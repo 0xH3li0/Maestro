@@ -302,6 +302,7 @@ describe('searchableSettings', () => {
 			['synopsis provider', 'encore-director-notes'],
 			['computer history', 'encore-computer-history'],
 			['digest agent', 'encore-computer-history'],
+			['digest model', 'encore-computer-history'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

@@ -229,6 +229,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'computer-history',
 		encoreFlag: 'computerHistory',
 	},
+	{
+		id: 'computer-history-digest-local',
+		filename: 'computer-history-digest-local.md',
+		description:
+			'Computer History digest for a small local model or endpoint: summarizes one piece of the activity record, or the notes and digests made from it, as markdown bullets',
+		category: 'computer-history',
+		encoreFlag: 'computerHistory',
+	},
 	// Concerto (first-party plugin system-prompt section)
 	{
 		id: 'concerto-system',
@@ -520,6 +528,7 @@ export const PROMPT_IDS = {
 	PIANOLA_SYSTEM: 'pianola-system',
 	// Computer History
 	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
+	COMPUTER_HISTORY_DIGEST_LOCAL: 'computer-history-digest-local',
 	// MaestroRun
 	MAESTRO_RUN_SYSTEM: 'maestro-run-system',
 	// Concerto

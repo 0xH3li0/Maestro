@@ -8,17 +8,38 @@
  * with an empty name is never left facing a dead Save button.
  */
 
-import { BrainCircuit, Cpu, Server, SlidersHorizontal, Terminal, Users } from 'lucide-react';
+import {
+	BrainCircuit,
+	Cpu,
+	ScrollText,
+	Server,
+	SlidersHorizontal,
+	Terminal,
+	Users,
+} from 'lucide-react';
 import type { ModalTab } from '../ui/ModalTabStrip';
 import {
 	AGENT_SETTINGS_TAB_IDS,
 	AGENT_SETTINGS_TAB_LABELS,
-	type AgentSettingsTabId,
+	type AgentSettingsTabId as LinkableAgentSettingsTabId,
 } from '../../../shared/agentSettingsTabs';
 
-export type { AgentSettingsTabId };
+/**
+ * The Audit Log tab, the one tab that is NOT in the shared list, on purpose.
+ *
+ * The shared list is what `maestro-cli open agent-settings --tab` offers and
+ * what `open --list` prints, and the feature behind this tab is hidden from
+ * agents (read the header of `src/shared/cotExport/types.ts`). So the tab has
+ * no deep link and no name outside the renderer. Only Edit Agent draws it, and
+ * only where `isCotExportAvailable()` says the desktop app offers the feature.
+ * Do not move this id into `src/shared/agentSettingsTabs.ts`.
+ */
+export const AUDIT_LOG_TAB_ID = 'auditLog';
 
-const AGENT_SETTINGS_TAB_ICONS: Readonly<Record<AgentSettingsTabId, ModalTab['icon']>> = {
+/** A tab of the form: one the CLI can link to, or the Audit Log tab. */
+export type AgentSettingsTabId = LinkableAgentSettingsTabId | typeof AUDIT_LOG_TAB_ID;
+
+const LINKABLE_TAB_ICONS: Readonly<Record<LinkableAgentSettingsTabId, ModalTab['icon']>> = {
 	general: SlidersHorizontal,
 	provider: Cpu,
 	models: BrainCircuit,
@@ -29,19 +50,29 @@ const AGENT_SETTINGS_TAB_ICONS: Readonly<Record<AgentSettingsTabId, ModalTab['ic
 
 /**
  * Every tab, in strip order. A surface shows the subset it supports. The ids
- * and labels are the shared list `maestro-cli open agent-settings --tab` reads.
+ * and labels are the shared list `maestro-cli open agent-settings --tab` reads,
+ * then the Audit Log tab, which that list must never hold.
  */
-export const AGENT_SETTINGS_TABS: readonly ModalTab<AgentSettingsTabId>[] =
-	AGENT_SETTINGS_TAB_IDS.map((id) => ({
+export const AGENT_SETTINGS_TABS: readonly ModalTab<AgentSettingsTabId>[] = [
+	...AGENT_SETTINGS_TAB_IDS.map((id) => ({
 		id,
 		label: AGENT_SETTINGS_TAB_LABELS[id],
-		icon: AGENT_SETTINGS_TAB_ICONS[id],
-	}));
+		icon: LINKABLE_TAB_ICONS[id],
+	})),
+	{ id: AUDIT_LOG_TAB_ID, label: 'Audit Log', icon: ScrollText },
+];
 
-/** New Agent and Edit Agent show every tab. */
-export const AGENT_FORM_TAB_IDS: readonly AgentSettingsTabId[] = AGENT_SETTINGS_TABS.map(
-	(tab) => tab.id
-);
+/** New Agent and Group Settings show every tab the CLI can link to. */
+export const AGENT_FORM_TAB_IDS: readonly AgentSettingsTabId[] = AGENT_SETTINGS_TAB_IDS;
+
+/**
+ * Edit Agent where the desktop app offers the audit log: the form's tabs, then
+ * Audit Log. It needs an agent that exists, so New Agent never shows it.
+ */
+export const EDIT_AGENT_TAB_IDS: readonly AgentSettingsTabId[] = [
+	...AGENT_FORM_TAB_IDS,
+	AUDIT_LOG_TAB_ID,
+];
 
 /** The moderator has no gateway (no Models tab) and a group chat has no peers. */
 export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = [

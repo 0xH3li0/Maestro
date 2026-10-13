@@ -156,7 +156,16 @@ import { ClipCapture } from '../../acappella/audio/clip-capture';
 import { NoticeSpeech } from '../../acappella/audio/notice-speech';
 import { registerDictationMicrophone } from '../../local-models/dictation';
 import { cancelSpokenNotices, registerNoticeSpeaker } from '../../local-models/spoken-notices';
-import { TAB_SCOPE_ROUTER_ID } from '../../../shared/acappella/voice-mode';
+import { isScopeRouterId } from '../../../shared/acappella/voice-mode';
+import {
+	QUICK_CHAT_VOICE_SCOPE,
+	isQuickChatScope,
+	scopeRebindBlocker,
+} from '../../../shared/acappella/quick-chat-scope';
+import {
+	QUICK_CHAT_VOICE_UNAVAILABLE,
+	type QuickChatVoiceHost,
+} from '../../acappella/dispatch/quick-chat-dispatch';
 import { wakeScorerFactory } from '../../acappella/wake/transcription-wake';
 import { describePressHoldCapability } from '../../acappella/hotkeys/press-hold';
 import type { GlobalHotkeyStatus } from '../../../shared/global-hotkeys';
@@ -298,6 +307,13 @@ export interface ACappellaHandlerDependencies {
 	 * primary window shows it, which is the only window there is.
 	 */
 	resolveVoiceWindowId?: (sender?: WebContents | null) => VoiceWindowId;
+	/**
+	 * Quick Chat, for a session bound to it: its window is the session's surface
+	 * and its `send` delivers each turn. A getter because the controller is built
+	 * after these handlers are registered. Absent in tests and in a host with no
+	 * Quick Chat, where a Quick Chat session is refused by name.
+	 */
+	getQuickChat?: () => QuickChatVoiceHost | null;
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
 	/**
@@ -535,6 +551,8 @@ const requireEnabled = requireACappellaEnabled;
 /** An unrecognised scope is conductor scope; a malformed BOUND scope is not. */
 function parseScope(raw: unknown): VoiceScope {
 	if (!isRecord(raw)) return { kind: 'conductor' };
+	// Quick Chat carries no ids, so there is nothing about it to be malformed.
+	if (raw.kind === 'quick-chat') return { ...QUICK_CHAT_VOICE_SCOPE };
 	if (raw.kind !== 'agent' && raw.kind !== 'document') return { kind: 'conductor' };
 	// Falling back to the conductor here would send a spoken instruction to
 	// whichever agent happens to be active, which is the one outcome worse than
@@ -756,6 +774,7 @@ async function buildService(
 			readVoiceProviderSettings(deps.settingsStore).conversationalMode === true,
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
+			getQuickChat: deps.getQuickChat,
 		}),
 		// Read through the module variable rather than captured: the bridge cannot
 		// exist yet (it takes the service), and the two are replaced together.
@@ -838,10 +857,11 @@ let lastDecisionWasRouted = true;
  * failure path cannot forget to report itself.
  */
 function recordRoutingOutcome(event: VoiceEvent): void {
-	// Tab mode routes nothing, so its dispatch is not an outcome of any logged
-	// turn; recording it would overwrite the verdict of the last real one.
+	// Tab mode and a Quick Chat session route nothing, so their dispatch is not an
+	// outcome of any logged turn; recording it would overwrite the verdict of the
+	// last real one.
 	if (event.type === 'route-decision') {
-		lastDecisionWasRouted = event.brainProviderId !== TAB_SCOPE_ROUTER_ID;
+		lastDecisionWasRouted = !isScopeRouterId(event.brainProviderId);
 		return;
 	}
 	if (!lastDecisionWasRouted) return;
@@ -1039,12 +1059,32 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// `ipcMain.handle`, because each has a second caller: the voice control
 	// service registered at the end of this function, which is how `maestro-cli
 	// voice` presses the same button.
+	/**
+	 * Put the Quick Chat window on screen and return its id, the owner of a
+	 * session bound to Quick Chat. A session whose only surface cannot be shown
+	 * is refused, never opened in some other window: the HUD's mode switch there
+	 * would offer a re-binding this session does not allow.
+	 */
+	const claimQuickChatWindow = (): string => {
+		const windowId = deps.getQuickChat?.()?.showForVoice() ?? null;
+		if (!windowId) throw new VoiceControlRefusal(QUICK_CHAT_VOICE_UNAVAILABLE);
+		return windowId;
+	};
+	/** The window that shows a session on `scope`: Quick Chat's own, or `fallback`. */
+	const ownerWindowFor = (scope: VoiceScope, fallback: VoiceWindowId): VoiceWindowId =>
+		isQuickChatScope(scope) ? claimQuickChatWindow() : fallback;
+
 	const startSession = async (
 		rawScope: unknown,
 		windowId: VoiceWindowId,
 		paused: boolean
 	): Promise<VoiceStartSessionResult> => {
 		const scope = parseScope(rawScope);
+		// A Quick Chat session is shown by the Quick Chat window and by no other,
+		// whoever asked for it (the window's own microphone, or `maestro-cli voice
+		// start --quick-chat` with no window behind it). Claimed before the
+		// microphone is asked for, so a refusal costs the user no permission prompt.
+		const owner = ownerWindowFor(scope, windowId);
 		// The microphone is asked for HERE and nowhere earlier. Not at app
 		// launch, not when the Encore Feature is switched on: a first run that
 		// prompts for the microphone for a feature nobody turned on spends trust
@@ -1063,7 +1103,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		const snapshot = await service.startSession({
 			scope,
 			source: 'client-button',
-			windowId,
+			windowId: owner,
 			paused,
 		});
 		return { snapshot, substitutions };
@@ -1290,7 +1330,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				// No IPC sender to resolve: a global hotkey, a wake word, and a paired
 				// phone all arrive with no window behind them, so the HUD belongs to
 				// the window the user is looking at.
-				windowId: deps.resolveVoiceWindowId?.() ?? null,
+				windowId: ownerWindowFor(scope, deps.resolveVoiceWindowId?.() ?? null),
 			});
 		},
 		stopSession: async (reason) => {
@@ -1869,7 +1909,14 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		'stop-reply': async () => ({
 			interrupted: getVoiceSessionService()?.interrupt('client-button') ?? false,
 		}),
-		scope: async ({ scope }) => ({ applied: setScope(scope), scope }),
+		scope: async ({ scope }) => {
+			// A locked binding is a refusal with its own sentence. Without this the
+			// caller is told there is no session, which is not what happened.
+			const live = getVoiceSessionService()?.getSnapshot();
+			const blocker = live && live.state !== 'idle' ? scopeRebindBlocker(live.scope, scope) : null;
+			if (blocker) throw new VoiceControlRefusal(blocker);
+			return { applied: setScope(scope), scope };
+		},
 		wait: async ({ waitMs }) => setSendWait(waitMs),
 		volume: async ({ volume }) => ({ applied: await applyVolume(volume), volume }),
 		inputs: async () => readInputDevices(),
@@ -2034,7 +2081,7 @@ export function disposeACappellaAudioBridge(): void {
  * own settings watcher; the transport stands down and stays reusable.
  */
 /**
- * End the session if it belonged to a window that just closed.
+ * End the session if it belonged to a window that just went away.
  *
  * A session is shown by exactly one window, so closing that window would
  * otherwise leave an open microphone with no surface anywhere - the same
@@ -2042,13 +2089,20 @@ export function disposeACappellaAudioBridge(): void {
  * exists to prevent, arrived at by a different route. Closing the window that
  * holds the floor is a clear enough intent to end the session.
  *
+ * `hidden` is the same failure for a window that is put away instead of closed:
+ * Quick Chat hides on Escape and stays alive, so a session bound to it would
+ * otherwise keep listening behind a window nobody can see.
+ *
  * A session with no window (null) is deliberately left alone: it is not this
  * window's to end, and the primary window still shows it.
  */
-export async function stopVoiceSessionForClosedWindow(windowId: string): Promise<void> {
+export async function stopVoiceSessionForWindow(
+	windowId: string,
+	cause: 'closed' | 'hidden' = 'closed'
+): Promise<void> {
 	const service = getVoiceSessionService();
 	if (!service || service.getSnapshot().windowId !== windowId) return;
-	logger.info(`Voice session ended: its window (${windowId}) closed`, LOG_CONTEXT);
+	logger.info(`Voice session ended: its window (${windowId}) was ${cause}`, LOG_CONTEXT);
 	await service.stopSession('shutdown');
 }
 

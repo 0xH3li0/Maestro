@@ -228,6 +228,7 @@ import {
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import {
 	shutdownACappellaForDisable,
+	stopVoiceSessionForWindow,
 	syncACappellaAfterExternalSettingsChange,
 } from './ipc/handlers/acappella';
 import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
@@ -773,6 +774,9 @@ const quickChatController = createQuickChatController({
 			get: () => windowStateStore.get('quickChat'),
 			set: (bounds) => windowStateStore.set('quickChat', bounds),
 		},
+		// A voice session bound to Quick Chat has this window as its only surface,
+		// so putting the window away ends it.
+		onHidden: (windowId) => void stopVoiceSessionForWindow(windowId, 'hidden'),
 	},
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,

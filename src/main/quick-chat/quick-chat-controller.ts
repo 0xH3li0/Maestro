@@ -30,6 +30,7 @@ import {
 	closeQuickChatWindow,
 	getQuickChatWindow,
 	getQuickChatWindowBounds,
+	getQuickChatWindowId,
 	hideQuickChatWindow,
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
@@ -68,6 +69,13 @@ export interface QuickChatController {
 	setBounds(request: QuickChatBoundsRequest): QuickChatStatus;
 	/** Float the window above other windows, or let it fall behind them. */
 	setPinned(pinned: boolean): QuickChatStatus;
+	/**
+	 * Put the window on screen as the surface of a voice session bound to Quick
+	 * Chat, and return its window id (the session's owner). Null when Quick Chat
+	 * is turned off: the caller refuses the session instead of opening a
+	 * microphone with nothing to show it.
+	 */
+	showForVoice(): string | null;
 	getStatus(): QuickChatStatus;
 }
 
@@ -159,6 +167,14 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getStatus();
 	};
 
+	const showForVoice = (): string | null => {
+		if (!isEnabled()) return null;
+		// Already on screen is the common case (the window's own microphone), and
+		// showing it again would refocus the composer mid-press.
+		if (!isQuickChatWindowVisible()) windowAction('show');
+		return getQuickChatWindowId();
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -208,6 +224,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		windowAction,
 		setBounds,
 		setPinned,
+		showForVoice,
 		getStatus,
 	};
 	activeController = controller;

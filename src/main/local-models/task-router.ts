@@ -116,6 +116,11 @@ export interface LocalTaskInput extends LocalTaskAttribution {
 	jsonSchema?: Record<string, unknown>;
 	/** In-process callers only: an abort signal cannot cross IPC or the CLI bridge. */
 	signal?: AbortSignal;
+	/**
+	 * Nobody is waiting on this call (a Computer History digest). It is not
+	 * counted by {@link isInteractiveLocalTaskRunning}. In-process callers only.
+	 */
+	background?: boolean;
 }
 
 export type LocalTaskResult =
@@ -248,6 +253,7 @@ export async function runLocalTask(
 			}),
 		{
 			agentId: input.agentId,
+			background: input.background === true,
 			metrics: (result) => ({
 				durationMs: result.durationMs,
 				tokensIn: result.tokensIn,

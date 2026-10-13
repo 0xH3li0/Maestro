@@ -35,6 +35,7 @@ import {
 	isDocumentScope,
 	voiceScopeAgentId,
 } from '../../shared/acappella/document-scope';
+import { QUICK_CHAT_VOICE_LABEL, isQuickChatScope } from '../../shared/acappella/quick-chat-scope';
 import { isVoiceSessionActive, type VoiceSessionState } from '../../shared/acappella/session-state';
 import { useVoiceDiagnosticsStore } from './voiceDiagnosticsStore';
 import { useVoiceUiStore } from './voiceUiStore';
@@ -689,6 +690,7 @@ export const selectVoiceScopeLabel = (s: VoiceSessionStore): string => {
 	// The document comes first: a document conversation is bound to an agent too,
 	// so an agent-id test alone would label it with the agent and lose the file.
 	if (isDocumentScope(scope)) return documentScopeName(scope);
+	if (isQuickChatScope(scope)) return QUICK_CHAT_VOICE_LABEL;
 	const agentSessionId = voiceScopeAgentId(scope);
 	if (!agentSessionId) return 'Conductor';
 	return s.roster.find((a) => a.sessionId === agentSessionId)?.name ?? 'Agent';

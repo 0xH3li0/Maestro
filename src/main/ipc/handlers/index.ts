@@ -74,7 +74,7 @@ import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import {
 	registerACappellaHandlers,
-	stopVoiceSessionForClosedWindow,
+	stopVoiceSessionForWindow,
 	ACappellaHandlerDependencies,
 } from './acappella';
 import {
@@ -168,7 +168,7 @@ export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
-export { registerACappellaHandlers, stopVoiceSessionForClosedWindow };
+export { registerACappellaHandlers, stopVoiceSessionForWindow };
 export type { ACappellaHandlerDependencies };
 export { registerACappellaModelsHandlers };
 export type { ACappellaModelsHandlerDependencies };

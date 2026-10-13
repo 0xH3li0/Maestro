@@ -21,6 +21,10 @@ import {
 	isDocumentScope,
 	voiceScopeAgentId,
 } from '../../../shared/acappella/document-scope';
+import {
+	QUICK_CHAT_VOICE_LABEL,
+	isQuickChatScope,
+} from '../../../shared/acappella/quick-chat-scope';
 import { voiceScopeTabId } from '../../../shared/acappella/voice-mode';
 import { generateParticipantColor } from '../../utils/participantColors';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
@@ -84,9 +88,11 @@ export function useVoiceScope(theme: Theme): VoiceScopeDisplay {
 		// still on the row below as the tab the dispatch landed in.
 		const label = isDocumentScope(scope)
 			? documentScopeName(scope)
-			: agentSessionId
-				? (agent?.name ?? 'Agent')
-				: 'Conductor';
+			: isQuickChatScope(scope)
+				? QUICK_CHAT_VOICE_LABEL
+				: agentSessionId
+					? (agent?.name ?? 'Agent')
+					: 'Conductor';
 
 		// Tab mode names its tab from the binding itself, before anything has been
 		// sent: the header is the promise of where the next sentence lands.

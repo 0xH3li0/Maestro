@@ -1,6 +1,5 @@
 /**
- * @fileoverview Tests for ProviderTab: the picker slot, Agent Resilience and
- * the chain of thought export slot.
+ * @fileoverview Tests for ProviderTab: the picker slot and Agent Resilience.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -11,7 +10,7 @@ import { createMockTheme } from '../../../helpers/mockTheme';
 const theme = createMockTheme();
 
 describe('ProviderTab', () => {
-	it('renders the picker first, then resilience, then the export slot', () => {
+	it('renders the picker first, then resilience', () => {
 		render(
 			<ProviderTab
 				theme={theme}
@@ -23,7 +22,6 @@ describe('ProviderTab', () => {
 					onChangeAvailability: vi.fn(),
 					onChangeTokenExhaustion: vi.fn(),
 				}}
-				cotExport={<div data-testid="cot-slot">cot</div>}
 			/>
 		);
 
@@ -31,11 +29,9 @@ describe('ProviderTab', () => {
 		expect(panel).toHaveAttribute('id', 'new-agent-tabpanel-provider');
 		const picker = screen.getByTestId('picker-slot');
 		const resilience = screen.getByText('Agent Resilience');
-		const cot = screen.getByTestId('cot-slot');
 		expect(
 			picker.compareDocumentPosition(resilience) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
-		expect(resilience.compareDocumentPosition(cot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it('reports resilience changes to the modal', () => {

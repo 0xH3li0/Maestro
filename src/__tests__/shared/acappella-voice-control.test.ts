@@ -35,6 +35,13 @@ describe('parseVoiceControlScope', () => {
 		).toEqual({ kind: 'document', sessionId: 'a1', path: '/notes/plan.md' });
 	});
 
+	it('reads Quick Chat, which carries no ids, and drops any it was given', () => {
+		expect(parseVoiceControlScope({ kind: 'quick-chat' })).toEqual({ kind: 'quick-chat' });
+		expect(parseVoiceControlScope({ kind: 'quick-chat', sessionId: 'a1', tabId: 't1' })).toEqual({
+			kind: 'quick-chat',
+		});
+	});
+
 	it('refuses an unknown kind instead of reading it as the Conductor', () => {
 		// A typo must not send a spoken instruction to whichever agent the
 		// Conductor happens to pick.

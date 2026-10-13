@@ -583,6 +583,73 @@ describe('VoiceSessionService modes (Tab, Agent, Conductor)', () => {
 	});
 });
 
+describe('VoiceSessionService bound to Quick Chat', () => {
+	async function startQuickChat(h: Harness): Promise<void> {
+		await h.service.startSession({ scope: { kind: 'quick-chat' }, source: 'client-button' });
+		h.events.length = 0;
+	}
+
+	it('sends the words whole, without asking the Brain, and names no agent', async () => {
+		const h = makeHarness();
+		await startQuickChat(h);
+
+		h.service.submitUtterance('ask the frontend agent what day it is');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		expect(h.brain.contexts).toHaveLength(0);
+		const [decision, context] = h.executor.mock.calls[0] as [RouteDecision, { scope: unknown }];
+		expect(decision).toEqual({
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'ask the frontend agent what day it is',
+			confidence: 1,
+		});
+		// The executor reads the SCOPE to know the turn is Quick Chat's.
+		expect(context.scope).toEqual({ kind: 'quick-chat' });
+		const routed = h.events.find((event) => event.type === 'route-decision');
+		expect(routed).toMatchObject({ brainProviderId: 'quick-chat-scope' });
+	});
+
+	it('sends "no, the other one" as a message: there was no routing to correct', async () => {
+		const h = makeHarness();
+		await startQuickChat(h);
+
+		h.service.submitUtterance('what day is today');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		h.service.submitUtterance('no, the other one');
+		await vi.waitFor(() => expect(h.executor).toHaveBeenCalledTimes(2));
+
+		expect(h.types()).not.toContain('route-correction');
+		const [decision] = h.executor.mock.calls[1] as [RouteDecision];
+		expect(decision.prompt).toBe('no, the other one');
+		await h.service.stopSession('user');
+	});
+
+	it('cannot be re-bound: the mode switch does not apply', async () => {
+		const h = makeHarness();
+		await startQuickChat(h);
+
+		expect(h.service.setScope({ kind: 'conductor' })).toBe(false);
+		expect(h.service.setScope({ kind: 'agent', sessionId: 'agent-backend' })).toBe(false);
+		expect(h.service.setScope({ kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-1' })).toBe(
+			false
+		);
+
+		expect(h.types()).not.toContain('scope-change');
+		expect(h.service.getSnapshot().scope).toEqual({ kind: 'quick-chat' });
+	});
+
+	it('cannot be switched INTO from another session', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		expect(h.service.setScope({ kind: 'quick-chat' })).toBe(false);
+
+		expect(h.types()).not.toContain('scope-change');
+		expect(h.service.getSnapshot().scope).toEqual({ kind: 'conductor' });
+	});
+});
+
 describe('VoiceSessionService lifecycle', () => {
 	let h: Harness;
 

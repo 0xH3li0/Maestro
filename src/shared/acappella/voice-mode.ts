@@ -14,7 +14,9 @@
  *     you until there is a request.
  *
  * A fourth binding, the document conversation, is a tab binding that also knows
- * which file it is about; its rules live in `./document-scope`.
+ * which file it is about; its rules live in `./document-scope`. A fifth, the
+ * Quick Chat conversation, is locked to the Quick Chat window's chat; its rules
+ * live in `./quick-chat-scope`.
  *
  * The rules are applied AFTER the Brain has read the utterance (Agent mode) or
  * instead of it (Tab mode), in the session service, so every Brain - keyword,
@@ -22,10 +24,12 @@
  * to be told.
  */
 
+import { voiceScopeAgentId } from './document-scope';
 import type { AgentVoiceScope, RosterAgent, VoiceScope } from './protocol';
+import { isQuickChatScope, QUICK_CHAT_SCOPE_ROUTER_ID } from './quick-chat-scope';
 import type { RouteDecision } from './route-decision';
 
-export type VoiceMode = 'tab' | 'agent' | 'conductor' | 'document';
+export type VoiceMode = 'tab' | 'agent' | 'conductor' | 'document' | 'quick-chat';
 
 /**
  * The `brainProviderId` a Tab-mode `route-decision` carries. No Brain ran, and
@@ -34,11 +38,50 @@ export type VoiceMode = 'tab' | 'agent' | 'conductor' | 'document';
  */
 export const TAB_SCOPE_ROUTER_ID = 'tab-scope';
 
+/**
+ * The `brainProviderId` for a turn whose SCOPE decides where it goes, or null
+ * when a Brain routes it.
+ *
+ * Tab mode and a Quick Chat session both send the utterance as the message,
+ * with no Conductor in between. One function names the two, so the session
+ * service stamps the decision and skips the correction path by the same test.
+ */
+export function scopeRouterId(scope: VoiceScope | null | undefined): string | null {
+	if (isQuickChatScope(scope)) return QUICK_CHAT_SCOPE_ROUTER_ID;
+	return voiceScopeTabId(scope) ? TAB_SCOPE_ROUTER_ID : null;
+}
+
+/** Whether a `route-decision` was stamped by a scope, not by a Brain. */
+export function isScopeRouterId(brainProviderId: string): boolean {
+	return brainProviderId === TAB_SCOPE_ROUTER_ID || brainProviderId === QUICK_CHAT_SCOPE_ROUTER_ID;
+}
+
 /** Which of the modes a scope is. */
 export function voiceScopeMode(scope: VoiceScope | null | undefined): VoiceMode {
 	if (!scope || scope.kind === 'conductor') return 'conductor';
 	if (scope.kind === 'document') return 'document';
+	if (scope.kind === 'quick-chat') return 'quick-chat';
 	return scope.tabId ? 'tab' : 'agent';
+}
+
+/**
+ * Whether two scopes are the same binding: the same kind, on the same agent,
+ * tab and document. A missing scope equals nothing, not even another missing
+ * one, because "no session" is not a binding to resume.
+ */
+export function isSameVoiceScope(
+	a: VoiceScope | null | undefined,
+	b: VoiceScope | null | undefined
+): boolean {
+	if (!a || !b) return false;
+	if (a.kind === 'agent') {
+		return b.kind === 'agent' && a.sessionId === b.sessionId && a.tabId === b.tabId;
+	}
+	if (a.kind === 'document') {
+		return b.kind === 'document' && a.sessionId === b.sessionId && a.path === b.path;
+	}
+	// The Conductor and Quick Chat carry no ids: the kind is the whole binding.
+	return a.kind === b.kind;
 }
 
 /** The tab a Tab-mode scope is pinned to, or null for every other mode. */
@@ -134,8 +177,11 @@ export function applyAgentScope(
 	};
 }
 
-/** The three modes a user switches between. Document conversations are opened, not switched to. */
-export type SwitchableVoiceMode = Exclude<VoiceMode, 'document'>;
+/**
+ * The three modes a user switches between. Document and Quick Chat
+ * conversations are opened, not switched to.
+ */
+export type SwitchableVoiceMode = Exclude<VoiceMode, 'document' | 'quick-chat'>;
 
 /** In the order the HUD draws them, which is also the order Tab walks them. */
 export const SWITCHABLE_VOICE_MODES: readonly SwitchableVoiceMode[] = ['tab', 'agent', 'conductor'];
@@ -144,11 +190,13 @@ export const SWITCHABLE_VOICE_MODES: readonly SwitchableVoiceMode[] = ['tab', 'a
  * The mode a scope shows as in the switch.
  *
  * A document conversation is a tab binding that also knows its file, so it reads
- * as Tab; switching away from it leaves the document behind.
+ * as Tab; switching away from it leaves the document behind. A Quick Chat
+ * session reads as Tab too (every sentence goes to one conversation), and it
+ * cannot be switched away from: see `scopeRebindBlocker` in `./quick-chat-scope`.
  */
 export function switchableVoiceMode(scope: VoiceScope | null | undefined): SwitchableVoiceMode {
 	const mode = voiceScopeMode(scope);
-	return mode === 'document' ? 'tab' : mode;
+	return mode === 'document' || mode === 'quick-chat' ? 'tab' : mode;
 }
 
 /**
@@ -199,8 +247,7 @@ export function scopeForMode(
 ): VoiceScope | null {
 	if (mode === 'conductor') return { kind: 'conductor' };
 
-	const bound =
-		context.scope && context.scope.kind !== 'conductor' ? context.scope.sessionId : null;
+	const bound = voiceScopeAgentId(context.scope);
 	const agentSessionId = context.focusedAgentId ?? bound ?? context.lastDispatch?.agentSessionId;
 	if (!agentSessionId) return null;
 
@@ -234,10 +281,11 @@ export interface VoiceFocus {
  * wherever the mode was first picked, and the only way to move it was to leave
  * the mode and come back.
  *
- * Null, which is "do not re-bind", in four cases:
+ * Null, which is "do not re-bind", in five cases:
  *
  *   - **Conductor.** It is bound to nothing; the Conductor picks per sentence.
  *   - **A document conversation.** It is about a file, and stays with it.
+ *   - **A Quick Chat session.** It is locked to the Quick Chat conversation.
  *   - **Tab mode with no conversation in front** (a tiled file pane, an agent
  *     with no AI tab). The pin is kept rather than degraded to Agent mode: the
  *     user picked Tab, and losing the mode because they glanced at a file would

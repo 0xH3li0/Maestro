@@ -78,6 +78,7 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'voice-routing',
 			'model-routing',
 			'token-proxy',
+			'history-digests',
 			'local-judge',
 		]);
 	});
@@ -109,6 +110,7 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'voice-routing',
 			'model-routing',
 			'token-proxy',
+			'history-digests',
 			'local-judge',
 		] as const) {
 			expect(LOCAL_MODEL_TASKS[id].needs).toBe('text-gen');
@@ -475,7 +477,21 @@ describe('tasksForSystem', () => {
 			'git-drafts',
 			'spoken-notices',
 			'token-proxy',
+			'history-digests',
 		]);
+	});
+
+	it('Computer History digests is a text task with no Utility Agent path, off until a model is picked', () => {
+		const task = LOCAL_MODEL_TASKS['history-digests'];
+		expect(task.allowsUtilityAgent).toBe(false);
+		expect(task.defaultAssignment).toEqual({ type: 'off' });
+		// The other writer is the digest agent, which is not an assignment.
+		expect(localModelAssignmentProblem('history-digests', { type: 'utility-agent' })).toMatch(
+			/no Utility Agent path/
+		);
+		expect(localModelAssignmentProblem('history-digests', { type: 'system-one' })).toMatch(
+			/writes text/
+		);
 	});
 
 	it('covers every task exactly once', () => {

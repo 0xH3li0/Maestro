@@ -20,6 +20,7 @@
 import type { AudioDeviceInfo } from './audio-host';
 import type { VoiceSendWait } from './listen-mode';
 import type { VoiceOrigin, VoiceScope } from './protocol';
+import { QUICK_CHAT_VOICE_SCOPE } from './quick-chat-scope';
 import { VOICE_CREDENTIAL_SERVICES, type VoiceCredentialService } from './provider-catalog';
 import type { VoiceProviderSubstitution } from './providers';
 import type { VoiceReadiness } from './readiness';
@@ -237,6 +238,7 @@ function nonEmptyString(value: unknown): string | null {
 export function parseVoiceControlScope(raw: unknown): VoiceScope | null {
 	if (!isRecord(raw)) return null;
 	if (raw.kind === 'conductor') return { kind: 'conductor' };
+	if (raw.kind === 'quick-chat') return { ...QUICK_CHAT_VOICE_SCOPE };
 	const sessionId = nonEmptyString(raw.sessionId);
 	if (!sessionId) return null;
 	if (raw.kind === 'agent') {

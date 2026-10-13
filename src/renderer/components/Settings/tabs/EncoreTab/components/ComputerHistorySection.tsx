@@ -15,13 +15,14 @@ import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
 import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 import { ActionButton } from './ActionButton';
+import { DigestWriterField } from './DigestWriterField';
 import { CaptureRulesEditor } from '../../../../ComputerHistory/CaptureRulesEditor';
 import { useComputerHistoryStatus } from '../../../../../hooks/computerHistory/useComputerHistoryStatus';
 import { useSessionStore } from '../../../../../stores/sessionStore';
 import { useModalStore } from '../../../../../stores/modalStore';
 import { notifyToast } from '../../../../../stores/notificationStore';
 import { formatSize } from '../../../../../../shared/formatters';
-import { GIB } from '../../../../../../shared/computer-history/config';
+import { DIGEST_SOURCE_LABELS, GIB } from '../../../../../../shared/computer-history/config';
 import type { RecorderState } from '../../../../../../shared/computer-history/status';
 import type { ComputerHistoryConfig } from '../../../../../../shared/computer-history/types';
 
@@ -157,6 +158,9 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 		backgroundColor: theme.colors.bgActivity,
 		color: theme.colors.textMain,
 	};
+
+	// "local model" or "agent", for the sentences that name the digest writer.
+	const writerName = config ? DIGEST_SOURCE_LABELS[config.digests.source].toLowerCase() : '';
 
 	const needsMacPermission = platform === 'macos' && helper?.permission === 'denied';
 	const needsLinuxBus =
@@ -358,7 +362,7 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 				<div>
 					<SettingsSectionHeading
 						icon={ScrollText}
-						description="An agent of your choice summarizes each 15-minute window into a markdown digest next to the history, and can roll each 6-hour block up into one summary. Off by default."
+						description="A local model or an agent of your choice summarizes each 15-minute window into a markdown digest next to the history, and can roll each 6-hour block up into one summary. Off by default."
 					>
 						Digests
 					</SettingsSectionHeading>
@@ -368,37 +372,25 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 							title="Write digests"
 							description={
 								config.digests.enabled
-									? 'A 15-minute digest is requested from the chosen agent after each window with activity closes.'
+									? `A 15-minute digest is written by the chosen ${writerName} after each window with activity closes.`
 									: 'No digests are written.'
 							}
 							checked={config.digests.enabled}
 							onChange={(checked) => void saveConfig({ digests: { enabled: checked } })}
 							clickableRow
 						/>
-						<label className="block">
-							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-								Digest agent
-							</div>
-							<select
-								value={config.digests.agentId ?? ''}
-								onChange={(e) => void saveConfig({ digests: { agentId: e.target.value || null } })}
-								className="mt-1 w-full px-2 py-1 rounded border text-sm outline-none"
-								style={inputStyle}
-							>
-								<option value="">Choose an agent</option>
-								{digestAgents.map((a) => (
-									<option key={a.id} value={a.id}>
-										{a.name}
-									</option>
-								))}
-							</select>
-						</label>
+						<DigestWriterField
+							theme={theme}
+							digests={config.digests}
+							agents={digestAgents}
+							onSave={(patch) => void saveConfig(patch)}
+						/>
 						<ToggleSettingRow
 							theme={theme}
 							title="6-hour roll-up"
 							description={
 								config.digests.rollup
-									? 'At 00:00, 06:00, 12:00, and 18:00 UTC the same agent summarizes the block from its 15-minute digests.'
+									? `At 00:00, 06:00, 12:00, and 18:00 UTC the same ${writerName} summarizes the block from its 15-minute digests.`
 									: 'Only 15-minute digests are written.'
 							}
 							checked={config.digests.rollup}

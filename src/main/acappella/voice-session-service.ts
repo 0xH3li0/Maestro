@@ -39,10 +39,15 @@ import {
 } from '../../shared/acappella/document-scope';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 import {
-	TAB_SCOPE_ROUTER_ID,
+	isQuickChatScope,
+	quickChatScopeDecision,
+	scopeRebindBlocker,
+} from '../../shared/acappella/quick-chat-scope';
+import {
 	applyAgentScope,
 	isAgentModeScope,
 	isTabScope,
+	scopeRouterId,
 	tabScopeDecision,
 	voiceScopeMode,
 } from '../../shared/acappella/voice-mode';
@@ -1154,11 +1159,16 @@ export class VoiceSessionService {
 			// utterance, never halfway through this one.
 			const scope: VoiceScope = this.scope ?? { kind: 'conductor' };
 
+			// Tab mode and a Quick Chat session send the utterance as the message:
+			// the scope decides where it goes and no Brain is asked.
+			const scopeRouter = scopeRouterId(scope);
+
 			// A correction is not a request, so it never reaches the Brain: "no, the
 			// other one" routed as an utterance becomes a prompt, and the agent it
-			// lands in has no idea what it refers to. Not in Tab mode: nothing was
-			// routed there, so there is no "other one", and the words are for the tab.
-			if (!isTabScope(scope) && this.lastDispatch && isCorrectionUtterance(utterance)) {
+			// lands in has no idea what it refers to. Not when the scope decides:
+			// nothing was routed there, so there is no "other one", and the words
+			// are for the conversation.
+			if (!scopeRouter && this.lastDispatch && isCorrectionUtterance(utterance)) {
 				await this.runCorrection(roster, turn);
 				return;
 			}
@@ -1179,6 +1189,10 @@ export class VoiceSessionService {
 					return;
 				}
 				decision = tabScopeDecision(utterance, scope);
+			} else if (isQuickChatScope(scope)) {
+				// Quick Chat resolves its own agent and tab when the message lands
+				// (its tab may not exist yet), so there is nothing to check here.
+				decision = quickChatScopeDecision(utterance);
 			} else {
 				decision = await this.providers.brain.route(utterance, context);
 				if (!this.isCurrentTurn(turn)) return;
@@ -1198,7 +1212,7 @@ export class VoiceSessionService {
 			this.lastDecision = decision;
 			this.emit('route-decision', {
 				decision,
-				brainProviderId: isTabScope(scope) ? TAB_SCOPE_ROUTER_ID : this.providers.brain.id,
+				brainProviderId: scopeRouter ?? this.providers.brain.id,
 				latencyMs: Date.now() - startedAt,
 			});
 
@@ -1312,10 +1326,19 @@ export class VoiceSessionService {
 	 * an answer to "which agent?" must not be routed after you have already said
 	 * which one by switching to it.
 	 *
-	 * @returns false when there is no live session to re-bind.
+	 * A Quick Chat session is the one binding that is not re-bound, in either
+	 * direction: see `scopeRebindBlocker`.
+	 *
+	 * @returns false when there is no live session to re-bind, or the binding is
+	 *          locked.
 	 */
 	setScope(scope: VoiceScope): boolean {
 		if (!this.sessionId || this.state === 'idle') return false;
+		const blocker = scopeRebindBlocker(this.scope, scope);
+		if (blocker) {
+			logger.info(`Voice session not re-bound: ${blocker}`, LOG_CONTEXT);
+			return false;
+		}
 		this.scope = scope;
 		this.pendingClarification = null;
 		this.conversation.clear();

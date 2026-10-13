@@ -25,7 +25,9 @@
 
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { nextVoiceListenMode, type VoiceListenMode } from '../../shared/acappella/listen-mode';
+import type { VoiceScope } from '../../shared/acappella/protocol';
 import { isVoiceSessionActive } from '../../shared/acappella/session-state';
+import { isSameVoiceScope } from '../../shared/acappella/voice-mode';
 import { notifyToast } from '../stores/notificationStore';
 import { beginVoiceSession, useVoiceSessionStore } from '../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../stores/voiceUiStore';
@@ -51,27 +53,52 @@ export function notifyVoiceStartFailed(error: unknown): void {
 	});
 }
 
-/**
- * Open the microphone: resume a live session, or start one.
- *
- * @param options.hold Push-to-talk press. The release, not a pause, ends the
- *                     thought, so nothing is sent while the button is down.
- */
-export function openVoiceMic(options: { hold?: boolean } = {}): Promise<void> {
+export interface OpenVoiceMicOptions {
+	/**
+	 * Push-to-talk press. The release, not a pause, ends the thought, so nothing
+	 * is sent while the button is down.
+	 */
+	hold?: boolean;
+	/**
+	 * The binding this microphone belongs to, for a surface that talks to ONE
+	 * thing (the Quick Chat window). Only a live session already on it is
+	 * resumed; a session bound anywhere else is replaced by a new one on this
+	 * scope, because opening this microphone must never send the next sentence
+	 * to whatever the last session happened to be about. Omitted, the HUD's
+	 * rule applies: resume what is live, else restart on the last scope.
+	 */
+	scope?: VoiceScope;
+	/**
+	 * Told why a session did not start. Defaults to the toast, which a window
+	 * with no toast surface replaces with its own.
+	 */
+	onError?: (error: unknown) => void;
+}
+
+/** Open the microphone: resume a live session, or start one. */
+export function openVoiceMic(options: OpenVoiceMicOptions = {}): Promise<void> {
 	const hold = options.hold === true;
 	return queue.enqueue(MIC_KEY, async () => {
 		try {
-			if (await window.maestro.voice.setListening({ listening: true, hold })) return;
+			// Read inside the queue, not at the press: a press queued behind a start
+			// must see the session that start opened.
+			const live = useVoiceSessionStore.getState();
+			const resumable =
+				!options.scope ||
+				(isVoiceSessionActive(live.state) && isSameVoiceScope(live.scope, options.scope));
+			if (resumable && (await window.maestro.voice.setListening({ listening: true, hold }))) {
+				return;
+			}
 			// Nothing live to resume. Restart in the mode the last session ended in,
 			// so a user who switched to Tab mode is not quietly dropped back to the
 			// Conductor by a session that timed out in between.
-			const scope = useVoiceSessionStore.getState().scope ?? undefined;
+			const scope = options.scope ?? live.scope ?? undefined;
 			await beginVoiceSession(scope, { open: true });
 			// A fresh session opens its microphone itself; what it does not know is
 			// that a button is holding it.
 			if (hold) await window.maestro.voice.setListening({ listening: true, hold: true });
 		} catch (error) {
-			notifyVoiceStartFailed(error);
+			(options.onError ?? notifyVoiceStartFailed)(error);
 		}
 	});
 }

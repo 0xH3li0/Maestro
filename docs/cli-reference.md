@@ -2441,7 +2441,7 @@ maestro-cli computer-history apps --since 1d
 
 ## `maestro-cli computer-history digests`
 
-List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)
+List 15-minute digests and 6-hour roll-ups (model-written, untrusted content)
 
 | Option           | Description                                             | Default |
 | ---------------- | ------------------------------------------------------- | ------- |
@@ -2566,18 +2566,20 @@ maestro-cli computer-history enable-accessibility
 
 Show settings, or change them with the flags below
 
-| Option                      | Description                                                        | Default |
-| --------------------------- | ------------------------------------------------------------------ | ------- |
-| `--retention-days <n>`      | Keep this many days (default 90)                                   | -       |
-| `--max-gb <n>`              | Keep at most this many GB (default 25)                             | -       |
-| `--snapshots <on\|off>`     | Record visible window text snapshots                               | -       |
-| `--digests <on\|off>`       | Have an agent write 15-minute digests (off by default)             | -       |
-| `--digest-agent <id>`       | Agent that writes digests (empty string clears it)                 | -       |
-| `--digest-rollup <on\|off>` | Also write 6-hour roll-ups from the 15-minute digests (default on) | -       |
-| `--json`                    | Output as JSON (for scripting)                                     | -       |
+| Option                           | Description                                                                                             | Default |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--retention-days <n>`           | Keep this many days (default 90)                                                                        | -       |
+| `--max-gb <n>`                   | Keep at most this many GB (default 25)                                                                  | -       |
+| `--snapshots <on\|off>`          | Record visible window text snapshots                                                                    | -       |
+| `--digests <on\|off>`            | Write 15-minute digests (off by default)                                                                | -       |
+| `--digest-source <local\|agent>` | Who writes digests: the model assigned to the history-digests task (models assign), or the digest agent | -       |
+| `--digest-agent <id>`            | Agent that writes digests; also sets the source to agent (empty string clears it)                       | -       |
+| `--digest-rollup <on\|off>`      | Also write 6-hour roll-ups from the 15-minute digests (default on)                                      | -       |
+| `--json`                         | Output as JSON (for scripting)                                                                          | -       |
 
 ```bash
 maestro-cli computer-history config --retention-days 30 --digests on
+maestro-cli computer-history config --digest-source local
 ```
 
 ## `maestro-cli pianola`
@@ -2970,20 +2972,22 @@ maestro-cli voice status --json
 
 ## `maestro-cli voice start`
 
-Start a voice session on the Conductor (the default), an agent, one tab, or a document. Its HUD opens in the window you are looking at
+Start a voice session on the Conductor (the default), an agent, one tab, a document, or Quick Chat. Its HUD opens in the window you are looking at
 
-| Option              | Description                                                                            | Default |
-| ------------------- | -------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`  | Talk to this agent (id, id prefix, or exact name)                                      | -       |
-| `--tab <id>`        | Talk to this tab only ("active" for the selected tab)                                  | -       |
-| `--conductor`       | Talk to the Conductor, which routes each request to an agent                           | -       |
-| `--document <path>` | Talk about this document with the agent named by --agent                               | -       |
-| `--paused`          | Open with the microphone shut (push-to-talk): nothing is heard until "voice listen on" | -       |
-| `--json`            | Output as JSON (for scripting)                                                         | -       |
+| Option              | Description                                                                               | Default |
+| ------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Talk to this agent (id, id prefix, or exact name)                                         | -       |
+| `--tab <id>`        | Talk to this tab only ("active" for the selected tab)                                     | -       |
+| `--conductor`       | Talk to the Conductor, which routes each request to an agent                              | -       |
+| `--document <path>` | Talk about this document with the agent named by --agent                                  | -       |
+| `--quick-chat`      | Talk to Quick Chat: opens its window and locks the session to its chat (no "voice scope") | -       |
+| `--paused`          | Open with the microphone shut (push-to-talk): nothing is heard until "voice listen on"    | -       |
+| `--json`            | Output as JSON (for scripting)                                                            | -       |
 
 ```bash
 maestro-cli voice start --conductor
 maestro-cli voice start --agent <agent-id> --paused
+maestro-cli voice start --quick-chat
 ```
 
 ## `maestro-cli voice stop`
@@ -3038,7 +3042,7 @@ maestro-cli voice stop-reply
 
 ## `maestro-cli voice scope <mode>`
 
-Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch)
+Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch). Refused for a Quick Chat session, which is locked
 
 | Option             | Description                                              | Default |
 | ------------------ | -------------------------------------------------------- | ------- |

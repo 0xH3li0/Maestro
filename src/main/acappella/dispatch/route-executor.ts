@@ -23,6 +23,7 @@ import type { BrowserWindow } from 'electron';
 
 import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
+import { isQuickChatScope } from '../../../shared/acappella/quick-chat-scope';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { isClarification, routeTargetSessionId } from '../../../shared/acappella/route-decision';
 import type { StoredSession } from '../../stores/types';
@@ -34,6 +35,7 @@ import { buildRoutingRoster } from '../router/routing-context';
 import { resolveRecall } from '../router/tab-recall';
 import { VoiceDispatchError } from '../voice-session-service';
 import type { VoiceDispatchResult, VoiceRouteExecutor } from '../voice-session-service';
+import { dispatchToQuickChat, type QuickChatVoiceHost } from './quick-chat-dispatch';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -290,6 +292,12 @@ export interface VoiceRouteExecutorOptions {
 	getActiveSessionId?: () => string | null;
 	/** How long an identical decision replays instead of executing again. */
 	replayWindowMs?: number;
+	/**
+	 * Quick Chat, for a session bound to it. A getter because the controller is
+	 * built after the handlers that take this. Absent, or returning null, a Quick
+	 * Chat turn fails by name.
+	 */
+	getQuickChat?: () => QuickChatVoiceHost | null;
 }
 
 interface ResolvedExecutorDeps {
@@ -297,6 +305,7 @@ interface ResolvedExecutorDeps {
 	getSessions: () => StoredSession[];
 	getActiveSessionId: () => string | null;
 	recentDispatches?: DispatchReplayCache;
+	getQuickChat?: () => QuickChatVoiceHost | null;
 }
 
 /**
@@ -357,6 +366,7 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
 		getSessions: options.getSessions ?? readStoredSessions,
 		getActiveSessionId: options.getActiveSessionId ?? readActiveSessionId,
 		recentDispatches: createDispatchReplayCache(options.replayWindowMs),
+		getQuickChat: options.getQuickChat,
 	};
 	return (decision, context) => executeRouteDecision(decision, context, deps);
 }
@@ -381,6 +391,16 @@ export async function executeRouteDecision(
 	// the user their own half-finished request.
 	if (isClarification(decision)) {
 		throw new VoiceDispatchError('That decision is a question, not a dispatch');
+	}
+
+	// A Quick Chat session never touches the roster or the `remote:*` channels:
+	// Quick Chat owns its agent and tab, and delivers the turn itself. It also
+	// skips the replay guard below. That guard exists for a renderer round trip
+	// that opened a tab and lost its receipt; here an identical sentence a few
+	// seconds later ("yes", twice) is the user answering twice, and dropping the
+	// second one would leave the session waiting on a reply nobody asked for.
+	if (isQuickChatScope(context.scope)) {
+		return dispatchToQuickChat(decision.prompt.trim(), deps.getQuickChat?.());
 	}
 
 	// Re-read rather than trusting the roster the Brain saw: routing is async and

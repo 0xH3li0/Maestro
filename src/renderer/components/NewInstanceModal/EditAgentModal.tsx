@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
-import { AgentCotExportSection } from './AgentCotExportSection';
+import { isCotExportAvailable } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
@@ -39,8 +39,11 @@ import { TierTargetsField } from '../shared/TierTargetsField';
 import {
 	AGENT_FORM_TAB_IDS,
 	AgentProviderSelect,
+	AUDIT_LOG_TAB_ID,
+	AuditLogTab,
 	BrowseFolderButton,
 	buildAgentSettingsTabs,
+	EDIT_AGENT_TAB_IDS,
 	EnvironmentTab,
 	firstTabWithError,
 	GeneralTab,
@@ -83,6 +86,8 @@ import type { CodexTransport } from '../../../shared/codexTransport';
  * The form is tabbed (General, Provider, Models, Environment, Peers, SSH; see
  * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
  * Only the active panel is rendered, so Tab never walks into a hidden one.
+ * The desktop app adds a last tab, Audit Log, which is the exception: it saves
+ * itself and none of its state is here.
  */
 export function EditAgentModal({
 	isOpen,
@@ -179,8 +184,10 @@ export function EditAgentModal({
 	// The one piece of form state the tabs own. Reopening shows the last tab used.
 	// A caller can send the user to one tab (`openAgentSettings(session, { tab })`).
 	const requestedTab = useModalStore((state) => selectModalData('editAgent')(state)?.initialTab);
+	// The Audit Log tab exists only where the desktop app offers the feature.
+	const tabIds = isCotExportAvailable() ? EDIT_AGENT_TAB_IDS : AGENT_FORM_TAB_IDS;
 	const { activeTab, setActiveTab } = useModalTabs({
-		tabs: AGENT_FORM_TAB_IDS,
+		tabs: tabIds,
 		initialTab: 'general',
 		rememberKey: 'edit-agent',
 		requestedTab,
@@ -830,10 +837,7 @@ export function EditAgentModal({
 		runOnError,
 		tierTargetsError,
 	]);
-	const tabs = useMemo(
-		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
-		[errorFields]
-	);
+	const tabs = useMemo(() => buildAgentSettingsTabs(tabIds, errorFields), [tabIds, errorFields]);
 
 	// A save attempt that cannot save goes to the field that blocks it, so a
 	// user on another tab is not left facing a dead Save. An unverified new
@@ -843,9 +847,9 @@ export function EditAgentModal({
 		const blocking = [...errorFields];
 		if (!instanceName.trim()) blocking.push('name');
 		if (newWorkingDirUnverified) blocking.push('workingDir');
-		const tab = firstTabWithError(blocking, AGENT_FORM_TAB_IDS);
+		const tab = firstTabWithError(blocking, tabIds);
 		if (tab) setActiveTab(tab);
-	}, [errorFields, instanceName, newWorkingDirUnverified, setActiveTab]);
+	}, [errorFields, instanceName, newWorkingDirUnverified, setActiveTab, tabIds]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
@@ -1207,19 +1211,6 @@ export function EditAgentModal({
 							onChangeAvailability: setRetryOnAvailabilityErrors,
 							onChangeTokenExhaustion: setRetryOnTokenExhaustion,
 						}}
-						cotExport={
-							// Chain of thought export. The section saves its own changes the
-							// moment they are made, into the feature's own store. It hands this
-							// dialog no state on purpose: nothing of it may reach `onSave`, and
-							// through that the Session object.
-							<AgentCotExportSection
-								theme={theme}
-								agentId={session.id}
-								agentName={session.name}
-								supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
-								usesInteractiveTokenSource={usesInteractiveTokenSource}
-							/>
-						}
 					/>
 				)}
 
@@ -1356,6 +1347,21 @@ export function EditAgentModal({
 						sshRemotes={sshRemotes}
 						sshRemoteConfig={sshRemoteConfig}
 						onSshRemoteConfigChange={setSshRemoteConfig}
+					/>
+				)}
+
+				{activeTab === AUDIT_LOG_TAB_ID && (
+					// The tab saves its own changes the moment they are made, into the
+					// feature's own store. It hands this dialog no state on purpose:
+					// nothing of it may reach `onSave`, and through that the Session
+					// object.
+					<AuditLogTab
+						theme={theme}
+						idPrefix="edit-agent"
+						agentId={session.id}
+						agentName={session.name}
+						supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+						usesInteractiveTokenSource={usesInteractiveTokenSource}
 					/>
 				)}
 			</div>

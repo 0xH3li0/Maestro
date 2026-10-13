@@ -10,7 +10,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AgentCotExportSection } from '../../../../renderer/components/NewInstanceModal/AgentCotExportSection';
+import {
+	AgentCotExportSection,
+	isCotExportAvailable,
+} from '../../../../renderer/components/NewInstanceModal/AgentCotExportSection';
 import type {
 	CotAgentStatus,
 	CotChainVerifyResult,
@@ -30,7 +33,7 @@ vi.mock('../../../../renderer/utils/runtimeContext', async (importOriginal) => (
 
 const AGENT = 'agent-1';
 const FOLDER = path.join(path.sep, 'audit', 'backend');
-const TOGGLE_LABEL = 'Export chain of thought for this agent';
+const TOGGLE_LABEL = 'Keep an audit log for this agent';
 
 const statusOf = (overrides: Partial<CotAgentStatus> = {}): CotAgentStatus => ({
 	enabled: false,
@@ -106,6 +109,13 @@ describe('AgentCotExportSection', () => {
 			const { container } = renderSection();
 
 			expect(container.innerHTML).toBe('');
+			expect(isCotExportAvailable()).toBe(false);
+		});
+
+		it('is available in the desktop app, where the API is exposed', () => {
+			(window.maestro as any).cotExport = createApi();
+
+			expect(isCotExportAvailable()).toBe(true);
 		});
 
 		it('renders nothing in the browser build, where the preload still exposes the API', () => {
@@ -116,6 +126,7 @@ describe('AgentCotExportSection', () => {
 			const { container } = renderSection();
 
 			expect(container.innerHTML).toBe('');
+			expect(isCotExportAvailable()).toBe(false);
 			expect(api.status).not.toHaveBeenCalled();
 		});
 
@@ -123,7 +134,7 @@ describe('AgentCotExportSection', () => {
 			const api = createApi();
 			await renderLoaded(api);
 
-			expect(screen.getByText('Chain of Thought Export')).toBeInTheDocument();
+			expect(screen.getByText('Audit Log')).toBeInTheDocument();
 			expect(api.status).toHaveBeenCalledWith(AGENT);
 		});
 
@@ -135,7 +146,7 @@ describe('AgentCotExportSection', () => {
 			(window.maestro as any).cotExport = api;
 			renderSection();
 
-			expect(await screen.findByText(/could not read the export settings/i)).toHaveTextContent(
+			expect(await screen.findByText(/could not read the audit log settings/i)).toHaveTextContent(
 				'store is locked'
 			);
 			expect(screen.getByRole('alert')).not.toHaveTextContent('cotExport:status');

@@ -37,16 +37,34 @@ export interface DocumentVoiceScope {
 }
 
 /**
+ * The Quick Chat conversation, whichever agent and tab it is on.
+ *
+ * It names no agent and no tab on purpose. Quick Chat owns both: its tab does
+ * not exist until the first message, a new chat replaces it, and the picker
+ * moves the chat to another agent. A scope that carried ids would be stale the
+ * moment the user did any of those, so the binding is the Quick Chat itself and
+ * each sentence is handed to it to deliver. Its rules live in
+ * `./quick-chat-scope`.
+ */
+export interface QuickChatVoiceScope {
+	kind: 'quick-chat';
+}
+
+/**
  * What a voice session is bound to. The `sessionId` inside an agent or document
  * scope is an AGENT id; the envelope's `sessionId` is the voice session id. They
  * are never the same value and are never interchangeable.
  *
  * Use `voiceScopeAgentId()` from `./document-scope` rather than testing for
- * `kind === 'agent'`: two of the three kinds are bound to an agent, and a test
+ * `kind === 'agent'`: two of the four kinds are bound to an agent, and a test
  * that only knows about one silently treats a document conversation as an
  * unbound Conductor session.
  */
-export type VoiceScope = { kind: 'conductor' } | AgentVoiceScope | DocumentVoiceScope;
+export type VoiceScope =
+	| { kind: 'conductor' }
+	| AgentVoiceScope
+	| DocumentVoiceScope
+	| QuickChatVoiceScope;
 
 /**
  * Bound to one agent, and optionally to ONE TAB of it.

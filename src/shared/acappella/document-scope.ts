@@ -29,7 +29,8 @@ export function isDocumentScope(scope: VoiceScope | null | undefined): scope is 
 }
 
 /**
- * The agent a scope is bound to, or null for the Conductor.
+ * The agent a scope is bound to, or null for the Conductor and for Quick Chat
+ * (whose agent is Quick Chat's to choose, message by message).
  *
  * The one place that knows which scope kinds carry an agent. Every caller that
  * hand-wrote `scope.kind === 'agent' ? scope.sessionId : null` was correct until

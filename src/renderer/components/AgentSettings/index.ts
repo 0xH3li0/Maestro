@@ -8,3 +8,4 @@ export * from './ModelsTab';
 export * from './EnvironmentTab';
 export * from './PeersTab';
 export * from './SshTab';
+export * from './AuditLogTab';

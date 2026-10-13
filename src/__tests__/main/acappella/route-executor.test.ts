@@ -38,6 +38,14 @@ import {
 	type VoiceRendererBridge,
 } from '../../../main/acappella/dispatch/route-executor';
 import { VoiceDispatchError } from '../../../main/acappella/voice-session-service';
+import type { QuickChatVoiceHost } from '../../../main/acappella/dispatch/quick-chat-dispatch';
+import { quickChatScopeDecision } from '../../../shared/acappella/quick-chat-scope';
+import {
+	EMPTY_QUICK_CHAT_SNAPSHOT,
+	type QuickChatCommandResult,
+	type QuickChatSnapshot,
+	type QuickChatStatus,
+} from '../../../shared/quickChat';
 import type { VoiceScope } from '../../../shared/acappella/protocol';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import type { StoredSession } from '../../../main/stores/types';
@@ -504,6 +512,138 @@ describe('executeRouteDecision - idempotency', () => {
 		await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
 
 		expect(bridge.executeCommand).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Quick Chat
+// ---------------------------------------------------------------------------
+
+describe('executeRouteDecision - a session bound to Quick Chat', () => {
+	const QUICK_CHAT_SCOPE: VoiceScope = { kind: 'quick-chat' };
+
+	function chatSnapshot(overrides: Partial<QuickChatSnapshot> = {}): QuickChatSnapshot {
+		return {
+			...EMPTY_QUICK_CHAT_SNAPSHOT,
+			agentId: 'agent-backend',
+			agentName: 'Backend',
+			...overrides,
+		};
+	}
+
+	/** A Quick Chat whose `send` lands in `after`, starting from `before`. */
+	function makeQuickChat(options: {
+		before?: QuickChatSnapshot;
+		result?: QuickChatCommandResult;
+	}): QuickChatVoiceHost & { runCommand: MockedFunction<QuickChatVoiceHost['runCommand']> } {
+		const before = options.before ?? chatSnapshot();
+		const result = options.result ?? { ok: true, snapshot: chatSnapshot({ tabId: 'tab-quick' }) };
+		return {
+			showForVoice: vi.fn(() => 'window-quick'),
+			getStatus: vi.fn(() => ({ snapshot: before }) as QuickChatStatus),
+			runCommand: vi.fn<QuickChatVoiceHost['runCommand']>(async () => result),
+		};
+	}
+
+	function makeQuickChatExecutor(
+		bridge: VoiceRendererBridge,
+		quickChat: QuickChatVoiceHost | null
+	) {
+		return createVoiceRouteExecutor({
+			bridge,
+			getSessions: () => makeSessions(),
+			getActiveSessionId: () => 'agent-frontend',
+			getQuickChat: () => quickChat,
+		});
+	}
+
+	it('sends through Quick Chat and never touches a remote:* channel', async () => {
+		const bridge = makeBridge();
+		const quickChat = makeQuickChat({});
+		const execute = makeQuickChatExecutor(bridge, quickChat);
+
+		const result = await execute(quickChatScopeDecision('what day is today'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		});
+
+		expect(quickChat.runCommand).toHaveBeenCalledWith({ type: 'send', text: 'what day is today' });
+		// A hidden tab must stay hidden and the main window must stay where it is.
+		expect(bridge.selectSession).not.toHaveBeenCalled();
+		expect(bridge.focusTab).not.toHaveBeenCalled();
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
+		expect(bridge.newTabWithPrompt).not.toHaveBeenCalled();
+		// The address the reply is followed on is the one Quick Chat reported.
+		expect(result).toEqual({
+			agentSessionId: 'agent-backend',
+			agentName: 'Backend',
+			tabId: 'tab-quick',
+			tabName: 'Quick Chat',
+			action: 'created',
+			promptSent: true,
+		});
+	});
+
+	it('reports a carried-on chat as recalled, not created', async () => {
+		const quickChat = makeQuickChat({ before: chatSnapshot({ tabId: 'tab-quick' }) });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		const result = await execute(quickChatScopeDecision('and tomorrow'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		});
+
+		expect(result.action).toBe('recalled');
+	});
+
+	it('sends an identical sentence twice: answering twice is not a retry', async () => {
+		const quickChat = makeQuickChat({ before: chatSnapshot({ tabId: 'tab-quick' }) });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		await execute(quickChatScopeDecision('yes'), { roster: [], scope: QUICK_CHAT_SCOPE });
+		await execute(quickChatScopeDecision('yes'), { roster: [], scope: QUICK_CHAT_SCOPE });
+
+		expect(quickChat.runCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it('fails with the sentence Quick Chat gave when it refuses the message', async () => {
+		const quickChat = makeQuickChat({
+			result: {
+				ok: false,
+				error: 'Wait for the reply, or stop it, before sending again',
+				snapshot: chatSnapshot({ tabId: 'tab-quick', busy: true }),
+			},
+		});
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		const attempt = execute(quickChatScopeDecision('one more thing'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		});
+
+		await expect(attempt).rejects.toBeInstanceOf(VoiceDispatchError);
+		await expect(attempt).rejects.toThrow(/Wait for the reply/);
+	});
+
+	it('fails when Quick Chat reports no tab, so no reply is waited for', async () => {
+		const quickChat = makeQuickChat({ result: { ok: true, snapshot: chatSnapshot() } });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		await expect(
+			execute(quickChatScopeDecision('hello'), { roster: [], scope: QUICK_CHAT_SCOPE })
+		).rejects.toThrow(/reported no tab/);
+	});
+
+	it('fails by name when there is no Quick Chat to send to', async () => {
+		const bridge = makeBridge();
+		const execute = makeQuickChatExecutor(bridge, null);
+
+		await expect(
+			execute(quickChatScopeDecision('hello'), { roster: [], scope: QUICK_CHAT_SCOPE })
+		).rejects.toThrow(/Quick Chat is turned off/);
+		// Never falls back to the ordinary path, which would land the sentence on
+		// whichever agent the desktop is showing.
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
 	});
 });
 

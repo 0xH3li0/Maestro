@@ -135,6 +135,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'clear history',
 			'digests',
 			'digest agent',
+			'digest model',
 			'6-hour roll-up',
 			'rollup',
 			'roll-up',

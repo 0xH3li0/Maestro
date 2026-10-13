@@ -9,9 +9,13 @@ import { describe, it, expect } from 'vitest';
 
 import {
 	SWITCHABLE_VOICE_MODES,
+	TAB_SCOPE_ROUTER_ID,
 	applyAgentScope,
+	isSameVoiceScope,
+	isScopeRouterId,
 	scopeFollowingFocus,
 	scopeForMode,
+	scopeRouterId,
 	stepSwitchableVoiceMode,
 	switchableVoiceMode,
 	tabScopeDecision,
@@ -19,6 +23,7 @@ import {
 	voiceScopeTabId,
 	type ModeTargetContext,
 } from '../../shared/acappella/voice-mode';
+import { QUICK_CHAT_SCOPE_ROUTER_ID } from '../../shared/acappella/quick-chat-scope';
 import type { RosterAgent } from '../../shared/acappella/protocol';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 
@@ -53,7 +58,8 @@ function decision(overrides: Partial<RouteDecision> = {}): RouteDecision {
 }
 
 describe('voiceScopeMode', () => {
-	it('tells the four bindings apart', () => {
+	it('tells the five bindings apart', () => {
+		expect(voiceScopeMode({ kind: 'quick-chat' })).toBe('quick-chat');
 		expect(voiceScopeMode({ kind: 'conductor' })).toBe('conductor');
 		expect(voiceScopeMode(null)).toBe('conductor');
 		expect(voiceScopeMode({ kind: 'agent', sessionId: 'philosopher' })).toBe('agent');
@@ -67,6 +73,75 @@ describe('voiceScopeMode', () => {
 			'p-main'
 		);
 		expect(voiceScopeTabId({ kind: 'agent', sessionId: 'philosopher' })).toBeNull();
+	});
+});
+
+describe('scopeRouterId', () => {
+	it('names the scopes that send the utterance as the message, with no Brain', () => {
+		expect(scopeRouterId({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' })).toBe(
+			TAB_SCOPE_ROUTER_ID
+		);
+		expect(scopeRouterId({ kind: 'quick-chat' })).toBe(QUICK_CHAT_SCOPE_ROUTER_ID);
+	});
+
+	it('is null wherever a Brain routes the turn', () => {
+		expect(scopeRouterId({ kind: 'conductor' })).toBeNull();
+		expect(scopeRouterId(null)).toBeNull();
+		expect(scopeRouterId({ kind: 'agent', sessionId: 'philosopher' })).toBeNull();
+		expect(scopeRouterId({ kind: 'document', sessionId: 'philosopher', path: '/a.md' })).toBeNull();
+	});
+
+	it('recognises its own stamps, so the routing log skips those turns', () => {
+		expect(isScopeRouterId(TAB_SCOPE_ROUTER_ID)).toBe(true);
+		expect(isScopeRouterId(QUICK_CHAT_SCOPE_ROUTER_ID)).toBe(true);
+		expect(isScopeRouterId('mock-brain')).toBe(false);
+	});
+});
+
+describe('isSameVoiceScope', () => {
+	it('compares the kind, the agent, the tab and the document', () => {
+		expect(isSameVoiceScope({ kind: 'conductor' }, { kind: 'conductor' })).toBe(true);
+		expect(isSameVoiceScope({ kind: 'quick-chat' }, { kind: 'quick-chat' })).toBe(true);
+		expect(
+			isSameVoiceScope(
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' }
+			)
+		).toBe(true);
+		expect(
+			isSameVoiceScope(
+				{ kind: 'document', sessionId: 'philosopher', path: '/a.md' },
+				{ kind: 'document', sessionId: 'philosopher', path: '/a.md' }
+			)
+		).toBe(true);
+	});
+
+	it('tells Agent mode from Tab mode, and one tab or file from another', () => {
+		expect(
+			isSameVoiceScope(
+				{ kind: 'agent', sessionId: 'philosopher' },
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' }
+			)
+		).toBe(false);
+		expect(
+			isSameVoiceScope(
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-ideas' }
+			)
+		).toBe(false);
+		expect(
+			isSameVoiceScope(
+				{ kind: 'document', sessionId: 'philosopher', path: '/a.md' },
+				{ kind: 'document', sessionId: 'philosopher', path: '/b.md' }
+			)
+		).toBe(false);
+		expect(isSameVoiceScope({ kind: 'conductor' }, { kind: 'quick-chat' })).toBe(false);
+	});
+
+	it('never matches a missing scope: no session is not a binding to resume', () => {
+		expect(isSameVoiceScope(null, null)).toBe(false);
+		expect(isSameVoiceScope({ kind: 'quick-chat' }, null)).toBe(false);
+		expect(isSameVoiceScope(undefined, { kind: 'conductor' })).toBe(false);
 	});
 });
 
@@ -349,6 +424,8 @@ describe('scopeFollowingFocus', () => {
 		expect(
 			scopeFollowingFocus({ kind: 'document', sessionId: 'philosopher', path: '/a.md' }, focus)
 		).toBeNull();
+		// A Quick Chat session is locked to the Quick Chat conversation.
+		expect(scopeFollowingFocus({ kind: 'quick-chat' }, focus)).toBeNull();
 	});
 
 	it('stays put when no agent is on screen', () => {
@@ -382,5 +459,9 @@ describe('stepping through the modes (the Tab key)', () => {
 		expect(
 			switchableVoiceMode({ kind: 'document', sessionId: 'philosopher', path: '/p/notes.md' })
 		).toBe('tab');
+	});
+
+	it('reads a Quick Chat session as Tab: every sentence goes to one conversation', () => {
+		expect(switchableVoiceMode({ kind: 'quick-chat' })).toBe('tab');
 	});
 });

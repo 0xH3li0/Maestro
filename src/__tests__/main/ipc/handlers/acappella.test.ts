@@ -151,7 +151,7 @@ import {
 	registerACappellaHandlers,
 	resetACappellaHandlerState,
 	shutdownACappellaForDisable,
-	stopVoiceSessionForClosedWindow,
+	stopVoiceSessionForWindow,
 	type VoiceStartSessionResult,
 	type WakeTestStartResult,
 } from '../../../../main/ipc/handlers/acappella';
@@ -176,6 +176,9 @@ import {
 	getVoiceSessionService,
 } from '../../../../main/acappella';
 import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/protocol';
+import type { QuickChatVoiceHost } from '../../../../main/acappella/dispatch/quick-chat-dispatch';
+import { runVoiceControlRequest } from '../../../../main/acappella/voice-control-service';
+import { EMPTY_QUICK_CHAT_SNAPSHOT, type QuickChatStatus } from '../../../../shared/quickChat';
 import type { DictationMicrophone } from '../../../../main/local-models/dictation';
 import type { NoticeSpeaker } from '../../../../main/local-models/spoken-notices';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
@@ -231,7 +234,9 @@ function voiceEvents(): VoiceEvent[] {
  */
 let voiceWindowId: string | null | undefined;
 
-function register(options: { withAudio?: boolean } = {}): void {
+function register(
+	options: { withAudio?: boolean; quickChat?: QuickChatVoiceHost | null } = {}
+): void {
 	registerACappellaHandlers({
 		settingsStore,
 		getMainWindow: () => fakeWindow as never,
@@ -241,6 +246,8 @@ function register(options: { withAudio?: boolean } = {}): void {
 		audioHostDeps: options.withAudio ? ({} as never) : undefined,
 		resolveVoiceWindowId:
 			voiceWindowId === undefined ? undefined : () => voiceWindowId as string | null,
+		// Absent by default, as in a host with no Quick Chat.
+		getQuickChat: options.quickChat === undefined ? undefined : () => options.quickChat ?? null,
 	});
 }
 
@@ -697,7 +704,7 @@ describe('A Cappella IPC handlers - window scoping', () => {
 		register();
 		await handlerFor('acappella:start-session')({});
 
-		await stopVoiceSessionForClosedWindow('window-2');
+		await stopVoiceSessionForWindow('window-2');
 
 		expect(getVoiceSessionService()?.getState()).toBe('idle');
 	});
@@ -708,9 +715,129 @@ describe('A Cappella IPC handlers - window scoping', () => {
 		register();
 		await handlerFor('acappella:start-session')({});
 
-		await stopVoiceSessionForClosedWindow('window-1');
+		await stopVoiceSessionForWindow('window-1');
 
 		expect(getVoiceSessionService()?.getState()).toBe('listening');
+	});
+});
+
+/**
+ * A session bound to Quick Chat: shown by the Quick Chat window whoever asked
+ * for it, ended when that window is put away, and never re-bound.
+ */
+describe('A Cappella IPC handlers - a Quick Chat session', () => {
+	const QUICK_CHAT_SCOPE = { kind: 'quick-chat' };
+
+	function makeQuickChat(windowId: string | null = 'window-quick'): QuickChatVoiceHost {
+		return {
+			showForVoice: vi.fn(() => windowId),
+			getStatus: vi.fn(() => ({ snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT } }) as QuickChatStatus),
+			runCommand: vi.fn(async () => ({ ok: true, snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT } })),
+		};
+	}
+
+	function registerWith(quickChat: QuickChatVoiceHost | null | undefined): void {
+		vi.mocked(ipcMain.handle).mockClear();
+		register({ quickChat });
+	}
+
+	afterEach(() => {
+		voiceWindowId = undefined;
+	});
+
+	it('is owned by the Quick Chat window, not the window the start came from', async () => {
+		// An app window asked (the CLI lands here too, with the focused window).
+		voiceWindowId = 'window-2';
+		const quickChat = makeQuickChat();
+		registerWith(quickChat);
+
+		const result = (await handlerFor('acappella:start-session')(
+			{},
+			QUICK_CHAT_SCOPE
+		)) as VoiceStartSessionResult;
+
+		expect(quickChat.showForVoice).toHaveBeenCalledTimes(1);
+		expect(result.snapshot.scope).toEqual({ kind: 'quick-chat' });
+		expect(result.snapshot.windowId).toBe('window-quick');
+		expect(voiceEvents()[0]).toMatchObject({ type: 'wake', windowId: 'window-quick' });
+	});
+
+	it('leaves Quick Chat alone for every other scope', async () => {
+		voiceWindowId = 'window-2';
+		const quickChat = makeQuickChat();
+		registerWith(quickChat);
+
+		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
+
+		expect(quickChat.showForVoice).not.toHaveBeenCalled();
+		expect(result.snapshot.windowId).toBe('window-2');
+	});
+
+	it('refuses by name when Quick Chat is turned off, and opens no session', async () => {
+		registerWith(makeQuickChat(null));
+
+		await expect(handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE)).rejects.toThrow(
+			/Quick Chat is turned off/
+		);
+		expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+	});
+
+	it('refuses by name in a host with no Quick Chat at all', async () => {
+		registerWith(undefined);
+
+		await expect(handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE)).rejects.toThrow(
+			/Quick Chat is turned off/
+		);
+	});
+
+	it('ends when the Quick Chat window is put away', async () => {
+		registerWith(makeQuickChat());
+		await handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE);
+
+		await stopVoiceSessionForWindow('window-quick', 'hidden');
+
+		expect(getVoiceSessionService()?.getState()).toBe('idle');
+	});
+
+	it('is not re-bound by the mode switch', async () => {
+		registerWith(makeQuickChat());
+		await handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE);
+
+		await expect(
+			handlerFor('acappella:set-scope')({}, { kind: 'agent', sessionId: 'agent-backend' })
+		).resolves.toBe(false);
+
+		expect(getVoiceSessionService()?.getSnapshot().scope).toEqual({ kind: 'quick-chat' });
+	});
+
+	it('tells `maestro-cli voice scope` WHY, instead of claiming there is no session', async () => {
+		registerWith(makeQuickChat());
+		await handlerFor('acappella:start-session')({}, QUICK_CHAT_SCOPE);
+
+		const reply = await runVoiceControlRequest({ action: 'scope', scope: { kind: 'conductor' } });
+
+		expect(reply).toEqual({ ok: false, reason: expect.stringMatching(/locked to Quick Chat/) });
+	});
+
+	it('starts from `maestro-cli voice start --quick-chat` through the same claim', async () => {
+		const quickChat = makeQuickChat();
+		registerWith(quickChat);
+
+		const reply = await runVoiceControlRequest({ action: 'start', scope: QUICK_CHAT_SCOPE });
+
+		expect(reply).toMatchObject({
+			ok: true,
+			result: { session: { scope: { kind: 'quick-chat' }, windowId: 'window-quick' } },
+		});
+		expect(quickChat.showForVoice).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers the CLI with a refusal, not an error, when Quick Chat is off', async () => {
+		registerWith(makeQuickChat(null));
+
+		const reply = await runVoiceControlRequest({ action: 'start', scope: QUICK_CHAT_SCOPE });
+
+		expect(reply).toEqual({ ok: false, reason: expect.stringMatching(/Quick Chat is turned off/) });
 	});
 });
 

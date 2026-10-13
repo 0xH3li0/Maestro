@@ -323,7 +323,7 @@ function TaskAssignmentRow({
 	);
 }
 
-interface TaskReadinessLineProps {
+export interface TaskReadinessLineProps {
 	theme: Theme;
 	readiness: LocalModelTaskReadiness | undefined;
 	checking: boolean;
@@ -332,7 +332,12 @@ interface TaskReadinessLineProps {
 	onRecheck: () => Promise<void>;
 }
 
-function TaskReadinessLine({
+/**
+ * One task's readiness under its source picker, with the recovery this surface
+ * can perform in place. Exported for a picker outside the Models tab that sets
+ * one task's source (the Computer History digest model).
+ */
+export function TaskReadinessLine({
 	theme,
 	readiness,
 	checking,

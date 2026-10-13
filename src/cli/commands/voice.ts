@@ -20,6 +20,10 @@ import {
 } from '../../shared/acappella/listen-mode';
 import { ACAPPELLA_SYSTEM_DEFAULT_INPUT } from '../../shared/acappella/audio-host';
 import type { VoiceScope } from '../../shared/acappella/protocol';
+import {
+	QUICK_CHAT_VOICE_LABEL,
+	QUICK_CHAT_VOICE_SCOPE,
+} from '../../shared/acappella/quick-chat-scope';
 import { readinessErrorMessage } from '../../shared/acappella/readiness';
 import {
 	DEFAULT_WAKE_TEST_SECONDS,
@@ -63,6 +67,7 @@ interface ScopeOptions extends JsonOption {
 
 interface StartOptions extends ScopeOptions {
 	paused?: boolean;
+	quickChat?: boolean;
 }
 
 /** The self-test loads each native runtime in a child process, one after another. */
@@ -84,6 +89,7 @@ function agentLabel(agentId: string): string {
 export function describeVoiceScope(scope: VoiceScope | null): string {
 	if (!scope) return 'no scope';
 	if (scope.kind === 'conductor') return 'the Conductor';
+	if (scope.kind === 'quick-chat') return `${QUICK_CHAT_VOICE_LABEL} (locked)`;
 	if (scope.kind === 'document')
 		return `document ${scope.path}, with ${agentLabel(scope.sessionId)}`;
 	return scope.tabId
@@ -138,8 +144,20 @@ export function formatVoiceStatus(status: VoiceStatusResult): string {
 }
 
 /** Read the scope flags of `voice start` into the scope the HUD would bind. */
-async function resolveScope(options: ScopeOptions): Promise<VoiceScope> {
+async function resolveScope(options: StartOptions): Promise<VoiceScope> {
 	const named = [options.agent, options.tab, options.document].some((flag) => flag !== undefined);
+	if (options.quickChat) {
+		// Quick Chat picks its own agent and tab, so naming one here would be a
+		// flag the session ignores.
+		if (named || options.conductor) {
+			failCommand(
+				'--quick-chat cannot be combined with --agent, --tab, --document or --conductor. Pick the agent with "maestro-cli quick-chat agent <id>".',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		return { ...QUICK_CHAT_VOICE_SCOPE };
+	}
 	if (options.conductor) {
 		if (named) {
 			failCommand(
@@ -185,7 +203,7 @@ export async function voiceStatus(options: JsonOption): Promise<void> {
 	else console.log(formatVoiceStatus(status));
 }
 
-/** `voice start` - open a session on the Conductor, an agent, a tab, or a document. */
+/** `voice start` - open a session on the Conductor, an agent, a tab, a document, or Quick Chat. */
 export async function voiceStart(options: StartOptions): Promise<void> {
 	const scope = await resolveScope(options);
 	const result = await sendVoiceControl(

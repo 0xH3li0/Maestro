@@ -124,6 +124,7 @@ export const LOCAL_MODEL_TASK_IDS = [
 	'voice-routing',
 	'model-routing',
 	'token-proxy',
+	'history-digests',
 	'local-judge',
 ] as const;
 
@@ -456,6 +457,18 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Token proxy',
 			description: 'Summarizes large tool output for the token-conservation proxy.',
 			needs: 'text-gen',
+			allowsUtilityAgent: false,
+			defaultAssignment: OFF_ASSIGNMENT,
+		}),
+		'history-digests': defineTask({
+			id: 'history-digests',
+			system: 'two',
+			label: 'Computer History digests',
+			description:
+				'Writes the 15-minute digests and 6-hour roll-ups of Computer History. Used while the digest source in the Computer History settings is the local model.',
+			needs: 'text-gen',
+			// The other writer is the digest AGENT, chosen in the Computer History
+			// settings (`digests.source`), not the Utility Agent.
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),

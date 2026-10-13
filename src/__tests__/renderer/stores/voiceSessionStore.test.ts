@@ -269,6 +269,12 @@ describe('voiceSessionStore projection', () => {
 		);
 		expect(selectVoiceScopeLabel(useVoiceSessionStore.getState())).toBe('Backend');
 	});
+
+	it('names a Quick Chat session after Quick Chat, not after the Conductor', () => {
+		// It names no agent, so an agent-id test alone would read it as unbound.
+		apply(event('wake', { source: 'client-button', scope: { kind: 'quick-chat' } }));
+		expect(selectVoiceScopeLabel(useVoiceSessionStore.getState())).toBe('Quick Chat');
+	});
 });
 
 describe('voiceSessionStore audio projection', () => {

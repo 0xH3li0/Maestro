@@ -123,6 +123,95 @@ describe('openVoiceMic', () => {
 	});
 });
 
+describe('openVoiceMic for a surface bound to one thing (the Quick Chat window)', () => {
+	const QUICK_CHAT = { kind: 'quick-chat' } as const;
+
+	function startsOn(scope: unknown): void {
+		start.mockImplementationOnce(async () => {
+			order.push('start');
+			return snapshot(scope);
+		});
+	}
+
+	it('resumes a live session that is already on its scope', async () => {
+		useVoiceSessionStore.setState({ state: 'listening', scope: QUICK_CHAT } as never);
+
+		await openVoiceMic({ scope: QUICK_CHAT });
+
+		expect(setListening).toHaveBeenCalledWith({ listening: true, hold: false });
+		expect(start).not.toHaveBeenCalled();
+	});
+
+	it('replaces a live session bound somewhere else instead of resuming it', async () => {
+		// Every window mirrors the one session. Resuming this one would send the
+		// next sentence to the agent the main window's composer opened it on.
+		useVoiceSessionStore.setState({
+			state: 'listening',
+			scope: { kind: 'agent', sessionId: 'agent-1' },
+		} as never);
+		startsOn(QUICK_CHAT);
+
+		await openVoiceMic({ scope: QUICK_CHAT });
+
+		expect(start).toHaveBeenCalledWith(QUICK_CHAT);
+		expect(setListening).not.toHaveBeenCalled();
+	});
+
+	it('starts on its own scope, not on whatever the last session was about', async () => {
+		useVoiceSessionStore.setState({
+			state: 'idle',
+			scope: { kind: 'agent', sessionId: 'agent-1', tabId: 'tab-1' },
+		} as never);
+		startsOn(QUICK_CHAT);
+
+		await openVoiceMic({ scope: QUICK_CHAT });
+
+		expect(start).toHaveBeenCalledWith(QUICK_CHAT);
+	});
+
+	it('does not resume its own scope once that session has ended', async () => {
+		// The scope outlives the session in the store; the state is what says it
+		// is live.
+		useVoiceSessionStore.setState({ state: 'idle', scope: QUICK_CHAT } as never);
+		startsOn(QUICK_CHAT);
+
+		await openVoiceMic({ scope: QUICK_CHAT });
+
+		expect(order).toEqual(['start']);
+	});
+
+	it('tells a session it had to start that a button is holding it', async () => {
+		startsOn(QUICK_CHAT);
+
+		await openVoiceMic({ hold: true, scope: QUICK_CHAT });
+
+		expect(order).toEqual(['start', 'open:hold']);
+	});
+
+	it('sees the session its own press opened when the next press is queued behind it', async () => {
+		startsOn(QUICK_CHAT);
+
+		// A tap that starts the session, and a hold landing before it has answered.
+		const tap = openVoiceMic({ scope: QUICK_CHAT });
+		const hold = openVoiceMic({ hold: true, scope: QUICK_CHAT });
+		await Promise.all([tap, hold]);
+
+		// One session, then the hold resumes it. Not a second start.
+		expect(order).toEqual(['start', 'open:hold']);
+	});
+
+	it('hands a refused start to a caller that has no toast surface', async () => {
+		const refusal = new Error('Quick Chat is turned off.');
+		start.mockRejectedValueOnce(refusal);
+		const onError = vi.fn();
+
+		await openVoiceMic({ scope: QUICK_CHAT, onError });
+
+		expect(onError).toHaveBeenCalledWith(refusal);
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+});
+
 describe('closeVoiceMic', () => {
 	it('shuts the microphone, dropping a half-said thought by default', async () => {
 		await closeVoiceMic();

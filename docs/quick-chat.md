@@ -20,6 +20,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Start a new chat                 | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                             |
 | Switch agent                     | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                   |
 | Send                             | `Enter` (`Shift+Enter` for a new line)                                                                                      |
+| Talk instead of typing           | The microphone beside Send, when [A Cappella](./voice-mode) is on. Click to start or end, hold to talk                      |
 | Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward                                           |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
@@ -42,6 +43,25 @@ A chat has one of two modes, and you can flip between them at any time with the 
 | Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
 
 A reply never raises a completion toast in the main window: you are reading it in Quick Chat. The audio or spoken notification you configured still plays.
+
+## Talking to it
+
+With [A Cappella](./voice-mode) turned on, the composer has a microphone beside Send. It opens a voice session that is locked to this chat: what you say is sent as your message, word for word, and the reply is spoken as well as shown.
+
+| Gesture | What it does                                                                            |
+| ------- | --------------------------------------------------------------------------------------- |
+| Click   | Starts the session with the microphone open. Click again to end it                      |
+| Hold    | Push-to-talk: the microphone is open while you hold, and letting go sends what you said |
+
+While a session is running, the microphone shows what it is doing (listening, working, speaking), and what it hears appears in the window before it is sent. Spoken and typed messages land in the same conversation, so you can mix them.
+
+Three things differ from the voice session you start in the main window:
+
+- **It stays here.** There is no Tab / Agent / Conductor switch, and the session does not follow the agent or tab you click in the main window. To talk somewhere else, end it and start a session there.
+- **Nothing is routed.** Naming another agent is part of the message, not an instruction to send it elsewhere.
+- **Closing the window ends it.** `Esc`, the **X**, the hotkey, and **Open as a tab** all put the window away, and the microphone closes with it. Switching agents or starting a new chat keeps the session: it follows the chat.
+
+Starting a voice session from the main window while this one is running replaces it, since there is one microphone.
 
 ## Settings
 
@@ -74,6 +94,8 @@ maestro-cli quick-chat reveal              # open the chat as a tab in Maestro
 maestro-cli quick-chat stop                # stop the reply
 maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move or resize, as dragging does
 ```
+
+The microphone has no `quick-chat` verb of its own because it is a voice session: `maestro-cli voice start --quick-chat` opens the window and starts one locked to the chat, `voice stop` ends it, and `voice status` reads it. `voice scope` is refused for it.
 
 `bounds` takes any of the four flags (`--x` and `--y` together). `--height` is the conversation height, so before the first message it is remembered rather than applied. `quick-chat status` reports the current size and spot.
 

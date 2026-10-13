@@ -1,6 +1,7 @@
 /**
- * AgentCotExportSection - the one control of chain of thought export: a
- * section of the Edit Agent dialog, operated by a person at the desktop app.
+ * AgentCotExportSection - the one control of chain of thought export: the
+ * body of the Edit Agent dialog's Audit Log tab, operated by a person at the
+ * desktop app.
  *
  * NOTHING HERE GOES THROUGH THE DIALOG'S SAVE
  * The folder and the switch are saved the moment they change, through
@@ -35,7 +36,7 @@ import type { Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
-interface AgentCotExportSectionProps {
+export interface AgentCotExportSectionProps {
 	theme: Theme;
 	/** The Maestro agent the section controls. */
 	agentId: string;
@@ -60,10 +61,23 @@ function countOf(count: number, noun: string): string {
 const BUTTON_CLASS =
 	'shrink-0 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded border transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed';
 
+/** The API where the section shows (see WHERE IT SHOWS), `undefined` everywhere else. */
+function cotExportApi(): CotExportApi | undefined {
+	return isWebDesktop() ? undefined : window.maestro?.cotExport;
+}
+
+/**
+ * Whether this runtime shows the section at all. Edit Agent asks before it
+ * draws the tab that holds the section, so no runtime gets an empty tab.
+ */
+export function isCotExportAvailable(): boolean {
+	return cotExportApi() !== undefined;
+}
+
 export function AgentCotExportSection(
 	props: AgentCotExportSectionProps
 ): React.ReactElement | null {
-	const api: CotExportApi | undefined = isWebDesktop() ? undefined : window.maestro?.cotExport;
+	const api = cotExportApi();
 	if (!api) return null;
 	return <CotExportControls {...props} api={api} />;
 }
@@ -197,7 +211,7 @@ function CotExportControls({
 				className="block text-xs font-bold opacity-70 uppercase mb-2"
 				style={{ color: colors.textMain }}
 			>
-				Chain of Thought Export
+				Audit Log
 			</div>
 			<p className="text-xs mb-2" style={{ color: colors.textDim }}>
 				When this is on, Maestro records each turn of {agentName} into a folder you choose: the
@@ -278,14 +292,14 @@ function CotExportControls({
 					onChange={(e) => void handleToggle(e.target.checked)}
 					className="mt-0.5 accent-current"
 					style={{ accentColor: colors.accent }}
-					aria-label="Export chain of thought for this agent"
+					aria-label="Keep an audit log for this agent"
 				/>
 				<div className="flex flex-col min-w-0">
 					<span
 						className="text-xs font-medium"
 						style={{ color: toggleDisabled ? colors.textDim : colors.textMain }}
 					>
-						Export chain of thought for this agent
+						Keep an audit log for this agent
 					</span>
 					<span className="text-2xs" style={{ color: colors.textDim }}>
 						Applies from this agent's next message. Maestro never deletes these files. The folder
@@ -308,7 +322,7 @@ function CotExportControls({
 
 			{loadError && (
 				<p role="alert" className="mt-2 text-xs select-text" style={{ color: colors.error }}>
-					Maestro could not read the export settings of this agent: {loadError}
+					Maestro could not read the audit log settings of this agent: {loadError}
 				</p>
 			)}
 			{folder !== null && status && (

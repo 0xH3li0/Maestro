@@ -204,6 +204,8 @@ Switching binds to what is on screen: **Agent** means the agent you are looking 
 
 **Tab** and **Agent** then follow you. Click another agent and Agent mode talks to that one; click another tab, or another agent, and Tab mode talks to the tab now in front. Looking at a file, terminal, or browser tab does not move anything: the conversation behind it is still the one you are talking to. **Conductor** mode is bound to nothing, and a conversation about a document stays with its document, so neither moves. A session that an agent's own wake phrase opened stays with that agent until you go somewhere else.
 
+A session started from the [Quick Chat](./quick-chat#talking-to-it) window's microphone is outside these three modes. It is locked to that chat: every sentence is sent to it word for word, the switch does not apply, and it ends when the Quick Chat window is put away.
+
 How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's talk button reopens in whatever mode you last used.
 
 ## The two hotkeys

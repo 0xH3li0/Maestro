@@ -2537,7 +2537,7 @@ computerHistory
 
 computerHistory
 	.command('digests')
-	.description('List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)')
+	.description('List 15-minute digests and 6-hour roll-ups (model-written, untrusted content)')
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--kind <kind>', '15m | 6h (default both)')
@@ -2615,8 +2615,15 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
-	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
-	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
+	.option('--digests <on|off>', 'Write 15-minute digests (off by default)')
+	.option(
+		'--digest-source <local|agent>',
+		'Who writes digests: the model assigned to the history-digests task (models assign), or the digest agent'
+	)
+	.option(
+		'--digest-agent <id>',
+		'Agent that writes digests; also sets the source to agent (empty string clears it)'
+	)
 	.option(
 		'--digest-rollup <on|off>',
 		'Also write 6-hour roll-ups from the 15-minute digests (default on)'
@@ -2943,12 +2950,16 @@ voice
 voice
 	.command('start')
 	.description(
-		'Start a voice session on the Conductor (the default), an agent, one tab, or a document. Its HUD opens in the window you are looking at'
+		'Start a voice session on the Conductor (the default), an agent, one tab, a document, or Quick Chat. Its HUD opens in the window you are looking at'
 	)
 	.option('-a, --agent <id>', 'Talk to this agent (id, id prefix, or exact name)')
 	.option('--tab <id>', 'Talk to this tab only ("active" for the selected tab)')
 	.option('--conductor', 'Talk to the Conductor, which routes each request to an agent')
 	.option('--document <path>', 'Talk about this document with the agent named by --agent')
+	.option(
+		'--quick-chat',
+		'Talk to Quick Chat: opens its window and locks the session to its chat (no "voice scope")'
+	)
 	.option(
 		'--paused',
 		'Open with the microphone shut (push-to-talk): nothing is heard until "voice listen on"'
@@ -2986,7 +2997,7 @@ voice
 voice
 	.command('scope <mode>')
 	.description(
-		'Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch)'
+		'Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch). Refused for a Quick Chat session, which is locked'
 	)
 	.option('-a, --agent <id>', 'The agent, for agent and tab (default: the active agent)')
 	.option('--tab <id>', 'The tab, for tab (default: the selected tab)')

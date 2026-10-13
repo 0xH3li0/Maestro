@@ -288,6 +288,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'computer-history enable-accessibility': ['maestro-cli computer-history enable-accessibility'],
 	'computer-history config': [
 		'maestro-cli computer-history config --retention-days 30 --digests on',
+		'maestro-cli computer-history config --digest-source local',
 	],
 
 	// Pianola
@@ -337,6 +338,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'voice start': [
 		'maestro-cli voice start --conductor',
 		'maestro-cli voice start --agent <agent-id> --paused',
+		'maestro-cli voice start --quick-chat',
 	],
 	'voice stop': ['maestro-cli voice stop'],
 	'voice listen': ['maestro-cli voice listen on', 'maestro-cli voice listen off --send'],

@@ -908,6 +908,20 @@ describe('interactive call tracking', () => {
 		await expect(running).resolves.toMatchObject({ status: 'ok' });
 	});
 
+	it('does not count a text task marked background (a Computer History digest)', async () => {
+		assign('history-digests', LOCAL);
+		const call = deferred<ReturnType<typeof okReply>>();
+		generate.generateText.mockReset().mockReturnValue(call.promise);
+
+		const running = runLocalTask('history-digests', { prompt: 'a window', background: true });
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+		// The flag is the router's own: the model is never handed it.
+		expect(generate.generateText.mock.calls[0][0]).not.toHaveProperty('background');
+
+		call.resolve(okReply(LOCAL));
+		await expect(running).resolves.toMatchObject({ status: 'ok' });
+	});
+
 	it('releases the count when the call fails', async () => {
 		embed.embedTexts.mockRejectedValue(
 			new LocalModelError('bge is not downloaded.', {

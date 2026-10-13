@@ -9,6 +9,11 @@
  *
  * Two shapes, like the ChatGPT companion window it is modeled on: just the
  * composer before the first message, then the conversation above it.
+ *
+ * With A Cappella on, the composer has a microphone. It opens a voice session
+ * locked to this chat (see `useQuickChatVoice`): spoken turns arrive through the
+ * same `send` command a typed one does, so they show up here as ordinary
+ * messages, and the reply is spoken as well as shown.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -31,16 +36,20 @@ import {
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
 import { formatDurationHuman } from '../../shared/duration';
+import { VOICE_HUD_STATE_DESCRIPTIONS } from '../../shared/acappella/hud-state';
 import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { useQuickChatVoice } from '../hooks/voice/useQuickChatVoice';
+import { VoiceHeldNotice } from '../components/ACappella/VoiceHeldNotice';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
+import { QuickChatVoiceButton } from './QuickChatVoiceButton';
 
 const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
@@ -154,6 +163,7 @@ export function QuickChatRoot() {
 	// This window boots its own renderer and never runs useSettings: load the
 	// settings, follow changes made in the main window, and apply the typography.
 	useWindowSettingsSync();
+	const voice = useQuickChatVoice();
 
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
@@ -176,16 +186,18 @@ export function QuickChatRoot() {
 	}, []);
 
 	// The picker needs room the composer-only window does not have, so the
-	// window grows while it is open and shrinks back when it closes.
+	// window grows while it is open and shrinks back when it closes. A live voice
+	// session is a conversation from its first second: what is being heard, and
+	// a held sentence waiting to be sent, need the room too.
 	const hasConversation = snapshot.messages.length > 0 || snapshot.busy;
-	const expanded = hasConversation || pickerOpen;
+	const expanded = hasConversation || pickerOpen || voice.active;
 	useEffect(() => {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
 
 	const lastMessage = snapshot.messages[snapshot.messages.length - 1];
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}`
+		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}:${voice.partialTranscript.length}`
 	);
 	useAutosizeTextarea({ textareaRef, value: draft, maxHeight: COMPOSER_MAX_HEIGHT });
 	const elapsed = useElapsedSeconds(snapshot.busySince);
@@ -255,7 +267,7 @@ export function QuickChatRoot() {
 		[theme]
 	);
 	const agentName = snapshot.agentName ?? 'your agent';
-	const shownError = error ?? snapshot.error;
+	const shownError = error ?? voice.error ?? snapshot.error;
 	const c = theme.colors;
 
 	// The switcher sits at the TOP in both shapes. The window grows downward
@@ -345,6 +357,11 @@ export function QuickChatRoot() {
 						<PinOff className="w-4 h-4" />
 					)}
 				</IconButton>
+				{/* Beside Send, as in the main composer: speaking is a way of
+				    submitting a message. */}
+				{voice.enabled && (
+					<QuickChatVoiceButton theme={theme} voice={voice} agentName={agentName} />
+				)}
 				{snapshot.busy ? (
 					<button
 						type="button"
@@ -437,6 +454,34 @@ export function QuickChatRoot() {
 							Working for {formatDurationHuman(elapsed * 1000)}
 						</div>
 					)}
+					{voice.active &&
+						(voice.partialTranscript ? (
+							// What is being heard, drawn where the sent message will land.
+							// Dashed and dim: it is a hypothesis, not yet a message.
+							<div className="flex justify-end" data-testid="quick-chat-voice-partial">
+								<div
+									className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words italic"
+									style={{ border: `1px dashed ${c.border}`, color: c.textDim }}
+								>
+									{voice.partialTranscript}
+								</div>
+							</div>
+						) : (
+							!snapshot.busy && (
+								<div
+									className="text-sm"
+									style={{ color: c.textDim }}
+									data-testid="quick-chat-voice-status"
+								>
+									{VOICE_HUD_STATE_DESCRIPTIONS[voice.visualState]}
+								</div>
+							)
+						))}
+				</div>
+			)}
+			{voice.active && !pickerOpen && (
+				<div className="px-2 shrink-0" style={NO_DRAG_REGION}>
+					<VoiceHeldNotice theme={theme} />
 				</div>
 			)}
 			{shownError && (

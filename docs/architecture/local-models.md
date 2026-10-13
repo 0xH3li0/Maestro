@@ -851,9 +851,9 @@ output is text written for someone to read or run is `two`. `defineTask` in `tas
 constructor, so a new task cannot skip the choice, and `local-models-tasks.test.ts` fails if one has
 no `system` or if the System One and System Two lists drift from the exact sets.
 
-| System One                                                                                                                     | System Two                                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `cue-gate`, `injection-screen`, `secret-screen`, `voice-routing`, `tab-cleanup`, `semantic-search`, `dictation`, `local-judge` | `tab-naming`, `tab-summary`, `ai-command`, `git-drafts`, `spoken-notices`, `token-proxy` |
+| System One                                                                                                                     | System Two                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `cue-gate`, `injection-screen`, `secret-screen`, `voice-routing`, `tab-cleanup`, `semantic-search`, `dictation`, `local-judge` | `tab-naming`, `tab-summary`, `ai-command`, `git-drafts`, `spoken-notices`, `token-proxy`, `history-digests` |
 
 `tasksForSystem(system)` returns one system's definitions in registry order. The Settings Models tab
 uses it to draw each assignment table (`LocalModelsAssignmentsSection` takes a `system` prop), and

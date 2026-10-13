@@ -1611,13 +1611,14 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	// The export section saves its own changes into its own store. Nothing of
+	// The Audit Log tab saves its own changes into its own store. Nothing of
 	// it may ride along with Save: Save writes the Session object, and that
 	// object lands in a file the CLI reads.
-	describe('chain of thought export section', () => {
+	describe('Audit Log tab', () => {
 		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
 		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
-		const TOGGLE_LABEL = 'Export chain of thought for this agent';
+		const TOGGLE_LABEL = 'Keep an audit log for this agent';
+		const AUDIT_LOG_TAB = 'Audit Log';
 		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
 		const INTERACTIVE_NOTE =
 			/Reasoning may be missing while this agent runs through the interactive/;
@@ -1645,9 +1646,9 @@ describe('EditAgentModal', () => {
 			return api;
 		}
 
-		/** The dialog, on the Provider tab where the export section lives. */
-		const renderModal = (session: Session = createSession()) => {
-			const result = render(
+		/** The dialog as it opens, on General. */
+		const renderDialog = (session: Session = createSession()) =>
+			render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -1657,21 +1658,27 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+
+		/** The dialog, on the Audit Log tab. The API must be installed first. */
+		const renderModal = (session: Session = createSession()) => {
+			const result = renderDialog(session);
+			openTab(AUDIT_LOG_TAB);
 			return result;
 		};
 
 		/**
 		 * The form, once the agent and its config have loaded: what Save reads.
-		 * The name is on General, so it is checked there before coming back.
+		 * The config is on Provider and the name on General, so each is checked
+		 * on its own tab before going to `endOn`.
 		 */
-		const formReady = async () => {
+		const formReady = async (endOn?: string) => {
+			openTab('Provider');
 			await waitFor(() =>
 				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0)
 			);
 			openTab('General');
 			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
-			openTab('Provider');
+			if (endOn) openTab(endOn);
 		};
 
 		/** The section, once its first status has arrived and its controls are free. */
@@ -1690,24 +1697,64 @@ describe('EditAgentModal', () => {
 		});
 
 		it('is absent where the API is not exposed', async () => {
-			renderModal();
+			renderDialog();
 
 			await formReady();
-			expect(screen.queryByText('Chain of Thought Export')).not.toBeInTheDocument();
+			expect(screen.queryByRole('tab', { name: AUDIT_LOG_TAB })).not.toBeInTheDocument();
+			expect(screen.queryByText(AUDIT_LOG_TAB)).not.toBeInTheDocument();
 		});
 
-		it('mounts directly after Agent Resilience, for the agent being edited', async () => {
+		it('is the last tab, and holds the section for the agent being edited', async () => {
 			const api = installCotExport();
 			renderModal(createSession({ id: 'agent-under-edit' }));
 
-			const section = await screen.findByTestId('cot-export-section');
-			expect(section.previousElementSibling).toHaveTextContent('Agent Resilience');
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Environment',
+				'Peers',
+				'SSH',
+				AUDIT_LOG_TAB,
+			]);
+			const panel = screen.getByRole('tabpanel');
+			expect(panel).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+			expect(panel).toContainElement(await screen.findByTestId('cot-export-section'));
 			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
+		});
+
+		it('leaves the Provider tab without the section', async () => {
+			installCotExport();
+			renderDialog();
+
+			await formReady();
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+			expect(screen.queryByTestId('cot-export-section')).not.toBeInTheDocument();
+		});
+
+		it('reopens on Audit Log when it was the last tab used', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+		});
+
+		it('falls back to General when the last tab used was Audit Log and it is gone', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+			delete (window.maestro as any).cotExport;
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
 		});
 
 		it('keeps every export change out of Save', async () => {
 			// What Save hands over with the feature absent...
-			const without = renderModal();
+			const without = renderDialog();
 			await formReady();
 			fireEvent.click(screen.getByText('Save Changes'));
 			const baseline = onSave.mock.calls[0];
@@ -1720,7 +1767,7 @@ describe('EditAgentModal', () => {
 			const selectFolder = vi.fn().mockResolvedValue(LOG_FOLDER);
 			(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
 			renderModal();
-			await formReady();
+			await formReady(AUDIT_LOG_TAB);
 			await sectionReady();
 
 			fireEvent.click(screen.getByText('Choose Folder'));
@@ -1748,7 +1795,7 @@ describe('EditAgentModal', () => {
 			const saved = onSave.mock.calls[0];
 			expect(saved).toEqual(baseline);
 			expect(JSON.stringify(saved)).not.toMatch(
-				/cot[-_ ]?export|chain of thought|turn-log-7f3c91d2/i
+				/cot[-_ ]?export|chain of thought|audit ?log|turn-log-7f3c91d2/i
 			);
 		});
 

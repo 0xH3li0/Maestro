@@ -48,6 +48,12 @@ export interface QuickChatWindowDeps {
 	devServerUrl: string;
 	windowRegistry: WindowRegistry;
 	boundsStore: QuickChatBoundsStore;
+	/**
+	 * The window was put away (Escape, the close button, the hotkey, "Open as a
+	 * tab"). Whatever was using it as its only surface, a voice session bound to
+	 * Quick Chat for one, has to end with it.
+	 */
+	onHidden?: (windowId: string) => void;
 }
 
 const DEFAULT_WIDTH = 560;
@@ -82,6 +88,11 @@ let pendingSave: DebouncedFunction<[Electron.Rectangle, QuickChatLayout, boolean
 /** The Quick Chat window, or null when it has not been created (or was closed). */
 export function getQuickChatWindow(): BrowserWindow | null {
 	return quickWindow && !quickWindow.isDestroyed() ? quickWindow : null;
+}
+
+/** The window's id in the window registry, or null when there is no window. */
+export function getQuickChatWindowId(): string | null {
+	return getQuickChatWindow() ? quickWindowId : null;
 }
 
 /**
@@ -288,7 +299,10 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	};
 	win.on('move', capture);
 	win.on('resize', capture);
-	win.on('hide', () => persist.flush());
+	win.on('hide', () => {
+		persist.flush();
+		if (quickWindow === win && quickWindowId) deps.onHidden?.(quickWindowId);
+	});
 	win.on('close', () => {
 		closing = true;
 		persist.flush();

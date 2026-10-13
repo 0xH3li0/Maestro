@@ -25,18 +25,18 @@ import {
 	summarizeApps,
 } from '../../shared/computer-history/reader';
 import { builtInBlockedApps, observedPlatformFor } from '../../shared/computer-history/exclusions';
-import { GIB } from '../../shared/computer-history/config';
+import { GIB, describeDigestWriter, isDigestSource } from '../../shared/computer-history/config';
 import { parseDurationInput, parseTimeInput } from '../../shared/computer-history/timeRange';
 import {
-	UNTRUSTED_FENCE_BEGIN,
-	UNTRUSTED_FENCE_END,
+	fenceUntrusted,
 	resolveKindInput,
 	type ComputerHistoryCommandAction,
 	type ComputerHistoryStatus,
 	type SeenApp,
 } from '../../shared/computer-history/status';
-import { APP_CAPTURE_MODES } from '../../shared/computer-history/types';
+import { APP_CAPTURE_MODES, DIGEST_SOURCES } from '../../shared/computer-history/types';
 import type {
+	ComputerHistoryConfig,
 	AppCaptureMode,
 	CaptureRule,
 	StoredEvent,
@@ -45,7 +45,16 @@ import type {
 import { isCliServerRunning } from '../../shared/cli-server-discovery';
 import { formatDurationCompact } from '../../shared/duration';
 import { formatSize } from '../../shared/formatters';
-import { getConfigDirectory, readSettingValue } from '../services/storage';
+import {
+	localModelAssignmentSourceLabel,
+	resolveLocalModelAssignment,
+} from '../../shared/local-models/tasks';
+import {
+	getConfigDirectory,
+	readLocalModelAssignments,
+	readLocalModelEndpoints,
+	readSettingValue,
+} from '../services/storage';
 import {
 	failCommand,
 	resolveAgentOrFail,
@@ -76,6 +85,7 @@ export interface ConfigCliOptions extends JsonOption {
 	maxGb?: string;
 	snapshots?: string;
 	digests?: string;
+	digestSource?: string;
 	digestAgent?: string;
 	digestRollup?: string;
 }
@@ -85,6 +95,17 @@ const UNTRUSTED_NOTICE =
 
 const DEFAULT_QUERY_LIMIT = 200;
 const SNAPSHOT_PREVIEW_CHARS = 600;
+
+/** What the `history-digests` assignment runs on, or null while it names no model. */
+function digestModelLabel(): string | null {
+	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), 'history-digests');
+	return localModelAssignmentSourceLabel(assignment, readLocalModelEndpoints());
+}
+
+/** The digest writer of a config, named with the model the local source runs on. */
+function digestWriterLabel(digests: ComputerHistoryConfig['digests']): string {
+	return describeDigestWriter(digests, digestModelLabel());
+}
 
 function storeDir(): string {
 	return computerHistoryDir(getConfigDirectory());
@@ -175,11 +196,6 @@ export function formatEvent(e: StoredEvent): string {
 	return lines.join('\n');
 }
 
-/** Wrap captured content in the untrusted fence. */
-export function fenceUntrusted(body: string): string {
-	return `${UNTRUSTED_FENCE_BEGIN}\n${body}\n${UNTRUSTED_FENCE_END}`;
-}
-
 async function writeCommand(
 	action: ComputerHistoryCommandAction,
 	payload: Record<string, unknown>,
@@ -246,6 +262,7 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 				snapshots: config.snapshots,
 				rules: config.rules.length,
 				digests: config.digests,
+				digestModel: digestModelLabel(),
 				latestDigests: {
 					'15m': latest15m ? describeDigest(latest15m) : null,
 					'6h': latest6h ? describeDigest(latest6h) : null,
@@ -284,7 +301,7 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 	);
 	lines.push(`Rules:            ${config.rules.length} user rule(s) plus built-in exclusions`);
 	lines.push(
-		`Digests:          ${config.digests.enabled ? `on (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}` : 'off'}`
+		`Digests:          ${config.digests.enabled ? `on (${digestWriterLabel(config.digests)}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}` : 'off'}`
 	);
 	if (latest15m || latest6h) {
 		lines.push(
@@ -747,6 +764,18 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 		// Partial ids resolve like every other agent flag; empty clears the choice.
 		const raw = options.digestAgent.trim();
 		digests.agentId = raw ? resolveAgentOrFail(raw, options.json) : null;
+		// Naming an agent chooses it as the writer, unless the source is named too.
+		if (raw) digests.source = 'agent';
+	}
+	if (options.digestSource !== undefined) {
+		const source = options.digestSource.trim().toLowerCase();
+		if (!isDigestSource(source)) {
+			failCommand(
+				`Invalid --digest-source "${options.digestSource}". Use one of: ${DIGEST_SOURCES.join(', ')}.`,
+				options.json
+			);
+		}
+		digests.source = source;
 	}
 	if (options.digestRollup !== undefined) {
 		digests.rollup = parseOnOff(options.digestRollup, '--digest-rollup', options.json);
@@ -757,7 +786,7 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 	if (Object.keys(patch).length === 0) {
 		const config = await readStoreConfig(storeDir());
 		if (options.json) {
-			console.log(JSON.stringify({ success: true, config }));
+			console.log(JSON.stringify({ success: true, config, digestModel: digestModelLabel() }));
 			return;
 		}
 		console.log(
@@ -767,7 +796,7 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 				`Snapshots:   ${config.snapshots ? 'on' : 'off'}`,
 				`App mode:    ${describeAppMode(config.appMode)}`,
 				`Paused:      ${config.pausedUntil ?? 'no'}`,
-				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}`,
+				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (${digestWriterLabel(config.digests)}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}`,
 				`Rules:       ${config.rules.length}`,
 			].join('\n')
 		);

@@ -193,6 +193,10 @@ describe('voice commands', () => {
 				describeVoiceScope({ kind: 'document', sessionId: 'agent-scout', path: '/notes/plan.md' })
 			).toBe('document /notes/plan.md, with Scout (agent-scout)');
 		});
+
+		it('names Quick Chat, and that the session cannot be re-aimed', () => {
+			expect(describeVoiceScope({ kind: 'quick-chat' })).toBe('Quick Chat (locked)');
+		});
 	});
 
 	describe('start', () => {
@@ -244,6 +248,33 @@ describe('voice commands', () => {
 					path: path.resolve('notes/plan.md'),
 				},
 			});
+		});
+
+		it('binds Quick Chat with --quick-chat, naming no agent or tab', async () => {
+			const { sent } = mockBridge(() => ok(started));
+			await voiceStart({ quickChat: true });
+
+			expect(sent[0].request).toEqual({
+				action: 'start',
+				scope: { kind: 'quick-chat' },
+				paused: false,
+			});
+		});
+
+		it('refuses --quick-chat beside any other scope flag', async () => {
+			// Quick Chat picks its own agent and tab, so a second flag would be one
+			// the session ignores.
+			mockBridge(() => ok(started));
+
+			for (const options of [
+				{ quickChat: true, agent: 'scout' },
+				{ quickChat: true, tab: 'tab-1' },
+				{ quickChat: true, document: 'plan.md' },
+				{ quickChat: true, conductor: true },
+			]) {
+				await expect(voiceStart(options)).rejects.toThrow(`exit:${ExitCode.InvalidUsage}`);
+			}
+			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
 		it('refuses a document with no agent, and --conductor beside a named scope', async () => {
@@ -382,6 +413,16 @@ describe('voice commands', () => {
 			mockBridge(() => ok({ applied: false, scope: { kind: 'conductor' } }));
 			await expect(voiceScope('conductor', {})).rejects.toThrow('exit:1');
 			expect(errors()).toContain('No voice session is live');
+		});
+
+		it('prints the reason a Quick Chat session gives for staying where it is', async () => {
+			mockBridge(() => ({
+				ok: false,
+				reason: 'This voice session is locked to Quick Chat. End it to talk somewhere else.',
+			}));
+			await expect(voiceScope('conductor', {})).rejects.toThrow('exit:1');
+			expect(errors()).toContain('locked to Quick Chat');
+			expect(errors()).not.toContain('No voice session is live');
 		});
 	});
 

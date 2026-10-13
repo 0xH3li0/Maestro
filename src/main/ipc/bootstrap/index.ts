@@ -59,7 +59,7 @@ import {
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerACappellaHandlers,
-	stopVoiceSessionForClosedWindow,
+	stopVoiceSessionForWindow,
 	registerACappellaModelsHandlers,
 	registerLocalModelsHandlers,
 	registerPluginsHandlers,
@@ -74,6 +74,7 @@ import {
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
+import { getQuickChatController } from '../../quick-chat';
 import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
 import { startCoworkingBridge } from '../../coworking/coworking-bridge';
 import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
@@ -383,6 +384,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				? deps.windowRegistry.findBySender(sender)
 				: deps.windowRegistry.getFocusedAppWindow()
 			)?.id ?? null,
+		// A session bound to Quick Chat is shown by its window and delivered by
+		// its `send`. The controller is created after these handlers, so it is
+		// read when a session asks for it.
+		getQuickChat: getQuickChatController,
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
 		// The paired-device transport rides the web server's authenticated socket,
@@ -514,7 +519,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// A voice session is shown by exactly one window, so closing that window
 		// would otherwise leave an open microphone with no surface anywhere.
 		if (change.type === 'removed' && change.windowId) {
-			void stopVoiceSessionForClosedWindow(change.windowId);
+			void stopVoiceSessionForWindow(change.windowId);
 		}
 	});
 
