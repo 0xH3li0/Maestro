@@ -5,7 +5,6 @@ import type {
 	AgentConfig,
 	PeerAccess,
 	PeerAgent,
-	Session,
 	ToolType,
 } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
@@ -47,7 +46,7 @@ import { TOKEN_PROXY_NAME } from '../../../shared/local-models/token-proxy';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSessionStore } from '../../stores/sessionStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import type { AgentDebugInfo, NewInstanceModalProps } from './types';
+import type { AgentDebugInfo, AgentSeed, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
@@ -252,9 +251,13 @@ export function NewInstanceModal({
 	});
 
 	// Define handlers first before they're used in effects
-	const loadAgents = async (source?: Session, sshRemoteId?: string) => {
+	const loadAgents = async (source?: AgentSeed, sshRemoteId?: string) => {
 		setLoading(true);
 		setSshConnectionError(null);
+		// The provider the seed's provider settings belong to. A seed with none
+		// (a group default that names no provider) fills only the fields the form
+		// does not keep per provider.
+		const seedProvider = source?.toolType;
 		try {
 			const detectedAgents = await window.maestro.agents.detect(sshRemoteId);
 
@@ -325,8 +328,8 @@ export function NewInstanceModal({
 			}
 
 			// If duplicating, merge source session config values into loaded configs
-			if (source) {
-				const sourceConfig: Record<string, any> = { ...configs[source.toolType] };
+			if (source && seedProvider) {
+				const sourceConfig: Record<string, any> = { ...configs[seedProvider] };
 				if (source.customModel) {
 					sourceConfig.model = source.customModel;
 				}
@@ -340,10 +343,10 @@ export function NewInstanceModal({
 					// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
 					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
 					// actually defines so the value round-trips through the modal.
-					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
+					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === seedProvider);
 					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort;
 				}
-				configs[source.toolType] = sourceConfig;
+				configs[seedProvider] = sourceConfig;
 			}
 
 			setAgentConfigs(configs);
@@ -353,8 +356,8 @@ export function NewInstanceModal({
 
 			// Select first available non-hidden agent (or source agent if duplicating)
 			// (hidden agents like 'terminal' should never be auto-selected)
-			if (source) {
-				setSelectedAgent(source.toolType);
+			if (seedProvider) {
+				setSelectedAgent(seedProvider);
 			} else if (!sshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
 				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
@@ -370,11 +373,13 @@ export function NewInstanceModal({
 				// a local placeholder in `cwd` and the real path in the override, so the
 				// override is what the copy should start from. The value on screen is
 				// then the single source for the new agent's cwd AND its override.
-				handleWorkingDirChange(
+				const seedWorkingDir =
 					(source.sessionSshRemoteConfig?.enabled &&
 						source.sessionSshRemoteConfig.workingDirOverride) ||
-						source.cwd
-				);
+					(source.cwd ?? source.projectRoot);
+				if (seedWorkingDir !== undefined) {
+					handleWorkingDirChange(seedWorkingDir);
+				}
 				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
@@ -382,87 +387,92 @@ export function NewInstanceModal({
 				setPeerAgents((source.peerAgents ?? []).map((peer) => ({ ...peer })));
 				setGroupPeerAccess(source.groupPeerAccess && { ...source.groupPeerAccess });
 				setWorktreePeerAccess(source.worktreePeerAccess && { ...source.worktreePeerAccess });
-				setInstanceName(`${source.name} (Copy)`);
+				if (source.name !== undefined) {
+					setInstanceName(`${source.name} (Copy)`);
+				}
 				setNudgeMessage(source.nudgeMessage || '');
 				setNewSessionMessage(source.newSessionMessage || '');
 
-				// Pre-fill custom agent configuration
-				setCustomAgentPaths((prev) => ({
-					...prev,
-					[source.toolType]: source.customPath || '',
-				}));
-				setCustomAgentArgs((prev) => ({
-					...prev,
-					[source.toolType]: source.customArgs || '',
-				}));
-				setCustomAgentEnvVars((prev) => ({
-					...prev,
-					[source.toolType]: source.customEnvVars || {},
-				}));
-				// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
-				// inherits it. When the source never configured a token source, leave the
-				// entry unset so the duplicate falls through to the same default path as a
-				// fresh agent (see agentEnableMaestroP below) instead of pinning a falsy
-				// default as if it were an explicit "API" choice.
-				setEnableMaestroPByAgent((prev) => {
-					const next = { ...prev };
-					if (source.enableMaestroP === undefined) {
-						delete next[source.toolType];
-					} else {
-						next[source.toolType] = source.enableMaestroP;
-					}
-					return next;
-				});
-				setMaestroPModeByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.maestroPMode ?? 'dynamic',
-				}));
-				setMaestroPPathByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.maestroPPath || '',
-				}));
-				// Mirror the source agent's Agent Resilience toggles (default ON).
-				setRetryAvailabilityByAgent((prev) => ({
-					...prev,
-					[source.toolType]: resilienceEnabled(source.retryOnAvailabilityErrors),
-				}));
-				setRetryTokenByAgent((prev) => ({
-					...prev,
-					[source.toolType]: resilienceEnabled(source.retryOnTokenExhaustion),
-				}));
-				// Duplicating an agent carries its automatic-reset preference too, so a
-				// copy does not silently start spending credits the original never did
-				// (and vice versa).
-				setCodexAutoResetByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.codexAutoResetOnExhaustion === true,
-				}));
-				// A copy runs its chat turns on the same transport as the original.
-				setCodexTransportByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
-				}));
-				// And through the same gateway. Its token proxy mode is not copied:
-				// absent reads as passthrough, so a copy never starts compressing.
-				setGatewayUrlByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.gatewayUrl ?? '',
-				}));
-				// And on the same model. A stored target that cannot be read is not
-				// copied: the copy starts on its provider's model.
+				// The copy runs on the same model. A stored target that cannot be read is
+				// not copied: the copy starts on its provider's model.
 				const sourceRunOn = parseRunOnTarget(source.runOn);
 				setRunOn(sourceRunOn.ok ? sourceRunOn.target : { type: 'provider' });
 
-				// Pre-fill SSH remote configuration if source session has it
-				if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
-					setAgentSshRemoteConfigs((prev) => ({
+				if (seedProvider) {
+					// Pre-fill custom agent configuration, kept per provider
+					setCustomAgentPaths((prev) => ({
 						...prev,
-						[source.toolType]: {
-							enabled: true,
-							remoteId: source.sessionSshRemoteConfig!.remoteId!,
-							workingDirOverride: source.sessionSshRemoteConfig!.workingDirOverride,
-						},
+						[seedProvider]: source.customPath || '',
 					}));
+					setCustomAgentArgs((prev) => ({
+						...prev,
+						[seedProvider]: source.customArgs || '',
+					}));
+					setCustomAgentEnvVars((prev) => ({
+						...prev,
+						[seedProvider]: source.customEnvVars || {},
+					}));
+					// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
+					// inherits it. When the source never configured a token source, leave the
+					// entry unset so the duplicate falls through to the same default path as a
+					// fresh agent (see agentEnableMaestroP below) instead of pinning a falsy
+					// default as if it were an explicit "API" choice.
+					setEnableMaestroPByAgent((prev) => {
+						const next = { ...prev };
+						if (source.enableMaestroP === undefined) {
+							delete next[seedProvider];
+						} else {
+							next[seedProvider] = source.enableMaestroP;
+						}
+						return next;
+					});
+					setMaestroPModeByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.maestroPMode ?? 'dynamic',
+					}));
+					setMaestroPPathByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.maestroPPath || '',
+					}));
+					// Mirror the source agent's Agent Resilience toggles (default ON).
+					setRetryAvailabilityByAgent((prev) => ({
+						...prev,
+						[seedProvider]: resilienceEnabled(source.retryOnAvailabilityErrors),
+					}));
+					setRetryTokenByAgent((prev) => ({
+						...prev,
+						[seedProvider]: resilienceEnabled(source.retryOnTokenExhaustion),
+					}));
+					// Duplicating an agent carries its automatic-reset preference too, so a
+					// copy does not silently start spending credits the original never did
+					// (and vice versa).
+					setCodexAutoResetByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.codexAutoResetOnExhaustion === true,
+					}));
+					// A copy runs its chat turns on the same transport as the original.
+					setCodexTransportByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
+					}));
+					// And through the same gateway. Its token proxy mode is not copied:
+					// absent reads as passthrough, so a copy never starts compressing.
+					setGatewayUrlByAgent((prev) => ({
+						...prev,
+						[seedProvider]: source.gatewayUrl ?? '',
+					}));
+
+					// Pre-fill SSH remote configuration if source session has it
+					if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
+						setAgentSshRemoteConfigs((prev) => ({
+							...prev,
+							[seedProvider]: {
+								enabled: true,
+								remoteId: source.sessionSshRemoteConfig!.remoteId!,
+								workingDirOverride: source.sessionSshRemoteConfig!.workingDirOverride,
+							},
+						}));
+					}
 				}
 			}
 		} catch (error) {

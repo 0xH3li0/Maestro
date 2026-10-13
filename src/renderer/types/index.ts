@@ -23,6 +23,7 @@ export type {
 	UpdateStatus,
 	ToolType,
 	Group,
+	GroupAgentDefaults,
 	UsageStats,
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,

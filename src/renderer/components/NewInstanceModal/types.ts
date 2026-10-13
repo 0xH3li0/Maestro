@@ -39,6 +39,50 @@ export interface SessionSshRemoteConfig {
 	shareHistoryToProjectDir?: boolean;
 }
 
+/**
+ * What the New Agent form can be pre-filled from: the fields `loadAgents` reads
+ * off its source, all optional. An agent being duplicated (`Session`) and a
+ * group's defaults (`GroupAgentDefaults`) both satisfy it, so the form has one
+ * pre-fill path for both.
+ *
+ * A seed with no `toolType` selects no provider and fills none of the provider
+ * settings, which the form keeps per provider. A seed with no `name` leaves the
+ * name alone. A seed gives its working directory as `cwd` (an agent) or
+ * `projectRoot` (a group default, which has no `cwd`).
+ */
+export type AgentSeed = Partial<
+	Pick<
+		Session,
+		| 'name'
+		| 'toolType'
+		| 'cwd'
+		| 'projectRoot'
+		| 'additionalDirectories'
+		| 'peerAgents'
+		| 'groupPeerAccess'
+		| 'worktreePeerAccess'
+		| 'nudgeMessage'
+		| 'newSessionMessage'
+		| 'customPath'
+		| 'customArgs'
+		| 'customEnvVars'
+		| 'customModel'
+		| 'customEffort'
+		| 'customContextWindow'
+		| 'customProviderPath'
+		| 'enableMaestroP'
+		| 'maestroPMode'
+		| 'maestroPPath'
+		| 'retryOnAvailabilityErrors'
+		| 'retryOnTokenExhaustion'
+		| 'codexAutoResetOnExhaustion'
+		| 'codexTransport'
+		| 'gatewayUrl'
+		| 'runOn'
+		| 'sessionSshRemoteConfig'
+	>
+>;
+
 export interface NewInstanceModalProps {
 	isOpen: boolean;
 	onClose: () => void;

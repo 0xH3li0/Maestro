@@ -216,6 +216,64 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsAdditionalDirectories: false,
 };
 
+/**
+ * Group Settings: the values a new agent created in a group starts with.
+ *
+ * COPY-AT-CREATE. These are seed values for the create-agent form and nothing
+ * else: they are stamped into the form when an agent is created in the group
+ * and never read again. No spawn, launch plan or `resolveAgentEnvironment()`
+ * call reads them, moving an agent between groups changes nothing about it,
+ * and a later edit reaches an existing agent only through an explicit publish,
+ * which writes into that agent's own record.
+ *
+ * Every field is optional, and an absent field means "no opinion, use the
+ * Maestro default". The fields are the agent's own (`SessionInfo`), under the
+ * same names and types, so a default is copied or published key for key. They
+ * are flat, for one provider: the provider settings belong to `toolType`, and
+ * a default with no `toolType` carries only the fields every provider reads.
+ * Never here: `name`, `id`, `groupId`, or any runtime state.
+ */
+export type GroupAgentDefaults = Partial<
+	Pick<
+		SessionInfo,
+		// General
+		| 'projectRoot'
+		| 'additionalDirectories'
+		| 'newSessionMessage'
+		| 'nudgeMessage'
+		// Provider
+		| 'toolType'
+		| 'customPath'
+		| 'customArgs'
+		| 'customModel'
+		| 'customEffort'
+		| 'customContextWindow'
+		| 'enableMaestroP'
+		| 'maestroPMode'
+		| 'maestroPPath'
+		| 'codexTransport'
+		| 'retryOnAvailabilityErrors'
+		| 'retryOnTokenExhaustion'
+		| 'codexAutoResetOnExhaustion'
+		// Models
+		| 'runOn'
+		| 'tierTargets'
+		| 'backgroundRequests'
+		| 'systemOneOptOut'
+		| 'gatewayUrl'
+		| 'tokenProxyMode'
+		// Environment
+		| 'customEnvVars'
+		| 'customEnvVarsDisabled'
+		// Peers
+		| 'peerAgents'
+		| 'groupPeerAccess'
+		| 'worktreePeerAccess'
+		// SSH
+		| 'sessionSshRemoteConfig'
+	>
+>;
+
 // Session group
 export interface Group {
 	id: string;
@@ -226,6 +284,15 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Hand-picked text for the badge drawn beside this group's bookmarked agents,
+	 * in place of the automatic abbreviation of `name`. Display-only: it is a
+	 * property of the group, not a default, so it is never copied into a new
+	 * agent and never published to an existing one.
+	 */
+	shortLabel?: string;
+	/** Seed values copied into the create-agent form for a new agent in this group. */
+	defaults?: GroupAgentDefaults;
 	/**
 	 * Parked out of the Left Bar. A middle ground between keeping a group on
 	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
