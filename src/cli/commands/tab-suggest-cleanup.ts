@@ -69,9 +69,6 @@ export async function tabSuggestCleanup(options: SuggestCleanupOptions): Promise
 		if (!result.success) exitWith(ExitCode.GeneralError);
 		return;
 	}
-	if (!result.success) {
-		console.error(`Error: ${result.error}`);
-		exitWith(ExitCode.GeneralError);
-	}
+	if (!result.success) failCommand(result.error);
 	console.log(formatTabCleanupSuggestions(result));
 }

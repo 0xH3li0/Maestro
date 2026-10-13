@@ -11,6 +11,7 @@ import { withMaestroClient, type MaestroClient } from '../services/maestro-clien
 import { resolveAgentId } from '../services/storage';
 import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
 import { ExitCode, exitWith } from '../exit-codes';
+import { formatError } from '../output/formatter';
 import { failCommand, failFromError } from '../services/session-command';
 
 // Starting a chat spawns a moderator and every participant before the app
@@ -128,7 +129,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 			if (options.json) {
 				console.log(JSON.stringify({ success: false, error, chatId: reply.chatId }));
 			} else {
-				console.error(`Error: ${error}`);
+				console.error(formatError(error));
 				if (reply.chatId) console.error(`  Chat ID: ${reply.chatId}`);
 			}
 			exitWith(ExitCode.GeneralError);
@@ -168,7 +169,7 @@ export async function groupChatSend(
 				: 'The chat is busy or its moderator is not running; retry once status reports idle');
 		if (error) {
 			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
-			else console.error(`Error: ${error}`);
+			else console.error(formatError(error));
 			exitWith(ExitCode.GeneralError);
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
@@ -252,7 +253,7 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		const error = bridgeError(reply) ?? (reply.success ? undefined : 'Failed to stop group chat');
 		if (error) {
 			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
-			else console.error(`Error: ${error}`);
+			else console.error(formatError(error));
 			exitWith(ExitCode.GeneralError);
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));

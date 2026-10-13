@@ -7,7 +7,7 @@
 
 import { RUN_ON_TEST_PROMPT, type RunOnTestResult } from '../../shared/local-models/run-on';
 import { ExitCode, exitWith } from '../exit-codes';
-import { formatSuccess } from '../output/formatter';
+import { formatError, formatSuccess } from '../output/formatter';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { failCommand, failFromError } from '../services/session-command';
@@ -62,7 +62,7 @@ export async function agentTestRunOn(agentRef: string, options: TestRunOnOptions
 				})
 			);
 		} else {
-			console.error(`Error: ${result.message} [${result.code}]`);
+			console.error(formatError(`${result.message} [${result.code}]`));
 		}
 		exitWith(ExitCode.GeneralError);
 	}

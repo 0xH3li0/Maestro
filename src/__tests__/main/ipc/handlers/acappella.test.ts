@@ -1215,10 +1215,12 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 			pushSilence(40);
 			await enroll({ action: 'stop' });
 
+			// Each phrase's status rides along, so a client lists them in one round trip.
 			expect(await enroll({ action: 'list' })).toEqual({
 				ok: true,
 				status: null,
 				phrases: ['Hey Scout'],
+				statuses: [expect.objectContaining({ phrase: 'Hey Scout', clips: 1 })],
 			});
 		});
 

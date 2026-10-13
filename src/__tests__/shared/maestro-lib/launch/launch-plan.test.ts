@@ -504,7 +504,7 @@ describe('buildAgentLaunchPlan', () => {
 				if (!result.ok) throw new Error(result.error);
 				const { plan } = result;
 				expect(plan.launchArgs.slice(0, 6)).toEqual(plan.runOn?.args);
-				expect(plan.launchArgs[1]).toContain('base_url="https://models.example.com/v1"');
+				expect(plan.launchArgs[1]).toContain("base_url='https://models.example.com/v1'");
 				// `-m` belongs to `exec`: a root `-m` is the TUI's.
 				expect(plan.launchArgs.slice(6)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
 				expect(plan.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-workstation' });

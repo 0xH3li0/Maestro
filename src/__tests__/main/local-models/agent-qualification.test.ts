@@ -382,7 +382,8 @@ describe('the qualification repo and launch recipes', () => {
 		});
 
 		const codex = codexQualificationLaunch(SERVER, '/tmp/home');
-		expect(codex.args.join(' ')).toContain(`base_url="${SERVER.baseUrl}/v1"`);
+		// TOML literal strings: no double quote and no space, so a shell passes it whole.
+		expect(codex.args.join(' ')).toContain(`base_url='${SERVER.baseUrl}/v1'`);
 		expect(codex.args).toEqual(expect.arrayContaining(['exec', '--json', '-m', 'm']));
 		expect(codex.args.at(-1)).toBe(QUALIFICATION_PROMPT);
 		expect(codex.env).toEqual({ MAESTRO_LOCAL_KEY: 'sk-test', CODEX_HOME: '/tmp/home' });

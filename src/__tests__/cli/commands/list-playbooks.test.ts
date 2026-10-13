@@ -489,7 +489,10 @@ describe('list-playbooks command', () => {
 			expect(() => listPlaybooks({ json: true })).toThrow('process.exit(1)');
 
 			const errorOutput = consoleSpy.mock.calls[0][0];
-			expect(JSON.parse(errorOutput)).toEqual({ error: 'Unknown error' });
+			expect(JSON.parse(errorOutput)).toEqual({
+				success: false,
+				error: 'Failed to list playbooks: Unknown error',
+			});
 		});
 	});
 
