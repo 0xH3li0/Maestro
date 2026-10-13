@@ -197,6 +197,18 @@ async function waitForMatchingReadyRecord(
 	}
 }
 
+/** Confirm the authored revision loaded even when the stage is hidden. */
+export async function waitForConcertoDesignerFrameReady(
+	surface: ConcertoHtmlSurface,
+	id: string,
+	timeoutMs = DEFAULT_READY_TIMEOUT_MS,
+	expectedRevision?: number
+): Promise<boolean> {
+	return (
+		(await waitForMatchingReadyRecord(frameKey(surface, id), expectedRevision, timeoutMs)) !== null
+	);
+}
+
 export async function getConcertoDesignerFrameSnapshot(
 	surface: ConcertoHtmlSurface,
 	id: string,
