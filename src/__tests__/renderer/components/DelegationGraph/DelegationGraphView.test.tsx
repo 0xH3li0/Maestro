@@ -1,0 +1,942 @@
+/**
+ * Tests for DelegationGraphView - the Delegation Graph's canvas.
+ *
+ * The modules under the view have their own tests: the model
+ * (`useDelegationGraphModel`), the arrangement (`delegationLayouts`), the saved
+ * record (`useDelegationGraphLayout`), the node, the edge, the legend and the
+ * selected-agent panel. What is pinned here is the wiring between them: what the
+ * view hands the canvas, what a drag, a layout pick and a scope change write,
+ * and what a remount reads back.
+ *
+ * reactflow cannot lay itself out in jsdom, so `<ReactFlow>` is replaced by a
+ * stand-in that draws each node through the view's own `nodeTypes` (the real
+ * `AgentDelegationNode`), draws each edge as a marker, and keeps the props it
+ * was handed. A drag or a selection is then one call to the `onNodesChange` the
+ * view passed, with the change reactflow would send. `applyNodeChanges` is the
+ * real one.
+ */
+
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import type { ComponentType, ReactNode } from 'react';
+import type { Edge, Node, NodeChange, NodeProps } from 'reactflow';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DelegationEdgeData } from '../../../../renderer/components/DelegationGraph/edges/DelegationEdge';
+import type { AgentDelegationNodeData } from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
+
+/** What the view handed `<ReactFlow>` on its last render. */
+interface FlowProps {
+	nodes: Node<AgentDelegationNodeData>[];
+	edges: Edge<DelegationEdgeData>[];
+	nodeTypes: Record<string, ComponentType<NodeProps<AgentDelegationNodeData>>>;
+	onNodesChange: (changes: NodeChange[]) => void;
+	nodesConnectable?: boolean;
+	deleteKeyCode?: string | null;
+	children?: ReactNode;
+}
+
+const flow = vi.hoisted(() => ({
+	props: null as FlowProps | null,
+	fitView: vi.fn(),
+}));
+
+vi.mock('reactflow', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('reactflow')>();
+	// One object for the life of the file: the view re-arms its fit timer when
+	// this reference changes.
+	const api = { fitView: flow.fitView };
+
+	const ReactFlowStandIn = (props: FlowProps) => {
+		flow.props = props;
+		return (
+			<div data-testid="react-flow">
+				{props.nodes.map((node) => {
+					const NodeComponent = props.nodeTypes[node.type ?? ''];
+					const nodeProps = {
+						id: node.id,
+						type: node.type,
+						data: node.data,
+						selected: Boolean(node.selected),
+						isConnectable: false,
+						xPos: node.position.x,
+						yPos: node.position.y,
+						zIndex: 0,
+						dragging: false,
+					} as NodeProps<AgentDelegationNodeData>;
+					return (
+						<div
+							key={node.id}
+							data-testid="flow-node"
+							data-node-id={node.id}
+							data-node-type={node.type}
+							style={node.style}
+						>
+							<NodeComponent {...nodeProps} />
+						</div>
+					);
+				})}
+				{props.edges.map((edge) => (
+					<div
+						key={edge.id}
+						data-testid="flow-edge"
+						data-edge-id={edge.id}
+						data-edge-type={edge.type}
+						data-source={edge.source}
+						data-target={edge.target}
+						data-has-reverse={String(edge.data?.hasReverse)}
+						data-emphasis={edge.data?.emphasis ?? 'none'}
+					/>
+				))}
+				{props.children}
+			</div>
+		);
+	};
+
+	return {
+		...actual,
+		default: ReactFlowStandIn,
+		ReactFlowProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+		useReactFlow: () => api,
+		Background: () => null,
+		Controls: () => null,
+		MiniMap: () => null,
+		// The real handle reads the node it belongs to from a mounted <ReactFlow>.
+		Handle: () => null,
+	};
+});
+
+import { DelegationGraphView } from '../../../../renderer/components/DelegationGraph/DelegationGraphView';
+import { DELEGATION_LAYOUT_LABELS } from '../../../../renderer/components/DelegationGraph/delegationLayoutTypes';
+import {
+	AGENT_DELEGATION_NODE_BORDER_STYLE,
+	AGENT_DELEGATION_SPILL_OPACITY,
+} from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
+import { DELEGATION_POSITION_SAVE_DEBOUNCE_MS } from '../../../../renderer/components/DelegationGraph/useDelegationGraphLayout';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import type { DelegationGraphLayouts } from '../../../../renderer/stores/settingsDelegationGraphSlice';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import type { Group, Session } from '../../../../renderer/types';
+import {
+	buildDelegationGraph,
+	type DelegationGraphScope,
+} from '../../../../shared/delegationGraph';
+import {
+	DELEGATION_GRAPH_LAYOUTS_SETTING,
+	scopeStorageKey,
+	type DelegationNodePosition,
+	type DelegationSavedPositions,
+} from '../../../../shared/delegationGraphLayout';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { createMockSession } from '../../../helpers/mockSession';
+import { mockTheme } from '../../../helpers/mockTheme';
+
+const PLATFORM: Group = { id: 'g-1', name: 'Platform', emoji: '', collapsed: false };
+const RESEARCH: Group = { id: 'g-2', name: 'Research', emoji: '', collapsed: false };
+/** A group with no agent in it. */
+const VACANT: Group = { id: 'g-3', name: 'Vacant', emoji: '', collapsed: false };
+
+const ALL: DelegationGraphScope = { kind: 'all' };
+const PLATFORM_SCOPE: DelegationGraphScope = { kind: 'group', groupId: PLATFORM.id };
+const RESEARCH_SCOPE: DelegationGraphScope = { kind: 'group', groupId: RESEARCH.id };
+const ALL_KEY = scopeStorageKey(ALL);
+const PLATFORM_KEY = scopeStorageKey(PLATFORM_SCOPE);
+
+/**
+ * Five agents and three edges:
+ *
+ *   Alpha (Platform) <-> Beta (Research)   a mutual pair
+ *   Delta (no group)  -> Epsilon (Platform)
+ *   Gamma (Research)                       reaches nobody, reached by nobody
+ */
+function fleet(): Session[] {
+	return [
+		createMockSession({
+			id: 'a',
+			name: 'Alpha',
+			groupId: PLATFORM.id,
+			peerAgents: [{ sessionId: 'b', read: true, write: true }],
+		}),
+		createMockSession({
+			id: 'b',
+			name: 'Beta',
+			groupId: RESEARCH.id,
+			peerAgents: [{ sessionId: 'a', read: true, write: false }],
+		}),
+		createMockSession({ id: 'c', name: 'Gamma', groupId: RESEARCH.id }),
+		createMockSession({
+			id: 'd',
+			name: 'Delta',
+			peerAgents: [{ sessionId: 'e', read: false, write: true }],
+		}),
+		createMockSession({ id: 'e', name: 'Epsilon', groupId: PLATFORM.id }),
+	];
+}
+
+const ALL_IDS = ['a', 'b', 'c', 'd', 'e'];
+/** The Platform graph: its two agents, and the two outside it that an edge reaches. */
+const PLATFORM_IDS = ['a', 'b', 'd', 'e'];
+
+/** Where the user left every agent on the graph of every agent. Far from the origin on purpose. */
+const ALL_POSITIONS: DelegationSavedPositions = {
+	a: { x: 2000, y: 2000 },
+	b: { x: 2400, y: 2000 },
+	c: { x: 2800, y: 2000 },
+	d: { x: 2000, y: 2400 },
+	e: { x: 2400, y: 2400 },
+};
+/** The same agents, somewhere else, on the Platform graph. */
+const PLATFORM_POSITIONS: DelegationSavedPositions = {
+	a: { x: 900, y: 900 },
+	b: { x: 1300, y: 900 },
+	d: { x: 900, y: 1200 },
+	e: { x: 1300, y: 1200 },
+};
+
+const ORIGIN: DelegationNodePosition = { x: 0, y: 0 };
+/** A place no layout puts an agent, so a node found there was dragged there. */
+const DRAGGED: DelegationNodePosition = { x: 5120, y: 3840 };
+
+function renderView(initialScope?: DelegationGraphScope) {
+	return render(
+		<LayerStackProvider>
+			<DelegationGraphView theme={mockTheme} initialScope={initialScope} />
+		</LayerStackProvider>
+	);
+}
+
+function layouts(): DelegationGraphLayouts {
+	return useSettingsStore.getState().delegationGraphLayouts;
+}
+
+function saveLayouts(next: DelegationGraphLayouts): void {
+	useSettingsStore.setState({ delegationGraphLayouts: next });
+}
+
+/** Every record sent to disk, oldest first. */
+function diskWrites(): unknown[] {
+	return vi
+		.mocked(window.maestro.settings.set)
+		.mock.calls.filter(([key]) => key === DELEGATION_GRAPH_LAYOUTS_SETTING)
+		.map(([, value]) => value);
+}
+
+/** How many times the record was written to disk. */
+function writeCount(): number {
+	return diskWrites().length;
+}
+
+function nodeEl(id: string): HTMLElement {
+	const el = screen
+		.queryAllByTestId('flow-node')
+		.find((candidate) => candidate.dataset.nodeId === id);
+	if (!el) throw new Error(`no node is drawn for agent ${id}`);
+	return el;
+}
+
+/** The node component's own root, inside the stand-in's wrapper. */
+function nodeBody(id: string): HTMLElement {
+	return within(nodeEl(id)).getByTestId('agent-delegation-node');
+}
+
+function edgeEl(id: string): HTMLElement {
+	const el = screen
+		.queryAllByTestId('flow-edge')
+		.find((candidate) => candidate.dataset.edgeId === id);
+	if (!el) throw new Error(`no edge is drawn for ${id}`);
+	return el;
+}
+
+function drawnNodeIds(): string[] {
+	return screen
+		.queryAllByTestId('flow-node')
+		.map((el) => el.dataset.nodeId ?? '')
+		.sort();
+}
+
+function drawnEdgeIds(): string[] {
+	return screen
+		.queryAllByTestId('flow-edge')
+		.map((el) => el.dataset.edgeId ?? '')
+		.sort();
+}
+
+/**
+ * Where the canvas was told to draw an agent. Read from the props and not from
+ * the DOM, so the numbers are the ones the view passed and not a string of them.
+ */
+function positionOf(id: string): DelegationNodePosition {
+	// Throws when the agent is not on screen, so a stale prop is never read.
+	nodeEl(id);
+	const node = flow.props?.nodes.find((candidate) => candidate.id === id);
+	if (!node) throw new Error(`the canvas was handed no node for agent ${id}`);
+	return { x: node.position.x, y: node.position.y };
+}
+
+function positionsOnCanvas(): DelegationSavedPositions {
+	const positions: DelegationSavedPositions = {};
+	for (const id of drawnNodeIds()) positions[id] = positionOf(id);
+	return positions;
+}
+
+/** Move a node, with the change reactflow sends while one is dragged. */
+function drag(id: string, to: DelegationNodePosition): void {
+	act(() => {
+		flow.props?.onNodesChange([{ type: 'position', id, position: to, dragging: true }]);
+	});
+}
+
+/** Select a node, with the change reactflow sends for a click on one. */
+function select(id: string): void {
+	act(() => {
+		flow.props?.onNodesChange([{ type: 'select', id, selected: true }]);
+	});
+}
+
+/** Let a waiting drag write land. */
+function rest(): void {
+	act(() => {
+		vi.advanceTimersByTime(DELEGATION_POSITION_SAVE_DEBOUNCE_MS);
+	});
+}
+
+function changeScope(key: string): void {
+	fireEvent.change(screen.getByTestId('delegation-graph-scope'), { target: { value: key } });
+}
+
+function setSessions(update: (sessions: Session[]) => Session[]): void {
+	act(() => {
+		useSessionStore.setState((state) => ({ sessions: update(state.sessions) }));
+	});
+}
+
+function distance(from: DelegationNodePosition, to: DelegationNodePosition): number {
+	return Math.hypot(from.x - to.x, from.y - to.y);
+}
+
+describe('DelegationGraphView', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		// The legend's open state is kept in localStorage. Without a Storage the
+		// result differs between a local run and CI.
+		installLocalStorageMock();
+		flow.props = null;
+		saveLayouts({});
+		useSessionStore.setState({
+			sessions: fleet(),
+			groups: [PLATFORM, RESEARCH, VACANT],
+			activeSessionId: 'a',
+		});
+		useModalStore.getState().closeAll();
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	describe('what it draws', () => {
+		it('draws one node per model node and one edge per model edge', () => {
+			const model = buildDelegationGraph(ALL, useSessionStore.getState().sessions);
+
+			renderView();
+
+			expect(drawnNodeIds()).toEqual(model.nodes.map((node) => node.sessionId).sort());
+			expect(drawnEdgeIds()).toEqual(model.edges.map((edge) => edge.id).sort());
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+			expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
+		});
+
+		it('draws the graph of one group: its agents, and the agents its edges reach', () => {
+			const model = buildDelegationGraph(PLATFORM_SCOPE, useSessionStore.getState().sessions);
+
+			renderView(PLATFORM_SCOPE);
+
+			expect(drawnNodeIds()).toEqual(model.nodes.map((node) => node.sessionId).sort());
+			expect(drawnEdgeIds()).toEqual(model.edges.map((edge) => edge.id).sort());
+			// Gamma is in Research and no edge joins it to Platform.
+			expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+		});
+
+		it('joins each edge to the agents it runs between', () => {
+			renderView();
+
+			expect(edgeEl('d->e').dataset.source).toBe('d');
+			expect(edgeEl('d->e').dataset.target).toBe('e');
+			expect(edgeEl('b->a').dataset.source).toBe('b');
+			expect(edgeEl('b->a').dataset.target).toBe('a');
+		});
+
+		// The edge component draws a mutual pair as two lanes, and it is told
+		// which edges are half of one by this flag alone.
+		it('tells both edges of a mutual pair that the other exists, and a one-way edge that it is alone', () => {
+			renderView();
+
+			expect(edgeEl('a->b').dataset.hasReverse).toBe('true');
+			expect(edgeEl('b->a').dataset.hasReverse).toBe('true');
+			expect(edgeEl('d->e').dataset.hasReverse).toBe('false');
+		});
+
+		it('draws every node and edge with the delegation components', () => {
+			renderView();
+
+			for (const el of screen.getAllByTestId('flow-node')) {
+				expect(el.dataset.nodeType).toBe('agent');
+			}
+			for (const el of screen.getAllByTestId('flow-edge')) {
+				expect(el.dataset.edgeType).toBe('delegation');
+			}
+		});
+
+		// Read-only in this phase: a roster is edited on the Peers tab.
+		it('lets no edge be drawn and no node be deleted', () => {
+			renderView();
+
+			expect(flow.props?.nodesConnectable).toBe(false);
+			expect(flow.props?.deleteKeyCode).toBeNull();
+		});
+	});
+
+	describe('node markers', () => {
+		it('marks an agent with no edges as isolated', () => {
+			renderView();
+			const gamma = nodeBody('c');
+
+			expect(gamma).toHaveAttribute('data-node-state', 'isolated');
+			expect(gamma.style.borderStyle).toBe(AGENT_DELEGATION_NODE_BORDER_STYLE.isolated);
+			expect(within(gamma).getByTestId('agent-delegation-node-isolated')).toBeInTheDocument();
+			expect(within(gamma).getByText('No peers')).toBeInTheDocument();
+		});
+
+		it('marks an agent outside the group as spill, with the name of the group it is in', () => {
+			renderView(PLATFORM_SCOPE);
+			const beta = nodeBody('b');
+
+			expect(beta).toHaveAttribute('data-node-state', 'spill');
+			expect(beta.style.borderStyle).toBe(AGENT_DELEGATION_NODE_BORDER_STYLE.spill);
+			expect(beta.style.opacity).toBe(String(AGENT_DELEGATION_SPILL_OPACITY));
+			expect(within(beta).getByTestId('agent-delegation-node-spill-group')).toHaveTextContent(
+				'Research'
+			);
+			// Delta is in no group at all.
+			expect(
+				within(nodeBody('d')).getByTestId('agent-delegation-node-spill-group')
+			).toHaveTextContent('Ungrouped');
+		});
+
+		it('gives a connected agent in scope neither marker', () => {
+			renderView(PLATFORM_SCOPE);
+
+			for (const id of ['a', 'e']) {
+				const body = nodeBody(id);
+				expect(body).toHaveAttribute('data-node-state', 'in-scope');
+				expect(body.style.borderStyle).toBe(AGENT_DELEGATION_NODE_BORDER_STYLE['in-scope']);
+				expect(within(body).queryByTestId('agent-delegation-node-isolated')).toBeNull();
+				expect(within(body).queryByTestId('agent-delegation-node-spill-group')).toBeNull();
+			}
+		});
+
+		// The same agent is isolated in one graph and absent from another: the
+		// state belongs to the scope, not to the agent.
+		it('marks an agent by the scope on screen', () => {
+			renderView(RESEARCH_SCOPE);
+
+			expect(nodeBody('c')).toHaveAttribute('data-node-state', 'isolated');
+			expect(nodeBody('b')).toHaveAttribute('data-node-state', 'in-scope');
+			expect(nodeBody('a')).toHaveAttribute('data-node-state', 'spill');
+		});
+
+		it('marks an agent isolated when the one agent it reached is deleted', () => {
+			renderView();
+			expect(nodeBody('a')).toHaveAttribute('data-node-state', 'in-scope');
+
+			setSessions((sessions) => sessions.filter((session) => session.id !== 'b'));
+
+			expect(drawnNodeIds()).toEqual(['a', 'c', 'd', 'e']);
+			expect(drawnEdgeIds()).toEqual(['d->e']);
+			expect(nodeBody('a')).toHaveAttribute('data-node-state', 'isolated');
+		});
+	});
+
+	describe('saved positions', () => {
+		it('draws every agent where it was saved', () => {
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS } });
+
+			renderView();
+
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+			// Reading a saved arrangement writes nothing.
+			expect(writeCount()).toBe(0);
+		});
+
+		it('keeps a dragged agent where it was left across a remount', () => {
+			const first = renderView();
+			const others = positionsOnCanvas();
+			delete others.a;
+
+			drag('a', DRAGGED);
+			first.unmount();
+			renderView();
+
+			expect(positionOf('a')).toEqual(DRAGGED);
+			// The first drag saved every agent, so none of the rest moved either.
+			for (const [id, position] of Object.entries(others)) {
+				expect(positionOf(id)).toEqual(position);
+			}
+			// It reached disk, which is what makes it still there tomorrow.
+			expect(diskWrites().at(-1)).toMatchObject({
+				[ALL_KEY]: { layout: 'manual', positions: { a: DRAGGED } },
+			});
+		});
+
+		// Every move after the first waits for the pointer to rest. Closing the
+		// graph before it does must not lose that move.
+		it('keeps the last move of a drag when the graph closes before the write', () => {
+			const first = renderView();
+			drag('a', { x: 4000, y: 4000 });
+			drag('a', DRAGGED);
+			expect(layouts()[ALL_KEY].positions.a).toEqual({ x: 4000, y: 4000 });
+
+			first.unmount();
+			renderView();
+
+			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+			expect(positionOf('a')).toEqual(DRAGGED);
+		});
+
+		// The write a drag makes comes back as a new arrangement a render later.
+		// The node must stay under the pointer, not jump to an older save.
+		it('leaves a node where the pointer has it while an earlier move is being saved', () => {
+			renderView();
+
+			drag('a', { x: 4000, y: 4000 });
+			drag('a', { x: 4500, y: 4200 });
+			drag('a', DRAGGED);
+
+			expect(positionOf('a')).toEqual(DRAGGED);
+			rest();
+			expect(positionOf('a')).toEqual(DRAGGED);
+			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+		});
+
+		it('never drops an agent with no saved position on the origin', () => {
+			// Beta (a peer of Alpha) and Gamma (a peer of nobody) were never placed.
+			const saved: DelegationSavedPositions = {
+				a: ALL_POSITIONS.a,
+				d: ALL_POSITIONS.d,
+				e: ALL_POSITIONS.e,
+			};
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: saved } });
+
+			renderView();
+
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+			expect(positionOf('b')).not.toEqual(ORIGIN);
+			expect(positionOf('c')).not.toEqual(ORIGIN);
+			// Beta goes beside the agent it is connected to, not somewhere arbitrary.
+			expect(distance(positionOf('b'), ALL_POSITIONS.a)).toBeLessThan(1000);
+			// No agent is dropped on top of another.
+			const places = ALL_IDS.map((id) => `${positionOf(id).x},${positionOf(id).y}`);
+			expect(new Set(places).size).toBe(ALL_IDS.length);
+			// Nothing already placed moved to make room.
+			for (const [id, position] of Object.entries(saved)) {
+				expect(positionOf(id)).toEqual(position);
+			}
+		});
+
+		it('keeps an agent it placed in the same spot on the next open', () => {
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: { a: ALL_POSITIONS.a } } });
+			const first = renderView();
+			const placed = positionsOnCanvas();
+
+			// The new places were added to what is saved, and the layout is still manual.
+			expect(layouts()[ALL_KEY]).toEqual({ layout: 'manual', positions: placed });
+
+			first.unmount();
+			renderView();
+
+			expect(positionsOnCanvas()).toEqual(placed);
+		});
+
+		it('places an agent created while the graph is open beside its peer, and moves nobody else', () => {
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS } });
+			renderView();
+
+			setSessions((sessions) => [
+				...sessions,
+				createMockSession({
+					id: 'f',
+					name: 'Zeta',
+					peerAgents: [{ sessionId: 'a', read: true, write: false }],
+				}),
+			]);
+
+			expect(drawnNodeIds()).toEqual([...ALL_IDS, 'f']);
+			expect(positionOf('f')).not.toEqual(ORIGIN);
+			expect(distance(positionOf('f'), ALL_POSITIONS.a)).toBeLessThan(1000);
+			for (const id of ALL_IDS) expect(positionOf(id)).toEqual(ALL_POSITIONS[id]);
+			expect(layouts()[ALL_KEY].positions.f).toEqual(positionOf('f'));
+		});
+	});
+
+	describe('scope', () => {
+		beforeEach(() => {
+			saveLayouts({
+				[ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS },
+				[PLATFORM_KEY]: { layout: 'manual', positions: PLATFORM_POSITIONS },
+			});
+		});
+
+		it("loads the scope's own positions on a switch, and never the other scope's", () => {
+			renderView();
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+
+			changeScope(PLATFORM_KEY);
+			expect(positionsOnCanvas()).toEqual(PLATFORM_POSITIONS);
+
+			changeScope(ALL_KEY);
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+
+			// Looking at a scope changes neither record.
+			expect(layouts()).toEqual({
+				[ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS },
+				[PLATFORM_KEY]: { layout: 'manual', positions: PLATFORM_POSITIONS },
+			});
+			expect(writeCount()).toBe(0);
+		});
+
+		it('opens on the scope it was handed', () => {
+			renderView(PLATFORM_SCOPE);
+
+			expect(screen.getByTestId('delegation-graph-scope')).toHaveValue(PLATFORM_KEY);
+			expect(positionsOnCanvas()).toEqual(PLATFORM_POSITIONS);
+		});
+
+		it('saves a drag to the scope it was made in, and leaves the other scope alone', () => {
+			renderView(PLATFORM_SCOPE);
+
+			drag('a', DRAGGED);
+			rest();
+
+			expect(layouts()[PLATFORM_KEY].positions.a).toEqual(DRAGGED);
+			expect(layouts()[ALL_KEY].positions).toEqual(ALL_POSITIONS);
+
+			changeScope(ALL_KEY);
+			expect(positionOf('a')).toEqual(ALL_POSITIONS.a);
+		});
+
+		// The drag is still waiting to be written when the scope changes. It must
+		// land in the scope it happened in, not in the one now on screen.
+		it('does not carry a drag into the next scope when the scope changes mid-write', () => {
+			renderView(PLATFORM_SCOPE);
+
+			drag('a', DRAGGED);
+			changeScope(ALL_KEY);
+
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+			expect(layouts()[ALL_KEY].positions).toEqual(ALL_POSITIONS);
+			expect(layouts()[PLATFORM_KEY].positions.a).toEqual(DRAGGED);
+
+			changeScope(PLATFORM_KEY);
+			expect(positionOf('a')).toEqual(DRAGGED);
+		});
+
+		it('lists every group in the scope selector', () => {
+			renderView();
+			const options = within(screen.getByTestId('delegation-graph-scope')).getAllByRole('option');
+
+			expect(options.map((option) => option.textContent)).toEqual([
+				'All agents',
+				'Platform',
+				'Research',
+				'Vacant',
+			]);
+		});
+
+		// A group can be deleted while its graph is the one on screen, or between
+		// the click that asked for it and the open.
+		it('shows every agent when the group it was handed does not exist', () => {
+			renderView({ kind: 'group', groupId: 'gone' });
+
+			expect(screen.getByTestId('delegation-graph-scope')).toHaveValue(ALL_KEY);
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+		});
+	});
+
+	describe('a deleted agent', () => {
+		it('draws no node for a saved position whose agent is gone', () => {
+			saveLayouts({
+				[ALL_KEY]: {
+					layout: 'manual',
+					positions: { ...ALL_POSITIONS, ghost: { x: 9, y: 9 } },
+				},
+			});
+
+			renderView();
+
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+		});
+
+		it('drops the coordinates of a deleted agent on the next write', () => {
+			saveLayouts({
+				[ALL_KEY]: {
+					layout: 'manual',
+					positions: { ...ALL_POSITIONS, ghost: { x: 9, y: 9 } },
+				},
+			});
+			renderView();
+
+			drag('a', DRAGGED);
+			rest();
+
+			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(ALL_IDS);
+		});
+
+		it('drops the coordinates of an agent deleted while the graph is open', () => {
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS } });
+			renderView();
+
+			setSessions((sessions) => sessions.filter((session) => session.id !== 'c'));
+			expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
+
+			drag('a', DRAGGED);
+			rest();
+
+			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(['a', 'b', 'd', 'e']);
+			// The agents that are still here did not move.
+			expect(layouts()[ALL_KEY].positions.b).toEqual(ALL_POSITIONS.b);
+		});
+	});
+
+	describe('dragging', () => {
+		it('turns the scope manual on the first move and saves every agent', () => {
+			renderView();
+			expect(screen.queryByTestId('delegation-graph-layout-manual')).toBeNull();
+			expect(screen.getByTestId('delegation-graph-reset')).toBeDisabled();
+			const before = positionsOnCanvas();
+
+			drag('a', DRAGGED);
+
+			expect(layouts()[ALL_KEY]).toEqual({
+				layout: 'manual',
+				positions: { ...before, a: DRAGGED },
+			});
+			expect(screen.getByTestId('delegation-graph-layout-manual')).toBeInTheDocument();
+			expect(screen.getByTestId('delegation-graph-reset')).toBeEnabled();
+		});
+
+		it('saves nothing when a node is selected', () => {
+			renderView();
+
+			select('a');
+
+			expect(layouts()).toEqual({});
+			expect(writeCount()).toBe(0);
+		});
+	});
+
+	describe('a named layout', () => {
+		// Moving between two algorithms destroys nothing the user made.
+		it('is applied at once when nothing was placed by hand', () => {
+			renderView();
+
+			fireEvent.click(screen.getByTestId('delegation-graph-layout-force'));
+
+			expect(screen.queryByTestId('delegation-graph-confirm')).toBeNull();
+			expect(layouts()[ALL_KEY].layout).toBe('force');
+			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(ALL_IDS);
+			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
+			expect(screen.getByTestId('delegation-graph-layout-force')).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+		});
+
+		it('asks first when the scope was arranged by hand, and changes nothing on Cancel', () => {
+			renderView();
+			drag('a', DRAGGED);
+
+			fireEvent.click(screen.getByTestId('delegation-graph-layout-radial'));
+			const dialog = screen.getByTestId('delegation-graph-confirm');
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+
+			fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+			expect(screen.queryByTestId('delegation-graph-confirm')).toBeNull();
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+			expect(positionOf('a')).toEqual(DRAGGED);
+		});
+
+		it('replaces what was placed by hand once confirmed', () => {
+			renderView();
+			drag('a', DRAGGED);
+
+			fireEvent.click(screen.getByTestId('delegation-graph-layout-radial'));
+			fireEvent.click(
+				within(screen.getByTestId('delegation-graph-confirm')).getByRole('button', {
+					name: `Apply ${DELEGATION_LAYOUT_LABELS.radial.name}`,
+				})
+			);
+
+			expect(screen.queryByTestId('delegation-graph-confirm')).toBeNull();
+			expect(layouts()[ALL_KEY].layout).toBe('radial');
+			expect(positionOf('a')).not.toEqual(DRAGGED);
+			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
+			expect(screen.queryByTestId('delegation-graph-layout-manual')).toBeNull();
+		});
+
+		it('forgets the arrangement on a confirmed reset', () => {
+			renderView();
+			const arranged = positionsOnCanvas();
+			drag('a', DRAGGED);
+
+			fireEvent.click(screen.getByTestId('delegation-graph-reset'));
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+			fireEvent.click(
+				within(screen.getByTestId('delegation-graph-confirm')).getByRole('button', {
+					name: 'Reset',
+				})
+			);
+
+			expect(layouts()).toEqual({});
+			// Back where the default layout put every agent.
+			expect(positionsOnCanvas()).toEqual(arranged);
+			expect(screen.getByTestId('delegation-graph-reset')).toBeDisabled();
+		});
+	});
+
+	describe('neighbor focus', () => {
+		it('highlights the edges of the selected agent and dims the rest', () => {
+			renderView();
+			expect(edgeEl('a->b').dataset.emphasis).toBe('none');
+
+			select('a');
+
+			expect(edgeEl('a->b').dataset.emphasis).toBe('highlighted');
+			expect(edgeEl('b->a').dataset.emphasis).toBe('highlighted');
+			expect(edgeEl('d->e').dataset.emphasis).toBe('dimmed');
+		});
+
+		it('dims every agent that is neither selected nor one edge away', () => {
+			renderView();
+
+			select('a');
+
+			expect(nodeEl('a').style.opacity).toBe('');
+			expect(nodeEl('b').style.opacity).toBe('');
+			for (const id of ['c', 'd', 'e']) expect(nodeEl(id).style.opacity).toBe('0.35');
+		});
+
+		it('shows the selected agent in the panel, and clears the focus from there', () => {
+			renderView();
+			expect(screen.queryByTestId('delegation-graph-detail')).toBeNull();
+
+			select('a');
+			const panel = screen.getByTestId('delegation-graph-detail');
+			expect(within(panel).getByTestId('delegation-graph-detail-outbound')).toHaveTextContent(
+				'Beta'
+			);
+
+			fireEvent.click(within(panel).getByRole('button', { name: 'Clear the selection' }));
+
+			expect(screen.queryByTestId('delegation-graph-detail')).toBeNull();
+			expect(edgeEl('d->e').dataset.emphasis).toBe('none');
+			for (const id of ALL_IDS) expect(nodeEl(id).style.opacity).toBe('');
+		});
+
+		it("opens the selected agent's Peers tab from the panel", () => {
+			renderView();
+			select('d');
+
+			fireEvent.click(screen.getByTestId('delegation-graph-detail-open-peers'));
+
+			const opened = useModalStore.getState().getData('editAgent');
+			expect(opened?.session.id).toBe('d');
+			expect(opened?.initialTab).toBe('peers');
+		});
+	});
+
+	describe('empty states', () => {
+		it('says so in prose when there is no agent at all, and draws no canvas', () => {
+			useSessionStore.setState({ sessions: [] });
+
+			renderView();
+
+			expect(screen.getByText('No agents yet')).toBeInTheDocument();
+			expect(screen.getByText(/Peers tab of its settings/)).toBeInTheDocument();
+			expect(screen.queryByTestId('react-flow')).toBeNull();
+			expect(screen.getByTestId('delegation-graph-fit')).toBeDisabled();
+		});
+
+		it('says so in prose when the group has no agent', () => {
+			renderView({ kind: 'group', groupId: VACANT.id });
+
+			expect(screen.getByText('No agents in this group')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-flow')).toBeNull();
+		});
+
+		// An isolated agent is what the graph exists to show, so the agents are
+		// still drawn. The notice says why nothing joins them and where to fix it.
+		it('draws the agents under a notice when every one of them is isolated', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'a', name: 'Alpha' }),
+					createMockSession({ id: 'b', name: 'Beta' }),
+				],
+				activeSessionId: 'b',
+			});
+
+			renderView();
+
+			expect(drawnNodeIds()).toEqual(['a', 'b']);
+			expect(drawnEdgeIds()).toEqual([]);
+			expect(screen.getByTestId('delegation-graph-no-edges')).toHaveTextContent(
+				'No agent here can reach another'
+			);
+		});
+
+		it('links the notice to the Peers tab of the agent the user is working in', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'a', name: 'Alpha' }),
+					createMockSession({ id: 'b', name: 'Beta' }),
+				],
+				activeSessionId: 'b',
+			});
+			renderView();
+			const link = screen.getByTestId('delegation-graph-no-edges-open-peers');
+			expect(link).toHaveTextContent('Open Peers tab of Beta');
+
+			fireEvent.click(link);
+
+			const opened = useModalStore.getState().getData('editAgent');
+			expect(opened?.session.id).toBe('b');
+			expect(opened?.initialTab).toBe('peers');
+		});
+
+		it('shows no notice while at least one edge is drawn', () => {
+			renderView();
+
+			expect(screen.queryByTestId('delegation-graph-no-edges')).toBeNull();
+		});
+	});
+
+	describe('the legend', () => {
+		it('is open by default', () => {
+			renderView();
+
+			expect(screen.getByTestId('delegation-graph-legend')).toBeInTheDocument();
+		});
+
+		it('stays hidden across a remount once the user hides it', () => {
+			const first = renderView();
+
+			fireEvent.click(screen.getByTestId('delegation-graph-legend-toggle'));
+			expect(screen.queryByTestId('delegation-graph-legend')).toBeNull();
+			first.unmount();
+			renderView();
+
+			expect(screen.queryByTestId('delegation-graph-legend')).toBeNull();
+		});
+	});
+});
