@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
 	buildDelegationGraph,
+	connectedAgentIds,
 	delegationGraphStats,
 	edgeBetween,
 	isMutual,
@@ -278,6 +279,39 @@ describe('isMutual', () => {
 
 		expect(isMutual(model, 'a', 'a')).toBe(false);
 		expect(isMutual(model, 'a', 'gone')).toBe(false);
+	});
+});
+
+describe('connectedAgentIds', () => {
+	it('is empty on a graph with no edges', () => {
+		const model = buildDelegationGraph(ALL, [agent('a', 'Alice'), agent('b', 'Bob')]);
+
+		expect(connectedAgentIds(model).size).toBe(0);
+	});
+
+	it('holds both ends of every edge and leaves out an agent no edge touches', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alice', { peerAgents: [row('b', R)] }),
+			agent('b', 'Bob'),
+			agent('c', 'Carol'),
+		]);
+
+		expect([...connectedAgentIds(model)].sort()).toEqual(['a', 'b']);
+	});
+
+	// A spill agent is on the graph only because an edge reaches it, so it is
+	// always connected. The canvas relies on this: a node is spill OR isolated.
+	it('always holds a spill agent', () => {
+		const model = buildDelegationGraph(G1, [
+			agent('a', 'Alice', { groupId: 'g1', peerAgents: [row('x', W)] }),
+			agent('x', 'Xavier', { groupId: 'g2' }),
+		]);
+		const connected = connectedAgentIds(model);
+
+		for (const node of model.nodes.filter((n) => n.scope === 'spill')) {
+			expect(connected.has(node.sessionId)).toBe(true);
+		}
+		expect(connected.has('x')).toBe(true);
 	});
 });
 

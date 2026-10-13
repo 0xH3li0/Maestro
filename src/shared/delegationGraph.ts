@@ -198,18 +198,27 @@ export function isMutual(model: DelegationGraphModel, a: string, b: string): boo
 }
 
 /**
- * Count what is on the graph, in one pass over the edges and one over the
- * nodes. `agents` includes the `spill` agents, so the in-scope count is
- * `agents - spill`.
+ * Every agent at least one edge touches, at either end. An agent on the graph
+ * that is NOT in this set is isolated: nobody reaches it and it reaches nobody.
+ * `delegationGraphStats` counts those agents and the canvas marks them, and
+ * both ask here so the two cannot disagree about which agents they are.
  */
-export function delegationGraphStats(model: DelegationGraphModel): DelegationGraphStats {
-	const edgeIds = new Set<string>();
+export function connectedAgentIds(model: DelegationGraphModel): Set<string> {
 	const connectedIds = new Set<string>();
 	for (const edge of model.edges) {
-		edgeIds.add(edge.id);
 		connectedIds.add(edge.sourceId);
 		connectedIds.add(edge.targetId);
 	}
+	return connectedIds;
+}
+
+/**
+ * Count what is on the graph. `agents` includes the `spill` agents, so the
+ * in-scope count is `agents - spill`.
+ */
+export function delegationGraphStats(model: DelegationGraphModel): DelegationGraphStats {
+	const edgeIds = new Set(model.edges.map((edge) => edge.id));
+	const connectedIds = connectedAgentIds(model);
 
 	// A mutual pair is two edges. Count it at the one whose source id sorts
 	// first, so the pair counts once.
