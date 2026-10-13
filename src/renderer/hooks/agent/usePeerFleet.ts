@@ -7,8 +7,9 @@
  *
  * The section reads no store, so every form that mounts it reads the fleet
  * here: Edit Agent passes the group the agent is in now, New Agent the group
- * selected on General. The returned keys are the section's own prop names, so
- * a caller can spread the result onto `<PeersTab>`.
+ * selected on General, and the wizard no group, because its agent starts in
+ * none. The returned keys are the section's own prop names, so a caller can
+ * spread the result onto `<PeersTab>` or the section itself.
  */
 
 import { useMemo } from 'react';
