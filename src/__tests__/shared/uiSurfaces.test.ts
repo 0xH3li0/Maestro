@@ -64,6 +64,25 @@ describe('resolveUiSurface', () => {
 		expect(DEFAULT_SHORTCUTS[cleanup!.shortcutId!].keys).toEqual([]);
 	});
 
+	it('resolves the Delegation Graph so `open delegation-graph` works', () => {
+		const graph = resolveUiSurface('delegation-graph');
+		expect(graph?.modal).toBe('delegationGraph');
+		expect(resolveUiSurface('delegation')?.id).toBe('delegation-graph');
+		expect(resolveUiSurface('peer-graph')?.id).toBe('delegation-graph');
+		// Not an Encore Feature: it ships on, so `open` never refuses it.
+		expect(graph?.encore).toBeUndefined();
+		// Its shortcut ships unbound, but the id must still be a registered one.
+		expect(DEFAULT_SHORTCUTS[graph!.shortcutId!].keys).toEqual([]);
+	});
+
+	it('names all three manual ways into the Delegation Graph once a chord is bound', () => {
+		const graph = resolveUiSurface('delegation-graph')!;
+		const hint = describeSurfaceAccess(graph, 'Ctrl+Cmd+G');
+		expect(hint).toContain('press Ctrl+Cmd+G');
+		expect(hint).toContain('search "Delegation Graph"');
+		expect(hint).toContain('the hamburger menu > Delegation Graph');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

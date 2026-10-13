@@ -330,6 +330,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Tab Cleanup Suggestions: the list                                                           | `tab suggest-cleanup [--json]` (read-only; same `suggestTabCleanup()` as the modal)                                                                |
 | Tab Cleanup Suggestions: Apply a ticked row                                                 | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`                                                           |
 | Open Tab Cleanup Suggestions                                                                | `open tab-cleanup`                                                                                                                                 |
+| Open the Delegation Graph (hamburger menu, palette, unbound hotkey)                         | `open delegation-graph` (every agent)                                                                                                              |
+| Delegation Graph: read a scope's layout and saved positions                                 | `settings get delegationGraphLayouts` (keys: `all`, `group:<groupId>`)                                                                             |
 | Local Models: semantic index status and progress                                            | `models index` (same record as `localModels:semanticIndex:status`)                                                                                 |
 | Local Models: token proxy status and totals                                                 | `models proxy status` (same report as `localModels:proxy:report`)                                                                                  |
 | Local Models: diff of one compressed block                                                  | `models proxy block <hash>` (same record as `localModels:proxy:block`)                                                                             |
@@ -478,6 +480,17 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
+17. **Delegation Graph: scope, layout and reset.** `open delegation-graph`
+    opens the graph on every agent. There is no way to open it on one group
+    from the CLI: the modal takes `{ scope }`, and `open` carries only tabs.
+    Picking a named layout, Reset layout, Fit, the legend toggle and dragging
+    an agent have no verb either. All of these are presentation: they change
+    where an agent is DRAWN, never whom it can reach, and what they leave
+    behind is readable with `settings get delegationGraphLayouts`. The
+    relationships the graph draws are covered in full (`update-agent --peer`
+    writes them, `show-agent` reads them resolved). Closing the scope half
+    means a verb with `--group <id>` that passes `{ scope }` to
+    `openModal('delegationGraph')`.
 
 ### Audit backlog (2026-09-27)
 

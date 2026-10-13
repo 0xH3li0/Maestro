@@ -57,6 +57,7 @@ import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
 import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { buildDelegationGraphCommands } from './commands/delegationGraphCommands';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
@@ -569,6 +570,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			hotkey: quickChatHotkey,
 			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
+		}),
+		...buildDelegationGraphCommands({
+			setQuickActionOpen,
+			openDelegationGraphShortcut: shortcuts.openDelegationGraph,
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,

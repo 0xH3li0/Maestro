@@ -294,6 +294,13 @@ export const MODAL_PRIORITIES = {
 	/** Document Graph modal */
 	DOCUMENT_GRAPH: 545,
 
+	/**
+	 * Delegation Graph (the fleet's peer relationships, drawn). Must rank BELOW
+	 * NEW_INSTANCE: its Peers link opens the Edit Agent modal on top of it, and
+	 * Escape closes the highest-priority layer.
+	 */
+	DELEGATION_GRAPH: 546,
+
 	/** Computer History viewer (destination surface) */
 	COMPUTER_HISTORY: 547,
 

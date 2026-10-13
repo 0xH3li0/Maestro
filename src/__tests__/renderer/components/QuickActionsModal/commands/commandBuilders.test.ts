@@ -4,6 +4,7 @@ import { buildAgentPanelCommands } from '../../../../../renderer/components/Quic
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
 import { buildDebugCommands } from '../../../../../renderer/components/QuickActionsModal/commands/debugCommands';
+import { buildDelegationGraphCommands } from '../../../../../renderer/components/QuickActionsModal/commands/delegationGraphCommands';
 import { buildFeatureCommands } from '../../../../../renderer/components/QuickActionsModal/commands/featureCommands';
 import { buildGitWorktreeCommands } from '../../../../../renderer/components/QuickActionsModal/commands/gitWorktreeCommands';
 import {
@@ -1065,5 +1066,37 @@ describe('Group Settings command', () => {
 	it('is absent when the active agent is in no group, or in one that no longer exists', () => {
 		expect(build({}, '').map((command) => command.id)).not.toContain('groupSettings');
 		expect(build(null).map((command) => command.id)).not.toContain('groupSettings');
+	});
+});
+
+describe('buildDelegationGraphCommands', () => {
+	it('opens the Delegation Graph on every agent and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const [command] = buildDelegationGraphCommands({ setQuickActionOpen });
+
+		expect(command.label).toBe('Delegation Graph');
+		try {
+			command.action();
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			// No scope: the graph opens on every agent.
+			expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+		} finally {
+			useModalStore.getState().closeModal('delegationGraph');
+		}
+	});
+
+	it('shows the chord the user bound, and none by default', () => {
+		const bound = { id: 'openDelegationGraph', label: 'Delegation Graph', keys: ['y'] };
+
+		expect(buildDelegationGraphCommands({ setQuickActionOpen: vi.fn() })[0].shortcut).toBe(
+			undefined
+		);
+		expect(
+			buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				openDelegationGraphShortcut: bound,
+			})[0].shortcut
+		).toBe(bound);
 	});
 });

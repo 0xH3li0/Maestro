@@ -21,6 +21,7 @@ import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettingsTabs';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
+import type { DelegationGraphScope } from '../../shared/delegationGraph';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
@@ -239,6 +240,12 @@ export interface DeleteAgentModalData {
 /** Director's Notes modal data */
 export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
+}
+
+/** Delegation Graph modal data */
+export interface DelegationGraphModalData {
+	/** The scope the graph opens on, e.g. one group. Absent, every agent. */
+	scope?: DelegationGraphScope;
 }
 
 /** Quit confirmation modal data */
@@ -468,6 +475,8 @@ export type ModalId =
 	| 'pianolaModal'
 	// Computer History viewer
 	| 'computerHistory'
+	// Delegation Graph (the fleet's peer relationships, drawn)
+	| 'delegationGraph'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -509,6 +518,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'marketplace',
 	'processMonitor',
 	'computerHistory',
+	'delegationGraph',
 	// Main-panel destinations - these replace the whole center workspace, so an
 	// overlay left open on top of one hides it completely.
 	'logViewer',
@@ -621,6 +631,7 @@ export interface ModalDataMap {
 	directorNotes: DirectorNotesData;
 	cueModal: CueModalData;
 	cueYamlEditor: CueYamlEditorData;
+	delegationGraph: DelegationGraphModalData;
 	quitConfirm: QuitConfirmModalData;
 }
 

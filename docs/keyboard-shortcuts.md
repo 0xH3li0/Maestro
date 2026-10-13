@@ -74,6 +74,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
+| Delegation Graph              | unassigned by default   | unassigned by default     |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
@@ -82,7 +83,8 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
 The full-window surfaces in that table (Settings, Usage Dashboard, Director's
-Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory, and
+the Delegation Graph once you give it a chord in **Settings** → **Shortcuts**)
 replace each other rather than stacking, and their hotkeys stay live while one
 of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
 Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound

@@ -189,6 +189,17 @@ export const UI_SURFACES: UiSurface[] = [
 		encore: 'computerHistory',
 	},
 	{
+		id: 'delegation-graph',
+		label: 'Delegation Graph',
+		aliases: ['delegation', 'delegations', 'peer-graph', 'peers-graph'],
+		modal: 'delegationGraph',
+		description:
+			'Which agent can consult or delegate to which, drawn as a graph. Read-only: peers are set on the Peers tab of an agent.',
+		shortcutId: 'openDelegationGraph',
+		commandPalette: 'Delegation Graph',
+		click: 'the hamburger menu > Delegation Graph',
+	},
+	{
 		id: 'symphony',
 		label: 'Maestro Symphony',
 		modal: 'symphony',

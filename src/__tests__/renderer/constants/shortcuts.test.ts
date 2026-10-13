@@ -362,6 +362,7 @@ describe('every registered action has a handler', () => {
 	const UNBOUND_IDS = [
 		'showSnoozeList',
 		'tabCleanupSuggestions',
+		'openDelegationGraph',
 		'openMediaPlayer',
 		'mediaPlayPause',
 		'mediaNext',

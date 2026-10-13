@@ -434,6 +434,15 @@ export const DEFAULT_SHORTCUTS = {
 		keys: [],
 	},
 
+	// Registered unassigned: which chord the Delegation Graph gets is a product
+	// decision that has not been made. Listing it here lets a user bind one in
+	// Settings -> Shortcuts, and the menu and the palette then show it.
+	openDelegationGraph: {
+		id: 'openDelegationGraph',
+		label: 'Delegation Graph',
+		keys: [],
+	},
+
 	// Media player. All four ship unbound: the player is a floating widget most
 	// users reach by opening a file, so claiming four default chords for it would
 	// spend keys nobody asked for. Listing them is what puts them in

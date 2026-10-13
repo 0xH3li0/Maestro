@@ -768,6 +768,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('tabCleanup');
 				trackShortcut('tabCleanupSuggestions');
+			} else if (ctx.isShortcut(e, 'openDelegationGraph')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('delegationGraph');
+				trackShortcut('openDelegationGraph');
 			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');

@@ -79,3 +79,28 @@ describe('openUiSurface - settings deep links', () => {
 		expect(result.error).toContain('--sub-tab needs --tab');
 	});
 });
+
+describe('openUiSurface - delegation graph', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('delegationGraph');
+	});
+
+	it('opens the Delegation Graph by id and by alias, with no Encore Feature to refuse it', () => {
+		expect(openUiSurface('delegation-graph')).toEqual({ ok: true });
+		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(true);
+		// No scope: the graph opens on every agent.
+		expect(selectModalData('delegationGraph')(useModalStore.getState())).toBeUndefined();
+
+		useModalStore.getState().closeModal('delegationGraph');
+		expect(openUiSurface('delegation')).toEqual({ ok: true });
+		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(true);
+	});
+
+	it('refuses a tab, since the graph has none', () => {
+		const result = openUiSurface('delegation-graph', 'peers');
+
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('has no tabs');
+		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(false);
+	});
+});

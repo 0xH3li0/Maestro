@@ -1372,6 +1372,27 @@ describe('modalStore', () => {
 			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 		});
 
+		it('treats the Delegation Graph as a destination, and keeps it under the Edit Agent form', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('delegationGraph', { scope: { kind: 'group', groupId: 'g1' } });
+
+			// One full-window surface at a time.
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'g1' },
+			});
+
+			// The graph's Peers link opens the Edit Agent form, a dialog ABOUT the
+			// graph under it. Opening it must not close the graph.
+			store.openModal('editAgent', { session: { id: 's1' } as never, initialTab: 'peers' });
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+
+			store.closeModal('editAgent');
+			store.closeModal('delegationGraph');
+		});
+
 		it('does not list dialogs as destinations', () => {
 			for (const id of ['confirm', 'renameTab', 'cueYamlEditor', 'shortcutsHelp'] as ModalId[]) {
 				expect(DESTINATION_MODALS.has(id)).toBe(false);
@@ -1389,6 +1410,7 @@ describe('modalStore', () => {
 					'computerHistory',
 					'directorNotes',
 					'openCue',
+					'openDelegationGraph',
 					'openMemoryViewer',
 					'openSymphony',
 					'processMonitor',
