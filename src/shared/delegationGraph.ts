@@ -70,6 +70,31 @@ export interface DelegationGraphModel {
 	edges: DelegationGraphEdge[];
 }
 
+/** The counts the legend and the empty-state copy read. */
+export interface DelegationGraphStats {
+	/** Every agent on the graph, `spill` agents included. */
+	agents: number;
+	/** Directed edges. A pair that reaches each other counts as two. */
+	edges: number;
+	/** Pairs of agents with an edge in EACH direction. A pair counts once. */
+	mutual: number;
+	/**
+	 * Agents no edge touches. Always in-scope agents: a `spill` agent is on the
+	 * graph only because an edge reaches it.
+	 */
+	isolated: number;
+	/** Agents outside the requested scope, a subset of `agents`. */
+	spill: number;
+}
+
+/**
+ * The id of the edge from one agent to another. The builder and the lookups
+ * below share it, so the two cannot disagree about the spelling.
+ */
+function delegationEdgeId(sourceId: string, targetId: string): string {
+	return `${sourceId}->${targetId}`;
+}
+
 /**
  * Build the graph for a scope from the live agent list. It takes the same
  * minimal `PeerRosterInput` shape roster resolution does, so the renderer
@@ -115,7 +140,7 @@ export function buildDelegationGraph(
 		for (const peer of resolvePeerRoster(session, sessions)) {
 			if (!sourceInScope && !inScopeIds.has(peer.sessionId)) continue;
 			edges.push({
-				id: `${session.id}->${peer.sessionId}`,
+				id: delegationEdgeId(session.id, peer.sessionId),
 				sourceId: session.id,
 				targetId: peer.sessionId,
 				read: peer.read,
@@ -148,4 +173,62 @@ export function buildDelegationGraph(
 		// which are not words, and this order is the same on every machine.
 		edges: edges.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
 	};
+}
+
+/**
+ * The edge from `sourceId` to `targetId`, when there is one. Direction matters:
+ * the edge from `targetId` back to `sourceId` is a different edge.
+ */
+export function edgeBetween(
+	model: DelegationGraphModel,
+	sourceId: string,
+	targetId: string
+): DelegationGraphEdge | undefined {
+	return model.edges.find((edge) => edge.sourceId === sourceId && edge.targetId === targetId);
+}
+
+/**
+ * True when edges exist in BOTH directions between two agents, whichever bits
+ * each one carries. This is the "bidirectional" question, answered from two
+ * edges because it is stored on neither. A manager who may delegate to an
+ * employee who may only consult back is mutual.
+ */
+export function isMutual(model: DelegationGraphModel, a: string, b: string): boolean {
+	return edgeBetween(model, a, b) !== undefined && edgeBetween(model, b, a) !== undefined;
+}
+
+/**
+ * Count what is on the graph, in one pass over the edges and one over the
+ * nodes. `agents` includes the `spill` agents, so the in-scope count is
+ * `agents - spill`.
+ */
+export function delegationGraphStats(model: DelegationGraphModel): DelegationGraphStats {
+	const edgeIds = new Set<string>();
+	const connectedIds = new Set<string>();
+	for (const edge of model.edges) {
+		edgeIds.add(edge.id);
+		connectedIds.add(edge.sourceId);
+		connectedIds.add(edge.targetId);
+	}
+
+	// A mutual pair is two edges. Count it at the one whose source id sorts
+	// first, so the pair counts once.
+	let mutual = 0;
+	for (const edge of model.edges) {
+		if (
+			edge.sourceId < edge.targetId &&
+			edgeIds.has(delegationEdgeId(edge.targetId, edge.sourceId))
+		) {
+			mutual++;
+		}
+	}
+
+	let isolated = 0;
+	let spill = 0;
+	for (const node of model.nodes) {
+		if (!connectedIds.has(node.sessionId)) isolated++;
+		if (node.scope === 'spill') spill++;
+	}
+
+	return { agents: model.nodes.length, edges: model.edges.length, mutual, isolated, spill };
 }
