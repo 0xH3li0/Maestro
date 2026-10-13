@@ -618,3 +618,22 @@ docker rm maestro-cue
 ```
 
 Then start it with the same `docker run -d` command as in [Start](#start-in-a-container). With Compose, `docker compose up -d --build` does both (with the same `AGENT_CLIS`, if you set one).
+
+## Known limits
+
+What an operator can run into today. The full, current list, including what has not been verified, is kept in the [verification record](https://github.com/RunMaestro/Maestro/blob/rc/Plans/headless-cue-verification.md#known-limits-current).
+
+- **The installer does not time out without network.** `install.sh` installs the agent CLIs and its own runtime with `npm install`, which waits silently when the npm registry cannot be reached. Check from the machine first; anything but `200` means the install will hang at that step:
+
+  ```bash
+  curl -4 -sS -m 10 -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/
+  ```
+
+- **`cue trigger <name>` fires the whole trigger.** It also runs every other subscription in the same pipeline that has the same trigger settings. Give a subscription you want to fire on its own a pipeline of its own.
+- **No run history from the command line.** `maestro-cli cue activity` needs the desktop app. On a server, read the engine's log (each run logs `Run started` and `Run finished` with its `runId`); `cue engine status` and `inspect` report counts only.
+- **No log level in JSON mode.** Debug output is left out of the JSON logs and cannot be turned on there (see [Logs](#logs)).
+- **After a hard kill.** The next engine refuses to start for up to 3 minutes while the old lock goes stale (see [Start in a container](#start-in-a-container)). Its refusal message names the process id recorded in the old lock; in a container the dead engine usually had the same id as the new one, so the message reads as if the engine were blocking itself. Once it starts it logs one `Sleep detected` line for the gap, which runs nothing.
+- **GitHub token permissions.** The minimum permissions a token needs for `github.*` triggers are not documented yet.
+- **A webhook secret shared by two subscriptions.** If it is missing, the readiness gap names only one of them.
+- **GitHub triggers quiet for 30 days.** What a GitHub trigger has already seen is kept for 30 days, so after 30 days with no new items a subscription treats its next poll as its first: it records the items it finds and runs none of them.
+- **Stop over SSH for shell steps.** Stopping a Cue `action: command` step that runs on an SSH remote stops only the local `ssh` client, not the command on the remote host. Agent runs over SSH are stopped on the remote.

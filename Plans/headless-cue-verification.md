@@ -5,6 +5,68 @@ what was NOT run. Companion to the contract in
 `docs/agent-guides/CLI-HEADLESS.md`, which the teammate's Dockerfile, systemd
 unit and install script build against.
 
+## Known limits, current
+
+Updated 2026-10-13 on `feat/cue-server` at `7f2f258b8`. This is the one current
+list: the "Open items" lists further down are the record of their day and are
+superseded by it. Each open item was checked against the code on 2026-10-13:
+none of the source files behind them (`cue-engine-lock.ts`,
+`cue-readiness.ts`, `cue-fan-in-tracker.ts`, `cue-github-poller.ts`,
+`cue-bundle-validator.ts`, `cue-control.ts`, `userDataDir.ts`,
+`packaging/server/install.sh`, and `triggerSubscription` in `cue-engine.ts`)
+changed between `40767c62f` (2026-10-09) and HEAD, the rc merges included.
+Deliberate design limits (one `better-sqlite3` binary per checkout, the engine
+lock on a network filesystem, `cue engine stop`'s 5 s default, no drain from
+outside on Windows, and the rest) are in the table in
+[CLI-HEADLESS.md, Known limits](../docs/agent-guides/CLI-HEADLESS.md#known-limits)
+and are not repeated here. The operator guide's
+[Known limits](../docs/maestro-cue-server.md#known-limits) carries the
+operator-facing items below in short form.
+
+### Open: behaviour
+
+| Item                                                                                                                                                                                                                                           | Where it is, evidence                                                                                                                                                                                  | Operator-facing       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| `cue trigger <name>` also fires every subscription of the same pipeline with the same trigger config; the `cli.trigger` docs do not say so                                                                                                     | `triggerSubscription` fires every sub whose `triggerGroupKey` matches (`cue-engine.ts`); seen live 2026-10-12 (five `TurnCheck` siblings)                                                              | Yes                   |
+| `install.sh` has no timeout on its `npm install` steps: with no registry access it waits silently (over 9 minutes on 2026-10-12)                                                                                                               | `install.sh` lines 224 and 244, no timeout; seen live 2026-10-12. Check registry access first                                                                                                          | Yes                   |
+| `cue activity` needs the desktop app, so a server has no CLI view of run history (a CLI parity gap); `cue engine status` and `inspect` report counts only                                                                                      | `cueActivity` goes through `withMaestroClient` (`cue-control.ts`)                                                                                                                                      | Yes                   |
+| No `--log-level`: in JSON mode the debug lines are dropped and cannot be turned on                                                                                                                                                             | No such option on `cue engine start`; the operator guide's Logs section gives the workaround (`--log-format text`)                                                                                     | Yes (documented)      |
+| After a hard kill the next engine waits about 3 minutes for the lock, its refusal message names the pid recorded in the old lock (in the container, the new engine's own pid), and it then logs a spurious `Sleep detected` (it fires nothing) | `CUE_ENGINE_LOCK_STALE_MS = 180_000` (`cue-engine-lock.ts`); live in the container run (D6, D7: lock taken over 2 min 48 s after the kill). The wait is documented; the pid and the sleep line are not | Yes (wait documented) |
+| The GitHub token's minimum permissions are not documented                                                                                                                                                                                      | Operator guide, GitHub for Cue triggers: names where the token comes from, not what it needs                                                                                                           | Yes                   |
+| A readiness gap for a webhook secret shared by two subscriptions names only one of them                                                                                                                                                        | `webhookSecrets` is keyed by the secret name, last subscription wins (`cue-readiness.ts`)                                                                                                              | Yes                   |
+| GitHub seen rows expire after 30 days, so a subscription quiet that long re-seeds; malformed `gh` output on a first poll does the same                                                                                                         | `pruneGitHubSeen(30 days)` (`cue-github-poller.ts`)                                                                                                                                                    | Yes                   |
+| A Cue `action: command` shell run over SSH is launched inline, so Stop reaches only the local ssh client                                                                                                                                       | [Merge of `origin/rc` at `8b194665a`](#merge-of-originrc-at-8b194665a-2026-10-12); agent runs are covered (`eb090bff9`)                                                                                | Yes                   |
+| The remote Stop signal is a detached one-shot ssh; a process that exits in the same tick (a forced drain, then exit) may not send it. The desktop has the same limit at quit                                                                   | Same section                                                                                                                                                                                           | No                    |
+| A pipeline whose owner the bundle leaves out still exports; `bundle validate` reports it and import refuses it                                                                                                                                 | `7346b7c5a` covers the config rules only; documented in the operator guide's export paragraph                                                                                                          | Yes (documented)      |
+| Import refuses `command.mode: cli` nodes on the desktop too, not only on a server                                                                                                                                                              | `desktop-only-command` in the shared `cue-bundle-validator.ts`                                                                                                                                         | No (desktop)          |
+| A fan-in fires after a failed upstream run                                                                                                                                                                                                     | Existing behaviour; a `filter` on status is the way to require success                                                                                                                                 | No (pipeline design)  |
+| `maestro-cli lite *` from a terminal in a dev checkout cannot find a dev desktop's `maestro-dev` data directory; it resolves the installed `Maestro` unless `MAESTRO_USER_DATA` is set                                                         | Outside Electron `probeIsPackaged()` returns true (`userDataDir.ts`), and `resolveLiteDataDirectory()` (new from rc) goes through it. Development only                                                 | No (development)      |
+
+### Open: not verified
+
+| Item                                                               | What stands in for it                                                                                                                        |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| No committed container end-to-end test (the plan's automated test) | Manual container runs on `b42db6468` ([Container under Compose](#container-under-compose)); `server-packaging.test.ts` checks the files      |
+| The plan's 24 hour soak                                            | Replaced by agreement with two stability runs of about 4.6 hours (2026-10-09, 2026-10-12), every target passed                               |
+| No Windows host run                                                | Read-only Windows reviews and CI's `windows-latest`. CI last ran on `c64ccb428`; today's commits get their first run on push                 |
+| Codex not run live                                                 | A stub `codex` in the container runs; Claude Code and OpenCode live                                                                          |
+| No real host suspend                                               | SIGSTOP live and fake-timer tests                                                                                                            |
+| Cue SSH Stop not run against a real SSH remote                     | `cue-standalone-ssh-stop.test.ts` and the wrapper tests                                                                                      |
+| Per-turn Claude cost on a resumed turn (`681232e77`, from rc)      | Tests only. Cue runs start fresh sessions, where the old and new code agree ([2026-10-13](#upgrade-and-live-checks-on-528253b1d-2026-10-13)) |
+| New Session Message on a resumed turn is not prefixed (by design)  | Not checked live; the first-turn case was                                                                                                    |
+
+### Closed since the 2026-10-09 list
+
+| Item                                                                                   | Closed by                                                  | Verified                                 |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| `file.changed` misses a watched folder created after the engine started                | `a1a206775`                                                | Live on `c64ccb428`, 2026-10-12          |
+| A `cue.yaml` reload re-fires that workspace's heartbeats. **Desktop behaviour change** | `5f21b4e3c`                                                | Live on `c64ccb428`, 2026-10-12          |
+| `file.changed`: a folder created in a different case than the glob, Windows and macOS  | `fc1db36a3`                                                | Tests (run on Windows and macOS CI only) |
+| Stop reached only the local ssh client for most Cue SSH agent runs                     | `eb090bff9` (rc's `7b1665fa5` plus `launchViaStdinScript`) | Tests only                               |
+| A Cue prompt run did not get the agent's New Session Message                           | `35567346b` (from rc, merged in `640c30b22`)               | Live on `528253b1d`, 2026-10-13          |
+| `cue model` could not be pointed at a server's data directory                          | `6f1ce671a` (`--data-dir`)                                 | Live on `528253b1d`, 2026-10-13          |
+| The Claude parser recorded a resumed session's running cost as the turn's              | `681232e77` (from rc)                                      | Tests only (see above)                   |
+
 ## Service mode verification
 
 Dated 2026-10-06, on Linux (Docker 29.8.1), against
@@ -689,6 +751,8 @@ target passed.
 
 ### Open items
 
+Superseded by [Known limits, current](#known-limits-current).
+
 - `cue trigger <name>` also fires same-pipeline siblings with the same trigger; the `cli.trigger` docs do not say so.
 - `install.sh` has no timeout on `npm install`: with no network it waits silently (over 9 minutes on 2026-10-12). Check registry access first; see [Update, 2026-10-12](#update-2026-10-12).
 - No committed container end-to-end test (the plan's automated test); today's container runs were manual.
@@ -754,6 +818,8 @@ is the latest live run.
 | Webhook start p95 under 1 s                                                              | Pass on `3bc48cbe9` (53 ms), not remeasured                                           | Stage A, Measurements                     |
 
 ### Open items
+
+Superseded by [Known limits, current](#known-limits-current).
 
 - `bundle export` accepts a config that `bundle validate` rejects.
 - GitHub triggers (`github.pull_request`, `github.issue`, `github.label`) not
