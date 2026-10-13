@@ -123,3 +123,72 @@ describe('handleCreateSession - Run on target', () => {
 		expect(created({ runOn: null })).toBeUndefined();
 	});
 });
+
+describe('handleCreateSession - group defaults', () => {
+	it('passes a refusal to seed through the config allowlist', () => {
+		// `create-agent --no-group-defaults` sends it; without the allowlist entry
+		// the agent would be seeded from the group and the CLI would report success.
+		const config = created({ groupId: 'g-1', seedFromGroup: false });
+
+		expect(config?.seedFromGroup).toBe(false);
+	});
+
+	it('leaves seeding on when the flag is absent or is not the boolean false', () => {
+		expect(created({ groupId: 'g-1' })).toBeUndefined();
+		createSession.mockClear();
+		expect(created({ groupId: 'g-1', seedFromGroup: 'no' as unknown as boolean })).toBeUndefined();
+	});
+
+	it('reports the group the agent was seeded from, and what it left out', async () => {
+		createSession.mockResolvedValue({
+			sessionId: 'new-1',
+			seededFromGroup: 'g-1',
+			skipped: ['Run On: the source is on this machine'],
+		});
+		const ctx = makeCtx();
+
+		handleCreateSession(
+			ctx,
+			{} as WebClient,
+			{
+				name: 'Agent',
+				toolType: 'codex',
+				cwd: '/tmp',
+				groupId: 'g-1',
+				requestId: 'r-1',
+			} as unknown as WebClientMessage
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(ctx.send).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				type: 'create_session_result',
+				success: true,
+				sessionId: 'new-1',
+				seededFromGroup: 'g-1',
+				skipped: ['Run On: the source is on this machine'],
+			})
+		);
+	});
+
+	it('reports no group for a create that was not seeded', async () => {
+		const ctx = makeCtx();
+
+		handleCreateSession(
+			ctx,
+			{} as WebClient,
+			{
+				name: 'Agent',
+				toolType: 'codex',
+				cwd: '/tmp',
+			} as unknown as WebClientMessage
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(ctx.send).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ seededFromGroup: null, skipped: [] })
+		);
+	});
+});

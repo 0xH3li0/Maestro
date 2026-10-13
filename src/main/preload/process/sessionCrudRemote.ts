@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
 
 export function createSessionCrudRemoteApi() {
 	return {
@@ -91,7 +92,7 @@ export function createSessionCrudRemoteApi() {
 		 */
 		sendRemoteCreateSessionResponse: (
 			responseChannel: string,
-			result: { sessionId: string } | null
+			result: ({ sessionId: string } & Partial<GroupSeededCreateReport>) | null
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

@@ -56,6 +56,9 @@ import {
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
+import { seedRemoteCreate } from '../../services/groupSeededCreate';
+import type { GroupDefaultsCreateFields } from '../../../shared/groupAgentDefaults';
 import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
@@ -1514,6 +1517,39 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				runOn = edit.target;
 			}
 
+			// The group's defaults, when the agent is created in a group that holds
+			// some (`--no-group-defaults` turns that off). What the caller set on
+			// purpose is laid over them, field by field, so a flag always wins.
+			const explicitFields: GroupDefaultsCreateFields = {
+				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
+				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
+				...(config?.customPath && { customPath: config.customPath as string }),
+				...(config?.customArgs && { customArgs: config.customArgs as string }),
+				...(config?.customEnvVars && {
+					customEnvVars: config.customEnvVars as Record<string, string>,
+				}),
+				...(config?.customModel && { customModel: config.customModel as string }),
+				...(config?.customEffort && { customEffort: config.customEffort as string }),
+				...(config?.customContextWindow && {
+					customContextWindow: config.customContextWindow as number,
+				}),
+				...(config?.sessionSshRemoteConfig && {
+					sessionSshRemoteConfig:
+						config.sessionSshRemoteConfig as GroupDefaultsCreateFields['sessionSshRemoteConfig'],
+				}),
+				...(gatewayUrl && { gatewayUrl }),
+				...(runOn && { runOn }),
+			};
+			const seeded = await seedRemoteCreate({
+				groupId: groupId || undefined,
+				toolType: toolType as ToolType,
+				explicit: explicitFields,
+				seed: config?.seedFromGroup !== false,
+			});
+			if (seeded.skipped.length > 0) {
+				logger.warn(`[Remote] Group defaults not applied: ${seeded.skipped.join('; ')}`);
+			}
+
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
 			const initialTabId = generateId();
@@ -1536,9 +1572,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// sessions, defer the check until onSshRemote fires (see useAgentListeners).
 			// gitService methods route through createIpcMethod with a defaultValue,
 			// so they swallow IPC errors (and report to Sentry) rather than throwing.
-			const sshConfig = config?.sessionSshRemoteConfig as
-				| { enabled?: boolean; remoteId?: string | null }
-				| undefined;
+			const sshConfig = seeded.fields.sessionSshRemoteConfig;
 			const isRemoteSession = !!(sshConfig?.enabled && sshConfig.remoteId);
 			let isGitRepo = false;
 			let gitBranches: string[] | undefined;
@@ -1607,37 +1641,32 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				unifiedClosedTabHistory: [],
 				groupId: groupId || undefined,
 				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
-				// Apply optional config fields from CLI/web
-				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
-				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
-				...(config?.customPath && { customPath: config.customPath as string }),
-				...(config?.customArgs && { customArgs: config.customArgs as string }),
-				...(config?.customEnvVars && {
-					customEnvVars: config.customEnvVars as Record<string, string>,
+				// The seed under the caller's explicit fields (see `seedRemoteCreate`).
+				...(seeded.fields as Partial<Session>),
+				// Defaults the create has no field for. The token proxy is applied
+				// below, through the writers that work out its address.
+				...(seeded.extras.customEnvVarsDisabled && {
+					customEnvVarsDisabled: seeded.extras.customEnvVarsDisabled,
 				}),
-				...(config?.customModel && { customModel: config.customModel as string }),
-				...(config?.customEffort && { customEffort: config.customEffort as string }),
-				...(config?.customContextWindow && {
-					customContextWindow: config.customContextWindow as number,
-				}),
+				...(seeded.extras.tierTargets && { tierTargets: seeded.extras.tierTargets }),
+				...(seeded.extras.systemOneOptOut && { systemOneOptOut: true }),
 				...(config?.contextWindowSource === 'user-edited' && {
 					contextWindowSource: 'user-edited' as const,
 				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
-				...(config?.sessionSshRemoteConfig && {
-					sessionSshRemoteConfig:
-						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
-				}),
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
-				...(gatewayUrl && { gatewayUrl }),
-				...(runOn && { runOn }),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
+			// The agent is in the store now, which is where the proxy writers look
+			// it up. Not awaited: a refusal is reported by its own toast.
+			if (seeded.extras.tokenProxyMode) {
+				void applySeededTokenProxy(newId, seeded.extras);
+			}
 			// A background create leaves the Left Bar selection where it is. The
 			// agent still exists, is listed, and is addressable by the id handed
 			// back - it just does not take the window from whoever is working.
@@ -1668,6 +1697,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, {
 				sessionId: newId,
+				seededFromGroup: seeded.seededFromGroup,
+				skipped: seeded.skipped,
 			});
 		} catch (error) {
 			logger.error('[Remote] Failed to create session:', undefined, error);

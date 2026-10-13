@@ -47,6 +47,7 @@ import type {
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import type { GroupSeededCreateReport } from '../../../../shared/groupAgentDefaults';
 import type { OpenUiSurfaceRequest } from '../../../../shared/uiSurfaces';
 import type { CreateGistResult } from '../../../../shared/gitUtils';
 import type { CueGateSetting, CueGateWriteResult } from '../../../../shared/cue/gate';
@@ -356,7 +357,7 @@ export interface MessageHandlerCallbacks {
 		groupId?: string,
 		config?: CreateSessionConfig,
 		background?: boolean
-	) => Promise<{ sessionId: string } | null>;
+	) => Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null>;
 	createWorktreeSession: (
 		parentSessionId: string,
 		config: {

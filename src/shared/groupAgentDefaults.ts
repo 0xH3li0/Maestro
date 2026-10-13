@@ -768,3 +768,82 @@ export function groupDefaultsCreateExtras(
 
 	return { extras, skipped };
 }
+
+/**
+ * The defaults that become fields of a new agent's own record at create: every
+ * key the create form draws a control for. The rest of the profile is not here:
+ * `projectRoot` and `toolType` pick WHERE and WHICH (the caller already holds
+ * both), and the five keys of {@link GroupDefaultsCreateExtras} are judged
+ * against the finished agent by `groupDefaultsCreateExtras()`.
+ */
+export type GroupDefaultsCreateFields = Omit<
+	GroupAgentDefaults,
+	'projectRoot' | 'toolType' | keyof GroupDefaultsCreateExtras
+>;
+
+/**
+ * What a create that seeded from a group reports back to a caller that cannot
+ * see the form (`maestro-cli create-agent`): the group it seeded from, and the
+ * defaults it left out, each with its reason.
+ */
+export interface GroupSeededCreateReport {
+	/** The group whose defaults seeded the agent, or `null` when none did. */
+	seededFromGroup: string | null;
+	/** Defaults the new agent could not take, as `Label: reason`. */
+	skipped: string[];
+}
+
+const NON_FIELD_KEYS: ReadonlySet<GroupDefaultKey> = new Set<GroupDefaultKey>([
+	'projectRoot',
+	'toolType',
+	'tierTargets',
+	'backgroundRequests',
+	'systemOneOptOut',
+	'tokenProxyMode',
+	'customEnvVarsDisabled',
+]);
+
+/**
+ * The fields a new agent on `toolType` starts with when it is created in a
+ * group, with whatever the caller set explicitly laid over them. The rules are
+ * the create form's own, so a scripted create and a click store the same agent:
+ *
+ *   - A provider-bound default (path, arguments, model, effort, Run on, the
+ *     gateway, ...) is taken only when the seed names `toolType`. A default
+ *     written for one provider's binary is never handed to another.
+ *   - An explicit value beats the seed's, always. An absent one (`undefined`)
+ *     is no opinion and leaves the seed's.
+ *   - Environment variables merge key by key, the explicit side winning, which
+ *     is how the form lays the profile's variables over a provider's own.
+ *   - The gateway and a Run on target exclude each other (a target takes the
+ *     gateway's place at launch), so an explicit one drops the seed's other.
+ *
+ * Lists and records are cloned: the new agent's record must not alias the
+ * group's.
+ */
+export function groupDefaultsCreateFields(
+	seed: GroupAgentDefaults,
+	toolType: ToolType,
+	explicit: GroupDefaultsCreateFields = {}
+): GroupDefaultsCreateFields {
+	const fields: Record<string, unknown> = {};
+	const sameProvider = seed.toolType === toolType;
+	for (const key of GROUP_DEFAULT_KEYS) {
+		if (NON_FIELD_KEYS.has(key)) continue;
+		if (GROUP_DEFAULT_FIELDS[key].providerBound && !sameProvider) continue;
+		const value = seed[key];
+		if (value !== undefined) fields[key] = structuredClone(value);
+	}
+
+	for (const [key, value] of Object.entries(explicit)) {
+		if (value !== undefined) fields[key] = value;
+	}
+
+	if (seed.customEnvVars || explicit.customEnvVars) {
+		fields.customEnvVars = { ...seed.customEnvVars, ...explicit.customEnvVars };
+	}
+	if (explicit.runOn !== undefined && explicit.gatewayUrl === undefined) delete fields.gatewayUrl;
+	if (explicit.gatewayUrl !== undefined && explicit.runOn === undefined) delete fields.runOn;
+
+	return fields as GroupDefaultsCreateFields;
+}

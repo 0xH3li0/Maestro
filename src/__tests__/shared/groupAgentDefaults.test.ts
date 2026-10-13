@@ -8,6 +8,7 @@ import {
 	diffGroupDefaults,
 	directGroupMembers,
 	groupDefaultsCreateExtras,
+	groupDefaultsCreateFields,
 	groupDefaultsPublishProvider,
 	PUBLISHABLE_KEYS,
 	publishableChangesFor,
@@ -857,5 +858,130 @@ describe('groupDefaultsCreateExtras', () => {
 			{ toolType: 'claude-code', customEnvVars: { DEBUG: '2' } }
 		);
 		expect(none.extras).not.toHaveProperty('customEnvVarsDisabled');
+	});
+});
+
+describe('groupDefaultsCreateFields', () => {
+	const defaults: GroupAgentDefaults = {
+		projectRoot: '/work/api',
+		toolType: 'claude-code',
+		customModel: 'opus',
+		customEffort: 'high',
+		customPath: '/opt/claude',
+		nudgeMessage: 'Be brief.',
+		retryOnTokenExhaustion: false,
+		customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'group' },
+		customEnvVarsDisabled: { DEBUG: '1' },
+		tierTargets: { low: { type: 'provider', model: 'haiku' } as never },
+		systemOneOptOut: true,
+		tokenProxyMode: 'compress',
+		peerAgents: [{ agentId: 'peer-1', canConsult: true, note: 'Owns the schema' } as never],
+		groupPeerAccess: { read: true, write: false } as never,
+		gatewayUrl: 'http://127.0.0.1:8787',
+		sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+	};
+
+	it('takes every create field, and none of the keys a create decides elsewhere', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'claude-code');
+
+		expect(fields).toMatchObject({
+			customModel: 'opus',
+			customEffort: 'high',
+			customPath: '/opt/claude',
+			nudgeMessage: 'Be brief.',
+			retryOnTokenExhaustion: false,
+			customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'group' },
+			peerAgents: [{ agentId: 'peer-1', note: 'Owns the schema' }],
+			groupPeerAccess: { read: true, write: false },
+			gatewayUrl: 'http://127.0.0.1:8787',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		// Where and which are the caller's; the extras are judged by their own function.
+		for (const key of [
+			'projectRoot',
+			'toolType',
+			'tierTargets',
+			'systemOneOptOut',
+			'tokenProxyMode',
+			'customEnvVarsDisabled',
+			'backgroundRequests',
+		]) {
+			expect(fields).not.toHaveProperty(key);
+		}
+	});
+
+	it('hands a provider-bound default only to the provider the seed names', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'codex');
+
+		for (const key of ['customModel', 'customEffort', 'customPath', 'gatewayUrl']) {
+			expect(fields).not.toHaveProperty(key);
+		}
+		// What is not tied to a provider still applies.
+		expect(fields.nudgeMessage).toBe('Be brief.');
+		expect(fields.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'group' });
+		expect(fields.peerAgents).toHaveLength(1);
+		expect(fields.sessionSshRemoteConfig?.remoteId).toBe('remote-1');
+	});
+
+	it('lets an explicit value beat the seed, and an absent one leave it', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'claude-code', {
+			customModel: 'sonnet',
+			nudgeMessage: undefined,
+		});
+
+		expect(fields.customModel).toBe('sonnet');
+		expect(fields.customEffort).toBe('high');
+		expect(fields.nudgeMessage).toBe('Be brief.');
+	});
+
+	it('merges environment variables key by key, the explicit side winning', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'claude-code', {
+			customEnvVars: { SHARED: 'flag', EXTRA: '1' },
+		});
+
+		expect(fields.customEnvVars).toEqual({
+			CLAUDE_CONFIG_DIR: '~/.work',
+			SHARED: 'flag',
+			EXTRA: '1',
+		});
+	});
+
+	it('replaces the SSH block whole when one is given', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'claude-code', {
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-2' },
+		});
+
+		expect(fields.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'remote-2' });
+	});
+
+	it('drops the seed gateway beside an explicit Run on target, and the seed target beside an explicit gateway', () => {
+		const target = {
+			type: 'source',
+			endpointId: 'ep',
+			model: 'qwen',
+			contextTokens: 65536,
+		} as never;
+		const withTarget = groupDefaultsCreateFields(defaults, 'claude-code', { runOn: target });
+		expect(withTarget.runOn).toEqual(target);
+		expect(withTarget).not.toHaveProperty('gatewayUrl');
+
+		const seededTarget = { ...defaults, runOn: target };
+		const withGateway = groupDefaultsCreateFields(seededTarget, 'claude-code', {
+			gatewayUrl: 'http://127.0.0.1:9999',
+		});
+		expect(withGateway.gatewayUrl).toBe('http://127.0.0.1:9999');
+		expect(withGateway).not.toHaveProperty('runOn');
+	});
+
+	it('copies lists and records, so the agent never aliases the group', () => {
+		const fields = groupDefaultsCreateFields(defaults, 'claude-code');
+
+		expect(fields.peerAgents).toEqual(defaults.peerAgents);
+		expect(fields.peerAgents).not.toBe(defaults.peerAgents);
+		expect(fields.customEnvVars).not.toBe(defaults.customEnvVars);
+	});
+
+	it('returns nothing for an empty seed', () => {
+		expect(groupDefaultsCreateFields({}, 'claude-code')).toEqual({});
 	});
 });

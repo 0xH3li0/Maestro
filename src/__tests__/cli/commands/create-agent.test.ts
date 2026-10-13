@@ -24,6 +24,9 @@ vi.mock('../../../cli/services/storage', () => ({
 	]),
 	// The harness tier defaults `--model auto` is judged against.
 	readHarnessTierDefaults: vi.fn(() => ({})),
+	// `--group` is resolved and its defaults read from the stored group list.
+	readGroups: vi.fn(() => []),
+	resolveGroupId: vi.fn((id: string) => id),
 }));
 
 // Mock formatter
@@ -34,7 +37,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 
 import { createAgent } from '../../../cli/commands/create-agent';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { readHarnessTierDefaults } from '../../../cli/services/storage';
+import { readGroups, readHarnessTierDefaults, resolveGroupId } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 describe('create-agent command', () => {
@@ -555,6 +558,245 @@ describe('create-agent command', () => {
 			const parsed = JSON.parse(output);
 			expect(parsed.success).toBe(false);
 			expect(parsed.error).toBe('Connection refused');
+		});
+	});
+
+	describe('group defaults', () => {
+		const GROUP = {
+			id: 'group-1',
+			name: 'Work',
+			emoji: '💼',
+			collapsed: false,
+			defaults: {
+				toolType: 'codex',
+				projectRoot: '/work/api',
+				customModel: 'gpt-5',
+				sessionSshRemoteConfig: { enabled: false, remoteId: null },
+			},
+		};
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(resolveGroupId).mockImplementation((id: string) => id);
+			vi.mocked(readGroups).mockReturnValue([GROUP] as never);
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'id-1',
+							seededFromGroup: 'group-1',
+							skipped: ['Run On: the source is on this machine'],
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the resolved group id, so the app can seed from it', async () => {
+			vi.mocked(resolveGroupId).mockReturnValue('group-1');
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-' });
+
+			expect(resolveGroupId).toHaveBeenCalledWith('group-');
+			expect(sentPayload.groupId).toBe('group-1');
+			expect(sentPayload).not.toHaveProperty('seedFromGroup');
+		});
+
+		it('reports the group it seeded from in JSON, and what it left out', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-1', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				seededFromGroup: 'group-1',
+				seedSkipped: ['Run On: the source is on this machine'],
+			});
+		});
+
+		it('reports no group when the agent was not seeded', async () => {
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockResolvedValue({
+						type: 'create_session_result',
+						success: true,
+						sessionId: 'id-2',
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', json: true });
+
+			const printed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(printed.seededFromGroup).toBeNull();
+			expect(printed).not.toHaveProperty('seedSkipped');
+		});
+
+		it('says so in the human output, and names what was not applied', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-1' });
+
+			const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+			expect(lines).toContainEqual(expect.stringContaining('Group defaults: from "Work"'));
+			expect(lines).toContainEqual(
+				expect.stringContaining('Not applied: Run On: the source is on this machine')
+			);
+		});
+
+		it('sends seedFromGroup: false for --no-group-defaults', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				groupDefaults: false,
+			});
+
+			expect(sentPayload.groupId).toBe('group-1');
+			expect(sentPayload.seedFromGroup).toBe(false);
+		});
+
+		it('does not send a refusal to seed when there is no group', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', groupDefaults: false });
+
+			expect(sentPayload).not.toHaveProperty('seedFromGroup');
+		});
+
+		it("takes the group's provider when --type was not typed", async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: false,
+				group: 'group-1',
+			});
+
+			expect(sentPayload.toolType).toBe('codex');
+		});
+
+		it("keeps the provider that was typed, over the group's", async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: true,
+				group: 'group-1',
+			});
+
+			expect(sentPayload.toolType).toBe('claude-code');
+		});
+
+		it('keeps the default provider when --no-group-defaults is given', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: false,
+				group: 'group-1',
+				groupDefaults: false,
+			});
+
+			expect(sentPayload.toolType).toBe('claude-code');
+		});
+
+		it("uses the group's working directory when --cwd is not given", async () => {
+			await createAgent('Agent', { type: 'codex', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('/work/api');
+		});
+
+		it('prefers --cwd to the group working directory', async () => {
+			await createAgent('Agent', { cwd: '/tmp/mine', type: 'codex', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('/tmp/mine');
+		});
+
+		it('passes a remote working directory as stored, not made absolute', async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{
+					...GROUP,
+					defaults: {
+						projectRoot: 'work/api',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				},
+			] as never);
+
+			await createAgent('Agent', { type: 'claude-code', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('work/api');
+		});
+
+		it('refuses a create with no --cwd and no group working directory', async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{ ...GROUP, defaults: { customModel: 'x' } },
+			] as never);
+
+			await createAgent('Agent', { type: 'codex', group: 'group-1' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No working directory'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a create with no --cwd and no group at all', async () => {
+			await createAgent('Agent', { type: 'codex' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--cwd'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a group that does not exist', async () => {
+			vi.mocked(resolveGroupId).mockImplementation(() => {
+				throw new Error('Group not found: nope');
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'nope' });
+
+			expect(formatError).toHaveBeenCalledWith('Group not found: nope');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it("lays --ssh-cwd and --sync-history-to-remote over the group's remote", async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{
+					...GROUP,
+					defaults: { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+				},
+			] as never);
+
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				sshCwd: '/srv/app',
+				syncHistoryToRemote: 'true',
+			});
+
+			expect(sentPayload.sessionSshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/srv/app',
+				syncHistory: true,
+			});
+		});
+
+		it('still requires --ssh-remote for --sync-history-to-remote when the group has none', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				syncHistoryToRemote: 'true',
+			});
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--sync-history-to-remote requires --ssh-remote')
+			);
+		});
+
+		it('does not read the stored groups for a create with no --group', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex' });
+
+			expect(readGroups).not.toHaveBeenCalled();
+			expect(resolveGroupId).not.toHaveBeenCalled();
 		});
 	});
 });

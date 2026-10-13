@@ -2,6 +2,12 @@
 //
 // Selects the new agent, as it always has. Pass --background to create it
 // without moving the Left Bar selection; the agent is still created and listed.
+//
+// An agent created in a group (`--group`) starts from the group's Group
+// Settings defaults, the way the New Agent dialog does. Every flag typed here
+// is an explicit choice and beats the inherited value; `--no-group-defaults`
+// makes a bare agent in the group. The merge itself runs in the app, where the
+// dialog's own rules live (`services/groupSeededCreate.ts`).
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
@@ -16,17 +22,31 @@ import {
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
 import { readRunOnFlags } from '../services/run-on';
-import { readHarnessTierDefaults } from '../services/storage';
+import { readGroups, readHarnessTierDefaults, resolveGroupId } from '../services/storage';
 import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { autoModelProblem } from '../../shared/autoTurn';
-import type { ToolType } from '../../shared/types';
+import {
+	isWorktreeGroup,
+	type Group,
+	type GroupAgentDefaults,
+	type ToolType,
+} from '../../shared/types';
+import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
 interface CreateAgentOptions {
-	cwd: string;
+	/** Optional only when `--group` names a group whose defaults hold a working directory. */
+	cwd?: string;
 	type: string;
+	/**
+	 * `false` when `--type` was left at its default, so a group's provider may
+	 * stand in for it. Absent means the type was typed.
+	 */
+	typeExplicit?: boolean;
 	group?: string;
+	/** `--no-group-defaults` sets this to `false`. */
+	groupDefaults?: boolean;
 	nudge?: string;
 	newSessionMessage?: string;
 	customPath?: string;
@@ -48,18 +68,81 @@ interface CreateAgentOptions {
 	json?: boolean;
 }
 
+function fail(msg: string, json?: boolean): void {
+	if (json) {
+		console.log(JSON.stringify({ success: false, error: msg }));
+	} else {
+		console.error(formatError(msg));
+	}
+	process.exit(1);
+}
+
+/**
+ * The group `--group` names, and the defaults a new agent in it starts from
+ * (none for `--no-group-defaults`, a worktree group, or a group with no
+ * defaults). A group that does not exist is refused: the app would store the
+ * agent against an id nothing shows.
+ */
+function resolveCreateGroup(options: CreateAgentOptions): {
+	groupId?: string;
+	group?: Group;
+	defaults?: GroupAgentDefaults;
+} {
+	if (!options.group) return {};
+	let groupId: string;
+	let group: Group | undefined;
+	try {
+		groupId = resolveGroupId(options.group);
+		group = readGroups().find((candidate) => candidate.id === groupId);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+		return {};
+	}
+	const seeded =
+		options.groupDefaults !== false &&
+		group !== undefined &&
+		!isWorktreeGroup(group) &&
+		group.defaults !== undefined &&
+		Object.keys(group.defaults).length > 0;
+	return { groupId, group, defaults: seeded ? group?.defaults : undefined };
+}
+
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
-	if (!VALID_TYPES.has(options.type)) {
-		const msg = `Invalid agent type "${options.type}". Must be one of: ${[...VALID_TYPES].join(', ')}`;
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: msg }));
-		} else {
-			console.error(formatError(msg));
-		}
-		process.exit(1);
+	const { groupId, group, defaults: groupDefaults } = resolveCreateGroup(options);
+
+	// The provider typed on the command line beats the group's. Left at its
+	// default, the group's provider stands in for it, as it does in the dialog.
+	const type =
+		options.typeExplicit === false && groupDefaults?.toolType
+			? groupDefaults.toolType
+			: options.type;
+	if (!VALID_TYPES.has(type)) {
+		fail(
+			`Invalid agent type "${type}". Must be one of: ${[...VALID_TYPES].join(', ')}`,
+			options.json
+		);
+		return;
 	}
 
-	const cwd = path.resolve(options.cwd);
+	// `--cwd` is required unless the group names a working directory. A remote
+	// directory (the group runs on an SSH remote) means nothing on this machine,
+	// so it is passed as stored and never made absolute.
+	const seededRemote =
+		!options.sshRemote && groupDefaults?.sessionSshRemoteConfig?.enabled === true;
+	let cwd: string;
+	if (options.cwd !== undefined) {
+		cwd = path.resolve(options.cwd);
+	} else if (groupDefaults?.projectRoot) {
+		cwd = seededRemote ? groupDefaults.projectRoot : path.resolve(groupDefaults.projectRoot);
+	} else {
+		fail(
+			group
+				? `No working directory: pass --cwd, or set one in the defaults of group "${group.name}" (update-group-settings --cwd).`
+				: "required option '-d, --cwd <path>' not specified",
+			options.json
+		);
+		return;
+	}
 
 	// Parse --env KEY=VALUE pairs into a Record
 	let customEnvVars: Record<string, string> | undefined;
@@ -115,20 +198,22 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	// Build SSH config if provided. `--sync-history-to-remote` only takes effect
 	// alongside an SSH remote (it syncs history to the remote host), so it is
 	// folded into the config block rather than standing on its own.
-	let sessionSshRemoteConfig:
-		| {
-				enabled: boolean;
-				remoteId: string | null;
-				workingDirOverride?: string;
-				syncHistory?: boolean;
-		  }
-		| undefined;
+	let sessionSshRemoteConfig: GroupAgentDefaults['sessionSshRemoteConfig'] | undefined;
+	const groupSsh = groupDefaults?.sessionSshRemoteConfig;
 	if (options.sshRemote) {
 		sessionSshRemoteConfig = {
 			enabled: true,
 			remoteId: options.sshRemote,
 			workingDirOverride: options.sshCwd,
 			syncHistory,
+		};
+	} else if (groupSsh?.enabled && (options.sshCwd !== undefined || syncHistory !== undefined)) {
+		// The group runs its agents on a remote. These two flags describe that
+		// remote, so they are laid over the group's block rather than refused.
+		sessionSshRemoteConfig = {
+			...groupSsh,
+			...(options.sshCwd !== undefined ? { workingDirOverride: options.sshCwd } : {}),
+			...(syncHistory !== undefined ? { syncHistory } : {}),
 		};
 	} else if (syncHistory !== undefined) {
 		const msg = '--sync-history-to-remote requires --ssh-remote';
@@ -145,7 +230,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	// `update-agent` use, so a create never stores what the launch would refuse.
 	let gatewayUrl: string | undefined;
 	if (options.gatewayUrl !== undefined) {
-		const edit = parseGatewayUrlEdit(options.type, options.gatewayUrl);
+		const edit = parseGatewayUrlEdit(type, options.gatewayUrl);
 		if (!edit.ok) {
 			const msg = `--gateway-url: ${edit.error}`;
 			if (options.json) {
@@ -163,7 +248,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	// store, and checked against the provider and the saved sources, so a create
 	// never stores a target the agent's first launch would refuse.
 	let runOn: RunOnSourceTarget | undefined;
-	const runOnEdit = readRunOnFlags(options, { toolType: options.type });
+	const runOnEdit = readRunOnFlags(options, { toolType: type });
 	if (runOnEdit.kind === 'refused') {
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: runOnEdit.error }));
@@ -193,7 +278,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	let customModel = options.model;
 	if (isAutoModel(options.model)) {
 		const problem = autoModelProblem(
-			{ toolType: options.type as ToolType, runOn },
+			{ toolType: type as ToolType, runOn },
 			readHarnessTierDefaults()
 		);
 		if (problem) {
@@ -213,11 +298,13 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	const payload: Record<string, unknown> = {
 		type: 'create_session',
 		name,
-		toolType: options.type,
+		toolType: type,
 		cwd,
-		groupId: options.group,
+		groupId,
 		background,
 	};
+	// Only a refusal to seed travels: seeding from the group is the default.
+	if (groupId && options.groupDefaults === false) payload.seedFromGroup = false;
 
 	// Add optional config fields
 	if (options.nudge) payload.nudgeMessage = options.nudge;
@@ -244,12 +331,14 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 
 	try {
 		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				type: string;
-				success: boolean;
-				sessionId?: string;
-				error?: string;
-			}>(payload, 'create_session_result');
+			return client.sendCommand<
+				{
+					type: string;
+					success: boolean;
+					sessionId?: string;
+					error?: string;
+				} & Partial<GroupSeededCreateReport>
+			>(payload, 'create_session_result');
 		});
 
 		if (result.success) {
@@ -259,19 +348,27 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 						success: true,
 						agentId: result.sessionId,
 						name,
-						type: options.type,
+						type,
 						background,
+						seededFromGroup: result.seededFromGroup ?? null,
+						...(result.skipped?.length ? { seedSkipped: result.skipped } : {}),
 						...(runOn ? { runOn } : {}),
 					})
 				);
 			} else {
 				console.log(
 					formatSuccess(
-						`Created agent "${name}" (${options.type})${background ? ' in the background' : ''}`
+						`Created agent "${name}" (${type})${background ? ' in the background' : ''}`
 					)
 				);
 				console.log(`  ID: ${result.sessionId}`);
 				console.log(`  CWD: ${cwd}`);
+				if (result.seededFromGroup) {
+					console.log(
+						`  Group defaults: from "${group?.name ?? result.seededFromGroup}" (flags you passed take precedence)`
+					);
+					for (const skipped of result.skipped ?? []) console.log(`  Not applied: ${skipped}`);
+				}
 				if (runOn) {
 					console.log(
 						`  Run on: ${formatRunOnSpec(runOn)} (context ${runOn.contextTokens} tokens)`

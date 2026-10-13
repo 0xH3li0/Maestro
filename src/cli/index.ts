@@ -1461,14 +1461,26 @@ program
 // Create agent command - create a new agent in the Maestro desktop app
 program
 	.command('create-agent <name>')
-	.description('Create a new agent in the Maestro desktop app')
-	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
+	.description(
+		"Create a new agent in the Maestro desktop app. With --group, the agent starts from that group's defaults (see group-settings); flags you pass take precedence"
+	)
+	.option(
+		'-d, --cwd <path>',
+		'Working directory for the agent (required, unless --group names a group whose defaults set one)'
+	)
 	.option(
 		'-t, --type <type>',
 		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
 		'claude-code'
 	)
-	.option('-g, --group <id>', 'Group ID to assign the agent to')
+	.option(
+		'-g, --group <id>',
+		"Group to assign the agent to. The agent starts from the group's defaults (provider, model, environment variables, peers, ...), and every flag below overrides one"
+	)
+	.option(
+		'--no-group-defaults',
+		"Create a bare agent in --group, ignoring the group's defaults (no effect without --group)"
+	)
 	.option('--nudge <message>', 'Nudge message appended to every user message')
 	.option('--new-session-message <message>', 'Message prefixed to first message in new sessions')
 	.option('--custom-path <path>', 'Custom binary path for the agent')
@@ -1511,7 +1523,13 @@ program
 	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
 	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
-	.action(createAgent);
+	.action((name, options, command) =>
+		createAgent(name, {
+			...options,
+			// `--type` carries a default, so only its source says whether it was typed.
+			typeExplicit: command.getOptionValueSource('type') !== 'default',
+		})
+	);
 
 // Create group command - create a new group in the Maestro desktop app
 program

@@ -234,6 +234,7 @@ import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { LocalModelsApi } from '../main/preload/localModels';
 import type { QuickChatApi } from '../main/preload/quickChat';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { GroupSeededCreateReport } from '../shared/groupAgentDefaults';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
@@ -1015,7 +1016,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteCreateSessionResponse: (
 			responseChannel: string,
-			result: { sessionId: string } | null
+			result: ({ sessionId: string } & Partial<GroupSeededCreateReport>) | null
 		) => void;
 		onRemoteDeleteSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteRenameSession: (

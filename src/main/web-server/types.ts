@@ -4,6 +4,7 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { OpenUiSurfaceRequest } from '../../shared/uiSurfaces';
@@ -1248,6 +1249,12 @@ export interface CreateSessionConfig {
 	 * checks it again with `parseRunOnEdit` before it is stored.
 	 */
 	runOn?: unknown;
+	/**
+	 * `false` creates the agent bare, without the group's defaults
+	 * (`create-agent --no-group-defaults`). Absent or `true` seeds from the
+	 * group named by `groupId`, when it holds defaults.
+	 */
+	seedFromGroup?: boolean;
 }
 
 export type CreateSessionCallback = (
@@ -1257,7 +1264,7 @@ export type CreateSessionCallback = (
 	groupId?: string,
 	config?: CreateSessionConfig,
 	background?: boolean
-) => Promise<{ sessionId: string } | null>;
+) => Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null>;
 /**
  * Create a new agent in a git worktree branched off an existing parent agent,
  * without an Auto Run playbook. The desktop creates the worktree on disk, builds

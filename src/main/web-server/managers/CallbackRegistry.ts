@@ -7,6 +7,7 @@
 
 import { logger } from '../../utils/logger';
 import type { CreateGistResult } from '../../../shared/gitUtils';
+import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -864,7 +865,7 @@ export class CallbackRegistry {
 		groupId?: string,
 		config?: CreateSessionConfig,
 		background?: boolean
-	): Promise<{ sessionId: string } | null> {
+	): Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null> {
 		if (!this.callbacks.createSession) return null;
 		return this.callbacks.createSession(name, toolType, cwd, groupId, config, background);
 	}

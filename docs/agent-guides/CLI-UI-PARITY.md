@@ -263,6 +263,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Read a group's defaults and pill label (Group Settings)                                     | `group-settings <group> [--json]` (the defaults, the label, and whether it is custom or automatic)                                                 |
 | Set a group's defaults and pill label (Group Settings Save)                                 | `update-group-settings <group>` with `update-agent`'s flags, `--short-label`, `--clear`; read back through the same `group-settings`               |
 | Publish a Group Settings save to the agents already in the group ("Update N agents")        | `update-group-settings ... --publish [--yes]` (same `diffGroupDefaults()` and `applyGroupDefaultsToSession()`; the app raises the Undo toast)      |
+| Create an agent from its group's defaults (New Agent form opened in a group)                | `create-agent --group <group>` (a flag beats a default; `--no-group-defaults` for a bare agent; `--json` reports `seededFromGroup`)                |
 | Move an agent or a whole group to another window                                            | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                              |
 | Create a worktree agent                                                                     | `create-worktree`                                                                                                                                  |
 | New / close / rename a tab                                                                  | `tab new`, `tab close`, `tab rename`                                                                                                               |
@@ -477,17 +478,6 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
-17. **Group Settings, seeding half.** The dialog is covered: `group-settings`
-    reads the defaults and the pill label, and `update-group-settings` writes
-    them and, with `--publish`, pushes the call's change into the agents already
-    in the group, through the rules in `src/shared/groupAgentDefaults.ts`
-    (`diffGroupDefaults()`, `applyGroupDefaultsToSession()`). What is still
-    open is seeding: the New Agent form opens pre-filled from the defaults of
-    the group the agent is created in, and `create-agent --group` does not read
-    them yet. It must seed through `resolveGroupDefaultsSeed()` and
-    `groupDefaultsCreateExtras()` in the same file, with an explicit flag
-    always winning over a default. Planned in the Agent Delegation work
-    (MODELS-17).
 
 ### Audit backlog (2026-09-27)
 

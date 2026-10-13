@@ -9,6 +9,7 @@ import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -60,14 +61,14 @@ function createdSession(setSessions: ReturnType<typeof vi.fn>): Session {
 	return updater([])[0];
 }
 
-function dispatchCreate(toolType: string, config?: Record<string, unknown>) {
+function dispatchCreate(toolType: string, config?: Record<string, unknown>, groupId?: string) {
 	window.dispatchEvent(
 		new CustomEvent('maestro:remoteCreateSession', {
 			detail: {
 				name: 'CLI Agent',
 				toolType,
 				cwd: '/tmp/project',
-				groupId: undefined,
+				groupId,
 				config,
 				responseChannel: 'ch',
 				background: true,
@@ -99,7 +100,11 @@ describe('maestro:remoteCreateSession gateway', () => {
 		const session = createdSession(setSessions);
 		expect(session.gatewayUrl).toBe('http://127.0.0.1:8787');
 		expect(session.tokenProxyMode).toBeUndefined();
-		expect(respond).toHaveBeenCalledWith('ch', { sessionId: session.id });
+		expect(respond).toHaveBeenCalledWith('ch', {
+			sessionId: session.id,
+			seededFromGroup: null,
+			skipped: [],
+		});
 	});
 
 	it('creates the agent with no gateway when none was sent', async () => {
@@ -167,7 +172,11 @@ describe('maestro:remoteCreateSession Run on', () => {
 		expect(session.runOn).toEqual(QWEN);
 		// The launch reads the target from main's store.
 		expect(setMany).toHaveBeenCalledWith([expect.objectContaining({ runOn: QWEN })], []);
-		expect(respond).toHaveBeenCalledWith('ch', { sessionId: session.id });
+		expect(respond).toHaveBeenCalledWith('ch', {
+			sessionId: session.id,
+			seededFromGroup: null,
+			skipped: [],
+		});
 	});
 
 	it.each([[undefined], [{ type: 'provider' }]])(
@@ -210,5 +219,111 @@ describe('maestro:remoteCreateSession Run on', () => {
 		expect(setSessions).not.toHaveBeenCalled();
 		expect(setMany).not.toHaveBeenCalled();
 		expect(respond).toHaveBeenCalledWith('ch', null);
+	});
+});
+
+describe('maestro:remoteCreateSession group defaults', () => {
+	const GROUP = {
+		id: 'group-1',
+		name: 'Work',
+		emoji: '💼',
+		collapsed: false,
+		defaults: {
+			toolType: 'claude-code',
+			customModel: 'opus',
+			nudgeMessage: 'Be brief.',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'group' },
+			customEnvVarsDisabled: { DEBUG: '1' },
+			systemOneOptOut: true,
+			peerAgents: [{ agentId: 'peer-1', canConsult: true }],
+		},
+	};
+
+	beforeEach(() => {
+		vi.mocked(useSessionStore.getState).mockReturnValue({ groups: [GROUP], sessions: [] } as never);
+	});
+	afterEach(() => {
+		vi.mocked(useSessionStore.getState).mockReturnValue({} as never);
+	});
+
+	it('starts the agent from the group, and reports the group', async () => {
+		const { setSessions } = setup();
+
+		dispatchCreate('claude-code', undefined, 'group-1');
+		await flush();
+
+		const session = createdSession(setSessions);
+		expect(session).toMatchObject({
+			groupId: 'group-1',
+			customModel: 'opus',
+			nudgeMessage: 'Be brief.',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'group' },
+			customEnvVarsDisabled: { DEBUG: '1' },
+			systemOneOptOut: true,
+			peerAgents: [{ agentId: 'peer-1', canConsult: true }],
+		});
+		expect(respond).toHaveBeenCalledWith('ch', {
+			sessionId: session.id,
+			seededFromGroup: 'group-1',
+			skipped: [],
+		});
+	});
+
+	it('lets a flag beat the group, key by key for environment variables', async () => {
+		const { setSessions } = setup();
+
+		dispatchCreate(
+			'claude-code',
+			{ customModel: 'sonnet', customEnvVars: { SHARED: 'flag' } },
+			'group-1'
+		);
+		await flush();
+
+		const session = createdSession(setSessions);
+		expect(session.customModel).toBe('sonnet');
+		expect(session.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '~/.work', SHARED: 'flag' });
+		expect(session.nudgeMessage).toBe('Be brief.');
+	});
+
+	it('does not hand a provider-bound default to another provider', async () => {
+		const { setSessions } = setup();
+
+		dispatchCreate('codex', undefined, 'group-1');
+		await flush();
+
+		const session = createdSession(setSessions);
+		expect(session).not.toHaveProperty('customModel');
+		expect(session.nudgeMessage).toBe('Be brief.');
+	});
+
+	it('creates a bare agent in the group for seedFromGroup: false', async () => {
+		const { setSessions } = setup();
+
+		dispatchCreate('claude-code', { seedFromGroup: false }, 'group-1');
+		await flush();
+
+		const session = createdSession(setSessions);
+		expect(session.groupId).toBe('group-1');
+		expect(session).not.toHaveProperty('customModel');
+		expect(session).not.toHaveProperty('peerAgents');
+		expect(respond).toHaveBeenCalledWith('ch', {
+			sessionId: session.id,
+			seededFromGroup: null,
+			skipped: [],
+		});
+	});
+
+	it('seeds nothing from a group that holds no defaults', async () => {
+		vi.mocked(useSessionStore.getState).mockReturnValue({
+			groups: [{ ...GROUP, defaults: undefined }],
+			sessions: [],
+		} as never);
+		const { setSessions } = setup();
+
+		dispatchCreate('claude-code', undefined, 'group-1');
+		await flush();
+
+		expect(createdSession(setSessions)).not.toHaveProperty('customModel');
+		expect(respond).toHaveBeenCalledWith('ch', expect.objectContaining({ seededFromGroup: null }));
 	});
 });
