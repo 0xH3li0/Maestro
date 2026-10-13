@@ -183,6 +183,15 @@ describe('Lite discovery-first controls', () => {
 		};
 		emit();
 	}
+	it('keeps network discovery off on boot until the user selects a search option', async () => {
+		await vi.waitFor(() => expect(field('discovery-tailnet').disabled).toBe(false));
+		expect(ipc.invoke.mock.calls.filter((call) => call[1] === 'discovery-start')).toEqual([
+			['lite:control', 'discovery-start', { lan: false, tailscale: false, tailscalePeers: false }],
+		]);
+		expect(field('discovery-tailnet').getAttribute('aria-pressed')).toBe('false');
+		expect(field('discovery-lan').getAttribute('aria-pressed')).toBe('false');
+		expect(field('discovery-peers').checked).toBe(false);
+	});
 	it('offers Tailscale and local network discovery as separate visible choices', async () => {
 		await vi.waitFor(() => expect(field('discovery-tailnet').disabled).toBe(false));
 		expect(field('discovery-tailnet').textContent).toBe('Find over Tailscale');
@@ -217,11 +226,45 @@ describe('Lite discovery-first controls', () => {
 			field('guide-back').click();
 			ipc.invoke.mockClear();
 			field('help-search').click();
-			expect(ipc.invoke).toHaveBeenCalledWith('lite:control', 'discovery-start', options);
+			expect(ipc.invoke).toHaveBeenCalledWith('lite:control', 'discovery-start', {
+				...options,
+				tailscalePeers: false,
+			});
 			expect(field('discovery-lan').hidden).toBe(false);
 			expect(field('discovery-tailnet').hidden).toBe(false);
 		}
 	);
+	it('keeps advertised Tailscale discovery selected when diagnostic peer scanning is disabled', async () => {
+		await vi.waitFor(() => expect(field('discovery-tailnet').disabled).toBe(false));
+		field('discovery-tailnet').click();
+		await vi.waitFor(() => expect(field('discovery-tailnet').disabled).toBe(false));
+		field('guide-help').click();
+		field('open-diagnostics').click();
+		expect(field('discovery-details').hidden).toBe(false);
+		expect(field('discovery-peers').checked).toBe(true);
+		ipc.invoke.mockClear();
+		field('discovery-peers').click();
+		expect(field('discovery-peers').checked).toBe(false);
+		expect(ipc.invoke).toHaveBeenCalledWith('lite:control', 'discovery-start', {
+			lan: false,
+			tailscale: true,
+			tailscalePeers: false,
+		});
+		expect(field('discovery-tailnet').getAttribute('aria-pressed')).toBe('true');
+		expect(field('discovery-lan').getAttribute('aria-pressed')).toBe('false');
+		await vi.waitFor(() => expect(field('discovery-start').disabled).toBe(false));
+		ipc.invoke.mockClear();
+		field('discovery-peers').click();
+		expect(field('discovery-peers').checked).toBe(true);
+		expect(ipc.invoke).toHaveBeenCalledWith('lite:control', 'discovery-start', {
+			lan: false,
+			tailscale: true,
+			tailscalePeers: true,
+		});
+		await vi.waitFor(() => expect(field('discovery-start').disabled).toBe(false));
+		field('guide-back').click();
+		expect(field('help-network').textContent).toMatch(/same Tailscale network/i);
+	});
 	it('switches from Tailscale to LAN and explains the local network requirements', async () => {
 		await vi.waitFor(() => expect(field('discovery-tailnet').disabled).toBe(false));
 		field('discovery-tailnet').click();
