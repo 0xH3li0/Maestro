@@ -167,7 +167,16 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 			resolveHoldThresholdMs(readVoiceControlSettings(deps.settingsStore).holdThresholdMs),
 	});
 
+	/** The floor's own settings, re-read. A no-op until a floor exists. */
+	const applyFloorSettings = (): void => {
+		floor?.configure({ idleTimeoutMs: readIdleTimeoutMs(deps.settingsStore) });
+	};
+
 	const sync = (): Record<VoiceHotkeyId, GlobalHotkeyStatus> => {
+		// A write from outside the app (`maestro-cli settings set acappella...`)
+		// fires no store change event, and `sync` is what the settings watcher
+		// calls for it, so the floor is brought up to date here as well.
+		applyFloorSettings();
 		if (!isACappellaEnabled(deps.settingsStore)) {
 			// Released rather than left bound: see the module header.
 			for (const id of VOICE_HOTKEY_IDS) registry.clear(id);
@@ -190,9 +199,7 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 
 	deps.settingsStore.onDidChange?.('shortcuts', () => sync());
 	deps.settingsStore.onDidChange?.('encoreFeatures', () => sync());
-	deps.settingsStore.onDidChange?.(ACAPPELLA_SETTINGS_KEY, () => {
-		floor?.configure({ idleTimeoutMs: readIdleTimeoutMs(deps.settingsStore) });
-	});
+	deps.settingsStore.onDidChange?.(ACAPPELLA_SETTINGS_KEY, applyFloorSettings);
 
 	logger.info(`Voice hotkeys installed (${controller.capability})`, LOG_CONTEXT);
 

@@ -11,6 +11,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { readGroups, resolveGroupId } from '../services/storage';
+import { groupSettingsBlocker } from '../services/group-settings';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
@@ -127,6 +128,14 @@ export async function openModal(
 		} catch (error) {
 			fail(error instanceof Error ? error.message : String(error), options);
 		}
+	}
+	// Group Settings is refused for a worktree group, in the words the Group
+	// Settings verbs use, before the app is asked to open a dialog with nothing
+	// in it.
+	if (surface.groupRequired && groupId) {
+		const group = readGroups().find((candidate) => candidate.id === groupId);
+		const blocker = group ? groupSettingsBlocker(group) : undefined;
+		if (blocker) fail(blocker, options);
 	}
 	const target = { ...accepted, group: groupId };
 	const tabId = target.tab?.id;

@@ -22,6 +22,12 @@ import {
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
 import { readRunOnFlags } from '../services/run-on';
+import {
+	hasPeerFlags,
+	readPeerFlags,
+	type PeerFlagOptions,
+	type PeerFlagPatch,
+} from '../services/peer-flags';
 import { readGroups, readHarnessTierDefaults, resolveGroupId } from '../services/storage';
 import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { autoModelProblem } from '../../shared/autoTurn';
@@ -68,6 +74,9 @@ interface CreateAgentOptions {
 	json?: boolean;
 }
 
+/** The peer flags join the create options: the New Agent dialog has a Peers tab. */
+type CreateAgentFlags = CreateAgentOptions & PeerFlagOptions;
+
 function fail(msg: string, json?: boolean): void {
 	if (json) {
 		console.log(JSON.stringify({ success: false, error: msg }));
@@ -107,7 +116,7 @@ function resolveCreateGroup(options: CreateAgentOptions): {
 	return { groupId, group, defaults: seeded ? group?.defaults : undefined };
 }
 
-export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
+export async function createAgent(name: string, options: CreateAgentFlags): Promise<void> {
 	const { groupId, group, defaults: groupDefaults } = resolveCreateGroup(options);
 
 	// The provider typed on the command line beats the group's. Left at its
@@ -293,6 +302,21 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		customModel = AUTO_MODEL;
 	}
 
+	// The Peers tab of the New Agent dialog. Read before anything is created, so
+	// a misspelled flag or an agent that does not resolve costs no agent. The
+	// rows are written after the create, through the message `update-agent
+	// --peer` sends: one implementation, and the new agent has to exist before
+	// the app can check a row against it.
+	let peerPatch: PeerFlagPatch | undefined;
+	if (hasPeerFlags(options)) {
+		try {
+			peerPatch = readPeerFlags(options);
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options.json);
+			return;
+		}
+	}
+
 	// Build the WebSocket message payload
 	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
@@ -341,6 +365,35 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 			>(payload, 'create_session_result');
 		});
 
+		// The agent exists. Its peers are a second write; when the app refuses it
+		// the agent is still there, so the caller is told both things.
+		let peerError: string | undefined;
+		if (result.success && result.sessionId && peerPatch) {
+			try {
+				const peers = await withMaestroClient((client) =>
+					client.sendCommand<{ success: boolean; error?: string }>(
+						{ type: 'update_session_config', sessionId: result.sessionId, configPatch: peerPatch },
+						'update_session_config_result'
+					)
+				);
+				if (!peers.success) peerError = peers.error || 'The peers could not be saved';
+			} catch (error) {
+				peerError = error instanceof Error ? error.message : String(error);
+			}
+			if (peerError) {
+				const msg = `Created agent "${name}" (${result.sessionId}), but its peers were not saved: ${peerError}. Set them with update-agent --peer.`;
+				if (options.json) {
+					console.log(
+						JSON.stringify({ success: false, error: msg, agentId: result.sessionId, name, type })
+					);
+				} else {
+					console.error(formatError(msg));
+				}
+				process.exit(1);
+				return;
+			}
+		}
+
 		if (result.success) {
 			if (options.json) {
 				console.log(
@@ -353,6 +406,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 						seededFromGroup: result.seededFromGroup ?? null,
 						...(result.skipped?.length ? { seedSkipped: result.skipped } : {}),
 						...(runOn ? { runOn } : {}),
+						...(peerPatch ? { peers: peerPatch } : {}),
 					})
 				);
 			} else {
@@ -374,6 +428,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 						`  Run on: ${formatRunOnSpec(runOn)} (context ${runOn.contextTokens} tokens)`
 					);
 				}
+				if (peerPatch) console.log('  Peers: saved (read them with show agent)');
 			}
 		} else {
 			const msg = result.error || 'Failed to create agent';

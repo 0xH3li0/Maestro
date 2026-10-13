@@ -14,6 +14,7 @@
  * time. Adding a modal means adding one entry here, not touching four files.
  */
 
+import { resolveEncoreFeatures } from './encoreFeatureDefaults';
 import {
 	MODELS_SETTINGS_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
@@ -83,6 +84,11 @@ export interface UiSurface {
 	 * click to get that by hand. Absent, `--group` is refused for the surface.
 	 */
 	groupClick?: string;
+	/**
+	 * The surface exists only for one group, so it cannot open without `--group`.
+	 * Implies {@link groupClick}.
+	 */
+	groupRequired?: boolean;
 	/** Encore Feature that gates the surface. */
 	encore?: UiSurfaceEncoreFlag;
 }
@@ -215,6 +221,17 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Delegation Graph',
 		click: 'the hamburger menu > Delegation Graph',
 		groupClick: 'right-click the group in the Left Bar > Delegation Graph',
+	},
+	{
+		id: 'group-settings',
+		label: 'Group Settings',
+		aliases: ['group-defaults'],
+		modal: 'groupSettings',
+		description:
+			"One group's defaults for new agents, its pill label, and Publish to existing agents. Needs --group. Read and write the same settings with group-settings and update-group-settings.",
+		commandPalette: 'Group Settings',
+		groupClick: 'right-click the group in the Left Bar > Group Settings',
+		groupRequired: true,
 	},
 	{
 		id: 'symphony',
@@ -434,6 +451,9 @@ export function resolveUiSurfaceTarget(
 	if (group !== undefined && !surface.groupClick) {
 		return { error: `${surface.label} does not open on one group, so --group does not apply.` };
 	}
+	if (group === undefined && surface.groupRequired) {
+		return { error: `${surface.label} opens on one group: pass --group <id>.` };
+	}
 	const target = resolveUiSurfaceTabTarget(surface, request);
 	if ('error' in target || group === undefined) return target;
 	return { ...target, group };
@@ -471,6 +491,21 @@ function resolveUiSurfaceTabTarget(
 		};
 	}
 	return { tab, subTab };
+}
+
+/**
+ * Why a surface cannot open right now because the Encore Feature behind it is
+ * switched off, or null when it can. `encoreFeatures` is the raw setting; a
+ * flag the user never touched reads as its default.
+ *
+ * One sentence for both ends of `maestro-cli open`: the app shows it as a
+ * toast, and the bridge answers the CLI with it, so a caller is never told
+ * "Opened" for a surface that did not open.
+ */
+export function surfaceEncoreRefusal(surface: UiSurface, encoreFeatures: unknown): string | null {
+	if (!surface.encore) return null;
+	if (resolveEncoreFeatures(encoreFeatures)[surface.encore]) return null;
+	return `${surface.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`;
 }
 
 /**

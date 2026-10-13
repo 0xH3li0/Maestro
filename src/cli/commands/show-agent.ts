@@ -6,9 +6,17 @@ import {
 	readHarnessTierDefaults,
 	readHistory,
 	readGroups,
+	readAgentConfigValue,
 	readLocalModelEndpoints,
 	readSessions,
+	readSettingValue,
 } from '../services/storage';
+import {
+	isSecretEnvKey,
+	maskEnvValue,
+	resolveAgentEnvironment,
+} from '../../shared/agentEnvironment';
+import { gatewayEnvVarsFor } from '../../shared/local-models/gateway';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
@@ -26,6 +34,36 @@ import { describePeerConfiguration } from '../../shared/peerAgents';
 
 interface ShowAgentOptions {
 	json?: boolean;
+	/** Print secret environment values in full instead of masked. */
+	showSecrets?: boolean;
+}
+
+/** A record of environment variables, or undefined when a store holds something else. */
+function asEnvRecord(value: unknown): Record<string, string> | undefined {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+	const entries = Object.entries(value).filter(
+		(entry): entry is [string, string] => typeof entry[1] === 'string'
+	);
+	return Object.fromEntries(entries);
+}
+
+/**
+ * A record with its secret values masked, the way the desktop's environment
+ * table shows them: a credential's tail is enough to tell two keys apart and
+ * not enough to use.
+ */
+function maskSecrets(
+	vars: Record<string, string> | undefined,
+	showSecrets: boolean | undefined
+): Record<string, string> | null {
+	if (!vars) return null;
+	if (showSecrets) return vars;
+	return Object.fromEntries(
+		Object.entries(vars).map(([key, value]) => [
+			key,
+			isSecretEnvKey(key) ? maskEnvValue(value) : value,
+		])
+	);
 }
 
 export function showAgent(agentId: string, options: ShowAgentOptions): void {
@@ -115,6 +153,21 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			!!agent.peerAgents?.length || !!agent.groupPeerAccess || !!agent.worktreePeerAccess;
 		const peers = describePeerConfiguration(agent, hasPeerConfig ? readSessions() : []);
 
+		// What the agent is spawned with, and the layer each value came from: the
+		// Edit Agent dialog's "Show environment" table, from the same resolver.
+		// The agent's own variables REPLACE the provider-level set.
+		const effectiveEnv = resolveAgentEnvironment({
+			global: asEnvRecord(readSettingValue('shellEnvVars')),
+			agent: asEnvRecord(readAgentConfigValue(agent.toolType, 'customEnvVars')),
+			session: agent.customEnvVars,
+			gateway: gatewayEnvVarsFor(agent.toolType, agent.gatewayUrl),
+		}).map((entry) => ({
+			...entry,
+			value:
+				options.showSecrets || !isSecretEnvKey(entry.key) ? entry.value : maskEnvValue(entry.value),
+			secret: isSecretEnvKey(entry.key),
+		}));
+
 		const output = {
 			id: agent.id,
 			name: agent.name,
@@ -136,7 +189,15 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			newSessionMessage: agent.newSessionMessage ?? null,
 			customPath: agent.customPath ?? null,
 			customArgs: agent.customArgs ?? null,
-			customEnvVars: agent.customEnvVars ?? null,
+			// Secret values are masked unless `--show-secrets` is passed, as the
+			// desktop masks them until the eye is clicked.
+			customEnvVars: maskSecrets(agent.customEnvVars, options.showSecrets),
+			// Variables switched off in the editor (`update-agent --env-park`).
+			parkedEnvVars: maskSecrets(agent.customEnvVarsDisabled, options.showSecrets),
+			// Every variable the agent is spawned with: `source` is the layer that
+			// set it (global, agent, session, gateway) and `shadowedBy` the layers
+			// it overrode.
+			effectiveEnv,
 			// Local Models gateway (settable with `update-agent --gateway-url`).
 			gatewayUrl: agent.gatewayUrl ?? null,
 			// How the Maestro token proxy carries this agent's requests when the

@@ -4,7 +4,12 @@
 import { readSettingValue, deleteSettingValue } from '../services/storage';
 import { formatSuccess, formatError } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
-import { SETTINGS_METADATA, getSettingDefault } from '../../shared/settingsMetadata';
+import {
+	SETTINGS_METADATA,
+	getSettingDefault,
+	getSettingDefaultAtPath,
+	nestedSettingPathProblem,
+} from '../../shared/settingsMetadata';
 
 interface SettingsResetOptions {
 	json?: boolean;
@@ -21,8 +26,15 @@ export function settingsReset(key: string, options: SettingsResetOptions): void 
 			);
 		}
 
+		const pathProblem = nestedSettingPathProblem(key);
+		if (pathProblem) throw new Error(pathProblem);
+
 		const oldValue = readSettingValue(key);
-		const defaultValue = getSettingDefault(topKey);
+		// A nested path under a setting with a field table resets to that field's
+		// default. Any other nested path has no default of its own to name.
+		const defaultValue = key.includes('.')
+			? getSettingDefaultAtPath(key)
+			: getSettingDefault(topKey);
 
 		deleteSettingValue(key);
 
@@ -34,7 +46,13 @@ export function settingsReset(key: string, options: SettingsResetOptions): void 
 				defaultValue,
 			});
 		} else {
-			console.log(formatSuccess(`${key} reset to default (${JSON.stringify(defaultValue)})`));
+			console.log(
+				formatSuccess(
+					defaultValue === undefined
+						? `${key} reset: its fields read as their defaults`
+						: `${key} reset to default (${JSON.stringify(defaultValue)})`
+				)
+			);
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

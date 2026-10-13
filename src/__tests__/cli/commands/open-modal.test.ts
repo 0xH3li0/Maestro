@@ -19,6 +19,9 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 const GROUPS = [
 	{ id: 'group-platform-1', name: 'Platform', emoji: '' },
 	{ id: 'group-research-2', name: 'Research', emoji: '🔬' },
+	// A worktree group: its agents come from the worktree flow, so it has no
+	// Group Settings to open.
+	{ id: 'group-worktree-3', name: 'Worktrees', emoji: '', kind: 'worktree' },
 ];
 
 vi.mock('../../../cli/services/storage', () => ({
@@ -165,5 +168,54 @@ describe('open command: --group', () => {
 		expect(surfaces.filter((surface) => surface.group_scoped).map((surface) => surface.id)).toEqual(
 			['delegation-graph']
 		);
+	});
+});
+
+describe('open command: Group Settings', () => {
+	let consoleSpy: MockInstance;
+	let consoleErrorSpy: MockInstance;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new ExitError();
+		});
+	});
+
+	it('opens Group Settings on the group named by a prefix', async () => {
+		const captured = captureSend();
+
+		await openModal('group-settings', { group: 'group-plat' });
+
+		expect(captured.sent).toMatchObject({
+			type: 'open_modal',
+			surface: 'group-settings',
+			group: 'group-platform-1',
+		});
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Opened Group Settings on the group Platform in Maestro.'
+		);
+	});
+
+	it('is refused without --group before the app is asked', async () => {
+		captureSend();
+
+		await expect(openModal('group-settings', {})).rejects.toBeInstanceOf(ExitError);
+
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(String(consoleErrorSpy.mock.calls[0][0])).toContain('pass --group');
+	});
+
+	it('is refused for a worktree group, which takes no defaults', async () => {
+		captureSend();
+
+		await expect(openModal('group-settings', { group: 'group-work' })).rejects.toBeInstanceOf(
+			ExitError
+		);
+
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(String(consoleErrorSpy.mock.calls[0][0])).toContain('worktree group');
 	});
 });

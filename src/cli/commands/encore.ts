@@ -23,6 +23,7 @@ const FEATURES: Record<string, string> = {
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun (macOS)',
+	aCappella: 'A Cappella (Voice)',
 };
 
 const ALIASES: Record<string, string> = {
@@ -50,6 +51,10 @@ const ALIASES: Record<string, string> = {
 	quickchat: 'quickChat',
 	'maestro-run': 'maestroRun',
 	maestrorun: 'maestroRun',
+	'a-cappella': 'aCappella',
+	acappella: 'aCappella',
+	voice: 'aCappella',
+	'voice-mode': 'aCappella',
 };
 
 interface EncoreOptions {

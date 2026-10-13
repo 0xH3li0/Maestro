@@ -105,6 +105,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'integrations',
 	},
+	acappella: {
+		description:
+			'Everything A Cappella (voice) persists, as one object: providers.{stt,tts,brain,realtime} and pipeline (what runs each slot), voice.{voiceId,rate,volume}, speech.speakBackgroundCompletions, audio.inputDeviceId, controls.* (wake word, stop word, send phrases and the conversation timing), ui.* (the Voice HUD), and ice.* (how a paired device connects). Read or write one field by its path, for example acappella.controls.turnSettleMs; a write is checked against the bounds the Voice settings panels use, and an unset field reads as its default. Cloud keys are not here: they are in the OS keychain (maestro-cli voice credentials). A provider or voice written here reaches a running session through maestro-cli voice providers set and voice voices set, which also tell the app.',
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
 	harnessTierDefaults: {
 		description:
 			"Tier defaults: where each harness launches a model tier for an agent that does not set the tier itself. Keyed by harness id (claude-code, codex, opencode, ...), then by tier (low, medium, high); each value is { type: 'provider-model', model } (a model on the harness's own provider), { type: 'provider' } (the provider, on the agent's own model), or { type: 'source', endpointId, model, contextTokens? } (a Run on target). A tier with no entry uses the built-in table. An agent's own tier target wins over this.",

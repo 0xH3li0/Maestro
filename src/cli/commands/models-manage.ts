@@ -348,6 +348,40 @@ export async function modelsRemoveHf(modelId: string, options: RemoveOptions): P
 	}
 }
 
+/** What the app answers a download with: the model's result, and its engine's. */
+export type ModelDownloadOutcome = DownloadResult & { runtime?: LocalRuntimeEnsureResult };
+
+/**
+ * Ask the app to download one model and wait until the job settles. The round
+ * trip behind `models install` and behind each model of `voice setup
+ * --download`, which is the same Download button pressed for a bundle.
+ */
+export async function downloadModelOverBridge(
+	modelId: string,
+	json: boolean | undefined
+): Promise<ModelDownloadOutcome> {
+	const reply = await send<{ success: boolean; error?: string; result?: ModelDownloadOutcome }>(
+		{ type: 'local_models_download', modelId },
+		'local_models_download_result',
+		json,
+		INSTALL_TIMEOUT_MS
+	);
+	if (!reply.result) fail('Download failed', json);
+	return reply.result;
+}
+
+/** The Library as the app reads it: every model joined to what is on disk. */
+export async function listModelsOverBridge(
+	json: boolean | undefined
+): Promise<LocalModelListing[]> {
+	const reply = await send<{ success: boolean; error?: string; listings?: LocalModelListing[] }>(
+		{ type: 'local_models_list' },
+		'local_models_list_result',
+		json
+	);
+	return reply.listings ?? [];
+}
+
 export async function modelsInstall(modelId: string, options: JsonOption): Promise<void> {
 	const entry = requireModel(modelId, options.json);
 	if (entry.pending) {
@@ -364,18 +398,7 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 			`Downloading ${entry.displayName} (${formatSize(entry.bytes)}), and its engine if that is missing. Progress shows in ${modelsSettingsLocation('library')}.`
 		);
 	}
-	const reply = await send<{
-		success: boolean;
-		error?: string;
-		result?: DownloadResult & { runtime?: LocalRuntimeEnsureResult };
-	}>(
-		{ type: 'local_models_download', modelId },
-		'local_models_download_result',
-		options.json,
-		INSTALL_TIMEOUT_MS
-	);
-	const result = reply.result;
-	if (!result) fail('Download failed', options.json);
+	const result = await downloadModelOverBridge(modelId, options.json);
 
 	if (result.status !== 'complete') {
 		const why =

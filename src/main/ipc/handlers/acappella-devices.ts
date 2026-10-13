@@ -68,6 +68,40 @@ export function readStoredIceSettings(
 	return readIceSettings(blob.ice);
 }
 
+/**
+ * Probe which paths a paired device could reach this machine on.
+ *
+ * Shared by the Settings "Test connection" button and `maestro-cli voice
+ * devices test-connection`. The caller applies the Encore gate.
+ */
+export async function testVoiceConnection(): Promise<IceProbeResult> {
+	const live = getACappellaTransport();
+	if (!live) {
+		return {
+			host: false,
+			stun: false,
+			relay: false,
+			best: 'unknown',
+			error: 'A Cappella has not started yet. Open a voice session and try again.',
+		};
+	}
+	return live.testConnection();
+}
+
+/**
+ * Start or stop advertising this machine on the local network.
+ *
+ * Shared by the Settings LAN discovery switch and `maestro-cli voice devices
+ * discovery`. Null when the transport has never been built.
+ */
+export async function setVoiceDiscovery(enabled: boolean): Promise<DiscoveryStatus | null> {
+	const live = getACappellaTransport();
+	if (!live) return null;
+	if (enabled) await live.discovery.start();
+	else await live.discovery.stop();
+	return live.discoveryStatus();
+}
+
 export function registerACappellaDeviceHandlers(deps: ACappellaDeviceHandlerDependencies): void {
 	const { settingsStore } = deps;
 
@@ -222,17 +256,7 @@ export function registerACappellaDeviceHandlers(deps: ACappellaDeviceHandlerDepe
 		'acappella:test-connection',
 		withIpcErrorLogging(handlerOpts('testConnection'), async (): Promise<IceProbeResult> => {
 			requireEnabled(settingsStore);
-			const live = transport();
-			if (!live) {
-				return {
-					host: false,
-					stun: false,
-					relay: false,
-					best: 'unknown',
-					error: 'A Cappella has not started yet. Open a voice session and try again.',
-				};
-			}
-			return live.testConnection();
+			return testVoiceConnection();
 		})
 	);
 
@@ -240,13 +264,8 @@ export function registerACappellaDeviceHandlers(deps: ACappellaDeviceHandlerDepe
 		'acappella:set-discovery',
 		withIpcErrorLogging(
 			handlerOpts('setDiscovery'),
-			async (_event, enabled: unknown): Promise<DiscoveryStatus | null> => {
-				const live = transport();
-				if (!live) return null;
-				if (enabled === true) await live.discovery.start();
-				else await live.discovery.stop();
-				return live.discoveryStatus();
-			}
+			async (_event, enabled: unknown): Promise<DiscoveryStatus | null> =>
+				setVoiceDiscovery(enabled === true)
 		)
 	);
 }

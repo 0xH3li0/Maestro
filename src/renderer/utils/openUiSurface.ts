@@ -14,7 +14,11 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { notifyToast } from '../stores/notificationStore';
-import { resolveUiSurface, resolveUiSurfaceTarget } from '../../shared/uiSurfaces';
+import {
+	resolveUiSurface,
+	resolveUiSurfaceTarget,
+	surfaceEncoreRefusal,
+} from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -49,13 +53,10 @@ export function openUiSurface(
 	if ('error' in target) return { ok: false, error: target.error };
 	const { tab, subTab } = target;
 
-	if (surface.encore) {
-		const enabled = useSettingsStore.getState().encoreFeatures[surface.encore];
-		if (!enabled) {
-			const message = `${surface.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`;
-			notifyToast({ color: 'yellow', title: `${surface.label} is disabled`, message });
-			return { ok: false, error: message };
-		}
+	const refusal = surfaceEncoreRefusal(surface, useSettingsStore.getState().encoreFeatures);
+	if (refusal) {
+		notifyToast({ color: 'yellow', title: `${surface.label} is disabled`, message: refusal });
+		return { ok: false, error: refusal };
 	}
 
 	const actions = getModalActions();
@@ -96,6 +97,11 @@ export function openUiSurface(
 			else useModalStore.getState().openModal('feedback');
 			return { ok: true };
 		}
+		case 'group-settings':
+			// The registry refuses this surface without a group, so one is here.
+			if (!target.group) return { ok: false, error: `${surface.label} opens on one group.` };
+			actions.openGroupSettings(target.group);
+			return { ok: true };
 		case 'delegation-graph':
 			// A group that is gone by now is not refused here: the graph falls
 			// back to every agent, the same as a scope whose group is deleted

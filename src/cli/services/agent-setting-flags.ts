@@ -5,8 +5,14 @@
  *   --nudge, --new-session-message, --custom-path, --custom-args, --env,
  *   --clear-env, --gateway-url, --proxy-mode, --tier, --background-requests,
  *   --system-one, --model, --effort, --context-window, --token-source,
- *   --maestro-p-path, --codex-transport, --bookmark
- *   --ssh-remote, --ssh-cwd, --sync-history-to-remote  (the SSH patch)
+ *   --maestro-p-path, --codex-transport, --bookmark,
+ *   --retry-on-availability, --retry-on-token-exhaustion, --codex-auto-reset,
+ *   --additional-dir, --clear-additional-dirs, --env-park, --env-unpark
+ *   --ssh-remote, --ssh-cwd, --sync-history-to-remote,
+ *   --share-history-to-project-dir  (the SSH patch)
+ *
+ * `update-agent` registers all of them. `update-group-settings` registers the
+ * ones a group's defaults hold, so a flag it does not offer is never read.
  *
  * Only the spelling is read here. Whether a value is acceptable for a provider
  * is judged by the app, with the validators the Edit Agent dialog and Group
@@ -21,7 +27,8 @@ import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport'
 import { parseBackgroundRequestsSpec } from '../../shared/local-models/background-requests';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../shared/local-models/token-proxy';
 import { parseTierAssignment, type TierTarget } from '../../shared/modelTiers';
-import { parseCliBool } from '../utils/parse';
+import { parseAdditionalDirFlag, type EnvParkEdits } from '../../shared/agentConfigExtras';
+import { isInheritValue, parseCliBool } from '../utils/parse';
 
 /** The commander options the setting flags populate. */
 export interface AgentSettingFlagOptions {
@@ -43,6 +50,13 @@ export interface AgentSettingFlagOptions {
 	maestroPPath?: string;
 	codexTransport?: string;
 	bookmark?: string;
+	retryOnAvailability?: string;
+	retryOnTokenExhaustion?: string;
+	codexAutoReset?: string;
+	additionalDir?: string[];
+	clearAdditionalDirs?: boolean;
+	envPark?: string[];
+	envUnpark?: string[];
 }
 
 /** The commander options the SSH flags populate. */
@@ -50,6 +64,7 @@ export interface SshFlagOptions {
 	sshRemote?: string;
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
+	shareHistoryToProjectDir?: string;
 }
 
 /** Whether any SSH flag was passed. */
@@ -57,7 +72,8 @@ export function hasSshFlags(options: SshFlagOptions): boolean {
 	return (
 		options.sshRemote !== undefined ||
 		options.sshCwd !== undefined ||
-		options.syncHistoryToRemote !== undefined
+		options.syncHistoryToRemote !== undefined ||
+		options.shareHistoryToProjectDir !== undefined
 	);
 }
 
@@ -83,6 +99,15 @@ export function buildSshPatch(options: SshFlagOptions): Record<string, unknown> 
 	}
 	if (options.syncHistoryToRemote !== undefined) {
 		sshPatch.syncHistory = parseCliBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+	}
+	// Independent of whether a remote is enabled: it mirrors History into the
+	// local project's `.maestro/history/`, for an agent another Maestro controls.
+	// It rides in the SSH block because that is where the agent record keeps it.
+	if (options.shareHistoryToProjectDir !== undefined) {
+		sshPatch.shareHistoryToProjectDir = parseCliBool(
+			options.shareHistoryToProjectDir,
+			'--share-history-to-project-dir'
+		);
 	}
 	return sshPatch;
 }
@@ -243,6 +268,46 @@ export function buildConfigPatch(
 		// Only the opt-in is stored; `exec` clears the field, matching the Edit
 		// Agent modal, where Standard leaves `codexTransport` unset.
 		patch.codexTransport = transport === 'app-server' ? transport : null;
+	}
+
+	// The Agent Resilience switches and the Codex auto reset: on, off, or
+	// `default` to drop the choice (`null` on the wire). The two retries are on
+	// by default, so `default` and `false` are different things.
+	for (const [value, flag, key] of [
+		[options.retryOnAvailability, '--retry-on-availability', 'retryOnAvailabilityErrors'],
+		[options.retryOnTokenExhaustion, '--retry-on-token-exhaustion', 'retryOnTokenExhaustion'],
+		[options.codexAutoReset, '--codex-auto-reset', 'codexAutoResetOnExhaustion'],
+	] as const) {
+		if (value === undefined) continue;
+		patch[key] = isInheritValue(value.trim().toLowerCase()) ? null : parseCliBool(value, flag);
+	}
+
+	// `--additional-dir <path>[:<r|w|rw>]` (repeatable). Like `--env`, the set
+	// given REPLACES the agent's list; `--clear-additional-dirs` empties it.
+	if (options.clearAdditionalDirs) {
+		if (options.additionalDir?.length) {
+			throw new Error('Use --additional-dir or --clear-additional-dirs, not both.');
+		}
+		patch.additionalDirectories = null;
+	} else if (options.additionalDir && options.additionalDir.length > 0) {
+		patch.additionalDirectories = options.additionalDir.map(parseAdditionalDirFlag);
+	}
+
+	// `--env-park KEY` / `--env-unpark KEY` (repeatable): the eye button on an
+	// environment variable row. The app moves the names between the live and the
+	// parked record, so it is refused beside a flag that replaces the live one.
+	const park = options.envPark ?? [];
+	const unpark = options.envUnpark ?? [];
+	if (park.length > 0 || unpark.length > 0) {
+		if (options.clearEnv || (options.env && options.env.length > 0)) {
+			throw new Error(
+				'--env-park and --env-unpark cannot be combined with --env or --clear-env: those replace the variables being parked.'
+			);
+		}
+		const edits: EnvParkEdits = {};
+		if (park.length > 0) edits.park = park;
+		if (unpark.length > 0) edits.unpark = unpark;
+		patch.envParkEdits = edits;
 	}
 
 	return Object.keys(patch).length > 0 ? patch : undefined;

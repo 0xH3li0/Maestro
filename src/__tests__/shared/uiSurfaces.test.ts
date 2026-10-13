@@ -14,6 +14,7 @@ import {
 	resolveUiSurfaceSubTab,
 	resolveUiSurfaceTab,
 	resolveUiSurfaceTarget,
+	surfaceEncoreRefusal,
 	surfaceSubTabIds,
 	surfaceTabIds,
 } from '../../shared/uiSurfaces';
@@ -94,10 +95,25 @@ describe('resolveUiSurface', () => {
 		);
 	});
 
-	it('opens only the Delegation Graph on a group', () => {
+	it('opens only the Delegation Graph and Group Settings on a group', () => {
 		expect(
 			UI_SURFACES.filter((surface) => surface.groupClick).map((surface) => surface.id)
-		).toEqual(['delegation-graph']);
+		).toEqual(['delegation-graph', 'group-settings']);
+	});
+
+	it('resolves Group Settings so `open group-settings --group` works', () => {
+		const surface = resolveUiSurface('group-settings');
+		expect(surface?.modal).toBe('groupSettings');
+		expect(resolveUiSurface('group-defaults')?.id).toBe('group-settings');
+		// Only a surface that says so needs a group: the Delegation Graph also
+		// opens on every agent.
+		expect(UI_SURFACES.filter((entry) => entry.groupRequired).map((entry) => entry.id)).toEqual([
+			'group-settings',
+		]);
+		// A surface that needs a group has to say how to open it on one by hand.
+		for (const entry of UI_SURFACES.filter((candidate) => candidate.groupRequired)) {
+			expect(entry.groupClick, entry.id).toBeTruthy();
+		}
 	});
 
 	it('returns null for an unknown or empty name', () => {
@@ -286,5 +302,48 @@ describe('formatShortcutKeysFor', () => {
 	it('uses macOS symbols with spaces and text with plus signs elsewhere', () => {
 		expect(formatShortcutKeysFor(['Meta', 'Shift', 'k'], true)).toBe('⌘ ⇧ K');
 		expect(formatShortcutKeysFor(['Meta', 'Shift', 'k'], false)).toBe('Ctrl+Shift+K');
+	});
+});
+
+describe('a surface that exists only for one group', () => {
+	const groupSettings = resolveUiSurface('group-settings')!;
+
+	it('is refused without a group, and names the flag', () => {
+		expect(resolveUiSurfaceTarget(groupSettings, {})).toEqual({
+			error: 'Group Settings opens on one group: pass --group <id>.',
+		});
+	});
+
+	it('passes the group through when one is given', () => {
+		expect(resolveUiSurfaceTarget(groupSettings, { group: 'group-1' })).toEqual({
+			group: 'group-1',
+		});
+	});
+});
+
+describe('surfaceEncoreRefusal', () => {
+	const cue = resolveUiSurface('cue')!;
+	const voiceSetup = UI_SURFACES.find((surface) => surface.encore === 'aCappella')!;
+	const settings = resolveUiSurface('settings')!;
+
+	it('never refuses a surface that is behind no Encore Feature', () => {
+		expect(surfaceEncoreRefusal(settings, { maestroCue: false })).toBeNull();
+		expect(surfaceEncoreRefusal(settings, undefined)).toBeNull();
+	});
+
+	it('refuses a surface whose feature is switched off, and names it', () => {
+		expect(surfaceEncoreRefusal(cue, { maestroCue: false })).toBe(
+			`${cue.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`
+		);
+		expect(surfaceEncoreRefusal(cue, { maestroCue: true })).toBeNull();
+	});
+
+	it('reads a flag the user never touched as its default', () => {
+		// Cue ships on and A Cappella ships off. Nothing stored must not read as
+		// "everything off", which is how a fresh install would refuse Cue.
+		expect(surfaceEncoreRefusal(cue, undefined)).toBeNull();
+		expect(surfaceEncoreRefusal(cue, {})).toBeNull();
+		expect(surfaceEncoreRefusal(voiceSetup, {})).toContain('currently off');
+		expect(surfaceEncoreRefusal(voiceSetup, { aCappella: true })).toBeNull();
 	});
 });

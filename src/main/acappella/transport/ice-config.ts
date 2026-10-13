@@ -28,7 +28,7 @@
 
 import { getLocalIpAddressSync, listLocalIpv4Addresses } from '../../utils/networkUtils';
 import type { DeviceCandidateType } from '../../../shared/acappella/device-protocol';
-import type { IceServerConfig } from '../../../shared/acappella/webrtc-host';
+import { DEFAULT_STUN_URLS, type IceServerConfig } from '../../../shared/acappella/webrtc-host';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -67,19 +67,10 @@ export interface IceTransportSettings {
 	forceRelay: boolean;
 }
 
-/**
- * Google's public STUN servers.
- *
- * A default rather than a recommendation, and it is stated in the settings copy:
- * using them tells Google the IP address of anything that connects. They are
- * here because a STUN-less default silently fails for most home users, and a
- * feature that fails silently is worse than one that discloses an IP and says
- * so. Both are removable and neither is required on a LAN.
- */
-export const DEFAULT_STUN_URLS: readonly string[] = [
-	'stun:stun.l.google.com:19302',
-	'stun:stun1.l.google.com:19302',
-];
+// The default STUN servers moved to `shared/acappella/webrtc-host.ts`, so the
+// settings table the CLI validates against reads the same list. Re-exported
+// because this module is where every main-process reader already looks.
+export { DEFAULT_STUN_URLS };
 
 export const DEFAULT_ICE_SETTINGS: IceTransportSettings = {
 	stunUrls: [...DEFAULT_STUN_URLS],

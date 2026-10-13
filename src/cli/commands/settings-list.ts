@@ -9,6 +9,7 @@ import {
 	CATEGORY_ORDER,
 	CATEGORY_LABELS,
 	type SettingCategory,
+	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
 
 interface SettingsListOptions {
@@ -35,8 +36,12 @@ export function settingsList(options: SettingsListOptions): void {
 
 			for (const key of keys) {
 				const meta = SETTINGS_METADATA[key];
-				const currentValue = key in settings ? settings[key] : meta.default;
-				const isDefault = JSON.stringify(currentValue) === JSON.stringify(meta.default);
+				const storedValue = key in settings ? settings[key] : meta.default;
+				const isDefault = JSON.stringify(storedValue) === JSON.stringify(meta.default);
+				// A secret inside an object setting is masked like a sensitive key is.
+				const currentValue = options.showSecrets
+					? storedValue
+					: redactNestedSettingSecrets(key, storedValue);
 
 				entries.push({
 					key,

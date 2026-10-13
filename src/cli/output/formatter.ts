@@ -600,6 +600,10 @@ export interface AgentDetailDisplay {
 	customPath?: string | null;
 	customArgs?: string | null;
 	customEnvVars?: Record<string, string> | null;
+	/** Variables switched off in the editor: kept, never spawned with. */
+	parkedEnvVars?: Record<string, string> | null;
+	/** What the agent is spawned with, layer by layer. Secrets arrive masked. */
+	effectiveEnv?: Array<{ key: string; value: string; source: string; shadowedBy: string[] }>;
 	gatewayUrl?: string | null;
 	tokenProxyMode?: string | null;
 	/** The Run on target; a source target carries its context size. */
@@ -760,6 +764,29 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 		lines.push(bold(c('cyan', 'CONFIGURATION')));
 		lines.push('');
 		lines.push(...configRows);
+	}
+
+	// The environment the agent is spawned with: every variable, the layer its
+	// value came from, and the layers it overrode. The Edit Agent dialog's "Show
+	// environment" table. Secret values were masked by the caller.
+	if (agent.effectiveEnv && agent.effectiveEnv.length > 0) {
+		lines.push('');
+		lines.push(bold(c('cyan', 'ENVIRONMENT')));
+		lines.push('');
+		for (const entry of agent.effectiveEnv) {
+			const overrode = entry.shadowedBy.length ? `, overrides ${entry.shadowedBy.join(', ')}` : '';
+			lines.push(`  ${entry.key}=${entry.value}  ${dim(`[${entry.source}${overrode}]`)}`);
+		}
+	}
+	if (agent.parkedEnvVars && Object.keys(agent.parkedEnvVars).length > 0) {
+		if (!agent.effectiveEnv?.length) {
+			lines.push('');
+			lines.push(bold(c('cyan', 'ENVIRONMENT')));
+			lines.push('');
+		}
+		lines.push(
+			`  ${c('white', 'Parked (not spawned with):')} ${Object.keys(agent.parkedEnvVars).join(', ')}`
+		);
 	}
 
 	// Peers: the stored rows and grants, then who they resolve to. The two are

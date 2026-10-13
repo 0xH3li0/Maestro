@@ -226,7 +226,10 @@ import {
 // A Cappella's hidden audio host window (created lazily on the first voice
 // session, closed here when the Encore Feature is switched off).
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
-import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
+import {
+	shutdownACappellaForDisable,
+	syncACappellaAfterExternalSettingsChange,
+} from './ipc/handlers/acappella';
 import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
 import { hydrateUserLocalModels } from './local-models/user-models';
 // Multi-window registry (single source of truth for window<->session ownership)
@@ -593,6 +596,11 @@ const settingsWatcher = createSettingsWatcher({
 		// `maestro-cli models assign model-routing ...` moves the embedding router
 		// to another model, or off. A no-op unless that assignment moved.
 		refreshModelRouting();
+		// `maestro-cli settings set acappella...` and `voice wake-phrase` edit the
+		// A Cappella blob in the file. The always-on wake word and the voice
+		// hotkeys follow the store's change event, which an outside write never
+		// fires, so they are re-read here.
+		syncACappellaAfterExternalSettingsChange();
 	},
 });
 

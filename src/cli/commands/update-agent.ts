@@ -48,7 +48,8 @@ import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { autoModelProblem } from '../../shared/autoTurn';
 import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
 import { applyPeerAgentEdits, peerAccessLabel, type PeerAgentEdits } from '../../shared/peerAgents';
-import type { PeerAccess } from '../../shared/types';
+import type { AdditionalDirectory, PeerAccess } from '../../shared/types';
+import type { EnvParkEdits } from '../../shared/agentConfigExtras';
 import { hasPeerFlags, readPeerFlags, type PeerFlagOptions } from '../services/peer-flags';
 import {
 	buildConfigPatch,
@@ -121,7 +122,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -488,6 +489,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if ('syncHistory' in applied.ssh) {
 			console.log(`  Sync history to remote: ${applied.ssh.syncHistory}`);
 		}
+		if ('shareHistoryToProjectDir' in applied.ssh) {
+			console.log(`  Share history to project dir: ${applied.ssh.shareHistoryToProjectDir}`);
+		}
 	}
 	if (applied.config !== undefined) {
 		// Friendly labels for the editable config keys; `null` means "cleared".
@@ -512,6 +516,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			maestroPMode: 'Token mode',
 			maestroPPath: 'maestro-p path',
 			codexTransport: 'Codex transport',
+			retryOnAvailabilityErrors: 'Retry on availability errors',
+			retryOnTokenExhaustion: 'Retry on token exhaustion',
+			codexAutoResetOnExhaustion: 'Codex auto reset',
+			additionalDirectories: 'Additional directories',
 		};
 		for (const [key, value] of Object.entries(applied.config)) {
 			// Derived marker, not something the caller typed - it is implied by
@@ -553,6 +561,15 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			} else if (key === 'groupPeerAccess' || key === 'worktreePeerAccess') {
 				// Off is not "unset" for a grant, it is the checkbox switched off.
 				console.log(`  ${label}: ${value ? peerAccessLabel(value as PeerAccess) : 'off'}`);
+			} else if (key === 'envParkEdits') {
+				const edits = value as EnvParkEdits;
+				if (edits.park?.length) console.log(`  Env vars parked: ${edits.park.join(', ')}`);
+				if (edits.unpark?.length) console.log(`  Env vars switched on: ${edits.unpark.join(', ')}`);
+			} else if (key === 'additionalDirectories' && Array.isArray(value)) {
+				const dirs = value as AdditionalDirectory[];
+				console.log(
+					`  ${label}: ${dirs.map((dir) => `${dir.path} (${dir.write ? 'read and write' : 'read'})`).join(', ')}`
+				);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {

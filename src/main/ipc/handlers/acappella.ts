@@ -139,7 +139,11 @@ import {
 	VOICE_CREDENTIAL_SERVICES,
 	type VoiceCredentialService,
 } from '../../../shared/acappella/provider-catalog';
-import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
+import {
+	formatTurnBreakdown,
+	lastTurn,
+	type TurnBreakdown,
+} from '../../acappella/telemetry/turn-metrics';
 import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
 import { HandsFreeListener } from '../../acappella/wake/hands-free';
 import {
@@ -179,7 +183,20 @@ import {
 	ACAPPELLA_DEVICES_CHANNEL,
 	ACAPPELLA_PAIRING_REQUEST_CHANNEL,
 	registerACappellaDeviceHandlers,
+	setVoiceDiscovery,
+	testVoiceConnection,
 } from './acappella-devices';
+import {
+	VoiceControlRefusal,
+	registerVoiceControlService,
+	type VoiceControlHandlers,
+} from '../../acappella/voice-control-service';
+import {
+	VOICE_PREVIEW_LINE,
+	type VoiceSessionView,
+	type VoiceWakeHit,
+} from '../../../shared/acappella/voice-control';
+import { formatVoiceSelfTestReport, runVoiceSelfTest } from '../../acappella/voice-self-test';
 
 const LOG_CONTEXT = '[ACappella]';
 
@@ -393,6 +410,19 @@ let wakeTestDetector: WakeDetector | null = null;
  */
 let wakeEnrollment: WakeEnrollmentService | null = null;
 let releaseWakeEnrollment: (() => void) | null = null;
+
+/**
+ * Listeners on the tuning run's hits, beside the broadcast to the Settings dot.
+ * `maestro-cli voice wake test` has no window to light up, so it counts the
+ * hits of its own run here.
+ */
+const wakeTestTaps = new Set<(event: WakeTestEvent) => void>();
+
+/**
+ * The registration of this layer's functions as the one voice control service
+ * (`acappella/voice-control-service.ts`), which `maestro-cli voice` reaches.
+ */
+let releaseVoiceControl: (() => void) | null = null;
 
 /**
  * The always-on wake word behind the Voice Controls toggle. Module state for the
@@ -959,6 +989,37 @@ function isTurnInFlight(service: VoiceSessionService | null): boolean {
 	return state !== 'idle' && state !== 'listening' && state !== 'error';
 }
 
+/** The snapshot fields a caller outside the app is shown. */
+function toVoiceSessionView(snapshot: VoiceSessionSnapshot | null): VoiceSessionView | null {
+	if (!snapshot) return null;
+	return {
+		sessionId: snapshot.sessionId,
+		state: snapshot.state,
+		scope: snapshot.scope,
+		origin: snapshot.origin,
+		windowId: snapshot.windowId,
+		listenPaused: snapshot.listenPaused,
+		startedAt: snapshot.startedAt,
+		providerIds: snapshot.providerIds,
+	};
+}
+
+/**
+ * Bring the voice machinery up to date after the settings FILE changed.
+ *
+ * Everything in this layer that follows settings does it from the store's
+ * change event, and that event fires only for a write made inside the app. A
+ * write from outside (`maestro-cli settings set acappella.controls...`, a hand
+ * edit) changes the file and tells the renderer, and would otherwise leave the
+ * always-on wake word armed on the old phrase and the hotkeys on the old
+ * timing until the next restart. Called from the settings watcher's
+ * `onSettingsChangedExternally`. A no-op before the handlers are registered.
+ */
+export function syncACappellaAfterExternalSettingsChange(): void {
+	void handsFree?.sync();
+	voiceHotkeys?.sync();
+}
+
 /**
  * Register the A Cappella IPC handlers.
  *
@@ -974,38 +1035,40 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	migrateLegacyVoiceProviders(settingsStore);
 	watchRosterChanges();
 
-	const wrappedStart = withIpcErrorLogging(
-		handlerOpts('startSession'),
-		async (
-			rawScope: unknown,
-			windowId: VoiceWindowId,
-			paused: boolean
-		): Promise<VoiceStartSessionResult> => {
-			const scope = parseScope(rawScope);
-			// The microphone is asked for HERE and nowhere earlier. Not at app
-			// launch, not when the Encore Feature is switched on: a first run that
-			// prompts for the microphone for a feature nobody turned on spends trust
-			// the app has not earned. This is the first moment the user has asked for
-			// something that genuinely needs a device.
-			//
-			// The result is not branched on. A refusal belongs to the capability
-			// gate, which names the microphone as its own blocking slot with its own
-			// recovery; throwing a second, differently-worded error from here would
-			// give the same problem two voices.
-			await requestMicPermission();
-			// First start is what pays for the audio host: enabling the Encore
-			// Feature opens no device and builds no second renderer.
-			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-			const { service, substitutions } = await ensureService(deps);
-			const snapshot = await service.startSession({
-				scope,
-				source: 'client-button',
-				windowId,
-				paused,
-			});
-			return { snapshot, substitutions };
-		}
-	);
+	// The handler bodies below are named rather than written inline in their
+	// `ipcMain.handle`, because each has a second caller: the voice control
+	// service registered at the end of this function, which is how `maestro-cli
+	// voice` presses the same button.
+	const startSession = async (
+		rawScope: unknown,
+		windowId: VoiceWindowId,
+		paused: boolean
+	): Promise<VoiceStartSessionResult> => {
+		const scope = parseScope(rawScope);
+		// The microphone is asked for HERE and nowhere earlier. Not at app
+		// launch, not when the Encore Feature is switched on: a first run that
+		// prompts for the microphone for a feature nobody turned on spends trust
+		// the app has not earned. This is the first moment the user has asked for
+		// something that genuinely needs a device.
+		//
+		// The result is not branched on. A refusal belongs to the capability
+		// gate, which names the microphone as its own blocking slot with its own
+		// recovery; throwing a second, differently-worded error from here would
+		// give the same problem two voices.
+		await requestMicPermission();
+		// First start is what pays for the audio host: enabling the Encore
+		// Feature opens no device and builds no second renderer.
+		if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+		const { service, substitutions } = await ensureService(deps);
+		const snapshot = await service.startSession({
+			scope,
+			source: 'client-button',
+			windowId,
+			paused,
+		});
+		return { snapshot, substitutions };
+	};
+	const wrappedStart = withIpcErrorLogging(handlerOpts('startSession'), startSession);
 
 	const wrappedStop = withIpcErrorLogging(handlerOpts('stopSession'), async (): Promise<void> => {
 		await getVoiceSessionService()?.stopSession('user');
@@ -1138,19 +1201,17 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	 * Resolves false when there is no audio host to apply it to, which the HUD
 	 * treats as "nothing is playing" rather than as a failure.
 	 */
-	const wrappedSetVolume = withIpcErrorLogging(
-		handlerOpts('setVolume'),
-		async (volume: unknown): Promise<boolean> => {
-			if (typeof volume !== 'number' || !Number.isFinite(volume)) {
-				throw new Error('InvalidVolume');
-			}
-			if (!audioBridge) return false;
-			// Zero is legal here and only here: mute is a real state the HUD owns,
-			// while the SLIDER floors above zero so it cannot become a silent mute.
-			audioBridge.setPlaybackVolume(Math.min(1, Math.max(0, volume)));
-			return true;
+	const applyVolume = async (volume: unknown): Promise<boolean> => {
+		if (typeof volume !== 'number' || !Number.isFinite(volume)) {
+			throw new Error('InvalidVolume');
 		}
-	);
+		if (!audioBridge) return false;
+		// Zero is legal here and only here: mute is a real state the HUD owns,
+		// while the SLIDER floors above zero so it cannot become a silent mute.
+		audioBridge.setPlaybackVolume(Math.min(1, Math.max(0, volume)));
+		return true;
+	};
+	const wrappedSetVolume = withIpcErrorLogging(handlerOpts('setVolume'), applyVolume);
 
 	/**
 	 * The microphones this machine offers, plus which one is selected.
@@ -1160,18 +1221,19 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	 * would hang whenever the audio host is not open - which is most of the time,
 	 * since nothing opens it until a session starts.
 	 */
-	const wrappedInputDevices = withIpcErrorLogging(
-		handlerOpts('inputDevices'),
-		async (): Promise<{ devices: AudioDeviceInfo[]; selectedId: string }> => {
-			if (getAcappellaAudioHostWindow()) sendAudioHostCommand({ kind: 'list-input-devices' });
-			return {
-				devices: inputDevices,
-				selectedId:
-					readVoiceProviderSettings(deps.settingsStore).inputDeviceId ??
-					ACAPPELLA_SYSTEM_DEFAULT_INPUT,
-			};
-		}
-	);
+	const readInputDevices = async (): Promise<{
+		devices: AudioDeviceInfo[];
+		selectedId: string;
+	}> => {
+		if (getAcappellaAudioHostWindow()) sendAudioHostCommand({ kind: 'list-input-devices' });
+		return {
+			devices: inputDevices,
+			selectedId:
+				readVoiceProviderSettings(deps.settingsStore).inputDeviceId ??
+				ACAPPELLA_SYSTEM_DEFAULT_INPUT,
+		};
+	};
+	const wrappedInputDevices = withIpcErrorLogging(handlerOpts('inputDevices'), readInputDevices);
 
 	/**
 	 * Choose the microphone.
@@ -1180,27 +1242,28 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	 * device under a live recogniser would splice two rooms into one sentence, and
 	 * the pre-roll buffer in front of it belongs to the old one.
 	 */
+	const chooseInputDevice = async (rawId: unknown): Promise<boolean> => {
+		if (typeof rawId !== 'string' || !rawId) throw new Error('InvalidInputDevice');
+		const stored = (deps.settingsStore.get(ACAPPELLA_SETTINGS_KEY, {}) ?? {}) as Record<
+			string,
+			unknown
+		>;
+		const audio = (stored.audio ?? {}) as Record<string, unknown>;
+		if (!deps.settingsStore.set) throw new Error('SettingsNotWritable');
+		deps.settingsStore.set(ACAPPELLA_SETTINGS_KEY, {
+			...stored,
+			audio: {
+				...audio,
+				// The sentinel is stored as "no preference" so the setting keeps
+				// following the OS rather than pinning today's default device.
+				inputDeviceId: rawId === ACAPPELLA_SYSTEM_DEFAULT_INPUT ? undefined : rawId,
+			},
+		});
+		return true;
+	};
 	const wrappedSetInputDevice = withIpcErrorLogging(
 		handlerOpts('setInputDevice'),
-		async (rawId: unknown): Promise<boolean> => {
-			if (typeof rawId !== 'string' || !rawId) throw new Error('InvalidInputDevice');
-			const stored = (deps.settingsStore.get(ACAPPELLA_SETTINGS_KEY, {}) ?? {}) as Record<
-				string,
-				unknown
-			>;
-			const audio = (stored.audio ?? {}) as Record<string, unknown>;
-			if (!deps.settingsStore.set) throw new Error('SettingsNotWritable');
-			deps.settingsStore.set(ACAPPELLA_SETTINGS_KEY, {
-				...stored,
-				audio: {
-					...audio,
-					// The sentinel is stored as "no preference" so the setting keeps
-					// following the OS rather than pinning today's default device.
-					inputDeviceId: rawId === ACAPPELLA_SYSTEM_DEFAULT_INPUT ? undefined : rawId,
-				},
-			});
-			return true;
-		}
+		chooseInputDevice
 	);
 
 	const wrappedLastTurn = withIpcErrorLogging(
@@ -1444,15 +1507,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		})
 	);
 
-	const wrappedWakeTest = withIpcErrorLogging(
-		handlerOpts('wakeTest'),
-		async (payload: unknown): Promise<WakeTestStartResult> => {
-			const result = await startWakeTest(deps, payload);
-			// A refused Test borrowed nothing; give the always-on wake word its microphone back.
-			if (!result.started) void handsFree?.resume();
-			return result;
-		}
-	);
+	const beginWakeTest = async (payload: unknown): Promise<WakeTestStartResult> => {
+		const result = await startWakeTest(deps, payload);
+		// A refused Test borrowed nothing; give the always-on wake word its microphone back.
+		if (!result.started) void handsFree?.resume();
+		return result;
+	};
+	const wrappedWakeTest = withIpcErrorLogging(handlerOpts('wakeTest'), beginWakeTest);
 
 	const wrappedWakeTestStop = withIpcErrorLogging(
 		handlerOpts('wakeTestStop'),
@@ -1526,25 +1587,29 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	// Tab / Agent / Conductor, switched mid-session from the HUD. Returns false
 	// when there is no live session to re-bind.
+	const setScope = (rawScope: unknown): boolean =>
+		getVoiceSessionService()?.setScope(parseScope(rawScope)) ?? false;
 	ipcMain.handle('acappella:set-scope', async (_event, rawScope: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return getVoiceSessionService()?.setScope(parseScope(rawScope)) ?? false;
+		return setScope(rawScope);
 	});
 
 	// "Send now": end the held utterance and dispatch it. The same two-part
 	// gesture as releasing the push-to-talk key: flush the recogniser so the tail
 	// of the sentence is decoded, and settle the composer on it.
-	ipcMain.handle('acappella:end-utterance', async (): Promise<void> => {
-		requireEnabled(settingsStore);
+	const sendNow = (): void => {
 		audioBridge?.endUtterance();
 		getVoiceSessionService()?.endUtteranceNow();
+	};
+	ipcMain.handle('acappella:end-utterance', async (): Promise<void> => {
+		requireEnabled(settingsStore);
+		sendNow();
 	});
 
 	// Open or shut the microphone without ending the session: the HUD's hands-free
 	// toggle, and both ends of its push-to-talk hold. Returns false when there is
 	// no live session to gate, which is how the HUD knows to start one instead.
-	ipcMain.handle('acappella:set-listening', async (_event, payload: unknown): Promise<boolean> => {
-		requireEnabled(settingsStore);
+	const setListening = (payload: unknown): boolean => {
 		const { listening, hold, send } = (payload ?? {}) as Record<string, unknown>;
 		if (typeof listening !== 'boolean') throw new Error('InvalidListening');
 		const service = getVoiceSessionService();
@@ -1555,6 +1620,10 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// while the audio it needs is still the audio the recogniser holds.
 		if (!listening && send === true) audioBridge?.endUtterance();
 		return service.setListening(listening, { hold: hold === true, send: send === true });
+	};
+	ipcMain.handle('acappella:set-listening', async (_event, payload: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return setListening(payload);
 	});
 
 	// Ungated read: the HUD draws the wait chip from it, and a chip that threw
@@ -1563,12 +1632,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	// The HUD's quick wait picker. Null (or anything malformed) returns to the
 	// stored default. Applies from the next fragment: the composer reads it live.
+	const setSendWait = (waitMs: unknown): VoiceSendWait => {
+		sendWaitOverrideMs = clampSendWaitOverrideMs(waitMs);
+		return readSendWait(deps);
+	};
 	ipcMain.handle(
 		'acappella:set-send-wait',
 		async (_event, waitMs: unknown): Promise<VoiceSendWait> => {
 			requireEnabled(settingsStore);
-			sendWaitOverrideMs = clampSendWaitOverrideMs(waitMs);
-			return readSendWait(deps);
+			return setSendWait(waitMs);
 		}
 	);
 
@@ -1729,6 +1801,168 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		if (!hostEvent || typeof (hostEvent as WebRtcHostEvent).kind !== 'string') return;
 		getACappellaTransport()?.handleHostEvent(hostEvent as WebRtcHostEvent);
 	});
+
+	// -- The voice control service -------------------------------------------
+	//
+	// `maestro-cli voice` reaches the functions above through one entry point
+	// (`runVoiceControlRequest`). Every handler is the body of a button: the same
+	// function, on the same session, under the same rules. What differs from a
+	// click is only what a caller with no window can supply: the HUD of a session
+	// it starts belongs to the window the user is looking at, as it does for a
+	// global hotkey, and a refusal comes back as a sentence.
+	const sessionView = (): VoiceSessionView | null =>
+		toVoiceSessionView(getVoiceSessionService()?.getSnapshot() ?? null);
+	const requireDevice = (changed: boolean, deviceId: string): void => {
+		if (!changed) throw new VoiceControlRefusal(`No paired device has the id "${deviceId}".`);
+	};
+	const requireKeySaved = (result: { ok: boolean; error?: string }): void => {
+		if (!result.ok) throw new VoiceControlRefusal(result.error ?? 'The key could not be saved.');
+	};
+	const isConfigured = (service: VoiceCredentialService): boolean =>
+		listCredentialStates().some((state) => state.service === service && state.configured);
+
+	const controlHandlers: VoiceControlHandlers = {
+		status: async () => {
+			const enabled = isACappellaEnabled(settingsStore);
+			return {
+				enabled,
+				session: sessionView(),
+				// The gate is not asked while voice is off, as `models:readiness` is not.
+				readiness: enabled ? await readVoiceReadiness(settingsStore) : null,
+				sendWait: readSendWait(deps),
+			};
+		},
+		start: async ({ scope, paused }) => {
+			// A start that cannot run says so on the event stream, which a caller
+			// with no HUD never sees. The message is caught here for the refusal.
+			const { service } = await ensureService(deps);
+			let failure: string | null = null;
+			const release = service.subscribe((event) => {
+				if (event.type === 'session-error') failure = event.message;
+			});
+			try {
+				const { snapshot, substitutions } = await startSession(
+					scope,
+					deps.resolveVoiceWindowId?.() ?? null,
+					paused === true
+				);
+				if (snapshot.state === 'idle' || snapshot.state === 'error') {
+					throw new VoiceControlRefusal(failure ?? 'The voice session could not start.');
+				}
+				return { session: toVoiceSessionView(snapshot) as VoiceSessionView, substitutions };
+			} finally {
+				release();
+			}
+		},
+		stop: async () => {
+			await getVoiceSessionService()?.stopSession('user');
+			return { session: sessionView() };
+		},
+		listen: async ({ listening, send }) => ({
+			applied: setListening({ listening, send }),
+			listening,
+		}),
+		send: async () => {
+			sendNow();
+			return { session: sessionView() };
+		},
+		'stop-reply': async () => ({
+			interrupted: getVoiceSessionService()?.interrupt('client-button') ?? false,
+		}),
+		scope: async ({ scope }) => ({ applied: setScope(scope), scope }),
+		wait: async ({ waitMs }) => setSendWait(waitMs),
+		volume: async ({ volume }) => ({ applied: await applyVolume(volume), volume }),
+		inputs: async () => readInputDevices(),
+		'set-input': async ({ deviceId }) => {
+			await chooseInputDevice(deviceId);
+			return { selectedId: (await readInputDevices()).selectedId };
+		},
+		'apply-providers': async () => applyACappellaProviders(deps),
+		voices: async () => ({ voices: await listVoiceOptions(deps) }),
+		preview: async ({ text, voiceId }) => ({
+			spoke: await previewVoiceLine(deps, text ?? VOICE_PREVIEW_LINE, voiceId),
+		}),
+		credentials: async () => ({ credentials: listCredentialStates() }),
+		'set-credential': async ({ service, key }) => {
+			requireKeySaved(setCredential(service, key));
+			return { service, configured: isConfigured(service) };
+		},
+		'clear-credential': async ({ service }) => {
+			requireKeySaved(clearCredential(service));
+			return { service, configured: isConfigured(service) };
+		},
+		'test-credential': async ({ service, key }) => validateCredential(service, key),
+		devices: async () => {
+			const live = getACappellaTransport();
+			return {
+				devices: (await live?.listDevices()) ?? [],
+				discovery: live?.discoveryStatus() ?? null,
+			};
+		},
+		'rename-device': async ({ deviceId, name }) => {
+			requireDevice(
+				(await getACappellaTransport()?.pairing.rename(deviceId, name)) ?? false,
+				deviceId
+			);
+			return { deviceId, name: name.trim() };
+		},
+		'revoke-device': async ({ deviceId }) => {
+			requireDevice((await getACappellaTransport()?.revokeDevice(deviceId)) ?? false, deviceId);
+			return { deviceId };
+		},
+		'forget-device': async ({ deviceId }) => {
+			requireDevice((await getACappellaTransport()?.pairing.forget(deviceId)) ?? false, deviceId);
+			return { deviceId };
+		},
+		'revoke-all-devices': async () => ({
+			revoked: (await getACappellaTransport()?.revokeAllDevices()) ?? 0,
+		}),
+		'disconnect-devices': async () => {
+			getACappellaTransport()?.disconnectAll();
+			return {};
+		},
+		discovery: async ({ enabled }) => ({ discovery: await setVoiceDiscovery(enabled) }),
+		'test-connection': async () => testVoiceConnection(),
+		latency: async () => {
+			const turn = lastTurn();
+			return {
+				turn: turn as unknown as Record<string, unknown> | null,
+				text: turn ? formatTurnBreakdown(turn) : null,
+			};
+		},
+		'self-test': async () => {
+			const report = await runVoiceSelfTest();
+			return {
+				report: report as unknown as Record<string, unknown>,
+				text: formatVoiceSelfTestReport(report),
+			};
+		},
+		'wake-test': async ({ phrase, sensitivity, seconds }) => {
+			const hits: VoiceWakeHit[] = [];
+			const tap = (event: WakeTestEvent): void => {
+				hits.push({ phrase: event.phrase, score: event.score, at: event.at });
+			};
+			const started = await beginWakeTest({ phrase, sensitivity });
+			if (!started.started) throw new VoiceControlRefusal(started.reason);
+			wakeTestTaps.add(tap);
+			try {
+				await new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000));
+			} finally {
+				wakeTestTaps.delete(tap);
+				// The run opened a microphone; it closes whether or not anything fired.
+				await stopWakeTest();
+			}
+			return {
+				phrase: phrase ?? readVoiceProviderSettings(settingsStore).wakePhrase ?? null,
+				seconds,
+				hits,
+			};
+		},
+	};
+	releaseVoiceControl?.();
+	releaseVoiceControl = registerVoiceControlService(controlHandlers, () =>
+		isACappellaEnabled(settingsStore)
+	);
 
 	// Release the floor on the way out, and with it the microphone: the audio host
 	// window holds a real capture device, and a session left running would keep it
@@ -1907,6 +2141,7 @@ async function startWakeTest(
 				at: detection.at,
 			};
 			deps.safeSend(ACAPPELLA_WAKE_TEST_CHANNEL, event);
+			for (const tap of wakeTestTaps) tap(event);
 		},
 	});
 	await detector.start();
@@ -2002,6 +2237,9 @@ export function resetACappellaHandlerState(): void {
 	wakeEnrollment = null;
 	releaseWakeEnrollment?.();
 	releaseWakeEnrollment = null;
+	releaseVoiceControl?.();
+	releaseVoiceControl = null;
+	wakeTestTaps.clear();
 	releaseDictationMicrophone?.();
 	releaseDictationMicrophone = null;
 	clipCapture = null;

@@ -5,7 +5,7 @@
 // this hop knows no groups, and the graph falls back to every agent when the
 // group is gone.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -18,6 +18,7 @@ vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
+import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
 function createMockClient(): WebClient {
@@ -129,5 +130,116 @@ describe('open_modal handler', () => {
 
 		expect(openModal).not.toHaveBeenCalled();
 		expect(lastResponse(client).error).toContain('has no tabs');
+	});
+});
+
+// `open` used to answer "Opened" for a surface behind a switched-off Encore
+// Feature: the app showed a toast and stayed as it was, and the caller was
+// told the opposite. The flags are read at this hop, so the refusal is in the
+// reply.
+describe('open_modal handler: a surface behind an Encore Feature', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	let openModal: ReturnType<typeof vi.fn>;
+
+	const withFlags = (encoreFeatures: unknown) =>
+		setBridgeGuardContextProvider(() => ({
+			userDataDir: null,
+			encoreFeatures,
+			platform: process.platform,
+		}));
+
+	beforeEach(() => {
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		openModal = vi.fn().mockResolvedValue(true);
+		handler.setCallbacks({ openModal } as never);
+	});
+
+	afterEach(() => {
+		setBridgeGuardContextProvider(null);
+	});
+
+	it('refuses a surface whose feature is off, and asks the app for nothing', async () => {
+		withFlags({ maestroCue: false });
+		handler.handleMessage(client, { type: 'open_modal', requestId: 'req-1', surface: 'cue' });
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'open_modal_result',
+			success: false,
+			requestId: 'req-1',
+		});
+		expect(lastResponse(client).error).toContain('is an Encore Feature and is currently off');
+	});
+
+	it('opens the same surface once the feature is on', async () => {
+		withFlags({ maestroCue: true });
+		handler.handleMessage(client, { type: 'open_modal', requestId: 'req-2', surface: 'cue' });
+		await flush();
+
+		expect(openModal).toHaveBeenCalledTimes(1);
+		expect(lastResponse(client)).toMatchObject({ success: true });
+	});
+
+	it('refuses Voice Setup on an install that never switched voice on', async () => {
+		// Nothing stored: A Cappella reads as its default, which is off.
+		withFlags(undefined);
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-3',
+			surface: 'voice-setup',
+		});
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client).success).toBe(false);
+	});
+
+	it('does not gate a surface behind no feature', async () => {
+		withFlags({});
+		handler.handleMessage(client, { type: 'open_modal', requestId: 'req-4', surface: 'settings' });
+		await flush();
+		expect(openModal).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('open_modal handler: Group Settings', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	let openModal: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		openModal = vi.fn().mockResolvedValue(true);
+		handler.setCallbacks({ openModal } as never);
+	});
+
+	it('opens on the group it was given', async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-1',
+			surface: 'group-settings',
+			group: 'group-1',
+		});
+		await flush();
+
+		expect(openModal).toHaveBeenCalledWith(
+			expect.objectContaining({ surface: 'group-settings', group: 'group-1' })
+		);
+	});
+
+	it('is refused without a group, since it has nothing to open on', async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-2',
+			surface: 'group-settings',
+		});
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client).error).toContain('pass --group');
 	});
 });

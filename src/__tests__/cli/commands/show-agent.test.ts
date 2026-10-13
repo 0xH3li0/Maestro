@@ -22,6 +22,10 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSessions: vi.fn(() => []),
 	// The harness tier defaults a tier is resolved against, below the agent's own.
 	readHarnessTierDefaults: vi.fn(() => ({})),
+	// The two layers under an agent's own environment variables: Settings >
+	// Environment, and the provider-level set.
+	readSettingValue: vi.fn(() => undefined),
+	readAgentConfigValue: vi.fn(() => undefined),
 	// The saved sources a Run on target is labeled from.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
@@ -43,10 +47,12 @@ vi.mock('../../../cli/output/formatter', () => ({
 import { showAgent } from '../../../cli/commands/show-agent';
 import {
 	getSessionById,
+	readAgentConfigValue,
 	readHarnessTierDefaults,
 	readHistory,
 	readGroups,
 	readSessions,
+	readSettingValue,
 } from '../../../cli/services/storage';
 import { formatAgentDetail, formatError } from '../../../cli/output/formatter';
 
@@ -868,5 +874,140 @@ describe('show-agent command', () => {
 
 			expect(readHistory).toHaveBeenCalledWith(undefined, 'specific-agent');
 		});
+	});
+});
+
+// The Edit Agent dialog's "Show environment" table, and the masking it does.
+// `show agent` used to print an agent's own variables raw and nothing about the
+// layers under them, so a caller could neither see what a spawn would get nor
+// read the output aloud.
+describe('show-agent: the environment an agent is spawned with', () => {
+	let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+	const agent = (overrides: Partial<SessionInfo> = {}): SessionInfo =>
+		({
+			id: 'agent-123',
+			name: 'Test Agent',
+			toolType: 'claude-code',
+			cwd: '/path/to/project',
+			projectRoot: '/path/to/project',
+			...overrides,
+		}) as SessionInfo;
+
+	const shown = () => JSON.parse(String(consoleSpy.mock.calls[0][0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(readHistory).mockReturnValue([]);
+		vi.mocked(readGroups).mockReturnValue([]);
+		vi.mocked(readSessions).mockReturnValue([]);
+		vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		vi.mocked(readAgentConfigValue).mockReturnValue(undefined);
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('names the layer each value came from, and the layer it overrode', () => {
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'shellEnvVars' ? { EDITOR: 'vim', LOG_LEVEL: 'info' } : undefined
+		);
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({ customEnvVars: { LOG_LEVEL: 'debug' } } as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		expect(shown().effectiveEnv).toEqual([
+			{ key: 'EDITOR', value: 'vim', source: 'global', shadowedBy: [], secret: false },
+			{
+				key: 'LOG_LEVEL',
+				value: 'debug',
+				source: 'session',
+				shadowedBy: ['global'],
+				secret: false,
+			},
+		]);
+	});
+
+	it('uses the provider-level variables only for an agent with none of its own', () => {
+		vi.mocked(readAgentConfigValue).mockReturnValue({ PROVIDER_FLAG: '1' });
+		vi.mocked(getSessionById).mockReturnValue(agent());
+		showAgent('agent-123', { json: true });
+		expect(shown().effectiveEnv).toEqual([
+			{ key: 'PROVIDER_FLAG', value: '1', source: 'agent', shadowedBy: [], secret: false },
+		]);
+		expect(readAgentConfigValue).toHaveBeenCalledWith('claude-code', 'customEnvVars');
+
+		consoleSpy.mockClear();
+		// The agent's own record REPLACES the provider-level set.
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({ customEnvVars: { OWN: 'x' } } as Partial<SessionInfo>)
+		);
+		showAgent('agent-123', { json: true });
+		expect(shown().effectiveEnv.map((entry: { key: string }) => entry.key)).toEqual(['OWN']);
+	});
+
+	it('masks a secret value, keeping only its tail', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-0123456789abcdef', REGION: 'us-east-1' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		const out = shown();
+		expect(out.customEnvVars.REGION).toBe('us-east-1');
+		expect(out.customEnvVars.ANTHROPIC_API_KEY).not.toContain('sk-ant-0123456789');
+		expect(out.customEnvVars.ANTHROPIC_API_KEY.endsWith('cdef')).toBe(true);
+		const key = out.effectiveEnv.find(
+			(entry: { key: string }) => entry.key === 'ANTHROPIC_API_KEY'
+		);
+		expect(key.secret).toBe(true);
+		expect(key.value).toBe(out.customEnvVars.ANTHROPIC_API_KEY);
+		// Nowhere in the output, in any field.
+		expect(String(consoleSpy.mock.calls[0][0])).not.toContain('sk-ant-0123456789abcdef');
+	});
+
+	it('prints a secret in full only when --show-secrets is passed', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-0123456789abcdef' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true, showSecrets: true });
+
+		const out = shown();
+		expect(out.customEnvVars.ANTHROPIC_API_KEY).toBe('sk-ant-0123456789abcdef');
+		expect(out.effectiveEnv[0].value).toBe('sk-ant-0123456789abcdef');
+	});
+
+	it('lists the variables that are parked, which are never spawned with', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { LIVE: '1' },
+				customEnvVarsDisabled: { PARKED_TOKEN: 'abcdefghijklmnop' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		const out = shown();
+		expect(Object.keys(out.parkedEnvVars)).toEqual(['PARKED_TOKEN']);
+		expect(out.parkedEnvVars.PARKED_TOKEN).not.toBe('abcdefghijklmnop');
+		expect(out.effectiveEnv.map((entry: { key: string }) => entry.key)).toEqual(['LIVE']);
+	});
+
+	it('reports no variables as null and an empty list, not as an error', () => {
+		vi.mocked(getSessionById).mockReturnValue(agent());
+		showAgent('agent-123', { json: true });
+		expect(shown()).toMatchObject({ customEnvVars: null, parkedEnvVars: null, effectiveEnv: [] });
 	});
 });

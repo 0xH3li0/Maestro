@@ -9,7 +9,9 @@ import {
 	SETTINGS_METADATA,
 	CATEGORY_LABELS,
 	type SettingCategory,
-	getSettingDefault,
+	getSettingDefaultAtPath,
+	nestedSettingPathProblem,
+	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
 
 interface SettingsGetOptions {
@@ -19,12 +21,20 @@ interface SettingsGetOptions {
 
 export function settingsGet(key: string, options: SettingsGetOptions): void {
 	try {
-		const value = readSettingValue(key);
-
 		// Resolve metadata - for dot-notation, use the top-level key
 		const topKey = key.split('.')[0];
 		const meta = SETTINGS_METADATA[topKey];
-		const defaultValue = key.includes('.') ? undefined : getSettingDefault(key);
+		const pathProblem = nestedSettingPathProblem(key);
+		if (pathProblem) throw new Error(pathProblem);
+		// A nested path has a default only under a setting with a field table.
+		const defaultValue = getSettingDefaultAtPath(key);
+		// An unset field of such a setting reads as its default, which is what
+		// the app runs on. A secret inside an object read is masked.
+		const stored = readSettingValue(key);
+		const value = redactNestedSettingSecrets(
+			key,
+			stored === undefined && key.includes('.') ? defaultValue : stored
+		);
 
 		if (value === undefined && !meta) {
 			throw new Error(

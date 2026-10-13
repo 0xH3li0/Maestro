@@ -36,17 +36,22 @@ import {
 	asWakeEngine,
 	type WakeEngine,
 } from '../../../../shared/acappella/voice-controls';
+import {
+	readAgentWakePhrases,
+	withAgentWakePhrase,
+	type AgentWakePhrase,
+} from '../../../../shared/acappella/voice-settings-schema';
 import { patchVoiceSettingsSection, readVoiceSettingsBlob } from '../../../services/voiceSettings';
 import { useVoiceUiStore } from '../../../stores/voiceUiStore';
 
 /** The idle timeout in the unit the panel shows. Stored in ms, shown in seconds. */
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_TIMEOUT_MS / 1000;
 
-/** One agent's wake phrase, so saying it jumps straight into that agent's context. */
-export interface AgentWakePhrase {
-	agentSessionId: string;
-	phrase: string;
-}
+// One agent's wake phrase, so saying it jumps straight into that agent's
+// context. The type and the two rules about the stored list (what a malformed
+// entry reads as, and how one agent's entry is rewritten) are shared with
+// `maestro-cli voice wake-phrase`, which writes the same list.
+export type { AgentWakePhrase };
 
 export interface VoiceControlSettings {
 	/** Whether the always-local wake detector runs at all. */
@@ -115,18 +120,6 @@ function asNumber(value: unknown, fallback: number): number {
 	return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function asAgentPhrases(value: unknown): AgentWakePhrase[] {
-	if (!Array.isArray(value)) return [];
-	return value
-		.filter(
-			(entry): entry is AgentWakePhrase =>
-				!!entry &&
-				typeof (entry as AgentWakePhrase).agentSessionId === 'string' &&
-				typeof (entry as AgentWakePhrase).phrase === 'string'
-		)
-		.map((entry) => ({ agentSessionId: entry.agentSessionId, phrase: entry.phrase }));
-}
-
 /** Widen a stored `controls` object into a complete settings object. */
 export function readVoiceControls(
 	stored: Record<string, unknown> | undefined
@@ -138,7 +131,7 @@ export function readVoiceControls(
 		wakeSensitivity: asNumber(raw.wakeSensitivity, DEFAULT_VOICE_CONTROLS.wakeSensitivity),
 		wakeDebounceMs: asNumber(raw.wakeDebounceMs, DEFAULT_VOICE_CONTROLS.wakeDebounceMs),
 		wakeEngine: asWakeEngine(raw.wakeEngine),
-		agentPhrases: asAgentPhrases(raw.agentPhrases),
+		agentPhrases: readAgentWakePhrases(raw.agentPhrases),
 		stopPhrase: asString(raw.stopPhrase, DEFAULT_VOICE_CONTROLS.stopPhrase),
 		stopWordEnabled: raw.stopWordEnabled !== false,
 		holdThresholdMs: asNumber(raw.holdThresholdMs, DEFAULT_VOICE_CONTROLS.holdThresholdMs),
@@ -210,12 +203,8 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 
 	const setAgentPhrase = useCallback(
 		async (agentSessionId: string, phrase: string) => {
-			const rest = settings.agentPhrases.filter((entry) => entry.agentSessionId !== agentSessionId);
-			// A blank phrase removes the assignment rather than storing an empty one:
-			// a phrase nobody can say would arm a classifier that never fires.
-			const agentPhrases = phrase.trim()
-				? [...rest, { agentSessionId, phrase: phrase.trim() }]
-				: rest;
+			// A blank phrase removes the assignment (see `withAgentWakePhrase`).
+			const agentPhrases = withAgentWakePhrase(settings.agentPhrases, agentSessionId, phrase);
 			setSettings({ ...settings, agentPhrases });
 			await patchVoiceSettingsSection('controls', { agentPhrases });
 			// The Left Bar draws a badge per agent from a mirror of this list. There

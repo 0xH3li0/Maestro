@@ -27,6 +27,11 @@ vi.mock('../../../cli/services/storage', () => ({
 	// `--group` is resolved and its defaults read from the stored group list.
 	readGroups: vi.fn(() => []),
 	resolveGroupId: vi.fn((id: string) => id),
+	// `--peer` names an agent the way every agent flag does.
+	resolveAgentId: vi.fn((ref: string) => {
+		if (ref === 'ghost') throw new Error('Agent not found: ghost');
+		return `agent-${ref}`;
+	}),
 }));
 
 // Mock formatter
@@ -798,5 +803,112 @@ describe('create-agent command', () => {
 			expect(readGroups).not.toHaveBeenCalled();
 			expect(resolveGroupId).not.toHaveBeenCalled();
 		});
+	});
+});
+
+// The New Agent dialog has a Peers tab; `create-agent` had no peer flag, so an
+// agent could not be created with its team. The rows are written after the
+// create, through the message `update-agent --peer` sends.
+describe('create-agent command: peers', () => {
+	let consoleSpy: MockInstance;
+	let consoleErrorSpy: MockInstance;
+	let processExitSpy: MockInstance;
+
+	/** Answer the create, then the peer write, recording both messages. */
+	function mockCreate(peerResult: Record<string, unknown> = { success: true }) {
+		const sent: Array<Record<string, unknown>> = [];
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+					sent.push(payload);
+					return Promise.resolve(
+						payload.type === 'create_session'
+							? { type: 'create_session_result', success: true, sessionId: 'new-id-123' }
+							: peerResult
+					);
+				}),
+			} as never)
+		);
+		return sent;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	it('creates the agent, then writes its peers through the update-agent message', async () => {
+		const sent = mockCreate();
+
+		await createAgent('Lead', {
+			cwd: '/tmp/project',
+			type: 'claude-code',
+			peer: ['scout:rw'],
+			peerNote: ['scout:reads the logs'],
+			groupPeers: 'r',
+			json: true,
+		});
+
+		expect(sent.map((message) => message.type)).toEqual([
+			'create_session',
+			'update_session_config',
+		]);
+		expect(sent[1]).toEqual({
+			type: 'update_session_config',
+			sessionId: 'new-id-123',
+			configPatch: {
+				peerAgentEdits: {
+					upsert: [{ sessionId: 'agent-scout', read: true, write: true }],
+					notes: [{ sessionId: 'agent-scout', description: 'reads the logs' }],
+				},
+				groupPeerAccess: { read: true, write: false },
+			},
+		});
+		expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toMatchObject({
+			success: true,
+			agentId: 'new-id-123',
+			peers: { groupPeerAccess: { read: true, write: false } },
+		});
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('sends no second message when no peer flag was passed', async () => {
+		const sent = mockCreate();
+		await createAgent('Solo', { cwd: '/tmp/project', type: 'claude-code', peer: [] });
+		expect(sent.map((message) => message.type)).toEqual(['create_session']);
+	});
+
+	it('creates nothing when a peer flag is misspelled or names no agent', async () => {
+		const sent = mockCreate();
+
+		await createAgent('Lead', { cwd: '/tmp/project', type: 'claude-code', peer: ['scout'] });
+		await createAgent('Lead', { cwd: '/tmp/project', type: 'claude-code', peer: ['ghost:rw'] });
+
+		// The flag is read before the create, so a typo costs no agent.
+		expect(sent).toEqual([]);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--peer expects'));
+		expect(formatError).toHaveBeenCalledWith('Agent not found: ghost');
+	});
+
+	it('says the agent exists when the app refuses its peers, and exits non-zero', async () => {
+		mockCreate({ success: false, error: 'A peer must be another live agent.' });
+
+		await createAgent('Lead', {
+			cwd: '/tmp/project',
+			type: 'claude-code',
+			peer: ['scout:rw'],
+			json: true,
+		});
+
+		const out = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+		expect(out).toMatchObject({ success: false, agentId: 'new-id-123' });
+		// Both halves: what was made, and what was not.
+		expect(out.error).toContain('new-id-123');
+		expect(out.error).toContain('A peer must be another live agent.');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
 });

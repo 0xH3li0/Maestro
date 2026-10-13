@@ -28,6 +28,20 @@ export const ACAPPELLA_WEBRTC_COMMAND_CHANNEL = 'acappella:webrtc-command';
 export const ACAPPELLA_WEBRTC_EVENT_CHANNEL = 'acappella:webrtc-event';
 
 /**
+ * Google's public STUN servers.
+ *
+ * A default rather than a recommendation, and it is stated in the settings copy:
+ * using them tells Google the IP address of anything that connects. They are
+ * here because a STUN-less default silently fails for most home users, and a
+ * feature that fails silently is worse than one that discloses an IP and says
+ * so. Both are removable and neither is required on a LAN.
+ */
+export const DEFAULT_STUN_URLS: readonly string[] = [
+	'stun:stun.l.google.com:19302',
+	'stun:stun1.l.google.com:19302',
+];
+
+/**
  * One ICE server, in `RTCIceServer` shape but as a plain object.
  *
  * Declared here rather than imported from `lib.dom` so the main process, which

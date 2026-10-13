@@ -73,6 +73,7 @@ import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { collectRepeatable } from './services/peer-flags';
+import { PICKABLE_AGENT_IDS } from '../shared/agentMetadata';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
@@ -174,6 +175,49 @@ import {
 	voiceWakeTrain,
 	voiceWakeUndo,
 } from './commands/voice-wake';
+import {
+	voiceInputList,
+	voiceInputSet,
+	voiceLatency,
+	voiceListen,
+	voiceMute,
+	voiceScope,
+	voiceSelfTest,
+	voiceSend,
+	voiceSetup,
+	voiceStart,
+	voiceStatus,
+	voiceStop,
+	voiceStopReply,
+	voiceUnmute,
+	voiceVolume,
+	voiceWait,
+	voiceWakeTest,
+} from './commands/voice';
+import {
+	voiceCredentialsClear,
+	voiceCredentialsList,
+	voiceCredentialsSet,
+	voiceCredentialsTest,
+	voiceProvidersList,
+	voiceProvidersSet,
+	voiceVoicesList,
+	voiceVoicesPreview,
+	voiceVoicesSet,
+	voiceWakePhraseClear,
+	voiceWakePhraseList,
+	voiceWakePhraseSet,
+} from './commands/voice-providers';
+import {
+	voiceDevicesDisconnect,
+	voiceDevicesDiscovery,
+	voiceDevicesForget,
+	voiceDevicesList,
+	voiceDevicesRename,
+	voiceDevicesRevoke,
+	voiceDevicesRevokeAll,
+	voiceDevicesTestConnection,
+} from './commands/voice-devices';
 import { search } from './commands/search';
 import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
 import { quickChat } from './commands/quick-chat';
@@ -428,8 +472,11 @@ const show = program.command('show').description('Show details of a resource');
 
 show
 	.command('agent <id>')
-	.description('Show agent details including history and usage stats')
+	.description(
+		'Show agent details: settings, the environment it is spawned with, peers, history and usage stats'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
+	.option('--show-secrets', 'Print secret environment values in full instead of masked')
 	.action(showAgent);
 
 show
@@ -1470,11 +1517,7 @@ program
 		'-d, --cwd <path>',
 		'Working directory for the agent (required, unless --group names a group whose defaults set one)'
 	)
-	.option(
-		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
-		'claude-code'
-	)
+	.option('-t, --type <type>', `Agent type (${PICKABLE_AGENT_IDS.join(', ')})`, 'claude-code')
 	.option(
 		'-g, --group <id>',
 		"Group to assign the agent to. The agent starts from the group's defaults (provider, model, environment variables, peers, ...), and every flag below overrides one"
@@ -1521,6 +1564,27 @@ program
 	.option(
 		'--run-on-context <tokens>',
 		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)"
+	)
+	// The Peers tab of the New Agent dialog, spelled as on update-agent.
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--group-peers <r|w|rw|off>',
+		'Grant access to every other agent in the same group, resolved live'
+	)
+	.option(
+		'--worktree-peers <r|w|rw|off>',
+		"Grant access to the agent's worktree family, resolved live"
 	)
 	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
 	.option('--focus', 'Select the new agent after creating it (default)')
@@ -1884,6 +1948,42 @@ program
 		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
 	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
+	// Agent Resilience and the rest of the Edit Agent dialog.
+	.option(
+		'--retry-on-availability <bool>',
+		'Agent Resilience: resend a turn the provider refused as overloaded (true/false; "default" drops the choice, which is on)'
+	)
+	.option(
+		'--retry-on-token-exhaustion <bool>',
+		'Agent Resilience: resend a turn refused for a spent quota once it resets (true/false; "default" drops the choice, which is on)'
+	)
+	.option(
+		'--codex-auto-reset <bool>',
+		'Spend a Codex rate-limit reset credit when the quota is exhausted (true/false; "default" drops the choice; Codex only)'
+	)
+	.option(
+		'--additional-dir <path[:access]>',
+		'A directory outside the working directory the agent may use (repeatable; replaces the list): <path> is read-only, <path>:rw adds write',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option('--clear-additional-dirs', 'Remove every additional directory')
+	.option(
+		'--env-park <KEY>',
+		'Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--env-unpark <KEY>',
+		'Switch a parked environment variable back on (repeatable)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--share-history-to-project-dir <bool>',
+		"Mirror History entries into the local project's .maestro/history/ (true/false; for an agent another Maestro controls; agent must be stopped)"
+	)
 	.option(
 		'--provider <type>',
 		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
@@ -2810,14 +2910,313 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(search);
 
-// Voice (A Cappella). The wake phrase training flow from Settings > Voice
-// Controls, verb for verb.
-const voice = program.command('voice').description('A Cappella voice: wake phrase training');
+// Voice (A Cappella). The Voice HUD and Settings > Voice, verb for verb: the
+// session and its controls, providers and voices, cloud keys, paired devices,
+// and wake phrase training.
+const voice = program
+	.command('voice')
+	.description(
+		'A Cappella voice: sessions, the HUD controls, providers, voices, cloud keys, paired devices and the wake word'
+	);
+
+voice
+	.command('status')
+	.description(
+		'Show whether voice is on, the live session, the send wait, and what blocks a session from starting (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStatus);
+
+voice
+	.command('start')
+	.description(
+		'Start a voice session on the Conductor (the default), an agent, one tab, or a document. Its HUD opens in the window you are looking at'
+	)
+	.option('-a, --agent <id>', 'Talk to this agent (id, id prefix, or exact name)')
+	.option('--tab <id>', 'Talk to this tab only ("active" for the selected tab)')
+	.option('--conductor', 'Talk to the Conductor, which routes each request to an agent')
+	.option('--document <path>', 'Talk about this document with the agent named by --agent')
+	.option(
+		'--paused',
+		'Open with the microphone shut (push-to-talk): nothing is heard until "voice listen on"'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStart);
+
+voice
+	.command('stop')
+	.description('End the voice session and close the microphone. Works with voice switched off')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStop);
+
+voice
+	.command('listen <state>')
+	.description(
+		'Open (on) or shut (off) the microphone and keep the session: the HUD talk button, and both ends of push-to-talk'
+	)
+	.option('--send', 'With "off": send what was said, as releasing push-to-talk does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceListen);
+
+voice
+	.command('send')
+	.description('Send what was said now, without waiting out the pause: the HUD "Send now" button')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSend);
+
+voice
+	.command('stop-reply')
+	.description('Cut off the spoken reply and keep the session open')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceStopReply);
+
+voice
+	.command('scope <mode>')
+	.description(
+		'Re-aim the live session: conductor, agent, or tab (the HUD Tab / Agent / Conductor switch)'
+	)
+	.option('-a, --agent <id>', 'The agent, for agent and tab (default: the active agent)')
+	.option('--tab <id>', 'The tab, for tab (default: the selected tab)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceScope);
+
+voice
+	.command('wait [ms]')
+	.description(
+		'Show, or set for this conversation, how long a pause sends a request. "default" returns to the saved wait'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWait);
+
+voice
+	.command('volume <level>')
+	.description(
+		'Set the volume of the spoken reply (0.1 to 1): saved, and applied to what is playing'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVolume);
+
+voice
+	.command('mute')
+	.description('Silence the spoken reply for now. Not saved, like the HUD mute button')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceMute);
+
+voice
+	.command('unmute')
+	.description('Return the spoken reply to the saved volume')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceUnmute);
+
+voice
+	.command('latency')
+	.description('Show where the time went in the last finished voice turn, hop by hop')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceLatency);
+
+voice
+	.command('self-test')
+	.description(
+		'Load each native runtime voice runs on and read the microphone permission. Works with voice switched off'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSelfTest);
+
+voice
+	.command('setup')
+	.description(
+		'Show the models local voice needs and which are on disk. Downloads nothing unless --download is passed'
+	)
+	.option('--download', 'Download what is missing, as the Voice Setup Download button does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceSetup);
+
+const voiceInput = voice.command('input').description('The microphone voice listens on');
+
+voiceInput
+	.command('list')
+	.description('List the microphones the app has seen and the one selected')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceInputList);
+
+voiceInput
+	.command('set <device-id>')
+	.description(
+		'Choose the microphone, from the next capture on. "default" follows the system default'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceInputSet);
+
+const voiceProviders = voice
+	.command('providers')
+	.description('What transcribes speech, speaks replies, and routes a request');
+
+voiceProviders
+	.command('list')
+	.description('Show what each slot (stt, tts, brain) runs and what it could run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceProvidersList);
+
+voiceProviders
+	.command('set <slot> <provider-id>')
+	.description(
+		'Pick what a slot runs (stt, tts, brain, realtime), or the pipeline (cascade, realtime), then tell the running app'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceProvidersSet);
+
+const voiceVoices = voice.command('voices').description('The voice replies are spoken in');
+
+voiceVoices
+	.command('list')
+	.description('List the voices the Text-to-Speech provider offers and the one selected')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesList);
+
+voiceVoices
+	.command('set <voice-id>')
+	.description('Pick the voice replies are spoken in')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesSet);
+
+voiceVoices
+	.command('preview [voice-id]')
+	.description(
+		'Speak one line in a voice (the selected one by default). Refused while a session is live'
+	)
+	.option('--text <text>', 'The line to speak (default: the Settings Preview line)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceVoicesPreview);
+
+const voiceCredentials = voice
+	.command('credentials')
+	.description(
+		'The cloud keys hosted voice providers use (openai, elevenlabs, anthropic), kept in the OS keychain'
+	);
+
+voiceCredentials
+	.command('list')
+	.description('Show which keys are stored. Never prints a key')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsList);
+
+voiceCredentials
+	.command('set <service>')
+	.description(
+		'Store a key read from standard input (never an argument, so it stays out of shell history)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsSet);
+
+voiceCredentials
+	.command('test <service>')
+	.description('Ask the service whether the stored key works')
+	.option('--stdin', 'Test a key read from standard input instead, before storing it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsTest);
+
+voiceCredentials
+	.command('clear <service>')
+	.description('Remove a stored key')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceCredentialsClear);
+
+const voiceDevices = voice
+	.command('devices')
+	.description(
+		'Devices paired to hold a voice session from elsewhere. Pairing itself is approved in the app'
+	);
+
+voiceDevices
+	.command('list')
+	.description('List every paired device, whether it is connected, and LAN discovery')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesList);
+
+voiceDevices
+	.command('rename <device> <name>')
+	.description('Rename a paired device (id, id prefix, or exact name)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRename);
+
+voiceDevices
+	.command('revoke <device>')
+	.description('End a pairing now: the device is disconnected and must pair again')
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRevoke);
+
+voiceDevices
+	.command('forget <device>')
+	.description("Delete a device's record altogether")
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesForget);
+
+voiceDevices
+	.command('revoke-all')
+	.description('End every pairing now')
+	.option('-y, --yes', 'Do not ask for confirmation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesRevokeAll);
+
+voiceDevices
+	.command('disconnect')
+	.description('Drop every live device connection and keep the pairings')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesDisconnect);
+
+voiceDevices
+	.command('discovery <state>')
+	.description('Advertise this machine on the local network (on), or stop (off)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesDiscovery);
+
+voiceDevices
+	.command('test-connection')
+	.description(
+		'Probe which paths a device could reach this machine on: local network, STUN, TURN relay'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDevicesTestConnection);
+
+const voiceWakePhrase = voice
+	.command('wake-phrase')
+	.description('A wake phrase of its own for one agent: saying it opens a session on that agent');
+
+voiceWakePhrase
+	.command('list')
+	.description('List every agent with a wake phrase of its own')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseList);
+
+voiceWakePhrase
+	.command('set <agent> <phrase>')
+	.description("Set one agent's wake phrase, leaving every other agent's as it is")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseSet);
+
+voiceWakePhrase
+	.command('clear <agent>')
+	.description("Remove one agent's wake phrase")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakePhraseClear);
+
 const voiceWake = voice
 	.command('wake')
 	.description(
 		'Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)'
 	);
+
+voiceWake
+	.command('test [phrase]')
+	.description(
+		'Run the wake word alone for a few seconds and count how often it fired (default: the configured phrase)'
+	)
+	.option('--seconds <n>', 'How long to listen, 1 to 60 (default 10)')
+	.option('--sensitivity <n>', 'Try a sensitivity from 0 to 1 without saving it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeTest);
 
 voiceWake
 	.command('list')

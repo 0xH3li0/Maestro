@@ -125,3 +125,24 @@ describe('openUiSurface - delegation graph', () => {
 		expect(selectModalOpen('about')(useModalStore.getState())).toBe(false);
 	});
 });
+
+describe('openUiSurface - group settings', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('groupSettings');
+	});
+
+	it('opens Group Settings on the group it was given', () => {
+		expect(openUiSurface('group-settings', undefined, undefined, 'group-1')).toEqual({ ok: true });
+		expect(selectModalOpen('groupSettings')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('groupSettings')(useModalStore.getState())).toMatchObject({
+			groupId: 'group-1',
+		});
+	});
+
+	it('is refused without a group, and opens nothing', () => {
+		const result = openUiSurface('group-settings');
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('pass --group');
+		expect(selectModalOpen('groupSettings')(useModalStore.getState())).toBe(false);
+	});
+});

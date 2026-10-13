@@ -21,6 +21,7 @@ import { Play, RotateCcw, Sliders } from 'lucide-react';
 
 import { summariseVoiceEgress } from '../../../../shared/acappella/provider-catalog';
 import type { BackgroundAnnouncementSetting } from '../../../../shared/acappella/announcements';
+import { VOICE_PREVIEW_LINE } from '../../../../shared/acappella/voice-control';
 import type { VoiceHudMinimizeBehavior } from '../../../../shared/acappella/ui-prefs';
 import {
 	MAX_IDLE_TIMEOUT_MS,
@@ -47,8 +48,9 @@ export interface VoiceOutputPanelProps {
 	enabled: boolean;
 }
 
-/** The line a Preview speaks. Fixed, so two voices can be compared fairly. */
-export const VOICE_PREVIEW_LINE = 'Backend agent finished the migration and all tests pass.';
+// The line a Preview speaks lives in shared, because `maestro-cli voice
+// preview` speaks the same one. Re-exported for the callers that import it here.
+export { VOICE_PREVIEW_LINE };
 
 const ANNOUNCEMENT_OPTIONS: Array<{ value: BackgroundAnnouncementSetting; label: string }> = [
 	{ value: 'auto', label: 'Auto' },

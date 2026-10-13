@@ -1497,3 +1497,121 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });
+
+// The Edit Agent settings `update-agent` did not reach: Agent Resilience, the
+// Codex auto reset, Additional Directories, parking an environment variable,
+// and mirroring History into the project directory.
+describe('update-agent command: the rest of the Edit Agent dialog', () => {
+	let processExitSpy: MockInstance;
+
+	function mockSend() {
+		const sendCommand = vi.fn().mockResolvedValue({ success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		return sendCommand;
+	}
+
+	const configPatch = (sendCommand: ReturnType<typeof vi.fn>) =>
+		sendCommand.mock.calls.find(([payload]) => payload.type === 'update_session_config')?.[0]
+			.configPatch;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	it('sends the resilience switches as booleans, and "default" as a clear', async () => {
+		const sendCommand = mockSend();
+
+		await updateAgent('agent-1', {
+			retryOnAvailability: 'false',
+			retryOnTokenExhaustion: 'default',
+			codexAutoReset: 'on',
+		});
+
+		// The two retries are on by default, so dropping the choice (null) is not
+		// the same as switching it off (false).
+		expect(configPatch(sendCommand)).toEqual({
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: null,
+			codexAutoResetOnExhaustion: true,
+		});
+	});
+
+	it('replaces the additional directories with the ones given', async () => {
+		const sendCommand = mockSend();
+
+		await updateAgent('agent-1', { additionalDir: ['/srv/docs', '/srv/out:rw'] });
+
+		expect(configPatch(sendCommand)).toEqual({
+			additionalDirectories: [
+				{ path: '/srv/docs', read: true, write: false },
+				{ path: '/srv/out', read: true, write: true },
+			],
+		});
+	});
+
+	it('clears the additional directories', async () => {
+		const sendCommand = mockSend();
+		await updateAgent('agent-1', { clearAdditionalDirs: true });
+		expect(configPatch(sendCommand)).toEqual({ additionalDirectories: null });
+	});
+
+	it('sends the variables to park and to switch back on by name', async () => {
+		const sendCommand = mockSend();
+
+		await updateAgent('agent-1', { envPark: ['DEBUG'], envUnpark: ['OLD_FLAG'] });
+
+		expect(configPatch(sendCommand)).toEqual({
+			envParkEdits: { park: ['DEBUG'], unpark: ['OLD_FLAG'] },
+		});
+	});
+
+	it('refuses to park beside a flag that replaces the variables being parked', async () => {
+		const sendCommand = mockSend();
+
+		await updateAgent('agent-1', { envPark: ['DEBUG'], env: ['FOO=bar'] });
+
+		expect(formatError).toHaveBeenCalledWith(
+			expect.stringContaining('cannot be combined with --env or --clear-env')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(configPatch(sendCommand)).toBeUndefined();
+	});
+
+	it('refuses a malformed switch, directory, or both directory flags at once', async () => {
+		mockSend();
+
+		await updateAgent('agent-1', { retryOnAvailability: 'sometimes' });
+		expect(formatError).toHaveBeenCalledWith(
+			expect.stringContaining('--retry-on-availability expects true or false')
+		);
+
+		await updateAgent('agent-1', { additionalDir: ['/srv/docs:none'] });
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('needs r, w or rw'));
+
+		await updateAgent('agent-1', { additionalDir: ['/srv/docs'], clearAdditionalDirs: true });
+		expect(formatError).toHaveBeenCalledWith(
+			expect.stringContaining('--additional-dir or --clear-additional-dirs, not both')
+		);
+	});
+
+	it('sends the history mirror switch in the SSH block, where the record keeps it', async () => {
+		const sendCommand = mockSend();
+
+		await updateAgent('agent-1', { shareHistoryToProjectDir: 'true' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_ssh',
+				sessionId: 'full-session-id',
+				sshPatch: { shareHistoryToProjectDir: true },
+			}),
+			'update_session_ssh_result'
+		);
+	});
+});

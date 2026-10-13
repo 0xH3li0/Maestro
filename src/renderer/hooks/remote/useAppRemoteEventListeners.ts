@@ -21,6 +21,7 @@ import {
 	parsePeerGrantValue,
 	peerAgentEditsProblem,
 } from '../../../shared/peerAgents';
+import { applyAgentConfigExtras } from '../../../shared/agentConfigExtras';
 import { AUTO_MODEL, isAutoModel } from '../../../shared/autoModel';
 import { autoModelProblem } from '../../../shared/autoTurn';
 import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
@@ -2344,6 +2345,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			updated.peerAgents = applied.peerAgents;
 		}
+
+		// The Agent Resilience switches, the Codex auto reset, the Additional
+		// Directories list and parking an environment variable. Checked and
+		// worked out by the shared function, against this agent's own records.
+		const extras = applyAgentConfigExtras(session, patch);
+		if (!extras.ok) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: extras.error,
+			});
+			return;
+		}
+		Object.assign(updated, extras.updated);
 
 		// Clearing the window clears its provenance too, even when the caller sent
 		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
