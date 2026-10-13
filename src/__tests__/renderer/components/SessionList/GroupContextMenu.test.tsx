@@ -89,6 +89,44 @@ describe('GroupContextMenu', () => {
 		expect(screen.queryByText('New group inside...')).not.toBeInTheDocument();
 	});
 
+	describe('Group Settings', () => {
+		it('sits between Rename and New Agent for a user group', () => {
+			setup({ onGroupSettings: vi.fn() });
+			const labels = screen.getAllByRole('button').map((button) => button.textContent);
+			const at = labels.indexOf('Group Settings...');
+			expect(labels[at - 1]).toBe('Rename Group...');
+			expect(labels[at + 1]).toBe('New Agent in Group...');
+		});
+
+		it('opens Group Settings and dismisses the menu', () => {
+			const onGroupSettings = vi.fn();
+			const props = setup({ onGroupSettings });
+			fireEvent.click(screen.getByText('Group Settings...'));
+			expect(onGroupSettings).toHaveBeenCalledTimes(1);
+			expect(props.onDismiss).toHaveBeenCalledTimes(1);
+		});
+
+		it('is shown for a group marked as a user group', () => {
+			setup({ onGroupSettings: vi.fn(), group: { ...group, kind: 'user' } });
+			expect(screen.getByText('Group Settings...')).toBeInTheDocument();
+		});
+
+		it('is hidden for a worktree group, by kind or by the worktree emoji', () => {
+			setup({ onGroupSettings: vi.fn(), group: { ...group, kind: 'worktree' } });
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+
+			setup({ onGroupSettings: vi.fn(), group: { ...group, emoji: '🌳' } });
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+			// The rest of the menu is still there.
+			expect(screen.getAllByText('Rename Group...')).toHaveLength(2);
+		});
+
+		it('is hidden when the host passes no handler', () => {
+			setup();
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Move Group to Window', () => {
 		const targets = [
 			{ windowId: 'p', isMain: true, windowNumber: 1, label: 'Main Window', isCurrentOwner: true },

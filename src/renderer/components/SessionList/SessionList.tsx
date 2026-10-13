@@ -2599,6 +2599,7 @@ function SessionListInner(props: SessionListProps) {
 						modalActions.setRenameGroupColor(groupContextMenuGroup.color);
 						modalActions.setRenameGroupModalOpen(true);
 					}}
+					onGroupSettings={() => getModalActions().openGroupSettings(groupContextMenuGroup.id)}
 					onNewAgent={() => {
 						// Expand the group so the new agent is visible when it lands here.
 						if (groupContextMenuGroup.collapsed) {

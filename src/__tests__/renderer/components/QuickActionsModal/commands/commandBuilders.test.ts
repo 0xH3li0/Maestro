@@ -997,3 +997,73 @@ describe('buildSupportCommands: Models settings', () => {
 		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 });
+
+describe('Group Settings command', () => {
+	const setQuickActionOpen = vi.fn();
+
+	function build(group: Record<string, unknown> | null, groupId: string | undefined = 'g1') {
+		return buildAgentPanelCommands({
+			activeSession: createMockSession({ id: 's1', groupId }),
+			groups: group ? [{ id: 'g1', name: 'Backend', emoji: '🚀', collapsed: false, ...group }] : [],
+			sessions: [],
+			setGroups: vi.fn(),
+			setSessions,
+			setQuickActionOpen,
+			setRenameGroupModalOpen: vi.fn(),
+			setRenameGroupId: vi.fn(),
+			setRenameGroupValue: vi.fn(),
+			setRenameGroupEmoji: vi.fn(),
+			setRenameGroupIcon: vi.fn(),
+			setRenameGroupColor: vi.fn(),
+			setCreateGroupModalOpen: vi.fn(),
+			setRightPanelOpen: vi.fn(),
+			setActiveRightTab: vi.fn(),
+			setMode: vi.fn(),
+			resetSelectionToFirst: vi.fn(),
+			ungroupedCollapsed: false,
+			setUngroupedCollapsed: vi.fn(),
+			bookmarksCollapsed: false,
+			setBookmarksCollapsed: vi.fn(),
+			groupChatsExpanded: true,
+			setGroupChatsExpanded: vi.fn(),
+		});
+	}
+
+	beforeEach(() => {
+		setQuickActionOpen.mockClear();
+		useModalStore.getState().closeModal('groupSettings');
+	});
+
+	it("sits directly after Rename Group and names the active agent's group", () => {
+		const ids = build({}).map((command) => command.id);
+		expect(ids.indexOf('groupSettings')).toBe(ids.indexOf('renameGroup') + 1);
+
+		const command = build({}).find((entry) => entry.id === 'groupSettings');
+		expect(command).toMatchObject({
+			label: 'Group Settings',
+			subtext: 'Defaults for new agents in 🚀 Backend',
+		});
+	});
+
+	it('opens Group Settings on that group and closes the palette', () => {
+		build({})
+			.find((entry) => entry.id === 'groupSettings')
+			?.action();
+
+		expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+		expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'g1' });
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('is absent for a worktree group, by kind or by the worktree emoji', () => {
+		expect(build({ kind: 'worktree' }).map((command) => command.id)).not.toContain('groupSettings');
+		expect(build({ emoji: '🌳' }).map((command) => command.id)).not.toContain('groupSettings');
+		// Rename Group has no such gate.
+		expect(build({ kind: 'worktree' }).map((command) => command.id)).toContain('renameGroup');
+	});
+
+	it('is absent when the active agent is in no group, or in one that no longer exists', () => {
+		expect(build({}, '').map((command) => command.id)).not.toContain('groupSettings');
+		expect(build(null).map((command) => command.id)).not.toContain('groupSettings');
+	});
+});

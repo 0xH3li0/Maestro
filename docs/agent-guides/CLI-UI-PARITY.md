@@ -472,6 +472,16 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
+17. **Group Settings** (a group's defaults for new agents, its pill label, and
+    the publish of a changed default to the agents already in the group). The
+    modal opens from the group's right-click menu and from the palette's
+    "Group Settings" command, and has no verb yet. `maestro-cli open` cannot
+    open it either: a `UI_SURFACES` entry names a surface and a tab, never a
+    group, so the modal has no entry there. Closing the gap means verbs over
+    the rules the modal already uses, all in `src/shared/groupAgentDefaults.ts`
+    (`withGroupDefaults()`, `withGroupShortLabel()`, `diffGroupDefaults()`,
+    `applyGroupDefaultsToSession()`), with `list groups --json` as the read.
+    Planned in the Agent Delegation work (MODELS-17).
 
 ### Audit backlog (2026-09-27)
 

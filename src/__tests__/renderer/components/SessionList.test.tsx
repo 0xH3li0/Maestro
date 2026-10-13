@@ -177,6 +177,7 @@ const mockModalActions = {
 	setRenameGroupEmoji: vi.fn(),
 	setRenameGroupIcon: vi.fn(),
 	setRenameGroupColor: vi.fn(),
+	openGroupSettings: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -1474,6 +1475,34 @@ describe('SessionList', () => {
 			expect(mockModalActions.setRenameGroupValue).toHaveBeenCalledWith('My Group');
 			expect(mockModalActions.setRenameGroupEmoji).toHaveBeenCalledWith('🚀');
 			expect(mockModalActions.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('opens Group Settings on the group when "Group Settings..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Group Settings...'));
+
+			expect(mockModalActions.openGroupSettings).toHaveBeenCalledWith('g1');
+			// The menu closes behind the click.
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+
+		it('offers no Group Settings for a worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Tree Group', emoji: '🌳' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Tree Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Rename Group...')).toBeInTheDocument();
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
 		});
 
 		it('opens newInstance modal with presetGroupId when "New Agent in Group..." is clicked', () => {
