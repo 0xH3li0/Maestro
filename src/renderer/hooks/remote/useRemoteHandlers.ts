@@ -165,6 +165,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  Forwarded to the agent spawn so AI tabs can render and send
 				 *  them in the prompt, mirroring desktop staged-images. */
 				images?: string[];
+				/** New-tab provider commands that have no Maestro prompt expansion. */
+				literalPrompt?: boolean;
 				/** Reply channel for the web server's delivery receipt. Set when the
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
@@ -177,6 +179,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				tabId: requestedTabId,
 				force,
 				images,
+				literalPrompt,
 				receiptChannel,
 			} = customEvent.detail;
 
@@ -414,7 +417,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			let commandMetadata: { command: string; description: string } | undefined;
 
 			// Handle slash commands (custom AI commands only)
-			if (command.trim().startsWith('/')) {
+			if (!literalPrompt && command.trim().startsWith('/')) {
 				const commandText = command.trim();
 				logger.info('[Remote] Detected slash command:', undefined, commandText);
 

@@ -164,8 +164,50 @@ describe('cue-cli-executor', () => {
 		expect(args[1]).toBe('dispatch');
 		expect(args[2]).toBe('session-research'); // CUE_FROM_AGENT resolved from sourceSessionId
 		expect(args[3]).toBe('computed answer = 42');
-		expect(args).toHaveLength(4);
+		expect(args).toHaveLength(5);
+		expect(args[4]).toBe('--background');
+		expect(args).not.toContain('--new-tab');
 		expect(result.status).toBe('completed');
+	});
+
+	it('dispatches a substituted slash command into a fresh background tab', async () => {
+		const config = createConfig({
+			event: { ...createEvent({ number: 42 }), type: 'github.issue' },
+			cli: {
+				command: 'send' as const,
+				target: '{{CUE_FROM_AGENT}}',
+				message: '/triage {{CUE_GH_NUMBER}}',
+				new_tab: true,
+			},
+		});
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+		mockChild.emit('close', 0);
+		const result = await promise;
+
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		expect(args.slice(1)).toEqual([
+			'dispatch',
+			'session-research',
+			'/triage 42',
+			'--background',
+			'--new-tab',
+		]);
+		expect(result.status).toBe('completed');
+	});
+
+	it('keeps explicit new_tab: false on the existing-tab delivery path', async () => {
+		const config = createConfig({
+			cli: { command: 'send' as const, target: 'session-A', message: '/triage', new_tab: false },
+		});
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+		mockChild.emit('close', 0);
+		await promise;
+
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		expect(args).toContain('--background');
+		expect(args).not.toContain('--new-tab');
 	});
 
 	it('caps argv message length to stay under the platform spawn limit', async () => {
