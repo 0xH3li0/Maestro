@@ -15,6 +15,8 @@ import {
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
+	parseQuickChatFontScaleRequest,
 	type QuickChatCommand,
 	type QuickChatCommandResult,
 	type QuickChatLayout,
@@ -29,11 +31,14 @@ import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
 import {
 	closeQuickChatWindow,
 	getQuickChatWindow,
+	getQuickChatFontScale,
 	getQuickChatWindowBounds,
 	getQuickChatWindowId,
 	hideQuickChatWindow,
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
+	setQuickChatFontScale,
+	setQuickChatFullView,
 	setQuickChatLayout,
 	setQuickChatWindowPinned,
 	setQuickChatWindowBounds,
@@ -76,6 +81,15 @@ export interface QuickChatController {
 	 * microphone with nothing to show it.
 	 */
 	showForVoice(): string | null;
+	/**
+	 * Hear every change of the chat's snapshot (a command's result, or the
+	 * engine's own push as a message is routed and answered). Main-process
+	 * callers only; the window gets the same snapshots over IPC. Returns the
+	 * function that stops listening.
+	 */
+	onSnapshot(listener: (snapshot: QuickChatSnapshot) => void): () => void;
+	/** Change the conversation's text zoom. */
+	setFontScale(request: QuickChatFontScaleRequest): QuickChatStatus;
 	getStatus(): QuickChatStatus;
 }
 
@@ -94,9 +108,26 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 	const isEnabled = () => resolveEncoreFeatures(settingsStore.get('encoreFeatures')).quickChat;
 	const readSettings = () => resolveQuickChatSettings(settingsStore.get(QUICK_CHAT_SETTINGS_KEY));
 
+	const snapshotListeners = new Set<(snapshot: QuickChatSnapshot) => void>();
+
 	const pushSnapshotToWindow = () => {
 		const win = getQuickChatWindow();
 		if (win && isWebContentsAvailable(win)) win.webContents.send('quickChat:snapshot', snapshot);
+	};
+
+	/** Take a new snapshot: remember it, show it, and tell whoever is following it. */
+	const setSnapshot = (next: QuickChatSnapshot) => {
+		snapshot = next;
+		pushSnapshotToWindow();
+		// A copy: a listener may stop listening from inside its own call.
+		for (const listener of [...snapshotListeners]) listener(next);
+	};
+
+	const onSnapshot = (listener: (snapshot: QuickChatSnapshot) => void): (() => void) => {
+		snapshotListeners.add(listener);
+		return () => {
+			snapshotListeners.delete(listener);
+		};
 	};
 
 	/** The app window whose renderer runs the conversation. */
@@ -112,6 +143,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		hotkeyRegistered,
 		bounds: getQuickChatWindowBounds(),
 		pinned: isQuickChatWindowPinned(windowDeps),
+		fontScale: getQuickChatFontScale(windowDeps),
 		snapshot,
 	});
 
@@ -128,8 +160,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			timeoutMs: COMMAND_TIMEOUT_MS,
 			fallback: { ok: false, error: 'Maestro did not answer', snapshot },
 		});
-		snapshot = result.snapshot;
-		pushSnapshotToWindow();
+		setSnapshot(result.snapshot);
 		// "Open in Maestro" is a deliberate trip to the main window: put the
 		// floating window away and bring the window showing the tab forward.
 		if (command.type === 'reveal' && result.ok && !win.isDestroyed()) {
@@ -175,6 +206,11 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getQuickChatWindowId();
 	};
 
+	const setFontScale = (request: QuickChatFontScaleRequest): QuickChatStatus => {
+		setQuickChatFontScale(request, windowDeps);
+		return getStatus();
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -199,14 +235,23 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			setPinned(pinned === true);
 			return isQuickChatWindowPinned(windowDeps);
 		});
+		ipcMain.handle('quickChat:getFontScale', () => getQuickChatFontScale(windowDeps));
+		ipcMain.handle('quickChat:setFontScale', (_event, request: unknown) => {
+			const parsed = parseQuickChatFontScaleRequest(request);
+			if (!parsed) throw new Error('Invalid text zoom request');
+			return setQuickChatFontScale(parsed, windowDeps);
+		});
 		ipcMain.on('quickChat:setLayout', (event, next: QuickChatLayout) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatLayout(next === 'expanded' ? 'expanded' : 'compact');
 		});
+		ipcMain.on('quickChat:setFullView', (event, on: boolean) => {
+			if (event.sender !== getQuickChatWindow()?.webContents) return;
+			setQuickChatFullView(on === true);
+		});
 		// The engine reports state as the conversation streams.
 		ipcMain.on('quickChat:snapshot', (_event, next: QuickChatSnapshot) => {
-			snapshot = next;
-			pushSnapshotToWindow();
+			setSnapshot(next);
 		});
 
 		syncHotkey();
@@ -225,6 +270,8 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		setBounds,
 		setPinned,
 		showForVoice,
+		onSnapshot,
+		setFontScale,
 		getStatus,
 	};
 	activeController = controller;

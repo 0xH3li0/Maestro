@@ -24,9 +24,16 @@ import {
 	QUICK_CHAT_MIN_EXPANDED_HEIGHT as MIN_EXPANDED_HEIGHT,
 	QUICK_CHAT_MIN_WIDTH as MIN_WIDTH,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
 	type QuickChatLayout,
 	type QuickChatWindowBounds,
 } from '../../shared/quickChat';
+import {
+	clampFontScale,
+	FONT_SCALE_DEFAULT,
+	FONT_SCALE_RANGE,
+	stepScale,
+} from '../../shared/scaleRange';
 import { resolveVisibleWindowPosition } from '../app-lifecycle/window-position';
 import { debounce, type DebouncedFunction } from '../utils/debounce';
 import { logger } from '../utils/logger';
@@ -84,6 +91,12 @@ let revealPending = false;
 let saved: QuickChatWindowBounds | null = null;
 /** The live window's pending bounds save, flushed before the shape changes. */
 let pendingSave: DebouncedFunction<[Electron.Rectangle, QuickChatLayout, boolean]> | null = null;
+/**
+ * Where the window was before a diagram took it full screen, or null when no
+ * diagram is open. While set, moves and resizes are the viewer's, not the
+ * user's, and are never saved.
+ */
+let fullViewRestore: { bounds: Electron.Rectangle; layout: QuickChatLayout } | null = null;
 
 /** The Quick Chat window, or null when it has not been created (or was closed). */
 export function getQuickChatWindow(): BrowserWindow | null {
@@ -119,6 +132,10 @@ function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
 		width: positive(raw.width),
 		expandedHeight: positive(raw.expandedHeight),
 		pinned: typeof raw.pinned === 'boolean' ? raw.pinned : undefined,
+		fontScale:
+			typeof raw.fontScale === 'number' && Number.isFinite(raw.fontScale)
+				? clampFontScale(raw.fontScale)
+				: undefined,
 	};
 	if (saved.x !== undefined && saved.y !== undefined) userPlaced = true;
 	return saved;
@@ -294,7 +311,7 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		WINDOW_STATE_SAVE_DEBOUNCE_MS
 	);
 	const capture = () => {
-		if (closing || win.isDestroyed()) return;
+		if (closing || win.isDestroyed() || fullViewRestore) return;
 		persist(win.getBounds(), layout, userPlaced);
 	};
 	win.on('move', capture);
@@ -319,6 +336,7 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		}
 		quickWindow = null;
 		revealPending = false;
+		fullViewRestore = null;
 		// The next window reloads the store, so a spot the user chose survives a
 		// close (feature toggled off and on) the same way it survives a restart.
 		saved = null;
@@ -337,19 +355,38 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	return win;
 }
 
+/**
+ * Raise an unpinned window to the floating level until it loses focus, then
+ * drop it back unless the user pinned it in the meantime.
+ */
+function floatUntilBlur(win: BrowserWindow): void {
+	win.setAlwaysOnTop(true, 'floating');
+	win.removeListener('blur', settleUnpinned);
+	win.once('blur', settleUnpinned);
+}
+
+function settleUnpinned(): void {
+	const win = getQuickChatWindow();
+	if (win && saved?.pinned === false) win.setAlwaysOnTop(false);
+}
+
 /** Show and focus the window, creating it on first use. */
 export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	const existing = getQuickChatWindow();
 	const win = existing ?? createQuickChatWindow(deps);
 	// Follow the cursor's display until the user places the window themselves.
-	if (!userPlaced) win.setBounds(boundsFor(layout));
+	// A diagram still open full screen keeps the window at the display's size.
+	if (!userPlaced && !fullViewRestore) win.setBounds(boundsFor(layout));
 	const reveal = () => {
 		revealPending = false;
 		if (win.isDestroyed()) return;
+		// Unpinned, the window sits at the normal level. A non-activating panel
+		// shown there while another app is active lands BEHIND that app's window
+		// (`moveTop` does not cross apps), so the hotkey looked dead outside
+		// Maestro. A summon must be seen: float it for the show, and let it settle
+		// back to the normal level once the user clicks away.
+		if (saved?.pinned === false) floatUntilBlur(win);
 		win.show();
-		// Unpinned, the window sits at the normal level, where showing it from
-		// another app can land it behind that app's window. A summon must be seen.
-		if (saved?.pinned === false) win.moveTop();
 		win.focus();
 		win.webContents.send('quickChat:focusInput');
 	};
@@ -403,9 +440,38 @@ export function setQuickChatLayout(next: QuickChatLayout): void {
 	pendingSave?.flush();
 	layout = next;
 	const win = getQuickChatWindow();
-	if (!win) return;
+	// A diagram holding the window full screen keeps it; the new shape applies
+	// when the viewer closes (setQuickChatFullView).
+	if (!win || fullViewRestore) return;
 	const bounds = win.getBounds();
 	applyLayout(win, next, { ...bounds, height: heightFor(next) });
+}
+
+/**
+ * Take the whole display for the diagram viewer, or give it back. The window
+ * is sized to fit a chat, which is far too small to read a diagram in, so the
+ * viewer grows it to the work area of the display it is on and puts it back
+ * exactly where it was afterwards. Nothing about the full-screen size is saved.
+ */
+export function setQuickChatFullView(on: boolean): void {
+	const win = getQuickChatWindow();
+	if (!win || on === (fullViewRestore !== null)) return;
+	if (on) {
+		pendingSave?.flush();
+		const bounds = win.getBounds();
+		fullViewRestore = { bounds, layout };
+		win.setMinimumSize(MIN_WIDTH, Math.min(COMPACT_HEIGHT, MIN_EXPANDED_HEIGHT));
+		win.setMaximumSize(NO_LIMIT, NO_LIMIT);
+		win.setBounds(screen.getDisplayMatching(bounds).workArea);
+		return;
+	}
+	const restore = fullViewRestore!;
+	fullViewRestore = null;
+	// The shape may have changed underneath the viewer (a reply arrived): keep
+	// the spot and width, and take the height of the shape the chat is in now.
+	const bounds =
+		restore.layout === layout ? restore.bounds : { ...restore.bounds, height: heightFor(layout) };
+	applyLayout(win, layout, bounds);
 }
 
 /**
@@ -430,6 +496,11 @@ export function setQuickChatWindowBounds(
 	}
 	saved = next;
 	deps.boundsStore.set(next);
+	// Under a full-screen diagram, the new spot is where the viewer gives it back.
+	if (fullViewRestore) {
+		fullViewRestore = { bounds: boundsFor(layout), layout };
+		return;
+	}
 	const win = getQuickChatWindow();
 	if (win) applyLayout(win, layout, boundsFor(layout));
 }
@@ -452,6 +523,36 @@ export function setQuickChatWindowPinned(next: boolean, deps: QuickChatWindowDep
 	if (!win) return;
 	win.setAlwaysOnTop(next, 'floating');
 	win.webContents.send('quickChat:pinned', next);
+}
+
+/** The conversation's text zoom (1 = normal). */
+export function getQuickChatFontScale(deps: QuickChatWindowDeps): number {
+	return loadSaved(deps).fontScale ?? FONT_SCALE_DEFAULT;
+}
+
+/**
+ * Change the conversation's text zoom and remember it with the window's other
+ * per-device state, so it survives a hide, a close, and a restart. The window's
+ * buttons and chords and `maestro-cli quick-chat font` all land here; the window
+ * is told so its text follows a CLI change. Returns the new zoom.
+ */
+export function setQuickChatFontScale(
+	request: QuickChatFontScaleRequest,
+	deps: QuickChatWindowDeps
+): number {
+	const current = getQuickChatFontScale(deps);
+	const next =
+		'reset' in request
+			? FONT_SCALE_DEFAULT
+			: 'step' in request
+				? stepScale(current, request.step, FONT_SCALE_RANGE)
+				: clampFontScale(request.scale);
+	if (next === current) return current;
+	pendingSave?.flush();
+	saved = { ...loadSaved(deps), fontScale: next };
+	deps.boundsStore.set(saved);
+	getQuickChatWindow()?.webContents.send('quickChat:fontScale', next);
+	return next;
 }
 
 /** The window's current bounds, for `quick-chat status`. */

@@ -479,10 +479,14 @@ export interface UseSettingsReturn {
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	forcedParallelAlways: boolean;
 	setForcedParallelAlways: (value: boolean) => void;
+	sendButtonMenu: boolean;
+	setSendButtonMenu: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	maxConsultationsPerTurn: number;
 	setMaxConsultationsPerTurn: (value: number) => void;
+	crossAgentHandoffsWritable: boolean;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
@@ -540,6 +544,8 @@ export interface UseSettingsReturn {
 	setShowStarredSessionsSection: (value: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;

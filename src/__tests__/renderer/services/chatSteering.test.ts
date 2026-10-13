@@ -12,6 +12,9 @@ import { createMockAITab } from '../../helpers/mockTab';
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: vi.fn(),
 }));
+vi.mock('../../../renderer/stores/centerFlashStore', () => ({
+	notifyCenterFlash: vi.fn(),
+}));
 
 import {
 	applySteeringVerdict,
@@ -19,11 +22,16 @@ import {
 	reconcilePendingSteers,
 	resetPendingSteersForTests,
 	returnPendingSteersToQueue,
+	requestSteerSend,
 	settlePendingSteersOnExit,
+	STEER_SEND_EVENT,
+	steerNewestQueuedMessage,
 	steerQueuedItem,
+	steerQueuedItemOrExplain,
 } from '../../../renderer/services/chatSteering';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
 
 const PROCESS_KEY = 'sess-1-ai-tab-1';
 
@@ -150,6 +158,8 @@ describe('steerQueuedItem', () => {
 			source: 'user',
 			text: 'go left instead',
 			queuedItemId: 'item-a',
+			// Badged like a force-sent message, so the transcript shows how it went.
+			steered: true,
 		});
 		// The record lives on the session so it is persisted with it.
 		expect(useSessionStore.getState().sessions[0].pendingSteers).toEqual([
@@ -246,6 +256,148 @@ describe('steerQueuedItem', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringMatching(/^Codex has your message/) })
 		);
+	});
+});
+
+describe('steerQueuedItemOrExplain', () => {
+	it('says why a message cannot be steered, and leaves it queued', async () => {
+		// The Steer button is hidden for this; a chord has nothing to hide.
+		useSessionStore.setState({
+			sessions: [{ ...steerableSession([item()]), toolType: 'codex' } as Session],
+		});
+
+		const result = await steerQueuedItemOrExplain('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'codex-exec' });
+		expect(steer).not.toHaveBeenCalled();
+		expect(queue()).toEqual([item()]);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: expect.stringMatching(/app server.*The message stays queued\.$/),
+				sessionId: 'sess-1',
+				tabId: 'tab-1',
+			})
+		);
+	});
+
+	it('adds nothing to a steer that goes through', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+
+		const result = await steerQueuedItemOrExplain('sess-1', 'item-a');
+
+		expect(result).toEqual({ outcome: 'delivered', verdict: 'delivered' });
+		expect(notifyToast).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Sent to the running turn' })
+		);
+	});
+});
+
+describe('steerNewestQueuedMessage', () => {
+	it('steers the newest steerable message on the tab', async () => {
+		useSessionStore.setState({
+			sessions: [
+				steerableSession([
+					item({ id: 'older', text: 'first' }),
+					item({ id: 'newer', text: 'second' }),
+				]),
+			],
+		});
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+
+		const result = await steerNewestQueuedMessage('sess-1', 'tab-1');
+
+		expect(result.outcome).toBe('delivered');
+		expect(steer).toHaveBeenCalledWith(PROCESS_KEY, 'second');
+		expect(queue().map((i) => i.id)).toEqual(['older']);
+	});
+
+	it('skips past a newer message that cannot be steered', async () => {
+		// Same walk as the Force Send chord: the newest ELIGIBLE item, so an
+		// image message on top does not make the chord dead.
+		useSessionStore.setState({
+			sessions: [
+				steerableSession([
+					item({ id: 'plain', text: 'steer me' }),
+					item({ id: 'pictures', text: 'look', images: ['data:image/png;base64,AA'] }),
+				]),
+			],
+		});
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+
+		await steerNewestQueuedMessage('sess-1', 'tab-1');
+
+		expect(steer).toHaveBeenCalledWith(PROCESS_KEY, 'steer me');
+		expect(queue().map((i) => i.id)).toEqual(['pictures']);
+	});
+
+	it('ignores messages queued on another tab, and queued commands', async () => {
+		useSessionStore.setState({
+			sessions: [
+				steerableSession([
+					item({ id: 'elsewhere', tabId: 'tab-2' }),
+					item({ id: 'cmd', type: 'command', command: '/review', text: undefined }),
+				]),
+			],
+		});
+
+		const result = await steerNewestQueuedMessage('sess-1', 'tab-1');
+
+		expect(result.outcome).toBe('not-found');
+		expect(steer).not.toHaveBeenCalled();
+		expect(queue()).toHaveLength(2);
+		expect(notifyCenterFlash).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'Nothing queued to steer on this tab' })
+		);
+	});
+
+	it('reports the newest message reason when nothing on the tab can be steered', async () => {
+		useSessionStore.setState({
+			sessions: [
+				steerableSession([
+					item({ id: 'held', paused: true }),
+					item({ id: 'pictures', images: ['data:image/png;base64,AA'] }),
+				]),
+			],
+		});
+
+		const result = await steerNewestQueuedMessage('sess-1', 'tab-1');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'has-images' });
+		expect(steer).not.toHaveBeenCalled();
+		expect(queue()).toHaveLength(2);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: expect.stringContaining('Images cannot be attached'),
+			})
+		);
+	});
+
+	it('says so when the tab has no turn running', async () => {
+		const idle = steerableSession([item()]);
+		useSessionStore.setState({
+			sessions: [{ ...idle, aiTabs: [{ ...idle.aiTabs[0], state: 'idle' }] } as Session],
+		});
+
+		const result = await steerNewestQueuedMessage('sess-1', 'tab-1');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'tab-not-working' });
+		expect(queue()).toEqual([item()]);
+	});
+});
+
+describe('requestSteerSend', () => {
+	it('asks the composer by event rather than steering itself', () => {
+		const heard = vi.fn();
+		window.addEventListener(STEER_SEND_EVENT, heard);
+		requestSteerSend();
+		window.removeEventListener(STEER_SEND_EVENT, heard);
+
+		expect(heard).toHaveBeenCalledTimes(1);
+		expect(steer).not.toHaveBeenCalled();
 	});
 });
 

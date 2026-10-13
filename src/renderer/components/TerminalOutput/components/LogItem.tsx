@@ -12,6 +12,7 @@ import {
 	Save,
 	Share2,
 	Hammer,
+	Navigation,
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
@@ -1199,6 +1200,19 @@ export const LogItem = memo(
 								/>
 							</span>
 						)}
+						{/* Steer indicator for messages handed to a turn that was already
+						    running. Same icon and color as the Steer button on a queued card. */}
+						{isUserMessage && isAIMode && log.steered && (
+							<span
+								title="Sent as a steer into the turn that was already running"
+								className="flex items-center"
+							>
+								<Navigation
+									className="w-3.5 h-3.5"
+									style={{ color: theme.colors.accent, opacity: 0.7 }}
+								/>
+							</span>
+						)}
 						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
 						{isUserMessage && isAIMode && log.delivered && (
 							<span title="Message delivered" className="flex items-center">
@@ -1222,6 +1236,7 @@ export const LogItem = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.steered === nextProps.log.steered &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&

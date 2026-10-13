@@ -28,7 +28,9 @@
 import type { ToolType } from './types';
 import type { ModelHint } from './autorunModelHints';
 import type { RunOnTarget } from './local-models/run-on';
+import { describeEffortRejection } from './effortRejection';
 import {
+	rejectedEffortForLevel,
 	resolveEffortLevel,
 	resolveTierTarget,
 	supportsEffortSelection,
@@ -130,10 +132,16 @@ export function resolveTurnSettings(
 				`effort="${hint.effort}" (${hint.scopes?.effort ?? 'document'}) -> ${effortValue}`
 			);
 		} else {
+			// A level the provider refused earlier in this process is a different
+			// story from one Maestro never mapped: say which, so the author knows
+			// the document is fine and the provider's catalogue moved.
+			const rejection = rejectedEffortForLevel(toolType, hint.effort);
 			warnings.push(
-				supportsEffortSelection(toolType)
-					? `No "${hint.effort}" effort level is mapped for ${toolType}; using the agent's configured effort.`
-					: `${toolType} has no effort setting, so effort="${hint.effort}" was ignored.`
+				rejection
+					? `${describeEffortRejection(toolType, rejection)} effort="${hint.effort}" was ignored; using the agent's configured effort.`
+					: supportsEffortSelection(toolType)
+						? `No "${hint.effort}" effort level is mapped for ${toolType}; using the agent's configured effort.`
+						: `${toolType} has no effort setting, so effort="${hint.effort}" was ignored.`
 			);
 		}
 	}

@@ -122,6 +122,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+	promptFileArgs?: (filePath: string) => string[]; // Replaces the final prompt and its separator with a Windows file attachment
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
@@ -310,7 +311,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				dynamic: true,
 				// Static fallback used when ~/.codex/models_cache.json hasn't been
 				// written yet (e.g. fresh install) so the dropdown still renders.
-				options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+				// No `minimal`: no model in the catalogue accepts it any more, and the
+				// API answers it with a 400, so offering it here fails every turn.
+				options: ['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
 				default: '',
 				// The config key is `model_reasoning_effort`. Codex 0.162 answers the
 				// old `reasoning.effort` with "`reasoning` is ignored" and runs at the
@@ -590,6 +593,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],
 		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		promptFileArgs: (filePath: string) => [`@${filePath}`],
 		configOptions: [
 			{
 				key: 'model',

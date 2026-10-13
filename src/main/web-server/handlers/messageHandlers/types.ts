@@ -5,8 +5,8 @@
  */
 
 import type { QueueSteerResult } from '../../../../shared/chatSteering';
-import { WebSocket } from 'ws';
 import type {
+	WebClient,
 	AutoRunDocument,
 	AutoRunState,
 	WebSettings,
@@ -91,19 +91,7 @@ export interface WebClientMessage {
 	[key: string]: unknown;
 }
 
-/**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
-	cliAuthenticated?: boolean;
-	/** Admitted by the CLI secret (see the root WebClient in ../../types). */
-	cli?: boolean;
-}
+export type { WebClient } from '../../types';
 
 /**
  * Session detail for command validation
@@ -214,6 +202,7 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		prompt: string,
 		background?: boolean,
+		hidden?: boolean,
 		consultChain?: ConsultChain
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */

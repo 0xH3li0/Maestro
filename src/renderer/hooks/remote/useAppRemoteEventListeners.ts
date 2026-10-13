@@ -34,6 +34,7 @@ import {
 	runOnGatewayEditProblem,
 	type RunOnSourceTarget,
 } from '../../../shared/local-models/run-on';
+import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
 	getRemoteMediaKind,
 	getRemoteMediaName,
@@ -50,7 +51,8 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
+import type { Session, AITab, ToolType, Group, BatchRunConfig } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
 import {
@@ -484,8 +486,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// usable immediately no matter which agent is on screen.
 		//
 		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
-		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
-		// spawning a second one when it later mounts.
+		// id, and the runtime initialization marker stops TerminalView spawning
+		// a second one when it later mounts, including ConPTY with PID 0.
 		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
 		if (sessionForSpawn) {
 			void spawnPtyForTab({
@@ -578,27 +580,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// The PTY lives in the main process and outlives its React view, so a
 		// write lands even when the owning agent is not on screen. A tab that was
-		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// never initialized has no PTY at all, and only the ACTIVE
 		// session has a live TerminalView that would spawn one. Waiting for a
 		// background agent would stall until the timeout for a shell that is
 		// never coming, so wait only when it can actually arrive - and never
 		// switch agents to force it, since that would yank the screen away to
 		// service a background command.
-		let pid = tab.pid;
-		if (pid === 0 && tab.state !== 'exited') {
+		let initialized = tab.ptyInitialized || tab.pid !== 0;
+		if (!initialized && tab.state !== 'exited') {
 			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
 			if (isActiveSession) {
 				const deadline = Date.now() + 4000;
-				while (pid === 0 && Date.now() < deadline) {
+				while (!initialized && Date.now() < deadline) {
 					await new Promise((resolve) => setTimeout(resolve, 100));
-					pid =
-						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
-							(t) => t.id === tab.id
-						)?.pid ?? 0;
+					const current = (
+						sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []
+					).find((t) => t.id === tab.id);
+					initialized = !!current && (current.ptyInitialized || current.pid !== 0);
+					if (current?.state === 'exited') break;
 				}
 			}
 		}
-		if (pid === 0) {
+		if (!initialized || tab.state === 'exited') {
 			ack(false, {
 				error:
 					tab.state === 'exited'
@@ -794,11 +797,39 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// Saved playbooks and launched runs both name documents relative to the
+			// Auto Run folder without `.md`, which is what every runner joins back
+			// to a path. The CLI and Cue send absolute `.md` paths, so both cases
+			// convert them here and refuse a document outside the folder by name.
+			let folderRelativeDocuments: Array<{ filename: string; resetOnCompletion?: boolean }> = [];
+			if (config.saveAsPlaybook || config.launch) {
+				const folderPath = session.autoRunFolderPath;
+				if (!folderPath) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: 'No Auto Run folder configured for this session',
+					});
+					return;
+				}
+				const resolved = resolveAutoRunDocumentNames(config.documents || [], folderPath);
+				if ('error' in resolved) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: resolved.error,
+					});
+					return;
+				}
+				folderRelativeDocuments = resolved.documents;
+			}
+
 			// Case 1: Save as playbook
 			if (config.saveAsPlaybook) {
 				const result = await window.maestro.playbooks.create(sessionId, {
 					name: config.saveAsPlaybook,
-					documents: config.documents || [],
+					documents: folderRelativeDocuments.map((doc) => ({
+						filename: doc.filename,
+						resetOnCompletion: doc.resetOnCompletion || false,
+					})),
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					prompt: config.prompt || '',
@@ -813,43 +844,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			// Case 2: Launch auto-run immediately
 			if (config.launch) {
-				const folderPath = session.autoRunFolderPath;
-				if (!folderPath) {
-					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-						success: false,
-						error: 'No Auto Run folder configured for this session',
-					});
-					return;
-				}
-
-				const documents = (config.documents || []).map(
-					(doc: { filename: string; resetOnCompletion?: boolean }) => {
-						// Compute path relative to the session's autoRunFolderPath.
-						// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
-						// but the batch processor expects the path relative to folderPath without .md
-						// (e.g., "subdir/temp").
-						let name = doc.filename.replace(/\.md$/i, '');
-						// Normalize separators to forward slash for comparison
-						const normalized = name.replace(/\\/g, '/');
-						const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
-						// Case-insensitive prefix check for cross-platform compatibility (Windows drive letters)
-						const normalizedLower = normalized.toLowerCase();
-						const folderLower = normalizedFolder.toLowerCase();
-						if (normalizedFolder && normalizedLower.startsWith(folderLower + '/')) {
-							name = normalized.substring(normalizedFolder.length + 1);
-						} else {
-							// Fallback for paths not under folderPath: use basename only
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-						}
-						return {
-							id: generateId(),
-							filename: name,
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						};
-					}
-				);
+				const folderPath = session.autoRunFolderPath as string;
+				const documents = folderRelativeDocuments.map((doc) => ({
+					id: generateId(),
+					filename: doc.filename,
+					resetOnCompletion: doc.resetOnCompletion || false,
+					isDuplicate: false,
+				}));
 
 				if (documents.length === 0) {
 					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {

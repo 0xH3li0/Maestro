@@ -57,7 +57,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 /**
  * Validate a `command` field, required when `action === 'command'`. Accepts:
  *   { mode: 'shell', shell: <non-empty string> }
- *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string } }
+ *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string, new_tab?: boolean } }
  */
 function validateCommandField(value: unknown, prefix: string, errors: string[]): void {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -91,6 +91,9 @@ function validateCommandField(value: unknown, prefix: string, errors: string[]):
 		}
 		if (cliRecord.message !== undefined && typeof cliRecord.message !== 'string') {
 			errors.push(`${prefix}: "command.cli.message" must be a string when provided`);
+		}
+		if (cliRecord.new_tab !== undefined && typeof cliRecord.new_tab !== 'boolean') {
+			errors.push(`${prefix}: "command.cli.new_tab" must be a boolean when provided`);
 		}
 	} else {
 		errors.push(`${prefix}: "command.mode" must be "shell" or "cli"`);

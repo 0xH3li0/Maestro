@@ -61,8 +61,7 @@ import {
 	parseCueGateOnUnavailable,
 	type CueGateOnUnavailable,
 } from '../../shared/cue/gate';
-import { TIER_LEVELS, asTierLevel } from '../../shared/modelTiers';
-import { formatCueTurnSettings } from '../../shared/cue/turn-settings';
+import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 import { ExitCode, exitWith } from '../exit-codes';
 
@@ -807,22 +806,13 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	}
 	const turnModel = autoRun ? undefined : options.model;
 	const turnEffort = autoRun ? undefined : options.effort;
-	const levels = TIER_LEVELS.join(', ');
-	const tier = options.tier !== undefined ? asTierLevel(options.tier) : undefined;
-	if (options.tier !== undefined && !tier) {
-		errorOut(`--tier must be one of: ${levels}`, options, 'BAD_TIER');
-	}
-	const effort = turnEffort !== undefined ? asTierLevel(turnEffort) : undefined;
-	if (turnEffort !== undefined && !effort) {
-		errorOut(`--effort must be one of: ${levels}`, options, 'BAD_EFFORT');
-	}
-	const model = turnModel?.trim() || undefined;
-	if (turnModel !== undefined && !model) {
-		errorOut('--model needs a model id', options, 'BAD_MODEL');
-	}
-	if (tier && model) {
-		errorOut('pass --tier or --model, not both', options, 'TIER_AND_MODEL');
-	}
+	const turnInput = parseCueTurnSettingsInput({
+		tier: options.tier,
+		model: turnModel,
+		effort: turnEffort,
+	});
+	if (!turnInput.ok) errorOut(turnInput.error, options, turnInput.code);
+	const { tier, model, effort } = turnInput.settings;
 	if ((tier || model || effort) && !hasPrompt) {
 		errorOut('--tier, --model, and --effort need --prompt', options, 'MODEL_WITHOUT_PROMPT');
 	}

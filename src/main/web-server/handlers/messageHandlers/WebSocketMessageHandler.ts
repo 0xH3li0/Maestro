@@ -82,6 +82,7 @@ import {
 	handleFeedbackCheckAuth,
 	handleFeedbackGhLoginCommand,
 	handleFeedbackAccounts,
+	handleFeedbackDiagnose,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -258,6 +259,7 @@ export class WebSocketMessageHandler {
 	 * Helper to send a JSON message to a client with timestamp
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
+		if (client.isAuthorized?.() === false) return;
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
 	}
 
@@ -775,6 +777,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_accounts':
 				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'feedback_diagnose':
+				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
 			case 'local_models_list':

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
+import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
@@ -59,6 +59,7 @@ import {
 import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
 import type { ConsultChain } from '../../../shared/consultBudget';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -79,6 +80,11 @@ export interface UseRemoteIntegrationDeps {
 	defaultSaveToHistory: boolean;
 	/** Default value for showThinking on new tabs */
 	defaultShowThinking: ThinkingMode;
+	/** Prompt-backed commands available to the ordinary command queue. */
+	customAICommandsRef?: React.RefObject<CustomAICommand[]>;
+	speckitCommandsRef?: React.RefObject<CustomAICommand[]>;
+	openspecCommandsRef?: React.RefObject<CustomAICommand[]>;
+	bmadCommandsRef?: React.RefObject<CustomAICommand[]>;
 }
 
 /**
@@ -552,8 +558,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				if (tabId) {
 					// The shared jump, not a hand-rolled focus: it reveals a hidden
 					// consult tab, reopens one from the closed-tab history, and
-					// activates a tab that lives inside a tiled group as a pane.
-					updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
+					// activates a tab that lives inside a tiled group as a pane. A tab
+					// that is neither open nor in that history changes nothing: the
+					// jump's own fallback would move the view to the agent's AI tab.
+					updateSessionWith(sessionId, (s) =>
+						s.aiTabs.some((t) => t.id === tabId) || reopenClosedAiTabById(s, tabId)
+							? focusAiTabInSession(s, tabId)
+							: s
+					);
 				}
 			}
 		);
@@ -610,6 +622,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					let updatedSession = s;
 					if (isInventorySync) {
 						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
+						const deferredTabIds = new Set(s.deferredContent?.tabIds ?? []);
 						const aiTabs = remoteTabs.map((remoteTab) => {
 							const existing = existingById.get(remoteTab.id);
 							const syncedFields = {
@@ -628,16 +641,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							// change signature. Preserve the browser's current draft for tabs it
 							// already knows so unrelated updates cannot replace newer input.
 							if (existing) return { ...existing, ...syncedFields };
+							deferredTabIds.add(remoteTab.id);
 							return {
 								...syncedFields,
-								inputValue: remoteTab.inputValue,
+								inputValue: '',
 								logs: [],
 								stagedImages: [],
 								saveToHistory: defaultSaveToHistory,
 								showThinking: defaultShowThinking,
 							};
 						});
-						updatedSession = { ...s, aiTabs };
+						const pendingTabIds = aiTabs
+							.filter((tab) => deferredTabIds.has(tab.id))
+							.map((tab) => tab.id);
+						updatedSession = {
+							...s,
+							aiTabs,
+							deferredContent:
+								pendingTabIds.length > 0 || s.deferredContent?.commands
+									? { ...s.deferredContent, tabIds: pendingTabIds }
+									: undefined,
+						};
 						updatedSession = {
 							...updatedSession,
 							unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
@@ -646,9 +670,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
 					if (!isInventorySync) {
-						return targetExists
-							? { ...updatedSession, ...aiTabFocusFields(tabId) }
-							: updatedSession;
+						return targetExists ? focusAiTabInSession(updatedSession, tabId) : updatedSession;
 					}
 
 					// An inventory snapshot never moves the browser's visible tab, even
@@ -720,7 +742,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// identical; a BUSY agent has the prompt queued for the new tab instead.
 		// A background dispatch (the default) creates the new tab without focus so
 		// the user's current view is preserved; `dispatch --focus` makes the new
-		// tab active instead. flushSync forces React to commit the new tab into
+		// tab active instead. A hidden dispatch (the `dispatch --new-tab` default)
+		// also leaves no chip in the strip: a hand-off from another agent or a Cue
+		// pipeline runs out of sight, still named from its prompt, and the user
+		// opens it from the completion toast or the caller's delegation pill
+		// (both deep-link through `focusAiTabInSession`, which reveals it).
+		// flushSync forces React to commit the new tab into
 		// session state before we fire the event, so the downstream handler can
 		// resolve the freshly-created tabId (which we always pass explicitly)
 		// instead of racing on a stale snapshot.
@@ -733,6 +760,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
+				hidden?: boolean,
 				consultChain?: ConsultChain
 			) => {
 				const ack = (result: {
@@ -752,6 +780,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					ack({ success: false, error: `Agent not found: ${sessionId}` });
 					return;
 				}
+				if (targetSession.toolType === 'terminal') {
+					ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
+					return;
+				}
 				// A BUSY agent is deliberately NOT a refusal here. Busy is an
 				// agent-level state, so a brand-new tab inherits it even though it
 				// owns no process, and `dispatch --new-tab` rejects both --force and
@@ -769,6 +801,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							// foreground): create the tab without making it active so the
 							// user's current view is preserved.
 							activate: !background,
+							hidden: background && hidden === true,
 						});
 						if (!result) return s;
 						createdTabId = result.tab.id;
@@ -794,18 +827,28 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// the tab was created: the store write above is the only thing that
 				// ran in between, but the decision below is about live state.
 				const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-				if (isBusy) {
-					// The agent already owns a live process, so the spawn path would
-					// refuse this prompt. Queue it against the fresh tab instead:
-					// `useQueueProcessing` drains it the moment the current turn ends,
-					// and the item is built by the shared builder so it is identical
-					// to one the composer would have queued - including the frozen
-					// model/effort and the `@mention` flags, which fire at drain time.
+				const commandName = prompt.trim().split(/\s/, 1)[0];
+				const isSlashCommand =
+					commandName.startsWith('/') &&
+					[
+						...(deps.customAICommandsRef?.current ?? []),
+						...(deps.speckitCommandsRef?.current ?? []),
+						...(deps.openspecCommandsRef?.current ?? []),
+						...(deps.bmadCommandsRef?.current ?? []),
+						...(targetSession.agentCommands ?? []),
+					].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
+				if (isBusy || isSlashCommand) {
+					// Busy agents wait for their current turn. Slash commands also use
+					// the command queue on idle agents, as the composer does: its drain
+					// resolves custom and project commands and substitutes $ARGUMENTS.
+					// Sending them as plain messages would skip that resolution when
+					// busy, while the direct remote-command path lacks project commands.
 					const queued = enqueuePromptForTab({
 						sessionId,
 						tabId: createdTabId,
 						text: prompt,
 						consultChain,
+						slashCommand: isSlashCommand,
 					});
 					if (!queued) {
 						logger.warn(
@@ -832,6 +875,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							command: prompt,
 							inputMode: 'ai',
 							tabId: createdTabId,
+							// Unexpanded provider commands go to the provider as typed.
+							literalPrompt: commandName.startsWith('/'),
 							...(consultChain ? { consultChain } : {}),
 						},
 					})
@@ -2568,6 +2613,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Group chat requests from the CLI / web client
 	useRemoteGroupChat();
+
+	// Register after the remote-operation hooks. Read current initialization
+	// state at probe time so a failed session read cannot look like an empty host.
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return window.maestro.web.onLiteReady(() => {
+			const state = useSessionStore.getState();
+			return state.initialLoadComplete && state.sessionsReadOk;
+		});
+	}, []);
 
 	return {};
 }

@@ -28,6 +28,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import { isValidAgentId } from '../../agentIds';
+import type { ClaudeCostState } from '../../claudeCostTracker';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../types';
@@ -308,6 +309,17 @@ export interface AgentOutputParser {
 	 * @returns true if the error must wait for the turn to show whether it recovered
 	 */
 	isProvisionalErrorNotice?(parsed: unknown): boolean;
+
+	/**
+	 * Tell a parser whose agent reports running SESSION totals which session this
+	 * process resumes, and the session's tracker as it stood when the turn
+	 * spawned, so the usage it emits is this turn's alone. Optional: only Claude
+	 * Code reports that way (see src/shared/claudeCostTracker.ts).
+	 *
+	 * @param resumeSessionId - The provider session this process resumes
+	 * @param baseline - The tracker at spawn: `null` for none, `undefined` for unknown
+	 */
+	primeResumedSession?(resumeSessionId: string, baseline: ClaudeCostState | null | undefined): void;
 
 	/**
 	 * Detect an error from process exit information

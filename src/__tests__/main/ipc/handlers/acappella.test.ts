@@ -733,6 +733,7 @@ describe('A Cappella IPC handlers - a Quick Chat session', () => {
 			showForVoice: vi.fn(() => windowId),
 			getStatus: vi.fn(() => ({ snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT } }) as QuickChatStatus),
 			runCommand: vi.fn(async () => ({ ok: true, snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT } })),
+			onSnapshot: vi.fn(() => () => {}),
 		};
 	}
 

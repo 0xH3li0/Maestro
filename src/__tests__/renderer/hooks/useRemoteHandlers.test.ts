@@ -970,6 +970,56 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		describe('New Session Message', () => {
+			async function dispatchHello(agentSessionId?: string) {
+				const session = createMockSession({
+					inputMode: 'ai',
+					newSessionMessage: 'Always check linting',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							name: 'Tab 1',
+							inputValue: '',
+							logs: [],
+							stagedImages: [],
+							agentSessionId,
+						} as any,
+					],
+				});
+				const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+				renderHook(() => useRemoteHandlers(deps));
+
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: 'session-1', command: 'hello', inputMode: 'ai' },
+						})
+					);
+				});
+			}
+
+			it('prefixes a dispatch that opens the tab (no provider session yet)', async () => {
+				await dispatchHello();
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'Always check linting\n\n---\n\nhello' })
+				);
+			});
+
+			it('leaves a dispatch into an existing conversation alone', async () => {
+				await dispatchHello('existing-session-123');
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'hello' })
+				);
+			});
+		});
+
 		it('ignores command when session not found', async () => {
 			const deps = createMockDeps({
 				sessionsRef: { current: [] },
@@ -1536,6 +1586,29 @@ describe('useRemoteHandlers', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
+		it('forwards a literal provider slash command from new-tab dispatch unchanged', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+
+			await act(async () => {
+				await getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '/compact',
+							inputMode: 'ai',
+							literalPrompt: true,
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: '/compact' })
+			);
+		});
+
 		it('logs error and returns early for unknown slash commands', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
@@ -1856,6 +1929,30 @@ describe('useRemoteHandlers', () => {
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.state).toBe('busy');
 			expect(updated?.busySource).toBe('ai');
+		});
+
+		it('stamps the target tab with its own start time, not just the agent', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+			const before = Date.now();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'analyze code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			// Quick Chat's "Working for" timer reads the tab: without this it sat at 0s.
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const tab = updated?.aiTabs.find((t) => t.id === updated.activeTabId);
+			expect(tab?.state).toBe('busy');
+			expect(tab?.thinkingStartTime).toBeGreaterThanOrEqual(before);
 		});
 
 		it('adds user log entry to the active tab for AI commands', async () => {

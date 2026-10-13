@@ -10,6 +10,11 @@ import {
 	isPluginsFeatureEnabled,
 	getHeadlessAgentRunner,
 } from '../../../plugins/plugin-manager-singleton';
+import {
+	RELAY_PLUGIN_ID,
+	RELAY_REPLY_TOOL_ID,
+	isRelayConversationIdentity,
+} from '../../../../shared/plugins/relay-identity';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { isTurnModelName } from '../../../../shared/autoModel';
@@ -109,7 +114,16 @@ export async function handlePluginsSendAgent(
 	// which this process spawns and the CLI's own shell therefore cannot supply.
 	// Anything that is not a chain reads as none.
 	const consultChain = parseConsultChain(message.consultChain);
+	const turn =
+		typeof model === 'string' || consultChain
+			? {
+					...(typeof model === 'string' ? { model } : {}),
+					...(consultChain ? { consultChain } : {}),
+				}
+			: undefined;
+	const requirePluginTools = message.requirePluginTools;
 	if (
+		(requirePluginTools !== undefined && typeof requirePluginTools !== 'boolean') ||
 		typeof agentId !== 'string' ||
 		!ctx.callbacks.getSessionDetail?.(agentId) ||
 		typeof prompt !== 'string' ||
@@ -137,7 +151,7 @@ export async function handlePluginsSendAgent(
 		const onClose = (): void => controller.abort();
 		client.socket.once('close', onClose);
 		try {
-			const reply = await run(
+			const args = [
 				agentId,
 				prompt,
 				sessionId as string | undefined,
@@ -145,13 +159,15 @@ export async function handlePluginsSendAgent(
 				'user',
 				undefined,
 				requiredToolId as string | undefined,
-				typeof model === 'string' || consultChain
-					? {
-							...(typeof model === 'string' ? { model } : {}),
-							...(consultChain ? { consultChain } : {}),
-						}
-					: undefined
-			);
+			] as const;
+			// `turn` sits after `requirePluginTools` in the runner's signature, so
+			// it carries the flag with it. With no turn settings the call keeps the
+			// arity it had.
+			const reply = turn
+				? await run(...args, requirePluginTools === true, turn)
+				: requirePluginTools === true
+					? await run(...args, true)
+					: await run(...args);
 			const toolStillActive =
 				requiredToolId === undefined ||
 				(isPluginsFeatureEnabled() &&
@@ -205,8 +221,8 @@ export async function handlePluginsSendAgent(
  * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
  * then invoke it via the broker. The toolId MUST be a declared `tools`
  * contribution (never an arbitrary command handler), and risk is rated on the
- * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
- * and NEVER executed. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
+ * model's ARGUMENTS via the shared Pianola gate. Only the trusted, authenticated
+ * Relay reply transport is exempt from the topic ceiling. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
  */
 export async function handlePluginsCallTool(
 	ctx: MessageHandlerContext,
@@ -248,13 +264,40 @@ export async function handlePluginsCallTool(
 	// the slug noise of the raw toolId. Follow-up: per-tool risk metadata + a
 	// user-approval path for HIGH instead of a hard block.
 	const riskText = `${declaredTool.name} ${declaredTool.description} ${argText}`;
-	const verdict = evaluatePluginDispatch(riskText);
-	if (!verdict.eligible) {
-		respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
-		return;
+	const context = pluginToolRunIdentity.resolve(message.runToken);
+	// Only Relay's declared reply transport can carry conversational text
+	// without a topic veto. Host proof + live signature trust are required;
+	// the plugin still enforces its sender, guild, channel/thread bindings and
+	// outbound policy, and its network calls remain brokered. Other tools,
+	// including other Relay tools, retain the usual risk ceiling.
+	const isRelayReply =
+		toolId === RELAY_REPLY_TOOL_ID &&
+		declaredTool.pluginId === RELAY_PLUGIN_ID &&
+		declaredTool.localId === 'send';
+	if (isRelayReply) {
+		if (!context.callerAgentId) {
+			respond({ ok: false, error: 'Verified caller required' });
+			return;
+		}
+		if (
+			!manager
+				.getActiveRecords()
+				.some((record) => isRelayConversationIdentity(record.id, record.signature))
+		) {
+			respond({
+				ok: false,
+				error: 'Relay reply requires a trusted signed plugin from the pinned Relay publisher',
+			});
+			return;
+		}
+	} else {
+		const verdict = evaluatePluginDispatch(riskText);
+		if (!verdict.eligible) {
+			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
+			return;
+		}
 	}
 	try {
-		const context = pluginToolRunIdentity.resolve(message.runToken);
 		logger.info(
 			`[PluginAudit] tool ${toolId} callerAgentId=${context.callerAgentId ?? 'unverified'}`,
 			LOG_CONTEXT

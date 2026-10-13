@@ -36,6 +36,26 @@ describe('atomicWriteJsonSync', () => {
 		expect(fs.readFileSync(filePath, 'utf-8')).toBe('{\n\t"a": 1\n}\n');
 	});
 
+	it('writes the text a custom serializer returns, and still adds the newline', () => {
+		atomicWriteJsonSync(
+			filePath,
+			{ a: 1 },
+			{ trailingNewline: true, serialize: (value) => JSON.stringify(value, null, 2) }
+		);
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe('{\n  "a": 1\n}\n');
+	});
+
+	it('checks a custom serializer the same way: text that is not JSON never lands', () => {
+		fs.writeFileSync(filePath, '{"old":true}', 'utf-8');
+
+		expect(() => atomicWriteJsonSync(filePath, { a: 1 }, { serialize: () => 'undefined' })).toThrow(
+			/Refusing to write/
+		);
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe('{"old":true}');
+	});
+
 	it('replaces an existing file and leaves no temp file behind', () => {
 		fs.writeFileSync(filePath, '{"old":true}', 'utf-8');
 

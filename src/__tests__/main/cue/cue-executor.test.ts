@@ -369,6 +369,59 @@ describe('cue-executor', () => {
 			await resultPromise;
 		});
 
+		describe('New Session Message', () => {
+			// Every Cue run is a fresh provider session (no --resume), so the
+			// agent's standing instructions ride along on each one.
+			it('prefixes the agent message onto the prompt of every run', async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Always answer in English' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe(
+					'Always answer in English\n\n---\n\nsubstituted: Triage the new issue'
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('sends the prompt unchanged when the agent has no message', async () => {
+				const config = createExecutionConfig({ promptPath: 'Triage the new issue' });
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe('substituted: Triage the new issue');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it("is not template-substituted (it is the user's own text, not a Cue prompt)", async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Keep {{CUE_SOURCE_OUTPUT}} literal' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSubstitute).not.toHaveBeenCalledWith(
+					expect.stringContaining('Keep {{CUE_SOURCE_OUTPUT}} literal'),
+					expect.anything()
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+		});
+
 		it('returns failed result when prompt content is empty', async () => {
 			const config = createExecutionConfig({ promptPath: '' });
 			const result = await executeCuePrompt(config);

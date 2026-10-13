@@ -264,3 +264,84 @@ describe('maestro:configureAutoRun launch', () => {
 		}
 	});
 });
+
+// The CLI's `auto-run` and a Cue `autorun` subscription send absolute `.md`
+// paths. Every runner reads `${folder}/${filename}.md`, so a saved playbook
+// that kept the absolute paths could never run.
+describe('maestro:configureAutoRun document names', () => {
+	const create = vi.fn();
+
+	beforeEach(() => {
+		create.mockResolvedValue({ success: true, playbook: { id: 'pb-1' } });
+		(window as any).maestro.playbooks = { create };
+	});
+
+	it('saves a playbook with folder-relative names without .md', async () => {
+		setup(vi.fn(() => Promise.resolve()));
+
+		launch({
+			launch: undefined,
+			saveAsPlaybook: 'Nightly',
+			documents: [
+				{ filename: `${FOLDER}/batch/DOC-01.md` },
+				{ filename: `${FOLDER}/batch/DOC-02.md`, resetOnCompletion: true },
+			],
+		});
+		await flush();
+
+		expect(create).toHaveBeenCalledWith(SESSION_ID, {
+			name: 'Nightly',
+			documents: [
+				{ filename: 'batch/DOC-01', resetOnCompletion: false },
+				{ filename: 'batch/DOC-02', resetOnCompletion: true },
+			],
+			loopEnabled: false,
+			maxLoops: undefined,
+			prompt: '',
+		});
+		expect(ack).toHaveBeenCalledWith('ch', { success: true, playbookId: 'pb-1', error: undefined });
+	});
+
+	it('refuses to save a playbook naming a document outside the Auto Run folder', async () => {
+		setup(vi.fn(() => Promise.resolve()));
+
+		launch({
+			launch: undefined,
+			saveAsPlaybook: 'Nightly',
+			documents: [{ filename: `${FOLDER}/ok.md` }, { filename: '/elsewhere/stray.md' }],
+		});
+		await flush();
+
+		expect(create).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: `Document is outside the Auto Run folder (${FOLDER}): /elsewhere/stray.md`,
+		});
+	});
+
+	it('refuses to launch a document outside the Auto Run folder instead of running its basename', async () => {
+		const startBatchRun = vi.fn(() => Promise.resolve());
+		setup(startBatchRun);
+
+		launch({ documents: [{ filename: '/elsewhere/ship-it.md' }] });
+		await flush();
+
+		expect(startBatchRun).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: `Document is outside the Auto Run folder (${FOLDER}): /elsewhere/ship-it.md`,
+		});
+	});
+
+	it('keeps subfolders when launching', async () => {
+		const startBatchRun = vi.fn(() => Promise.resolve());
+		setup(startBatchRun);
+
+		launch({ documents: [{ filename: `${FOLDER}/phase/one.md` }] });
+		await flush();
+
+		expect(((startBatchRun.mock.calls[0] as unknown[])[1] as any).documents[0].filename).toBe(
+			'phase/one'
+		);
+	});
+});

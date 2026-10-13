@@ -13,6 +13,7 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
@@ -26,6 +27,7 @@ import {
 	resolveSystemPromptDelivery,
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
+import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
@@ -46,6 +48,11 @@ import { buildConsultChainEnv, type ConsultChain } from '../../shared/consultBud
 import { sanitizeSessionId } from '../../shared/history';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+} from '../../shared/effortRejection';
 import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
@@ -171,6 +178,9 @@ type SpawnOverrides = Pick<
 	| 'customEnvVars'
 	| 'gatewayUrl'
 	| 'runOn'
+	| 'globalEnvVars'
+	| 'agentConfigValues'
+	| 'agentCommand'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -320,7 +330,7 @@ function resolveAgentOverrides(
 	userCustomEnvVars?: Record<string, string>;
 	agentCustomEnvVars?: Record<string, string>;
 } {
-	const agentConfigValues = readAgentConfig(toolType);
+	const agentConfigValues = overrides.agentConfigValues ?? readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
 		sessionCustomModel: overrides.customModel,
@@ -340,7 +350,9 @@ function resolveAgentOverrides(
  * exported in the shell that runs the command survives; the user's own vars
  * override it; and the prompt goes on the command line on every host. The
  * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
- * (every CLI spawn is a batch spawn).
+ * (every CLI spawn is a batch spawn). A desktop-backed local turn with live
+ * global settings uses the canonical desktop environment rules, including
+ * blank-value unsets; its prompt delivery and standalone CLI behavior remain unchanged.
  */
 function planCliLaunch(
 	toolType: ToolType,
@@ -352,6 +364,7 @@ function planCliLaunch(
 		prompt: string;
 		readOnlyMode?: boolean;
 		agentCustomEnvVars?: Record<string, string>;
+		globalEnvVars?: Record<string, string>;
 		sessionCustomEnvVars?: Record<string, string>;
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
@@ -361,7 +374,7 @@ function planCliLaunch(
 		runOn?: ResolvedRunOn;
 	}
 ): AgentLaunchPlanResult {
-	return buildAgentLaunchPlan({
+	const result = buildAgentLaunchPlan({
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
@@ -382,6 +395,19 @@ function planCliLaunch(
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
+	// Desktop-backed local turns use the same blank-unset, path expansion and
+	// environment layering as desktop spawns. The prompt still follows the CLI
+	// wire format, and standalone/remote launches keep their existing rules.
+	if (result.ok && result.plan.target.kind === 'local' && input.globalEnvVars !== undefined) {
+		result.plan.env = buildChildProcessEnv(
+			result.plan.envVars,
+			input.isResuming,
+			input.globalEnvVars,
+			undefined,
+			input.querySource
+		);
+	}
+	return result;
 }
 
 /**
@@ -743,7 +769,7 @@ async function spawnClaudeAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const claudeCommand = sshRemoteConfig?.enabled
 		? getAgentCommand('claude-code')
-		: await resolveLocalAgentCommand('claude-code');
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
 	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
@@ -769,6 +795,7 @@ async function spawnClaudeAgent(
 		prompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
@@ -894,6 +921,19 @@ async function spawnClaudeAgent(
 		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
+
 	// Used for `detectErrorFromExit` and for in-band failures; Claude's stream
 	// is still read by `processMessage` below because its stream-json shape is
 	// richer than the AgentOutputParser event vocabulary.
@@ -916,6 +956,8 @@ async function spawnClaudeAgent(
 	const progressTools = new Map<string, { tool: string; summary?: string }>();
 	let stopped = false;
 	let stopReason: string | undefined;
+	// The model the main thread last ran on; prices a turn whose baseline is unknown.
+	let lastMainModel: string | undefined;
 
 	// Process a single parsed JSON message from Claude Code's stream-json output
 
@@ -1015,9 +1057,24 @@ async function spawnClaudeAgent(
 		// `replaceUsageStats` keeps an occupancy snapshot or resolved window an
 		// earlier message reported when a later one (a trailing usage-only
 		// message, say) carries none.
+		if (
+			msg.type === 'assistant' &&
+			!msg.parent_tool_use_id &&
+			typeof msg.message?.model === 'string' &&
+			msg.message.model !== '<synthetic>'
+		) {
+			lastMainModel = msg.message.model;
+		}
+
 		const absoluteUsage = occupancyTracker.parseJsonObject(msg)?.usage?.absoluteUsage;
 		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-			const step = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			// A result's modelUsage and total_cost_usd are the SESSION's running
+			// totals; reduce them to this turn's before anything records them.
+			const turn =
+				msg.type === 'result'
+					? claudeTurnCost(msg, costBaseline, lastMainModel)
+					: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+			const step = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			usageStats = replaceUsageStats(usageStats, absoluteUsage ? { ...step, absoluteUsage } : step);
 		}
 	};
@@ -1248,7 +1305,7 @@ async function spawnJsonLineAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
 	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
 	// One that cannot run fails the turn by name; it never runs on the
@@ -1275,6 +1332,7 @@ async function spawnJsonLineAgent(
 		prompt: effectivePrompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: isResume,
 		querySource: overrides.querySource,
@@ -1536,6 +1594,10 @@ export interface SpawnAgentOptions {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/** Live desktop values; omitted by standalone CLI callers. */
+	globalEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
+	agentCommand?: string;
 	/**
 	 * The agent's Local Models gateway URL. The launch plan sets the provider's
 	 * base-URL variable from it unless `customEnvVars` already sets that variable,
@@ -1608,9 +1670,40 @@ export interface SpawnAgentOptions {
 }
 
 /**
- * Spawn an agent with a prompt and return the result
+ * Spawn an agent with a prompt and return the result.
+ *
+ * When the provider refuses the effort level the turn asked for, the turn is
+ * run once more with the effort left to the agent's own configuration. The
+ * effort a CLI run sends usually came off Maestro's static ladder (a document
+ * hint, the synopsis pin), and a provider can retire a rung without notice;
+ * failing every task of a playbook on a value nobody typed is the wrong
+ * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
+ * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
 export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	if (result.success || !options?.customEffort) return result;
+
+	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
+	if (!rejection) return result;
+
+	noteEffortRejection(toolType, rejection);
+	console.error(
+		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
+	);
+	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
+		...options,
+		customEffort: undefined,
+	});
+}
+
+async function spawnAgentOnce(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
@@ -1633,6 +1726,9 @@ export async function spawnAgent(
 		customEnvVars: options?.customEnvVars,
 		gatewayUrl: options?.gatewayUrl,
 		runOn: options?.runOn,
+		globalEnvVars: options?.globalEnvVars,
+		agentConfigValues: options?.agentConfigValues,
+		agentCommand: options?.agentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
@@ -1669,12 +1765,14 @@ export async function spawnAgent(
 }
 
 /**
- * Read a markdown document and count unchecked tasks
+ * Read a markdown document and count unchecked tasks.
+ * `missingPath` is set when the file does not exist, so a caller can name the
+ * document instead of reporting it as one with no tasks.
  */
 export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
-): { content: string; taskCount: number } {
+): { content: string; taskCount: number; missingPath?: string } {
 	const filePath = `${folderPath}/${filename}.md`;
 
 	try {
@@ -1684,7 +1782,10 @@ export function readDocAndCountTasks(
 			content,
 			taskCount: matches ? matches.length : 0,
 		};
-	} catch {
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return { content: '', taskCount: 0, missingPath: filePath };
+		}
 		return { content: '', taskCount: 0 };
 	}
 }

@@ -180,6 +180,10 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { getAgentDefinition } from '../../../main/agents/definitions';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+// Static, so they share one module instance with the statically imported
+// `spawnAgent` above; other suites here call `vi.resetModules()`.
+import { resetEffortRejections } from '../../../shared/effortRejection';
+import { resolveEffortLevel } from '../../../shared/modelTiers';
 
 const hostPlatform = process.platform;
 
@@ -260,6 +264,21 @@ describe('agent-spawner', () => {
 
 			expect(result.content).toBe('');
 			expect(result.taskCount).toBe(0);
+			expect(result.missingPath).toBeUndefined();
+		});
+
+		it('names the path it tried when the file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+			});
+
+			const result = readDocAndCountTasks('/playbooks', 'sub/missing');
+
+			expect(result).toEqual({
+				content: '',
+				taskCount: 0,
+				missingPath: '/playbooks/sub/missing.md',
+			});
 		});
 
 		it('should handle various checkbox formats', () => {
@@ -1237,6 +1256,58 @@ Some text with [x] in it that's not a checkbox
 
 			expect(result.usageStats?.inputTokens).toBe(200);
 			expect(result.usageStats?.outputTokens).toBe(100);
+		});
+
+		// claude reports cost and modelUsage as the SESSION's running totals; a
+		// resumed turn reports its share, using the cost-state row the transcript
+		// held when it spawned.
+		it('reports a resumed turn its share of the session totals', async () => {
+			const realFs = await vi.importActual<typeof import('fs')>('fs');
+			const realOs = await vi.importActual<typeof import('os')>('os');
+			// Real filesystem I/O needs the runner's temp directory, not the suite's POSIX mock.
+			const configDir = realFs.mkdtempSync(
+				path.join(realFs.realpathSync(realOs.tmpdir()), 'cli-cost-')
+			);
+			const projectDir = path.join(configDir, 'projects', '-project');
+			realFs.mkdirSync(projectDir, { recursive: true });
+			realFs.writeFileSync(
+				path.join(projectDir, 'sid-resume.jsonl'),
+				JSON.stringify({
+					type: 'cost-state',
+					totalCostUSD: 0.1,
+					modelUsage: { 'claude-x': { inputTokens: 10, outputTokens: 5, costUSD: 0.1 } },
+				}) + '\n'
+			);
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt', 'sid-resume');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						JSON.stringify({
+							type: 'result',
+							result: 'Done',
+							session_id: 'sid-resume',
+							total_cost_usd: 0.25,
+							modelUsage: { 'claude-x': { inputTokens: 30, outputTokens: 12, costUSD: 0.25 } },
+						}) + '\n'
+					)
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+
+				expect(result.usageStats?.totalCostUsd).toBeCloseTo(0.15, 9);
+				expect(result.usageStats?.inputTokens).toBe(20);
+				expect(result.usageStats?.outputTokens).toBe(7);
+			} finally {
+				if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+				else process.env.CLAUDE_CONFIG_DIR = previous;
+				realFs.rmSync(configDir, { recursive: true, force: true });
+			}
 		});
 
 		it('should aggregate usage from multiple models', async () => {
@@ -2823,6 +2894,70 @@ Some text with [x] in it that's not a checkbox
 			expect(args).not.toContain('--agent-level');
 		});
 
+		it.each(['claude-code', 'codex'] as const)(
+			'uses desktop blank-unset and path expansion for a live %s environment',
+			async (toolType) => {
+				vi.stubEnv('MAESTRO_TEST_BLANK', 'inherited');
+				try {
+					const p = spawnAgent(toolType, '/p', 'hi', undefined, {
+						globalEnvVars: {
+							MAESTRO_TEST_BLANK: '  ',
+							CLAUDE_CONFIG_DIR: '',
+							MAESTRO_TEST_PATH: '~/relay-fixture',
+							MAESTRO_TEST_CANCEL: 'global',
+							MAESTRO_TEST_RESTORE: '',
+							'': 'unfinished row',
+						},
+						customEnvVars: { MAESTRO_TEST_CANCEL: '', MAESTRO_TEST_RESTORE: 'session' },
+					});
+					await driveSpawnToCompletion(
+						p,
+						0,
+						toolType === 'claude-code' ? CLAUDE_OK() : CODEX_INIT()
+					);
+					const {
+						options: { env },
+					} = spawnCall();
+					expect(env.MAESTRO_TEST_BLANK).toBeUndefined();
+					expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+					expect(env.MAESTRO_TEST_CANCEL).toBeUndefined();
+					expect(env.MAESTRO_TEST_RESTORE).toBe('session');
+					expect(env.MAESTRO_TEST_PATH).toBe(path.join(os.homedir(), 'relay-fixture'));
+					expect(env['']).toBeUndefined();
+				} finally {
+					vi.unstubAllEnvs();
+				}
+			}
+		);
+
+		it('retains standalone CLI explicit blank values without live desktop settings', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customEnvVars: { MAESTRO_TEST_STANDALONE: '' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			expect(spawnCall().options.env.MAESTRO_TEST_STANDALONE).toBe('');
+		});
+
+		it('uses live desktop config and command with global env below session env', async () => {
+			mockReadAgentConfig.mockReturnValue({ customArgs: '--wrong-disk-config' });
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				agentConfigValues: { customArgs: '--live-desktop-config' },
+				agentCommand: '/desktop/claude',
+				globalEnvVars: { MAESTRO_TEST_GLOBAL: 'global', MAESTRO_TEST_LAYER: 'global' },
+				customEnvVars: { MAESTRO_TEST_LAYER: 'session' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			const {
+				args,
+				options: { env },
+			} = spawnCall();
+			expect(args).toContain('--live-desktop-config');
+			expect(args).not.toContain('--wrong-disk-config');
+			expect(mockSpawn.mock.calls[0][0]).toBe('/desktop/claude');
+			expect(env.MAESTRO_TEST_GLOBAL).toBe('global');
+			expect(env.MAESTRO_TEST_LAYER).toBe('session');
+		});
+
 		it('applies session customEnvVars to local spawn env (wins over shell env)', async () => {
 			const prev = process.env.MAESTRO_TEST_ENV;
 			process.env.MAESTRO_TEST_ENV = 'from-shell';
@@ -3116,6 +3251,110 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('the source "Ollama" is disabled');
 			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('spawnAgent: effort refused by the provider', () => {
+		isolateAgentEnv();
+
+		// What `codex exec --json` prints when the API answers the effort with a
+		// 400: the API's own JSON, carried as a string inside a JSONL event.
+		const REFUSAL_LINE =
+			JSON.stringify({
+				type: 'error',
+				message:
+					'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+			}) + '\n';
+
+		let errorSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+			errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			errorSpy.mockRestore();
+			resetEffortRejections();
+		});
+
+		/** Args of the Nth agent spawn (0-based). */
+		const argsOfSpawn = (index: number) => mockSpawn.mock.calls[index][1] as string[];
+		const effortArg = (args: string[]) =>
+			args.find((arg) => arg.startsWith('model_reasoning_effort='));
+
+		it('runs the turn once more with the effort left to the agent', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+
+			await waitForSpawnCall(1);
+			expect(effortArg(argsOfSpawn(0))).toBe('model_reasoning_effort="low"');
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			await waitForSpawnCall(2);
+			expect(mockSpawn).toHaveBeenCalledTimes(2);
+			expect(effortArg(argsOfSpawn(1))).toBeUndefined();
+			await yieldTick();
+			// A turn that closes with no final text reads as crashed, so the
+			// retry answers before it exits.
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }) +
+						'\n'
+				)
+			);
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+
+			const result = await p;
+			expect(result.success).toBe(true);
+			expect(errorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('codex rejected effort "low" for gpt-6-astra')
+			);
+		});
+
+		it('takes the refused value out of the ladder for the rest of the run', async () => {
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+			await waitForSpawnCall(2);
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+			await p;
+
+			expect(resolveEffortLevel('codex', 'low')).toBeUndefined();
+		});
+
+		it('does not retry when the caller sent no effort', async () => {
+			// The agent's own configured effort was refused: nothing Maestro chose
+			// is left to drop, so the failure is returned as it is.
+			const p = spawnAgent('codex', '/p', 'hi');
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStderr.emit('data', Buffer.from('Not logged in\n'));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
 	});
 

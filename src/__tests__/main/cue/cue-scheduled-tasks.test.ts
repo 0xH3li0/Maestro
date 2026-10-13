@@ -522,6 +522,51 @@ describe('cue-scheduled-tasks', () => {
 			expect(readSubs(projectRoot)[0]).not.toHaveProperty('gate');
 		});
 
+		it('sets, swaps, and clears the prompt run model choice', async () => {
+			await updateScheduledTask(projectRoot, 'standup', {
+				turnSettings: { tier: 'high', effort: 'low' },
+			});
+			expect(readSubs(projectRoot)[0]).toMatchObject({ tier: 'high', effort: 'low' });
+
+			// The form sends every axis: a picked model with the tier nulled out.
+			await updateScheduledTask(projectRoot, 'standup', {
+				turnSettings: { tier: null, model: 'claude-opus-4-7', effort: 'low' },
+			});
+			const swapped = readSubs(projectRoot)[0];
+			expect(swapped).toMatchObject({ model: 'claude-opus-4-7', effort: 'low' });
+			expect(swapped).not.toHaveProperty('tier');
+
+			await updateScheduledTask(projectRoot, 'standup', {
+				turnSettings: { tier: null, model: null, effort: null },
+			});
+			const cleared = readSubs(projectRoot)[0];
+			expect(cleared).not.toHaveProperty('tier');
+			expect(cleared).not.toHaveProperty('model');
+			expect(cleared).not.toHaveProperty('effort');
+			expect(cleared.prompt).toBe('standup');
+		});
+
+		it('refuses a model choice on a notify task and applies none of the patch', async () => {
+			createScheduledTask(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				notify: { message: 'ping' },
+				name: 'pinger',
+			});
+
+			const result = await updateScheduledTask(projectRoot, 'pinger', {
+				label: 'renamed',
+				turnSettings: { tier: 'high' },
+			});
+
+			expect(result.updated).toBe(false);
+			expect(result.reason).toMatch(/action "notify"/);
+			const pinger = readSubs(projectRoot).find((sub) => sub.name === 'pinger')!;
+			expect(pinger.label).not.toBe('renamed');
+			expect(pinger).not.toHaveProperty('tier');
+		});
+
 		it('preserves the leading comment header on rewrite', async () => {
 			const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
 			fs.writeFileSync(filePath, '# Pipeline: Tasks\n' + fs.readFileSync(filePath, 'utf-8'));

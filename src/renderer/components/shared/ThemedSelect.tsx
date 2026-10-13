@@ -13,6 +13,7 @@ import { useState, useRef, useCallback, useEffect, useId, useMemo } from 'react'
 import { ChevronDown, Search } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks/ui';
+import { EscCloseButton } from '../ui/EscCloseButton';
 
 export interface ThemedSelectOption {
 	value: string;
@@ -160,6 +161,7 @@ export function ThemedSelect({
 					}
 					break;
 				case 'Escape':
+					e.stopPropagation();
 					closeAndRefocus();
 					break;
 			}
@@ -237,6 +239,9 @@ export function ThemedSelect({
 				>
 					{filterable && (
 						<div
+							onKeyDown={(e) => {
+								if (e.key === 'Escape') handleNavKeyDown(e);
+							}}
 							style={{
 								display: 'flex',
 								alignItems: 'center',
@@ -267,6 +272,7 @@ export function ThemedSelect({
 									padding: 0,
 								}}
 							/>
+							<EscCloseButton theme={theme} onClose={closeAndRefocus} label="Close filter (Esc)" />
 						</div>
 					)}
 					<div style={{ overflowY: 'auto', minHeight: 0 }}>

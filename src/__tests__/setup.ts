@@ -120,9 +120,20 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	isMacOS: vi.fn(() => false),
 }));
 
-// Mock window.matchMedia for components that use media queries
+// Set browser APIs from the JSDOM environment.
 // Only mock if window exists (jsdom environment)
 if (typeof window !== 'undefined') {
+	// Node 25 exposes native Web Storage globals; each DOM suite must use its own storage.
+	const jsdomWindow = (globalThis as typeof globalThis & { jsdom: { window: Window } }).jsdom
+		.window;
+	for (const name of ['localStorage', 'sessionStorage'] as const) {
+		Object.defineProperty(window, name, {
+			configurable: true,
+			writable: true,
+			value: jsdomWindow[name],
+		});
+	}
+
 	Object.defineProperty(window, 'matchMedia', {
 		writable: true,
 		value: vi.fn().mockImplementation((query: string) => ({
@@ -584,7 +595,16 @@ const mockMaestro = {
 		clearPersistentToken: vi.fn().mockResolvedValue({ success: true }),
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
+	browserSession: {
+		onRelayRequest: vi.fn(() => () => {}),
+		onCreateTabRequest: vi.fn(() => () => {}),
+		onPageEvent: vi.fn(() => () => {}),
+		relayReady: vi.fn().mockResolvedValue(undefined),
+		relayRespond: vi.fn(),
+		pageClose: vi.fn().mockResolvedValue(undefined),
+	},
 	web: {
+		onLiteReady: vi.fn(() => () => {}),
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
@@ -1248,9 +1268,13 @@ const mockMaestro = {
 		window: vi.fn().mockResolvedValue(null),
 		getSnapshot: vi.fn().mockResolvedValue(null),
 		setLayout: vi.fn(),
+		setFullView: vi.fn(),
 		getPinned: vi.fn().mockResolvedValue(true),
 		setPinned: vi.fn((pinned: boolean) => Promise.resolve(pinned)),
 		onPinned: vi.fn(() => () => {}),
+		getFontScale: vi.fn().mockResolvedValue(1),
+		setFontScale: vi.fn().mockResolvedValue(1),
+		onFontScale: vi.fn(() => () => {}),
 		onSnapshot: vi.fn(() => () => {}),
 		onFocusInput: vi.fn(() => () => {}),
 		onCommand: vi.fn(() => () => {}),

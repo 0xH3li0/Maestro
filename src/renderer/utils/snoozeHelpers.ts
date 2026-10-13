@@ -382,7 +382,7 @@ export function snoozeTab(
 			// tab that points at a pid which no longer exists.
 			entry = {
 				type: 'terminal',
-				tab: { ...tab, pid: 0, state: 'idle', exitCode: undefined },
+				tab: { ...tab, pid: 0, ptyInitialized: false, state: 'idle', exitCode: undefined },
 				...common,
 			};
 			break;
@@ -536,6 +536,7 @@ export function wakeSnoozedTab(
 				terminalTabs: insertAt(session.terminalTabs || [], {
 					...entry.tab,
 					pid: 0,
+					ptyInitialized: false,
 					state: 'idle',
 					exitCode: undefined,
 				}),
@@ -853,7 +854,10 @@ function captureGroupMember(session: Session, ref: UnifiedTabRef): SnoozedGroupM
 			// The PTY dies with the pane. Keep the shell's identity, drop the
 			// process - waking spawns a fresh shell in the same place.
 			return tab
-				? { type: 'terminal', tab: { ...tab, pid: 0, state: 'idle', exitCode: undefined } }
+				? {
+						type: 'terminal',
+						tab: { ...tab, pid: 0, ptyInitialized: false, state: 'idle', exitCode: undefined },
+					}
 				: null;
 		}
 		default:

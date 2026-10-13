@@ -174,7 +174,7 @@ export function createProcessCoreApi() {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}): Promise<{ pid: number; success: boolean }> =>
+		}): Promise<{ pid: number; success: boolean; attached?: boolean }> =>
 			ipcRenderer.invoke('process:spawnTerminalTab', config),
 
 		/**

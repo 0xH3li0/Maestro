@@ -242,6 +242,8 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/** Revalidate the upgrade session/current login policy before commands and delivery. */
+	isAuthorized?: () => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -290,6 +292,8 @@ export interface WebClientMessage {
 	callbackTimeout?: number;
 	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
+	hidden?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
 	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
@@ -545,6 +549,8 @@ export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
 	background?: boolean,
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
+	hidden?: boolean,
 	/** The new tab's turn's place in a consult chain (see ExecuteCommandCallback). */
 	consultChain?: ConsultChain
 ) => Promise<NewAITabWithPromptResult>;

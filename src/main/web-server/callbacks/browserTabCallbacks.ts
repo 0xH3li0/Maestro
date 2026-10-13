@@ -320,6 +320,7 @@ export function registerBrowserTabCallbacks(
 			sessionId: string,
 			prompt: string,
 			background?: boolean,
+			hidden?: boolean,
 			consultChain?: ConsultChain
 		) => {
 			const mainWindow = getMainWindow();
@@ -371,6 +372,7 @@ export function registerBrowserTabCallbacks(
 					prompt,
 					responseChannel,
 					background,
+					hidden,
 					consultChain
 				);
 

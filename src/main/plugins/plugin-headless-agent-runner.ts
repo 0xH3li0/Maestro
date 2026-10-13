@@ -10,6 +10,8 @@ import { autoTurnReport, type AutoTurn } from '../../shared/autoTurn';
 import type { ConsultChain } from '../../shared/consultBudget';
 import type { AgentAutoTurnRequest } from '../local-models/auto-turn';
 import { logger } from '../utils/logger';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { checkCustomPath } from '../agents/path-prober';
 
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
@@ -18,7 +20,9 @@ import {
 
 export interface PluginHeadlessRunnerDeps {
 	getAgent: (agentId: string) => SessionInfo | undefined;
-	detectAgent: (type: SessionInfo['toolType']) => Promise<{ available: boolean }>;
+	detectAgent: (type: SessionInfo['toolType']) => Promise<{ available: boolean; path?: string }>;
+	getAgentConfig?: (type: SessionInfo['toolType']) => Record<string, unknown>;
+	getGlobalEnvVars?: () => Record<string, string>;
 	hasPluginTools: () => boolean;
 	spawn: (
 		type: SessionInfo['toolType'],
@@ -59,6 +63,10 @@ export interface PluginHeadlessRunnerDeps {
 	) => void;
 }
 
+/** Build a cancellable host turn using live desktop provider settings and execution mode.
+ * Required tools/receipts fail before spawn when no authenticated local MCP bridge exists.
+ * Every issued proof is revoked in finally, including provider and cleanup failures.
+ */
 export function createPluginHeadlessAgentRunner(
 	deps: PluginHeadlessRunnerDeps
 ): HeadlessAgentRunner {
@@ -70,27 +78,37 @@ export function createPluginHeadlessAgentRunner(
 		origin = 'auto',
 		onProgress,
 		receiptToolId,
+		requirePluginTools = false,
 		turn
 	) => {
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
 		const local = !agent.sessionSshRemoteConfig?.enabled;
 		if (
-			receiptToolId &&
+			(receiptToolId || requirePluginTools) &&
 			(!local ||
 				!MCP_CONFIG_BY_AGENT[agent.toolType]?.verified ||
+				(agent.toolType === 'claude-code' && getClaudeTokenMode(agent) !== 'api') ||
 				!deps.hasPluginTools() ||
-				!deps.getRunReceipts ||
-				!deps.hasRunReceiptOverflow)
+				(!!receiptToolId && (!deps.getRunReceipts || !deps.hasRunReceiptOverflow)))
 		) {
 			return {
 				success: false,
 				response: null,
 				sessionId: null,
-				error: 'Authenticated plugin tool receipt unavailable',
+				error: receiptToolId
+					? 'Authenticated plugin tool receipt unavailable'
+					: 'Authenticated plugin tools unavailable',
 			};
 		}
-		if (local && !(await deps.detectAgent(agent.toolType)).available) {
+		const customBinary =
+			local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
+		const detection = local
+			? customBinary
+				? { available: customBinary.exists, path: customBinary.path }
+				: await deps.detectAgent(agent.toolType)
+			: undefined;
+		if (local && !detection?.available) {
 			return {
 				success: false,
 				response: null,
@@ -148,6 +166,9 @@ export function createPluginHeadlessAgentRunner(
 				...(autoTurn?.runOn ? { runOn: autoTurn.runOn } : {}),
 				customArgs: agent.customArgs,
 				customEnvVars: agent.customEnvVars,
+				globalEnvVars: deps.getGlobalEnvVars?.(),
+				agentConfigValues: deps.getAgentConfig?.(agent.toolType),
+				agentCommand: detection?.path,
 				additionalDirectories: agent.additionalDirectories,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
 				appendSystemPrompt: await deps.prepareSystemPrompt(agent, turn?.consultChain),

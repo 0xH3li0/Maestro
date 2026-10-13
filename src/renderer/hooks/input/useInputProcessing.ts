@@ -15,7 +15,7 @@ import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/provi
 import { routeQueuedAutoItem, settleAutoTurn, turnSpawnSettings } from '../../services/autoTurn';
 import type { AutoRouteStamp } from '../../../shared/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -51,6 +51,7 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -219,6 +220,18 @@ export type BatchState = BatchRunState;
 /** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
 export type ProcessInputOptions = {
 	forceParallel?: boolean;
+	/**
+	 * Steer Running Turn: when this send lands in the queue, hand it straight to
+	 * the turn already running on its tab. A send that dispatches immediately has
+	 * no turn to steer and is an ordinary send.
+	 */
+	steer?: boolean;
+	/**
+	 * Queue Held: always queue this send, paused, even when the agent is idle. It
+	 * waits on the queue card until the user resumes it (the Send menu's Queue
+	 * Held row). Never dispatches on its own.
+	 */
+	hold?: boolean;
 	images?: string[];
 	/** Prefer this agent over the live activeSessionId when the callback runs. */
 	sessionId?: string;
@@ -547,6 +560,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								activeTab?.id || activeSession.activeTabId
 							);
 							const sessionIsIdle =
+								!options?.hold &&
 								!retryHoldsTab &&
 								(forceParallel
 									? activeTab?.state !== 'busy'
@@ -565,6 +579,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
+								...(options?.hold && { paused: true }),
 								// Freeze the model/effort now: the queue may not drain until
 								// after the user has switched to something else, and this
 								// command must run under - and be labeled with - what was
@@ -807,6 +822,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						(item) => item.waitingForConnection
 					);
 					if (
+						options?.hold ||
 						mentionProbe.probeFailed ||
 						mentionProbe.anyActive ||
 						hasWorkAheadOfNewMessage(liveMentionSession, {
@@ -829,6 +845,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							readOnlyMode: activeTab?.readOnlyMode === true,
 							crossAgentMention: true,
 							crossAgentOnly: true,
+							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
 								waitingForConnection: true,
 							}),
@@ -846,6 +863,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								executionQueue: [...s.executionQueue, mentionQueuedItem],
 							};
 						});
+						// An @mention cannot be steered; asking anyway reports why.
+						if (options?.steer) {
+							void steerQueuedItemOrExplain(resolvedSessionId, mentionQueuedItem.id);
+						}
 
 						clearComposerUnlessTaken();
 						if (mentionProbe.probeFailed) {
@@ -1034,6 +1055,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 
 				const shouldQueue =
+					options?.hold ||
 					connectionHold ||
 					retryHoldsTab ||
 					consultHoldsTab ||
@@ -1077,6 +1099,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
+						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
@@ -1123,6 +1146,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// and the answer is written onto the item: what the router said is
 					// part of what was frozen at send. A no-op on a named model.
 					routeQueuedAutoItem(resolvedSessionId, queuedItem);
+					// Steer Running Turn: the draft is a queued item now, which is what a
+					// steer starts from. One that cannot be steered stays queued and the
+					// service says why.
+					if (options?.steer) {
+						void steerQueuedItemOrExplain(resolvedSessionId, queuedItem.id);
+					}
 
 					clearComposerUnlessTaken();
 					if (processState.probeFailed) {
@@ -1537,12 +1566,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
 						// Prefix new session message if present (only for the first message in a new session)
-						if (!tabAgentSessionId) {
-							effectivePrompt = prependNewSessionMessage(
-								effectivePrompt,
-								freshSession.newSessionMessage
-							);
-						}
+						effectivePrompt = prependNewSessionMessageOnFirstTurn(
+							effectivePrompt,
+							freshSession.newSessionMessage,
+							tabAgentSessionId
+						);
 
 						// For read-only mode, append instruction to return plan in response instead of writing files
 						if (isReadOnly) {

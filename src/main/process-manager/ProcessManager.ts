@@ -43,6 +43,7 @@ import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
+import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -106,10 +107,22 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session.
 	 *
-	 * Live AI processes own their sessionId until they exit. Terminal processes
-	 * retain replacement semantics so shell restarts continue to work.
+	 * Live AI processes own their sessionId until they exit. Canonical terminal-tab
+	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const existing = this.processes.get(config.sessionId);
+		if (
+			config.reuseTerminal &&
+			config.toolType === 'terminal' &&
+			existing?.isTerminal &&
+			(existing.ptyProcess ||
+				(existing.childProcess &&
+					existing.childProcess.exitCode === null &&
+					!existing.childProcess.signalCode))
+		) {
+			return { pid: existing.pid, success: true, attached: true };
+		}
 		// Expand a leading `~` in the working directory before spawning. node-pty
 		// and child_process hand `cwd` straight to the OS, which - unlike a shell -
 		// does not expand `~`. A session whose cwd is persisted as `~/project` (or
@@ -158,7 +171,6 @@ export class ProcessManager extends EventEmitter {
 		// handler removes the entry before emitting `exit`, which lets replay flows
 		// start the next process without racing the old process's trailing output.
 		// Terminals intentionally keep their existing restart behavior.
-		const existing = this.processes.get(config.sessionId);
 		if (existing) {
 			const childProcessRunning =
 				existing.childProcess !== undefined &&
@@ -246,7 +258,7 @@ export class ProcessManager extends EventEmitter {
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
 			// the two would otherwise see every turn here end without a start.
-			this.emitSpawn(config);
+			if (serveResult.success) this.emitSpawn(config);
 			return serveResult;
 		}
 
@@ -294,7 +306,7 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		this.emitSpawn(config);
+		if (result.success) this.emitSpawn(config);
 
 		return result;
 	}
@@ -504,6 +516,11 @@ export class ProcessManager extends EventEmitter {
 						label: 'interrupt',
 					}
 				);
+				// The local child of an SSH spawn is only the ssh client; the agent on
+				// the remote host never sees its signals. Ask the host to deliver them:
+				// SIGINT now, SIGTERM if the turn is still running after the grace.
+				this.signalRemote(sessionId, process, 'interrupt');
+				this.scheduleRemoteTerminate(sessionId, process, process.childProcess);
 				return true;
 			}
 			return false;
@@ -586,6 +603,7 @@ export class ProcessManager extends EventEmitter {
 					}
 				);
 			} else if (proc.childProcess) {
+				this.signalRemote(sessionId, proc, 'terminate');
 				stopProcess(
 					{ child: proc.childProcess },
 					{
@@ -610,6 +628,43 @@ export class ProcessManager extends EventEmitter {
 			});
 			return false;
 		}
+	}
+
+	/**
+	 * Deliver a signal to an SSH-hosted agent on its remote host. A no-op for
+	 * local processes and for SSH spawns that recorded no remote pid.
+	 */
+	private signalRemote(sessionId: string, proc: ManagedProcess, mode: RemoteSignalMode): void {
+		if (!proc.sshRemotePidFile || !proc.command || !proc.args) return;
+		signalRemoteAgent(
+			{
+				sshCommand: proc.command,
+				sshArgs: proc.args,
+				pidFile: proc.sshRemotePidFile,
+				sessionId,
+			},
+			mode
+		);
+	}
+
+	/**
+	 * The stop ladder escalates only the local ssh client. When an interrupted
+	 * SSH agent has not exited after the grace period, ask its host for SIGTERM
+	 * too. Test for an observed exit, never `.killed`, which is set as soon as a
+	 * signal is delivered.
+	 */
+	private scheduleRemoteTerminate(
+		sessionId: string,
+		proc: ManagedProcess,
+		child: NonNullable<ManagedProcess['childProcess']>
+	): void {
+		if (!proc.sshRemotePidFile) return;
+		const timer = setTimeout(() => {
+			if (child.exitCode === null && child.signalCode === null) {
+				this.signalRemote(sessionId, proc, 'terminate');
+			}
+		}, INTERACTIVE_STOP_GRACE_MS);
+		child.once('exit', () => clearTimeout(timer));
 	}
 
 	/**
@@ -698,7 +753,7 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Convenience wrapper for spawning a terminal tab PTY.
+	 * Ensure a terminal tab PTY exists, attaching to its live host handle if present.
 	 * Uses the terminal tab session ID format {sessionId}-terminal-{tabId},
 	 * which causes PtySpawner to forward raw PTY data without filtering.
 	 */
@@ -722,6 +777,7 @@ export class ProcessManager extends EventEmitter {
 		return this.spawn({
 			sessionId: config.sessionId,
 			toolType: 'terminal',
+			reuseTerminal: true,
 			cwd: config.cwd,
 			command: shell,
 			args: [],

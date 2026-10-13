@@ -29,7 +29,8 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentError, ToolType } from '../../../shared/types';
+import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -130,11 +131,18 @@ export interface TabNamingConfig {
 	useUtilityAgent?: boolean;
 }
 
-/** Shared isolated naming turn for UI tabs and brokered plugin titles. */
+/** Shared isolated naming turn for UI tabs and brokered plugin titles.
+ * Resolve an enabled SSH target once before awaiting provider detection and retain it
+ * for probing and command construction. An unresolved target returns null; remote
+ * settings changes must never send the remote message to a local provider.
+ */
 export async function generateTabName(
 	deps: TabNamingHandlerDependencies,
 	config: TabNamingConfig,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	// Internal: set by this function's own retry (see the effort-rejection
+	// branch in onExit) so the second attempt leaves the effort to the agent.
+	skipCheapEffort = false
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
@@ -176,6 +184,15 @@ export async function generateTabName(
 	});
 
 	try {
+		const sshRemote = config.sessionSshRemoteConfig?.enabled
+			? getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+					sessionSshConfig: config.sessionSshRemoteConfig,
+				}).config
+			: null;
+		if (config.sessionSshRemoteConfig?.enabled && !sshRemote) {
+			logger.warn('Configured SSH remote unavailable for tab naming', LOG_CONTEXT);
+			return null;
+		}
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
 		const utilityAgentId =
@@ -224,7 +241,12 @@ export async function generateTabName(
 		// isn't mapped, and applyAgentConfigOverrides then falls through to
 		// the agent's own configured value - so an unmapped provider keeps
 		// exactly the behaviour it had before.
-		const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
+		const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+		// The cheap effort is a value MAESTRO picked off a static ladder, and
+		// a provider can retire a rung without notice. When it has refused
+		// this one, the retry below runs again with the effort left to the
+		// agent - a tab named at the wrong effort beats a tab with no name.
+		const cheapNaming = skipCheapEffort ? { ...cheapSettings, effort: undefined } : cheapSettings;
 		const allConfigs = agentConfigsStore.get('configs', {});
 		const agentConfigValues = allConfigs[effectiveAgentType] || {};
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
@@ -286,8 +308,8 @@ export async function generateTabName(
 		// That's the correct behavior when the user picked TUI/Dynamic.
 		let claudeSpawnDecision: ClaudeSpawnDecision | null = null;
 		if (agent.id === 'claude-code') {
-			const sshEnabled = !!config.sessionSshRemoteConfig?.enabled;
-			const sshRemoteId = config.sessionSshRemoteConfig?.remoteId ?? undefined;
+			const sshEnabled = !!sshRemote;
+			const sshRemoteId = sshRemote?.id;
 
 			// Mirror the chat spawn (process.ts) EXACTLY so the naming turn spends
 			// the same provider the chat would. Over SSH that means probing whether
@@ -297,13 +319,8 @@ export async function generateTabName(
 			// fell back to API (or vice-versa) - the token-source mismatch we must
 			// never produce. Local (non-SSH) spawns skip the probe entirely.
 			let sshMaestroPAvailable: boolean | undefined;
-			if (sshEnabled && sshRemoteId) {
-				const sshRemote = getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
-					sessionSshConfig: config.sessionSshRemoteConfig,
-				}).config;
-				if (sshRemote) {
-					sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
-				}
+			if (sshRemote) {
+				sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
 			}
 
 			const tokenMode = getClaudeTokenMode(
@@ -335,94 +352,87 @@ export async function generateTabName(
 		// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
 		let shouldSendPromptViaStdin = false;
 		let promptAlreadyInArgs = false;
-		if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
-			const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-			const sshResult = getSshRemoteConfig(sshStoreAdapter, {
-				sessionSshConfig: config.sessionSshRemoteConfig,
-			});
+		if (sshRemote) {
+			// Use the agent's command (not path) for remote execution
+			// since the path is local and remote host has its own binary location
+			let remoteCommand = agent.command;
+			const remoteCwd = config.sessionSshRemoteConfig?.workingDirOverride || config.cwd;
 
-			if (sshResult.config) {
-				// Use the agent's command (not path) for remote execution
-				// since the path is local and remote host has its own binary location
-				let remoteCommand = agent.command;
-				const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
-
-				// For agents that support stream-json input, use stdin for the prompt
-				// This completely avoids shell escaping issues with multi-layer SSH commands
-				const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-				if (agentSupportsStreamJson) {
-					// Add --input-format stream-json to args so agent reads from stdin
-					const hasStreamJsonInput =
-						finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
-					if (!hasStreamJsonInput) {
-						finalArgs = [...finalArgs, '--input-format', 'stream-json'];
-					}
-					shouldSendPromptViaStdin = true;
-					logger.debug('Using stdin for tab naming prompt in SSH remote execution', LOG_CONTEXT, {
-						sessionId,
-						promptLength: fullPrompt.length,
-						agentSupportsStreamJson,
-					});
-				} else {
-					// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
-					// prompt embedded inside the bash -c '<...>' wrapper. If we let
-					// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
-					// the agent invocation, those args land OUTSIDE the wrapper and get
-					// swallowed as positional params to the remote bash, never reaching
-					// the agent. Build the prompt into args here so it's quoted as part
-					// of the wrapped command.
-					if (agent.promptArgs) {
-						finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
-					} else if (agent.noPromptSeparator) {
-						finalArgs = [...finalArgs, fullPrompt];
-					} else {
-						finalArgs = [...finalArgs, '--', fullPrompt];
-					}
-					promptAlreadyInArgs = true;
-					logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
-						sessionId,
-						promptLength: fullPrompt.length,
-					});
+			// For agents that support stream-json input, use stdin for the prompt
+			// This completely avoids shell escaping issues with multi-layer SSH commands
+			const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
+			if (agentSupportsStreamJson) {
+				// Add --input-format stream-json to args so agent reads from stdin
+				const hasStreamJsonInput =
+					finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
+				if (!hasStreamJsonInput) {
+					finalArgs = [...finalArgs, '--input-format', 'stream-json'];
 				}
-
-				// Claude TUI/dynamic over SSH runs maestro-p on the REMOTE host
-				// (must be on its PATH) to drive the remote claude TUI on the Max
-				// subscription. Returns null for the API path and non-claude
-				// agents, leaving the spawn on the plain claude binary. The
-				// interactive flags are prepended ahead of the existing arg list
-				// (incl. `--input-format stream-json`): maestro-p strips the
-				// headless-only flags, parses the stream-json prompt from stdin,
-				// and drives the TUI. We do NOT pre-probe the remote FS for
-				// maestro-p; if it's absent this throwaway naming turn just fails
-				// and the tab keeps its default name.
-				const remoteInteractive = claudeSpawnDecision
-					? buildRemoteInteractiveSpawn({
-							decision: claudeSpawnDecision,
-							interactiveModeArgs: agent.interactiveModeArgs,
-							remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
-						})
-					: null;
-				if (remoteInteractive) {
-					remoteCommand = remoteInteractive.command;
-					finalArgs = [...remoteInteractive.prependArgs, ...finalArgs];
-					customEnvVars = { ...(customEnvVars ?? {}), ...remoteInteractive.env };
-					logger.debug('Tab naming resolved to remote maestro-p TUI over SSH', LOG_CONTEXT, {
-						sessionId,
-					});
-				}
-
-				const sshCommand = await buildSshCommand(sshResult.config, {
-					command: remoteCommand,
-					args: finalArgs,
-					cwd: remoteCwd,
-					env: customEnvVars,
-					useStdin: shouldSendPromptViaStdin,
+				shouldSendPromptViaStdin = true;
+				logger.debug('Using stdin for tab naming prompt in SSH remote execution', LOG_CONTEXT, {
+					sessionId,
+					promptLength: fullPrompt.length,
+					agentSupportsStreamJson,
 				});
-				command = sshCommand.command;
-				finalArgs = sshCommand.args;
-				// Local cwd is not used for SSH commands - the command runs on remote
-				cwd = process.cwd();
+			} else {
+				// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
+				// prompt embedded inside the bash -c '<...>' wrapper. If we let
+				// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
+				// the agent invocation, those args land OUTSIDE the wrapper and get
+				// swallowed as positional params to the remote bash, never reaching
+				// the agent. Build the prompt into args here so it's quoted as part
+				// of the wrapped command.
+				if (agent.promptArgs) {
+					finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
+				} else if (agent.noPromptSeparator) {
+					finalArgs = [...finalArgs, fullPrompt];
+				} else {
+					finalArgs = [...finalArgs, '--', fullPrompt];
+				}
+				promptAlreadyInArgs = true;
+				logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
+					sessionId,
+					promptLength: fullPrompt.length,
+				});
 			}
+
+			// Claude TUI/dynamic over SSH runs maestro-p on the REMOTE host
+			// (must be on its PATH) to drive the remote claude TUI on the Max
+			// subscription. Returns null for the API path and non-claude
+			// agents, leaving the spawn on the plain claude binary. The
+			// interactive flags are prepended ahead of the existing arg list
+			// (incl. `--input-format stream-json`): maestro-p strips the
+			// headless-only flags, parses the stream-json prompt from stdin,
+			// and drives the TUI. We do NOT pre-probe the remote FS for
+			// maestro-p; if it's absent this throwaway naming turn just fails
+			// and the tab keeps its default name.
+			const remoteInteractive = claudeSpawnDecision
+				? buildRemoteInteractiveSpawn({
+						decision: claudeSpawnDecision,
+						interactiveModeArgs: agent.interactiveModeArgs,
+						remoteClaudeBin: claudeSpawnDecision.claudeRealBinPath,
+					})
+				: null;
+			if (remoteInteractive) {
+				remoteCommand = remoteInteractive.command;
+				finalArgs = [...remoteInteractive.prependArgs, ...finalArgs];
+				customEnvVars = { ...(customEnvVars ?? {}), ...remoteInteractive.env };
+				logger.debug('Tab naming resolved to remote maestro-p TUI over SSH', LOG_CONTEXT, {
+					sessionId,
+				});
+			}
+
+			const sshCommand = await buildSshCommand(sshRemote, {
+				command: remoteCommand,
+				args: finalArgs,
+				cwd: remoteCwd,
+				env: customEnvVars,
+				useStdin: shouldSendPromptViaStdin,
+			});
+			command = sshCommand.command;
+			finalArgs = sshCommand.args;
+			// Local cwd is not used for SSH commands - the command runs on remote
+			cwd = process.cwd();
 		}
 
 		// Realize a LOCAL interactive (maestro-p) decision by wrapping the
@@ -447,24 +457,26 @@ export async function generateTabName(
 			});
 		}
 
-		// A TUI (maestro-p) naming spawn emits a plain terminal transcript,
-		// not stream-json, so the raw-output fallback in extraction would
-		// scrape live thinking/response prose onto the tab. Require
-		// structured output on that path. Covers both the local wrap above
-		// and the remote maestro-p case, which share the same decision mode.
-		const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+		// No separate rule for a TUI (maestro-p) spawn: maestro-p answers in
+		// stream-json like `claude --print`, and ProcessManager parses that
+		// stream before it emits `data` - only the final `result` text arrives,
+		// and non-JSON lines are dropped for any agent with an output parser.
+		// Requiring raw JSON here (as #1110 once did) rejected every name a
+		// TUI-mode agent generated, so its tabs were never auto-named.
 
 		// Create a promise that resolves when we get the tab name
 		if (signal?.aborted) return null;
 		return new Promise<string | null>((resolve) => {
 			let output = '';
 			let resolved = false;
+			let effortRejection: EffortRejection | null = null;
 
 			const cleanup = () => {
 				clearTimeout(timeoutId);
 				clearInterval(earlyExtractIntervalId);
 				processManager.off('data', onData);
 				processManager.off('exit', onExit);
+				processManager.off('agent-error', onAgentError);
 				signal?.removeEventListener('abort', onAbort);
 			};
 
@@ -501,11 +513,7 @@ export async function generateTabName(
 			// without waiting for the full process to exit.
 			const earlyExtractIntervalId = setInterval(() => {
 				if (resolved || !output.trim()) return;
-				const earlyResult = extractTabNameFromOutput(
-					effectiveAgentType,
-					output,
-					requireStructuredOutput
-				);
+				const earlyResult = extractTabNameFromOutput(effectiveAgentType, output);
 				if (earlyResult.name) {
 					resolveWith(earlyResult.name, 'resolved early from partial output');
 				}
@@ -517,6 +525,14 @@ export async function generateTabName(
 				output += data;
 			};
 
+			// A provider's refusal of the effort arrives as an agent error, not
+			// as output: the turn never ran, so `output` stays empty and the
+			// exit below would otherwise read as an anonymous failure.
+			const onAgentError = (errorSessionId: string, agentError: AgentError) => {
+				if (errorSessionId !== sessionId) return;
+				effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+			};
+
 			// Listen for process exit
 			const onExit = (exitSessionId: string, code?: number) => {
 				if (exitSessionId !== sessionId) return;
@@ -525,6 +541,24 @@ export async function generateTabName(
 					// Already resolved by early extraction, just clean up listeners
 					processManager.off('data', onData);
 					processManager.off('exit', onExit);
+					processManager.off('agent-error', onAgentError);
+					return;
+				}
+
+				// The provider refused the effort Maestro chose for this turn.
+				// Run it once more at the agent's own effort instead of leaving
+				// the tab unnamed. Only when THIS attempt sent the cheap effort,
+				// so a refusal of the agent's own configured value cannot loop.
+				const rejection = effortRejection ?? parseEffortRejection(output);
+				if (rejection && cheapNaming.effort !== undefined) {
+					resolved = true;
+					cleanup();
+					logger.warn(
+						'Tab naming effort rejected by the provider; retrying at the agent default',
+						LOG_CONTEXT,
+						{ sessionId, effort: cheapNaming.effort, ...rejection }
+					);
+					resolve(generateTabName(deps, config, signal, true));
 					return;
 				}
 
@@ -545,11 +579,7 @@ export async function generateTabName(
 					return;
 				}
 
-				const extraction = extractTabNameFromOutput(
-					effectiveAgentType,
-					output,
-					requireStructuredOutput
-				);
+				const extraction = extractTabNameFromOutput(effectiveAgentType, output);
 				if (!extraction.name) {
 					logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 						sessionId,
@@ -565,6 +595,7 @@ export async function generateTabName(
 
 			processManager.on('data', onData);
 			processManager.on('exit', onExit);
+			processManager.on('agent-error', onAgentError);
 			signal?.addEventListener('abort', onAbort, { once: true });
 			if (signal?.aborted) {
 				onAbort();
@@ -826,27 +857,9 @@ function extractAgentResponseText(agentType: string, output: string): string | n
  * Extract a tab name from raw agent process output, normalizing structured
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
- *
- * `structuredOnly` disables that raw-output fallback. Pass it when the naming
- * spawn drives the maestro-p TUI (Claude token mode = TUI/dynamic): maestro-p
- * strips the headless-only flags, including the `--tools ""` guard, so the
- * model runs a real agentic turn and `output` is a live terminal transcript of
- * thinking and response prose rather than stream-json. Scraping that buffer
- * lifts an arbitrary sentence fragment onto the tab, which is what users see as
- * "the response is streaming into the tab name" (issue #1110). Prose has no
- * angle brackets, so STRUCTURAL_NOISE_RE can't catch it - the only safe answer
- * is to decline. Returning null costs nothing: the send-side trigger retries
- * naming on the next message, so the tab keeps its placeholder and self-heals.
  */
-function extractTabNameFromOutput(
-	agentType: string,
-	output: string,
-	structuredOnly = false
-): TabNameExtractionResult {
+function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
 	const responseText = extractAgentResponseText(agentType, output);
-	if (responseText === null && structuredOnly) {
-		return { name: null, reason: 'structured_only_no_json' };
-	}
 	return extractTabName(responseText ?? output);
 }
 

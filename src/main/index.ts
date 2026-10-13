@@ -47,6 +47,7 @@ import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { RELAY_PLUGIN_ID } from '../shared/plugins/relay-identity';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
 import { seedBundledPlugins } from './plugins/bundled-plugins';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
@@ -117,7 +118,7 @@ import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
-import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { localSystemOneAccess } from './utils/maestro-system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
@@ -212,6 +213,8 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import { registerBrowserRelayHandlers } from './browser/browser-relay';
+import { isHostBrowserPageWindow } from './browser/browser-pages';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -623,6 +626,11 @@ let quitHandler: QuitHandler | null = null;
 // the primary window registers itself as `isMain` when createWindow() runs on
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
+const getWindowForSession = (sessionId: string): BrowserWindow | null => {
+	const ownerId = windowRegistry.getWindowForSession(sessionId);
+	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+	return owner?.browserWindow ?? mainWindow;
+};
 
 // Shared by the main window and the cadenza HUD window (which reuses the same
 // preload + renderer bundle, loaded with `?cadenzaHud`).
@@ -847,7 +855,10 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// flow. When the primary is the LAST window, we defer to
 		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
 		// we skip if a quit is already in flight to avoid re-entrancy.
-		const otherWindowsOpen = BrowserWindow.getAllWindows().length > 0;
+		// Offscreen browser pages are workloads, not secondary application windows.
+		const otherWindowsOpen = BrowserWindow.getAllWindows().some(
+			(window) => !isHostBrowserPageWindow(window)
+		);
 		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
 			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
 			app.quit();
@@ -932,6 +943,8 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		registerBrowserRelayHandlers({ getMainWindow: () => mainWindow, getWindowForSession });
+
 		// Serve agent-authored Concerto mockups as real documents with their own
 		// CSP. A srcdoc frame would inherit Maestro's renderer CSP and block the
 		// inline scripts that make mockups interactive.
@@ -1680,6 +1693,7 @@ app
 						cwd: projectRoot,
 						projectRoot,
 						autoRunFolderPath: storedSession.autoRunFolderPath,
+						newSessionMessage: storedSession.newSessionMessage,
 					},
 					subscription: {
 						name: subscriptionName,
@@ -2756,7 +2770,12 @@ app
 				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
 					(session) => session.id === agentId
 				),
-			detectAgent,
+			detectAgent: async (type) => {
+				const detected = await agentDetector?.getAgent(type);
+				return { available: detected?.available === true, path: detected?.path };
+			},
+			getAgentConfig: getAgentConfigForAgent,
+			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			// This builder runs in the main process here, so it asks the System One
@@ -2955,6 +2974,8 @@ app
 				isPluginTrusted: (pluginId) =>
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
+				getPluginSignature: (pluginId) =>
+					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.signature,
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {
@@ -3510,7 +3531,7 @@ app
 		// Older Relay turns predate origin recording. The private host binding is
 		// the proof: only a session owned by this exact plugin and agent qualifies.
 		// A real CLI session has no such binding, so it is never relabeled.
-		if (pluginProviderSessions.hasBindings('sh.maestro.relay')) {
+		if (pluginProviderSessions.hasBindings(RELAY_PLUGIN_ID)) {
 			void (async () => {
 				for (const agent of sessionsStore.get('sessions', []) as SessionInfo[]) {
 					const storage = getSessionStorage(agent.toolType);
@@ -3529,9 +3550,7 @@ app
 							profileEnvVar ? agent.customEnvVars?.[profileEnvVar] : undefined
 						);
 						for (const session of sessions) {
-							if (
-								!pluginProviderSessions.isOwned('sh.maestro.relay', agent.id, session.sessionId)
-							) {
+							if (!pluginProviderSessions.isOwned(RELAY_PLUGIN_ID, agent.id, session.sessionId)) {
 								continue;
 							}
 							markRelaySession(agent, session.sessionId, true);

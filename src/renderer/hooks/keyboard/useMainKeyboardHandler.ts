@@ -33,9 +33,10 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import { requestDictationShortcutPress } from '../../services/dictation';
 import type { TileableTabKind } from '../tabs/tileNewTab';
-import { isMacOSPlatform } from '../../utils/platformUtils';
+import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
@@ -243,7 +244,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// On Windows/Linux, Ctrl doubles as the modifier for Maestro shortcuts (Ctrl+F, Ctrl+W, etc.)
 			// so we only bypass for macOS to avoid breaking cross-platform app shortcuts.
 			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode/platform.
-			const isMac = isMacOSPlatform();
+			const isMac = isMacOSKeyboard();
 			if (
 				isMac &&
 				activeSession?.inputMode === 'terminal' &&
@@ -1125,6 +1126,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
 					e.preventDefault();
 					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
+			} else if (ctx.isShortcut(e, 'steerSend')) {
+				// Same split as forcedParallelSend above: the composer answers the chord
+				// itself while the caret is in it, and everywhere else the chord still
+				// has to work, because the queued message it steers is drawn in the
+				// transcript. A group chat has no running turn of this agent on screen.
+				const cameFromComposer = !!ctx.inputRef?.current && e.target === ctx.inputRef.current;
+				if (!cameFromComposer && !ctx.activeGroupChatId) {
+					e.preventDefault();
+					requestSteerSend();
 				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();

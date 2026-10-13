@@ -39,6 +39,7 @@ import {
 import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
+import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -2265,6 +2266,31 @@ describe('settingsStore', () => {
 			});
 		});
 
+		it('hydrates remote tool visibility and preferences without native log-buffer access', async () => {
+			vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+			const nativeGetMaxLogBuffer = window.maestro.logger.getMaxLogBuffer;
+			window.maestro.logger.getMaxLogBuffer = vi
+				.fn()
+				.mockRejectedValue(
+					new Error('Channel "logger:getMaxLogBuffer" is not available over web interface')
+				);
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				showToolCalls: true,
+				defaultShowThinking: 'sticky',
+				fontSize: 18,
+			});
+			try {
+				await loadAllSettings();
+				expect(useSettingsStore.getState()).toMatchObject({
+					settingsLoaded: true,
+					showToolCalls: true,
+					defaultShowThinking: 'sticky',
+					fontSize: 18,
+				});
+			} finally {
+				window.maestro.logger.getMaxLogBuffer = nativeGetMaxLogBuffer;
+			}
+		});
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
@@ -3064,6 +3090,34 @@ describe('settingsStore', () => {
 			expect(shortcuts.focusActiveTab.keys).toEqual(['Alt', 'Meta', 'ArrowUp']);
 			// The freed combo now belongs to cross-tab message search.
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
+		});
+
+		it('does not re-persist a map the migration leaves unchanged (settings:set ping-pong)', async () => {
+			// nextUnreadTab at its own default used to match a stale remap onto the
+			// reserved Cmd+Shift+Down, which the guard reverted: the output equalled
+			// the input but the flag stayed raised, so every load wrote and notified
+			// the peer window, which did the same. A no-op migration must not write.
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Alt', 'Meta', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'shortcuts')
+			).toHaveLength(0);
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
 		});
 
 		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {

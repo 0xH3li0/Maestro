@@ -29,10 +29,18 @@ import {
 	type ScheduledTaskKind,
 	type ScheduledTaskUpdateInput,
 } from '../../../shared/cue/scheduled-tasks';
+import {
+	cueTurnSettingsOf,
+	sameCueTurnSettings,
+	type CueTurnSettings,
+} from '../../../shared/cue/turn-settings';
+import { AgentTurnSettings } from '../CuePipelineEditor/panels/AgentTurnSettings';
 
 export interface ScheduledTaskFormAgent {
 	id: string;
 	name: string;
+	/** Provider, so the Model selector can name what each tier resolves to. */
+	toolType?: string;
 }
 
 export interface ScheduledTaskFormProps {
@@ -86,6 +94,12 @@ export function ScheduledTaskForm({
 	const [prompt, setPrompt] = useState(() =>
 		task?.action === 'notify' ? '' : (task?.prompt ?? '')
 	);
+	// The prompt run's model choice. A notify-only task has no agent run, so
+	// its edit form never shows the selectors.
+	const [turnSettings, setTurnSettings] = useState<CueTurnSettings>(
+		() => (task ? cueTurnSettingsOf(task) : undefined) ?? {}
+	);
+	const runsPrompt = task ? task.action !== 'notify' : true;
 	const [notifyEnabled, setNotifyEnabled] = useState(() => task?.action === 'notify');
 	const [notifyMessage, setNotifyMessage] = useState(() => task?.notifyMessage ?? '');
 	const [notifySticky, setNotifySticky] = useState(() => task?.notifySticky === true);
@@ -176,6 +190,15 @@ export function ScheduledTaskForm({
 					if (notify) patch.notify = notify;
 				} else {
 					patch.prompt = prompt;
+					// `null` clears an axis back to the agent's own value; sent only
+					// when the choice moved so an untouched task keeps its YAML as-is.
+					if (!sameCueTurnSettings(task, turnSettings)) {
+						patch.turnSettings = {
+							tier: turnSettings.tier ?? null,
+							model: turnSettings.model ?? null,
+							effort: turnSettings.effort ?? null,
+						};
+					}
 				}
 				if (kind === 'once') patch.fireAt = new Date(fireAtLocal).toISOString();
 				if (kind === 'daily') {
@@ -209,6 +232,8 @@ export function ScheduledTaskForm({
 				label: label.trim() || undefined,
 				pipelineName: pipeline.trim() || undefined,
 				...(gateCondition ? { gate: gateCondition, gateOnUnavailable: gate.onUnavailable } : {}),
+				// The model choice belongs to the prompt run; a notify-only task has none.
+				...(prompt.trim() ? cueTurnSettingsOf(turnSettings) : undefined),
 			};
 			const ok = await onCreate(input);
 			if (ok) onCancel();
@@ -388,6 +413,17 @@ export function ScheduledTaskForm({
 					style={fieldStyle}
 				/>
 			</label>
+
+			{runsPrompt && (
+				<AgentTurnSettings
+					data={{
+						...turnSettings,
+						toolType: agents.find((agent) => agent.id === agentId)?.toolType,
+					}}
+					theme={theme}
+					onChange={(patch) => setTurnSettings((prev) => ({ ...prev, ...patch }))}
+				/>
+			)}
 
 			<div className="flex flex-col gap-2">
 				<div className="flex items-center gap-2">

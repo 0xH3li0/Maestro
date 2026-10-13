@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
 	ipcMain: {
+		_invokeHandlers: h.handlers,
 		handle: (channel: string, fn: (...args: unknown[]) => unknown) => h.handlers.set(channel, fn),
 	},
 }));
@@ -20,24 +21,7 @@ vi.mock('../../../main/computer-history', () => ({
 
 import { registerComputerHistoryHandlers } from '../../../main/ipc/handlers/computerHistory';
 import { createComputerHistorySupervisorHooks } from '../../../main/computer-history/first-party';
-import { isBridgeDeniedChannel } from '../../../main/web-server/handlers/bridgeDenyList';
-
-const EXPECTED_CHANNELS = [
-	'computerHistory:status',
-	'computerHistory:getConfig',
-	'computerHistory:setConfig',
-	'computerHistory:pause',
-	'computerHistory:resume',
-	'computerHistory:listRules',
-	'computerHistory:addRule',
-	'computerHistory:removeRule',
-	'computerHistory:clear',
-	'computerHistory:requestAccessibility',
-	'computerHistory:query',
-	'computerHistory:activity',
-	'computerHistory:knownApps',
-	'computerHistory:digests',
-];
+import { handleBridgeInvoke } from '../../../main/web-server/handlers/bridgeHandlers';
 
 beforeEach(() => {
 	h.handlers.clear();
@@ -54,9 +38,21 @@ beforeEach(() => {
 });
 
 describe('computerHistory IPC', () => {
-	it('registers every channel, and every one is denied on the web bridge (D15)', () => {
-		expect([...h.handlers.keys()].sort()).toEqual([...EXPECTED_CHANNELS].sort());
-		for (const channel of EXPECTED_CHANNELS) expect(isBridgeDeniedChannel(channel)).toBe(true);
+	it('refuses Computer History reads and controls over the web bridge before dispatch', async () => {
+		for (const [channel, registered] of h.handlers) {
+			const invoked = vi.fn(registered);
+			h.handlers.set(channel, invoked);
+			const responses: object[] = [];
+			await handleBridgeInvoke(
+				{ id: 'browser-client' } as never,
+				{ type: 'bridge.invoke', requestId: channel, channel, args: [] },
+				(_client, response) => responses.push(response)
+			);
+			expect(responses).toEqual([
+				expect.objectContaining({ type: 'bridge.response', requestId: channel, ok: false }),
+			]);
+			expect(invoked).not.toHaveBeenCalled();
+		}
 	});
 
 	it('passes arguments through after the event and compiles grep for query', async () => {

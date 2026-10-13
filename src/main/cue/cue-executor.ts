@@ -14,6 +14,7 @@ import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cu
 import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import type { CueTurnLaunch } from '../../shared/cue/turn-settings';
+import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
@@ -223,9 +224,17 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		);
 	}
 
+	// Every Cue run spawns a fresh provider session (no `--resume`), so prefix
+	// the agent's New Session Message onto each one, as Auto Run does per task.
+	// Applied after the empty check above: that warning is about the
+	// subscription's own prompt, which a standing prefix must not mask.
+	const finalPrompt = prependNewSessionMessage(substitutedPrompt, session.newSessionMessage);
+
 	// 3. Settings that depend on the prompt (a subscription on the Auto model)
 	// are decided now that there is one. A tier target that cannot be used
 	// fails the run by name, exactly as the refusal checked at the top does.
+	// The router reads the subscription's own prompt, not the standing prefix:
+	// the prefix is the same on every run and says nothing about this one.
 	let launchConfig = config;
 	if (config.resolveLateTurn) {
 		const late = await config.resolveLateTurn(substitutedPrompt);
@@ -237,7 +246,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	}
 
 	// 4. Build spawn spec (agent args, SSH wrapping, etc.)
-	const buildResult = await buildSpawnSpec(launchConfig, substitutedPrompt);
+	const buildResult = await buildSpawnSpec(launchConfig, finalPrompt);
 	if (!buildResult.ok) {
 		onLog('error', buildResult.message);
 		return failedResult(buildResult.message);

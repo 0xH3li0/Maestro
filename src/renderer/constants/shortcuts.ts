@@ -275,6 +275,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Forced Parallel Send',
 		keys: ['Meta', 'Shift', 'Enter'],
 	},
+	// Send the draft into the turn ALREADY RUNNING on this tab, or with an empty
+	// draft, steer the newest queued message. Clear the binding to turn it off.
+	steerSend: {
+		id: 'steerSend',
+		label: 'Steer Running Turn',
+		keys: ['Alt', 'Meta', 'Enter'],
+	},
 	clearTerminal: {
 		id: 'clearTerminal',
 		label: 'Clear Terminal',

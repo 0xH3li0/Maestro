@@ -261,6 +261,94 @@ describe('Tab Naming IPC Handlers', () => {
 		expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
 
+	it.each([null, 'missing', 'disabled'])(
+		'refuses an enabled unresolved SSH title target before a local spawn: %s',
+		async (remoteId) => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			const result = await generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as any,
+					settingsStore: mockSettingsStore as any,
+				},
+				{
+					userMessage: 'remote private text',
+					agentType: 'codex',
+					cwd: '/remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+					useUtilityAgent: false,
+				}
+			);
+			expect(result).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each([
+		['claude-code', 'detection'],
+		['codex', 'detection'],
+		['claude-code', 'probe'],
+	])('keeps %s naming on the resolved SSH target across %s', async (agentType, stage) => {
+		const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+		const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+		const { ensureRemoteMaestroPProbed } =
+			await import('../../../../main/agents/probeRemoteMaestroP');
+		const remote = { id: 'r1', host: 'remote.example.com', port: 22 };
+		vi.mocked(getSshRemoteConfig).mockReturnValue({ config: remote as any, source: 'session' });
+		vi.mocked(buildSshCommand).mockResolvedValue({
+			command: 'ssh',
+			args: ['remote.example.com'],
+		} as any);
+		mockAgentDetector.getAgent.mockImplementation(async () => {
+			if (stage === 'detection') {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			}
+			return {
+				...mockClaudeAgent,
+				id: agentType,
+				command: agentType === 'codex' ? 'codex' : 'claude',
+			};
+		});
+		if (stage === 'probe') {
+			vi.mocked(ensureRemoteMaestroPProbed).mockImplementationOnce(async () => {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+				return true;
+			});
+		}
+		const controller = new AbortController();
+		const pending = generateTabName(
+			{
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: mockSettingsStore as any,
+			},
+			{
+				userMessage: 'remote private text',
+				agentType,
+				cwd: '/remote',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				useUtilityAgent: false,
+				enableMaestroP: false,
+			},
+			controller.signal
+		);
+		try {
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ command: 'ssh' })
+			);
+			expect(buildSshCommand).toHaveBeenCalledWith(remote, expect.anything());
+			expect(getSshRemoteConfig).toHaveBeenCalledOnce();
+		} finally {
+			controller.abort();
+			await pending;
+		}
+	});
+
 	describe('tabNaming:generateTabName', () => {
 		it('returns null when agent is not found', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(null);
@@ -1427,13 +1515,11 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
-		// Regression for #1110: on the TUI path maestro-p strips the headless-only
-		// flags (including the `--tools ""` guard), so naming runs a real agentic
-		// turn and its raw terminal transcript is thinking/response prose, not
-		// stream-json. Scraping that buffer put a sentence fragment on the tab,
-		// which users saw as the response streaming into the tab name. Prose has no
-		// angle brackets, so STRUCTURAL_NOISE_RE can't catch it - we must decline.
-		it('returns null instead of scraping a plain-text TUI transcript for a name', async () => {
+		// ProcessManager parses maestro-p's stream-json before it emits `data`, so
+		// the naming listener receives the bare `result` text, never raw JSON.
+		// Requiring JSON on the TUI path (the old #1110 guard) threw away every
+		// name a TUI-mode agent generated, and its tabs stayed unnamed.
+		it('accepts the parsed result text ProcessManager emits on the TUI path', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
@@ -1457,15 +1543,10 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// A realistic maestro-p TUI transcript: short prose lines that clear the
-			// 40-char filter and carry no structural noise.
-			onDataCallback?.(
-				'tab-naming-mock-uuid-1234',
-				'I should look at the auth flow\nLet me start with the form\n'
-			);
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form');
 			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
 
-			await expect(resultPromise).resolves.toBeNull();
+			await expect(resultPromise).resolves.toBe('Login Form');
 		});
 
 		it('still accepts a stream-json name on the TUI path', async () => {
@@ -1641,6 +1722,163 @@ describe('Tab Naming IPC Handlers', () => {
 
 			finish();
 			await resultPromise;
+		});
+	});
+
+	describe('effort refused by the provider', () => {
+		// Verbatim from a Codex-over-SSH naming run. The turn never ran: the API
+		// answered the cheap effort with a 400, the process exited 1 with no
+		// output, and the tab kept its session-id label with nothing to say why.
+		const REFUSAL = {
+			type: 'unknown',
+			agentId: 'claude-code',
+			recoverable: true,
+			timestamp: 0,
+			message:
+				'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+		};
+
+		type Callbacks = {
+			data?: (sessionId: string, data: string) => void;
+			exit?: (sessionId: string, code?: number) => void;
+			'agent-error'?: (sessionId: string, error: unknown) => void;
+		};
+
+		// Each attempt registers its own listeners; keep the latest set.
+		function captureListeners(): Callbacks {
+			const callbacks: Callbacks = {};
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					(callbacks as Record<string, unknown>)[event] = callback;
+				}
+			);
+			return callbacks;
+		}
+
+		it('runs the naming turn once more with the effort left to the agent', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[0][2]).toMatchObject({
+				sessionCustomEffort: 'low',
+			});
+
+			// The refusal arrives as an agent error, then the process exits 1.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retryOverrides = (applyAgentConfigOverrides as Mock).mock.calls[1][2];
+			expect(retryOverrides.sessionCustomEffort).toBeUndefined();
+			// Only the effort is dropped; the cheap MODEL is still wanted.
+			expect(retryOverrides.sessionCustomModel).toBe('haiku');
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
+		it('detaches the first attempt listeners before retrying', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstErrorListener = callbacks['agent-error'];
+
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			expect(mockProcessManager.off).toHaveBeenCalledWith('agent-error', firstErrorListener);
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+			await resultPromise;
+		});
+
+		it('gives up after one retry rather than looping', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			// The agent's OWN configured effort is refused too. That is the
+			// user's setting to change; a third spawn would just repeat it.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				...REFUSAL,
+				message: 'Not logged in',
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores a refusal that belongs to another process', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('some-other-session', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
 		});
 	});
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Clock, Info } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseScheduleTimestamp } from '../../shared/cue/scheduled-tasks';

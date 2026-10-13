@@ -18,7 +18,7 @@
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { useSessionStore, selectSessionById, updateAiTab } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { extractQuickTabName, isAiTabHidden } from '../utils/tabHelpers';
+import { extractQuickTabName } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
 import type { AITab, Session } from '../types';
 
@@ -244,9 +244,12 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
  * snapshot taken before an await (agent config, system prompt), and a namer
  * started by another send during that gap is invisible to the snapshot - which
  * would spawn a second, paid naming job for the same tab. `session` is only the
- * fallback for a caller whose agent is not in the store. A hidden consult tab
- * is never named: it has no chip to show a name on, and the text it receives
- * was written by the agent that asked, not by the user.
+ * fallback for a caller whose agent is not in the store. A cross-agent consult
+ * tab (`consultOrigin`) is never named: it already carries `↩ <Agent>`, and the
+ * text it receives was written by the agent that asked, not by the user. Other
+ * hidden tabs ARE named - a hand-off from `dispatch --new-tab` runs hidden by
+ * default, and its name is what the completion toast, History, and the chip
+ * read once the user opens it.
  *
  * Never throws. The send paths call this synchronously right before they
  * spawn (the queue drain before its own recovery `try`), and a naming bug must
@@ -268,7 +271,7 @@ export function requestTabAutoNameForMessage(
 		if (!text) return;
 		const liveSession = selectSessionById(session.id)(useSessionStore.getState()) ?? session;
 		const tab = liveSession.aiTabs.find((t) => t.id === tabId);
-		if (!tab || isAiTabHidden(tab)) return;
+		if (!tab || tab.consultOrigin) return;
 		wasGenerating = !!tab.isGeneratingName;
 
 		const prior = tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text);

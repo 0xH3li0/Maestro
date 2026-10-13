@@ -38,11 +38,16 @@ import {
 	type VoiceRendererBridge,
 } from '../../../main/acappella/dispatch/route-executor';
 import { VoiceDispatchError } from '../../../main/acappella/voice-session-service';
-import type { QuickChatVoiceHost } from '../../../main/acappella/dispatch/quick-chat-dispatch';
+import {
+	dispatchToQuickChat,
+	type QuickChatVoiceHost,
+} from '../../../main/acappella/dispatch/quick-chat-dispatch';
 import { quickChatScopeDecision } from '../../../shared/acappella/quick-chat-scope';
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	type QuickChatCommandResult,
+	type QuickChatMessage,
+	type QuickChatRoute,
 	type QuickChatSnapshot,
 	type QuickChatStatus,
 } from '../../../shared/quickChat';
@@ -531,19 +536,65 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 		};
 	}
 
-	/** A Quick Chat whose `send` lands in `after`, starting from `before`. */
-	function makeQuickChat(options: {
-		before?: QuickChatSnapshot;
-		result?: QuickChatCommandResult;
-	}): QuickChatVoiceHost & { runCommand: MockedFunction<QuickChatVoiceHost['runCommand']> } {
-		const before = options.before ?? chatSnapshot();
-		const result = options.result ?? { ok: true, snapshot: chatSnapshot({ tabId: 'tab-quick' }) };
+	/** A message the user sent, as the engine lists it at one point of its route. */
+	function sent(route: Partial<QuickChatRoute> = {}, text = 'what day is today'): QuickChatMessage {
 		return {
-			showForVoice: vi.fn(() => 'window-quick'),
-			getStatus: vi.fn(() => ({ snapshot: before }) as QuickChatStatus),
-			runCommand: vi.fn<QuickChatVoiceHost['runCommand']>(async () => result),
+			id: 'm1',
+			role: 'user',
+			text,
+			timestamp: 0,
+			route: {
+				status: 'running',
+				tabId: 'tab-quick',
+				tabName: null,
+				origin: 'new',
+				tabOpen: true,
+				since: 0,
+				...route,
+			},
 		};
 	}
+
+	/**
+	 * A Quick Chat whose `send` answers `result`. `push` is the engine announcing
+	 * a later state of the chat, the way a message's route arrives after `send`
+	 * has returned.
+	 */
+	function makeQuickChat(options: { result?: QuickChatCommandResult } = {}) {
+		const result = options.result ?? {
+			ok: true,
+			snapshot: chatSnapshot({ messages: [sent()] }),
+		};
+		let current = chatSnapshot();
+		const listeners = new Set<(snapshot: QuickChatSnapshot) => void>();
+		return {
+			showForVoice: vi.fn(() => 'window-quick'),
+			getStatus: vi.fn(() => ({ snapshot: current }) as QuickChatStatus),
+			runCommand: vi.fn<QuickChatVoiceHost['runCommand']>(async () => {
+				current = result.snapshot;
+				return result;
+			}),
+			onSnapshot: vi.fn<QuickChatVoiceHost['onSnapshot']>((listener) => {
+				listeners.add(listener);
+				return () => {
+					listeners.delete(listener);
+				};
+			}),
+			push(next: QuickChatSnapshot) {
+				current = next;
+				for (const listener of [...listeners]) listener(next);
+			},
+			listening: () => listeners.size,
+		};
+	}
+
+	/** A `send` that returns while a tab is still being found for the message. */
+	const SEARCHING: QuickChatCommandResult = {
+		ok: true,
+		snapshot: chatSnapshot({
+			messages: [sent({ status: 'searching', tabId: null, origin: null })],
+		}),
+	};
 
 	function makeQuickChatExecutor(
 		bridge: VoiceRendererBridge,
@@ -559,7 +610,7 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 
 	it('sends through Quick Chat and never touches a remote:* channel', async () => {
 		const bridge = makeBridge();
-		const quickChat = makeQuickChat({});
+		const quickChat = makeQuickChat();
 		const execute = makeQuickChatExecutor(bridge, quickChat);
 
 		const result = await execute(quickChatScopeDecision('what day is today'), {
@@ -573,7 +624,7 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 		expect(bridge.focusTab).not.toHaveBeenCalled();
 		expect(bridge.executeCommand).not.toHaveBeenCalled();
 		expect(bridge.newTabWithPrompt).not.toHaveBeenCalled();
-		// The address the reply is followed on is the one Quick Chat reported.
+		// The address the reply is followed on is the one this message was routed to.
 		expect(result).toEqual({
 			agentSessionId: 'agent-backend',
 			agentName: 'Backend',
@@ -582,10 +633,21 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 			action: 'created',
 			promptSent: true,
 		});
+		// Nothing is left following the chat once the route is known.
+		expect(quickChat.listening()).toBe(0);
 	});
 
-	it('reports a carried-on chat as recalled, not created', async () => {
-		const quickChat = makeQuickChat({ before: chatSnapshot({ tabId: 'tab-quick' }) });
+	it("reports a message routed to an existing tab as recalled, under that tab's name", async () => {
+		const quickChat = makeQuickChat({
+			result: {
+				ok: true,
+				snapshot: chatSnapshot({
+					messages: [
+						sent({ origin: 'open', tabId: 'tab-ci', tabName: 'CI Build' }, 'and tomorrow'),
+					],
+				}),
+			},
+		});
 		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
 
 		const result = await execute(quickChatScopeDecision('and tomorrow'), {
@@ -593,11 +655,59 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 			scope: QUICK_CHAT_SCOPE,
 		});
 
-		expect(result.action).toBe('recalled');
+		expect(result).toMatchObject({ action: 'recalled', tabId: 'tab-ci', tabName: 'CI Build' });
+	});
+
+	it('waits for the route when send returns while a tab is still being found', async () => {
+		const quickChat = makeQuickChat({ result: SEARCHING });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		let settled = false;
+		const attempt = execute(quickChatScopeDecision('what day is today'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		}).finally(() => {
+			settled = true;
+		});
+		await vi.waitFor(() => expect(quickChat.listening()).toBe(1));
+		// No tab yet, so there is no address to follow a reply on.
+		expect(settled).toBe(false);
+
+		quickChat.push(chatSnapshot({ messages: [sent({ tabId: 'tab-found', origin: 'reopened' })] }));
+
+		await expect(attempt).resolves.toMatchObject({ tabId: 'tab-found', action: 'recalled' });
+		expect(quickChat.listening()).toBe(0);
+	});
+
+	it('waits out the queue: a tab answering an earlier message is not this reply', async () => {
+		const quickChat = makeQuickChat({ result: SEARCHING });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		let settled = false;
+		const attempt = execute(quickChatScopeDecision('what day is today'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		}).finally(() => {
+			settled = true;
+		});
+		await vi.waitFor(() => expect(quickChat.listening()).toBe(1));
+
+		quickChat.push(
+			chatSnapshot({ messages: [sent({ status: 'queued', tabId: 'tab-busy', origin: 'open' })] })
+		);
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		quickChat.push(
+			chatSnapshot({ messages: [sent({ status: 'running', tabId: 'tab-busy', origin: 'open' })] })
+		);
+		await expect(attempt).resolves.toMatchObject({ tabId: 'tab-busy' });
 	});
 
 	it('sends an identical sentence twice: answering twice is not a retry', async () => {
-		const quickChat = makeQuickChat({ before: chatSnapshot({ tabId: 'tab-quick' }) });
+		const quickChat = makeQuickChat({
+			result: { ok: true, snapshot: chatSnapshot({ messages: [sent({}, 'yes')] }) },
+		});
 		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
 
 		await execute(quickChatScopeDecision('yes'), { roster: [], scope: QUICK_CHAT_SCOPE });
@@ -610,8 +720,8 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 		const quickChat = makeQuickChat({
 			result: {
 				ok: false,
-				error: 'Wait for the reply, or stop it, before sending again',
-				snapshot: chatSnapshot({ tabId: 'tab-quick', busy: true }),
+				error: 'No agent to chat with. Create an agent first.',
+				snapshot: chatSnapshot({ agentId: null, agentName: null }),
 			},
 		});
 		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
@@ -622,16 +732,90 @@ describe('executeRouteDecision - a session bound to Quick Chat', () => {
 		});
 
 		await expect(attempt).rejects.toBeInstanceOf(VoiceDispatchError);
-		await expect(attempt).rejects.toThrow(/Wait for the reply/);
+		await expect(attempt).rejects.toThrow(/No agent to chat with/);
 	});
 
-	it('fails when Quick Chat reports no tab, so no reply is waited for', async () => {
+	it("fails with the engine's reason when no tab could be opened for the message", async () => {
+		const quickChat = makeQuickChat({ result: SEARCHING });
+		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
+
+		const attempt = execute(quickChatScopeDecision('what day is today'), {
+			roster: [],
+			scope: QUICK_CHAT_SCOPE,
+		});
+		await vi.waitFor(() => expect(quickChat.listening()).toBe(1));
+		quickChat.push(
+			chatSnapshot({
+				messages: [
+					sent({ status: 'failed', tabId: null, origin: null }),
+					{
+						id: 'm1-error',
+						role: 'error',
+						text: 'Could not open a tab on this agent',
+						timestamp: 0,
+					},
+				],
+			})
+		);
+
+		await expect(attempt).rejects.toBeInstanceOf(VoiceDispatchError);
+		await expect(attempt).rejects.toThrow(/Could not open a tab on this agent/);
+		expect(quickChat.listening()).toBe(0);
+	});
+
+	it('fails when the message is withdrawn, or the chat is replaced, before it runs', async () => {
+		const withdrawn = makeQuickChat({ result: SEARCHING });
+		const first = makeQuickChatExecutor(makeBridge(), withdrawn)(
+			quickChatScopeDecision('what day is today'),
+			{ roster: [], scope: QUICK_CHAT_SCOPE }
+		);
+		await vi.waitFor(() => expect(withdrawn.listening()).toBe(1));
+		withdrawn.push(chatSnapshot({ messages: [sent({ status: 'cancelled', tabId: null })] }));
+		await expect(first).rejects.toThrow(/withdrawn/);
+
+		const replaced = makeQuickChat({ result: SEARCHING });
+		const second = makeQuickChatExecutor(makeBridge(), replaced)(
+			quickChatScopeDecision('what day is today'),
+			{ roster: [], scope: QUICK_CHAT_SCOPE }
+		);
+		await vi.waitFor(() => expect(replaced.listening()).toBe(1));
+		// A new chat: the message is no longer in the conversation.
+		replaced.push(chatSnapshot({ messages: [] }));
+		await expect(second).rejects.toThrow(/started a new chat/);
+	});
+
+	it('fails when Quick Chat does not list the message, so no reply is waited for', async () => {
 		const quickChat = makeQuickChat({ result: { ok: true, snapshot: chatSnapshot() } });
 		const execute = makeQuickChatExecutor(makeBridge(), quickChat);
 
 		await expect(
 			execute(quickChatScopeDecision('hello'), { roster: [], scope: QUICK_CHAT_SCOPE })
-		).rejects.toThrow(/reported no tab/);
+		).rejects.toThrow(/did not list it/);
+	});
+
+	it('gives up on a message that never leaves searching, and on one queued too long', async () => {
+		const stuck = makeQuickChat({ result: SEARCHING });
+		await expect(
+			dispatchToQuickChat('what day is today', stuck, { routeTimeoutMs: 10 })
+		).rejects.toThrow(/did not find a tab/);
+		expect(stuck.listening()).toBe(0);
+
+		const queued = makeQuickChat({
+			result: {
+				ok: true,
+				snapshot: chatSnapshot({
+					messages: [sent({ status: 'queued', tabId: 'tab-busy', origin: 'open' })],
+				}),
+			},
+		});
+		// The queue has its own budget: the short search budget does not end it.
+		await expect(
+			dispatchToQuickChat('what day is today', queued, {
+				routeTimeoutMs: 5_000,
+				queueTimeoutMs: 10,
+			})
+		).rejects.toThrow(/still answering an earlier message/);
+		expect(queued.listening()).toBe(0);
 	});
 
 	it('fails by name when there is no Quick Chat to send to', async () => {

@@ -26,6 +26,13 @@ export interface AtomicJsonSyncOptions {
 	indent?: string | number;
 	/** End the file with a newline. */
 	trailingNewline?: boolean;
+	/**
+	 * Produce the JSON text in place of `JSON.stringify`, for a caller that can
+	 * do it cheaper (a memoized serializer over a large array). It decides the
+	 * whole text, so `indent` is not applied to it. The result is checked like
+	 * any other payload before it can replace the file.
+	 */
+	serialize?: (value: unknown) => string;
 }
 
 /**
@@ -42,7 +49,9 @@ export function atomicWriteJsonSync(
 	value: unknown,
 	options: AtomicJsonSyncOptions = {}
 ): void {
-	const serialized = JSON.stringify(value, null, options.indent);
+	const serialized = options.serialize
+		? options.serialize(value)
+		: JSON.stringify(value, null, options.indent);
 	assertSerializedJsonIsSafe(serialized, filePath);
 	const content = options.trailingNewline ? `${serialized}\n` : serialized;
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;

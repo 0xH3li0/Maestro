@@ -48,6 +48,7 @@ export type HeadlessAgentRunner = (
 	origin?: 'user' | 'auto' | 'relay',
 	onProgress?: (event: AgentSendProgressEvent) => void,
 	receiptToolId?: string,
+	requirePluginTools?: boolean,
 	/** Settings for this one turn that replace the agent's own (`maestro-cli send --model`). */
 	turn?: HeadlessTurnSettings
 ) => Promise<HeadlessAgentReply>;

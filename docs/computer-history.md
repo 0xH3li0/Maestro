@@ -38,7 +38,7 @@ Nothing is uploaded. Maestro never sends Computer History anywhere. An agent you
 
 ### macOS
 
-Maestro needs **Accessibility** access (System Settings > Privacy & Security > Accessibility). The tile's **Request Accessibility access** button, or `maestro-cli computer-history enable-accessibility`, opens the system prompt. The helper runs as part of Maestro, so the grant is for Maestro. Recording starts on its own a few seconds after you allow it.
+Maestro needs **Accessibility** access (System Settings > Privacy & Security > Accessibility). The tile's **Request Accessibility access** button, or `maestro-cli computer-history enable-accessibility`, shows the system prompt and opens that Settings pane (macOS shows its own prompt only the first time an app asks). If access is already granted, it says so. The helper runs as part of Maestro, so the grant is for Maestro. Recording starts on its own a few seconds after you allow it.
 
 macOS gives the grant to the app that launched the recorder. A development build started from a terminal needs the grant on that terminal app; one started by an agent inside Maestro uses Maestro's own grant.
 

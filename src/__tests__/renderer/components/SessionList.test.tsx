@@ -1092,6 +1092,19 @@ describe('SessionList', () => {
 			useSettingsStore.setState({ showHiddenGroups: false });
 		});
 
+		it('suppresses the Show Hidden toggle while the unread filter is on', () => {
+			const hidden = createMockGroup({ id: 'g-hidden', name: 'Parked', hidden: true });
+			const sessions = [createMockSession({ id: 's1', name: 'Parked Agent', groupId: 'g-hidden' })];
+			useSessionStore.setState({ sessions, groups: [hidden] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.queryByTestId('show-hidden-groups-toggle')).not.toBeInTheDocument();
+
+			act(() => useUIStore.setState({ showUnreadAgentsOnly: false }));
+			expect(screen.getByTestId('show-hidden-groups-toggle')).toBeInTheDocument();
+		});
+
 		it('renders a selected standard icon and label color', () => {
 			enableGroupsPlus();
 			const group = createMockGroup({
@@ -2435,7 +2448,7 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Skinny Mode', () => {
-		it('renders session dots in collapsed mode', () => {
+		it('labels each agent with its initials in collapsed mode by default', () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Session 1' }),
 				createMockSession({ id: 's2', name: 'Session 2' }),
@@ -2447,9 +2460,32 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Should have circular session indicators
-			const dots = container.querySelectorAll('.rounded-full.w-3.h-3');
-			expect(dots.length).toBe(2);
+			const badges = container.querySelectorAll('[data-testid="skinny-initials-badge"]');
+			expect(Array.from(badges, (b) => b.textContent)).toEqual(['S1', 'S2']);
+			expect(container.querySelectorAll('.rounded-full.w-3.h-3').length).toBe(0);
+		});
+
+		it('renders session dots in collapsed mode when initials are turned off', () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Session 1' }),
+				createMockSession({ id: 's2', name: 'Session 2' }),
+			];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: false });
+			useSettingsStore.setState({ showLeftPanelCollapsedInitials: false });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			try {
+				const { container } = render(<SessionList {...props} />);
+
+				// Should have circular session indicators
+				const dots = container.querySelectorAll('.rounded-full.w-3.h-3');
+				expect(dots.length).toBe(2);
+				expect(container.querySelector('[data-testid="skinny-initials-badge"]')).toBeNull();
+			} finally {
+				useSettingsStore.setState({ showLeftPanelCollapsedInitials: true });
+			}
 		});
 
 		it('selects session when dot clicked in collapsed mode', () => {

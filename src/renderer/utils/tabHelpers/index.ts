@@ -1,12 +1,12 @@
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	Session,
 	AITab,
 	ClosedTab,
 	ClosedTabEntry,
-	BrowserTab,
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,
@@ -1006,6 +1006,10 @@ export interface CreateTabOptions {
 	 *  The current active tab/file/browser/terminal/group and inputMode are all
 	 *  preserved so the user's visible view never changes. Default true. */
 	activate?: boolean;
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). A hidden
+	 *  tab is never activated: focusing a tab the strip does not draw strands the
+	 *  user on it, so this overrides `activate`. Default false. */
+	hidden?: boolean;
 	/** Adopt an id minted elsewhere instead of generating one. The only caller
 	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
 	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
@@ -1060,9 +1064,11 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
-		activate = true,
+		activate: activateOption = true,
+		hidden = false,
 		id,
 	} = options;
+	const activate = activateOption && !hidden;
 
 	// Create the new tab with default values
 	const newTab: AITab = {
@@ -1078,6 +1084,7 @@ export function createTab(
 		state: 'idle',
 		saveToHistory,
 		showThinking,
+		...(hidden ? { hidden: true } : {}),
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the

@@ -45,7 +45,6 @@ vi.mock('electron', async () => {
 			this.emit('hide');
 		});
 		focus = vi.fn();
-		moveTop = vi.fn();
 		loadURL = vi.fn();
 		setAlwaysOnTop = vi.fn();
 		setVisibleOnAllWorkspaces = vi.fn();
@@ -101,7 +100,6 @@ type WindowModule = typeof import('../../../main/quick-chat/quick-chat-window');
 type Bounds = { x: number; y: number; width: number; height: number };
 type MockWindow = EventEmitter & {
 	show: ReturnType<typeof vi.fn>;
-	moveTop: ReturnType<typeof vi.fn>;
 	setAlwaysOnTop: ReturnType<typeof vi.fn>;
 	webContents: EventEmitter & { send: ReturnType<typeof vi.fn> };
 	setBounds: (b: Bounds) => void;
@@ -117,6 +115,7 @@ type SavedBounds = {
 	width?: number;
 	expandedHeight?: number;
 	pinned?: boolean;
+	fontScale?: number;
 };
 
 /** An in-memory bounds store, standing in for the window-state store. */
@@ -449,7 +448,7 @@ describe('Quick Chat window pin', () => {
 		expect(store.value).toMatchObject({ width: 700, pinned: false });
 	});
 
-	it('opens unpinned after a restart, and still comes to the front when summoned', async () => {
+	it('floats an unpinned window for a summon, then lets it settle back on blur', async () => {
 		const { deps: d } = makeDeps({ pinned: false });
 		const mod = await freshModule();
 		mod.showQuickChatWindow(d);
@@ -457,16 +456,175 @@ describe('Quick Chat window pin', () => {
 		expect(win.setAlwaysOnTop).toHaveBeenCalledWith(false, 'floating');
 
 		win.emit('ready-to-show');
-		expect(win.moveTop).toHaveBeenCalledTimes(1);
+		// Raised BEFORE it shows, so it cannot land behind the active app's window.
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'floating');
+		expect(win.setAlwaysOnTop.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			win.show.mock.invocationCallOrder[0]
+		);
+
+		win.emit('blur');
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
 	});
 
-	it('does not jump a pinned window with moveTop', async () => {
+	it('keeps a window the user pinned while it was floating for a summon', async () => {
+		const { deps: d } = makeDeps({ pinned: false });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+
+		mod.setQuickChatWindowPinned(true, d);
+		win.emit('blur');
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'floating');
+	});
+
+	it('settles back once however many times it was summoned', async () => {
+		const { deps: d } = makeDeps({ pinned: false });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+		mod.showQuickChatWindow(d);
+		mod.showQuickChatWindow(d);
+		expect(win.listenerCount('blur')).toBe(1);
+	});
+
+	it('leaves a pinned window at its level when summoned', async () => {
 		const { deps: d } = makeDeps();
 		const mod = await freshModule();
 		mod.showQuickChatWindow(d);
 		const win = lastWindow();
 		win.emit('ready-to-show');
-		expect(win.moveTop).not.toHaveBeenCalled();
+		expect(win.setAlwaysOnTop).toHaveBeenCalledTimes(1);
+		expect(win.listenerCount('blur')).toBe(0);
+	});
+});
+
+describe('Quick Chat window full view (diagram viewer)', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('fills the display for a diagram and puts the window back after, saving nothing', async () => {
+		const { deps: d, store } = makeDeps({ x: 100, y: 120, width: 700, expandedHeight: 500 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		mod.setQuickChatLayout('expanded');
+		const win = lastWindow();
+		vi.advanceTimersByTime(1000);
+		const before = win.getBounds();
+		const savedBefore = { ...store.value };
+
+		mod.setQuickChatFullView(true);
+		expect(win.getBounds()).toEqual(WORK_AREA);
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toEqual(savedBefore);
+
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual(before);
+	});
+
+	it('keeps the full-screen size when the chat changes shape underneath', async () => {
+		const { deps: d } = makeDeps({ x: 100, y: 120, width: 700, expandedHeight: 500 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatLayout('expanded');
+		expect(win.getBounds()).toEqual(WORK_AREA);
+
+		// Given back in the shape the chat is in now.
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 500 });
+	});
+
+	it('stays full screen when summoned again with the viewer still open', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFullView(true);
+		mod.hideQuickChatWindow();
+		mod.showQuickChatWindow(d);
+		expect(win.getBounds()).toEqual(WORK_AREA);
+	});
+
+	it('ignores a repeated request', async () => {
+		const { deps: d } = makeDeps({ x: 100, y: 120, width: 700 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+	});
+});
+
+describe('Quick Chat text zoom', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('defaults to 100%, steps, sets, resets, and clamps', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ step: 1 }, d)).toBe(1.1);
+		expect(mod.setQuickChatFontScale({ step: -1 }, d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ scale: 1.5 }, d)).toBe(1.5);
+		expect(mod.setQuickChatFontScale({ scale: 9 }, d)).toBe(2);
+		expect(mod.setQuickChatFontScale({ reset: true }, d)).toBe(1);
+	});
+
+	it('remembers the zoom with the window state, beside the pin and the size', async () => {
+		const { deps: d, store } = makeDeps({ width: 700, pinned: false });
+		const mod = await freshModule();
+		mod.setQuickChatFontScale({ scale: 1.3 }, d);
+		expect(store.value).toEqual({ width: 700, pinned: false, fontScale: 1.3 });
+
+		// A fresh module is a restart: it reads the zoom back.
+		const restarted = await freshModule();
+		expect(restarted.getQuickChatFontScale(d)).toBe(1.3);
+	});
+
+	it('clamps a hand-edited stored zoom on load', async () => {
+		const { deps: d } = makeDeps({ fontScale: 40 });
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(2);
+	});
+
+	it('tells the open window so its text follows a CLI change', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ step: 1 }, d);
+		expect(win.webContents.send).toHaveBeenCalledWith('quickChat:fontScale', 1.1);
+	});
+
+	it('keeps the zoom when the user then resizes the window', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ scale: 1.2 }, d);
+		win.setBounds({ ...win.getBounds(), width: 720 });
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toMatchObject({ width: 720, fontScale: 1.2 });
 	});
 });
 

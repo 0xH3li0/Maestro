@@ -6,7 +6,7 @@
  * the renderer status push, the two digest writers) is resolved here.
  */
 
-import { app, systemPreferences, type BrowserWindow } from 'electron';
+import { app, shell, systemPreferences, type BrowserWindow } from 'electron';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import { createHistoryDigestWriter } from '../local-models/history-digests';
 import { logger } from '../utils/logger';
@@ -16,6 +16,8 @@ import type { ComputerHistoryService } from './computer-history-service';
 import type { ComputerHistoryStatus } from '../../shared/computer-history/status';
 
 const LOG_CONTEXT = '[ComputerHistory]';
+const MAC_ACCESSIBILITY_SETTINGS_URL =
+	'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
 
 export interface ComputerHistoryAppDeps {
 	settingsStore: { get: (key: string) => unknown };
@@ -46,6 +48,10 @@ export function createComputerHistoryForApp(deps: ComputerHistoryAppDeps): Compu
 		isMacAccessibilityTrusted:
 			process.platform === 'darwin'
 				? (prompt) => systemPreferences.isTrustedAccessibilityClient(prompt)
+				: undefined,
+		openMacAccessibilitySettings:
+			process.platform === 'darwin'
+				? () => shell.openExternal(MAC_ACCESSIBILITY_SETTINGS_URL)
 				: undefined,
 		getBlockPids: maestroPids,
 		onStatusChange: (status: ComputerHistoryStatus) =>

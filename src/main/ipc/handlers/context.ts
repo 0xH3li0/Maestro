@@ -153,9 +153,23 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					 * own model: a weak result there would degrade every later turn.
 					 */
 					cheapTurn?: boolean;
+					/**
+					 * For a turn that only ANSWERS (a classification, a one-word
+					 * decision): no tool may run, nothing may be written, and the call
+					 * gives up after `timeoutMs` instead of the grooming default. Quick
+					 * Chat's tab routing sets all three.
+					 */
+					readOnly?: boolean;
+					disableTools?: boolean;
+					timeoutMs?: number;
 				}
 			): Promise<string> => {
-				if (options?.cheapTurn) {
+				// A cheap turn that may use tools is a context SUMMARY, so the model
+				// assigned to `tab-summary` gets it first. An answer-only turn (Quick
+				// Chat's tab routing) is cheap too, but it is a question with a
+				// one-word answer, not a summary: it must not be sent to the summary
+				// model, with the summary's token budget and timeout.
+				if (options?.cheapTurn && !options.disableTools) {
 					const assigned = await summarizeWithAssignedModel(prompt);
 					if (assigned !== null) return assigned;
 				}
@@ -217,6 +231,9 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomModel: cheapTurn?.model,
 						sessionCustomEffort: cheapTurn?.effort,
 						agentConfigValues,
+						readOnlyMode: options?.readOnly,
+						disableTools: options?.disableTools,
+						timeoutMs: options?.timeoutMs,
 					},
 					processManager,
 					agentDetector

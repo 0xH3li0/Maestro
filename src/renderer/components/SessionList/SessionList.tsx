@@ -40,6 +40,7 @@ import { VoiceStatusIndicator } from '../ACappella/VoiceStatusIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { orderLeftBarGroups } from '../../utils/leftBarOrder';
 import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -304,6 +305,7 @@ function SessionListInner(props: SessionListProps) {
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
+	const showLeftPanelCollapsedInitials = useSettingsStore((s) => s.showLeftPanelCollapsedInitials);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
 	// How much wider the header's own labels render in the current interface font
@@ -1015,40 +1017,7 @@ function SessionListInner(props: SessionListProps) {
 			hiddenGroupIds.size > 0
 				? sortedGroups.filter((group) => !hiddenGroupIds.has(group.id))
 				: sortedGroups;
-		if (!groupsPlusEnabled) {
-			return {
-				orderedGroups: visibleGroups,
-				groupById,
-				childrenByParentId: new Map<string, Group[]>(),
-			};
-		}
-
-		const childrenByParentId = new Map<string, Group[]>();
-		const rootGroups: Group[] = [];
-
-		for (const group of visibleGroups) {
-			const parent = group.parentGroupId ? groupById.get(group.parentGroupId) : undefined;
-			if (!parent || parent.parentGroupId) {
-				rootGroups.push(group);
-				continue;
-			}
-
-			const children = childrenByParentId.get(parent.id);
-			if (children) {
-				children.push(group);
-			} else {
-				childrenByParentId.set(parent.id, [group]);
-			}
-		}
-
-		return {
-			orderedGroups: rootGroups.flatMap((group) => [
-				group,
-				...(childrenByParentId.get(group.id) ?? []),
-			]),
-			groupById,
-			childrenByParentId,
-		};
+		return { ...orderLeftBarGroups(visibleGroups, groupById, groupsPlusEnabled), groupById };
 	}, [groupsPlusEnabled, sortedGroups, hiddenGroupIds]);
 
 	// Counted off the groups themselves, never off `hiddenGroupIds`: that set is
@@ -2376,34 +2345,38 @@ function SessionListInner(props: SessionListProps) {
 					{/* SHOW HIDDEN - only exists once something is actually parked, so the
 					    foot of the list stays empty for anyone not using the feature. It is
 					    the ONLY way back to a hidden group: its header is off the list, so
-					    the right-click that hid it is out of reach. */}
-					{!activeVirtualGrouping && !isSecondaryWindow && hiddenGroupCount > 0 && (
-						<div className="mt-2 px-3">
-							<button
-								type="button"
-								onClick={() => setShowHiddenGroups(!showHiddenGroups)}
-								disabled={!settingsLoaded}
-								aria-pressed={showHiddenGroups}
-								data-testid="show-hidden-groups-toggle"
-								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
-								style={{
-									backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
-									color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,
-									border: `1px solid ${showHiddenGroups ? theme.colors.accent + '40' : theme.colors.border}`,
-								}}
-								title={
-									showHiddenGroups
-										? 'Suppress hidden groups from this list again'
-										: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'}`
-								}
-							>
-								{showHiddenGroups ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-								<span>
-									{showHiddenGroups ? 'Hide Hidden' : 'Show Hidden'} ({hiddenGroupCount})
-								</span>
-							</button>
-						</div>
-					)}
+					    the right-click that hid it is out of reach. Suppressed while the
+					    unread filter is on, like the other list-foot controls. */}
+					{!activeVirtualGrouping &&
+						!isSecondaryWindow &&
+						!showUnreadAgentsOnly &&
+						hiddenGroupCount > 0 && (
+							<div className="mt-2 px-3">
+								<button
+									type="button"
+									onClick={() => setShowHiddenGroups(!showHiddenGroups)}
+									disabled={!settingsLoaded}
+									aria-pressed={showHiddenGroups}
+									data-testid="show-hidden-groups-toggle"
+									className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
+									style={{
+										backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
+										color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,
+										border: `1px solid ${showHiddenGroups ? theme.colors.accent + '40' : theme.colors.border}`,
+									}}
+									title={
+										showHiddenGroups
+											? 'Suppress hidden groups from this list again'
+											: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'}`
+									}
+								>
+									{showHiddenGroups ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									<span>
+										{showHiddenGroups ? 'Hide Hidden' : 'Show Hidden'} ({hiddenGroupCount})
+									</span>
+								</button>
+							</div>
+						)}
 
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />
@@ -2459,6 +2432,7 @@ function SessionListInner(props: SessionListProps) {
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
 					stuckOutageSignature={stuckOutageSignature}
+					showInitials={showLeftPanelCollapsedInitials}
 				/>
 			)}
 

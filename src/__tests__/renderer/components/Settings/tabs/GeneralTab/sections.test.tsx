@@ -4,6 +4,7 @@ import {
 	AutoResumeSection,
 	BrowserSection,
 	ConsultationBudgetSection,
+	CrossAgentMentionsSection,
 	HistorySection,
 	InputBehaviorSection,
 	MaestroCliSection,
@@ -590,5 +591,43 @@ describe('GeneralTab section components', () => {
 
 			expect(input.value).toBe('500');
 		});
+	});
+});
+
+describe('CrossAgentMentionsSection', () => {
+	function renderSection(handoffsWritable: boolean) {
+		const setCrossAgentHandoffsWritable = vi.fn();
+		const setCrossAgentMentionsWritable = vi.fn();
+		render(
+			<CrossAgentMentionsSection
+				theme={mockTheme}
+				crossAgentMentionsWritable={false}
+				setCrossAgentMentionsWritable={setCrossAgentMentionsWritable}
+				crossAgentHandoffsWritable={handoffsWritable}
+				setCrossAgentHandoffsWritable={setCrossAgentHandoffsWritable}
+			/>
+		);
+		return { setCrossAgentHandoffsWritable, setCrossAgentMentionsWritable };
+	}
+
+	it('gives hand-offs their own switch, separate from consults', () => {
+		const { setCrossAgentHandoffsWritable, setCrossAgentMentionsWritable } = renderSection(true);
+
+		expect(screen.getByText('Hand-offs')).toBeInTheDocument();
+		// The second Read-Only button belongs to the Hand-offs group.
+		fireEvent.click(screen.getAllByRole('button', { name: 'Read-Only' })[1]);
+
+		expect(setCrossAgentHandoffsWritable).toHaveBeenCalledWith(false);
+		expect(setCrossAgentMentionsWritable).not.toHaveBeenCalled();
+	});
+
+	it('warns that a writable hand-off acts on forwarded text unattended', () => {
+		renderSection(true);
+		expect(screen.getByText(/can include text from the web/)).toBeInTheDocument();
+	});
+
+	it('drops the warning when hand-offs are read-only', () => {
+		renderSection(false);
+		expect(screen.queryByText(/can include text from the web/)).not.toBeInTheDocument();
 	});
 });

@@ -81,6 +81,18 @@ describe('context IPC handlers: Local Models routing', () => {
 		expect(groomContext).toHaveBeenCalledTimes(2);
 	});
 
+	it('never sends an answer-only cheap turn to the summary model', async () => {
+		// Quick Chat's tab routing: cheap, but a one-word answer, not a summary.
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'ok', text: 'a summary' } as never);
+
+		expect(await groom({ cheapTurn: true, readOnly: true, disableTools: true })).toBe(
+			'agent summary'
+		);
+
+		expect(runLocalTask).not.toHaveBeenCalled();
+		expect(groomContext).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps the agent path for a summary on use-utility-agent', async () => {
 		expect(await groom({ cheapTurn: true })).toBe('agent summary');
 

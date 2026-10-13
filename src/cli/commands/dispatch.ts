@@ -17,6 +17,14 @@ export interface DispatchOptions {
 	tab?: string;
 	force?: boolean;
 	/**
+	 * With `--new-tab`: draw the new tab's chip in the strip. Without it the tab
+	 * is created hidden - named, running, and reachable from the completion toast
+	 * or the caller's delegation pill, but out of the user's tab space. A
+	 * hand-off between agents (or from a Cue pipeline) is background work, and a
+	 * chip per hand-off is clutter the user never asked for. `--focus` implies it.
+	 */
+	visible?: boolean;
+	/**
 	 * Ask for background placement: the active agent and the active tab both stay
 	 * where the user left them. Already the default with `--new-tab`; on the plain
 	 * `send_command` path it suppresses the agent switch the desktop does today.
@@ -278,6 +286,14 @@ export async function runDispatch(
 		};
 	}
 
+	if (options.visible && !options.newTab) {
+		return {
+			success: false,
+			error: '--visible only applies to --new-tab (an existing tab is already in the strip)',
+			code: 'INVALID_OPTIONS',
+		};
+	}
+
 	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
 	// and a prompt that cannot start because the AGENT is mid-turn is queued for
 	// the new tab rather than rejected. Reject the combo rather than silently
@@ -396,6 +412,9 @@ export async function runDispatch(
 						// Background by default: a dispatched prompt is an agent talking to
 						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
+						// Hidden by default too, so hand-offs do not pile up chips in the
+						// target's tab strip. A focused tab is never hidden.
+						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
 						...caller,
 						...chain,

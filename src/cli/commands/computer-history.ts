@@ -283,6 +283,8 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 			`Permission:       ${h.permission}${h.accessibilityBus ? `, accessibility bus ${h.accessibilityBus}` : ''}${h.session ? ` (${h.session})` : ''}`
 		);
 		if (h.detail) lines.push(`Helper note:      ${h.detail}`);
+	} else if (live?.appAccessibility) {
+		lines.push(`Permission:       ${live.appAccessibility} (Maestro's macOS Accessibility access)`);
 	}
 	if (live?.helper.state === 'binary-missing') {
 		lines.push('Helper:           maestro-observer is not installed for this platform');

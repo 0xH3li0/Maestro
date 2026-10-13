@@ -45,6 +45,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	sendButtonMenu: {
+		description:
+			'When true (default), clicking Send while the agent is working opens a menu to Queue, Force Send, Queue Held, or Steer. When false, a click always sends at once, the same as Enter.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	crossAgentMentionsWritable: {
 		description:
 			'When true, an @-mention is a delegation: the mentioned agent may modify files. When false (default), it is a consult and runs read-only.',
@@ -56,6 +63,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: `The most consults and delegations an agent's peers may make in total while working on one of your messages. Counts the whole chain, so an agent that consults a peer who consults another spends two. 0 turns peer consults and delegations off. Range: 0-${MAX_CONSULTATIONS_PER_TURN_CEILING}.`,
 		type: 'number',
 		default: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+		category: 'editor',
+	},
+	crossAgentHandoffsWritable: {
+		description:
+			'When true (default), a hand-off ("then send what you find to @agent") may modify files in the receiving agent\'s workspace. When false, hand-offs run read-only like consults.',
+		type: 'boolean',
+		default: true,
 		category: 'editor',
 	},
 	defaultSaveToHistory: {

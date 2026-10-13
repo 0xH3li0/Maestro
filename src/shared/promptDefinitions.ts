@@ -356,6 +356,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'quick-chat-route',
+		filename: 'quick-chat-route.md',
+		description:
+			'Quick Chat routing: picks which existing conversation a new message continues, or that it starts a new one',
+		category: 'system',
+		encoreFlag: 'quickChat',
+	},
+	{
 		id: 'director-notes',
 		filename: 'director-notes.md',
 		description: "Director's Notes prompt",
@@ -551,6 +559,7 @@ export const PROMPT_IDS = {
 	TAB_NAMING: 'tab-naming',
 	TAB_NAMING_LOCAL: 'tab-naming-local',
 	GROUP_CHAT_PARTICIPANT_SUMMARY_LOCAL: 'group-chat-participant-summary-local',
+	QUICK_CHAT_ROUTE: 'quick-chat-route',
 	DIRECTOR_NOTES: 'director-notes',
 	ACAPPELLA_ROUTER: 'acappella-router',
 	ACAPPELLA_TRANSLATOR: 'acappella-translator',

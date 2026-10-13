@@ -3,8 +3,11 @@ import {
 	cueAutoMarker,
 	cueRunIsAutoRouted,
 	cueTurnLaunch,
+	applyCueTurnSettingsPatch,
 	cueTurnSettingsOf,
 	formatCueTurnSettings,
+	hasCueTurnSettingsPatch,
+	parseCueTurnSettingsInput,
 	resolveCueTurnSettings,
 	sameCueTurnSettings,
 } from '../../../shared/cue/turn-settings';
@@ -218,5 +221,83 @@ describe('cueTurnLaunch', () => {
 		expect(
 			'launchRefusal' in cueTurnLaunch(resolveCueTurnSettings('claude-code', undefined), undefined)
 		).toBe(false);
+	});
+});
+
+describe('applyCueTurnSettingsPatch', () => {
+	it('setting a tier replaces a pinned model, since they are one choice', () => {
+		const target: Record<string, unknown> = { name: 's', model: 'opus-4-7', effort: 'low' };
+		expect(applyCueTurnSettingsPatch(target, { tier: 'high' })).toBeNull();
+		expect(target).toEqual({ name: 's', tier: 'high', effort: 'low' });
+	});
+
+	it('setting an exact model replaces a tier, trimmed', () => {
+		const target: Record<string, unknown> = { name: 's', tier: 'high' };
+		expect(applyCueTurnSettingsPatch(target, { model: ' gpt-5.5-codex ' })).toBeNull();
+		expect(target).toEqual({ name: 's', model: 'gpt-5.5-codex' });
+	});
+
+	it('null clears an axis and undefined leaves it alone', () => {
+		const target: Record<string, unknown> = { name: 's', tier: 'high', effort: 'low' };
+		expect(applyCueTurnSettingsPatch(target, { tier: null, model: null })).toBeNull();
+		expect(target).toEqual({ name: 's', effort: 'low' });
+		expect(applyCueTurnSettingsPatch(target, { effort: null })).toBeNull();
+		expect(target).toEqual({ name: 's' });
+	});
+
+	it('refuses a tier and a model together, and writes nothing', () => {
+		const target: Record<string, unknown> = { name: 's' };
+		expect(applyCueTurnSettingsPatch(target, { tier: 'high', model: 'opus' })).toMatch(/not both/);
+		expect(target).toEqual({ name: 's' });
+	});
+
+	it('refuses a level outside low | medium | high', () => {
+		const target: Record<string, unknown> = { name: 's' };
+		expect(applyCueTurnSettingsPatch(target, { tier: 'max' as never })).toMatch(/tier must be/);
+		expect(applyCueTurnSettingsPatch(target, { effort: 'max' as never })).toMatch(/effort must be/);
+		expect(applyCueTurnSettingsPatch(target, { model: '  ' })).toMatch(/model needs/);
+		expect(target).toEqual({ name: 's' });
+	});
+
+	it('refuses to set a model on a command or notify subscription, but lets one be cleared', () => {
+		const command: Record<string, unknown> = { name: 's', action: 'command', tier: 'high' };
+		expect(applyCueTurnSettingsPatch(command, { effort: 'low' })).toMatch(/action "command"/);
+		expect(applyCueTurnSettingsPatch(command, { tier: null })).toBeNull();
+		expect(command).toEqual({ name: 's', action: 'command' });
+
+		const notify: Record<string, unknown> = { name: 's', action: 'notify' };
+		expect(applyCueTurnSettingsPatch(notify, { tier: 'low' })).toMatch(/action "notify"/);
+	});
+});
+
+describe('hasCueTurnSettingsPatch', () => {
+	it('is false for an absent or empty patch and true once any axis is named', () => {
+		expect(hasCueTurnSettingsPatch(undefined)).toBe(false);
+		expect(hasCueTurnSettingsPatch({})).toBe(false);
+		expect(hasCueTurnSettingsPatch({ effort: null })).toBe(true);
+		expect(hasCueTurnSettingsPatch({ tier: 'low' })).toBe(true);
+	});
+});
+
+describe('parseCueTurnSettingsInput', () => {
+	it('accepts levels in any case and trims the model', () => {
+		expect(parseCueTurnSettingsInput({ tier: 'HIGH', effort: ' Low ' })).toEqual({
+			ok: true,
+			settings: { tier: 'high', effort: 'low' },
+		});
+		expect(parseCueTurnSettingsInput({ model: ' gpt-5.5-codex ' })).toEqual({
+			ok: true,
+			settings: { model: 'gpt-5.5-codex' },
+		});
+		expect(parseCueTurnSettingsInput({})).toEqual({ ok: true, settings: {} });
+	});
+
+	it('names the flag and a stable code for each refusal', () => {
+		expect(parseCueTurnSettingsInput({ tier: 'hgih' })).toMatchObject({ code: 'BAD_TIER' });
+		expect(parseCueTurnSettingsInput({ effort: 'max' })).toMatchObject({ code: 'BAD_EFFORT' });
+		expect(parseCueTurnSettingsInput({ model: '   ' })).toMatchObject({ code: 'BAD_MODEL' });
+		expect(parseCueTurnSettingsInput({ tier: 'high', model: 'opus' })).toMatchObject({
+			code: 'TIER_AND_MODEL',
+		});
 	});
 });

@@ -83,3 +83,6 @@ examples/plugins/*/signature.json
 *.part
 ggml-*.bin
 models/acappella/
+
+# Superseded local-only Lite prototype and visual verification artifacts
+src/main/lite/discovery-pairing-prototype/

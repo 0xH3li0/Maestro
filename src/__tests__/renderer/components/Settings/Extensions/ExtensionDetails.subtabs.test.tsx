@@ -1,14 +1,19 @@
 /**
  * ExtensionDetails sub-tabs contract.
  *
- * The detail pane splits into two sub-tabs (role=tab, aria-selected):
+ * The detail pane splits into three sub-tabs (role=tab, aria-selected):
+ * - Help: the usage guide. Always present. Default for anything not yet
+ *   enabled, and for an enabled tile with nothing to configure.
  * - Settings: first-party config body / plugin's consent-gated editor /
- *   Pianola's Open-Pianola entry. Default when the tile is configurable.
+ *   Pianola's Open-Pianola entry. Default when the tile is enabled and
+ *   configurable.
  * - Permissions: capability disclosure + supervised background services +
- *   (plugins) contributions. Default when there is nothing to configure.
+ *   (plugins) contributions.
  *
  * These tests defend:
- * - which sub-tab opens first (configurable → Settings, else Permissions),
+ * - which sub-tab opens first (enabled + configurable → Settings, else Help),
+ * - that the Enable switch and the Help button sit in the header row on
+ *   every tile, and that flipping the switch never moves the user's tab,
  * - that capability/service disclosure is gated behind the Permissions tab,
  * - the disabled first-party hint, Pianola's moved Open-Pianola entry (which
  *   dismisses Settings so its modal is not hidden behind it), and the
@@ -200,12 +205,10 @@ describe('ExtensionDetails sub-tabs - configurable first-party tile', () => {
 	it('shows the disabled hint (not the config body) when the feature is disabled', () => {
 		renderDetails({ ext: builtinTile('usageStats', false), settingsBody: SETTINGS_BODY });
 
-		// Still opens on Settings (it is configurable), but the body is gated
-		// behind the enable state - a hint takes its place.
-		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
-			'aria-selected',
-			'true'
-		);
+		// Disabled opens on Help; the Settings tab still exists, but its body
+		// is gated behind the enable state - a hint takes its place.
+		expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 		expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
 			'Enable this plugin to configure it.'
 		);
@@ -214,17 +217,80 @@ describe('ExtensionDetails sub-tabs - configurable first-party tile', () => {
 });
 
 describe('ExtensionDetails sub-tabs - non-configurable tile', () => {
-	it('opens straight on Permissions when there is nothing to configure', () => {
-		// A disabled directorNotes tile with NO settingsBody: not configurable,
-		// so the Settings tab is absent and the pane opens on Permissions.
-		renderDetails({ ext: builtinTile('directorNotes', false) });
+	it('opens on Help when there is nothing to configure, enabled or not', () => {
+		// directorNotes with NO settingsBody: not configurable, so the Settings
+		// tab is absent and the pane opens on its guide either way.
+		for (const enabled of [false, true]) {
+			const view = renderDetails({ ext: builtinTile('directorNotes', enabled) });
+			expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
+			expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+			expect(screen.getByTestId('extension-usage-guide')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('extension-subtab-permissions'));
+			expect(screen.getAllByTestId('extension-permission').length).toBeGreaterThan(0);
+			view.unmount();
+		}
+	});
+});
 
-		expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
-		expect(screen.getByTestId('extension-subtab-permissions')).toHaveAttribute(
+describe('ExtensionDetails header - Enable switch and Help button', () => {
+	it('puts the switch in the header and reports its state as a switch', () => {
+		const onToggleBuiltin = vi.fn();
+		renderDetails({ ext: builtinTile('directorNotes', false), onToggleBuiltin });
+
+		const toggle = screen.getByTestId('extension-enable-toggle');
+		expect(toggle).toHaveAttribute('role', 'switch');
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+		expect(screen.getByTestId('extension-details-state')).toHaveTextContent('Disabled');
+		// It sits above the description and the tab strip, not below them.
+		const tablist = screen.getByRole('tablist');
+		expect(toggle.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		fireEvent.click(toggle);
+		expect(onToggleBuiltin).toHaveBeenCalledExactlyOnceWith('directorNotes');
+	});
+
+	it('Help button selects the Help tab from any other tab', () => {
+		renderDetails({ ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY });
+		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
 			'aria-selected',
 			'true'
 		);
-		expect(screen.getAllByTestId('extension-permission').length).toBeGreaterThan(0);
+
+		fireEvent.click(screen.getByTestId('extension-help-button'));
+		expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByTestId('extension-help-button')).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByTestId('extension-usage-guide')).toBeInTheDocument();
+	});
+
+	it('flipping the switch keeps the user on the tab they chose', () => {
+		const view = renderDetails({
+			ext: builtinTile('usageStats', false),
+			settingsBody: SETTINGS_BODY,
+		});
+		expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+
+		view.rerender(
+			<ExtensionDetails
+				theme={theme}
+				ext={builtinTile('usageStats', true)}
+				contributions={null}
+				busy={false}
+				onTogglePlugin={vi.fn()}
+				onToggleBuiltin={vi.fn()}
+				onUninstall={vi.fn()}
+				onRevoke={vi.fn()}
+				getGrants={vi.fn(async () => ({ requested: [], granted: [] }))}
+				settingsBody={SETTINGS_BODY}
+			/>
+		);
+		expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByTestId('extension-details-state')).toHaveTextContent('Enabled');
+	});
+
+	it('says so on the Help tab for a plugin that ships no guide', () => {
+		renderDetails({ ext: pluginTile('plugin-a') });
+		fireEvent.click(screen.getByTestId('extension-help-button'));
+		expect(screen.getByTestId('extension-help-missing')).toBeInTheDocument();
 	});
 });
 
@@ -256,6 +322,7 @@ describe('ExtensionDetails sub-tabs - Pianola', () => {
 
 	it('shows the disabled hint on the Settings tab when Pianola is off', () => {
 		renderDetails({ ext: builtinTile('pianola', false) });
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 
 		expect(screen.queryByTestId('extension-open-pianola')).not.toBeInTheDocument();
 		expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
@@ -371,6 +438,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
 		);
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 		expect(screen.getByTestId('extension-plugin-settings-status')).toHaveTextContent(
 			'Select Enable to review permissions for this version'
 		);
@@ -397,6 +465,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			getGrants,
 		};
 		const view = render(<ExtensionDetails {...props} />);
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 		expect(view.container.querySelector('webview')).toBeNull();
 		const enabled = pluginTile('plugin-a', true);
 		view.rerender(<ExtensionDetails {...props} ext={enabled} />);
@@ -451,7 +520,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			},
 		};
 		const view = renderDetails({ ext: plugin, contributions: contributions([]) });
-		expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 		expect(screen.getByTestId('extension-plugin-settings-status')).toBeInTheDocument();
 		view.rerender(
 			<ExtensionDetails

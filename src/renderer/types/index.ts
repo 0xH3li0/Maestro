@@ -1,4 +1,5 @@
 // Type definitions for Maestro renderer
+import type { BrowserTab } from '../../shared/browserPage';
 
 // Re-export context merge types
 export * from './contextMerge';
@@ -32,6 +33,8 @@ export type {
 	TaskSelectionMode,
 	ThinkingMode,
 	WorktreeRunTarget,
+	BatchRunConfig,
+	WorktreeConfig,
 } from '../../shared/types';
 
 // Re-export Symphony types for session metadata
@@ -45,13 +48,9 @@ import type {
 	PeerAccess,
 	PeerAgent,
 	SessionWorktreeConfig,
-	WorktreeConfig as BaseWorktreeConfig,
-	WorktreeRunTarget,
-	BatchDocumentEntry,
 	UsageStats,
 	ToolType,
 	ThinkingMode,
-	TaskSelectionMode,
 	PlaybookStatus,
 } from '../../shared/types';
 
@@ -265,6 +264,9 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	// For user messages - tracks if message was steered into a turn that was
+	// already running, rather than starting a turn of its own (see chatSteering.ts)
+	steered?: boolean;
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -615,11 +617,6 @@ export interface HistoryEntry extends BaseHistoryEntry {
 	achievementAction?: 'openAbout'; // If set, this entry has an action button to open the About/achievements panel
 }
 
-// Renderer-specific WorktreeConfig extends the shared base with UI-specific fields
-export interface WorktreeConfig extends BaseWorktreeConfig {
-	ghPath?: string; // Custom path to gh CLI binary (optional, UI-specific)
-}
-
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
 // Distinct from `WorktreeConfig` above, which describes a single batch run's
 // worktree. The shape lives in shared/types so the CLI (`list agents --json`,
@@ -643,37 +640,6 @@ export interface WorktreeValidationState {
 export interface GhCliStatus {
 	installed: boolean; // gh CLI is installed
 	authenticated: boolean; // gh CLI is authenticated
-}
-
-// Configuration for starting a batch run
-export interface BatchRunConfig {
-	documents: BatchDocumentEntry[]; // Ordered list of docs to run
-	prompt: string;
-	loopEnabled: boolean; // Loop back to first doc when done
-	maxLoops?: number | null; // Max loop iterations (null/undefined = infinite)
-	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' - controls {{TASK_SELECTION_BLOCK}}
-	worktree?: WorktreeConfig; // Optional worktree configuration
-	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
-	// Per-run model override. Wins over session.customModel for this run's spawns
-	// only - the session and its interactive tabs are never modified, and the
-	// override dies with the run. Absent means "use the agent default".
-	model?: string;
-	effort?: string; // Per-run reasoning effort override, same run-scoped rules as `model`
-	// Skip the documents' MAESTRO:MODEL markers so every task runs at the
-	// override above, then the agent's settings. Run-scoped like `model`;
-	// absent means the markers apply as usual.
-	ignoreModelHints?: boolean;
-	// Auto-resume after an agent error pauses the run. All three are optional and
-	// absence means the documented default (ON, 5 minutes, 5 attempts) - see
-	// `resolveAutoResumePolicy` in shared/autorunAutoResume.ts, which is the only
-	// place that turns these into a policy.
-	autoResumeOnError?: boolean;
-	autoResumeAfterMin?: number;
-	maxAutoResumes?: number;
-	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
-	// over the document/task-driven spec mode. When set, the run pursues a free-text
-	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
-	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
 }
 
 // Import BatchProcessingState for state machine integration
@@ -1117,7 +1083,9 @@ export interface TerminalTab {
 	id: string; // Unique tab ID (UUID)
 	name: string | null; // User-defined name; null displays "Terminal N" (auto-numbered)
 	shellType: string; // Shell binary name, e.g. 'zsh', 'bash', 'sh'
-	pid: number; // PTY process ID; 0 if PTY has not been spawned yet
+	pid: number; // PTY process ID; ConPTY may report 0 even after initialization
+	/** Runtime-only: successful host PTY creation/attachment, independent of its PID. */
+	ptyInitialized?: boolean;
 	cwd: string; // Current working directory for this shell session
 	createdAt: number; // Unix timestamp (ms) when the tab was created
 	state: 'idle' | 'busy' | 'exited'; // PTY lifecycle state
@@ -1134,34 +1102,6 @@ export interface TerminalTab {
 	// Working directory for the startup command. When set, the PTY is spawned in
 	// this directory. Falls back to tab.cwd / session.cwd when unset.
 	startupCommandCwd?: string;
-}
-
-/**
- * Browser Tab for embedded web browsing via Electron webview.
- * Browser tabs persist their chrome state, but guest contents are recreated on restore.
- */
-export interface BrowserTab {
-	id: string; // Unique tab ID (UUID)
-	url: string; // Current URL shown in the address bar
-	title: string; // Last known document title (falls back to URL)
-	// User-assigned tab name. When set, it locks the displayed label and overrides
-	// page-set titles (the website can no longer rename the tab) until the user clears it.
-	customTitle?: string;
-	createdAt: number; // Timestamp for ordering
-	partition?: string; // Persisted Electron partition so browser tabs share session data per agent
-	canGoBack: boolean; // Navigation state for toolbar back button
-	canGoForward: boolean; // Navigation state for toolbar forward button
-	isLoading: boolean; // Current loading state for toolbar and restore UX
-	favicon?: string | null; // Optional site icon URL/data for tab chrome
-	// When true, this tab is hidden from coworking agents: excluded from the
-	// registry so list_browsers / read_browser / interaction never see it. Persisted.
-	hiddenFromAgent?: boolean;
-	// When true, this is an incognito tab: it uses an in-memory (non-persist:)
-	// partition and is dropped from persisted session state, so it never
-	// survives an app restart.
-	ephemeral?: boolean;
-	// Runtime-only: populated by the embedded Electron browser surface, never persisted
-	webContentsId?: number;
 }
 
 /**

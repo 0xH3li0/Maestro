@@ -141,14 +141,13 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
 		],
 		toKeys: ['Meta', 'Shift', 'j'],
 	},
-	// nextUnreadTab has NO remap on purpose. It briefly sat on Cmd+Shift+Down,
-	// which is in RESERVED_SHORTCUT_COMBOS, so a remap pointing there is stripped
-	// by the reserved guard below on the very same pass and can never take
-	// effect. Anyone still carrying Cmd+Shift+Down on disk is moved to the
-	// bundled default by that guard, which is exactly what the remap would have
-	// done. A remap and the guard pulling in opposite directions is what spun the
-	// settings file at ~166 writes/sec - see the diff-based `needsMigration`.
-
+	// nextUnreadTab used to be remapped here from Opt+Cmd+Down to Cmd+Shift+Down.
+	// That destination later became a reserved OS chord (select-to-end in a text
+	// field), so the guard below stripped it straight back to the default, which
+	// IS Opt+Cmd+Down: a remap that undoes itself. Every load then flagged a
+	// migration, wrote the identical map, and told the other window to reload,
+	// which did the same - a settings:set ping-pong measured at over 100 writes a
+	// second that pinned the main process. Do not remap onto a reserved chord.
 	// The tiling family moved from unbound (and, before that, Cmd+Shift+J for the
 	// terminal one) onto Ctrl+Cmd + the same letter its plain "new tab" chord
 	// uses. Both eras are listed, and the UNBOUND one is the important half: the
@@ -253,7 +252,21 @@ function migrateShortcuts(
 		};
 	}
 
-	return { shortcuts: merged, migratedRaw: migrated, needsMigration };
+	// A migration is only a migration if it changed something. Each pass above
+	// raises the flag when its RULE fires, but two rules can cancel out (a remap
+	// onto a chord the reserved guard then reverts), leaving the map byte-for-byte
+	// what was saved. Writing that back is not a no-op: it notifies every other
+	// window, which reloads, re-migrates, and writes again, forever. Comparing the
+	// result to the input makes that class of loop impossible for any future rule.
+	const changed = Object.keys(migrated).some(
+		(id) => !shortcutKeysEqualInOrder(migrated[id].keys, saved[id]?.keys)
+	);
+
+	return { shortcuts: merged, migratedRaw: migrated, needsMigration: needsMigration && changed };
+}
+
+function shortcutKeysEqualInOrder(a: readonly string[], b: readonly string[] | undefined): boolean {
+	return !!b && a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
 /** Mutates `patch` in place with any persisted shortcut fields found in `allSettings`, applying migration. */

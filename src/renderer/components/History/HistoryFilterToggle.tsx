@@ -143,7 +143,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					className="absolute left-0 top-0 whitespace-nowrap font-bold pointer-events-none"
 					style={{ ...PILL_TYPE_STYLE, visibility: 'hidden' }}
 				>
-					{visibleTypes.map((type) => (type === 'RELAY' ? 'Relay' : type)).join('')}
+					{visibleTypes.join('')}
 				</div>
 			)}
 			{visibleTypes.map((type) => {
@@ -169,7 +169,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 						}}
 					>
 						{density.icon && <Icon className="w-3 h-3" />}
-						{type === 'RELAY' ? 'Relay' : type}
+						{type}
 					</button>
 				);
 			})}

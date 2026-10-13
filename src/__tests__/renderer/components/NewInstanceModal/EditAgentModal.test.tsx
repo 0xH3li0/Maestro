@@ -1561,8 +1561,7 @@ describe('EditAgentModal', () => {
 		// pinned: a Save that dropped the value would silently put an opted-in
 		// agent back on codex exec.
 		describe('Codex transport', () => {
-			const appServerButton = () =>
-				screen.getByText('App server (experimental, enables steering)').closest('button');
+			const appServerButton = () => screen.getByText('codex app-server').closest('button');
 
 			it('loads Standard for an agent that never opted in, and saves exec', async () => {
 				renderCodex(codexSession());

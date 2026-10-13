@@ -67,6 +67,12 @@ export interface ComputerHistoryStatus {
 	helper: ObserverProcessStatus;
 	/** The helper's last `helper.status`, or null before it reported. */
 	helperStatus: HelperStatus | null;
+	/**
+	 * macOS: whether Maestro itself holds Accessibility access, read live. The
+	 * helper inherits it, so this answers the permission question even when no
+	 * helper is running (not installed, crashed, starting). Null off macOS.
+	 */
+	appAccessibility: 'granted' | 'denied' | null;
 	/** Events written since the service started. */
 	eventsStored: number;
 	/** Events dropped by rules, pause, or validation since the service started. */

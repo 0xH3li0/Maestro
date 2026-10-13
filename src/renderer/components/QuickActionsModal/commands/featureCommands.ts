@@ -2,6 +2,8 @@ import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
+import { requestSteerSend } from '../../../services/chatSteering';
+import { useGroupChatStore } from '../../../stores/groupChatStore';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -58,6 +60,7 @@ interface BuildFeatureCommandsArgs {
 		openMemoryViewer?: QuickAction['shortcut'];
 		executionQueue?: QuickAction['shortcut'];
 		editLastQueuedMessage?: QuickAction['shortcut'];
+		steerSend?: QuickAction['shortcut'];
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
@@ -223,6 +226,22 @@ export function buildFeatureCommands({
 				requestEditLastQueuedMessage();
 			},
 		});
+		// Listed for every AI-mode agent rather than only a steerable one, for the
+		// same reason as the entry above: the service says why a steer cannot run
+		// (wrong transport, nothing queued), which a hidden entry never could.
+		// Not offered over a group chat, which covers the agent this would act on.
+		if (activeSession.inputMode === 'ai' && !useGroupChatStore.getState().activeGroupChatId) {
+			commands.push({
+				id: 'steerSend',
+				label: 'Steer Running Turn',
+				subtext: 'Send the draft, or the newest queued message, into the turn in progress',
+				shortcut: shortcuts.steerSend,
+				action: () => {
+					setQuickActionOpen(false);
+					requestSteerSend();
+				},
+			});
+		}
 	}
 
 	if (setUsageDashboardOpen) {

@@ -281,15 +281,34 @@ describe('requestTabAutoNameForMessage', () => {
 		expect(generateTabName).not.toHaveBeenCalled();
 	});
 
-	it('never names a hidden consult tab', () => {
-		// A consult tab has no chip, and its text was written by the asking agent.
-		const tab = createMockAITab({ id: 'tab-1', name: null, hidden: true });
+	it('never names a consult tab', () => {
+		// A consult tab already reads `↩ <Agent>`, and its text was written by the
+		// asking agent.
+		const tab = createMockAITab({
+			id: 'tab-1',
+			name: null,
+			hidden: true,
+			consultOrigin: { sourceSessionId: 'caller', sourceTabId: 'caller-tab' },
+		});
 		const session = createMockSession({ aiTabs: [tab], activeTabId: tab.id });
 		seedStore(session);
 
 		requestTabAutoNameForMessage(session, tab.id, 'what does the schema look like?');
 
 		expect(generateTabName).not.toHaveBeenCalled();
+	});
+
+	it('names a hidden hand-off tab (dispatch --new-tab) from its prompt', () => {
+		// A hidden dispatch tab has no chip yet, but its name is what the
+		// completion toast, History, and the chip (once opened) read.
+		const visible = createMockAITab({ id: 'tab-visible', name: 'Mine' });
+		const tab = createMockAITab({ id: 'tab-1', name: null, hidden: true });
+		const session = createMockSession({ aiTabs: [visible, tab], activeTabId: visible.id });
+		seedStore(session);
+
+		requestTabAutoNameForMessage(session, tab.id, 'wire up the ingest pipeline');
+
+		expect(generateTabName).toHaveBeenCalledTimes(1);
 	});
 	it('never throws into the send path, and does not leave the tab stuck mid-naming', () => {
 		// The queue drain calls this right before spawning; a naming failure must

@@ -243,6 +243,7 @@ export function createBrowserTabRemoteApi() {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
+				hidden?: boolean,
 				consultChain?: ConsultChain
 			) => void
 		): (() => void) => {
@@ -252,10 +253,11 @@ export function createBrowserTabRemoteApi() {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
+				hidden?: boolean,
 				consultChain?: ConsultChain
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, consultChain);
+					callback(sessionId, prompt, responseChannel, background, hidden, consultChain);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

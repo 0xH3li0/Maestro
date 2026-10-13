@@ -135,6 +135,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	// Cue
 	'cue trigger': ['maestro-cli cue trigger "Nightly review" --prompt "Focus on the auth module"'],
 	'cue list': ['maestro-cli cue list --json'],
+	'cue model': [
+		'maestro-cli cue model "Nightly review" --tier high --effort low',
+		'maestro-cli cue model "Nightly review" --clear-model',
+	],
 	'cue enable': ['maestro-cli cue enable "Nightly review" --agent <agent-id>'],
 	'cue disable': ['maestro-cli cue disable "Nightly review" --agent <agent-id>'],
 	'cue gate': [
@@ -502,8 +506,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'quick-chat new': ['maestro-cli quick-chat new'],
 	'quick-chat keep': ['maestro-cli quick-chat keep on'],
 	'quick-chat pin': ['maestro-cli quick-chat pin on'],
+	'quick-chat font': ['maestro-cli quick-chat font 120%', 'maestro-cli quick-chat font reset'],
 	'quick-chat agent': ['maestro-cli quick-chat agent <agent-id>'],
 	'quick-chat reveal': ['maestro-cli quick-chat reveal'],
+	'quick-chat new-tab': ['maestro-cli quick-chat new-tab <message-id>'],
 	'quick-chat stop': ['maestro-cli quick-chat stop'],
 	'quick-chat bounds': ['maestro-cli quick-chat bounds --x 200 --y 120 --width 640'],
 
@@ -533,6 +539,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'feedback auth': ['maestro-cli feedback auth --json'],
 	'feedback login': ['maestro-cli feedback login'],
 	'feedback accounts': ['maestro-cli feedback accounts --json'],
+	'feedback diagnose': ['maestro-cli feedback diagnose --json'],
 	'feedback search': ['maestro-cli feedback search "queue drops a message"'],
 	'feedback submit': [
 		'maestro-cli feedback submit --category bug --summary "Queue drops a message" --expected "It runs" --actual "It vanishes"',
@@ -550,6 +557,35 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'plugin sign': ['maestro-cli plugin sign ./my-plugin --key ./signing.pem'],
 	'plugin pack': ['maestro-cli plugin pack ./my-plugin --out my-plugin-1.0.0.tgz'],
 	'mcp serve': ['maestro-cli mcp serve'],
+
+	// Maestro Lite (a remote client of another computer's Maestro)
+	'lite status': ['maestro-cli lite status --json'],
+	'lite connect': ['maestro-cli lite connect <profile-id>'],
+	'lite reconnect': ['maestro-cli lite reconnect'],
+	'lite disconnect': ['maestro-cli lite disconnect'],
+	'lite connections': ['maestro-cli lite connections'],
+	'lite commands': ['maestro-cli lite commands'],
+	'lite dismiss': ['maestro-cli lite dismiss'],
+	'lite close': ['maestro-cli lite close --yes'],
+	'lite profile list': ['maestro-cli lite profile list --json'],
+	'lite profile read': ['maestro-cli lite profile read <profile-id> --json'],
+	'lite profile save': ['maestro-cli lite profile save --file profile.json'],
+	'lite profile remove': ['maestro-cli lite profile remove <profile-id> --yes'],
+	'lite profile reset-identity': ['maestro-cli lite profile reset-identity <profile-id> --yes'],
+	'lite discovery show': ['maestro-cli lite discovery show'],
+	'lite discovery start': [
+		'maestro-cli lite discovery start',
+		'maestro-cli lite discovery start --no-tailscale',
+	],
+	'lite discovery status': ['maestro-cli lite discovery status'],
+	'lite discovery stop': ['maestro-cli lite discovery stop'],
+	'lite discovery import': ['maestro-cli lite discovery import < invitation.txt'],
+	'lite pair request': [
+		'maestro-cli lite pair request <host-key> --generation 3 --name "Work laptop"',
+	],
+	'lite pair submit': ['maestro-cli lite pair submit --pin-stdin < pin.txt'],
+	'lite pair read': ['maestro-cli lite pair read'],
+	'lite pair cancel': ['maestro-cli lite pair cancel'],
 };
 
 /** The command's path without the program name: `models server start`. */

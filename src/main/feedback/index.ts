@@ -36,6 +36,11 @@ import {
 import { getSettingsStore } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../debug-package';
+import { captureFeedbackLiveDiagnosis } from './live-state';
+import {
+	formatLiveDiagnosisForIssue,
+	formatLiveDiagnosisForPrompt,
+} from '../../shared/feedbackLiveState';
 import { captureException, captureMessage } from '../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { generateUUID } from '../../shared/uuid';
@@ -1417,7 +1422,12 @@ export async function buildFeedbackConversationPrompt(
 	}
 
 	const environment = environmentLines.join('\n');
-	const prompt = promptTemplate.replace('{{ENVIRONMENT}}', environment);
+	const liveState = formatLiveDiagnosisForPrompt(await captureFeedbackLiveDiagnosis());
+	let prompt = promptTemplate.replace('{{ENVIRONMENT}}', environment);
+	// A customized prompt may predate the placeholder; the state still belongs in it.
+	prompt = prompt.includes('{{LIVE_STATE}}')
+		? prompt.replace('{{LIVE_STATE}}', liveState)
+		: `${prompt}\n\n## Live App State\n\n${liveState}`;
 
 	// Diagnostics run from the user's home directory rather than the app's
 	// cwd (which is `/` for a Finder-launched .app, where nothing useful
@@ -1501,6 +1511,11 @@ export async function submitFeedbackConversation(
 		secretScreenNote = screen.note;
 	}
 
+	// Live state as of filing: an anonymized section on the issue, and the Auto
+	// Run counters the support package cannot read on its own (they live only in
+	// the renderer, so a package built here used to ship that section empty).
+	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
+
 	// Generate the debug package if requested. It screens its own contents and
 	// writes no zip when it finds something.
 	let debugPackagePath: string | undefined;
@@ -1508,6 +1523,9 @@ export async function submitFeedbackConversation(
 		try {
 			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps, {
 				allowSecrets,
+				...(liveDiagnosis.rendererAvailable
+					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
+					: {}),
 			});
 			if (packageResult.secretFindings?.length) {
 				findings.push(...packageResult.secretFindings);
@@ -1585,6 +1603,7 @@ export async function submitFeedbackConversation(
 	}
 
 	// Build issue body
+	const liveDiagnosisMarkdown = formatLiveDiagnosisForIssue(liveDiagnosis);
 	const title = buildIssueTitle(payload.category, summaryField.value!);
 	const isBug = payload.category === 'bug_report';
 	const sections = [
@@ -1594,6 +1613,7 @@ export async function submitFeedbackConversation(
 		`## ${isBug ? 'Expected Behavior' : 'Desired Outcome'}\n${expectedField.value!}`,
 		`## ${isBug ? 'Actual Behavior' : 'Details'}\n${actualField.value!}`,
 		contextField.value ? `## Additional Context\n${contextField.value}` : null,
+		liveDiagnosisMarkdown ? `## Live Diagnosis\n${liveDiagnosisMarkdown}` : null,
 		attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
 		debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
 		performanceTraceMarkdown ? `## Performance Trace\n${performanceTraceMarkdown}` : null,

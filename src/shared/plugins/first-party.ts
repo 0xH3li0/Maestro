@@ -148,8 +148,12 @@ export interface FirstPartyPluginDefinition {
 	 * Ask through `isFirstPartyPluginAvailableOn`, never by reading this field.
 	 */
 	platforms?: readonly FirstPartyPlatform[];
-	/** How to actually use the feature once it is on. */
-	usage?: FirstPartyUsageGuide;
+	/**
+	 * How to use the feature, shown in the details pane's Help tab. Required: a
+	 * tile with no guide leaves the user switching something on blind, and an
+	 * optional field is how seven of them shipped without one.
+	 */
+	usage: FirstPartyUsageGuide;
 	/**
 	 * A section appended to EVERY Maestro-spawned agent's system prompt while
 	 * the feature is enabled. `promptId` names a core prompt (so the user can
@@ -378,6 +382,42 @@ export const COWORKING_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'coworking',
 	encoreFlag: 'coworking',
 	releaseDate: '2026-05-03',
+	usage: {
+		overview: [
+			'Coworking gives an agent eyes on the rest of your workspace. Once its MCP server is installed for an agent, that agent can list and read the scrollback of your terminal tabs and inspect the browser tabs open in its own Maestro agent.',
+			'Reading is all an agent gets by default. Clicking, typing, and running JavaScript in a browser tab is a separate opt-in, per agent, and Maestro asks before the actions you choose.',
+		],
+		steps: [
+			{
+				title: 'Install the MCP server for each agent',
+				body: 'Use Install (or Install for all) in Coworking Setup below. Maestro writes a maestro-coworking entry into that provider\u2019s own config file. Restart the agent\u2019s open tabs so they pick it up.',
+			},
+			{
+				title: 'Choose who may drive the browser',
+				body: 'Turn on Browser interaction for an agent only when you want it to click and type in its browser tabs. Background browsing lets that work happen without bringing the tab forward.',
+			},
+			{
+				title: 'Pick when Maestro asks first',
+				body: 'Ask before actions: Risky only (the default), Every action, or JS only. Running JavaScript in a page always asks, whatever you pick.',
+			},
+		],
+		agentCommands: [
+			{
+				label: 'Ask for it in plain language',
+				command: 'What is the dev server terminal showing?',
+			},
+			{
+				label: 'Read a terminal from the shell instead',
+				command: 'maestro-cli read-terminal --tail 50',
+			},
+		],
+		notes: [
+			'Every browser interaction is written to a redacted audit log on this computer.',
+			'Turning Coworking off cuts agent access at once, but the MCP entries stay in each provider config until you uninstall them here.',
+			'Coworking is not available to OpenCode agents while OpenCode Server is on.',
+		],
+		docsSlug: 'coworking',
+	},
 	// No supervised background service tied to the flag: the coworking IPC bridge
 	// is app-scoped (main startup/shutdown owns its lifecycle), so disable = flag
 	// off + per-agent MCP uninstall; nothing flag-supervised keeps running.
@@ -406,6 +446,17 @@ export const OPENCODE_SERVER_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'opencodeServer',
 	encoreFlag: 'opencodeServer',
 	releaseDate: '2026-07-07',
+	usage: {
+		overview: [
+			'OpenCode normally starts a fresh CLI process for every prompt. With OpenCode Server on, local interactive OpenCode turns go to one shared `opencode serve` process through its SDK instead. That is the groundwork for live permission prompts.',
+			'There is nothing to open: turn it on and your next local OpenCode prompt uses the server. Maestro starts it the first time it is needed and stops it when Maestro quits.',
+		],
+		notes: [
+			'SSH-remote agents, prompts with images, and spawns without a prompt still use the CLI path.',
+			'Coworking MCP tools are not available on this path yet. They fail closed instead of reaching the wrong agent.',
+			'Turning it off sends OpenCode back to the CLI path. Nothing keeps running.',
+		],
+	},
 	// The shared `opencode serve` process is app-scoped (spawned lazily by
 	// OpencodeServerManager, torn down on quit), not flag-supervised: disable =
 	// flag off, and routing falls back to the CLI path. Nothing keeps running.
@@ -469,6 +520,31 @@ export const DIRECTOR_NOTES_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'directorNotes',
 	encoreFlag: 'directorNotes',
 	releaseDate: '2026-02-16',
+	usage: {
+		overview: [
+			"Director's Notes is one view of everything every agent did. Unified History merges each agent's History panel into a single searchable list you can filter by user, Auto Run, and Cue entries.",
+			'AI Overview asks an agent to read that history and write a synopsis of what happened, what got done, and what still needs attention, over a lookback of 1 to 90 days. Save or copy the result.',
+		],
+		access: [
+			{
+				label: "Open Director's Notes",
+				shortcutId: 'directorNotes',
+				commandPalette: "Director's Notes",
+				menu: "Director's Notes in the Left Bar hamburger menu",
+			},
+		],
+		agentCommands: [
+			{ label: 'Read the unified history', command: 'maestro-cli director-notes history --days 1' },
+			{
+				label: 'Generate a synopsis',
+				command: 'maestro-cli director-notes synopsis --days 7 --json',
+			},
+		],
+		notes: [
+			'The synopsis runs on the first available provider unless you pin one in Settings below. It is a read-only agent run.',
+		],
+		docsSlug: 'director-notes',
+	},
 	// No supervised background services: every Director's Notes surface is
 	// on-demand (unified history / graph / stats are computed per IPC call;
 	// synopsis generation is a single awaited, timeout-bounded batch spawn
@@ -548,6 +624,32 @@ export const USAGE_STATS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'usageStats',
 	encoreFlag: 'usageStats',
 	releaseDate: '2025-11-26',
+	usage: {
+		overview: [
+			'Usage & Stats records what your agents do: queries, their duration and token counts, Auto Run sessions and tasks, and Cue runs. The Usage Dashboard turns that into charts per agent, provider, and time range, plus plan-quota meters for Claude and Codex accounts.',
+			'Prompt and response text is never stored, only counts and timings. The data lives in a local database on this computer.',
+		],
+		access: [
+			{
+				label: 'Open the Usage Dashboard',
+				shortcutId: 'usageDashboard',
+				commandPalette: 'Usage Dashboard',
+				menu: 'Usage Dashboard in the Left Bar hamburger menu',
+			},
+		],
+		agentCommands: [
+			{ label: 'Summarize this week', command: 'maestro-cli stats --range week' },
+			{
+				label: 'Query the stats database (read-only)',
+				command: 'maestro-cli stats-query "SELECT COUNT(*) FROM query_events" --json',
+			},
+		],
+		notes: [
+			'This switch is also the recording switch: turning it off stops new records. Data already recorded is kept.',
+			'WakaTime tracking is optional and set up in Settings below.',
+		],
+		docsSlug: 'usage-dashboard',
+	},
 	backgroundServices: [
 		{
 			id: 'stats.sampler',
@@ -628,6 +730,39 @@ export const SYMPHONY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'symphony',
 	encoreFlag: 'symphony',
 	releaseDate: '2025-12-30',
+	usage: {
+		overview: [
+			'Symphony points your agents at open-source projects that want help. Browse curated repositories, pick an issue the maintainers prepared for Maestro, and an agent works through it with Auto Run.',
+		],
+		access: [
+			{
+				label: 'Open Maestro Symphony',
+				shortcutId: 'openSymphony',
+				commandPalette: 'Maestro Symphony',
+				menu: 'Maestro Symphony in the Left Bar hamburger menu',
+			},
+		],
+		steps: [
+			{
+				title: 'Pick a project and an issue',
+				body: 'Browse the registry in the Projects tab. Issues marked blocking still wait on something else; leave those for later.',
+			},
+			{
+				title: 'Start Symphony',
+				body: 'Maestro clones the repository under ~/Maestro-Symphony, makes a branch, creates an agent for it, and runs the issue\u2019s Auto Run documents.',
+			},
+			{
+				title: 'Follow it to a pull request',
+				body: 'The first commit opens a draft pull request, which claims the issue. Track it in the Active tab and use Check PR Status to see where it stands.',
+			},
+		],
+		agentCommands: [{ label: 'Open the Symphony window', command: 'maestro-cli open symphony' }],
+		notes: [
+			'Requires the GitHub CLI (gh), installed and signed in, plus whatever build tools the project needs.',
+			'Add your own registries in Settings below.',
+		],
+		docsSlug: 'symphony',
+	},
 	// NONE on purpose: registry/issue fetching is on-demand (2h/5min/24h TTL
 	// caches, refreshed when the UI asks) and PR-status sync is renderer-side
 	// polling of on-demand IPC while the Symphony modal is open. There is no
@@ -701,6 +836,39 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'maestroCue',
 	encoreFlag: 'maestroCue',
 	releaseDate: '2026-03-01',
+	usage: {
+		overview: [
+			'Cue sends a prompt to an agent when something happens: a timer fires, a file changes, another agent finishes, a markdown task appears, a GitHub pull request or issue arrives, or a webhook is called.',
+			'Each agent reads its own `.maestro/cue.yaml` in its project folder. Build pipelines on the visual graph in the Cue window, ask the AI assistant to write the YAML, or edit it by hand. The engine starts as soon as a file exists.',
+		],
+		access: [
+			{
+				label: 'Open the Cue window',
+				shortcutId: 'openCue',
+				commandPalette: 'Maestro Cue',
+				menu: 'Maestro Cue in the Left Bar hamburger menu',
+			},
+			{
+				label: "Edit one agent's cue.yaml",
+				commandPalette: 'Configure Maestro Cue',
+				menu: "Configure Maestro Cue in the agent's right-click menu",
+			},
+		],
+		agentCommands: [
+			{ label: 'List subscriptions', command: 'maestro-cli cue list --json' },
+			{
+				label: 'Schedule a prompt',
+				command: 'maestro-cli cue schedule --daily-at 09:00 -a <agent> "<prompt>"',
+			},
+			{ label: 'Fire a subscription now', command: 'maestro-cli cue trigger <subscription-name>' },
+			{ label: 'See what ran', command: 'maestro-cli cue activity -n 20' },
+		],
+		notes: [
+			'The GitHub events need the GitHub CLI (gh), installed and signed in.',
+			'Turning Cue off stops every watcher, poller, and timer. Your cue.yaml files are kept.',
+		],
+		docsSlug: 'maestro-cue',
+	},
 	backgroundServices: [
 		{
 			id: 'cue.engine',
@@ -821,6 +989,41 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'groupsPlus',
 	encoreFlag: 'groupsPlus',
 	releaseDate: '2026-07-10',
+	usage: {
+		overview: [
+			'Groups+ lets a group hold other groups, one level deep, so related agents can sit in folders in the Left Bar. It also gives each group a standard icon and a label color in place of, or beside, its emoji.',
+		],
+		access: [
+			{
+				label: 'Nest a group in a folder',
+				menu: "Move into... in the group's right-click menu, or drag the group onto another group",
+			},
+			{
+				label: 'Make a group inside a folder',
+				menu: "New group inside... in the folder's right-click menu",
+			},
+			{
+				label: 'Give a group an icon or a color',
+				menu: 'Standard icon and Label color in the group appearance picker',
+			},
+		],
+		agentCommands: [
+			{
+				label: 'Create a nested group',
+				command:
+					'maestro-cli create-group "<name>" --parent <group-id> --icon rocket --color #9146FF',
+			},
+			{
+				label: 'Move a group back to the top level',
+				command: 'maestro-cli update-group <id> --clear-parent',
+			},
+			{ label: 'See the hierarchy', command: 'maestro-cli list groups --json' },
+		],
+		notes: [
+			'Turning Groups+ off shows a flat list with emoji only. Folders, icons, and colors are kept and come back when you turn it on again.',
+		],
+		docsSlug: 'general-usage#groups',
+	},
 	// Groups+ has no service or broker entry point: existing group persistence stays
 	// host-owned. Disable only hides its renderer surfaces and preserves stored data.
 	backgroundServices: [],
@@ -869,6 +1072,52 @@ export const A_CAPPELLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// the flag leaves nothing running. Wake-word listening (a later phase) is the
 	// first thing here that would need a supervised entry.
 	backgroundServices: [],
+	usage: {
+		overview: [
+			'Say a request out loud. Maestro transcribes it, works out which agent and tab you meant, sends it there, and reads the reply back to you.',
+			'A session has a mode. Conductor routes each request to the agent and tab it is about. Agent sends everything to the agent in front. Tab sends every sentence, word for word, to the tab in front. Switch between them in the Voice HUD.',
+			'By default speech recognition, the wake word and the voice all run on models on this computer. Nothing is downloaded until you press Download in Voice Setup, and the microphone opens only when you start a session.',
+		],
+		steps: [
+			{
+				title: 'Download the models',
+				body: 'Open Voice Setup below and press Download. It lists each model, its size and its license first. Later leaves voice on and unconfigured.',
+			},
+			{
+				title: 'Start a session',
+				body: 'Press a hotkey, or click the microphone under Send in the composer. macOS asks for the microphone the first time.',
+			},
+			{
+				title: 'Talk',
+				body: 'The Voice HUD shows what was heard, where it went, and the reply as it is spoken. Minimize keeps the session; close ends it.',
+			},
+		],
+		access: [
+			{ label: 'Talk to Maestro (Conductor), from any app', shortcutId: 'voiceConductor' },
+			{ label: 'Talk to the agent in front', shortcutId: 'voiceCurrentAgent' },
+			{ label: 'Talk to the agent in front', menu: 'the microphone under Send in the composer' },
+			{ label: 'Talk to one agent', menu: 'right-click the agent in the Left Bar' },
+			{ label: 'Talk to the Conductor', commandPalette: 'Talk to the Conductor' },
+			{ label: 'Download or check the models', commandPalette: 'Set Up Voice Models' },
+			{ label: 'End the session', commandPalette: 'End Voice Session' },
+		],
+		agentCommands: [
+			{ label: 'Read the session (--json for scripting)', command: 'maestro-cli voice status' },
+			{ label: 'Start a Conductor session', command: 'maestro-cli voice start --conductor' },
+			{
+				label: 'Start a session on one agent',
+				command: 'maestro-cli voice start --agent <agent-id>',
+			},
+			{ label: 'End the session', command: 'maestro-cli voice stop' },
+		],
+		notes: [
+			'Nothing starts itself. Turning A Cappella on opens no microphone, downloads nothing, and starts no session.',
+			'A model that is missing is named, with how to get it. Maestro never swaps a local provider for a cloud one on its own.',
+			'There is one microphone and one session. Starting a second session replaces the first.',
+			'Turning A Cappella off ends the session, releases both hotkeys, and stops the wake word. Downloaded models stay until you remove them.',
+		],
+		docsSlug: 'voice-mode',
+	},
 };
 
 /** Web Login gates the web interface host-side: the login routes, the cookie
@@ -1028,20 +1277,27 @@ export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	usage: {
 		overview: [
 			'Press the Quick Chat hotkey (Option+Space on macOS, Alt+Space on Windows and Linux, by default) anywhere on your computer. A small window opens on top of whatever you are doing, ready to type. Press the hotkey again, or Escape, to put it away. Your conversation is still there the next time you open it.',
-			"Every chat runs as a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
-			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the pin in the window; the setting below picks the default.',
+			"Every message runs in a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
+			'Each message finds its own tab. One about a subject an open tab already holds goes to that tab, one that picks up a conversation you closed in the last two weeks reopens it, and a new subject starts a new tab. A pill under the message names the tab; click it to open that tab in Maestro. You can send the next message before the last is answered.',
+			'A message for a tab that is mid-reply waits in the queue and shows Queued. Click "Send to a new tab" beside it to run it in a new tab now instead.',
+			'A tab the chat creates is ephemeral by default: hidden, and deleted when you start a new chat. A kept chat leaves its tabs on the agent after you move on. Flip between the two with the bookmark in the window; the setting below picks the default. Tabs you already had are never hidden or deleted.',
 		],
 		access: [
 			{ label: 'Open or close Quick Chat', menu: 'the Quick Chat hotkey, from any app' },
 			{ label: 'Start a new chat', menu: 'the pencil in the Quick Chat window' },
 			{ label: 'Open the chat as a tab in Maestro', menu: 'the arrow in the Quick Chat window' },
+			{ label: 'Open the tab a message went to', menu: 'the pill under the message' },
 		],
 		agentCommands: [
 			{ label: 'Open, close, or toggle the window', command: 'maestro-cli quick-chat toggle' },
 			{ label: 'Send a message', command: 'maestro-cli quick-chat send "<message>"' },
 			{
-				label: 'Read the current chat (--json for scripting)',
+				label: 'Read the current chat and where each message went (--json for scripting)',
 				command: 'maestro-cli quick-chat status',
+			},
+			{
+				label: 'Send a queued message to a new tab instead of waiting',
+				command: 'maestro-cli quick-chat new-tab',
 			},
 		],
 		notes: [

@@ -22,7 +22,7 @@ import type {
 } from '../types';
 import { generateId } from './ids';
 import { isAutoModel } from '../../shared/autoModel';
-import { steeringTextTooLong } from '../../shared/chatSteering';
+import { STEERING_TOO_LONG_DETAIL, steeringTextTooLong } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -264,7 +264,9 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  * `hold` decides whether the item comes back runnable. A spawn collision (the
  * tab's previous process has not exited yet) is transient and self-correcting,
  * so the item stays runnable and the next drain trigger sends it a moment
- * later. Any OTHER failure would fail again the same way on the next tick, so
+ * later (bounded by {@link noteSpawnCollision}, since an old process that never
+ * releases its key would otherwise collide forever). Any OTHER failure would
+ * fail again the same way on the next tick, so
  * the item comes back `paused`: still there, still editable, still one click
  * from Force Send, but not spinning the queue against a wall.
  */
@@ -300,6 +302,65 @@ export function applyQueuedItemDispatchFailure(
 		...(orphans && { orphanedThinkingTabs: orphans }),
 		executionQueue,
 	};
+}
+
+/**
+ * How many spawn collisions a queued item may hit before it is treated as a
+ * real failure (held, with an error frame) instead of a transient one.
+ */
+export const SPAWN_COLLISION_MAX_ATTEMPTS = 6;
+
+/** First back-off after a collision; doubles per attempt (1s, 2s, 4s, ...). */
+export const SPAWN_COLLISION_BASE_DELAY_MS = 1000;
+
+/**
+ * Spawn collisions per queued item id. Module state on purpose: it is timing
+ * bookkeeping for a retry in flight, not part of the item, so it must not be
+ * persisted with the queue or survive a restart (a restart frees every key).
+ */
+const spawnCollisions = new Map<string, { count: number; retryAt: number }>();
+
+/**
+ * Record that dispatching `itemId` was refused because its tab's previous
+ * process still owns the process key, and return how many times that has now
+ * happened.
+ *
+ * {@link applyQueuedItemDispatchFailure} treats a collision as transient and
+ * returns the item runnable, which is right when the old process is a moment
+ * from exiting (Stop dispatches the next item before the interrupted child is
+ * gone). It is wrong when the old entry never clears: the refused dispatch
+ * restores the very queue state that triggers the next drain, so the queue
+ * re-dispatched into the same refusal on every render, about 14 times a second,
+ * and the tab sat on "Thinking... 0m 0s" forever. Counting bounds that: the
+ * drain waits out a doubling back-off, and after
+ * {@link SPAWN_COLLISION_MAX_ATTEMPTS} the caller holds the item instead.
+ */
+export function noteSpawnCollision(itemId: string, now: number = Date.now()): number {
+	const count = (spawnCollisions.get(itemId)?.count ?? 0) + 1;
+	const delay = SPAWN_COLLISION_BASE_DELAY_MS * 2 ** (count - 1);
+	spawnCollisions.set(itemId, { count, retryAt: now + delay });
+	return count;
+}
+
+/**
+ * Milliseconds until a collided item may be dispatched again by the drain
+ * poll, or 0 when it is free to go. Only the poll honours this: a real process
+ * exit, Stop, and Force Send are edges that prove (or override) the old owner
+ * being gone, so they dispatch regardless.
+ */
+export function spawnCollisionCooldownMs(itemId: string, now: number = Date.now()): number {
+	const entry = spawnCollisions.get(itemId);
+	return entry ? Math.max(0, entry.retryAt - now) : 0;
+}
+
+/** Forget an item's collisions: it dispatched, or it was held for the user. */
+export function clearSpawnCollision(itemId: string): void {
+	spawnCollisions.delete(itemId);
+}
+
+/** Test-only: drop all collision bookkeeping. */
+export function resetSpawnCollisionsForTest(): void {
+	spawnCollisions.clear();
 }
 
 /**
@@ -730,6 +791,49 @@ export function getSteerEligibility(
  */
 export function shouldOfferSteer(eligibility: SteerEligibility | null | undefined): boolean {
 	return !!eligibility?.canSteer;
+}
+
+/**
+ * Why a steer was declined, as a sentence for the user. A Record rather than a
+ * switch so a new {@link SteerBlockedReason} fails to compile until it is worded.
+ *
+ * The Steer button never needs this: it is hidden for every blocked reason (see
+ * {@link shouldOfferSteer}). A keyboard steer has no control to hide, so it has
+ * to say why nothing happened.
+ */
+const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
+	'no-target-tab': 'The tab this message was queued on is gone.',
+	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
+	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'codex-exec':
+		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
+	'api-token-source':
+		'This turn is running on the API token source, which takes no input until it ends.',
+	'nothing-to-type': 'The message has no text to steer with.',
+	'has-images': 'Images cannot be attached to a turn that is already running.',
+	'awaiting-consult': 'The message is waiting on a consult reply.',
+	'cross-agent-mention': 'An @mention only reaches the other agent on a normal send.',
+	'has-agent-context': 'The message carries consult replies that only a normal send delivers.',
+	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
+	paused: 'The message is paused. Resume it from its queued card.',
+	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
+	'ssh-remote': 'A turn on an SSH remote cannot be steered.',
+	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
+	'tui-command-prefix':
+		'A message that starts with / or ! would run as a command in the running turn.',
+	'read-only': 'The message is read-only and the running turn is not.',
+};
+
+const STEER_BLOCKED_FALLBACK = 'The running turn cannot take this message right now.';
+
+/**
+ * The sentence for one blocked reason. Takes a string because the reason crosses
+ * a process boundary as one (`QueueSteerResult.blockedReason`).
+ */
+export function describeSteerBlocked(reason: string | undefined): string {
+	return reason && Object.prototype.hasOwnProperty.call(STEER_BLOCKED_DETAILS, reason)
+		? STEER_BLOCKED_DETAILS[reason as SteerBlockedReason]
+		: STEER_BLOCKED_FALLBACK;
 }
 
 /**
