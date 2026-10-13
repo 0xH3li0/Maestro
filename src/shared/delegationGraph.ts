@@ -29,7 +29,7 @@
  * `fs`, `os`, or Electron.
  */
 
-import type { ResolvedPeer } from './peerAgents';
+import { resolvePeerRoster, type PeerRosterInput, type ResolvedPeer } from './peerAgents';
 import type { PeerAccess } from './types';
 
 /** Why an agent appears on the graph at all. */
@@ -68,4 +68,84 @@ export type DelegationGraphScope = { kind: 'all' } | { kind: 'group'; groupId: s
 export interface DelegationGraphModel {
 	nodes: DelegationGraphNode[];
 	edges: DelegationGraphEdge[];
+}
+
+/**
+ * Build the graph for a scope from the live agent list. It takes the same
+ * minimal `PeerRosterInput` shape roster resolution does, so the renderer
+ * passes its `Session`s and the CLI its own session records.
+ *
+ * Every agent's roster is resolved, in scope or not, and an edge is kept when
+ * EITHER end is in scope. That one rule covers both directions of a group
+ * scope: an edge that leaves the group (outbound) and an edge that reaches
+ * into it from outside (inbound). Without the inbound half the graph shows
+ * only arrows going out and reads as though nobody can reach the group. An
+ * edge between two agents that are both outside the scope is not the scope's
+ * business and is dropped.
+ *
+ * Nodes:
+ *
+ *   - Every in-scope agent gets one, with or without edges. An agent that
+ *     nobody reaches and that reaches nobody is exactly what the graph exists
+ *     to show.
+ *   - An agent outside the scope gets one only when a kept edge names it, and
+ *     it is marked `spill` so the canvas can draw it differently.
+ *
+ * `resolvePeerRoster` has already dropped the agent itself, a row whose agent
+ * is gone, and a peer left with neither bit. So there is no self-edge, no
+ * dangling edge and no dead edge to guard against here, and each `ResolvedPeer`
+ * becomes exactly one edge.
+ *
+ * The output is sorted (nodes by name, then id; edges by id), so two calls with
+ * the same input give the same order and a caller never has to sort.
+ */
+export function buildDelegationGraph(
+	scope: DelegationGraphScope,
+	sessions: readonly PeerRosterInput[]
+): DelegationGraphModel {
+	const inScopeIds = new Set<string>();
+	for (const session of sessions) {
+		if (scope.kind === 'all' || session.groupId === scope.groupId) inScopeIds.add(session.id);
+	}
+
+	const edges: DelegationGraphEdge[] = [];
+	const reachedIds = new Set<string>();
+	for (const session of sessions) {
+		const sourceInScope = inScopeIds.has(session.id);
+		for (const peer of resolvePeerRoster(session, sessions)) {
+			if (!sourceInScope && !inScopeIds.has(peer.sessionId)) continue;
+			edges.push({
+				id: `${session.id}->${peer.sessionId}`,
+				sourceId: session.id,
+				targetId: peer.sessionId,
+				read: peer.read,
+				write: peer.write,
+				...(peer.description ? { description: peer.description } : {}),
+				source: peer.source,
+			});
+			reachedIds.add(session.id);
+			reachedIds.add(peer.sessionId);
+		}
+	}
+
+	const nodes: DelegationGraphNode[] = [];
+	for (const session of sessions) {
+		const inScope = inScopeIds.has(session.id);
+		if (!inScope && !reachedIds.has(session.id)) continue;
+		nodes.push({
+			sessionId: session.id,
+			name: session.name,
+			...(session.groupId ? { groupId: session.groupId } : {}),
+			scope: inScope ? 'in-scope' : 'spill',
+		});
+	}
+
+	return {
+		nodes: nodes.sort(
+			(a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId)
+		),
+		// Code-unit order, not `localeCompare`: an edge id is built from agent ids,
+		// which are not words, and this order is the same on every machine.
+		edges: edges.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+	};
 }
