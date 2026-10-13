@@ -47,7 +47,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	sendButtonMenu: {
 		description:
-			'When true (default), clicking Send while the agent is working opens a menu to Queue, Force Send, Queue Held, or Steer. When false, a click always sends at once, the same as Enter.',
+			'When true (default), clicking Send while the agent is working opens a menu to Queue, Force Send, Steer, or Queue Held. When false, a click always sends at once, the same as Enter.',
 		type: 'boolean',
 		default: true,
 		category: 'editor',

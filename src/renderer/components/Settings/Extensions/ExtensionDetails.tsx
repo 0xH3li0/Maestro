@@ -9,7 +9,7 @@
  * it shows the description and an enable toggle.
  *
  * Every extension gets the same frame: title, meta, and the Enable switch
- * pinned in the header row (beside a Help button), the one-line description,
+ * pinned in the header row, the one-line description,
  * then the Help | Settings | Permissions sub-tabs. The usage guide lives in the
  * Help tab, so a long guide never pushes the switch down the pane and every
  * tile puts it in the same place.
@@ -270,21 +270,6 @@ export function ExtensionDetails({
 					</div>
 				</div>
 				<div className="flex items-center gap-2 flex-shrink-0">
-					<button
-						type="button"
-						data-testid="extension-help-button"
-						aria-label={`How to use ${ext.name}`}
-						title="How to use it"
-						aria-pressed={activeSubTab === 'help'}
-						onClick={() => setActiveSubTab('help')}
-						className="flex items-center justify-center p-1.5 rounded-lg border transition-colors hover:bg-white/5"
-						style={{
-							borderColor: activeSubTab === 'help' ? theme.colors.accent : theme.colors.border,
-							color: activeSubTab === 'help' ? theme.colors.accent : theme.colors.textDim,
-						}}
-					>
-						<HelpCircle className="w-4 h-4" />
-					</button>
 					{/* One switch for every tile, always in this spot. The label and
 					    the pill share one role="switch" button (a nested button
 					    would be invalid), the same shape as the Cue header. */}

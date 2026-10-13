@@ -161,7 +161,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Send Button Menu',
 		description:
-			'Clicking Send while the agent is working opens a menu to Queue, Force Send, Queue Held, or Steer. Turn it off to make a click send at once.',
+			'Clicking Send while the agent is working opens a menu to Queue, Force Send, Steer, or Queue Held. Turn it off to make a click send at once.',
 		keywords: [
 			'send button',
 			'send button menu',

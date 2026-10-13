@@ -41,7 +41,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Browser (web-desktop) UI, PWA, or touch hook       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)                 |
 | CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)           |
 | CLI verb mirroring a point-and-click action        | [CLI-UI-PARITY.md](docs/agent-guides/CLI-UI-PARITY.md)           |
-| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)                 |
+| Group chat (or Symphony, a separate feature)       | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)                 |
 | Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)       |
 | Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)           |
 | Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)             |

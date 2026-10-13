@@ -193,7 +193,7 @@ export function buildSendMenuModel(
 	}
 
 	return {
-		rows: [{ action: 'queue', enabled: true }, force, { action: 'hold', enabled: true }, steer],
+		rows: [{ action: 'queue', enabled: true }, force, steer, { action: 'hold', enabled: true }],
 		steerSupport,
 		activeTabWorking,
 	};

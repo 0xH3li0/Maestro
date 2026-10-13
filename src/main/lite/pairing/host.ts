@@ -1,6 +1,7 @@
 import { LITE_SETUP_REVISION } from '../../../shared/lite-discovery';
 import { randomInt } from 'node:crypto';
 import { PairedDevices } from './paired-devices';
+import { lanIPv4 } from '../lan';
 import * as opaque from '@serenity-kit/opaque';
 import {
 	displayName,
@@ -56,6 +57,7 @@ export class PairingHost {
 	onRequest(listener: (id: string) => void): void {
 		this.requestListener = listener;
 	}
+	/** Normalize allowed host origins and require a socket admission policy for every plain-HTTP endpoint. */
 	constructor(
 		private name: string,
 		private instanceId: string,
@@ -72,7 +74,7 @@ export class PairingHost {
 		this.name = displayName(name);
 		this.endpoints = new Set(endpoints.map(connectionOrigin));
 		if ([...this.endpoints].some((origin) => origin.startsWith('http:')) && !requestPolicy)
-			fail('direct-tailnet-policy-required');
+			fail('direct-access-policy-required');
 	}
 	static async create(
 		name: string,
@@ -86,12 +88,14 @@ export class PairingHost {
 		await Promise.all([opaque.ready, devices.load()]);
 		return new PairingHost(name, instanceId, endpoints, now, persistent, devices, requestPolicy);
 	}
+	/** Require an allowed endpoint/source and match plain HTTP routes to their LAN or Tailscale address. */
 	describe(route: Route): Descriptor {
 		if (
 			!route ||
 			!this.endpoints.has(connectionOrigin(route.endpoint)) ||
 			!['lan', 'tailscale', 'cloudflare'].includes(route.source) ||
-			(route.endpoint.startsWith('http:') && route.source !== 'tailscale')
+			(route.endpoint.startsWith('http:') &&
+				route.source !== (lanIPv4(new URL(route.endpoint).hostname) ? 'lan' : 'tailscale'))
 		)
 			fail('route-mismatch');
 		return {

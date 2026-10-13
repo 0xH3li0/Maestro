@@ -18,7 +18,7 @@ import { mkdirSync } from 'fs';
 import { LiteProfiles, normalizeRemoteUrl, hostPartition } from './profiles';
 import type { LiteProfile } from '../../shared/lite-control';
 import { openTunnel } from './tunnel';
-import { openTailnetRelay } from './tailnet-relay';
+import { openTailnetRelay, openLanRelay } from './tailnet-relay';
 import { validateHandshake, HostConnectionError } from './handshake';
 import { connectionPage } from './ui';
 import { parseSshConfig } from '../utils/ssh-config-parser';
@@ -26,6 +26,7 @@ import { startLiteControlServer } from './control-server';
 import { resolveLiteDataDirectory } from '../../shared/lite-control';
 import type { LiteControlOptions, LiteControlState } from '../../shared/lite-control';
 
+/** Start an isolated attachment runtime without full Maestro backends, keeping remote content sandboxed. */
 export async function startLite(): Promise<void> {
 	// Separate startup preferences from full-mode data without opening any backend stores.
 	const dataFlag = process.argv.indexOf('--lite-user-data');
@@ -289,6 +290,7 @@ export async function startLite(): Promise<void> {
 			);
 		return response.json();
 	}
+	/** Drain the previous transport, cancel superseded attempts and validate host trust before showing remote content. */
 	async function connect(id: string, initialState?: () => void): Promise<void> {
 		const closing = disconnect();
 		const version = connectionVersion;
@@ -310,15 +312,18 @@ export async function startLite(): Promise<void> {
 			status = `Connecting · ${profile.name}`;
 			publish();
 			let base = normalizeRemoteUrl(profile.url, profile.transport);
-			if (profile.transport === 'tailscale') {
+			if (profile.transport === 'tailscale' || profile.transport === 'lan') {
 				if (!selectedDiscovery)
-					throw new HostConnectionError('Select and pair the discovered Tailscale host first.');
-				const opening = openTailnetRelay(
-					base,
-					selectedDiscovery.credential,
-					signal,
-					selectedDiscovery.peerId!
-				);
+					throw new HostConnectionError('Select and pair the discovered private host first.');
+				const opening =
+					profile.transport === 'lan'
+						? openLanRelay(base, selectedDiscovery.credential, signal)
+						: openTailnetRelay(
+								base,
+								selectedDiscovery.credential,
+								signal,
+								selectedDiscovery.peerId!
+							);
 				transportOpening = opening.then(
 					() => {},
 					() => {}
@@ -355,7 +360,8 @@ export async function startLite(): Promise<void> {
 			const authentication = selectedDiscovery
 				? discoveredSession!
 				: session.fromPartition('maestro-lite-auth-' + randomUUID());
-			if (profile.transport === 'tailscale') await authentication.setProxy({ mode: 'direct' });
+			if (profile.transport === 'tailscale' || profile.transport === 'lan')
+				await authentication.setProxy({ mode: 'direct' });
 			if (selectedDiscovery)
 				authentication.webRequest.onBeforeSendHeaders((details, callback) => {
 					const url = new URL(details.url);

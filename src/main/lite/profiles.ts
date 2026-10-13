@@ -5,7 +5,9 @@ import type { LiteProfile } from '../../shared/lite-control';
 import { validateSshOption } from '../../shared/sshOptions';
 import { CONNECT_PATH } from './pairing/protocol';
 import { directTailnetOrigin } from './tailnet-origin';
+import { lanOrigin } from './lan';
 
+/** Reject URL credential fields, queries and fragments; direct private URLs require the paired connection path. */
 export function normalizeRemoteUrl(input: string, transport: LiteProfile['transport']): URL {
 	if (typeof input !== 'string' || /[\s\\\x00-\x1f]/.test(input))
 		throw new Error('Enter a Remote Control URL without whitespace or backslashes.');
@@ -14,10 +16,11 @@ export function normalizeRemoteUrl(input: string, transport: LiteProfile['transp
 		throw new Error(
 			'Remote Control URLs must not contain credentials, query parameters, or fragments.'
 		);
-	if (transport === 'tailscale') {
-		directTailnetOrigin(url.origin);
+	if (transport === 'tailscale' || transport === 'lan') {
+		if (transport === 'lan') lanOrigin(url.origin);
+		else directTailnetOrigin(url.origin);
 		if (url.pathname !== CONNECT_PATH)
-			throw new Error('Direct Tailscale access requires the paired connection path.');
+			throw new Error('Direct access requires the paired connection path.');
 		return url;
 	}
 	if (

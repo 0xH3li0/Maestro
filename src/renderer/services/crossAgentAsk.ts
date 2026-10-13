@@ -22,7 +22,11 @@ import {
 	sendCrossAgentRequest,
 	type CrossAgentCompletion,
 } from '../hooks/agent/useCrossAgentDispatch';
-import { recordAgentDelegation, settleAgentDelegation } from './agentDelegation';
+import {
+	recordAgentDelegation,
+	resolveDelegationSourceTab,
+	settleAgentDelegation,
+} from './agentDelegation';
 import type { LogEntry } from '../types';
 import type { ConsultChain } from '../../shared/consultBudget';
 
@@ -65,7 +69,8 @@ export interface CrossAgentAskRequest {
 	 */
 	fromTabId?: string;
 	/**
-	 * Forward the caller's active-tab transcript as context. Off by default -
+	 * Forward the asking tab's transcript as context (the active tab when the
+	 * caller named no tab). Off by default -
 	 * `ask` exists to send a fresh, self-contained question, and a relayed
 	 * transcript is what `@mention` is for.
 	 */
@@ -121,8 +126,14 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 
 	// Only forwarded when explicitly asked for; `selectContextWindow` inside
 	// `sendCrossAgentRequest` narrows it the same way a typed mention's would be.
-	const sourceLogs: LogEntry[] =
-		request.withContext && source ? (getActiveTab(source)?.logs ?? []) : [];
+	// The stamped tab is the transcript that asked; the active tab is only a
+	// guess for a bare `--from` typed outside any turn.
+	const sourceTab = !source
+		? undefined
+		: request.fromTabId
+			? resolveDelegationSourceTab(source, request.fromTabId)
+			: (getActiveTab(source) ?? undefined);
+	const sourceLogs: LogEntry[] = request.withContext ? (sourceTab?.logs ?? []) : [];
 
 	// Mark the consult in the asking agent's transcript, the way a typed @mention
 	// shows who answered. An unattributed caller has no transcript to mark.

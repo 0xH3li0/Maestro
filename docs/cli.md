@@ -1501,7 +1501,7 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces and verbs available.
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`. Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces and verbs available.
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 

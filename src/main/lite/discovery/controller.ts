@@ -7,6 +7,7 @@ import type { LiteProfile } from '../../../shared/lite-control';
 import type { DeviceCredentials } from '../device-credentials';
 import type { DiscoveryPairingState } from '../../../shared/lite-discovery';
 import { tailnetDestination } from '../tailnet';
+import { lanDestination } from '../lan';
 import { hostname } from 'node:os';
 export interface DiscoveredConnection {
 	profile: LiteProfile;
@@ -44,6 +45,7 @@ export class DiscoveryController {
 					: (this.client?.snapshot() ?? { phase: 'idle' }),
 		};
 	}
+	/** Hand a compatible paired host to the native connector, preserving LAN/Tailscale transport provenance. */
 	private deliver(row: Candidate, credential: string): void {
 		if (!row.connection) throw new Error('No compatible host connection.');
 		this.delivered = true;
@@ -51,7 +53,11 @@ export class DiscoveryController {
 			profile: {
 				id: 'discovered-' + this.revision,
 				name: row.name,
-				transport: row.endpoint.startsWith('http:') ? 'tailscale' : 'https',
+				transport: row.endpoint.startsWith('http:')
+					? row.source === 'lan'
+						? 'lan'
+						: 'tailscale'
+					: 'https',
 				url: row.endpoint + row.connection.path,
 				instanceId: row.id,
 			},
@@ -60,6 +66,7 @@ export class DiscoveryController {
 			capabilities: row.connection.capabilities,
 		});
 	}
+	/** Route discovery/pairing actions; verify saved host and private-network identities before credential reuse. */
 	async control(action: string, payload: unknown): Promise<void> {
 		if (action === 'discovery-start') {
 			if (!payload || typeof payload !== 'object')
@@ -84,7 +91,9 @@ export class DiscoveryController {
 			const revision = ++this.revision;
 			const saved = this.profiles().filter(
 				(profile) =>
-					(profile.transport === 'https' || profile.transport === 'tailscale') &&
+					(profile.transport === 'https' ||
+						profile.transport === 'tailscale' ||
+						profile.transport === 'lan') &&
 					new URL(profile.url).origin === row.endpoint &&
 					profile.instanceId
 			);
@@ -94,9 +103,12 @@ export class DiscoveryController {
 					'Saved host identity differs from discovered host. Verify its identity before pairing.'
 				);
 			if (row.endpoint.startsWith('http:')) {
-				const target = await tailnetDestination(row.endpoint, AbortSignal.timeout(5000));
-				if (target.peerId !== row.peerId)
-					throw new Error('Tailscale node identity changed. Refresh and verify this host.');
+				if (row.source === 'lan') await lanDestination(row.endpoint, AbortSignal.timeout(5000));
+				else {
+					const target = await tailnetDestination(row.endpoint, AbortSignal.timeout(5000));
+					if (target.peerId !== row.peerId)
+						throw new Error('Tailscale node identity changed. Refresh and verify this host.');
+				}
 			}
 			const credential = await this.credentials.get(row.id, row.endpoint, row.peerId);
 			if (revision !== this.revision) return;
