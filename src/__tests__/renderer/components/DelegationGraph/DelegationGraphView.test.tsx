@@ -19,9 +19,15 @@
  * reactflow makes for one: `onConnect` with the pair, then `onConnectEnd` with
  * the pointer. A click on an edge is a click on its marker, which calls the
  * `onEdgeClick` the view passed, when it passed one.
+ *
+ * An agent row dragged from the Left Bar is `draggingSessionId` in the UI
+ * store, which is all the Left Bar sets, and `dragover` / `drop` events on the
+ * canvas. jsdom has no `DragEvent`, so the pointer is put on the event by hand.
+ * The stand-in's `screenToFlowPosition` moves a point by `FLOW_OFFSET`, so a
+ * position that skipped the conversion is not the one expected.
  */
 
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentType, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import type { Connection, Edge, Node, NodeChange, NodeProps } from 'reactflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,6 +52,11 @@ interface FlowProps {
 const flow = vi.hoisted(() => ({
 	props: null as FlowProps | null,
 	fitView: vi.fn(),
+	// Window to canvas coordinates: moved by FLOW_OFFSET.
+	screenToFlowPosition: vi.fn((point: { x: number; y: number }) => ({
+		x: point.x + 1000,
+		y: point.y + 2000,
+	})),
 }));
 
 const toast = vi.hoisted(() => ({ notify: vi.fn() }));
@@ -61,7 +72,7 @@ vi.mock('reactflow', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('reactflow')>();
 	// One object for the life of the file: the view re-arms its fit timer when
 	// this reference changes.
-	const api = { fitView: flow.fitView };
+	const api = { fitView: flow.fitView, screenToFlowPosition: flow.screenToFlowPosition };
 
 	const ReactFlowStandIn = (props: FlowProps) => {
 		flow.props = props;
@@ -134,9 +145,12 @@ vi.mock('reactflow', async (importOriginal) => {
 
 import { DelegationGraphView } from '../../../../renderer/components/DelegationGraph/DelegationGraphView';
 import { DELEGATION_LAYOUT_LABELS } from '../../../../renderer/components/DelegationGraph/delegationLayoutTypes';
+import { placedAgentHint } from '../../../../renderer/components/DelegationGraph/DelegationGraphPlacement';
 import {
 	AGENT_DELEGATION_NODE_BORDER_STYLE,
+	AGENT_DELEGATION_NODE_HEIGHT,
 	AGENT_DELEGATION_SPILL_OPACITY,
+	estimateAgentDelegationNodeWidth,
 } from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
 import { DELEGATION_POSITION_SAVE_DEBOUNCE_MS } from '../../../../renderer/components/DelegationGraph/useDelegationGraphLayout';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
@@ -144,6 +158,7 @@ import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { DelegationGraphLayouts } from '../../../../renderer/stores/settingsDelegationGraphSlice';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import type { Group, Session } from '../../../../renderer/types';
 import {
 	buildDelegationGraph,
@@ -234,6 +249,8 @@ const ORIGIN: DelegationNodePosition = { x: 0, y: 0 };
 const DRAGGED: DelegationNodePosition = { x: 5120, y: 3840 };
 /** Where in the window an edge is dropped. Inside the jsdom viewport, so it is not clamped. */
 const DROP = { x: 300, y: 200 };
+/** What the stand-in's `screenToFlowPosition` adds to a point of the window. */
+const FLOW_OFFSET = { x: 1000, y: 2000 };
 
 function renderView(initialScope?: DelegationGraphScope) {
 	return render(
@@ -403,6 +420,60 @@ function removalToast(): { color: string; title: string; message: string } {
 	return toast.notify.mock.calls[0][0];
 }
 
+function addAgentSelect(): HTMLSelectElement | null {
+	return screen.queryByTestId('delegation-graph-add-agent') as HTMLSelectElement | null;
+}
+
+/** Pick an agent in the "Add agent" control. */
+function addAgent(id: string): void {
+	fireEvent.change(screen.getByTestId('delegation-graph-add-agent'), { target: { value: id } });
+}
+
+/** The agents the "Add agent" control offers, in its order. */
+function addableIds(): string[] {
+	return Array.from(addAgentSelect()?.querySelectorAll('option') ?? [])
+		.map((option) => option.value)
+		.filter(Boolean);
+}
+
+function canvas(): HTMLElement {
+	return screen.getByTestId('delegation-graph-canvas');
+}
+
+/** What the Left Bar does when one of its agent rows starts to move, and when it stops. */
+function startAgentDrag(id: string): void {
+	act(() => useUIStore.setState({ draggingSessionId: id }));
+}
+
+function endAgentDrag(): void {
+	act(() => useUIStore.setState({ draggingSessionId: null }));
+}
+
+/**
+ * Fire a drag event on the canvas, with the pointer at `at`. Returns `false`
+ * when the canvas took the event (it called `preventDefault`).
+ */
+function fireCanvasDrag(type: 'dragOver' | 'dragLeave' | 'drop', at = DROP): boolean {
+	const event = createEvent[type](canvas(), { dataTransfer: {} });
+	Object.defineProperties(event, { clientX: { value: at.x }, clientY: { value: at.y } });
+	return fireEvent(canvas(), event);
+}
+
+function dropOverlay(): HTMLElement | null {
+	return screen.queryByTestId('delegation-graph-drop-overlay');
+}
+
+function placedNotice(): HTMLElement | null {
+	return screen.queryByTestId('delegation-graph-placed');
+}
+
+/** Let the fit that follows a rearrangement run. */
+function settle(): void {
+	act(() => {
+		vi.advanceTimersByTime(1000);
+	});
+}
+
 function patchSession(id: string, patch: Partial<Session>): void {
 	setSessions((sessions) =>
 		sessions.map((session) => (session.id === id ? { ...session, ...patch } : session))
@@ -439,6 +510,7 @@ describe('DelegationGraphView', () => {
 			activeSessionId: 'a',
 		});
 		useModalStore.getState().closeAll();
+		useUIStore.setState({ draggingSessionId: null });
 		vi.clearAllMocks();
 	});
 
@@ -1189,6 +1261,441 @@ describe('DelegationGraphView', () => {
 
 			expect(edgeEditor()).not.toBeInTheDocument();
 			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+	});
+
+	// On the Platform graph Gamma has no node: it is in Research and no edge
+	// joins it to Platform.
+	describe('pulling an agent onto the canvas', () => {
+		const FOXTROT = { id: 'f', name: 'Foxtrot' };
+
+		function addFoxtrot(): void {
+			setSessions((sessions) => [...sessions, createMockSession(FOXTROT)]);
+		}
+
+		describe('the Add agent control', () => {
+			it('is offered in Edit only', () => {
+				renderView(PLATFORM_SCOPE);
+				expect(addAgentSelect()).toBeNull();
+
+				switchMode('edit');
+				expect(addAgentSelect()).toBeInTheDocument();
+
+				switchMode('view');
+				expect(addAgentSelect()).toBeNull();
+			});
+
+			it('lists the agents the graph does not draw, under the group each is in', () => {
+				addFoxtrot();
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				const sections = Array.from(addAgentSelect()?.querySelectorAll('optgroup') ?? []).map(
+					(section) => [
+						section.label,
+						Array.from(section.querySelectorAll('option')).map((option) => option.textContent),
+					]
+				);
+
+				expect(sections).toEqual([
+					['Research', ['Gamma']],
+					['Ungrouped', ['Foxtrot']],
+				]);
+				expect(addableIds()).toEqual(['c', 'f']);
+				expect(addAgentSelect()).toBeEnabled();
+			});
+
+			it('has nothing to add on the graph of every agent, and says why', () => {
+				renderView();
+				switchMode('edit');
+
+				expect(addableIds()).toEqual([]);
+				expect(addAgentSelect()).toBeDisabled();
+				expect(addAgentSelect()).toHaveAttribute('title', 'Every agent is already on this graph');
+			});
+
+			// An edge needs one end in the group, so an agent added to a group with
+			// no agent could never be connected.
+			it('is disabled on a group with no agent, and says why', () => {
+				renderView({ kind: 'group', groupId: VACANT.id });
+				switchMode('edit');
+
+				expect(addAgentSelect()).toBeDisabled();
+				expect(addAgentSelect()?.title).toMatch(/no agent/);
+			});
+
+			it('draws the picked agent as placed, and writes nothing to any agent', () => {
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				addAgent('c');
+
+				expect(drawnNodeIds()).toEqual(['a', 'b', 'c', 'd', 'e']);
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
+				expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+				// Placing is not moving: Gamma is still in Research.
+				expect(sessionOf('c').groupId).toBe(RESEARCH.id);
+				// The control is back on its label, and no longer offers Gamma.
+				expect(addAgentSelect()?.value).toBe('');
+				expect(addableIds()).toEqual([]);
+			});
+
+			// The arrangement can put the agent outside what is on screen.
+			it('fits the view after an agent is added', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				settle();
+				flow.fitView.mockClear();
+
+				addAgent('c');
+				settle();
+
+				expect(flow.fitView).toHaveBeenCalledTimes(1);
+			});
+
+			it('saves nothing for a scope with no arrangement saved', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				addAgent('c');
+				rest();
+
+				expect(layouts()[PLATFORM_KEY]).toBeUndefined();
+				expect(writeCount()).toBe(0);
+			});
+
+			it('moves no agent of a saved arrangement, and keeps the place it gave the new one', () => {
+				saveLayouts({ [PLATFORM_KEY]: { layout: 'manual', positions: PLATFORM_POSITIONS } });
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				addAgent('c');
+
+				for (const id of PLATFORM_IDS) expect(positionOf(id)).toEqual(PLATFORM_POSITIONS[id]);
+				const gamma = positionOf('c');
+				expect(gamma).not.toEqual(ORIGIN);
+				for (const id of PLATFORM_IDS)
+					expect(distance(gamma, PLATFORM_POSITIONS[id])).toBeGreaterThan(0);
+				expect(layouts()[PLATFORM_KEY]).toEqual({
+					layout: 'manual',
+					positions: { ...PLATFORM_POSITIONS, c: gamma },
+				});
+			});
+		});
+
+		describe('an agent with no edge yet', () => {
+			it('says that adding is not moving, and names the agent and the group', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				expect(placedNotice()).toBeNull();
+
+				addAgent('c');
+
+				expect(placedNotice()).toHaveTextContent('Gamma has no edge yet.');
+				expect(placedNotice()).toHaveTextContent(placedAgentHint(PLATFORM.name));
+				expect(placedAgentHint(PLATFORM.name)).toMatch(/does not move it into Platform/);
+			});
+
+			it('names every agent that waits for an edge', () => {
+				addFoxtrot();
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				addAgent('c');
+				addAgent('f');
+
+				expect(placedNotice()).toHaveTextContent('Foxtrot, Gamma have no edge yet.');
+			});
+
+			// "Placed and then connected becomes a spill node, exactly as if the
+			// delegation had been authored in settings."
+			it('becomes a spill agent when an edge is drawn to it, and stays in its own group', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+				const gammaBefore = sessionOf('c');
+
+				connect('a', 'c');
+				confirmEdge();
+
+				expect(sessionOf('a').peerAgents).toContainEqual({
+					sessionId: 'c',
+					read: true,
+					write: false,
+				});
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'spill');
+				expect(drawnEdgeIds()).toContain(delegationEdgeId('a', 'c'));
+				expect(placedNotice()).toBeNull();
+				// The edge was written to Alpha. Gamma is the same object, group included.
+				expect(sessionOf('c')).toBe(gammaBefore);
+				expect(
+					buildDelegationGraph(PLATFORM_SCOPE, useSessionStore.getState().sessions).nodes
+				).toContainEqual({ sessionId: 'c', name: 'Gamma', groupId: RESEARCH.id, scope: 'spill' });
+			});
+
+			it('can start an edge as well as end one', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+
+				connect('c', 'e');
+				confirmEdge();
+
+				expect(sessionOf('c').peerAgents).toEqual([{ sessionId: 'e', read: true, write: false }]);
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'spill');
+			});
+
+			// Both ends outside the group: the graph of the group would not draw it.
+			it('is refused an edge to another agent outside the group', () => {
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+
+				connect('c', 'b');
+
+				expect(screen.getByTestId('delegation-edge-refusal')).toHaveTextContent(
+					'outside this group'
+				);
+				expect(edgeEditor()).not.toBeInTheDocument();
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			});
+
+			it('is taken off the graph from the notice, which leaves a connected agent alone', () => {
+				addFoxtrot();
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+				addAgent('f');
+				connect('a', 'c');
+				confirmEdge();
+				const sessionsBefore = useSessionStore.getState().sessions;
+
+				fireEvent.click(screen.getByTestId('delegation-graph-placed-clear'));
+
+				expect(drawnNodeIds()).toEqual(['a', 'b', 'c', 'd', 'e']);
+				expect(placedNotice()).toBeNull();
+				expect(addableIds()).toEqual(['f']);
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			});
+
+			it('stays when an edge to it is deleted, so it does not vanish under the pointer', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+				connect('a', 'c');
+				confirmEdge();
+
+				clickEdge(delegationEdgeId('a', 'c'));
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
+			});
+
+			it('stays on the canvas when the mode goes back to View', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+
+				switchMode('view');
+
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
+				expect(placedNotice()).toBeInTheDocument();
+			});
+
+			it('belongs to the scope it was added on', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+
+				changeScope(ALL_KEY);
+				expect(placedNotice()).toBeNull();
+				changeScope(PLATFORM_KEY);
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+			});
+
+			// Never saved: the graph cannot open with an agent nobody connected.
+			it('is gone after a remount', () => {
+				const first = renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+				first.unmount();
+
+				renderView(PLATFORM_SCOPE);
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+			});
+
+			it('goes with its agent when the agent is deleted', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				addAgent('c');
+
+				setSessions((sessions) => sessions.filter((session) => session.id !== 'c'));
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+				expect(placedNotice()).toBeNull();
+			});
+		});
+
+		describe('an agent row dropped from the Left Bar', () => {
+			const GAMMA_DROP: DelegationNodePosition = {
+				x: DROP.x + FLOW_OFFSET.x - estimateAgentDelegationNodeWidth('Gamma') / 2,
+				y: DROP.y + FLOW_OFFSET.y - AGENT_DELEGATION_NODE_HEIGHT / 2,
+			};
+
+			it('is not taken in View', () => {
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView(PLATFORM_SCOPE);
+				startAgentDrag('c');
+
+				expect(fireCanvasDrag('dragOver')).toBe(true);
+				expect(dropOverlay()).toBeNull();
+				fireCanvasDrag('drop');
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+				expect(writeCount()).toBe(0);
+			});
+
+			// A file or a tab dragged across the canvas belongs to somebody else.
+			it('is not taken when the drag is not an agent', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+
+				expect(fireCanvasDrag('dragOver')).toBe(true);
+				expect(dropOverlay()).toBeNull();
+				fireCanvasDrag('drop');
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+			});
+
+			it('says before the drop that adding is not moving', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				startAgentDrag('c');
+
+				expect(fireCanvasDrag('dragOver')).toBe(false);
+
+				expect(dropOverlay()).toHaveTextContent('Drop to add Gamma');
+				expect(dropOverlay()).toHaveTextContent(placedAgentHint(PLATFORM.name));
+				expect(dropOverlay()).toHaveAttribute('data-already-drawn', 'false');
+				// It must not take the drop from the canvas under it.
+				expect(dropOverlay()?.className).toContain('pointer-events-none');
+			});
+
+			it('takes the hint away when the drag leaves the canvas, and when it ends', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				startAgentDrag('c');
+
+				fireCanvasDrag('dragOver');
+				fireCanvasDrag('dragLeave');
+				expect(dropOverlay()).toBeNull();
+
+				fireCanvasDrag('dragOver');
+				expect(dropOverlay()).toBeInTheDocument();
+				endAgentDrag();
+				expect(dropOverlay()).toBeNull();
+			});
+
+			it('draws the agent where it was dropped, with its middle under the pointer', () => {
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				startAgentDrag('c');
+				fireCanvasDrag('dragOver');
+
+				expect(fireCanvasDrag('drop')).toBe(false);
+
+				expect(flow.screenToFlowPosition).toHaveBeenCalledWith(DROP);
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
+				expect(positionOf('c')).toEqual(GAMMA_DROP);
+				expect(dropOverlay()).toBeNull();
+				expect(placedNotice()).toHaveTextContent('Gamma has no edge yet.');
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+				expect(sessionOf('c').groupId).toBe(RESEARCH.id);
+			});
+
+			// A drop at a point is hand placement, saved the way a drag is.
+			it('saves the drop at once as a hand arrangement, and moves no other agent', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				const before = positionsOnCanvas();
+				startAgentDrag('c');
+
+				fireCanvasDrag('drop');
+
+				expect(layouts()[PLATFORM_KEY]).toEqual({
+					layout: 'manual',
+					positions: { ...before, c: GAMMA_DROP },
+				});
+				expect(writeCount()).toBe(1);
+				expect(positionsOnCanvas()).toEqual({ ...before, c: GAMMA_DROP });
+				expect(screen.getByTestId('delegation-graph-layout-manual')).toBeInTheDocument();
+			});
+
+			it('keeps the agent where it was dropped after the drag ends and the write settles', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				startAgentDrag('c');
+				fireCanvasDrag('drop');
+
+				endAgentDrag();
+				rest();
+
+				expect(positionOf('c')).toEqual(GAMMA_DROP);
+				expect(writeCount()).toBe(1);
+			});
+
+			it('selects an agent that is already on the graph, and adds nothing', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				const before = positionsOnCanvas();
+				startAgentDrag('b');
+
+				fireCanvasDrag('dragOver');
+				expect(dropOverlay()).toHaveTextContent('Beta is already on this graph');
+				expect(dropOverlay()).toHaveAttribute('data-already-drawn', 'true');
+				fireCanvasDrag('drop');
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+				expect(flow.props?.nodes.filter((node) => node.selected).map((node) => node.id)).toEqual([
+					'b',
+				]);
+				expect(positionsOnCanvas()).toEqual(before);
+				expect(writeCount()).toBe(0);
+				expect(placedNotice()).toBeNull();
+			});
+
+			it('takes nothing on a group with no agent', () => {
+				renderView({ kind: 'group', groupId: VACANT.id });
+				switchMode('edit');
+				startAgentDrag('c');
+
+				expect(fireCanvasDrag('dragOver')).toBe(true);
+				fireCanvasDrag('drop');
+
+				expect(screen.queryByTestId('react-flow')).toBeNull();
+				expect(dropOverlay()).toBeNull();
+				expect(writeCount()).toBe(0);
+			});
+
+			it('takes nothing for an agent that is gone', () => {
+				renderView(PLATFORM_SCOPE);
+				switchMode('edit');
+				startAgentDrag('gone');
+
+				fireCanvasDrag('dragOver');
+				expect(dropOverlay()).toBeNull();
+				fireCanvasDrag('drop');
+
+				expect(drawnNodeIds()).toEqual(PLATFORM_IDS);
+				expect(writeCount()).toBe(0);
+			});
 		});
 	});
 

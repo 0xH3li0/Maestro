@@ -102,16 +102,22 @@ describe('useDelegationGraphLayout', () => {
 			expect(result.current.positions).toBe(first);
 		});
 
-		it('keeps its four actions identity-stable across renders and scope changes', () => {
+		it('keeps its five actions identity-stable across renders and scope changes', () => {
 			const { result, rerender } = renderHook(({ scope }) => useDelegationGraphLayout(scope), {
 				initialProps: scopeProps(ALL),
 			});
-			const { saveDraggedPositions, saveAlgorithmLayout, savePlacedPositions, resetLayout } =
-				result.current;
+			const {
+				saveDraggedPositions,
+				saveDroppedPositions,
+				saveAlgorithmLayout,
+				savePlacedPositions,
+				resetLayout,
+			} = result.current;
 
 			rerender({ scope: GROUP });
 
 			expect(result.current.saveDraggedPositions).toBe(saveDraggedPositions);
+			expect(result.current.saveDroppedPositions).toBe(saveDroppedPositions);
 			expect(result.current.saveAlgorithmLayout).toBe(saveAlgorithmLayout);
 			expect(result.current.savePlacedPositions).toBe(savePlacedPositions);
 			expect(result.current.resetLayout).toBe(resetLayout);
@@ -128,6 +134,65 @@ describe('useDelegationGraphLayout', () => {
 
 			rerender({ scope: GROUP });
 			expect(result.current.hasSavedLayout).toBe(false);
+		});
+	});
+
+	// An agent dropped on the canvas at a point: hand placement, written at once.
+	describe('saveDroppedPositions', () => {
+		it('turns the scope manual and writes at once', () => {
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.saveDroppedPositions({ a: { x: 10, y: 10 }, b: { x: 20, y: 20 } });
+			});
+
+			expect(layouts().all).toEqual({
+				layout: 'manual',
+				positions: { a: { x: 10, y: 10 }, b: { x: 20, y: 20 } },
+			});
+			expect(writeCount()).toBe(1);
+		});
+
+		// A drag waits for the debounce once the scope is manual. A drop does not:
+		// the canvas reads the position back in the render that draws the agent.
+		it('writes at once on a scope that is already manual', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'manual', positions: { a: { x: 1, y: 1 } } } },
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.saveDroppedPositions({ a: { x: 1, y: 1 }, b: { x: 70, y: 80 } });
+			});
+
+			expect(layouts().all?.positions.b).toEqual({ x: 70, y: 80 });
+			expect(writeCount()).toBe(1);
+		});
+
+		it('cancels a drag write that is waiting, so it cannot land after the drop', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'manual', positions: { a: { x: 1, y: 1 } } } },
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.saveDraggedPositions({ a: { x: 5, y: 5 } });
+				result.current.saveDroppedPositions({ a: { x: 9, y: 9 }, b: { x: 70, y: 80 } });
+			});
+			rest();
+
+			expect(layouts().all?.positions).toEqual({ a: { x: 9, y: 9 }, b: { x: 70, y: 80 } });
+			expect(writeCount()).toBe(1);
+		});
+
+		it('keeps no position for an agent that is gone', () => {
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.saveDroppedPositions({ a: { x: 1, y: 1 }, gone: { x: 2, y: 2 } });
+			});
+
+			expect(layouts().all?.positions).toEqual({ a: { x: 1, y: 1 } });
 		});
 	});
 

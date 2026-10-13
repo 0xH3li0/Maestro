@@ -493,8 +493,13 @@ a design constraint; they are simply not built yet.
     View / Edit switch has no verb and needs none: it is a guard against a
     slipped pointer, it is never saved, and a CLI caller has no pointer to
     slip. What Edit lets the pointer write, `update-agent --peer` writes (see
-    the "draw or re-draw an edge" row in the Covered table). The
-    relationships the graph draws are covered in full (`update-agent --peer`
+    the "draw or re-draw an edge" row in the Covered table). "Add agent",
+    and an agent row dropped on the canvas, have no verb and need none
+    either: placing an agent on a group's graph writes nothing (no peer row,
+    no group change, and the placement itself is never saved), and it exists
+    so a pointer has something to draw an edge to. The CLI names the target
+    by id, in or out of the group: `update-agent <source> --peer <target>:r`.
+    The relationships the graph draws are covered in full (`update-agent --peer`
     writes them, `show-agent` reads them resolved). Closing the scope half
     means a verb with `--group <id>` that passes `{ scope }` to
     `openModal('delegationGraph')`.

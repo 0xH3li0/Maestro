@@ -1,5 +1,5 @@
 /**
- * useDelegationGraphLayout - one scope's saved arrangement, and the four ways
+ * useDelegationGraphLayout - one scope's saved arrangement, and the five ways
  * it changes.
  *
  * The record itself lives in the settings store
@@ -17,6 +17,9 @@
  *   - A new agent that the canvas placed beside its neighbors is ADDED to what
  *     is saved, so it is in the same place on the next open. It changes
  *     neither the layout nor any position already saved.
+ *   - An agent dropped on the canvas at a point is hand placement like a drag,
+ *     and one deliberate action like an algorithm, so it is saved as a drag is
+ *     and written at once.
  *
  * A drag write that is still waiting is flushed when the scope changes and
  * when the canvas unmounts, so switching scope or closing the graph inside the
@@ -60,6 +63,14 @@ export interface DelegationGraphLayoutControls {
 	 * out of it has no saved position on the next open.
 	 */
 	saveDraggedPositions: (positions: DelegationSavedPositions) => void;
+	/**
+	 * An agent was dropped on the canvas at a point: the scope becomes `manual`
+	 * and keeps these positions, as after a drag. Pass every node on the canvas
+	 * and the dropped agent. It is written AT ONCE, because the canvas reads the
+	 * position back in the render that first draws the agent, and a write that
+	 * waited would draw it somewhere else first.
+	 */
+	saveDroppedPositions: (positions: DelegationSavedPositions) => void;
 	/** An algorithm was applied: its positions REPLACE everything saved for the scope. */
 	saveAlgorithmLayout: (
 		layout: DelegationAlgorithmLayout,
@@ -127,6 +138,13 @@ export function useDelegationGraphLayout(
 		debouncedCallback(scope, positions);
 	});
 
+	const saveDroppedPositions = useStableCallback((positions: DelegationSavedPositions) => {
+		// The caller passed where every node is now, so a drag write that is still
+		// waiting holds nothing this one does not.
+		cancel();
+		writeDraggedPositions(scope, positions);
+	});
+
 	const saveAlgorithmLayout = useStableCallback(
 		(layout: DelegationAlgorithmLayout, positions: DelegationSavedPositions) => {
 			cancel();
@@ -167,6 +185,7 @@ export function useDelegationGraphLayout(
 		hasSavedLayout: saved !== undefined,
 		positions: saved?.positions ?? NO_SAVED_POSITIONS,
 		saveDraggedPositions,
+		saveDroppedPositions,
 		saveAlgorithmLayout,
 		savePlacedPositions,
 		resetLayout,

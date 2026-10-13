@@ -14,7 +14,14 @@ import { AGENT_DELEGATION_NODE_BORDER_STYLE } from '../../../../renderer/compone
 import type { DelegationGraphStats } from '../../../../shared/delegationGraph';
 import { mockTheme } from '../../../helpers/mockTheme';
 
-const STATS: DelegationGraphStats = { agents: 6, edges: 4, mutual: 1, isolated: 2, spill: 1 };
+const STATS: DelegationGraphStats = {
+	agents: 6,
+	edges: 4,
+	mutual: 1,
+	isolated: 2,
+	spill: 1,
+	placed: 0,
+};
 
 describe('describeDelegationGraphStats', () => {
 	it('says how many agents and edges, then what stands out', () => {
@@ -28,8 +35,25 @@ describe('describeDelegationGraphStats', () => {
 
 	it('leaves out a count that is zero', () => {
 		expect(
-			describeDelegationGraphStats({ agents: 1, edges: 1, mutual: 0, isolated: 0, spill: 0 })
+			describeDelegationGraphStats({
+				agents: 1,
+				edges: 1,
+				mutual: 0,
+				isolated: 0,
+				spill: 0,
+				placed: 0,
+			})
 		).toEqual(['1 agent, 1 edge']);
+	});
+
+	it('counts the agents that were added and have no edge, after the ones outside the scope', () => {
+		expect(describeDelegationGraphStats({ ...STATS, spill: 3, placed: 2 })).toEqual([
+			'6 agents, 4 edges',
+			'1 mutual pair',
+			'2 with no peers',
+			'3 outside this scope',
+			'2 added, no edge yet',
+		]);
 	});
 
 	it('uses the plural for more than one mutual pair', () => {
@@ -65,10 +89,23 @@ describe('DelegationGraphLegend', () => {
 		renderLegend();
 		const legend = screen.getByTestId('delegation-graph-legend');
 
-		for (const state of ['in-scope', 'spill', 'isolated'] as const) {
+		for (const state of ['in-scope', 'spill', 'isolated', 'placed'] as const) {
 			const sample = legend.querySelector(`li[data-node-state="${state}"] > span`) as HTMLElement;
 			expect(sample.style.borderStyle).toBe(AGENT_DELEGATION_NODE_BORDER_STYLE[state]);
 		}
+	});
+
+	// Spill and placed share a border, so the sample needs a second sign.
+	it('tells the placed sample from the spill sample by opacity and a glyph', () => {
+		renderLegend();
+		const legend = screen.getByTestId('delegation-graph-legend');
+		const sampleOf = (state: string) =>
+			legend.querySelector(`li[data-node-state="${state}"] > span`) as HTMLElement;
+
+		expect(Number(sampleOf('spill').style.opacity)).toBeLessThan(1);
+		expect(sampleOf('placed').style.opacity).toBe('1');
+		expect(sampleOf('placed').querySelector('svg')).not.toBeNull();
+		expect(sampleOf('spill').querySelector('svg')).toBeNull();
 	});
 
 	// The Peers tab writes the two bits as R and W; an edge writes them as C and D.

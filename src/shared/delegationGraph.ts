@@ -44,9 +44,16 @@ export interface DelegationGraphNode {
 	sessionId: string;
 	name: string;
 	groupId?: string;
-	/** 'spill' means: outside the requested scope, drawn only because an edge reaches it. */
+	/**
+	 * 'spill' means: outside the requested scope. It is drawn because an edge
+	 * reaches it, or because the user placed it on the canvas
+	 * (`DelegationGraphOptions.placedIds`) and has not connected it yet.
+	 */
 	scope: DelegationNodeScope;
 }
+
+/** An agent that has no node on a graph: what "Add agent" on the canvas lists. */
+export type DelegationOffGraphAgent = Omit<DelegationGraphNode, 'scope'>;
 
 /**
  * One directed relationship. `source` may consult `target` when `read` is set, and
@@ -75,6 +82,19 @@ export interface DelegationGraphModel {
 	edges: DelegationGraphEdge[];
 }
 
+export interface DelegationGraphOptions {
+	/**
+	 * Agents the user put on the canvas by hand. Each one gets a node even when
+	 * it is outside the scope and no edge reaches it, so there is something to
+	 * draw an edge to. Placing changes no agent: it writes no peer row and it
+	 * does NOT move the agent into the scope's group. The node is `spill`, the
+	 * same as after the first edge is drawn, because the agent is outside the
+	 * scope either way. An id that is already on the graph, or that names no
+	 * live agent, changes nothing.
+	 */
+	placedIds?: Iterable<string>;
+}
+
 /** The counts the legend and the empty-state copy read. */
 export interface DelegationGraphStats {
 	/** Every agent on the graph, `spill` agents included. */
@@ -84,12 +104,18 @@ export interface DelegationGraphStats {
 	/** Pairs of agents with an edge in EACH direction. A pair counts once. */
 	mutual: number;
 	/**
-	 * Agents no edge touches. Always in-scope agents: a `spill` agent is on the
-	 * graph only because an edge reaches it.
+	 * In-scope agents no edge touches. An agent outside the scope that no edge
+	 * touches is counted in `placed`, never here: "nobody reaches it" is a fact
+	 * about the fleet, and "not connected yet" is a fact about this canvas.
 	 */
 	isolated: number;
 	/** Agents outside the requested scope, a subset of `agents`. */
 	spill: number;
+	/**
+	 * Agents outside the scope that no edge touches, a subset of `spill`. Only
+	 * `DelegationGraphOptions.placedIds` puts one on a graph.
+	 */
+	placed: number;
 }
 
 /**
@@ -121,8 +147,9 @@ export function delegationEdgeId(sourceId: string, targetId: string): string {
  *   - Every in-scope agent gets one, with or without edges. An agent that
  *     nobody reaches and that reaches nobody is exactly what the graph exists
  *     to show.
- *   - An agent outside the scope gets one only when a kept edge names it, and
- *     it is marked `spill` so the canvas can draw it differently.
+ *   - An agent outside the scope gets one only when a kept edge names it, or
+ *     when `options.placedIds` names it, and it is marked `spill` so the canvas
+ *     can draw it differently.
  *
  * `resolvePeerRoster` has already dropped the agent itself, a row whose agent
  * is gone, and a peer left with neither bit. So there is no self-edge, no
@@ -134,8 +161,10 @@ export function delegationEdgeId(sourceId: string, targetId: string): string {
  */
 export function buildDelegationGraph(
 	scope: DelegationGraphScope,
-	sessions: readonly PeerRosterInput[]
+	sessions: readonly PeerRosterInput[],
+	options: DelegationGraphOptions = {}
 ): DelegationGraphModel {
+	const placedIds = new Set(options.placedIds);
 	const inScopeIds = new Set<string>();
 	for (const session of sessions) {
 		if (scope.kind === 'all' || session.groupId === scope.groupId) inScopeIds.add(session.id);
@@ -164,7 +193,7 @@ export function buildDelegationGraph(
 	const nodes: DelegationGraphNode[] = [];
 	for (const session of sessions) {
 		const inScope = inScopeIds.has(session.id);
-		if (!inScope && !reachedIds.has(session.id)) continue;
+		if (!inScope && !reachedIds.has(session.id) && !placedIds.has(session.id)) continue;
 		nodes.push({
 			sessionId: session.id,
 			name: session.name,
@@ -174,13 +203,37 @@ export function buildDelegationGraph(
 	}
 
 	return {
-		nodes: nodes.sort(
-			(a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId)
-		),
+		nodes: nodes.sort(byNameThenId),
 		// Code-unit order, not `localeCompare`: an edge id is built from agent ids,
 		// which are not words, and this order is the same on every machine.
 		edges: edges.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
 	};
+}
+
+/** The order of every list of agents here: by name, and by id between two with one name. */
+function byNameThenId(a: DelegationOffGraphAgent, b: DelegationOffGraphAgent): number {
+	return a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId);
+}
+
+/**
+ * Every live agent with no node on `model`, sorted like the nodes are. On the
+ * graph of every agent the list is empty. On a group's graph it is the agents
+ * outside the group that no edge joins to it: the ones a user can place on the
+ * canvas (`DelegationGraphOptions.placedIds`) to draw an edge to.
+ */
+export function agentsOffGraph(
+	model: DelegationGraphModel,
+	sessions: readonly PeerRosterInput[]
+): DelegationOffGraphAgent[] {
+	const onGraphIds = new Set(model.nodes.map((node) => node.sessionId));
+	return sessions
+		.filter((session) => !onGraphIds.has(session.id))
+		.map((session) => ({
+			sessionId: session.id,
+			name: session.name,
+			...(session.groupId ? { groupId: session.groupId } : {}),
+		}))
+		.sort(byNameThenId);
 }
 
 /**
@@ -201,9 +254,10 @@ export function edgeBetween(
  *
  *   - An agent onto itself. An agent is never its own peer, and
  *     `resolvePeerRoster` would drop the row.
- *   - Two `spill` agents. `buildDelegationGraph` keeps an edge only when one
- *     end is in scope, so the row would be written and the edge would not
- *     appear, and an edge already there is not in the model to be shown first.
+ *   - Two `spill` agents, placed by the user or reached by an edge.
+ *     `buildDelegationGraph` keeps an edge only when one end is in scope, so
+ *     the row would be written and the edge would not appear, and an edge
+ *     already there is not in the model to be shown first.
  *
  * An end that is not on the graph is not refused here: the write itself names
  * an agent that is gone.
@@ -233,10 +287,12 @@ export function isMutual(model: DelegationGraphModel, a: string, b: string): boo
 }
 
 /**
- * Every agent at least one edge touches, at either end. An agent on the graph
- * that is NOT in this set is isolated: nobody reaches it and it reaches nobody.
- * `delegationGraphStats` counts those agents and the canvas marks them, and
- * both ask here so the two cannot disagree about which agents they are.
+ * Every agent at least one edge touches, at either end. An in-scope agent on
+ * the graph that is NOT in this set is isolated: nobody reaches it and it
+ * reaches nobody. A `spill` agent that is not in it was placed by the user and
+ * is not connected yet. `delegationGraphStats` counts both and the canvas marks
+ * both, and both ask here so the two cannot disagree about which agents they
+ * are.
  */
 export function connectedAgentIds(model: DelegationGraphModel): Set<string> {
 	const connectedIds = new Set<string>();
@@ -269,10 +325,23 @@ export function delegationGraphStats(model: DelegationGraphModel): DelegationGra
 
 	let isolated = 0;
 	let spill = 0;
+	let placed = 0;
 	for (const node of model.nodes) {
-		if (!connectedIds.has(node.sessionId)) isolated++;
-		if (node.scope === 'spill') spill++;
+		const connected = connectedIds.has(node.sessionId);
+		if (node.scope === 'spill') {
+			spill++;
+			if (!connected) placed++;
+		} else if (!connected) {
+			isolated++;
+		}
 	}
 
-	return { agents: model.nodes.length, edges: model.edges.length, mutual, isolated, spill };
+	return {
+		agents: model.nodes.length,
+		edges: model.edges.length,
+		mutual,
+		isolated,
+		spill,
+		placed,
+	};
 }

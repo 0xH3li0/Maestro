@@ -1,8 +1,8 @@
 /**
  * Tests for AgentDelegationNode - one agent on the Delegation Graph.
  *
- * The three states (in scope, spill, isolated) must be told apart by shape and
- * not by color alone, so the tests here read the border style, the opacity and
+ * The four states (in scope, spill, isolated, placed) must be told apart by
+ * shape and not by color alone, so the tests here read the border style, the opacity and
  * the markers, never a color on its own.
  */
 
@@ -204,7 +204,7 @@ describe('AgentDelegationNode', () => {
 		});
 	});
 
-	describe('the three states', () => {
+	describe('the four states', () => {
 		it('draws an in-scope agent at full opacity with a solid border', () => {
 			const { container, queryByTestId, queryByText } = renderNode({ state: 'in-scope' });
 			const root = rootOf(container);
@@ -263,7 +263,36 @@ describe('AgentDelegationNode', () => {
 			expect(getByTestId('agent-delegation-node-group')).toBeInTheDocument();
 		});
 
-		it('gives each state its own border style', () => {
+		// Outside the group like a spill agent, and in front of the user like an
+		// in-scope one: it was just put there, to have an edge drawn to it.
+		it('draws a placed agent like a spill agent at full opacity, with a caption', () => {
+			const { container, getByTestId, queryByTestId } = renderNode({
+				sessionId: 'b',
+				state: 'placed',
+			});
+			const root = rootOf(container);
+
+			expect(root).toHaveAttribute('data-node-state', 'placed');
+			expect(root.style.borderStyle).toBe('dotted');
+			expect(root.style.opacity).toBe('1');
+			expect(getByTestId('agent-delegation-node-placed')).toHaveTextContent('No edge yet');
+			// The group is named in full, because the agent is NOT in this one.
+			expect(getByTestId('agent-delegation-node-spill-group')).toHaveTextContent('Research');
+			expect(queryByTestId('agent-delegation-node-group')).toBeNull();
+			expect(queryByTestId('agent-delegation-node-isolated')).toBeNull();
+		});
+
+		it('shows the placed caption in no other state', () => {
+			for (const state of ['in-scope', 'spill', 'isolated'] as const) {
+				const { queryByTestId, unmount } = renderNode({ sessionId: 'b', state });
+				expect(queryByTestId('agent-delegation-node-placed')).toBeNull();
+				unmount();
+			}
+		});
+
+		// `placed` shares the dotted border with `spill`: both are outside the
+		// scope. Opacity and the caption tell the two apart.
+		it('gives the three states an edge can produce their own border style', () => {
 			const styles = (['in-scope', 'spill', 'isolated'] as const).map((state) => {
 				const { container, unmount } = renderNode({ state });
 				const style = rootOf(container).style.borderStyle;
@@ -292,6 +321,10 @@ describe('AgentDelegationNode', () => {
 			expect(rootOf(renderNode({ sessionId: 'c', state: 'isolated' }).container)).toHaveAttribute(
 				'title',
 				'Gamma, Codex, no peers'
+			);
+			expect(rootOf(renderNode({ sessionId: 'b', state: 'placed' }).container)).toHaveAttribute(
+				'title',
+				'Beta, Codex, Research, outside this group, no edge yet'
 			);
 		});
 	});
@@ -372,9 +405,25 @@ describe('agentDelegationNodeState', () => {
 		expect(states).toEqual({ a: 'in-scope', b: 'isolated', x: 'spill' });
 	});
 
-	// Spill wins: the builder never produces an unconnected spill node, and a
-	// caller that passes a stale set must not turn one into "isolated".
-	it('reads a spill node as spill whatever the connected set holds', () => {
-		expect(agentDelegationNodeState({ sessionId: 'x', scope: 'spill' }, new Set())).toBe('spill');
+	// An agent outside the scope that no edge touches is there because the user
+	// placed it. It is never "isolated": that word is about the fleet.
+	it('reads a spill node no edge touches as placed, and never as isolated', () => {
+		expect(agentDelegationNodeState({ sessionId: 'x', scope: 'spill' }, new Set())).toBe('placed');
+		expect(agentDelegationNodeState({ sessionId: 'x', scope: 'spill' }, new Set(['x']))).toBe(
+			'spill'
+		);
+	});
+
+	it('reads an agent the user placed as placed, beside the three other states', () => {
+		const fleet = [...sessions, { id: 'y', name: 'Yara', groupId: 'g2' }];
+		const model = buildDelegationGraph({ kind: 'group', groupId: 'g1' }, fleet, {
+			placedIds: ['y'],
+		});
+		const connected = connectedAgentIds(model);
+		const states = Object.fromEntries(
+			model.nodes.map((node) => [node.sessionId, agentDelegationNodeState(node, connected)])
+		);
+
+		expect(states).toEqual({ a: 'in-scope', b: 'isolated', x: 'spill', y: 'placed' });
 	});
 });

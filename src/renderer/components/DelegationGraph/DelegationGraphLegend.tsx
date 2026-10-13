@@ -12,7 +12,7 @@
  */
 
 import { memo } from 'react';
-import { Unplug, X } from 'lucide-react';
+import { Plus, Unplug, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { DelegationGraphStats } from '../../../shared/delegationGraph';
 import {
@@ -41,6 +41,7 @@ const NODE_STATES: ReadonlyArray<{ state: AgentDelegationNodeState; label: strin
 	{ state: 'in-scope', label: 'In this scope' },
 	{ state: 'spill', label: 'Outside it, reached by an edge' },
 	{ state: 'isolated', label: 'No peers in either direction' },
+	{ state: 'placed', label: 'Outside it, added by you, no edge yet' },
 ];
 
 const SAMPLE_WIDTH = 34;
@@ -58,6 +59,7 @@ export function describeDelegationGraphStats(stats: DelegationGraphStats): strin
 	if (stats.mutual > 0) lines.push(pluralize(stats.mutual, 'mutual pair', 'mutual pairs'));
 	if (stats.isolated > 0) lines.push(`${stats.isolated} with no peers`);
 	if (stats.spill > 0) lines.push(`${stats.spill} outside this scope`);
+	if (stats.placed > 0) lines.push(`${stats.placed} added, no edge yet`);
 	return lines;
 }
 
@@ -108,11 +110,12 @@ function NodeSample({ state, theme }: { state: AgentDelegationNodeState; theme: 
 				borderStyle: AGENT_DELEGATION_NODE_BORDER_STYLE[state],
 				borderColor: state === 'isolated' ? colors.warning : colors.border,
 				backgroundColor: colors.bgMain,
-				color: colors.warning,
+				color: state === 'placed' ? colors.textDim : colors.warning,
 				opacity: state === 'spill' ? AGENT_DELEGATION_SPILL_OPACITY : 1,
 			}}
 		>
 			{state === 'isolated' && <Unplug size={9} />}
+			{state === 'placed' && <Plus size={9} />}
 		</span>
 	);
 }

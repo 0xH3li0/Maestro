@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	agentsOffGraph,
 	buildDelegationGraph,
 	connectedAgentIds,
 	delegationEdgeId,
@@ -242,6 +243,101 @@ describe('buildDelegationGraph', () => {
 	});
 });
 
+// What the canvas passes for an agent the user put on it by hand.
+describe('buildDelegationGraph with placed agents', () => {
+	// In g1: Alpha and Beta. Outside it: Carol, reached by an edge, and Dave and
+	// Erin, reached by none.
+	const fleet = [
+		agent('a', 'Alpha', { groupId: 'g1', peerAgents: [row('c', R)] }),
+		agent('b', 'Beta', { groupId: 'g1' }),
+		agent('c', 'Carol', { groupId: 'g2' }),
+		agent('d', 'Dave', { groupId: 'g2' }),
+		agent('e', 'Erin'),
+	];
+
+	it('gives a placed agent outside the scope a spill node and no edge', () => {
+		const base = buildDelegationGraph(G1, fleet);
+		const model = buildDelegationGraph(G1, fleet, { placedIds: ['d'] });
+
+		expect(base.nodes.map((node) => node.sessionId)).toEqual(['a', 'b', 'c']);
+		expect(model.nodes).toEqual([
+			{ sessionId: 'a', name: 'Alpha', groupId: 'g1', scope: 'in-scope' },
+			{ sessionId: 'b', name: 'Beta', groupId: 'g1', scope: 'in-scope' },
+			{ sessionId: 'c', name: 'Carol', groupId: 'g2', scope: 'spill' },
+			{ sessionId: 'd', name: 'Dave', groupId: 'g2', scope: 'spill' },
+		]);
+		expect(model.edges).toEqual(base.edges);
+	});
+
+	// Placing is not moving: the node keeps the group the agent is really in.
+	it('does not put a placed agent in the group', () => {
+		const model = buildDelegationGraph(G1, fleet, { placedIds: ['d', 'e'] });
+
+		expect(model.nodes.find((node) => node.sessionId === 'd')?.groupId).toBe('g2');
+		expect(model.nodes.find((node) => node.sessionId === 'e')).toEqual({
+			sessionId: 'e',
+			name: 'Erin',
+			scope: 'spill',
+		});
+	});
+
+	it('changes nothing for an id that is already on the graph or names no agent', () => {
+		const base = buildDelegationGraph(G1, fleet);
+
+		expect(buildDelegationGraph(G1, fleet, { placedIds: ['a', 'c', 'gone'] })).toEqual(base);
+		expect(buildDelegationGraph(ALL, fleet, { placedIds: ['d'] })).toEqual(
+			buildDelegationGraph(ALL, fleet)
+		);
+	});
+
+	it('takes any iterable of ids', () => {
+		const model = buildDelegationGraph(G1, fleet, { placedIds: new Set(['e']) });
+
+		expect(model.nodes.map((node) => node.sessionId)).toContain('e');
+	});
+
+	// "Placed and then connected becomes a spill node, as if authored in settings."
+	it('draws a placed agent the same with and without the placement once an edge joins it', () => {
+		const connected = fleet.map((session) =>
+			session.id === 'b' ? { ...session, peerAgents: [row('d', W)] } : session
+		);
+
+		expect(buildDelegationGraph(G1, connected, { placedIds: ['d'] })).toEqual(
+			buildDelegationGraph(G1, connected)
+		);
+	});
+});
+
+describe('agentsOffGraph', () => {
+	const fleet = [
+		agent('a', 'Alpha', { groupId: 'g1', peerAgents: [row('c', R)] }),
+		agent('z', 'Zed', { groupId: 'g2' }),
+		agent('c', 'Carol', { groupId: 'g2' }),
+		agent('d', 'Dave'),
+		agent('d2', 'Dave', { groupId: 'g3' }),
+	];
+
+	it('is empty on the graph of every agent', () => {
+		expect(agentsOffGraph(buildDelegationGraph(ALL, fleet), fleet)).toEqual([]);
+	});
+
+	it('lists the agents a group graph does not draw, by name and then by id', () => {
+		const model = buildDelegationGraph(G1, fleet);
+
+		expect(agentsOffGraph(model, fleet)).toEqual([
+			{ sessionId: 'd', name: 'Dave' },
+			{ sessionId: 'd2', name: 'Dave', groupId: 'g3' },
+			{ sessionId: 'z', name: 'Zed', groupId: 'g2' },
+		]);
+	});
+
+	it('leaves out an agent once it is placed', () => {
+		const model = buildDelegationGraph(G1, fleet, { placedIds: ['z'] });
+
+		expect(agentsOffGraph(model, fleet).map((off) => off.sessionId)).toEqual(['d', 'd2']);
+	});
+});
+
 describe('edgeBetween', () => {
 	const model = buildDelegationGraph(ALL, [
 		agent('a', 'Alice', { peerAgents: [row('b', RW)] }),
@@ -310,6 +406,17 @@ describe('delegationEdgeRefusal', () => {
 
 		expect(delegationEdgeRefusal(model, 'c', 'd')).toMatch(/outside this group/);
 		expect(delegationEdgeRefusal(model, 'd', 'c')).toMatch(/outside this group/);
+	});
+
+	// A placed agent is outside the group too, with or without an edge.
+	it('refuses an edge between a placed agent and another agent outside the group', () => {
+		const withErin = [...fleet, agent('e', 'Erin')];
+		const model = buildDelegationGraph(G1, withErin, { placedIds: ['e'] });
+
+		expect(delegationEdgeRefusal(model, 'e', 'c')).toMatch(/outside this group/);
+		expect(delegationEdgeRefusal(model, 'd', 'e')).toMatch(/outside this group/);
+		expect(delegationEdgeRefusal(model, 'e', 'b')).toBeNull();
+		expect(delegationEdgeRefusal(model, 'a', 'e')).toBeNull();
 	});
 
 	it('leaves an end that is not on the graph to the write, which names it', () => {
@@ -394,6 +501,7 @@ describe('delegationGraphStats', () => {
 			mutual: 0,
 			isolated: 0,
 			spill: 0,
+			placed: 0,
 		});
 	});
 
@@ -410,6 +518,7 @@ describe('delegationGraphStats', () => {
 			mutual: 1,
 			isolated: 0,
 			spill: 0,
+			placed: 0,
 		});
 	});
 
@@ -439,6 +548,31 @@ describe('delegationGraphStats', () => {
 			mutual: 0,
 			isolated: 1,
 			spill: 2,
+			placed: 0,
+		});
+	});
+
+	// "Nobody reaches it" is a fact about the fleet. "Not connected yet" is a
+	// fact about one canvas, and it is counted apart.
+	it('counts a placed agent in `spill` and `placed`, and never as isolated', () => {
+		const model = buildDelegationGraph(
+			G1,
+			[
+				agent('a', 'Alice', { groupId: 'g1', peerAgents: [row('x', W)] }),
+				agent('b', 'Bob', { groupId: 'g1' }),
+				agent('x', 'Xavier', { groupId: 'g2' }),
+				agent('z', 'Zed', { groupId: 'g2' }),
+			],
+			{ placedIds: ['z'] }
+		);
+
+		expect(delegationGraphStats(model)).toEqual({
+			agents: 4,
+			edges: 1,
+			mutual: 0,
+			isolated: 1,
+			spill: 2,
+			placed: 1,
 		});
 	});
 });

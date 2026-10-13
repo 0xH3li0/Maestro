@@ -4,15 +4,20 @@
  * The visual grammar is `CuePipelineEditor/nodes/AgentNode.tsx`: a colored grip
  * strip, the name over a dim caption, a corner badge, and a handle per side.
  *
- * A node is in exactly one of three states, and each one is told apart by
+ * A node is in exactly one of four states, and each one is told apart by
  * SHAPE as well as by color, so the graph still reads on a theme with weak
  * contrast and for a user who cannot tell the colors apart:
  *
- *   | State    | Border | Opacity | Marker                               |
- *   | -------- | ------ | ------- | ------------------------------------ |
- *   | in-scope | solid  | full    | the group's short pill               |
- *   | spill    | dotted | dimmed  | an arrow and the group's FULL name   |
- *   | isolated | dashed | full    | a corner badge and a "No peers" line |
+ *   | State    | Border | Opacity | Marker                                         |
+ *   | -------- | ------ | ------- | ---------------------------------------------- |
+ *   | in-scope | solid  | full    | the group's short pill                         |
+ *   | spill    | dotted | dimmed  | an arrow and the group's FULL name             |
+ *   | isolated | dashed | full    | a corner badge and a "No peers" line           |
+ *   | placed   | dotted | full    | the spill marker and a "No edge yet" line      |
+ *
+ * `spill` and `placed` are the two halves of "outside this scope": an edge
+ * reaches the first, and the user put the second on the canvas and has not
+ * connected it. The first edge turns a placed node into a spill node.
  *
  * The node data holds an agent id and never a name. The name, the provider and
  * the group are read from the session store on every render, so a rename shows
@@ -43,10 +48,10 @@ export {
 
 /**
  * How a node is drawn. One value and not two flags, because the states exclude
- * each other: a `spill` agent is on the graph only because an edge reaches it,
- * so it can never also be isolated.
+ * each other: where the agent is (in the scope or outside it) and whether an
+ * edge touches it give exactly four combinations.
  */
-export type AgentDelegationNodeState = 'in-scope' | 'spill' | 'isolated';
+export type AgentDelegationNodeState = 'in-scope' | 'spill' | 'isolated' | 'placed';
 
 export interface AgentDelegationNodeData {
 	sessionId: string;
@@ -68,6 +73,7 @@ export const AGENT_DELEGATION_NODE_BORDER_STYLE: Record<
 	'in-scope': 'solid',
 	spill: 'dotted',
 	isolated: 'dashed',
+	placed: 'dotted',
 };
 
 /**
@@ -86,8 +92,9 @@ export function agentDelegationNodeState(
 	node: Pick<DelegationGraphNode, 'sessionId' | 'scope'>,
 	connectedIds: ReadonlySet<string>
 ): AgentDelegationNodeState {
-	if (node.scope === 'spill') return 'spill';
-	return connectedIds.has(node.sessionId) ? 'in-scope' : 'isolated';
+	const connected = connectedIds.has(node.sessionId);
+	if (node.scope === 'spill') return connected ? 'spill' : 'placed';
+	return connected ? 'in-scope' : 'isolated';
 }
 
 /**
@@ -152,13 +159,16 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 
 	const isSpill = state === 'spill';
 	const isIsolated = state === 'isolated';
+	const isPlaced = state === 'placed';
+	// Outside the scope, with an edge or without one: the group is named in full.
+	const isOutside = isSpill || isPlaced;
 
 	// The agent can be deleted a render before the graph drops its node. Keep the
 	// node whole for that render: an edge with no handle to land on throws.
 	const name = agent?.name ?? removedAgentLabel(sessionId);
 	const provider = agent ? getAgentDisplayName(agent.toolType) : '';
 
-	const stateColor = isIsolated ? colors.warning : isSpill ? colors.border : colors.accent;
+	const stateColor = isIsolated ? colors.warning : isOutside ? colors.border : colors.accent;
 	const borderColor = selected ? colors.accent : isIsolated ? colors.warning : colors.border;
 	const glowColor = selected ? colors.accent : stateColor;
 
@@ -166,8 +176,9 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 		name,
 		provider,
 		group?.name,
-		isSpill ? 'outside this group' : undefined,
+		isOutside ? 'outside this group' : undefined,
 		isIsolated ? 'no peers' : undefined,
+		isPlaced ? 'no edge yet' : undefined,
 	]
 		.filter(Boolean)
 		.join(', ');
@@ -238,7 +249,7 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 					>
 						{name}
 					</span>
-					{!isSpill && group && (
+					{!isOutside && group && (
 						<GroupPill theme={theme} group={group} testId="agent-delegation-node-group" />
 					)}
 				</div>
@@ -262,7 +273,7 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 					</span>
 				)}
 
-				{isSpill && (
+				{isOutside && (
 					<span
 						data-testid="agent-delegation-node-spill-group"
 						title="Outside this group"
@@ -290,6 +301,22 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 						}}
 					>
 						No peers
+					</span>
+				)}
+
+				{isPlaced && (
+					<span
+						data-testid="agent-delegation-node-placed"
+						title="Placed on this graph. Draw an edge to or from it to keep it here"
+						style={{
+							color: colors.textDim,
+							fontSize: 10,
+							fontWeight: 600,
+							marginTop: 4,
+							whiteSpace: 'nowrap',
+						}}
+					>
+						No edge yet
 					</span>
 				)}
 			</div>

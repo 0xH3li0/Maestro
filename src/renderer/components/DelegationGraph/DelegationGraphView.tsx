@@ -19,6 +19,11 @@
  * is two different writes (`deleteDelegationEdge`): the row of an edge the user
  * wrote is deleted, and an edge a grant derived has no row, so the peer is
  * excluded. A toast says which one happened.
+ * Edit is also where an agent the graph does not draw is put on it, from the
+ * "Add agent" control of the toolbar or by dropping its Left Bar row on the
+ * canvas. That changes no agent (`DelegationGraphPlacement`): the agent is not
+ * moved into the group, and it is on the canvas only until the graph closes
+ * unless an edge is drawn to it.
  * The switch is a guard and not ceremony: a graph of a real fleet is a dense
  * target, and a slipped drag on a surface that looks read-only would rewrite
  * an agent's permissions without a sign that it had. The mode is not saved,
@@ -51,6 +56,7 @@ import {
 	useRef,
 	useState,
 	type ChangeEvent,
+	type DragEvent as ReactDragEvent,
 	type MouseEvent as ReactMouseEvent,
 } from 'react';
 import ReactFlow, {
@@ -81,6 +87,7 @@ import {
 import {
 	parseScopeStorageKey,
 	scopeStorageKey,
+	type DelegationNodePosition,
 	type DelegationSavedPositions,
 } from '../../../shared/delegationGraphLayout';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
@@ -97,6 +104,7 @@ import {
 } from '../../services/delegationGraphEdits';
 import { notifyToast } from '../../stores/notificationStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { useUIStore } from '../../stores/uiStore';
 import { ConfirmModal } from '../ConfirmModal';
 import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
@@ -109,6 +117,13 @@ import {
 } from './DelegationEdgeEditor';
 import { DelegationGraphDetail } from './DelegationGraphDetail';
 import { DelegationGraphLegend } from './DelegationGraphLegend';
+import {
+	DelegationAddAgentSelect,
+	DelegationDropOverlay,
+	DelegationPlacedNotice,
+	delegationGroupLabel,
+	sectionAgentsForAdding,
+} from './DelegationGraphPlacement';
 import { arrangeDelegationGraph, computeDelegationLayout } from './delegationLayouts';
 import {
 	DEFAULT_DELEGATION_LAYOUT,
@@ -124,12 +139,14 @@ import {
 	type DelegationEdgeData,
 } from './edges/DelegationEdge';
 import {
+	AGENT_DELEGATION_NODE_HEIGHT,
 	AgentDelegationNode,
 	agentDelegationNodeState,
+	estimateAgentDelegationNodeWidth,
 	type AgentDelegationNodeData,
 } from './nodes/AgentDelegationNode';
 import { useDelegationGraphLayout } from './useDelegationGraphLayout';
-import { useDelegationGraphModel } from './useDelegationGraphModel';
+import { useAgentsOffDelegationGraph, useDelegationGraphModel } from './useDelegationGraphModel';
 
 export interface DelegationGraphViewProps {
 	theme: Theme;
@@ -167,6 +184,8 @@ interface NeighborFocus {
 }
 
 const ALL_SCOPE: DelegationGraphScope = { kind: 'all' };
+/** No agent placed by hand. One array, so the model is not rebuilt for it. */
+const NONE_PLACED: readonly string[] = Object.freeze([]);
 
 // Stable module-scope references, so reactflow does not see new props on
 // every render of the canvas.
@@ -276,13 +295,23 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		[groups]
 	);
 
-	const model = useDelegationGraphModel(scope);
+	// The agents the user put on this scope's canvas by hand. Never saved and
+	// never written to an agent: see `DelegationGraphPlacement`.
+	const [placedIds, setPlacedIds] = useState<readonly string[]>(NONE_PLACED);
+	const model = useDelegationGraphModel(scope, placedIds);
+	const addableAgents = useAgentsOffDelegationGraph(model);
 	const stats = useMemo(() => delegationGraphStats(model), [model]);
+	const connectedIds = useMemo(() => connectedAgentIds(model), [model]);
+	const isEmpty = stats.agents === 0;
+	// An agent is placed to be connected, and an edge needs one end in the
+	// scope: with no agent in it there is nothing to place an agent for.
+	const canPlace = isEditing && stats.agents > stats.spill;
 	const {
 		layout,
 		hasSavedLayout,
 		positions,
 		saveDraggedPositions,
+		saveDroppedPositions,
 		saveAlgorithmLayout,
 		savePlacedPositions,
 		resetLayout,
@@ -298,19 +327,20 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		savePlacedPositions(arrangement.newlyPlaced);
 	}, [arrangement, savePlacedPositions]);
 
-	const arrangedNodes = useMemo<AgentNode[]>(() => {
-		const connectedIds = connectedAgentIds(model);
-		return model.nodes.map((node) => ({
-			id: node.sessionId,
-			type: 'agent',
-			position: arrangement.positions[node.sessionId] ?? { x: 0, y: 0 },
-			data: {
-				sessionId: node.sessionId,
-				state: agentDelegationNodeState(node, connectedIds),
-				theme,
-			},
-		}));
-	}, [model, arrangement, theme]);
+	const arrangedNodes = useMemo<AgentNode[]>(
+		() =>
+			model.nodes.map((node) => ({
+				id: node.sessionId,
+				type: 'agent',
+				position: arrangement.positions[node.sessionId] ?? { x: 0, y: 0 },
+				data: {
+					sessionId: node.sessionId,
+					state: agentDelegationNodeState(node, connectedIds),
+					theme,
+				},
+			})),
+		[model, connectedIds, arrangement, theme]
+	);
 
 	const [nodes, setNodes] = useState<AgentNode[]>(arrangedNodes);
 	// What `nodes` will be after the pending render. reactflow can send several
@@ -478,6 +508,111 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		return () => clearTimeout(timer);
 	}, [fitRequest, scopeKey, reactFlow]);
 
+	// Select one agent and no other, which is how the graph points at an agent.
+	const selectOnly = useCallback(
+		(sessionId: string) => {
+			commitNodes(
+				nodesRef.current.map((node) =>
+					Boolean(node.selected) === (node.id === sessionId)
+						? node
+						: { ...node, selected: node.id === sessionId }
+				)
+			);
+		},
+		[commitNodes]
+	);
+
+	// Put an agent on the canvas. `at` is where it was dropped; without it the
+	// arrangement finds the agent a place. Nothing is written to any agent.
+	const placeAgent = useCallback(
+		(sessionId: string, at?: DelegationNodePosition) => {
+			if (!canPlace) return;
+			if (model.nodes.some((node) => node.sessionId === sessionId)) {
+				// Already drawn, so there is nothing to add: show the user where.
+				selectOnly(sessionId);
+				return;
+			}
+			if (!selectSessionById(sessionId)(useSessionStore.getState())) return;
+			if (at) {
+				// A drop at a point is hand placement, saved the way a drag is: with
+				// every node on the canvas, and before the agent is drawn, so its
+				// first render reads the drop point back.
+				const dropped = { ...positionsOfNodes(nodesRef.current), [sessionId]: at };
+				savedByCanvasRef.current = dropped;
+				saveDroppedPositions(dropped);
+			} else {
+				// The arrangement can put it outside the view. Bring it in.
+				requestFit();
+			}
+			setPlacedIds((ids) => (ids.includes(sessionId) ? ids : [...ids, sessionId]));
+		},
+		[canPlace, model, selectOnly, saveDroppedPositions, requestFit]
+	);
+	const clearPlaced = useCallback(() => setPlacedIds(NONE_PLACED), []);
+
+	const addableSections = useMemo(
+		() => sectionAgentsForAdding(addableAgents, sortedGroups),
+		[addableAgents, sortedGroups]
+	);
+	// The agents that are on the canvas only because the user put them there.
+	const placedNames = useMemo(
+		() =>
+			model.nodes
+				.filter((node) => agentDelegationNodeState(node, connectedIds) === 'placed')
+				.map((node) => node.name),
+		[model, connectedIds]
+	);
+	const scopeGroupName =
+		scope.kind === 'group' ? groups.find((group) => group.id === scope.groupId)?.name : undefined;
+
+	// An agent row dragged from the Left Bar. The row puts nothing in the drag's
+	// data: the agent in the user's hand is `draggingSessionId`, the same field
+	// the Left Bar's own drop targets read, and it is cleared when the drag ends.
+	const draggingSessionId = useUIStore((store) => store.draggingSessionId);
+	const draggingAgentName = useSessionStore((store) =>
+		draggingSessionId ? selectSessionById(draggingSessionId)(store)?.name : undefined
+	);
+	const [isDragOver, setIsDragOver] = useState(false);
+	// A drag that ends anywhere, dropped or cancelled, is over the canvas no more.
+	useEffect(() => {
+		if (!draggingSessionId) setIsDragOver(false);
+	}, [draggingSessionId]);
+	const handleCanvasDragOver = useCallback(
+		(event: ReactDragEvent<HTMLDivElement>) => {
+			// Read at the event: any other drag (a file, a tab) is none of this
+			// canvas's business and is left to whoever owns it.
+			if (!canPlace || !useUIStore.getState().draggingSessionId) return;
+			event.preventDefault();
+			event.dataTransfer.dropEffect = 'copy';
+			setIsDragOver(true);
+		},
+		[canPlace]
+	);
+	const handleCanvasDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+		// Crossing onto a child of the canvas fires this too.
+		if (!event.currentTarget.contains(event.relatedTarget as Element | null)) {
+			setIsDragOver(false);
+		}
+	}, []);
+	const handleCanvasDrop = useCallback(
+		(event: ReactDragEvent<HTMLDivElement>) => {
+			setIsDragOver(false);
+			const draggedId = useUIStore.getState().draggingSessionId;
+			if (!canPlace || !draggedId) return;
+			const agent = selectSessionById(draggedId)(useSessionStore.getState());
+			if (!agent) return;
+			event.preventDefault();
+			const point = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+			// A node is positioned by its top left corner: put its middle under the
+			// pointer.
+			placeAgent(draggedId, {
+				x: point.x - estimateAgentDelegationNodeWidth(agent.name) / 2,
+				y: point.y - AGENT_DELEGATION_NODE_HEIGHT / 2,
+			});
+		},
+		[canPlace, placeAgent, reactFlow]
+	);
+
 	const applyLayout = useCallback(
 		(next: DelegationAlgorithmLayout) => {
 			saveAlgorithmLayout(
@@ -601,6 +736,8 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	const handleScopeChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
 		setRequestedScope(parseScopeStorageKey(event.target.value) ?? ALL_SCOPE);
 		setPendingEdge(null);
+		// An agent was placed on ONE scope's canvas. Another scope starts without it.
+		setPlacedIds(NONE_PLACED);
 	}, []);
 
 	const legend = usePersistedToggle('delegationGraph.legend.open', true);
@@ -623,14 +760,13 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 			const state = (node as AgentNode).data?.state;
 			return state === 'isolated'
 				? colors.warning
-				: state === 'spill'
+				: state === 'spill' || state === 'placed'
 					? colors.border
 					: colors.accent;
 		},
 		[colors.warning, colors.border, colors.accent]
 	);
 
-	const isEmpty = stats.agents === 0;
 	const noEdges = !isEmpty && stats.edges === 0;
 	// The agent the "nobody is connected" notice sends the user to: the one they
 	// selected, else the one they are working in, else the first on the graph.
@@ -666,7 +802,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						const value = scopeStorageKey({ kind: 'group', groupId: group.id });
 						return (
 							<option key={value} value={value}>
-								{group.emoji ? `${group.emoji} ${group.name}` : group.name}
+								{delegationGroupLabel(group)}
 							</option>
 						);
 					})}
@@ -680,6 +816,20 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					ariaLabel="Mode"
 					testId="delegation-graph-mode"
 				/>
+				{isEditing && (
+					<DelegationAddAgentSelect
+						theme={theme}
+						sections={addableSections}
+						disabledReason={
+							!canPlace
+								? 'This group has no agent that an added agent could be connected to'
+								: addableAgents.length === 0
+									? 'Every agent is already on this graph'
+									: undefined
+						}
+						onAdd={placeAgent}
+					/>
+				)}
 
 				<SegmentedControl
 					value={layout}
@@ -740,6 +890,11 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				className="flex-1 relative overflow-hidden min-h-0"
 				data-testid="delegation-graph-canvas"
 				data-mode={mode}
+				// The drop zone of an agent row. In View, and for any other drag, the
+				// three handlers do nothing.
+				onDragOver={handleCanvasDragOver}
+				onDragLeave={handleCanvasDragLeave}
+				onDrop={handleCanvasDrop}
 			>
 				{isEmpty ? (
 					<EmptyStatePlaceholder
@@ -812,6 +967,23 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 
 				{!isEmpty && legend.value && (
 					<DelegationGraphLegend theme={theme} stats={stats} onClose={legend.toggle} />
+				)}
+
+				{placedNames.length > 0 && (
+					<DelegationPlacedNotice
+						theme={theme}
+						agentNames={placedNames}
+						groupName={scopeGroupName}
+						onClear={clearPlaced}
+					/>
+				)}
+				{isDragOver && canPlace && draggingAgentName !== undefined && (
+					<DelegationDropOverlay
+						theme={theme}
+						agentName={draggingAgentName}
+						alreadyDrawn={model.nodes.some((node) => node.sessionId === draggingSessionId)}
+						groupName={scopeGroupName}
+					/>
 				)}
 
 				{/* Every agent is isolated: say so, and point at where peers are set. */}
