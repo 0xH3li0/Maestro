@@ -46,6 +46,7 @@ import {
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
+import { applyCommandExamples } from './command-examples';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
@@ -282,7 +283,7 @@ import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
 import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
-import { encoreList, encoreSet } from './commands/encore';
+import { ENCORE_FEATURE_KEYS, encoreList, encoreSet } from './commands/encore';
 import {
 	computerHistoryApps,
 	computerHistoryClear,
@@ -2466,9 +2467,7 @@ encore
 
 encore
 	.command('enable <feature>')
-	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
-	)
+	.description(`Enable an Encore feature (${ENCORE_FEATURE_KEYS.join(', ')})`)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
@@ -4321,9 +4320,18 @@ mcp
 	.option('--tab <id>', 'Originating desktop tab id (diagnostics only)')
 	.action((options) => mcpServe(options));
 
+// Every command shows its examples in `--help` and in `reference`.
+applyCommandExamples(program);
+
+// The tree walk in src/__tests__/cli/command-tree.test.ts imports this module for
+// `program`; it must not parse the test runner's argv.
+export { program };
+
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
 // only strips argv[0] and treats the script path as the first user command.
 // Force node-style argv parsing so the shim that spawns us via Electron-as-Node
 // (see MaestroCliManager.writeUnixShim / writeWindowsShim) works correctly.
-program.parse(process.argv, { from: 'node' });
+if (!process.env.VITEST) {
+	program.parse(process.argv, { from: 'node' });
+}

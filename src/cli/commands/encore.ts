@@ -31,6 +31,9 @@ const FEATURES: Record<string, string> = {
 	aCappella: 'A Cappella (Voice)',
 };
 
+/** Every feature id `enable` accepts on some platform, in the order `list` prints them. */
+export const ENCORE_FEATURE_KEYS: readonly string[] = Object.keys(FEATURES);
+
 const ALIASES: Record<string, string> = {
 	'director-notes': 'directorNotes',
 	directornotes: 'directorNotes',

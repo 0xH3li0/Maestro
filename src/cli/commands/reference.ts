@@ -9,6 +9,7 @@
 // `npm run gen:cli-reference` pipes the Markdown form into docs/cli-reference.md.
 
 import type { Command } from 'commander';
+import { commandPath, examplesFor } from '../command-examples';
 
 interface OptionInfo {
 	flags: string;
@@ -21,6 +22,7 @@ interface CommandInfo {
 	description: string;
 	args: string;
 	options: OptionInfo[];
+	examples: readonly string[];
 	subcommands: CommandInfo[];
 }
 
@@ -59,6 +61,7 @@ function buildInfo(cmd: Command, parentPath: string): CommandInfo {
 		description: cmd.description() ?? '',
 		args: argSignature(cmd),
 		options: optionInfo(cmd),
+		examples: examplesFor(commandPath(cmd)),
 		subcommands: cmd.commands.map((c) => buildInfo(c as Command, path)),
 	};
 }
@@ -117,6 +120,12 @@ function toMarkdown(root: CommandInfo): string {
 				const flags = opt.flags.replace(/\|/g, '\\|');
 				lines.push(`| \`${flags}\` | ${desc} | ${def} |`);
 			}
+			lines.push('');
+		}
+		if (cmd.examples.length > 0) {
+			lines.push('```bash');
+			lines.push(...cmd.examples);
+			lines.push('```');
 			lines.push('');
 		}
 	}
