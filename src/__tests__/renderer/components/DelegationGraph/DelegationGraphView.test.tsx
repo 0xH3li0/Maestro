@@ -46,8 +46,27 @@ interface FlowProps {
 	onEdgeClick?: (event: ReactMouseEvent, edge: Edge<DelegationEdgeData>) => void;
 	nodesConnectable?: boolean;
 	deleteKeyCode?: string | null;
+	// The ways reactflow removes a node or an edge. The view passes none of them.
+	onNodesDelete?: unknown;
+	onEdgesDelete?: unknown;
+	onEdgesChange?: unknown;
+	onEdgeUpdate?: unknown;
+	onReconnect?: unknown;
 	children?: ReactNode;
 }
+
+/**
+ * The props through which reactflow takes a node or an edge away: the two
+ * delete callbacks, the edge changes a controlled canvas applies, and the two
+ * names of the handler that lets the end of an edge be dragged off its agent.
+ */
+const REMOVAL_PROPS = [
+	'onNodesDelete',
+	'onEdgesDelete',
+	'onEdgesChange',
+	'onEdgeUpdate',
+	'onReconnect',
+] as const;
 
 const flow = vi.hoisted(() => ({
 	props: null as FlowProps | null,
@@ -163,6 +182,7 @@ import type { Group, Session } from '../../../../renderer/types';
 import {
 	buildDelegationGraph,
 	delegationEdgeId,
+	edgeBetween,
 	isMutual,
 	type DelegationGraphScope,
 } from '../../../../shared/delegationGraph';
@@ -486,6 +506,14 @@ function sessionOf(id: string): Session {
 	return session;
 }
 
+/** The agents whose object is not the one in `before`: the agents a write replaced. */
+function changedAgentIds(before: Session[]): string[] {
+	return before
+		.filter((session) => sessionOf(session.id) !== session)
+		.map((session) => session.id)
+		.sort();
+}
+
 function setSessions(update: (sessions: Session[]) => Session[]): void {
 	act(() => {
 		useSessionStore.setState((state) => ({ sessions: update(state.sessions) }));
@@ -613,6 +641,35 @@ describe('DelegationGraphView', () => {
 			expect(flow.props?.deleteKeyCode).toBeNull();
 		});
 
+		// reactflow lets the end of an edge be dragged off its agent, which deletes
+		// the edge, only when it is handed a handler for it. It is handed none, and
+		// no delete callback either, so an edge has one way out: its editor.
+		it('hands the canvas no way to drag an edge off or delete anything, in either mode', () => {
+			renderView();
+
+			for (const mode of ['view', 'edit', 'view'] as const) {
+				switchMode(mode);
+				for (const prop of REMOVAL_PROPS) {
+					expect(flow.props?.[prop], `${prop} in ${mode}`).toBeUndefined();
+				}
+				expect(flow.props?.deleteKeyCode).toBeNull();
+			}
+		});
+
+		// A drag in View is a layout gesture and nothing else.
+		it('moves an agent in View and writes to no roster', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+
+			drag('a', DRAGGED);
+			rest();
+
+			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
+			expect(edgeEditor()).not.toBeInTheDocument();
+		});
+
 		it('disarms the canvas on the way back to View', () => {
 			renderView();
 
@@ -712,6 +769,7 @@ describe('DelegationGraphView', () => {
 			renderView();
 			switchMode('edit');
 			const epsilonBefore = sessionOf('e');
+			const before = useSessionStore.getState().sessions;
 
 			connect('c', 'e');
 			confirmEdge();
@@ -719,6 +777,8 @@ describe('DelegationGraphView', () => {
 			expect(sessionOf('c').peerAgents).toEqual([{ sessionId: 'e', read: true, write: false }]);
 			// The agent the edge ends on is the same object: nothing was written to it.
 			expect(sessionOf('e')).toBe(epsilonBefore);
+			// Nor to any other agent. Gamma is the one object that was replaced.
+			expect(changedAgentIds(before)).toEqual(['c']);
 			expect(drawnEdgeIds()).toContain(delegationEdgeId('c', 'e'));
 			expect(edgeEditor()).not.toBeInTheDocument();
 			// Gamma was isolated until this edge.
@@ -822,6 +882,41 @@ describe('DelegationGraphView', () => {
 			expect(isMutual(model, 'd', 'e')).toBe(true);
 			expect(edgeEl(delegationEdgeId('d', 'e')).dataset.hasReverse).toBe('true');
 			expect(edgeEl(delegationEdgeId('e', 'd')).dataset.hasReverse).toBe('true');
+		});
+
+		// The manager delegates down and the employee only consults up. Two
+		// gestures, two rows, and the second gesture leaves the first row alone.
+		it('builds a manager and employee pair in two gestures, and neither undoes the other', () => {
+			renderView();
+			switchMode('edit');
+			const before = useSessionStore.getState().sessions;
+
+			// Gamma, the manager, delegates to Epsilon and does not consult it.
+			connect('c', 'e');
+			fireEvent.click(accessSquare('write'));
+			fireEvent.click(accessSquare('read'));
+			confirmEdge();
+			const managerAfterFirst = sessionOf('c');
+			expect(changedAgentIds(before)).toEqual(['c']);
+
+			// Epsilon, the employee, consults Gamma and does not delegate to it.
+			connect('e', 'c');
+			expect(screen.getByTestId('delegation-edge-editor-reverse')).toHaveTextContent(
+				'Gamma may already delegate to Epsilon'
+			);
+			confirmEdge();
+
+			// The second gesture wrote to Epsilon only: Gamma is the object the first one left.
+			expect(sessionOf('c')).toBe(managerAfterFirst);
+			expect(sessionOf('c').peerAgents).toEqual([{ sessionId: 'e', read: false, write: true }]);
+			expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'c', read: true, write: false }]);
+			expect(changedAgentIds(before)).toEqual(['c', 'e']);
+
+			const model = buildDelegationGraph(ALL, useSessionStore.getState().sessions);
+			expect(isMutual(model, 'c', 'e')).toBe(true);
+			expect(edgeBetween(model, 'c', 'e')).toMatchObject({ read: false, write: true });
+			expect(edgeBetween(model, 'e', 'c')).toMatchObject({ read: true, write: false });
+			expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'c->e', 'd->e', 'e->c']);
 		});
 
 		it('turns an edge a grant derived into a row, and leaves the grant alone', () => {
@@ -1162,6 +1257,29 @@ describe('DelegationGraphView', () => {
 					`The "${PEER_GRANT_LABELS.group}" grant of Epsilon is still in force`
 				);
 				expect(notice.message).toContain('A row with no access was written for Alpha');
+			});
+
+			it('does the same for an edge the worktree grant derived, and leaves that grant alone', () => {
+				// Gamma is a worktree child of Alpha and reaches it through the family grant.
+				patchSession('c', {
+					parentSessionId: 'a',
+					worktreePeerAccess: { read: true, write: true },
+				});
+				renderView();
+				switchMode('edit');
+				const before = useSessionStore.getState().sessions;
+
+				clickEdge('c->a');
+				expect(deleteEdgeButton()).toHaveTextContent('Exclude peer');
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(sessionOf('c').peerAgents).toEqual([{ sessionId: 'a', read: false, write: false }]);
+				expect(sessionOf('c').worktreePeerAccess).toEqual({ read: true, write: true });
+				expect(changedAgentIds(before)).toEqual(['c']);
+				expect(drawnEdgeIds()).not.toContain('c->a');
+				expect(removalToast().message).toContain(
+					`The "${PEER_GRANT_LABELS.worktree}" grant of Gamma is still in force`
+				);
 			});
 		});
 
