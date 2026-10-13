@@ -29,6 +29,7 @@ import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { PeerGrants } from '../../../shared/peerAgents';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
@@ -89,7 +90,9 @@ export interface UseSessionCrudReturn {
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
 		gatewayUrl?: string,
 		/** Run on target, already validated; `undefined` means the provider's model. */
-		runOn?: RunOnSourceTarget
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -190,7 +193,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Local Models gateway URL, already validated; `undefined` sets none. */
 			gatewayUrl?: string,
 			/** Run on target, already validated; `undefined` means the provider's model. */
-			runOn?: RunOnSourceTarget
+			runOn?: RunOnSourceTarget,
+			/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+			peerGrants?: PeerGrants
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -339,6 +344,11 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// Set from the New Agent Models tab. Absent means the provider's
 					// own model. A target takes the gateway's place at launch.
 					runOn,
+					// Set from the New Agent Peers tab. Each source is stored only when
+					// it is on: an absent field is what the roster reads as off.
+					peerAgents: peerGrants?.peerAgents,
+					groupPeerAccess: peerGrants?.groupPeerAccess,
+					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};

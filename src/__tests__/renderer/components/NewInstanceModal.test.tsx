@@ -55,6 +55,16 @@ const createTheme = (): Theme => ({
 });
 
 // Create test agent configs
+/**
+ * The 25th `onCreate` argument of a form whose Peers tab was never touched:
+ * every source of the roster is absent, which is what the data model reads as off.
+ */
+const NO_PEER_GRANTS = {
+	peerAgents: undefined,
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
+};
+
 const createAgentConfig = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 	id: 'claude-code',
 	name: 'Claude Code',
@@ -909,7 +919,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -968,7 +979,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -1027,7 +1039,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 	});
@@ -1087,7 +1100,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1652,7 +1666,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -1817,7 +1832,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 	});
@@ -3006,7 +3022,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -3246,7 +3263,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -3564,7 +3582,8 @@ describe('NewInstanceModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
-				undefined // runOn: the provider's own model unless chosen on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 

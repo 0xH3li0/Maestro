@@ -31,6 +31,7 @@ import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
+import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
 import { RunOnField } from '../shared/RunOnField';
 import { TierTargetsField } from '../shared/TierTargetsField';
@@ -540,18 +541,11 @@ export function EditAgentModal({
 	/** Live store entry for this agent; see the snapshot note in the memo below. */
 	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
 
-	// What the Peers tab draws from besides the form: the live fleet (the three
-	// fields its picker and its group count read) and the group this agent is in
-	// right now. This form does not edit the group, so the live entry is the
-	// truth and the opening snapshot is the fallback.
-	const fleetSessions = useSessionStore((s) => s.sessions);
-	const groups = useSessionStore((s) => s.groups);
-	const peerFleet = useMemo(
-		() => fleetSessions.map(({ id, name, groupId }) => ({ id, name, groupId })),
-		[fleetSessions]
-	);
+	// What the Peers tab draws from besides the form: the live fleet and the
+	// group this agent is in right now. This form does not edit the group, so the
+	// live entry is the truth and the opening snapshot is the fallback.
 	const peerGroupId = (liveSession ?? session)?.groupId;
-	const peerGroupName = peerGroupId ? groups.find((g) => g.id === peerGroupId)?.name : undefined;
+	const peerFleet = usePeerFleet(peerGroupId);
 
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
@@ -1365,10 +1359,9 @@ export function EditAgentModal({
 						onGroupAccessChange={setGroupPeerAccess}
 						worktreeAccess={worktreePeerAccess}
 						onWorktreeAccessChange={setWorktreePeerAccess}
-						availableAgents={peerFleet}
+						{...peerFleet}
 						selfSessionId={session.id}
 						groupId={peerGroupId}
-						groupName={peerGroupName}
 					/>
 				)}
 

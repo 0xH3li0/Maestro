@@ -619,6 +619,62 @@ describe('useSessionCrud', () => {
 
 			expect(useSessionStore.getState().sessions[0].runOn).toEqual(chosen);
 		});
+
+		// The New Agent Peers tab's grants: the explicit rows, the group grant and
+		// the worktree grant, in one argument.
+		describe('Peer grants', () => {
+			const createWith = async (peerGrants: unknown) => {
+				const deps = createDeps();
+				const { result } = renderHook(() => useSessionCrud(deps));
+
+				// peerGrants is the 25th positional argument.
+				const args: unknown[] = ['claude-code', '/test/project', 'Peer Session'];
+				args[24] = peerGrants;
+				const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+				await act(async () => {
+					await create(...args);
+				});
+				return useSessionStore.getState().sessions[0];
+			};
+
+			it('stores the rows and both grants on the created agent', async () => {
+				const peerAgents = [
+					{ sessionId: 'agent-a', read: true, write: false, description: 'Owns the docs' },
+					// Neither bit lit: an exclusion, which must be stored as it is.
+					{ sessionId: 'agent-b', read: false, write: false },
+				];
+				const session = await createWith({
+					peerAgents,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+
+				expect(session.peerAgents).toEqual(peerAgents);
+				expect(session.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(session.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('stores only the sources that are on', async () => {
+				const session = await createWith({
+					peerAgents: undefined,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: undefined,
+				});
+
+				expect(session.peerAgents).toBeUndefined();
+				expect(session.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(session.worktreePeerAccess).toBeUndefined();
+			});
+
+			// Every caller that predates the Peers tab passes 24 arguments.
+			it('creates an agent with no peers when the argument is absent', async () => {
+				const session = await createWith(undefined);
+
+				expect(session.peerAgents).toBeUndefined();
+				expect(session.groupPeerAccess).toBeUndefined();
+				expect(session.worktreePeerAccess).toBeUndefined();
+			});
+		});
 	});
 
 	// ========================================================================

@@ -61,7 +61,9 @@ export interface AppSessionModalsProps {
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
 		gatewayUrl?: string,
 		/** Run on target, already validated; `undefined` means the provider's model. */
-		runOn?: RunOnSourceTarget
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication

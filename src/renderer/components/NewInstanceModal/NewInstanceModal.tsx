@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Folder, AlertTriangle, Terminal, Users } from 'lucide-react';
-import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../types';
+import { Folder, AlertTriangle, Terminal } from 'lucide-react';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	PeerAccess,
+	PeerAgent,
+	Session,
+	ToolType,
+} from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { normalizePeerAgents } from '../../../shared/peerAgents';
 import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
@@ -21,6 +29,7 @@ import {
 	firstTabWithError,
 	GeneralTab,
 	ModelsTab,
+	PeersTab,
 	ProviderTab,
 	SshTab,
 } from '../AgentSettings';
@@ -41,6 +50,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import type { AgentDebugInfo, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
+import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import {
@@ -77,6 +87,10 @@ export function NewInstanceModal({
 	const [showAllProviders, setShowAllProviders] = useState(false);
 	const [workingDir, setWorkingDir] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
+	// Peer Agents: the explicit rows and the two grants. An absent grant is off.
+	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
+	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
@@ -146,6 +160,10 @@ export function NewInstanceModal({
 	// opens from the source session (when duplicating) or the caller's preset.
 	const [selectedGroupId, setSelectedGroupId] = useState<string>('');
 	const groups = useSessionStore((s) => s.groups);
+	// The Peers tab counts the group selected here, so choosing a group on General
+	// is what enables its group grant.
+	const peerGroupId = selectedGroupId || undefined;
+	const peerFleet = usePeerFleet(peerGroupId);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -360,6 +378,10 @@ export function NewInstanceModal({
 				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
+				// The copy starts with the source's peer grants, cloned for the same reason.
+				setPeerAgents((source.peerAgents ?? []).map((peer) => ({ ...peer })));
+				setGroupPeerAccess(source.groupPeerAccess && { ...source.groupPeerAccess });
+				setWorktreePeerAccess(source.worktreePeerAccess && { ...source.worktreePeerAccess });
 				setInstanceName(`${source.name} (Copy)`);
 				setNudgeMessage(source.nudgeMessage || '');
 				setNewSessionMessage(source.newSessionMessage || '');
@@ -771,7 +793,12 @@ export function NewInstanceModal({
 			codexTransportByAgent[selectedAgent] ?? 'exec',
 			gatewayEdit.gatewayUrl ?? undefined,
 			// Provider is the absence of a target on the agent record.
-			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined
+			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined,
+			{
+				peerAgents: normalizePeerAgents(peerAgents),
+				groupPeerAccess,
+				worktreePeerAccess,
+			}
 		);
 		onClose();
 
@@ -779,6 +806,9 @@ export function NewInstanceModal({
 		setInstanceName('');
 		handleWorkingDirChange('');
 		setAdditionalDirectories([]);
+		setPeerAgents([]);
+		setGroupPeerAccess(undefined);
+		setWorktreePeerAccess(undefined);
 		setNudgeMessage('');
 		setNewSessionMessage('');
 		// Reset per-agent config for selected agent
@@ -827,6 +857,9 @@ export function NewInstanceModal({
 		selectedAgent,
 		workingDir,
 		additionalDirectories,
+		peerAgents,
+		groupPeerAccess,
+		worktreePeerAccess,
 		homeDir,
 		nudgeMessage,
 		newSessionMessage,
@@ -1587,15 +1620,20 @@ export function NewInstanceModal({
 					))}
 
 				{activeTab === 'peers' && (
-					// A placeholder until this form holds peer state of its own: Edit
-					// Agent is wired first (MODELS-14 mounts `PeersTab` here next).
-					<AgentSettingsPanel theme={theme} idPrefix="new-agent" tab="peers">
-						<EmptyStatePlaceholder
-							theme={theme}
-							icon={<Users className="w-10 h-10" />}
-							title="Peer Agents are set up here."
-						/>
-					</AgentSettingsPanel>
+					// No `selfSessionId`: the agent has no id until it is created, so the
+					// picker offers the whole fleet.
+					<PeersTab
+						theme={theme}
+						idPrefix="new-agent"
+						peers={peerAgents}
+						onChange={setPeerAgents}
+						groupAccess={groupPeerAccess}
+						onGroupAccessChange={setGroupPeerAccess}
+						worktreeAccess={worktreePeerAccess}
+						onWorktreeAccessChange={setWorktreePeerAccess}
+						{...peerFleet}
+						groupId={peerGroupId}
+					/>
 				)}
 
 				{activeTab === 'ssh' && (
