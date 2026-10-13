@@ -99,6 +99,13 @@ export const MODAL_PRIORITIES = {
 	/** Rename group modal */
 	RENAME_GROUP: 850,
 
+	/**
+	 * Group Settings modal: the defaults a new agent in one group starts with.
+	 * Sits with Rename Group, the other per-group dialog. Its publish and clear
+	 * confirmations use CONFIRM, which is above it.
+	 */
+	GROUP_SETTINGS: 849,
+
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 

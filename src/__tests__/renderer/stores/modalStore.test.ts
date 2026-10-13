@@ -413,6 +413,7 @@ describe('modalStore', () => {
 				'renameInstance',
 				'renameTab',
 				'renameGroup',
+				'groupSettings',
 				'agentSessions',
 				'memoryViewer',
 				'queueBrowser',
@@ -760,6 +761,40 @@ describe('modalStore', () => {
 			expect(data?.groupId).toBe('group-1');
 			expect(data?.value).toBe('Work Projects');
 			expect(data?.emoji).toBe('💼');
+		});
+	});
+
+	describe('integration: group settings flow', () => {
+		it('openGroupSettings opens the modal on the given group', () => {
+			getModalActions().openGroupSettings('group-1');
+
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'group-1' });
+		});
+
+		it('openGroupSettings on a second group replaces the first', () => {
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().openGroupSettings('group-2');
+
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'group-2' });
+		});
+
+		it('closeGroupSettings closes the modal and drops the group id', () => {
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().closeGroupSettings();
+
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(false);
+			expect(useModalStore.getState().getData('groupSettings')).toBeUndefined();
+		});
+
+		it('leaves Rename Group alone', () => {
+			useModalStore
+				.getState()
+				.openModal('renameGroup', { groupId: 'group-1', value: 'Backend', emoji: '🌳' });
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().closeGroupSettings();
+
+			expect(useModalStore.getState().isOpen('renameGroup')).toBe(true);
 		});
 	});
 

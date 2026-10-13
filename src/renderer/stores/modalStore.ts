@@ -166,6 +166,11 @@ export interface RenameGroupModalData {
 	color?: string;
 }
 
+/** Group Settings modal data: the group whose defaults for new agents are edited. */
+export interface GroupSettingsModalData {
+	groupId: string;
+}
+
 /** Agent sessions browser data */
 export interface AgentSessionsModalData {
 	activeAgentSessionId: string | null;
@@ -392,6 +397,7 @@ export type ModalId =
 	| 'tabCleanup'
 	// Group Management
 	| 'renameGroup'
+	| 'groupSettings'
 	// Session Operations
 	| 'mergeSession'
 	| 'sendToAgent'
@@ -581,6 +587,7 @@ export interface ModalDataMap {
 	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
+	groupSettings: GroupSettingsModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
@@ -1102,6 +1109,10 @@ export function getModalActions() {
 				openModal('renameGroup', { groupId: '', value: '', emoji: '📂', color });
 			}
 		},
+
+		// Group Settings Modal
+		openGroupSettings: (groupId: string) => openModal('groupSettings', { groupId }),
+		closeGroupSettings: () => closeModal('groupSettings'),
 
 		// Agent Sessions Browser
 		setAgentSessionsOpen: (open: boolean) =>
