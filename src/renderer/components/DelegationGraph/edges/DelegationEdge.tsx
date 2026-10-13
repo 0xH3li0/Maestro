@@ -24,9 +24,16 @@
  *
  * The data holds agent ids and never a name. Both names are read from the
  * session store on every render, the same rule `AgentDelegationNode` follows.
+ *
+ * The badge is also the way INTO an edge. While the canvas hands the edge an
+ * `onOpen` (Edit mode), the badge is a button: a click, Enter or Space opens
+ * the edge editor there. The line itself is opened by the canvas
+ * (`onEdgeClick`), which is why a click on the badge stops here: the badge is
+ * drawn through a portal, and a React event bubbles through a portal to the
+ * edge it belongs to, so the canvas would open the same edge a second time.
  */
 
-import { memo, useCallback } from 'react';
+import { memo, useCallback, type KeyboardEvent, type MouseEvent } from 'react';
 import {
 	BaseEdge,
 	EdgeLabelRenderer,
@@ -61,6 +68,11 @@ export interface DelegationEdgeData {
 	/** The opposite edge exists too: `isMutual(model, edge.sourceId, edge.targetId)`. */
 	hasReverse: boolean;
 	emphasis?: DelegationEdgeEmphasis;
+	/**
+	 * Open this edge for editing, at a point of the window. Present only while
+	 * the canvas lets a relationship be changed; absent, the badge is a label.
+	 */
+	onOpen?: (edge: DelegationGraphEdge, anchor: { x: number; y: number }) => void;
 	theme: Theme;
 }
 
@@ -263,7 +275,7 @@ export const DelegationEdge = memo(function DelegationEdge({
 
 	const kind = data ? delegationEdgeKind(data.edge) : null;
 	if (!data || !kind) return null;
-	const { edge, hasReverse, emphasis, theme } = data;
+	const { edge, hasReverse, emphasis, onOpen, theme } = data;
 
 	const { path, labelX, labelY } = delegationEdgeGeometry(
 		anchorOfNode(sourceNode, sourceX, sourceY),
@@ -275,11 +287,22 @@ export const DelegationEdge = memo(function DelegationEdge({
 	const opacity = delegationEdgeOpacity(edge.source, emphasis);
 	const raised = selected || emphasis === 'highlighted';
 	// An agent can be deleted a render before the graph drops its edges.
-	const lines = describeDelegationEdge(
-		edge,
-		sourceName ?? removedAgentLabel(sourceId),
-		targetName ?? removedAgentLabel(targetId)
-	);
+	const sourceLabel = sourceName ?? removedAgentLabel(sourceId);
+	const targetLabel = targetName ?? removedAgentLabel(targetId);
+	const lines = describeDelegationEdge(edge, sourceLabel, targetLabel);
+
+	const openAtPointer = (event: MouseEvent) => {
+		// The canvas opens the line. See the file comment.
+		event.stopPropagation();
+		onOpen?.(edge, { x: event.clientX, y: event.clientY });
+	};
+	const openAtBadge = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+		event.stopPropagation();
+		const rect = event.currentTarget.getBoundingClientRect();
+		onOpen?.(edge, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+	};
 
 	return (
 		<>
@@ -316,11 +339,21 @@ export const DelegationEdge = memo(function DelegationEdge({
 					data-testid="delegation-edge-label"
 					data-edge-id={id}
 					data-edge-grant={edge.source}
+					{...(onOpen
+						? {
+								role: 'button',
+								tabIndex: 0,
+								'aria-label': `Edit the edge from ${sourceLabel} to ${targetLabel}`,
+								onClick: openAtPointer,
+								onKeyDown: openAtBadge,
+							}
+						: {})}
 					style={{
 						position: 'absolute',
 						transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
 						pointerEvents: 'all',
 						display: 'flex',
+						cursor: onOpen ? 'pointer' : undefined,
 						opacity,
 					}}
 				>

@@ -1,9 +1,11 @@
 /**
  * Tests for DelegationEdgeEditor - the popover that states one relationship.
  *
- * The write itself is `writeDelegationEdge` and has its own test. What is
- * pinned here is what the editor offers, what it hands `onConfirm`, and what it
- * says about an edge that already exists in either direction.
+ * The writes are `writeDelegationEdge`, `deleteDelegationEdge` and
+ * `excludeDelegationPeer`, which have their own test. What is pinned here is
+ * what the editor offers, what it hands `onConfirm` and `onDelete`, and what it
+ * says about an edge that already exists in either direction, before the click
+ * that takes one away.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -44,6 +46,7 @@ function edge(
 function renderEditor(props: Partial<DelegationEdgeEditorProps> = {}) {
 	const handlers = {
 		onConfirm: vi.fn<DelegationEdgeEditorProps['onConfirm']>(() => null),
+		onDelete: vi.fn<NonNullable<DelegationEdgeEditorProps['onDelete']>>(() => null),
 		onClose: vi.fn(),
 	};
 	render(
@@ -71,6 +74,17 @@ function note(): HTMLInputElement {
 
 function confirmButton(): HTMLElement {
 	return screen.getByTestId('delegation-edge-editor-confirm');
+}
+
+function deleteButton(): HTMLElement | null {
+	return screen.queryByTestId('delegation-edge-editor-delete');
+}
+
+/** Switch off every bit that is lit. */
+function clearBothBits(): void {
+	for (const bit of ['read', 'write'] as const) {
+		if (square(bit).getAttribute('aria-checked') === 'true') fireEvent.click(square(bit));
+	}
 }
 
 describe('DelegationEdgeEditor', () => {
@@ -149,9 +163,16 @@ describe('DelegationEdgeEditor', () => {
 			expect(screen.queryByTestId('delegation-edge-editor-existing')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('delegation-edge-editor-reverse')).not.toBeInTheDocument();
 		});
+
+		// There is nothing to take away yet, even when the caller hands a handler.
+		it('offers no delete action', () => {
+			renderEditor();
+
+			expect(deleteButton()).not.toBeInTheDocument();
+		});
 	});
 
-	describe('an edge with neither bit', () => {
+	describe('a new edge with neither bit', () => {
 		it('cannot be confirmed, by the button or by Enter, and says why', () => {
 			const { onConfirm } = renderEditor();
 
@@ -201,6 +222,113 @@ describe('DelegationEdgeEditor', () => {
 			expect(existing).toHaveTextContent('Alpha may consult Beta');
 			expect(existing).toHaveTextContent(PEER_GRANT_LABELS.group);
 			expect(existing).toHaveTextContent('overrides the grant');
+		});
+	});
+
+	describe('taking an edge away', () => {
+		it('offers to delete an edge the user wrote, and says what that removes', () => {
+			const { onDelete, onConfirm } = renderEditor({ existing: edge('a', 'b') });
+
+			const button = deleteButton()!;
+			expect(button).toHaveTextContent('Delete edge');
+			expect(button).toHaveAttribute(
+				'title',
+				expect.stringContaining('Removes the row for Beta from the Peers of Alpha')
+			);
+
+			fireEvent.click(button);
+
+			expect(onDelete).toHaveBeenCalledTimes(1);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
+
+		// A derived edge has no row. The action is named for what it writes.
+		it.each(['group', 'worktree'] as const)(
+			'names the action Exclude peer for an edge the %s grant derived, and says why',
+			(grant) => {
+				const { onDelete } = renderEditor({ existing: edge('a', 'b', { source: grant }) });
+
+				const button = deleteButton()!;
+				expect(button).toHaveTextContent('Exclude peer');
+				expect(button).not.toHaveTextContent('Delete');
+				expect(button).toHaveAttribute('title', expect.stringContaining(PEER_GRANT_LABELS[grant]));
+				expect(button).toHaveAttribute('title', expect.stringContaining('no row to delete'));
+
+				fireEvent.click(button);
+
+				expect(onDelete).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it('offers no delete action when the caller hands none', () => {
+			renderEditor({ existing: edge('a', 'b'), onDelete: undefined });
+
+			expect(deleteButton()).not.toBeInTheDocument();
+		});
+
+		it('shows why a delete was refused and stays open', () => {
+			const { onClose } = renderEditor({
+				existing: edge('a', 'b'),
+				onDelete: () => 'This edge is no longer on the graph.',
+			});
+
+			fireEvent.click(deleteButton()!);
+
+			expect(screen.getByTestId('delegation-edge-editor-error')).toHaveTextContent(
+				'This edge is no longer on the graph.'
+			);
+			expect(onClose).not.toHaveBeenCalled();
+		});
+	});
+
+	// Clearing both bits is the exclusion, not a delete, and the editor says so
+	// before the click.
+	describe('an existing edge saved with neither bit', () => {
+		it('can be confirmed, says it excludes and is not a delete, and hands over neither bit', () => {
+			const { onConfirm, onDelete } = renderEditor({
+				existing: edge('a', 'b', { read: true, write: true, description: 'Owns the build' }),
+			});
+
+			clearBothBits();
+
+			expect(confirmButton()).not.toBeDisabled();
+			expect(confirmButton()).toHaveTextContent('Save as excluded');
+			const excludes = screen.getByTestId('delegation-edge-editor-excludes');
+			expect(excludes).toHaveTextContent('Beta is excluded');
+			expect(excludes).toHaveTextContent('It is not a delete.');
+			expect(excludes).toHaveTextContent('To remove the row, use Delete edge.');
+			expect(screen.queryByTestId('delegation-edge-editor-needs-access')).not.toBeInTheDocument();
+
+			fireEvent.click(confirmButton());
+
+			expect(onConfirm).toHaveBeenCalledWith({
+				read: false,
+				write: false,
+				description: 'Owns the build',
+			});
+			expect(onDelete).not.toHaveBeenCalled();
+		});
+
+		// There is no row to remove under a derived edge, so the line does not
+		// point at a delete that does not exist.
+		it('does not point a derived edge at Delete edge', () => {
+			renderEditor({ existing: edge('a', 'b', { source: 'group' }) });
+
+			clearBothBits();
+
+			const excludes = screen.getByTestId('delegation-edge-editor-excludes');
+			expect(excludes).toHaveTextContent('It is not a delete.');
+			expect(excludes).not.toHaveTextContent('Delete edge');
+		});
+
+		it('reads Save edge again once a bit is lit', () => {
+			renderEditor({ existing: edge('a', 'b') });
+
+			clearBothBits();
+			fireEvent.click(square('write'));
+
+			expect(confirmButton()).toHaveTextContent('Save edge');
+			expect(screen.queryByTestId('delegation-edge-editor-excludes')).not.toBeInTheDocument();
 		});
 	});
 

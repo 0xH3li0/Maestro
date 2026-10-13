@@ -13,7 +13,12 @@
  * an edge dragged from one agent to another opens `DelegationEdgeEditor` where
  * it was dropped, and confirming it writes one row into the roster of the
  * agent the edge STARTS from (`writeDelegationEdge`). Nothing is written to
- * the agent it ends on, and nothing is written before the confirm.
+ * the agent it ends on, and nothing is written before the confirm. An edge
+ * already drawn opens the same editor when it is clicked, on its line or on
+ * its badge, and that is where it is changed and taken away. Taking one away
+ * is two different writes (`deleteDelegationEdge`): the row of an edge the user
+ * wrote is deleted, and an edge a grant derived has no row, so the peer is
+ * excluded. A toast says which one happened.
  * The switch is a guard and not ceremony: a graph of a real fleet is a dense
  * target, and a slipped drag on a surface that looks read-only would rewrite
  * an agent's permissions without a sign that it had. The mode is not saved,
@@ -39,7 +44,15 @@
  * under the pointer is never pulled back to where it was saved a moment ago.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ChangeEvent,
+	type MouseEvent as ReactMouseEvent,
+} from 'react';
 import ReactFlow, {
 	Background,
 	Controls,
@@ -61,6 +74,7 @@ import {
 	delegationEdgeRefusal,
 	delegationGraphStats,
 	edgeBetween,
+	type DelegationGraphEdge,
 	type DelegationGraphModel,
 	type DelegationGraphScope,
 } from '../../../shared/delegationGraph';
@@ -70,9 +84,18 @@ import {
 	type DelegationSavedPositions,
 } from '../../../shared/delegationGraphLayout';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { hasAnyPeerAccess } from '../../../shared/peerAgents';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { openAgentSettings } from '../../services/agentNavigation';
-import { writeDelegationEdge, type DelegationEdgeDraft } from '../../services/delegationGraphEdits';
+import {
+	DELEGATION_EDGE_NEEDS_ACCESS,
+	deleteDelegationEdge,
+	describeDelegationEdgeRemoval,
+	excludeDelegationPeer,
+	writeDelegationEdge,
+	type DelegationEdgeDraft,
+} from '../../services/delegationGraphEdits';
+import { notifyToast } from '../../stores/notificationStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { ConfirmModal } from '../ConfirmModal';
 import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
@@ -129,9 +152,9 @@ type AgentNode = Node<AgentDelegationNodeData>;
 type PendingChange = { kind: 'layout'; layout: DelegationAlgorithmLayout } | { kind: 'reset' };
 
 /**
- * A connection the user dropped and has not confirmed. `edge` is a question
- * the editor asks; `refused` is a drop that makes no edge, with the reason.
- * Neither has written anything.
+ * An edge the user dropped, or clicked, and has not confirmed. `edge` is a
+ * question the editor asks; `refused` is a drop that makes no edge, with the
+ * reason. Neither has written anything.
  */
 type PendingEdge =
 	| { kind: 'edge'; sourceId: string; targetId: string; anchor: DelegationEdgeEditorAnchor }
@@ -366,32 +389,82 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		[nodes, focus]
 	);
 
+	// An edge the user dropped or clicked, until it is confirmed or closed. It
+	// belongs to the scope and the mode it was opened in, so a change of either
+	// discards it.
+	const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
+	const canvasRef = useRef<HTMLDivElement>(null);
+	// reactflow reports a connection first (`onConnect`, which has no pointer)
+	// and the end of the gesture second (`onConnectEnd`, which has one). This
+	// says the end that is coming belongs to a connection, and not to an edge
+	// dropped on nothing.
+	const awaitingDropPointRef = useRef(false);
+
+	// Open an edge that is already drawn, where it was clicked. Only in Edit: in
+	// View the canvas hands no edge a way in at all.
+	const openEdgeEditor = useCallback(
+		(sourceId: string, targetId: string, anchor: DelegationEdgeEditorAnchor) => {
+			if (!isEditing) return;
+			awaitingDropPointRef.current = false;
+			setPendingEdge({ kind: 'edge', sourceId, targetId, anchor });
+		},
+		[isEditing]
+	);
+	// The line, from reactflow.
+	const handleEdgeClick = useCallback(
+		(event: ReactMouseEvent, edge: Edge) =>
+			openEdgeEditor(edge.source, edge.target, { x: event.clientX, y: event.clientY }),
+		[openEdgeEditor]
+	);
+	// The badge, from the edge itself: a click, Enter or Space.
+	const handleEdgeOpen = useCallback(
+		(edge: DelegationGraphEdge, anchor: DelegationEdgeEditorAnchor) =>
+			openEdgeEditor(edge.sourceId, edge.targetId, anchor),
+		[openEdgeEditor]
+	);
+
+	// The edge the open editor is about. It is raised, so the popover can be
+	// matched to its line on a dense graph.
+	const editedEdgeId =
+		pendingEdge?.kind === 'edge'
+			? delegationEdgeId(pendingEdge.sourceId, pendingEdge.targetId)
+			: null;
+
 	const edges = useMemo<Edge<DelegationEdgeData>[]>(() => {
 		const edgeIds = new Set(model.edges.map((edge) => edge.id));
 		const markerEnd = delegationEdgeMarker(theme);
-		return model.edges.map((edge) => ({
-			id: edge.id,
-			source: edge.sourceId,
-			target: edge.targetId,
-			type: 'delegation',
-			markerEnd,
-			selectable: false,
-			focusable: false,
-			data: {
-				edge,
-				hasReverse: edgeIds.has(delegationEdgeId(edge.targetId, edge.sourceId)),
-				...(focus
-					? {
-							emphasis:
-								edge.sourceId === focus.selectedId || edge.targetId === focus.selectedId
-									? ('highlighted' as const)
-									: ('dimmed' as const),
-						}
-					: {}),
-				theme,
-			},
-		}));
-	}, [model, theme, focus]);
+		const emphasisOf = (edge: DelegationGraphEdge): DelegationEdgeData['emphasis'] => {
+			if (edge.id === editedEdgeId) return 'highlighted';
+			if (!focus) return undefined;
+			return edge.sourceId === focus.selectedId || edge.targetId === focus.selectedId
+				? 'highlighted'
+				: 'dimmed';
+		};
+		return model.edges.map((edge) => {
+			const emphasis = emphasisOf(edge);
+			return {
+				id: edge.id,
+				source: edge.sourceId,
+				target: edge.targetId,
+				type: 'delegation',
+				markerEnd,
+				// Never selected and never focused through reactflow: the edges are
+				// controlled and no change is applied to them, so a selection would
+				// not show, and reactflow's own key handling opens nothing. An edge is
+				// opened by a click on its line (`onEdgeClick`) and through its badge,
+				// which is a button in Edit.
+				selectable: false,
+				focusable: false,
+				data: {
+					edge,
+					hasReverse: edgeIds.has(delegationEdgeId(edge.targetId, edge.sourceId)),
+					...(emphasis ? { emphasis } : {}),
+					...(isEditing ? { onOpen: handleEdgeOpen } : {}),
+					theme,
+				},
+			};
+		});
+	}, [model, theme, focus, editedEdgeId, isEditing, handleEdgeOpen]);
 
 	// Fit after a rearrangement and after a change of scope. The delay lets the
 	// moved nodes be drawn and measured, so the fit covers where they ARE.
@@ -441,16 +514,6 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		else if (pendingChange?.kind === 'reset') applyReset();
 	}, [pendingChange, applyLayout, applyReset]);
 
-	// A dropped connection, until the user confirms or closes it. It belongs to
-	// the scope and the mode it was dropped in, so a change of either discards it.
-	const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
-	const canvasRef = useRef<HTMLDivElement>(null);
-	// reactflow reports a connection first (`onConnect`, which has no pointer)
-	// and the end of the gesture second (`onConnectEnd`, which has one). This
-	// says the end that is coming belongs to a connection, and not to an edge
-	// dropped on nothing.
-	const awaitingDropPointRef = useRef(false);
-
 	const handleConnect = useCallback(
 		(connection: Connection) => {
 			const { source, target } = connection;
@@ -478,16 +541,6 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		if (point) setPendingEdge((pending) => (pending ? { ...pending, anchor: point } : pending));
 	}, []);
 	const closePendingEdge = useCallback(() => setPendingEdge(null), []);
-	const confirmPendingEdge = useCallback(
-		(draft: DelegationEdgeDraft): string | null => {
-			if (pendingEdge?.kind !== 'edge') return null;
-			const written = writeDelegationEdge(pendingEdge.sourceId, pendingEdge.targetId, draft);
-			if (!written.ok) return written.error;
-			setPendingEdge(null);
-			return null;
-		},
-		[pendingEdge]
-	);
 	// The editor names both agents, so it is drawn only while both are on the
 	// graph. An agent deleted under an open editor closes it.
 	const edgeEditor = useMemo(() => {
@@ -505,6 +558,41 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 			reverse: edgeBetween(model, pendingEdge.targetId, pendingEdge.sourceId),
 		};
 	}, [pendingEdge, model]);
+
+	const confirmPendingEdge = useCallback(
+		(draft: DelegationEdgeDraft): string | null => {
+			if (!edgeEditor) return null;
+			const { sourceId, targetId, sourceName, targetName } = edgeEditor;
+			if (hasAnyPeerAccess(draft)) {
+				const written = writeDelegationEdge(sourceId, targetId, draft);
+				if (!written.ok) return written.error;
+			} else {
+				// Neither bit. On an edge that exists it is the exclusion row, and
+				// the user is told that it was not a delete. A new edge with neither
+				// bit is not a relationship, and the editor does not offer it.
+				if (!edgeEditor.existing) return DELEGATION_EDGE_NEEDS_ACCESS;
+				const excluded = excludeDelegationPeer(sourceId, targetId, draft.description);
+				if (!excluded.ok) return excluded.error;
+				notifyToast(describeDelegationEdgeRemoval(excluded, sourceName, targetName));
+			}
+			setPendingEdge(null);
+			return null;
+		},
+		[edgeEditor]
+	);
+	// The delete action of the editor. What it writes depends on where the edge
+	// comes from, so the result is said in words at the moment it happens: a
+	// derived edge is excluded and not deleted, and a deleted row can leave an
+	// edge that a grant still draws.
+	const deletePendingEdge = useCallback((): string | null => {
+		if (!edgeEditor?.existing) return null;
+		const { sourceId, targetId, sourceName, targetName } = edgeEditor;
+		const removal = deleteDelegationEdge(sourceId, targetId);
+		if (!removal.ok) return removal.error;
+		notifyToast(describeDelegationEdgeRemoval(removal, sourceName, targetName));
+		setPendingEdge(null);
+		return null;
+	}, [edgeEditor]);
 
 	const handleModeChange = useCallback((next: DelegationGraphMode) => {
 		setMode(next);
@@ -681,6 +769,9 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						onConnect={handleConnect}
 						onConnectEnd={handleConnectEnd}
 						onClickConnectEnd={handleConnectEnd}
+						// An edge already drawn opens the same editor. In View no handler
+						// is passed, and reactflow then takes no pointer event on an edge.
+						onEdgeClick={isEditing ? handleEdgeClick : undefined}
 						connectionLineStyle={connectionLineStyle}
 						// In neither mode does a key remove anything: a node is an agent,
 						// and an edge is removed through its editor, which says what the
@@ -768,6 +859,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						existing={edgeEditor.existing}
 						reverse={edgeEditor.reverse}
 						onConfirm={confirmPendingEdge}
+						onDelete={edgeEditor.existing ? deletePendingEdge : undefined}
 						onClose={closePendingEdge}
 					/>
 				)}

@@ -17,11 +17,12 @@
  * reactflow does from `nodesConnectable`, and a handle is drawn as a marker that
  * carries what it was told. An edge dropped on an agent is the two calls
  * reactflow makes for one: `onConnect` with the pair, then `onConnectEnd` with
- * the pointer.
+ * the pointer. A click on an edge is a click on its marker, which calls the
+ * `onEdgeClick` the view passed, when it passed one.
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import type { Connection, Edge, Node, NodeChange, NodeProps } from 'reactflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DelegationEdgeData } from '../../../../renderer/components/DelegationGraph/edges/DelegationEdge';
@@ -36,6 +37,7 @@ interface FlowProps {
 	onConnect?: (connection: Connection) => void;
 	onConnectEnd?: (event: MouseEvent | TouchEvent) => void;
 	onClickConnectEnd?: (event: MouseEvent | TouchEvent) => void;
+	onEdgeClick?: (event: ReactMouseEvent, edge: Edge<DelegationEdgeData>) => void;
 	nodesConnectable?: boolean;
 	deleteKeyCode?: string | null;
 	children?: ReactNode;
@@ -44,6 +46,15 @@ interface FlowProps {
 const flow = vi.hoisted(() => ({
 	props: null as FlowProps | null,
 	fitView: vi.fn(),
+}));
+
+const toast = vi.hoisted(() => ({ notify: vi.fn() }));
+
+// The toast is what tells the user which of two writes a removal made. Its
+// input is read here; the store behind it has its own test.
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
+	notifyToast: toast.notify,
 }));
 
 vi.mock('reactflow', async (importOriginal) => {
@@ -92,6 +103,9 @@ vi.mock('reactflow', async (importOriginal) => {
 						data-target={edge.target}
 						data-has-reverse={String(edge.data?.hasReverse)}
 						data-emphasis={edge.data?.emphasis ?? 'none'}
+						// The badge of the real edge is a button only while it has this.
+						data-openable={String(Boolean(edge.data?.onOpen))}
+						onClick={(event) => props.onEdgeClick?.(event, edge)}
 					/>
 				))}
 				{props.children}
@@ -362,6 +376,37 @@ function accessSquare(bit: 'read' | 'write'): HTMLElement {
 
 function confirmEdge(): void {
 	fireEvent.click(screen.getByTestId('delegation-edge-editor-confirm'));
+}
+
+/** Click the line of an edge that is drawn, at the drop point. */
+function clickEdge(id: string): void {
+	fireEvent.click(edgeEl(id), { clientX: DROP.x, clientY: DROP.y });
+}
+
+/** Open an edge through its badge, with the call the real edge makes. */
+function openEdgeBadge(id: string): void {
+	const edge = flow.props?.edges.find((candidate) => candidate.id === id);
+	if (!edge?.data) throw new Error(`the canvas was handed no edge ${id}`);
+	const { data } = edge;
+	act(() => {
+		data.onOpen?.(data.edge, DROP);
+	});
+}
+
+function deleteEdgeButton(): HTMLElement | null {
+	return screen.queryByTestId('delegation-edge-editor-delete');
+}
+
+/** The one toast a removal raised. */
+function removalToast(): { color: string; title: string; message: string } {
+	expect(toast.notify).toHaveBeenCalledTimes(1);
+	return toast.notify.mock.calls[0][0];
+}
+
+function patchSession(id: string, patch: Partial<Session>): void {
+	setSessions((sessions) =>
+		sessions.map((session) => (session.id === id ? { ...session, ...patch } : session))
+	);
 }
 
 function sessionOf(id: string): Session {
@@ -821,6 +866,328 @@ describe('DelegationGraphView', () => {
 
 			expect(edgeEditor()).not.toBeInTheDocument();
 			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+	});
+
+	describe('editing and deleting an edge', () => {
+		it('opens the editor on a clicked edge, pre-filled, where it was clicked, and writes nothing', () => {
+			patchSession('a', {
+				peerAgents: [{ sessionId: 'b', read: true, write: true, description: 'Owns research' }],
+			});
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			clickEdge('a->b');
+
+			const editor = screen.getByRole('dialog', { name: 'Edge from Alpha to Beta' });
+			expect(editor.style.left).toBe(`${DROP.x}px`);
+			expect(editor.style.top).toBe(`${DROP.y}px`);
+			expect(accessSquare('read')).toHaveAttribute('aria-checked', 'true');
+			expect(accessSquare('write')).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getByPlaceholderText(PEER_NOTE_PLACEHOLDER)).toHaveValue('Owns research');
+			expect(screen.getByTestId('delegation-edge-editor-confirm')).toHaveTextContent('Save edge');
+			expect(deleteEdgeButton()).toHaveTextContent('Delete edge');
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			expect(toast.notify).not.toHaveBeenCalled();
+		});
+
+		it('opens the same editor from the badge of an edge', () => {
+			renderView();
+			switchMode('edit');
+
+			openEdgeBadge('d->e');
+
+			expect(
+				screen.getByRole('dialog', { name: 'Edge from Delta to Epsilon' })
+			).toBeInTheDocument();
+			expect(accessSquare('read')).toHaveAttribute('aria-checked', 'false');
+			expect(accessSquare('write')).toHaveAttribute('aria-checked', 'true');
+		});
+
+		// The guard: in View an edge has no way in at all.
+		it('gives no edge a way in while the graph is in View', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+
+			expect(flow.props?.onEdgeClick).toBeUndefined();
+			for (const el of screen.getAllByTestId('flow-edge')) {
+				expect(el.dataset.openable).toBe('false');
+			}
+			clickEdge('a->b');
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('takes the way in away again on the way back to View', () => {
+			renderView();
+			switchMode('edit');
+			expect(flow.props?.onEdgeClick).toBeTypeOf('function');
+			expect(edgeEl('a->b').dataset.openable).toBe('true');
+
+			switchMode('view');
+
+			expect(flow.props?.onEdgeClick).toBeUndefined();
+			expect(edgeEl('a->b').dataset.openable).toBe('false');
+		});
+
+		it('raises the edge the editor is about, and lets it go when the editor closes', () => {
+			renderView();
+			switchMode('edit');
+
+			clickEdge('a->b');
+
+			expect(edgeEl('a->b').dataset.emphasis).toBe('highlighted');
+			expect(edgeEl('b->a').dataset.emphasis).toBe('none');
+			expect(edgeEl('d->e').dataset.emphasis).toBe('none');
+
+			fireEvent.click(screen.getByTestId('delegation-edge-editor-cancel'));
+
+			expect(edgeEl('a->b').dataset.emphasis).toBe('none');
+		});
+
+		it('starts clean when another edge is clicked under an open editor', () => {
+			renderView();
+			switchMode('edit');
+
+			clickEdge('a->b');
+			fireEvent.click(accessSquare('read'));
+			clickEdge('d->e');
+
+			expect(
+				screen.getByRole('dialog', { name: 'Edge from Delta to Epsilon' })
+			).toBeInTheDocument();
+			expect(screen.queryByRole('dialog', { name: 'Edge from Alpha to Beta' })).toBeNull();
+			expect(accessSquare('read')).toHaveAttribute('aria-checked', 'false');
+			expect(accessSquare('write')).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('saves a changed edge in place, with no toast', () => {
+			renderView();
+			switchMode('edit');
+			const betaBefore = sessionOf('b');
+
+			clickEdge('a->b');
+			fireEvent.click(accessSquare('read'));
+			confirmEdge();
+
+			expect(sessionOf('a').peerAgents).toEqual([{ sessionId: 'b', read: false, write: true }]);
+			expect(sessionOf('b')).toBe(betaBefore);
+			expect(drawnEdgeIds().filter((id) => id === 'a->b')).toHaveLength(1);
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(toast.notify).not.toHaveBeenCalled();
+		});
+
+		describe('deleting an edge the user wrote', () => {
+			it('removes the row entirely, from the agent the edge starts from only', () => {
+				renderView();
+				switchMode('edit');
+				const epsilonBefore = sessionOf('e');
+
+				clickEdge('d->e');
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(sessionOf('d').peerAgents).toBeUndefined();
+				expect(sessionOf('e')).toBe(epsilonBefore);
+				expect(drawnEdgeIds()).not.toContain('d->e');
+				expect(edgeEditor()).not.toBeInTheDocument();
+				// Delta and Epsilon had this one edge between them.
+				expect(nodeBody('d')).toHaveAttribute('data-node-state', 'isolated');
+
+				const notice = removalToast();
+				expect(notice.title).toBe('Edge deleted');
+				expect(notice.message).toContain('The row for Epsilon was removed from the Peers of Delta');
+			});
+
+			it('leaves the other half of a mutual pair as it was', () => {
+				renderView();
+				switchMode('edit');
+				const betaBefore = sessionOf('b');
+
+				clickEdge('a->b');
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(sessionOf('a').peerAgents).toBeUndefined();
+				expect(sessionOf('b')).toBe(betaBefore);
+				expect(drawnEdgeIds()).toEqual(['b->a', 'd->e']);
+				expect(edgeEl('b->a').dataset.hasReverse).toBe('false');
+			});
+
+			it('says the edge is still drawn when a grant gives the peer back', () => {
+				// Alpha holds a row for Epsilon over its group grant.
+				patchSession('a', {
+					groupPeerAccess: { read: true, write: false },
+					peerAgents: [
+						{ sessionId: 'b', read: true, write: true },
+						{ sessionId: 'e', read: true, write: true },
+					],
+				});
+				renderView();
+				switchMode('edit');
+
+				clickEdge('a->e');
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(sessionOf('a').peerAgents).toEqual([{ sessionId: 'b', read: true, write: true }]);
+				expect(sessionOf('a').groupPeerAccess).toEqual({ read: true, write: false });
+				// The row is gone and the edge is not: the grant draws it now.
+				expect(drawnEdgeIds()).toContain('a->e');
+				const model = buildDelegationGraph(ALL, useSessionStore.getState().sessions);
+				expect(model.edges.find((edge) => edge.id === 'a->e')).toMatchObject({
+					source: 'group',
+					read: true,
+					write: false,
+				});
+
+				const notice = removalToast();
+				expect(notice.title).toBe('Row deleted, edge still drawn');
+				expect(notice.message).toContain(PEER_GRANT_LABELS.group);
+			});
+		});
+
+		describe('deleting an edge a grant derived', () => {
+			beforeEach(() => {
+				// Epsilon reaches Alpha, the other agent in Platform, through its group grant.
+				patchSession('e', { groupPeerAccess: { read: true, write: false } });
+			});
+
+			it('names the action for what it writes', () => {
+				renderView();
+				switchMode('edit');
+
+				clickEdge('e->a');
+
+				expect(deleteEdgeButton()).toHaveTextContent('Exclude peer');
+			});
+
+			it('writes a row with neither bit and does not alter the grant', () => {
+				renderView();
+				switchMode('edit');
+				const alphaBefore = sessionOf('a');
+
+				clickEdge('e->a');
+				fireEvent.click(deleteEdgeButton()!);
+
+				expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'a', read: false, write: false }]);
+				expect(sessionOf('e').groupPeerAccess).toEqual({ read: true, write: false });
+				expect(sessionOf('a')).toBe(alphaBefore);
+				expect(drawnEdgeIds()).not.toContain('e->a');
+				expect(edgeEditor()).not.toBeInTheDocument();
+			});
+
+			it('says in a toast that the peer was excluded and not removed, and why', () => {
+				renderView();
+				switchMode('edit');
+
+				clickEdge('e->a');
+				fireEvent.click(deleteEdgeButton()!);
+
+				const notice = removalToast();
+				expect(notice.title).toBe('Peer excluded, not removed');
+				expect(notice.message).toContain(
+					`The "${PEER_GRANT_LABELS.group}" grant of Epsilon is still in force`
+				);
+				expect(notice.message).toContain('A row with no access was written for Alpha');
+			});
+		});
+
+		describe('clearing both bits', () => {
+			it('is the exclusion and not a delete on an edge the user wrote, and says so', () => {
+				patchSession('d', {
+					peerAgents: [{ sessionId: 'e', read: false, write: true, description: 'Runs deploys' }],
+				});
+				renderView();
+				switchMode('edit');
+
+				clickEdge('d->e');
+				fireEvent.click(accessSquare('write'));
+
+				expect(screen.getByTestId('delegation-edge-editor-excludes')).toHaveTextContent(
+					'It is not a delete.'
+				);
+				expect(screen.getByTestId('delegation-edge-editor-confirm')).toHaveTextContent(
+					'Save as excluded'
+				);
+				confirmEdge();
+
+				// The row is kept, with its note and with neither bit.
+				expect(sessionOf('d').peerAgents).toEqual([
+					{ sessionId: 'e', read: false, write: false, description: 'Runs deploys' },
+				]);
+				expect(drawnEdgeIds()).not.toContain('d->e');
+				expect(edgeEditor()).not.toBeInTheDocument();
+
+				const notice = removalToast();
+				expect(notice.title).toBe('Peer excluded, not removed');
+				expect(notice.message).toContain(
+					'The row for Epsilon stays in the Peers of Delta, with no access'
+				);
+			});
+
+			it('is the same exclusion on an edge a grant derived', () => {
+				patchSession('e', { groupPeerAccess: { read: true, write: false } });
+				renderView();
+				switchMode('edit');
+
+				clickEdge('e->a');
+				fireEvent.click(accessSquare('read'));
+				confirmEdge();
+
+				expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'a', read: false, write: false }]);
+				expect(sessionOf('e').groupPeerAccess).toEqual({ read: true, write: false });
+				expect(removalToast().message).toContain(PEER_GRANT_LABELS.group);
+			});
+
+			it('still refuses a new edge with neither bit', () => {
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView();
+				switchMode('edit');
+
+				connect('c', 'e');
+				fireEvent.click(accessSquare('read'));
+
+				expect(screen.getByTestId('delegation-edge-editor-confirm')).toBeDisabled();
+				expect(deleteEdgeButton()).not.toBeInTheDocument();
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			});
+		});
+
+		it('offers the delete action for a direction that is drawn again', () => {
+			renderView();
+			switchMode('edit');
+
+			connect('d', 'e');
+			fireEvent.click(deleteEdgeButton()!);
+
+			expect(sessionOf('d').peerAgents).toBeUndefined();
+			expect(drawnEdgeIds()).not.toContain('d->e');
+		});
+
+		it('brings an excluded peer back as a row when its edge is drawn again', () => {
+			patchSession('e', { groupPeerAccess: { read: true, write: false } });
+			renderView();
+			switchMode('edit');
+			clickEdge('e->a');
+			fireEvent.click(deleteEdgeButton()!);
+
+			connect('e', 'a');
+			confirmEdge();
+
+			expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'a', read: true, write: false }]);
+			expect(drawnEdgeIds()).toContain('e->a');
+		});
+
+		it('discards an open edge on the way back to View', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			clickEdge('a->b');
+			switchMode('view');
+
+			expect(edgeEditor()).not.toBeInTheDocument();
 			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
 		});
 	});

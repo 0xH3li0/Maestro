@@ -238,7 +238,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The fleet's peer relationships as one directed graph (the Delegation Graph):** `buildDelegationGraph(scope, sessions)`, `edgeBetween()`, `isMutual()`, `delegationEdgeId()`, `connectedAgentIds()`, `delegationGraphStats()` in `src/shared/delegationGraph.ts` (calls `resolvePeerRoster()`; never restate precedence)
 - **Where an agent sits on the Delegation Graph (saved per scope):** `useDelegationGraphLayout(scope)` in `src/renderer/components/DelegationGraph/useDelegationGraphLayout.ts`; `scopeStorageKey()`, `mergeSavedPositions()`, `prunePositions()` in `src/shared/delegationGraphLayout.ts` (never `saveNodePositions()`)
 - **Drawing and arranging the Delegation Graph:** `<DelegationGraphModal>`, `<DelegationGraphView>`, `useDelegationGraphModel(scope)`, `arrangeDelegationGraph()`, `computeDelegationLayout()` in `src/renderer/components/DelegationGraph/`; `delegationRosterEquality()` in `src/renderer/stores/sessionEquality.ts`
-- **Writing a relationship from the Delegation Graph:** `writeDelegationEdge()` in `src/renderer/services/delegationGraphEdits.ts`; `peerAgentEditsProblem()`, `PEER_ACCESS_CONTROLS` in `src/shared/peerAgents.ts`; `<DelegationEdgeEditor>` in `src/renderer/components/DelegationGraph/DelegationEdgeEditor.tsx`
+- **Writing a relationship from the Delegation Graph:** `writeDelegationEdge()`, `deleteDelegationEdge()` in `src/renderer/services/delegationGraphEdits.ts`; `peerAgentEditsProblem()`, `resolveGrantedPeer()` in `src/shared/peerAgents.ts`; `<DelegationEdgeEditor>` in `src/renderer/components/DelegationGraph/`
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 

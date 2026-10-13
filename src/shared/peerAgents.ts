@@ -387,10 +387,16 @@ export interface ResolvedPeer extends PeerAccess {
  * the user reads it here, so a tooltip cannot point at a control the tab spells
  * another way.
  */
-export const PEER_GRANT_LABELS: Record<Exclude<ResolvedPeer['source'], 'explicit'>, string> = {
+export const PEER_GRANT_LABELS: Record<PeerGrantSource, string> = {
 	group: 'Peers in my group',
 	worktree: 'Worktree family',
 };
+
+/** A derived grant: a source of peers that has no row behind it. */
+export type PeerGrantSource = Exclude<ResolvedPeer['source'], 'explicit'>;
+
+/** A peer as a derived grant gives it, with no explicit row in the way. */
+export type GrantedPeer = ResolvedPeer & { source: PeerGrantSource };
 
 /**
  * The fields of an agent that roster resolution reads. A minimal shape, so the
@@ -536,6 +542,30 @@ export function resolvePeerRoster(
 	return [...roster.values()]
 		.filter(hasAnyPeerAccess)
 		.sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
+}
+
+/**
+ * What the group and worktree grants ALONE give an agent for one peer: its
+ * roster with the explicit rows set aside. Undefined when no grant reaches
+ * that peer.
+ *
+ * A surface asks this before it takes an explicit row away, or after it wrote
+ * an exclusion: "what is under this row". Deleting a row hands the peer back
+ * to the grant, so the caller can say that the peer is still reachable, and
+ * through which grant. An exclusion that overrides nothing can be told from
+ * one that overrides a grant.
+ *
+ * It is `resolvePeerRoster` with one field cleared, so the precedence rules
+ * are not restated.
+ */
+export function resolveGrantedPeer(
+	session: PeerRosterSubject,
+	allSessions: readonly PeerRosterInput[],
+	peerId: string
+): GrantedPeer | undefined {
+	return resolvePeerRoster({ ...session, peerAgents: undefined }, allSessions).find(
+		(peer): peer is GrantedPeer => peer.sessionId === peerId && peer.source !== 'explicit'
+	);
 }
 
 /**

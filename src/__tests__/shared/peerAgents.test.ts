@@ -25,6 +25,7 @@ import {
 	hasAnyPeerAccess,
 	hasPeerGrant,
 	mergePeerAccess,
+	resolveGrantedPeer,
 	resolvePeerRoster,
 	resolvePeerRosterForPrompt,
 	describePeerConfiguration,
@@ -526,6 +527,77 @@ describe('resolvePeerRoster', () => {
 		];
 		const before = JSON.stringify(all);
 		resolvePeerRoster(me, all);
+		expect(JSON.stringify(all)).toBe(before);
+	});
+});
+
+// What is UNDER an explicit row: the question a surface asks before it deletes
+// one, and after it writes an exclusion.
+describe('resolveGrantedPeer', () => {
+	it('is undefined when the agent has no grant', () => {
+		const me = agent('me', 'Me', { peerAgents: [{ sessionId: 'a', ...RW }] });
+		const all = [me, agent('a', 'Alpha')];
+
+		expect(resolveGrantedPeer(me, all, 'a')).toBeUndefined();
+	});
+
+	it('gives what the group grant gives, whatever the explicit row says', () => {
+		const me = agent('me', 'Me', {
+			groupId: 'g1',
+			groupPeerAccess: R,
+			peerAgents: [{ sessionId: 'a', ...RW, description: 'Owns the docs' }],
+		});
+		const all = [me, agent('a', 'Alpha', { groupId: 'g1' })];
+
+		// The row raises Alpha to both bits. Under it, the grant gives consult.
+		expect(resolvePeerRoster(me, all)).toEqual([peer('a', 'Alpha', RW, 'Owns the docs')]);
+		expect(resolveGrantedPeer(me, all, 'a')).toEqual({
+			sessionId: 'a',
+			name: 'Alpha',
+			...R,
+			source: 'group',
+		});
+	});
+
+	it('sees through an exclusion row to the grant it overrides', () => {
+		const me = agent('me', 'Me', {
+			groupId: 'g1',
+			groupPeerAccess: RW,
+			peerAgents: [{ sessionId: 'a', ...NONE }],
+		});
+		const all = [me, agent('a', 'Alpha', { groupId: 'g1' })];
+
+		expect(resolvePeerRoster(me, all)).toEqual([]);
+		expect(resolveGrantedPeer(me, all, 'a')).toMatchObject({ ...RW, source: 'group' });
+	});
+
+	it('names the worktree grant for a peer only that grant reaches', () => {
+		const me = agent('me', 'Me', { parentSessionId: 'parent', worktreePeerAccess: W });
+		const all = [me, agent('parent', 'Parent')];
+
+		expect(resolveGrantedPeer(me, all, 'parent')).toMatchObject({ ...W, source: 'worktree' });
+	});
+
+	it('is undefined for a peer no grant reaches, and for the agent itself', () => {
+		const me = agent('me', 'Me', { groupId: 'g1', groupPeerAccess: R });
+		const all = [me, agent('a', 'Alpha', { groupId: 'g1' }), agent('z', 'Zulu', { groupId: 'g2' })];
+
+		expect(resolveGrantedPeer(me, all, 'z')).toBeUndefined();
+		expect(resolveGrantedPeer(me, all, 'me')).toBeUndefined();
+		expect(resolveGrantedPeer(me, all, 'gone')).toBeUndefined();
+	});
+
+	it('does not change the agent it was handed', () => {
+		const me = agent('me', 'Me', {
+			groupId: 'g1',
+			groupPeerAccess: R,
+			peerAgents: [{ sessionId: 'a', ...RW }],
+		});
+		const all = [me, agent('a', 'Alpha', { groupId: 'g1' })];
+		const before = JSON.stringify(all);
+
+		resolveGrantedPeer(me, all, 'a');
+
 		expect(JSON.stringify(all)).toBe(before);
 	});
 });

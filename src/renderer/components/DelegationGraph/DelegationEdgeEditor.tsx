@@ -1,9 +1,10 @@
 /**
  * DelegationEdgeEditor - the popover that states one relationship.
  *
- * It opens where an edge was dropped on the Delegation Graph, and it is the
- * only place on the canvas where a relationship is written. Nothing is stored
- * until the user confirms: a dropped edge is a question, not a change.
+ * It opens where an edge was dropped on the Delegation Graph, or where an edge
+ * already drawn was clicked, and it is the only place on the canvas where a
+ * relationship is written. Nothing is stored until the user confirms: a dropped
+ * edge, and a clicked one, is a question and not a change.
  *
  * It edits ONE direction. The edge from A to B is A's statement about whom A
  * may reach, so the editor writes to A alone. When the opposite edge exists it
@@ -16,7 +17,19 @@
  * `PermissionSquare`, because the row this editor writes is the row that tab
  * shows.
  *
- * An edge with neither bit is not a relationship, so it cannot be confirmed.
+ * A NEW edge with neither bit is not a relationship, so it cannot be confirmed.
+ *
+ * An edge that EXISTS can be taken away here, and there are two ways, which do
+ * not write the same thing:
+ *
+ *   - The delete action. For an edge the user wrote it deletes the row. An
+ *     edge a group or worktree grant derived has no row to delete, so the
+ *     action is named for what it does there: it excludes the peer.
+ *   - Clearing both bits and saving. That keeps a row with no access, which
+ *     is the exclusion and not a delete. The editor says so before the click.
+ *
+ * The caller says which of them happened once it is done (a toast), because
+ * the two leave different things in the agent's settings.
  *
  * `DelegationEdgeRefusal` is the same popover with one sentence in it, for a
  * drop the graph will not turn into an edge at all (an agent onto itself).
@@ -26,7 +39,7 @@
  */
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, X } from 'lucide-react';
+import { ArrowRight, Trash2, UserX, X } from 'lucide-react';
 import type { PeerAccess, Theme } from '../../types';
 import type { DelegationGraphEdge } from '../../../shared/delegationGraph';
 import {
@@ -55,7 +68,7 @@ export interface DelegationEdgeEditorAnchor {
 	y: number;
 }
 
-const POPOVER_WIDTH = 300;
+const POPOVER_WIDTH = 320;
 const ACCESS_BITS: ReadonlyArray<keyof PeerAccess> = ['read', 'write'];
 
 interface EdgePopoverProps {
@@ -129,7 +142,7 @@ function EdgePopover({
 
 export interface DelegationEdgeEditorProps {
 	theme: Theme;
-	/** Where the edge was dropped. */
+	/** Where the edge was dropped, or where it was clicked. */
 	anchor: DelegationEdgeEditorAnchor;
 	/** The agent the edge starts from: the one whose Peers the edit is written to. */
 	sourceName: string;
@@ -140,9 +153,15 @@ export interface DelegationEdgeEditorProps {
 	reverse?: DelegationGraphEdge;
 	/**
 	 * Write the edge. Returns why it was refused, or `null` once it is written.
-	 * The caller closes the editor on `null`.
+	 * The caller closes the editor on `null`. A draft with NEITHER bit is handed
+	 * over only for an edge that exists: it asks for the exclusion row.
 	 */
 	onConfirm: (draft: DelegationEdgeDraft) => string | null;
+	/**
+	 * Take the edge away. Offered only beside `existing`. Returns why it was
+	 * refused, or `null` once it is done, as `onConfirm` does.
+	 */
+	onDelete?: () => string | null;
 	onClose: () => void;
 }
 
@@ -154,6 +173,7 @@ export function DelegationEdgeEditor({
 	existing,
 	reverse,
 	onConfirm,
+	onDelete,
 	onClose,
 }: DelegationEdgeEditorProps) {
 	const { colors } = theme;
@@ -167,11 +187,20 @@ export function DelegationEdgeEditor({
 	useFocusOnMount(noteRef);
 
 	const hasAccess = hasAnyPeerAccess(access);
+	// A new edge needs a bit. An edge that exists may be saved with neither:
+	// that is the exclusion, and the line under the squares says so.
+	const canConfirm = hasAccess || existing !== undefined;
 	const confirm = useCallback(() => {
-		if (!hasAnyPeerAccess(access)) return;
+		if (!canConfirm) return;
 		setError(onConfirm({ ...access, description }));
-	}, [access, description, onConfirm]);
+	}, [canConfirm, access, description, onConfirm]);
+	const remove = useCallback(() => {
+		if (onDelete) setError(onDelete());
+	}, [onDelete]);
 
+	// An edge a grant derived has no row behind it, so its delete action
+	// excludes the peer, and is named for that.
+	const isDerived = existing !== undefined && existing.source !== 'explicit';
 	const existingKind = existing ? delegationEdgeKind(existing) : null;
 	const reverseKind = reverse ? delegationEdgeKind(reverse) : null;
 
@@ -225,16 +254,24 @@ export function DelegationEdgeEditor({
 				value={description}
 				onChange={setDescription}
 				onSubmit={confirm}
-				submitEnabled={hasAccess}
+				submitEnabled={canConfirm}
 				placeholder={PEER_NOTE_PLACEHOLDER}
 				heightClass="p-2"
 			/>
 
-			{!hasAccess && (
-				<p data-testid="delegation-edge-editor-needs-access" style={{ color: colors.warning }}>
-					{DELEGATION_EDGE_NEEDS_ACCESS} An edge with neither is not a relationship.
-				</p>
-			)}
+			{!hasAccess &&
+				(existing ? (
+					<p data-testid="delegation-edge-editor-excludes" style={{ color: colors.warning }}>
+						With neither, {targetName} is excluded. Saving keeps a row with no access for{' '}
+						{targetName} in the Peers of {sourceName}, and that row overrides every group and
+						worktree grant. It is not a delete.
+						{!isDerived && onDelete && ' To remove the row, use Delete edge.'}
+					</p>
+				) : (
+					<p data-testid="delegation-edge-editor-needs-access" style={{ color: colors.warning }}>
+						{DELEGATION_EDGE_NEEDS_ACCESS} An edge with neither is not a relationship.
+					</p>
+				))}
 
 			{reverse && reverseKind && (
 				<p data-testid="delegation-edge-editor-reverse" style={{ color: colors.textDim }}>
@@ -249,7 +286,30 @@ export function DelegationEdgeEditor({
 				</p>
 			)}
 
-			<div className="flex justify-end gap-2 pt-1">
+			<div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+				{existing && onDelete && (
+					<HeaderActionButton
+						theme={theme}
+						variant="ghost"
+						onClick={remove}
+						icon={
+							isDerived ? (
+								<UserX style={{ color: colors.error }} />
+							) : (
+								<Trash2 style={{ color: colors.error }} />
+							)
+						}
+						title={
+							existing.source === 'explicit'
+								? `Removes the row for ${targetName} from the Peers of ${sourceName}. A group or worktree grant that covers ${targetName} then applies again`
+								: `The "${PEER_GRANT_LABELS[existing.source]}" grant of ${sourceName} made this edge, so there is no row to delete. This writes a row with no access for ${targetName}, which excludes it from the grant`
+						}
+						className="mr-auto"
+						testId="delegation-edge-editor-delete"
+					>
+						{isDerived ? 'Exclude peer' : 'Delete edge'}
+					</HeaderActionButton>
+				)}
 				<HeaderActionButton
 					theme={theme}
 					variant="ghost"
@@ -261,11 +321,11 @@ export function DelegationEdgeEditor({
 				<HeaderActionButton
 					theme={theme}
 					onClick={confirm}
-					disabled={!hasAccess}
+					disabled={!canConfirm}
 					title={`Written to the Peers of ${sourceName}. Nothing is written to ${targetName}`}
 					testId="delegation-edge-editor-confirm"
 				>
-					{existing ? 'Save edge' : 'Add edge'}
+					{!existing ? 'Add edge' : hasAccess ? 'Save edge' : 'Save as excluded'}
 				</HeaderActionButton>
 			</div>
 		</EdgePopover>

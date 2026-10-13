@@ -60,6 +60,7 @@ interface EdgeOptions {
 	edge?: Partial<DelegationGraphEdge>;
 	hasReverse?: boolean;
 	emphasis?: DelegationEdgeEmphasis;
+	onOpen?: DelegationEdgeData['onOpen'];
 	selected?: boolean;
 	/** Where reactflow says the two handles are. Used only for unmeasured nodes. */
 	from?: { x: number; y: number };
@@ -84,6 +85,7 @@ function edgeProps(options: EdgeOptions = {}): EdgeProps<DelegationEdgeData> {
 			edge,
 			hasReverse: options.hasReverse ?? false,
 			emphasis: options.emphasis,
+			onOpen: options.onOpen,
 			theme: mockTheme,
 		},
 	} as EdgeProps<DelegationEdgeData>;
@@ -479,6 +481,93 @@ describe('DelegationEdge', () => {
 			expect(openTooltip('a->deleted-agent-id')).toHaveTextContent(
 				'Alpha may consult Removed agent deleted-'
 			);
+		});
+	});
+
+	// The badge is the way into an edge, and only while the canvas hands one.
+	describe('opening the edge', () => {
+		it('is a plain label while the canvas hands no way in', () => {
+			renderEdges({ edge: CONSULT });
+
+			expect(labelOf()).not.toHaveAttribute('role');
+			expect(labelOf()).not.toHaveAttribute('tabindex');
+			expect(labelOf().style.cursor).toBe('');
+		});
+
+		it('is a button that names the direction once it can be opened', () => {
+			renderEdges({ edge: CONSULT, onOpen: vi.fn() });
+
+			expect(labelOf()).toHaveAttribute('role', 'button');
+			expect(labelOf()).toHaveAttribute('tabindex', '0');
+			expect(labelOf()).toHaveAttribute('aria-label', 'Edit the edge from Alpha to Beta');
+			expect(labelOf().style.cursor).toBe('pointer');
+		});
+
+		it('opens the model edge where the badge was clicked', () => {
+			const onOpen = vi.fn();
+			renderEdges({ edge: { ...BOTH, source: 'group' }, onOpen });
+
+			fireEvent.click(badgeOf(), { clientX: 240, clientY: 130 });
+
+			expect(onOpen).toHaveBeenCalledTimes(1);
+			expect(onOpen).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'a->b', sourceId: 'a', targetId: 'b', source: 'group' }),
+				{ x: 240, y: 130 }
+			);
+		});
+
+		// The badge is drawn through a portal, and a React event bubbles through
+		// a portal to the edge. The canvas opens the line, so a click on the badge
+		// must stop at the badge or the same edge is opened twice.
+		it('keeps a click on the badge from reaching the edge it belongs to', () => {
+			const onOpen = vi.fn();
+			const onEdgeClick = vi.fn();
+			render(
+				<ReactFlowProvider>
+					<svg>
+						<g onClick={onEdgeClick}>
+							<DelegationEdge {...edgeProps({ edge: CONSULT, onOpen })} />
+						</g>
+					</svg>
+				</ReactFlowProvider>
+			);
+
+			fireEvent.click(badgeOf());
+
+			expect(onOpen).toHaveBeenCalledTimes(1);
+			expect(onEdgeClick).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['Enter', 'Enter'],
+			['Space', ' '],
+		])('opens at the middle of the badge on %s', (_name, key) => {
+			const onOpen = vi.fn();
+			renderEdges({ edge: CONSULT, onOpen });
+			vi.spyOn(labelOf(), 'getBoundingClientRect').mockReturnValue({
+				left: 100,
+				top: 50,
+				width: 24,
+				height: 12,
+			} as DOMRect);
+
+			fireEvent.keyDown(labelOf(), { key });
+
+			expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'a->b' }), {
+				x: 112,
+				y: 56,
+			});
+		});
+
+		it('ignores every other key', () => {
+			const onOpen = vi.fn();
+			renderEdges({ edge: CONSULT, onOpen });
+
+			fireEvent.keyDown(labelOf(), { key: 'Tab' });
+			fireEvent.keyDown(labelOf(), { key: 'Backspace' });
+			fireEvent.keyDown(labelOf(), { key: 'Delete' });
+
+			expect(onOpen).not.toHaveBeenCalled();
 		});
 	});
 
