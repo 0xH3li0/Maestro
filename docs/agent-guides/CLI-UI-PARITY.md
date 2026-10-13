@@ -342,7 +342,9 @@ changed with this: no row in Covered or Open gaps moved.
 | Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
-server. It calls the same native dispatcher used by Lite's trusted connection UI
+server (the third case in [CLI-HEADLESS.md](CLI-HEADLESS.md#need-a-running-lite-client):
+it needs neither the desktop app nor a data directory, and without a client every
+subcommand exits 1 with `success: false`). It calls the same native dispatcher used by Lite's trusted connection UI
 and menu. Profile persistence, URL/SSH validation, TLS, host authentication,
 validated identity, and tunnel ownership remain native; the CLI implements none
 of those policies. The endpoint imports no full-mode process manager, stores,
@@ -350,10 +352,12 @@ agent detector, or web server.
 
 Discovery lives in `lite-control.json` inside Lite's isolated user-data directory.
 The transport is a per-boot authenticated Windows named pipe or Unix socket,
-not a network listener: remote host web content cannot access it. The shared
-platform path resolver uses the application's normal `maestro` data path plus
-`Lite`, or `$MAESTRO_USER_DATA/Lite` when a base-path override is supplied. Dev
-and packaged Lite use the same default policy. To select an isolated instance
+not a network listener: remote host web content cannot access it. The desktop
+writes it under `app.getPath('userData')/Lite`; the CLI finds the same directory
+through `resolveUserDataDir()` plus `Lite`, or `$MAESTRO_USER_DATA/Lite` when a
+base-path override is supplied. A dev checkout's desktop writes under its own
+`maestro` or `maestro-dev` directory, which a CLI started from a terminal cannot
+guess, so pass `--user-data` there. To select an isolated instance
 explicitly, launch `Maestro --lite --lite-user-data <directory>` and run
 `maestro-cli lite --user-data <directory> ...`. These flags name the **final**
 Lite directory, without appending another `Lite`. Relative CLI paths and `~`
