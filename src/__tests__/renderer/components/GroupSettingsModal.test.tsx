@@ -384,6 +384,9 @@ describe('GroupSettingsModal', () => {
 
 			fireEvent.click(grant);
 			fireEvent.click(screen.getByText('Save'));
+			// Two agents already live in this group, so the save asks where the grant goes.
+			const dialog = screen.getByRole('dialog', { name: 'Publish to existing agents?' });
+			fireEvent.click(within(dialog).getByRole('button', { name: 'New agents only' }));
 			expect(written(group)[0].defaults).toEqual({
 				groupPeerAccess: { read: true, write: false },
 			});

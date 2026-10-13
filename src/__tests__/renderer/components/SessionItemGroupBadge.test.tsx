@@ -98,11 +98,12 @@ describe('SessionItem group pill', () => {
 
 	it('shows the real group name, not the shortLabel, when full labels are on', () => {
 		useSettingsStore.setState({ showFullGroupLabelInBookmarks: true });
+		// A label that is not a substring of the name, so the negative assertion means something.
 		render(
-			<SessionItem {...defaultProps} session={session()} group={group({ shortLabel: 'Money' })} />
+			<SessionItem {...defaultProps} session={session()} group={group({ shortLabel: 'Payroll' })} />
 		);
 		expect(pill()).toHaveTextContent(GROUP_NAME);
-		expect(pill()).not.toHaveTextContent('Money');
+		expect(pill()).not.toHaveTextContent('Payroll');
 		expect(pill()).toHaveAttribute('title', GROUP_NAME);
 	});
 
