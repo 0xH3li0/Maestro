@@ -13,11 +13,13 @@ import {
 	buildDelegationGraph,
 	connectedAgentIds,
 	delegationEdgeId,
+	delegationEdgeRefusal,
 	delegationGraphStats,
 	edgeBetween,
 	isMutual,
 } from '../../shared/delegationGraph';
 import type { DelegationGraphModel } from '../../shared/delegationGraph';
+import { SELF_PEER_ERROR } from '../../shared/peerAgents';
 import type { PeerRosterInput } from '../../shared/peerAgents';
 import type { PeerAccess, PeerAgent } from '../../shared/types';
 
@@ -264,6 +266,56 @@ describe('edgeBetween', () => {
 	it('returns undefined for an agent the graph does not hold', () => {
 		expect(edgeBetween(model, 'a', 'gone')).toBeUndefined();
 		expect(edgeBetween(model, 'gone', 'b')).toBeUndefined();
+	});
+});
+
+// What the canvas asks before it opens an editor on a dropped edge.
+describe('delegationEdgeRefusal', () => {
+	// In g1: Alpha and Beta. Outside it: Carol and Dave, each drawn only because
+	// an edge reaches it.
+	const fleet = [
+		agent('a', 'Alpha', { groupId: 'g1', peerAgents: [row('c', R), row('d', R)] }),
+		agent('b', 'Beta', { groupId: 'g1' }),
+		agent('c', 'Carol'),
+		agent('d', 'Dave', { groupId: 'g2' }),
+	];
+
+	it('refuses an agent as its own peer, on every scope', () => {
+		for (const scope of [ALL, G1]) {
+			const refusal = delegationEdgeRefusal(buildDelegationGraph(scope, fleet), 'a', 'a');
+
+			expect(refusal).toContain(SELF_PEER_ERROR);
+		}
+	});
+
+	it('allows any two different agents on the graph of every agent', () => {
+		const model = buildDelegationGraph(ALL, fleet);
+
+		expect(delegationEdgeRefusal(model, 'c', 'd')).toBeNull();
+		expect(delegationEdgeRefusal(model, 'b', 'a')).toBeNull();
+	});
+
+	it('allows an edge with one end in the group, in either direction', () => {
+		const model = buildDelegationGraph(G1, fleet);
+
+		expect(delegationEdgeRefusal(model, 'b', 'c')).toBeNull();
+		expect(delegationEdgeRefusal(model, 'c', 'b')).toBeNull();
+		expect(delegationEdgeRefusal(model, 'a', 'b')).toBeNull();
+	});
+
+	// `buildDelegationGraph` drops an edge with both ends outside the scope, so
+	// the row would be written and the edge would not appear.
+	it('refuses an edge between two agents that are both outside the group', () => {
+		const model = buildDelegationGraph(G1, fleet);
+
+		expect(delegationEdgeRefusal(model, 'c', 'd')).toMatch(/outside this group/);
+		expect(delegationEdgeRefusal(model, 'd', 'c')).toMatch(/outside this group/);
+	});
+
+	it('leaves an end that is not on the graph to the write, which names it', () => {
+		const model = buildDelegationGraph(ALL, fleet);
+
+		expect(delegationEdgeRefusal(model, 'a', 'gone')).toBeNull();
 	});
 });
 

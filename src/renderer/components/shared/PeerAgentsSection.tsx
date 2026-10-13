@@ -39,7 +39,13 @@
 import React, { useCallback, useMemo } from 'react';
 import { GitBranch, Plus, Trash2, Users } from 'lucide-react';
 
-import { hasAnyPeerAccess, PEER_GRANT_LABELS } from '../../../shared/peerAgents';
+import {
+	DEFAULT_PEER_ACCESS,
+	hasAnyPeerAccess,
+	PEER_ACCESS_CONTROLS,
+	PEER_GRANT_LABELS,
+	PEER_NOTE_PLACEHOLDER,
+} from '../../../shared/peerAgents';
 import { FormFieldLabel } from '../ui/FormFieldLabel';
 import { FormInput } from '../ui/FormInput';
 import { GhostIconButton } from '../ui/GhostIconButton';
@@ -72,10 +78,6 @@ export interface PeerAgentsSectionProps {
 	groupId?: string;
 	groupName?: string;
 }
-
-// A new grant or row starts as consult only: the safe access, because a consult
-// never touches the peer's open tab. Delegate is a deliberate second click.
-const DEFAULT_PEER_ACCESS: PeerAccess = { read: true, write: false };
 
 const NO_ACCESS: PeerAccess = { read: false, write: false };
 
@@ -306,15 +308,15 @@ export function PeerAgentsSection({
 								/>
 								<PermissionSquare
 									theme={theme}
-									label="R"
-									title="Consult this peer"
+									label={PEER_ACCESS_CONTROLS.read.square}
+									title={PEER_ACCESS_CONTROLS.read.title}
 									active={peer.read}
 									onToggle={() => updateAt(index, { read: !peer.read })}
 								/>
 								<PermissionSquare
 									theme={theme}
-									label="W"
-									title="Delegate to this peer"
+									label={PEER_ACCESS_CONTROLS.write.square}
+									title={PEER_ACCESS_CONTROLS.write.title}
 									active={peer.write}
 									onToggle={() => updateAt(index, { write: !peer.write })}
 								/>
@@ -333,7 +335,7 @@ export function PeerAgentsSection({
 									theme={theme}
 									value={peer.description ?? ''}
 									onChange={(value) => updateAt(index, { description: value })}
-									placeholder="Optional: what this peer is for or when to reach it"
+									placeholder={PEER_NOTE_PLACEHOLDER}
 									heightClass="p-2"
 								/>
 							</div>

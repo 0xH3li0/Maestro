@@ -29,7 +29,12 @@
  * `fs`, `os`, or Electron.
  */
 
-import { resolvePeerRoster, type PeerRosterInput, type ResolvedPeer } from './peerAgents';
+import {
+	resolvePeerRoster,
+	SELF_PEER_ERROR,
+	type PeerRosterInput,
+	type ResolvedPeer,
+} from './peerAgents';
 import type { PeerAccess } from './types';
 
 /** Why an agent appears on the graph at all. */
@@ -188,6 +193,33 @@ export function edgeBetween(
 	targetId: string
 ): DelegationGraphEdge | undefined {
 	return model.edges.find((edge) => edge.sourceId === sourceId && edge.targetId === targetId);
+}
+
+/**
+ * Why an edge from `sourceId` to `targetId` cannot be drawn on this graph, or
+ * `null` when it can. Two drops are refused:
+ *
+ *   - An agent onto itself. An agent is never its own peer, and
+ *     `resolvePeerRoster` would drop the row.
+ *   - Two `spill` agents. `buildDelegationGraph` keeps an edge only when one
+ *     end is in scope, so the row would be written and the edge would not
+ *     appear, and an edge already there is not in the model to be shown first.
+ *
+ * An end that is not on the graph is not refused here: the write itself names
+ * an agent that is gone.
+ */
+export function delegationEdgeRefusal(
+	model: DelegationGraphModel,
+	sourceId: string,
+	targetId: string
+): string | null {
+	if (sourceId === targetId) return `${SELF_PEER_ERROR} Drop the edge on another agent.`;
+	const isSpill = (sessionId: string) =>
+		model.nodes.some((node) => node.sessionId === sessionId && node.scope === 'spill');
+	if (isSpill(sourceId) && isSpill(targetId)) {
+		return 'Both agents are outside this group, so its graph would not draw the edge. Switch the scope to All agents to connect them.';
+	}
+	return null;
 }
 
 /**

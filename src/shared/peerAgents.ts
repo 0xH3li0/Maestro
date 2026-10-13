@@ -98,6 +98,40 @@ export function mergePeerAccess(a: PeerAccess, b: PeerAccess): PeerAccess {
 }
 
 /**
+ * What a new peer row or grant starts as: consult only. It is the safe access,
+ * because a consult never touches the peer's open tab. Delegate is a deliberate
+ * second click.
+ */
+export const DEFAULT_PEER_ACCESS: PeerAccess = { read: true, write: false };
+
+/**
+ * How the two bits of ONE peer are named to the user, wherever one peer is
+ * edited: a row of the Peers tab, and the edge editor of the Delegation Graph.
+ * Both read it here, so the graph cannot name a bit another way than the tab
+ * the same row is edited on.
+ */
+export const PEER_ACCESS_CONTROLS: Record<
+	keyof PeerAccess,
+	{ square: string; word: string; title: string; effect: string }
+> = {
+	read: {
+		square: 'R',
+		word: 'Consult',
+		title: 'Consult this peer',
+		effect: "Asks a question and gets the answer back. The peer's open tab is not touched.",
+	},
+	write: {
+		square: 'W',
+		word: 'Delegate',
+		title: 'Delegate to this peer',
+		effect: "The work lands in the peer's live tab.",
+	},
+};
+
+/** The placeholder of a peer's note, on every surface that edits one. */
+export const PEER_NOTE_PLACEHOLDER = 'Optional: what this peer is for or when to reach it';
+
+/**
  * Read the access word `maestro-cli` takes for one peer row: `r` (consult),
  * `w` (delegate), `rw`, or `none`. `none` is the deliberate exclusion, a row
  * with neither bit set. Returns undefined for anything else.
@@ -213,6 +247,35 @@ export function applyPeerAgentEdits(
 	}
 
 	return { ok: true, peerAgents: normalizePeerAgents([...rows.values()]) };
+}
+
+/** What every surface says when an agent is named as its own peer. */
+export const SELF_PEER_ERROR = 'An agent cannot be its own peer.';
+
+/**
+ * Why `edits` cannot be applied in this fleet, or `null` when they can. A peer
+ * that is given access or a note must be a live agent: a row for an id that
+ * matches nothing is inert, and the caller should hear that instead. Pass
+ * `selfId` when the rows belong to a live agent, which cannot be its own peer;
+ * a seed that is not an agent yet (a group's defaults) has no self to refuse.
+ *
+ * `remove` is not checked: deleting the row of an agent that is gone is how a
+ * dead row is cleaned up.
+ */
+export function peerAgentEditsProblem(
+	edits: PeerAgentEdits,
+	liveAgentIds: ReadonlySet<string>,
+	selfId?: string
+): string | null {
+	const named = [
+		...(edits.upsert ?? []).map((row) => row.sessionId),
+		...(edits.notes ?? []).map((note) => note.sessionId),
+	].map((id) => id.trim());
+	for (const id of named) {
+		if (selfId !== undefined && id === selfId) return SELF_PEER_ERROR;
+		if (!liveAgentIds.has(id)) return `Peer "${id}" is not an agent.`;
+	}
+	return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

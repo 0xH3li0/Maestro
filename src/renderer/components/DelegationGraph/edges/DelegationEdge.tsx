@@ -98,11 +98,26 @@ const BADGE_SLOTS: ReadonlyArray<{ letter: string; emptyFor: DelegationEdgeKind 
 	{ letter: 'D', emptyFor: 'consult' },
 ];
 
-const ACCESS_SENTENCES: Record<DelegationEdgeKind, (source: string, target: string) => string> = {
-	consult: (source, target) => `${source} may consult ${target}`,
-	delegate: (source, target) => `${source} may delegate to ${target}`,
-	both: (source, target) => `${source} may consult and delegate to ${target}`,
+/** What each kind lets the source do, as the verb of a sentence about the target. */
+const ACCESS_VERBS: Record<DelegationEdgeKind, string> = {
+	consult: 'consult',
+	delegate: 'delegate to',
+	both: 'consult and delegate to',
 };
+
+/**
+ * One relationship as a sentence: "Alpha may consult Beta". `already` is for a
+ * relationship named beside the one being edited: "Beta may already consult
+ * Alpha". The tooltip, and the edge editor, say it with this one function.
+ */
+export function delegationAccessSentence(
+	kind: DelegationEdgeKind,
+	sourceName: string,
+	targetName: string,
+	options: { already?: boolean } = {}
+): string {
+	return `${sourceName} may ${options.already ? 'already ' : ''}${ACCESS_VERBS[kind]} ${targetName}`;
+}
 
 /**
  * The kind of an edge, or `null` for one with neither bit. `resolvePeerRoster`
@@ -162,7 +177,7 @@ export function describeDelegationEdge(
 	const kind = delegationEdgeKind(edge);
 	if (!kind) return [];
 	const lines = [
-		ACCESS_SENTENCES[kind](sourceName, targetName),
+		delegationAccessSentence(kind, sourceName, targetName),
 		edge.source === 'explicit'
 			? `Named in the peer list of ${sourceName}`
 			: `From the "${PEER_GRANT_LABELS[edge.source]}" grant of ${sourceName}`,

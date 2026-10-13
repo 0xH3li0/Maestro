@@ -18,6 +18,7 @@ import {
 	delegationEdgeMarker,
 	delegationEdgeOpacity,
 	delegationEdgeTypes,
+	delegationAccessSentence,
 	describeDelegationEdge,
 	type DelegationEdgeData,
 	type DelegationEdgeEmphasis,
@@ -216,6 +217,23 @@ describe('delegationEdgeMarker', () => {
 			width: 16,
 			height: 16,
 		});
+	});
+});
+
+describe('delegationAccessSentence', () => {
+	it.each([
+		['consult', 'Alpha may consult Beta'],
+		['delegate', 'Alpha may delegate to Beta'],
+		['both', 'Alpha may consult and delegate to Beta'],
+	] as const)('says what a %s edge lets the source do', (kind, sentence) => {
+		expect(delegationAccessSentence(kind, 'Alpha', 'Beta')).toBe(sentence);
+	});
+
+	// The edge editor names the opposite edge beside the one being drawn.
+	it('says a relationship is already there when asked to', () => {
+		expect(delegationAccessSentence('delegate', 'Beta', 'Alpha', { already: true })).toBe(
+			'Beta may already delegate to Alpha'
+		);
 	});
 });
 

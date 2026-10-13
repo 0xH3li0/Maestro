@@ -40,6 +40,7 @@ import {
 	applyPeerAgentEdits,
 	parsePeerAgentEdits,
 	parsePeerGrantValue,
+	peerAgentEditsProblem,
 } from '../../../shared/peerAgents';
 import { GROUP_SETTINGS_SSH_PATCH_KEYS } from '../../../shared/groupSettingsUpdate';
 import type { GroupAgentDefaults, ToolType } from '../../../shared/types';
@@ -437,14 +438,8 @@ export function applyGroupDefaultsPatch(
 		const parsed = parsePeerAgentEdits(patch.peerAgentEdits);
 		if (!parsed.ok) return fail(parsed.error);
 		if (context.liveAgentIds) {
-			const live = new Set(context.liveAgentIds);
-			const unknown = [
-				...(parsed.edits.upsert ?? []).map((row) => row.sessionId),
-				...(parsed.edits.notes ?? []).map((note) => note.sessionId),
-			]
-				.map((id) => id.trim())
-				.find((id) => !live.has(id));
-			if (unknown !== undefined) return fail(`Peer "${unknown}" is not an agent.`);
+			const problem = peerAgentEditsProblem(parsed.edits, new Set(context.liveAgentIds));
+			if (problem) return fail(problem);
 		}
 		const applied = applyPeerAgentEdits(form.peerAgents, parsed.edits);
 		if (!applied.ok) return fail(applied.error);

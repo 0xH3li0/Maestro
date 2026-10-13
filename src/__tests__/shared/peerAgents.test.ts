@@ -12,7 +12,11 @@ import { describe, it, expect, vi } from 'vitest';
 
 import {
 	applyPeerAgentEdits,
+	DEFAULT_PEER_ACCESS,
 	normalizePeerAgents,
+	PEER_ACCESS_CONTROLS,
+	peerAgentEditsProblem,
+	SELF_PEER_ERROR,
 	parsePeerAccessWord,
 	parsePeerAgentEdits,
 	parsePeerGrantValue,
@@ -1011,6 +1015,83 @@ describe('applyPeerAgentEdits', () => {
 			remove: ['b'],
 		});
 		expect(JSON.stringify(rows)).toBe(before);
+	});
+});
+
+// The one check `update-agent --peer`, `update-group-settings --peer` and the
+// Delegation Graph make before they apply an edit.
+describe('peerAgentEditsProblem', () => {
+	const live = new Set(['a', 'b', 'c']);
+
+	it('passes an edit that names only live agents', () => {
+		expect(
+			peerAgentEditsProblem(
+				{
+					upsert: [{ sessionId: 'b', read: true, write: false }],
+					notes: [{ sessionId: 'c', description: 'n' }],
+				},
+				live,
+				'a'
+			)
+		).toBeNull();
+	});
+
+	it('names a peer that is not an agent, in a row and in a note', () => {
+		expect(
+			peerAgentEditsProblem(
+				{ upsert: [{ sessionId: 'gone', read: true, write: false }] },
+				live,
+				'a'
+			)
+		).toBe('Peer "gone" is not an agent.');
+		expect(
+			peerAgentEditsProblem({ notes: [{ sessionId: 'gone', description: 'n' }] }, live, 'a')
+		).toBe('Peer "gone" is not an agent.');
+	});
+
+	it('refuses the agent itself when the rows belong to a live agent', () => {
+		expect(
+			peerAgentEditsProblem({ upsert: [{ sessionId: ' a ', read: true, write: false }] }, live, 'a')
+		).toBe(SELF_PEER_ERROR);
+	});
+
+	// A group's defaults are a seed, not an agent: there is no self to refuse.
+	it('has no self to refuse when no agent owns the rows', () => {
+		expect(
+			peerAgentEditsProblem({ upsert: [{ sessionId: 'a', read: true, write: false }] }, live)
+		).toBeNull();
+	});
+
+	// Removing the row of an agent that is gone is how a dead row is cleaned up.
+	it('does not check the rows an edit removes', () => {
+		expect(peerAgentEditsProblem({ remove: ['gone', 'a'] }, live, 'a')).toBeNull();
+	});
+
+	it('reports the first problem in the order the edit names its peers', () => {
+		expect(
+			peerAgentEditsProblem(
+				{
+					upsert: [
+						{ sessionId: 'gone', read: true, write: false },
+						{ sessionId: 'a', read: true, write: false },
+					],
+				},
+				live,
+				'a'
+			)
+		).toBe('Peer "gone" is not an agent.');
+	});
+});
+
+describe('the wording of one peer', () => {
+	it('starts a new row as consult only, which is itself a relationship', () => {
+		expect(DEFAULT_PEER_ACCESS).toEqual({ read: true, write: false });
+		expect(hasAnyPeerAccess(DEFAULT_PEER_ACCESS)).toBe(true);
+	});
+
+	it('names read as consult and write as delegate, on the R and W squares', () => {
+		expect(PEER_ACCESS_CONTROLS.read).toMatchObject({ square: 'R', word: 'Consult' });
+		expect(PEER_ACCESS_CONTROLS.write).toMatchObject({ square: 'W', word: 'Delegate' });
 	});
 });
 

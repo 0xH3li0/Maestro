@@ -332,6 +332,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Open Tab Cleanup Suggestions                                                                | `open tab-cleanup`                                                                                                                                 |
 | Open the Delegation Graph (hamburger menu, palette, unbound hotkey)                         | `open delegation-graph` (every agent)                                                                                                              |
 | Delegation Graph: read a scope's layout and saved positions                                 | `settings get delegationGraphLayouts` (keys: `all`, `group:<groupId>`)                                                                             |
+| Delegation Graph: draw or re-draw an edge (Edit mode, the edge editor)                      | `update-agent <source> --peer <target>:<r\|w\|rw>`, `--peer-note <target>:<text>`; read: `show-agent` (same `applyPeerAgentEdits()` patch)         |
 | Local Models: semantic index status and progress                                            | `models index` (same record as `localModels:semanticIndex:status`)                                                                                 |
 | Local Models: token proxy status and totals                                                 | `models proxy status` (same report as `localModels:proxy:report`)                                                                                  |
 | Local Models: diff of one compressed block                                                  | `models proxy block <hash>` (same record as `localModels:proxy:block`)                                                                             |
@@ -489,7 +490,8 @@ a design constraint; they are simply not built yet.
     behind is readable with `settings get delegationGraphLayouts`. The
     View / Edit switch has no verb and needs none: it is a guard against a
     slipped pointer, it is never saved, and a CLI caller has no pointer to
-    slip. What Edit lets the pointer write, `update-agent --peer` writes. The
+    slip. What Edit lets the pointer write, `update-agent --peer` writes (see
+    the "draw or re-draw an edge" row in the Covered table). The
     relationships the graph draws are covered in full (`update-agent --peer`
     writes them, `show-agent` reads them resolved). Closing the scope half
     means a verb with `--group <id>` that passes `{ scope }` to

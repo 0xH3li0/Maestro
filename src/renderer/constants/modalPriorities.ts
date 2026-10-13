@@ -301,6 +301,13 @@ export const MODAL_PRIORITIES = {
 	 */
 	DELEGATION_GRAPH: 546,
 
+	/**
+	 * The Delegation Graph's edge editor, a popover over its canvas. Above the
+	 * graph, so Escape closes the editor first and leaves the graph open for a
+	 * second Escape.
+	 */
+	DELEGATION_GRAPH_EDGE_EDITOR: 548,
+
 	/** Computer History viewer (destination surface) */
 	COMPUTER_HISTORY: 547,
 

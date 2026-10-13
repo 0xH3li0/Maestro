@@ -19,6 +19,7 @@ import {
 	applyPeerAgentEdits,
 	parsePeerAgentEdits,
 	parsePeerGrantValue,
+	peerAgentEditsProblem,
 } from '../../../shared/peerAgents';
 import { AUTO_MODEL, isAutoModel } from '../../../shared/autoModel';
 import { autoModelProblem } from '../../../shared/autoTurn';
@@ -2321,19 +2322,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				});
 				return;
 			}
-			const liveIds = new Set(sessionsRef.current.map((s) => s.id));
-			const named = [
-				...(parsed.edits.upsert ?? []).map((row) => row.sessionId),
-				...(parsed.edits.notes ?? []).map((note) => note.sessionId),
-			].map((id) => id.trim());
-			const unknown = named.find((id) => id === sessionId || !liveIds.has(id));
-			if (unknown !== undefined) {
+			const problem = peerAgentEditsProblem(
+				parsed.edits,
+				new Set(sessionsRef.current.map((s) => s.id)),
+				sessionId
+			);
+			if (problem) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
-					error:
-						unknown === sessionId
-							? 'An agent cannot be its own peer.'
-							: `Peer "${unknown}" is not an agent.`,
+					error: problem,
 				});
 				return;
 			}

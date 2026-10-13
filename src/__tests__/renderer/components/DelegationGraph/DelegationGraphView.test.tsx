@@ -15,12 +15,14 @@
  * view passed, with the change reactflow would send. `applyNodeChanges` is the
  * real one. The stand-in tells each node whether it is connectable, as
  * reactflow does from `nodesConnectable`, and a handle is drawn as a marker that
- * carries what it was told.
+ * carries what it was told. An edge dropped on an agent is the two calls
+ * reactflow makes for one: `onConnect` with the pair, then `onConnectEnd` with
+ * the pointer.
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentType, ReactNode } from 'react';
-import type { Edge, Node, NodeChange, NodeProps } from 'reactflow';
+import type { Connection, Edge, Node, NodeChange, NodeProps } from 'reactflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DelegationEdgeData } from '../../../../renderer/components/DelegationGraph/edges/DelegationEdge';
 import type { AgentDelegationNodeData } from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
@@ -31,6 +33,9 @@ interface FlowProps {
 	edges: Edge<DelegationEdgeData>[];
 	nodeTypes: Record<string, ComponentType<NodeProps<AgentDelegationNodeData>>>;
 	onNodesChange: (changes: NodeChange[]) => void;
+	onConnect?: (connection: Connection) => void;
+	onConnectEnd?: (event: MouseEvent | TouchEvent) => void;
+	onClickConnectEnd?: (event: MouseEvent | TouchEvent) => void;
 	nodesConnectable?: boolean;
 	deleteKeyCode?: string | null;
 	children?: ReactNode;
@@ -128,6 +133,8 @@ import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { Group, Session } from '../../../../renderer/types';
 import {
 	buildDelegationGraph,
+	delegationEdgeId,
+	isMutual,
 	type DelegationGraphScope,
 } from '../../../../shared/delegationGraph';
 import {
@@ -136,6 +143,12 @@ import {
 	type DelegationNodePosition,
 	type DelegationSavedPositions,
 } from '../../../../shared/delegationGraphLayout';
+import {
+	PEER_ACCESS_CONTROLS,
+	PEER_GRANT_LABELS,
+	PEER_NOTE_PLACEHOLDER,
+	SELF_PEER_ERROR,
+} from '../../../../shared/peerAgents';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -205,6 +218,8 @@ const PLATFORM_POSITIONS: DelegationSavedPositions = {
 const ORIGIN: DelegationNodePosition = { x: 0, y: 0 };
 /** A place no layout puts an agent, so a node found there was dragged there. */
 const DRAGGED: DelegationNodePosition = { x: 5120, y: 3840 };
+/** Where in the window an edge is dropped. Inside the jsdom viewport, so it is not clamped. */
+const DROP = { x: 300, y: 200 };
 
 function renderView(initialScope?: DelegationGraphScope) {
 	return render(
@@ -324,6 +339,35 @@ function switchMode(mode: 'view' | 'edit'): void {
 /** Whether each handle drawn on the canvas was told an edge can start from it. */
 function handleConnectability(): string[] {
 	return screen.getAllByTestId('flow-handle').map((el) => el.dataset.connectable ?? '');
+}
+
+/**
+ * Drop an edge that was dragged from one agent onto another, with the two
+ * calls reactflow makes: the connection, then the end of the gesture.
+ */
+function connect(source: string, target: string): void {
+	act(() => {
+		flow.props?.onConnect?.({ source, target, sourceHandle: null, targetHandle: null });
+		flow.props?.onConnectEnd?.(new MouseEvent('mouseup', { clientX: DROP.x, clientY: DROP.y }));
+	});
+}
+
+function edgeEditor(): HTMLElement | null {
+	return screen.queryByTestId('delegation-edge-editor');
+}
+
+function accessSquare(bit: 'read' | 'write'): HTMLElement {
+	return screen.getByRole('switch', { name: PEER_ACCESS_CONTROLS[bit].title });
+}
+
+function confirmEdge(): void {
+	fireEvent.click(screen.getByTestId('delegation-edge-editor-confirm'));
+}
+
+function sessionOf(id: string): Session {
+	const session = useSessionStore.getState().sessions.find((candidate) => candidate.id === id);
+	if (!session) throw new Error(`no agent ${id}`);
+	return session;
 }
 
 function setSessions(update: (sessions: Session[]) => Session[]): void {
@@ -529,6 +573,255 @@ describe('DelegationGraphView', () => {
 
 			expect(screen.getByTestId('delegation-graph-canvas')).toHaveAttribute('data-mode', 'edit');
 			expect(screen.queryByTestId('delegation-graph-edit-frame')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('drawing an edge', () => {
+		it('opens the editor where the edge was dropped, and writes nothing yet', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+
+			const editor = screen.getByRole('dialog', { name: 'Edge from Gamma to Epsilon' });
+			expect(editor.style.left).toBe(`${DROP.x}px`);
+			expect(editor.style.top).toBe(`${DROP.y}px`);
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			expect(drawnEdgeIds()).not.toContain(delegationEdgeId('c', 'e'));
+		});
+
+		it('writes exactly one row, into the agent the edge starts from, on confirm', () => {
+			renderView();
+			switchMode('edit');
+			const epsilonBefore = sessionOf('e');
+
+			connect('c', 'e');
+			confirmEdge();
+
+			expect(sessionOf('c').peerAgents).toEqual([{ sessionId: 'e', read: true, write: false }]);
+			// The agent the edge ends on is the same object: nothing was written to it.
+			expect(sessionOf('e')).toBe(epsilonBefore);
+			expect(drawnEdgeIds()).toContain(delegationEdgeId('c', 'e'));
+			expect(edgeEditor()).not.toBeInTheDocument();
+			// Gamma was isolated until this edge.
+			expect(nodeBody('c')).toHaveAttribute('data-node-state', 'in-scope');
+		});
+
+		it('writes the bits and the note the editor holds', () => {
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			fireEvent.click(accessSquare('write'));
+			fireEvent.click(accessSquare('read'));
+			fireEvent.change(screen.getByPlaceholderText(PEER_NOTE_PLACEHOLDER), {
+				target: { value: 'Runs the deploys' },
+			});
+			confirmEdge();
+
+			expect(sessionOf('c').peerAgents).toEqual([
+				{ sessionId: 'e', read: false, write: true, description: 'Runs the deploys' },
+			]);
+		});
+
+		it('writes nothing when the editor is cancelled', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			fireEvent.click(screen.getByTestId('delegation-edge-editor-cancel'));
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('will not commit an edge with neither bit', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			fireEvent.click(accessSquare('read'));
+
+			expect(screen.getByTestId('delegation-edge-editor-confirm')).toBeDisabled();
+			confirmEdge();
+			expect(edgeEditor()).toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('refuses an agent dropped on itself, in words, and writes no row', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'c');
+
+			expect(screen.getByTestId('delegation-edge-refusal')).toHaveTextContent(SELF_PEER_ERROR);
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+			expect(screen.queryByTestId('delegation-edge-refusal')).not.toBeInTheDocument();
+		});
+
+		it('edits the edge in place when the direction is drawn again', () => {
+			renderView();
+			switchMode('edit');
+
+			connect('a', 'b');
+
+			// Alpha already consults and delegates to Beta: the editor opens on that.
+			expect(accessSquare('read')).toHaveAttribute('aria-checked', 'true');
+			expect(accessSquare('write')).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getByTestId('delegation-edge-editor-confirm')).toHaveTextContent('Save edge');
+
+			fireEvent.click(accessSquare('write'));
+			confirmEdge();
+
+			expect(sessionOf('a').peerAgents).toEqual([{ sessionId: 'b', read: true, write: false }]);
+			expect(drawnEdgeIds().filter((id) => id === delegationEdgeId('a', 'b'))).toHaveLength(1);
+		});
+
+		it('says the reverse edge exists, mirrors nothing, and keeps both edges', () => {
+			renderView();
+			switchMode('edit');
+			const deltaBefore = sessionOf('d');
+
+			connect('e', 'd');
+
+			expect(screen.getByTestId('delegation-edge-editor-reverse')).toHaveTextContent(
+				'Delta may already delegate to Epsilon'
+			);
+			// Delta delegates. The new edge is not handed that bit.
+			expect(accessSquare('write')).toHaveAttribute('aria-checked', 'false');
+
+			confirmEdge();
+
+			expect(sessionOf('d')).toBe(deltaBefore);
+			expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'd', read: true, write: false }]);
+			const model = buildDelegationGraph(ALL, useSessionStore.getState().sessions);
+			expect(isMutual(model, 'd', 'e')).toBe(true);
+			expect(edgeEl(delegationEdgeId('d', 'e')).dataset.hasReverse).toBe('true');
+			expect(edgeEl(delegationEdgeId('e', 'd')).dataset.hasReverse).toBe('true');
+		});
+
+		it('turns an edge a grant derived into a row, and leaves the grant alone', () => {
+			setSessions((sessions) =>
+				sessions.map((session) =>
+					session.id === 'e'
+						? { ...session, groupPeerAccess: { read: true, write: false } }
+						: session
+				)
+			);
+			renderView();
+			switchMode('edit');
+
+			// Epsilon reaches Alpha through its group grant.
+			connect('e', 'a');
+
+			expect(screen.getByTestId('delegation-edge-editor-existing')).toHaveTextContent(
+				PEER_GRANT_LABELS.group
+			);
+			fireEvent.click(accessSquare('write'));
+			confirmEdge();
+
+			expect(sessionOf('e').peerAgents).toEqual([{ sessionId: 'a', read: true, write: true }]);
+			expect(sessionOf('e').groupPeerAccess).toEqual({ read: true, write: false });
+		});
+
+		it('draws an edge to an agent outside the group without moving that agent into it', () => {
+			renderView(PLATFORM_SCOPE);
+			switchMode('edit');
+
+			connect('e', 'b');
+			confirmEdge();
+
+			expect(drawnEdgeIds()).toContain(delegationEdgeId('e', 'b'));
+			expect(nodeBody('b')).toHaveAttribute('data-node-state', 'spill');
+			expect(sessionOf('b').groupId).toBe(RESEARCH.id);
+		});
+
+		it('refuses an edge between two agents outside the group, which this graph would not draw', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView(PLATFORM_SCOPE);
+			switchMode('edit');
+
+			connect('b', 'd');
+
+			expect(screen.getByTestId('delegation-edge-refusal')).toHaveTextContent('outside this group');
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('opens nothing and writes nothing for a connection made in View', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+
+			connect('c', 'e');
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(screen.queryByTestId('delegation-edge-refusal')).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('ignores the end of a gesture that connected nothing', () => {
+			renderView();
+			switchMode('edit');
+
+			act(() => {
+				flow.props?.onConnectEnd?.(new MouseEvent('mouseup', { clientX: DROP.x, clientY: DROP.y }));
+			});
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+		});
+
+		it('discards an unconfirmed edge on the way back to View', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			switchMode('view');
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+			switchMode('edit');
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('discards an unconfirmed edge when the scope changes', () => {
+			renderView();
+			switchMode('edit');
+
+			connect('a', 'e');
+			changeScope(PLATFORM_KEY);
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+		});
+
+		it('closes the editor when one of its two agents is deleted', () => {
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			setSessions((sessions) => sessions.filter((session) => session.id !== 'e'));
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+		});
+
+		it('closes the editor on Escape and leaves the graph in Edit', () => {
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+			switchMode('edit');
+
+			connect('c', 'e');
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			expect(edgeEditor()).not.toBeInTheDocument();
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
 		});
 	});
 
