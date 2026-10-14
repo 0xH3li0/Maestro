@@ -200,16 +200,24 @@ export function createAgentsApi() {
 
 		/**
 		 * Discover available slash commands for an agent.
-		 * Returns objects with name, optional prompt (OpenCode custom commands),
-		 * and optional description (Claude Code skill frontmatter).
+		 * Returns names, optional expanded prompts or skill invocations, and descriptions.
+		 * customEnvVars selects the Codex profile used by this session.
 		 */
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
 			customPath?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			customEnvVars?: Record<string, string>
 		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
-			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
+			ipcRenderer.invoke(
+				'agents:discoverSlashCommands',
+				agentId,
+				cwd,
+				customPath,
+				sshRemoteId,
+				...(customEnvVars === undefined ? [] : [customEnvVars])
+			),
 
 		/**
 		 * Get the persisted capability snapshot for an agent in a given
