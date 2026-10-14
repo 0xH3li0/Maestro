@@ -15,7 +15,14 @@ describe('Session List Quick Resume tab visibility', () => {
 		vi.clearAllMocks();
 		resetStore(useSessionStore);
 		vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
-			messages: [{ type: 'assistant', content: 'Resumed conversation', uuid: 'message-1' }],
+			messages: [
+				{
+					type: 'assistant',
+					content: 'Resumed conversation',
+					timestamp: new Date(0).toISOString(),
+					uuid: 'message-1',
+				},
+			],
 			total: 1,
 			hasMore: false,
 		});

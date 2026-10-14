@@ -96,6 +96,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef,
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -148,6 +149,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef,
 				defaultSaveToHistory: false,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -190,6 +192,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef,
 				defaultSaveToHistory: false,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -228,6 +231,7 @@ describe('useAgentSessionManagement', () => {
 					setAgentSessionsOpen: vi.fn(),
 					rightPanelRef: createRightPanelRef(),
 					defaultSaveToHistory: false,
+					defaultShowThinking: 'off',
 				})
 			);
 		};
@@ -304,6 +308,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -345,6 +350,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -401,6 +407,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -453,6 +460,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -503,6 +511,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -544,6 +553,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -602,6 +612,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -689,6 +700,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -721,6 +733,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -792,6 +805,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -831,6 +845,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 				showFlash,
 			})
 		);
@@ -883,6 +898,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 				showFlash,
 			})
 		);
@@ -915,6 +931,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 			})
 		);
 
@@ -944,6 +961,7 @@ describe('useAgentSessionManagement', () => {
 				setAgentSessionsOpen: vi.fn(),
 				rightPanelRef: createRightPanelRef(),
 				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
 				showFlash,
 			})
 		);
