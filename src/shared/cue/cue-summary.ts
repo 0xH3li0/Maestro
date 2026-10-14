@@ -9,7 +9,7 @@
  * Pure / runtime-agnostic - safe to import from main and renderer alike.
  */
 
-import { flattenMarkdownTables, stripMarkdown } from '../markdown';
+import { stripMarkdown } from '../markdown';
 import { stripAnsiCodes } from '../stringUtils';
 import type { CueEvent, CueEventType, CueRunResult } from './contracts';
 
@@ -216,9 +216,10 @@ export function buildCueRunSummary(
  *
  * Two fallbacks keep visible output from collapsing to nothing:
  * - Stripping markdown left no text. That happens when the answer is only a
- *   table (fenced or bare), which stripMarkdown() drops on purpose, so the
- *   table's cells are flattened into text instead. Anything else markup-only
- *   (an empty fence, an image with no alt) falls back to the raw text.
+ *   table (bare, or wrapped in a fence, inline code or emphasis), which
+ *   stripMarkdown() drops on purpose, so it runs again with the table's cells
+ *   flattened into text instead. Anything else markup-only (an empty fence,
+ *   an image with no alt) falls back to the raw text.
  * - Not even the first sentence fits the cap. The text is clipped instead.
  */
 export function extractCueOutputExcerpt(
@@ -232,7 +233,7 @@ export function extractCueOutputExcerpt(
 	const plain = stripAnsiCodes(stdout);
 	const text =
 		collapseWhitespace(stripMarkdown(plain)) ||
-		collapseWhitespace(stripMarkdown(flattenMarkdownTables(plain))) ||
+		collapseWhitespace(stripMarkdown(plain, { tables: 'flatten' })) ||
 		collapseWhitespace(plain);
 	if (!text) return undefined;
 
