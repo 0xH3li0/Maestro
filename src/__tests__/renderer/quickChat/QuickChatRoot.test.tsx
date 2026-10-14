@@ -279,7 +279,13 @@ describe('Open in Maestro', () => {
 
 describe('Close', () => {
 	it('Cmd+W hides the window, even with the agent picker open, and the overlay names it', async () => {
-		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
+		// The header (and its Close button) only renders once there is a conversation.
+		await renderWith(
+			snapshot({
+				agents: [{ id: 'a', name: 'Pedsidian' }],
+				messages: [{ id: 'm', role: 'user', text: 'hi' }],
+			})
+		);
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Close\./ }).parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc \/ .*W$/);
 
