@@ -491,7 +491,7 @@ While a turn is running, a queued message for that tab can carry a **Steer** but
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
 
-A steered message carries the Steer button's arrow icon in the transcript, the same way a force-sent one carries the hammer. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the mark.
+A steered message is headed with the Steer button's arrow in the transcript, and the header says what the agent did with it. **Steering the running turn** shows while the agent has the text and has not yet acted on it. **Steered into the running turn**, with a check, means the turn took the message and changed course; the bubble is indented and joined by a line to the turn it steered. **Answered as a follow-up** means the agent could not fold the message in and answered it after the turn ended, so that bubble stands on its own. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the header.
 
 Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
 

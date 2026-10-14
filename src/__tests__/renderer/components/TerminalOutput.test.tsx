@@ -305,7 +305,90 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
-		it('shows the steer indicator for a message steered into a running turn', () => {
+		it('heads a steered message with what the agent did with it', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'go left instead',
+					source: 'user',
+					steered: true,
+					steerState: 'absorbed',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			const header = screen.getByTestId('steered-message-header');
+			expect(header).toHaveAttribute('data-steer-state', 'absorbed');
+			expect(header).toHaveTextContent('Steered into the running turn');
+			// Stitched to the turn it joined.
+			expect(screen.getByTestId('steer-turn-connector')).toBeInTheDocument();
+		});
+
+		it('does not stitch a steer the agent answered as a follow-up', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'go left instead',
+					source: 'user',
+					steered: true,
+					steerState: 'queued',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByTestId('steered-message-header')).toHaveTextContent(
+				'Answered as a follow-up'
+			);
+			expect(screen.queryByTestId('steer-turn-connector')).not.toBeInTheDocument();
+		});
+
+		it('runs the connector on through consecutive stitched steers', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'steer one',
+					source: 'user',
+					steered: true,
+					steerState: 'absorbed',
+				}),
+				createLogEntry({ text: 'steer two', source: 'user', steered: true, steerState: 'pending' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// A junction is two lines (the run carries on); the last steer is one elbow.
+			const [first, last] = screen.getAllByTestId('steer-turn-connector');
+			expect(first.children).toHaveLength(2);
+			expect(last.children).toHaveLength(1);
+		});
+
+		it('still marks a message steered before the outcome was recorded', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'go left instead', source: 'user', steered: true }),
 			];
@@ -340,9 +423,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(
-				screen.queryByTitle('Sent as a steer into the turn that was already running')
-			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('steered-message-header')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('steer-turn-connector')).not.toBeInTheDocument();
 			// The two marks are separate: a force-sent message keeps its hammer.
 			expect(
 				screen.getByTitle('Sent via forced parallel execution (bypassed queue)')
