@@ -222,6 +222,8 @@ describe('searchableSettings', () => {
 			// by a per-surface stepper plus a global zoom, so "font size" now
 			// leads to Zoom and to the individual surface pickers.
 			['zoom', 'display-font-zoom'],
+			['Show provider in subagent list', 'display-left-side-panel'],
+			['provider source', 'display-left-side-panel'],
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],

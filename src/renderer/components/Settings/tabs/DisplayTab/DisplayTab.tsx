@@ -172,6 +172,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setShowWorktreePill={settings.setShowWorktreePill}
 				showWorktreeBranchName={settings.showWorktreeBranchName}
 				setShowWorktreeBranchName={settings.setShowWorktreeBranchName}
+				showWorktreeProvider={settings.showWorktreeProvider}
+				setShowWorktreeProvider={settings.setShowWorktreeProvider}
 			/>
 			<ModalLayoutSection theme={theme} resetModalSizes={settings.resetModalSizes} />
 			<FileEditPreviewSection

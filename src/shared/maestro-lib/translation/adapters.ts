@@ -6,6 +6,7 @@ import { canonicalJson } from '../../canonicalJson';
 import { extractNativeConversation } from './native-records';
 import { nativeRecordKey, recordKey, translationHash } from './identity';
 import { TranslationRegistry } from './registry';
+import { TRANSLATION_DIRECTIONS, TRANSLATION_PROVIDER_VERSIONS } from './support';
 import { assertTranslationTarget } from './resource-projections';
 import type {
 	PortableConversation,
@@ -314,13 +315,13 @@ async function stageCodex(
 
 export const claudeTranslationAdapter: TranslationAdapter = {
 	provider: 'claude-code',
-	versions: ['2.1.296'],
+	versions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
 	extract: extractNativeConversation,
 	stage: stageClaude,
 };
 export const codexTranslationAdapter: TranslationAdapter = {
 	provider: 'codex',
-	versions: ['0.162.1'],
+	versions: TRANSLATION_PROVIDER_VERSIONS.codex,
 	extract: extractNativeConversation,
 	stage: stageCodex,
 };
@@ -328,20 +329,7 @@ export function createTranslationRegistry(): TranslationRegistry {
 	const registry = new TranslationRegistry();
 	registry.register(claudeTranslationAdapter);
 	registry.register(codexTranslationAdapter);
-	registry.declareDirection({
-		source: 'claude-code',
-		destination: 'codex',
-		sourceVersions: claudeTranslationAdapter.versions,
-		destinationVersions: codexTranslationAdapter.versions,
-		verification: 'unverified',
-	});
-	registry.declareDirection({
-		source: 'codex',
-		destination: 'claude-code',
-		sourceVersions: codexTranslationAdapter.versions,
-		destinationVersions: claudeTranslationAdapter.versions,
-		verification: 'unverified',
-	});
+	for (const direction of TRANSLATION_DIRECTIONS) registry.declareDirection(direction);
 	return registry;
 }
 

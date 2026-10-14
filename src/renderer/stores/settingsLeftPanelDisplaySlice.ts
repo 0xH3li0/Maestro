@@ -16,6 +16,7 @@ export interface LeftPanelDisplayState {
 	showProviderModePill: boolean;
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
+	showWorktreeProvider: boolean;
 	showStarredSessionsSection: boolean;
 	showLeftPanelGroupMemberCount: boolean;
 	showLeftPanelCollapsedInitials: boolean;
@@ -35,6 +36,7 @@ export interface LeftPanelDisplayActions {
 	setShowProviderModePill: (value: boolean) => void;
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
+	setShowWorktreeProvider: (value: boolean) => void;
 	setShowStarredSessionsSection: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
 	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
@@ -61,6 +63,7 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	showProviderModePill: false,
 	showWorktreePill: false,
 	showWorktreeBranchName: false,
+	showWorktreeProvider: false,
 	showStarredSessionsSection: true,
 	showLeftPanelGroupMemberCount: false,
 	showLeftPanelCollapsedInitials: true,
@@ -100,6 +103,11 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	setShowWorktreeBranchName: (value) => {
 		set({ showWorktreeBranchName: value });
 		window.maestro.settings.set('showWorktreeBranchName', value);
+	},
+
+	setShowWorktreeProvider: (value) => {
+		set({ showWorktreeProvider: value });
+		window.maestro.settings.set('showWorktreeProvider', value);
 	},
 
 	setShowStarredSessionsSection: (value) => {
@@ -176,6 +184,9 @@ export function hydrateLeftPanelDisplaySettings(
 
 	if (allSettings['showWorktreeBranchName'] !== undefined)
 		patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
+
+	if (allSettings['showWorktreeProvider'] !== undefined)
+		patch.showWorktreeProvider = allSettings['showWorktreeProvider'] as boolean;
 
 	if (allSettings['showStarredSessionsSection'] !== undefined)
 		patch.showStarredSessionsSection = allSettings['showStarredSessionsSection'] as boolean;

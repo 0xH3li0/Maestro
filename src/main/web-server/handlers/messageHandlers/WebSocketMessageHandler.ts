@@ -57,6 +57,7 @@ import {
 	handleUpdateSessionCwd,
 	handleUpdateSessionSsh,
 	handleUpdateSessionConfig,
+	handleProviderTranslation,
 	handleListDesktopSessions,
 	handleGetSessionHistory,
 } from './sessions';
@@ -513,6 +514,10 @@ export class WebSocketMessageHandler {
 
 			case 'update_session_config':
 				handleUpdateSessionConfig(this.ctx, client, message);
+				break;
+
+			case 'provider_translation':
+				handleProviderTranslation(this.ctx, client, message);
 				break;
 
 			case 'get_groups':
