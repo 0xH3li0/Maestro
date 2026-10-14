@@ -1,3 +1,5 @@
+import { ProviderTranslationService } from '../../provider-translation-service';
+import type { ProcessLivenessProbe } from '../../utils/agent-busy';
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
@@ -450,6 +452,7 @@ async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredComman
  * Dependencies required for agents handler registration
  */
 export interface AgentsHandlerDependencies {
+	getProcessManager?: () => ProcessLivenessProbe | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
@@ -1027,6 +1030,24 @@ async function discoverOpenCodeSlashCommandsRemote(
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
+	const translation =
+		sessionsStore && settingsStore && deps.getProcessManager
+			? new ProviderTranslationService({
+					sessionsStore,
+					settingsStore,
+					agentConfigsStore,
+					getAgentDetector,
+					getProcessManager: deps.getProcessManager,
+				})
+			: null;
+	ipcMain.handle(
+		'agents:translateProvider',
+		(_event, request) =>
+			translation?.run(request) ?? {
+				success: false,
+				error: 'Provider translation host unavailable',
+			}
+	);
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(

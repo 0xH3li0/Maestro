@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -940,7 +941,7 @@ export class CallbackRegistry {
 	async updateSessionConfig(
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	): Promise<{ success: boolean; error?: string }> {
+	): Promise<TranslationReport> {
 		if (!this.callbacks.updateSessionConfig) {
 			return { success: false, error: 'Session config updates not configured' };
 		}

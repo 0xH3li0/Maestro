@@ -1,3 +1,4 @@
+import { parseNativeLines } from '../../shared/maestro-lib/translation/native-records';
 /**
  * Codex CLI Session Storage Implementation
  *
@@ -1061,14 +1062,12 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 
 		try {
-			const lines = content.split('\n').filter((l) => l.trim());
-
 			const messages: SessionMessage[] = [];
 			let messageIndex = 0;
 
-			for (const line of lines) {
+			for (const { entry } of parseNativeLines(content)) {
 				try {
-					const entry = JSON.parse(line);
+					if (!entry) continue;
 
 					// Handle direct message entries
 					if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
@@ -1265,12 +1264,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 
 				let textContent = '';
 				let role: 'user' | 'assistant' | null = null;
@@ -1318,8 +1316,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	/**
 	 * Find the file path for a session by ID (async)
 	 */
-	private async findSessionFile(sessionId: string): Promise<string | null> {
-		const allFiles = await this.findAllSessionFiles();
+	async findSessionFile(sessionId: string, accountDir?: string): Promise<string | null> {
+		const allFiles = await this.findAllSessionFiles(accountDir);
 
 		for (const { filePath, filename } of allFiles) {
 			const fileSessionId = extractSessionIdFromFilename(filename);

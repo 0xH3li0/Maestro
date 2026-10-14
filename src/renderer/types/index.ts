@@ -1,3 +1,7 @@
+import type {
+	ProviderMigrationState,
+	HistoryTranslationMapping,
+} from '../../shared/maestro-lib/translation/types';
 // Type definitions for Maestro renderer
 import type { BrowserTab } from '../../shared/browserPage';
 
@@ -1285,6 +1289,13 @@ export interface PendingSteer {
 }
 
 export interface Session {
+	providerMigration?: ProviderMigrationState;
+	providerTranslationQueuedOrigins?: Record<string, ToolType>;
+	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
+	providerTranslationKnowledgeDirectory?: string;
+	providerTranslationTabInventory?: Array<
+		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
 	deferredContent?: import('../../shared/deferredSessionContent').DeferredSessionContent;

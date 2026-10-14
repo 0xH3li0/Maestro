@@ -1602,9 +1602,21 @@ program
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
-		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
+		'Translate owned conversations and selected project knowledge to another provider'
 	)
-	.option('--force', 'Confirm a destructive change (required for --provider)')
+	.option('--force', 'Alias for --accept-translation-limitations')
+	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
+	.option(
+		'--accept-translation-limitations',
+		'Accept the reported unverified or partial conversion limitations'
+	)
+	.option('--migration <action>', 'Migration operation: plan | apply | status | recover | rollback')
+	.option(
+		'--translation-resource <path>',
+		'Select one user-level resource (repeatable; no account-global import)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
 

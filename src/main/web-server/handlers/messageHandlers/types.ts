@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
 /**
  * Shared types for WebSocket message handlers.
  *
@@ -357,7 +358,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<TranslationReport>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;

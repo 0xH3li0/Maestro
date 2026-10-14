@@ -26,40 +26,7 @@ import type { ToolType } from '../../shared/types';
  * transcript is not provider-specific and survives any number of switches.
  * Returns the tab unchanged when the provider did not actually change.
  */
-export function switchTabProvider(tab: AITab, fromProvider: ToolType, toProvider: ToolType): AITab {
-	if (fromProvider === toProvider) return tab;
-
-	const parked: Partial<Record<ToolType, ProviderTabSession>> = {
-		...(tab.providerSessions ?? {}),
-	};
-
-	// Park the outgoing provider's live values. A tab that never ran under the
-	// outgoing provider still gets an entry, so switching back restores its
-	// "fresh tab" state rather than inheriting whatever the detour left behind.
-	parked[fromProvider] = {
-		agentSessionId: tab.agentSessionId,
-		usageStats: tab.usageStats,
-		customModel: tab.customModel,
-		customEffort: tab.customEffort,
-	};
-
-	const restored = parked[toProvider];
-	// The incoming provider must never keep an entry in the map - the live
-	// fields are its home now.
-	delete parked[toProvider];
-
-	return {
-		...tab,
-		agentSessionId: restored?.agentSessionId ?? null,
-		usageStats: restored?.usageStats,
-		customModel: restored?.customModel,
-		customEffort: restored?.customEffort,
-		// A restored session ID is a real resume target, not something we are
-		// waiting on the agent to hand back.
-		awaitingSessionId: false,
-		providerSessions: parked,
-	};
-}
+export { switchTabProvider } from '../../shared/maestro-lib/translation/session';
 
 /**
  * The provider that owns this tab's most recent turn.
@@ -132,12 +99,18 @@ export function captureQueuedTurnSettings(
  * binary belong to that provider.
  */
 export function codifyQueuedTurnSettings(
-	item: Pick<QueuedItem, 'turnSettings'>,
+	item: Pick<QueuedItem, 'turnSettings'> & Partial<Pick<QueuedItem, 'id'>>,
 	tab: AITab | undefined,
 	session: Session
 ): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
 	const live = codifyTurnSettings(tab, session);
-	if (!item.turnSettings) return live;
+	if (
+		!item.turnSettings ||
+		(item.id &&
+			session.providerTranslationQueuedOrigins?.[item.id] &&
+			session.providerTranslationQueuedOrigins[item.id] !== session.toolType)
+	)
+		return live;
 	return {
 		turnProvider: live.turnProvider,
 		turnModel: item.turnSettings.model,

@@ -103,8 +103,11 @@ export interface EditAgentModalProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
-	) => void;
+		codexTransport?: CodexTransport,
+		acceptTranslationLimitations?: boolean,
+		selectedUserResources?: string[],
+		migrationPlanId?: string
+	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;
 	existingSessions: Session[];

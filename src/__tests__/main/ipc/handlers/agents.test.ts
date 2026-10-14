@@ -164,6 +164,7 @@ describe('agents IPC handlers', () => {
 	describe('registration', () => {
 		it('should register all agents handlers', () => {
 			const expectedChannels = [
+				'agents:translateProvider',
 				'agents:detect',
 				'agents:refresh',
 				'agents:get',
@@ -212,6 +213,12 @@ describe('agents IPC handlers', () => {
 		});
 	});
 
+	it('reports a missing translation host without mutating configuration', async () => {
+		const handler = handlers.get('agents:translateProvider')!;
+		expect(
+			await (handler as any)({}, { agentId: 'agent', destination: 'codex', action: 'apply' })
+		).toEqual({ success: false, error: 'Provider translation host unavailable' });
+	});
 	describe('agents:getKnownAuthDirs', () => {
 		it('returns canonical local auth paths from agent and session env vars', async () => {
 			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {

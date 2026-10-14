@@ -1,3 +1,4 @@
+import { parseNativeLines } from '../../shared/maestro-lib/translation/native-records';
 /**
  * Claude Code Session Storage Implementation
  *
@@ -756,13 +757,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			content = await fs.readFile(sessionFile, 'utf-8');
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
-
 		const messages: SessionMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					let msgContent = '';
 					let toolUse = undefined;
@@ -859,12 +858,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					const textContent = extractTextFromContent(entry.message?.content);
 					if (textContent.trim()) {

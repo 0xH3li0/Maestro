@@ -10,7 +10,7 @@ const METHODS: Record<string, string> = {
 	agentSessions:
 		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionStarred snapshotStarredTranscript',
 	agents:
-		'consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
+		'translateProvider consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
 	aiCommand: 'suggest',
 	attachments: 'delete getPath list load save',
 	autorun:

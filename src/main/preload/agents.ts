@@ -1,3 +1,7 @@
+import type {
+	TranslationRequest,
+	TranslationReport,
+} from '../../shared/maestro-lib/translation/types';
 /**
  * Preload API for agent management
  *
@@ -53,6 +57,8 @@ export interface AgentRefreshResult {
  */
 export function createAgentsApi() {
 	return {
+		translateProvider: (request: TranslationRequest): Promise<TranslationReport> =>
+			ipcRenderer.invoke('agents:translateProvider', request),
 		/**
 		 * Detect available agents
 		 */
