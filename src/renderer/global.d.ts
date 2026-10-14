@@ -2628,9 +2628,11 @@ interface MaestroAPI {
 		navigateToSource: (
 			sessionId: string,
 			tabId?: string,
-			action?: ToastClickAction
+			action?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean }>;
-		onActivateAction: (callback: (action: ToastClickAction) => void) => () => void;
+		onActivateAction: (
+			callback: (action: import('../shared/toastClickAction').ToastClickAction) => void
+		) => () => void;
 
 		show: (
 			title: string,

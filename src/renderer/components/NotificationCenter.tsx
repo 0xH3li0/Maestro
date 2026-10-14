@@ -31,7 +31,7 @@ import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
-import { getViewportSize } from '../utils/modalSizing';
+import { clampModalSize, DEFAULT_MODAL_MIN_SIZE, getViewportSize } from '../utils/modalSizing';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -126,11 +126,17 @@ interface NotificationCenterPopoverProps {
 /** History controls and entry actions, positioned against the bell or the app fallback. */
 function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCenterPopoverProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	const large = useSettingsStore((s) => s.notificationCenterLarge);
+	const [defaultSize] = useState(() => {
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+		return { width: (large ? 38 : 22) * rem, height: (large ? 48 : 32) * rem };
+	});
 	const [viewport, setViewport] = useState(getViewportSize);
 	useEventListener('resize', () => setViewport(getViewportSize()));
 	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
 		align: 'end',
 		contentKey: `${viewport.width}:${viewport.height}`,
+		minPlacementSize: clampModalSize(defaultSize, { viewport, minSize: DEFAULT_MODAL_MIN_SIZE }),
 	});
 
 	// Escape closes the popover before any modal underneath it.
@@ -140,21 +146,16 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 		eventType: 'click',
 	});
 
-	const large = useSettingsStore((s) => s.notificationCenterLarge);
-	const [defaultSize] = useState(() => {
-		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-		return { width: (large ? 38 : 22) * rem, height: (large ? 48 : 32) * rem };
-	});
 	// Align to the bell on opening, then keep the top-left fixed while dragging.
 	// The remaining viewport space bounds east/south growth, including the fallback anchor.
 	const resize = useResizableModal({
 		resizeKey: large ? 'notification-center-large' : 'notification-center',
 		defaultSize,
-		minSize: { width: 320, height: 240 },
+		minSize: DEFAULT_MODAL_MIN_SIZE,
 		maxSize: ready
 			? {
-					width: Math.max(320, viewport.width - left - 8),
-					height: Math.max(240, viewport.height - top - 8),
+					width: Math.max(DEFAULT_MODAL_MIN_SIZE.width, viewport.width - left - 8),
+					height: Math.max(DEFAULT_MODAL_MIN_SIZE.height, viewport.height - top - 8),
 				}
 			: undefined,
 		anchor: 'top-left',

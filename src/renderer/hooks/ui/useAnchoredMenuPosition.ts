@@ -29,6 +29,7 @@
 
 import { useLayoutEffect, useState, type RefObject } from 'react';
 import { useContextMenuPosition } from './useContextMenuPosition';
+import type { ModalSize } from '../../utils/modalSizing';
 
 /** Default gap between the anchor and the menu. */
 const DEFAULT_GAP_PX = 6;
@@ -60,6 +61,8 @@ export interface AnchoredMenuOptions {
 	flip?: boolean;
 	/** Remeasure the anchor and menu when the caller's viewport/layout changes. */
 	contentKey?: unknown;
+	/** Reserve this footprint for a saved smaller surface to grow/reset in place. */
+	minPlacementSize?: Partial<ModalSize>;
 }
 
 export interface AnchoredMenuPosition {
@@ -100,7 +103,10 @@ export function useAnchoredMenuPosition(
 		align = 'start',
 		flip = false,
 		contentKey,
+		minPlacementSize,
 	} = resolved;
+	const minWidth = minPlacementSize?.width ?? 0;
+	const minHeight = minPlacementSize?.height ?? 0;
 	// Non-null exactly for the beside-the-anchor placements, which keeps the side
 	// narrowed for the flip helper below.
 	const sidePlacement = placement === 'right' || placement === 'left' ? placement : null;
@@ -141,12 +147,14 @@ export function useAnchoredMenuPosition(
 		if (!needsMenuSize) return;
 		const el = menuRef.current;
 		if (!el) return;
-		const { width, height } = el.getBoundingClientRect();
+		const measured = el.getBoundingClientRect();
+		const width = Math.max(measured.width, minWidth);
+		const height = Math.max(measured.height, minHeight);
 		// Guarded so a stable size can't drive a re-render loop.
 		setMenuSize((prev) =>
 			prev && prev.width === width && prev.height === height ? prev : { width, height }
 		);
-	}, [needsMenuSize, menuRef, anchor, contentKey]);
+	}, [needsMenuSize, menuRef, anchor, contentKey, minWidth, minHeight]);
 
 	const size = menuSize ?? { width: 0, height: 0 };
 
@@ -177,7 +185,7 @@ export function useAnchoredMenuPosition(
 		: 0;
 
 	// Clamps into the viewport - the same helper the right-click menus use.
-	const position = useContextMenuPosition(menuRef, x, y, 8, contentKey);
+	const position = useContextMenuPosition(menuRef, x, y, 8, contentKey, minPlacementSize);
 
 	// Stay "not ready" until everything the placement depends on is known, so
 	// callers keep the menu at opacity 0 rather than flashing it in a corner.

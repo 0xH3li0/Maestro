@@ -174,6 +174,17 @@ describe('useAnchoredMenuPosition', () => {
 		expect(readPosition()).toEqual({ left: 40, top: 56, ready: true });
 	});
 
+	it('leaves room for a saved smaller popover to regain its default size', () => {
+		render(
+			<Harness
+				anchorRect={{ left: 1060, right: 1100, bottom: 300 }}
+				menuSize={{ width: 320, height: 240 }}
+				options={{ align: 'end', minPlacementSize: { width: 608, height: 650 } }}
+			/>
+		);
+		expect(readPosition()).toEqual({ left: 492, top: 142, ready: true });
+	});
+
 	it('combines above and end, the media transport case', () => {
 		render(
 			<Harness
