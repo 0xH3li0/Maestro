@@ -14,6 +14,8 @@ Commander tree by `npm run gen:cli-reference`.
 
 ## Focus belongs to the human (`--background` / `--focus`)
 
+Provider translation (`update-agent --provider`) uses `provider_translation`, which forwards to the same migration callback as Edit Agent. Its dedicated transport prevents a newer CLI's preflight/apply from falling through to an older desktop's destructive provider settings patch. `--migration-plan` targets a reviewed operation; `--dry-run --json` supplies its ID for a Cue shell Command node. This operation changes the active provider; it is not an independent replica sync API.
+
 An agent may create a surface. It may not decide the human should be looking at
 it. Every verb that can move the Maestro view or raise a notice carries a
 `background` bit so a caller that wants to stay out of the way has a way to say

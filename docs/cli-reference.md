@@ -1372,29 +1372,34 @@ Remove an agent from the Maestro desktop app
 
 Update an existing agent's group, working directory, and per-agent settings
 
-| Option                            | Description                                                                                    | Default |
-| --------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                     | -       |
-| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)             | -       |
-| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped) | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                   | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                      | -       |
-| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                  | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                    | -       |
-| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                           | -       |
-| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                       | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                 | `[]`    |
-| `--clear-env`                     | Clear all per-agent environment variables                                                      | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                        | -       |
-| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                          | -       |
-| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
-| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
-| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)               | -       |
-| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
-| `--provider <type>`               | Switch the agent provider (tabs kept; old provider settings parked for a switch back)          | -       |
-| `--force`                         | No longer needed for --provider; accepted for older scripts                                    | -       |
-| `--json`                          | Output as JSON (for scripting)                                                                 | -       |
+| Option                             | Description                                                                                    | Default |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                 | Move the agent to this group (use "none" to ungroup; supports partial IDs)                     | -       |
+| `-d, --cwd <path>`                 | Change the agent's working directory (resolved to absolute; agent must be stopped)             | -       |
+| `--ssh-remote <id>`                | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped) | -       |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote                                                   | -       |
+| `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false)                      | -       |
+| `--nudge <message>`                | Nudge message appended to every message (empty string clears)                                  | -       |
+| `--new-session-message <message>`  | Message prefixed to the first message of new sessions (empty string clears)                    | -       |
+| `--custom-path <path>`             | Override the agent binary path (empty string clears)                                           | -       |
+| `--custom-args <args>`             | Custom CLI arguments for the agent (empty string clears)                                       | -       |
+| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                 | `[]`    |
+| `--clear-env`                      | Clear all per-agent environment variables                                                      | -       |
+| `--model <model>`                  | Model override (e.g. sonnet, opus; empty string clears)                                        | -       |
+| `--effort <level>`                 | Effort/reasoning level override (empty string clears)                                          | -       |
+| `--context-window <size>`          | Context window size in tokens (0 or "none" clears)                                             | -       |
+| `--token-source <mode>`            | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
+| `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                       | -       |
+| `--codex-transport <transport>`    | Codex transport: exec \| app-server (experimental, enables steering; Codex only)               | -       |
+| `--bookmark <bool>`                | Bookmark the agent in the Left Bar (true/false)                                                | -       |
+| `--provider <type>`                | Translate owned conversations and selected project knowledge to another provider               | -       |
+| `--force`                          | Alias for --accept-translation-limitations                                                     | -       |
+| `--dry-run`                        | Plan provider migration without native writes (requires --provider)                            | -       |
+| `--accept-translation-limitations` | Accept the reported unverified or partial conversion limitations                               | -       |
+| `--migration <action>`             | Migration operation: plan \| apply \| status \| recover \| rollback                            | -       |
+| `--migration-plan <id>`            | Use the reviewed plan or inspect/recover a specific operation ID                               | -       |
+| `--translation-resource <path>`    | Select one user-level resource (repeatable; no account-global import)                          | `[]`    |
+| `--json`                           | Output as JSON (for scripting)                                                                 | -       |
 
 ## `maestro-cli rename-agent <agent-id> <new-name>`
 

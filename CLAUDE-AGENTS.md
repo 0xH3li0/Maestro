@@ -183,6 +183,8 @@ To add support for a new agent:
 
 Translation registration lives in `src/shared/maestro-lib/translation/adapters.ts` (`createTranslationRegistry`). Implement `TranslationAdapter.extract`/`stage`, declare each direction and version pair, and use `planTranslation`/`applyTranslation`/`recoverTranslation` through the shared host service. Both current Claude Code 2.1.296 ↔ Codex 0.162.1 directions remain unverified. Project knowledge and explicitly selected user resources are the scope; account-global imports and file-write-only certification are excluded. See the [implemented contract](PROVIDER-SUPPORT.md#implemented-entry-points-and-registration).
 
+Keep picker hints and native registration on the renderer-safe declarations in `src/shared/maestro-lib/translation/support.ts`. Edit Agent marks declared destinations with a memory/history preview indicator, reads preflight on selection, and applies migration on Save Changes with activity status. The indicator does not bypass version checks or certify native resume.
+
 Reuse native extraction's tool-link validation: duplicate calls/results, results preceding their calls, missing linkage and invalid message roles block staging. Preserve original evidence and parallel-call ordering instead of repairing history by replay or reordering.
 
 Reuse selected-root validation for native targets and resource links. Persist the staged destination checkpoint before mapping commit; recovery must preserve later native work and settle the previous operation before another migration. Reuse `commitTranslationSession` to reject changed native source IDs across open/closed tabs and the saved inventory while permitting already applied destination mappings.

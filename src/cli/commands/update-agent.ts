@@ -20,6 +20,7 @@ import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/clau
 import { AGENT_IDS } from '../../shared/agentIds';
 import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
 import { parseCliBool, resolveCliPath } from '../utils/parse';
+import { errorFrameMessage } from '../services/session-command';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -36,6 +37,7 @@ interface UpdateAgentOptions {
 	dryRun?: boolean;
 	acceptTranslationLimitations?: boolean;
 	migration?: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
+	migrationPlan?: string;
 	translationResource?: string[];
 	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
 	// bookmark). Empty-string values clear the field; see buildConfigPatch.
@@ -252,6 +254,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(options.migration)
 	)
 		emitError('Invalid migration action.', options);
+	if (options.migrationPlan !== undefined && !options.migrationPlan.trim())
+		emitError('--migration-plan must be a nonempty reviewed operation ID.', options);
+	if (options.migrationPlan && providerType === undefined && options.migration === undefined)
+		emitError('--migration-plan requires --provider or --migration.', options);
 
 	// Build the SSH patch from the SSH-related flags. Only keys the caller
 	// touched are included so the renderer merges rather than clobbers.
@@ -390,21 +396,27 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				const action = options.dryRun ? 'plan' : (options.migration ?? 'apply');
 				const report = await client.sendCommand<TranslationReport>(
 					{
-						type: 'update_session_config',
+						type: 'provider_translation',
 						sessionId,
 						configPatch: {
 							...(providerType && { toolType: providerType }),
 							migrationAction: action,
 							acceptTranslationLimitations:
 								options.acceptTranslationLimitations || options.force || false,
+							...(options.migrationPlan && { migrationPlanId: options.migrationPlan.trim() }),
 							...(options.translationResource && {
 								selectedUserResources: options.translationResource.map(resolveCliPath),
 							}),
 						},
 					},
-					'update_session_config_result',
+					'provider_translation_result',
 					120000
 				);
+				const bridgeError = errorFrameMessage(report);
+				if (bridgeError)
+					throw new Error(
+						`${bridgeError}. Provider translation requires a matching desktop build; no legacy provider switch was attempted.`
+					);
 				if (options.json) console.log(JSON.stringify({ ...report, agentId: sessionId }));
 				else {
 					if (report.plan) {

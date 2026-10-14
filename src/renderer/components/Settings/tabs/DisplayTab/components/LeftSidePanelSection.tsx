@@ -33,6 +33,8 @@ interface LeftSidePanelSectionProps {
 	setShowWorktreePill: (enabled: boolean) => void;
 	showWorktreeBranchName: boolean;
 	setShowWorktreeBranchName: (enabled: boolean) => void;
+	showWorktreeProvider: boolean;
+	setShowWorktreeProvider: (enabled: boolean) => void;
 }
 
 function MonoExample({ children }: { children: ReactNode }) {
@@ -66,6 +68,8 @@ export function LeftSidePanelSection({
 	setShowWorktreePill,
 	showWorktreeBranchName,
 	setShowWorktreeBranchName,
+	showWorktreeProvider,
+	setShowWorktreeProvider,
 }: LeftSidePanelSectionProps) {
 	const pillPercentage = ((leftPanelCollapsedPillsPerRow - 5) / 45) * 100;
 
@@ -244,6 +248,16 @@ export function LeftSidePanelSection({
 					onChange={setShowWorktreeBranchName}
 					ariaLabel="Show branch name in left panel agent list"
 					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show provider in subagent list"
+					description="Display the provider backing each worktree agent beneath its name in the left panel."
+					checked={showWorktreeProvider}
+					onChange={setShowWorktreeProvider}
+					ariaLabel="Show provider in left panel agent list"
+					borderTop
+					clickableRow
 				/>
 			</SectionCard>
 		</div>

@@ -1612,6 +1612,10 @@ program
 	)
 	.option('--migration <action>', 'Migration operation: plan | apply | status | recover | rollback')
 	.option(
+		'--migration-plan <id>',
+		'Use the reviewed plan or inspect/recover a specific operation ID'
+	)
+	.option(
 		'--translation-resource <path>',
 		'Select one user-level resource (repeatable; no account-global import)',
 		(value: string, previous: string[]) => [...previous, value],

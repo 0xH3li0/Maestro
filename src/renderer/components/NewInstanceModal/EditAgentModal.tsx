@@ -1,8 +1,10 @@
 import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
+import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
@@ -138,6 +140,8 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+	/** Live store entry for this agent; the form's session prop is an opening snapshot. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
 	const [migrationPlan, setMigrationPlan] = useState<TranslationPlan | null>(null);
 	const [migrationError, setMigrationError] = useState('');
 	const [migrationLoading, setMigrationLoading] = useState(false);
@@ -145,6 +149,23 @@ export function EditAgentModal({
 	const [acceptTranslationLimitations, setAcceptTranslationLimitations] = useState(false);
 	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
 	const [selectionRevision, setSelectionRevision] = useState(0);
+	const carryDestinations = SUPPORTED_AGENTS.filter((provider) =>
+		getDeclaredTranslationDirection(session?.toolType ?? selectedToolType, provider)
+	);
+	const currentMigration = (liveSession ?? session)?.providerMigration;
+	const migrationState =
+		currentMigration?.operationId === migrationPlan?.id
+			? currentMigration?.state
+			: migrationPlan?.status;
+	const migrationActivity = migrationSaving
+		? migrationState === 'deferred'
+			? 'Waiting for the current turn to finish...'
+			: migrationState === 'staged' || migrationState === 'committing'
+				? 'Finishing provider switch...'
+				: 'Translating memory and session history...'
+		: migrationLoading
+			? 'Reading memory and session history...'
+			: null;
 	useEffect(() => {
 		if (!isOpen || !session || !providerChanged) {
 			setMigrationPlan(null);
@@ -159,12 +180,19 @@ export function EditAgentModal({
 			destination: selectedToolType,
 			action: 'plan',
 			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
-		}).then((report) => {
-			if (disposed) return;
-			setMigrationPlan(report.plan ?? null);
-			setMigrationError(report.error ?? '');
-			setMigrationLoading(false);
-		});
+		})
+			.then((report) => {
+				if (disposed) return;
+				setMigrationPlan(report.plan ?? null);
+				setMigrationError(report.error ?? '');
+				setMigrationLoading(false);
+			})
+			.catch((error) => {
+				if (disposed) return;
+				setMigrationPlan(null);
+				setMigrationError(error instanceof Error ? error.message : String(error));
+				setMigrationLoading(false);
+			});
 		return () => {
 			disposed = true;
 		};
@@ -465,9 +493,6 @@ export function EditAgentModal({
 		const folder = await window.maestro.dialog.selectFolder();
 		if (folder) setWorkingDir(folder);
 	}, []);
-
-	/** Live store entry for this agent; see the snapshot note in the memo below. */
-	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
 
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
@@ -790,7 +815,7 @@ export function EditAgentModal({
 					onConfirm={handleSave}
 					confirmLabel={
 						migrationSaving
-							? migrationPlan?.status === 'deferred'
+							? migrationState === 'deferred'
 								? 'Waiting for current turn'
 								: 'Translating provider'
 							: 'Save Changes'
@@ -822,7 +847,9 @@ export function EditAgentModal({
 						Agent Provider
 					</div>
 					<select
+						aria-label="Agent Provider"
 						value={selectedToolType}
+						disabled={migrationSaving}
 						onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
 						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
 						style={{
@@ -831,12 +858,28 @@ export function EditAgentModal({
 							backgroundColor: theme.colors.bgMain,
 						}}
 					>
-						{SUPPORTED_AGENTS.map((agentId) => (
-							<option key={agentId} value={agentId}>
-								{getAgentDisplayName(agentId)}
-							</option>
-						))}
+						{SUPPORTED_AGENTS.map((agentId) => {
+							const direction = getDeclaredTranslationDirection(session.toolType, agentId);
+							return (
+								<option key={agentId} value={agentId}>
+									{direction
+										? `→ ${getAgentDisplayName(agentId)} · Memory + history (${direction.verification === 'verified' ? 'verified' : 'preview'})`
+										: getAgentDisplayName(agentId)}
+								</option>
+							);
+						})}
 					</select>
+					<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+						{carryDestinations.length > 0
+							? '→ Memory + session carry. Preview conversions are unverified; installed versions and content are checked before saving.'
+							: 'Memory + session carry is not available from this provider.'}
+					</div>
+					{providerChanged && migrationActivity && (
+						<div role="status" aria-live="polite" className="mt-2 flex items-center gap-2 text-xs">
+							<Spinner size={14} color={theme.colors.accent} decorative />
+							<span>{migrationActivity}</span>
+						</div>
+					)}
 					{providerChanged && (
 						<div
 							className="mt-2 p-2 rounded border text-xs space-y-2"
@@ -886,7 +929,6 @@ export function EditAgentModal({
 									Review selection
 								</button>
 							</div>
-							{migrationLoading && <div role="status">Reading migration preflight...</div>}
 							{migrationPlan && (
 								<div>
 									{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records} native

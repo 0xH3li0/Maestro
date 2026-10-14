@@ -108,6 +108,7 @@ function resetStore() {
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
 		showToolCalls: false,
+		showWorktreeProvider: false,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
@@ -205,6 +206,10 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
+		it('defaults worktree provider labels to off in the store and metadata', () => {
+			expect(_INITIAL_STATE.showWorktreeProvider).toBe(false);
+			expect(SETTINGS_METADATA.showWorktreeProvider.default).toBe(false);
+		});
 		it('has correct default values for the initial settings fields', () => {
 			const state = useSettingsStore.getState();
 
@@ -310,6 +315,11 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('simple setters', () => {
+		it.each([true, false])('persists worktree provider visibility: %s', (enabled) => {
+			useSettingsStore.getState().setShowWorktreeProvider(enabled);
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(enabled);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('showWorktreeProvider', enabled);
+		});
 		describe('Shell', () => {
 			it('setDefaultShell updates state and persists', () => {
 				useSettingsStore.getState().setDefaultShell('bash');
@@ -1948,6 +1958,20 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		it.each([true, false])('restores worktree provider visibility: %s', async (enabled) => {
+			useSettingsStore.setState({ showWorktreeProvider: !enabled });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				showWorktreeProvider: enabled,
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(enabled);
+		});
+
+		it('keeps worktree provider labels off when older settings omit the key', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(false);
+		});
 		it('hydrates remote tool visibility and preferences without native log-buffer access', async () => {
 			vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
 			const nativeGetMaxLogBuffer = window.maestro.logger.getMaxLogBuffer;
