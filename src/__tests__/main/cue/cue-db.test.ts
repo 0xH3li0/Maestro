@@ -38,6 +38,7 @@ const mockStatement = {
 		allCalls.push(args);
 		return mockAllReturn;
 	}),
+	iterate: vi.fn(() => mockAllReturn[Symbol.iterator]()),
 };
 
 const prepareCalls: string[] = [];

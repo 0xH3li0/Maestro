@@ -550,6 +550,7 @@ Maestro acknowledges a delivery (answers `2xx`) only after it has handled it: it
 - A crash (`kill -9`, out of memory, a host reboot) followed by a restart loses nothing. A queued delivery runs after the restart; a run that was in progress is marked failed at the next start.
 - `systemctl stop` and `docker stop` drain: a delivery still being checked when the stop begins is finished and queued for the next start, within the drain timeout.
 - A redelivery of the same id fires nothing for 24 hours, and a GitHub change seen by both a webhook and a poll fires once.
+- A `cue.yaml` change while the delivery waits (a hand edit, `maestro-cli cue model`) keeps it queued while its subscription is still in the file and switched on. If the change removes, renames or switches off that subscription, the delivery is dropped, logged (`Dropped N queued event(s) ... on a cue.yaml reload`) and recorded as never run. A change that fails to parse keeps the queue until the next good save.
 
 Before the `2xx`, nothing is recorded. A crash while Maestro is still checking a delivery leaves the sender without an answer, and its retry fires once. GitHub does not retry on its own; the GitHub trigger's poll finds the change instead, or use **Redeliver**.
 

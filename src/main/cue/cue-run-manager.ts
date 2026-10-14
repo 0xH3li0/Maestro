@@ -12,7 +12,7 @@
 
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
-import type { CueLogPayload } from '../../shared/cue-log-types';
+import type { CueLogPayload, CueQueueDropReason } from '../../shared/cue-log-types';
 import type {
 	CueAutoRunConfig,
 	CueCommand,
@@ -305,15 +305,21 @@ export interface CueRunManager {
 	getQueueStatus(): Map<string, number>;
 	/**
 	 * Drop a session's queued events. `preserveStartup` keeps `app.startup`
-	 * entries; `preserveHeartbeats` also keeps the `time.heartbeat` entries of
-	 * the named subscriptions (the ones a cue.yaml reload carried over with
-	 * their schedule, so their waiting run is not lost).
+	 * entries.
 	 */
-	clearQueue(
+	clearQueue(sessionId: string, preserveStartup?: boolean): void;
+	/**
+	 * Settle a session's queue after a cue.yaml reload. `classify` returns
+	 * null to keep an entry, or why it is dropped. A dropped entry loses its
+	 * persisted row and is recorded in `cue_events` as never run, the way a
+	 * stale drop is, with one `queueDropped` log line per reason. A queued
+	 * event can be a webhook delivery already answered 2xx, so it never
+	 * disappears without a trace. Returns how many entries were dropped.
+	 */
+	retainQueue(
 		sessionId: string,
-		preserveStartup?: boolean,
-		preserveHeartbeats?: ReadonlySet<string>
-	): void;
+		classify: (entry: QueuedEvent) => CueQueueDropReason | null
+	): number;
 	reset(): void;
 }
 
@@ -423,30 +429,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// Record the dropped event to the activity log so users can see
 				// *why* their queued run never fired - previously these events
 				// disappeared with only a log line, making it look like a bug.
-				const droppedRunId = crypto.randomUUID();
-				// We record the event directly in its final `timeout` state, so
-				// there's no separate running→timeout flip needed - the row is
-				// born finalized (unlike normal runs, which start as `running`).
-				const droppedLineage = buildLineageColumns({
-					runId: droppedRunId,
-					chainRootId: entry.chainRootId,
-					parentEventId: entry.parentEventId,
-					pipelineName: entry.pipelineName,
-				});
-				safeRecordCueEvent({
-					id: droppedRunId,
-					type: entry.event.type,
-					triggerName: entry.event.triggerName,
-					sessionId,
-					subscriptionName: entry.subscriptionName,
-					status: 'timeout',
-					payload: JSON.stringify({
-						...entry.event.payload,
-						droppedFromQueue: true,
-						queuedForMs: ageMs,
-					}),
-					...droppedLineage,
-				});
+				recordDroppedEntry(sessionId, entry, { queuedForMs: ageMs });
 				// Emit as `queueDropped` (stale reason) rather than `runFinished`
 				// with status: 'timeout'. Previously this path incremented
 				// `runsTimedOut` via the metric interceptor, confounding real
@@ -506,6 +489,38 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		if (queue.length === 0) {
 			eventQueue.delete(sessionId);
 		}
+	}
+
+	/**
+	 * Record a queued event that will never run. The row is born finalized as
+	 * `timeout` (no running→timeout flip), with `droppedFromQueue` and `details`
+	 * merged into the event payload so the activity log can say why.
+	 */
+	function recordDroppedEntry(
+		sessionId: string,
+		entry: QueuedEvent,
+		details: Record<string, unknown>
+	): void {
+		const droppedRunId = crypto.randomUUID();
+		safeRecordCueEvent({
+			id: droppedRunId,
+			type: entry.event.type,
+			triggerName: entry.event.triggerName,
+			sessionId,
+			subscriptionName: entry.subscriptionName,
+			status: 'timeout',
+			payload: JSON.stringify({
+				...entry.event.payload,
+				droppedFromQueue: true,
+				...details,
+			}),
+			...buildLineageColumns({
+				runId: droppedRunId,
+				chainRootId: entry.chainRootId,
+				parentEventId: entry.parentEventId,
+				pipelineName: entry.pipelineName,
+			}),
+		});
 	}
 
 	/**
@@ -1258,11 +1273,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			return result;
 		},
 
-		clearQueue(
-			sessionId: string,
-			preserveStartup = false,
-			preserveHeartbeats?: ReadonlySet<string>
-		): void {
+		clearQueue(sessionId: string, preserveStartup = false): void {
 			if (!preserveStartup) {
 				// Mirror the in-memory clear on disk so persisted rows don't
 				// outlive the live queue they represent.
@@ -1277,9 +1288,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			}
 			const queue = eventQueue.get(sessionId);
 			if (!queue) return;
-			const keep = (e: QueuedEvent) =>
-				e.event.type === 'app.startup' ||
-				(e.event.type === 'time.heartbeat' && preserveHeartbeats?.has(e.subscriptionName) === true);
+			const keep = (e: QueuedEvent) => e.event.type === 'app.startup';
 			const kept = queue.filter(keep);
 			// Remove persisted rows for entries we are dropping.
 			for (const entry of queue) {
@@ -1292,6 +1301,49 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			} else {
 				eventQueue.set(sessionId, kept);
 			}
+		},
+
+		retainQueue(
+			sessionId: string,
+			classify: (entry: QueuedEvent) => CueQueueDropReason | null
+		): number {
+			const queue = eventQueue.get(sessionId);
+			if (!queue) return 0;
+			const kept: QueuedEvent[] = [];
+			const droppedByReason = new Map<CueQueueDropReason, number>();
+			for (const entry of queue) {
+				const reason = classify(entry);
+				if (reason === null) {
+					kept.push(entry);
+					continue;
+				}
+				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+				recordDroppedEntry(sessionId, entry, { reason });
+				droppedByReason.set(reason, (droppedByReason.get(reason) ?? 0) + 1);
+			}
+			if (kept.length === 0) {
+				eventQueue.delete(sessionId);
+			} else {
+				eventQueue.set(sessionId, kept);
+			}
+
+			const sessionName = getSessionName(sessionId);
+			let dropped = 0;
+			for (const [reason, count] of droppedByReason) {
+				dropped += count;
+				const why =
+					reason === 'superseded'
+						? 'a heartbeat whose timing changed fires on load instead'
+						: reason === 'session-missing'
+							? 'the agent no longer exists'
+							: 'their subscription was removed, renamed or switched off';
+				deps.onLog(
+					reason === 'superseded' ? 'cue' : 'warn',
+					`[CUE] Dropped ${count} queued event(s) for "${sessionName}" on a cue.yaml reload: ${why} - recorded in the activity log`,
+					{ type: 'queueDropped', sessionId, count, reason } satisfies CueLogPayload
+				);
+			}
+			return dropped;
 		},
 
 		reset(): void {
