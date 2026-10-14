@@ -2620,6 +2620,7 @@ function MaestroConsoleInner() {
 		handleEditQueueItem,
 		handleForceSendQueueItem,
 		handleSteerQueueItem,
+		handleMergeQueueItem,
 	} = useQueueHandlers({ processQueuedItem });
 
 	// Force Send from the inline chat list: the item always belongs to the active
@@ -3698,6 +3699,7 @@ function MaestroConsoleInner() {
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
 						onForceSendQueueItem={handleForceSendQueueItem}
+						onMergeQueueItem={handleMergeQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}

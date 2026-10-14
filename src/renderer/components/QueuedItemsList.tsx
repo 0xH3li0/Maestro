@@ -32,6 +32,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { QueuedMergeConfirmModal } from './QueuedMergeConfirmModal';
 import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MiniBadge } from './ui/MiniBadge';
@@ -179,7 +180,6 @@ export const QueuedItemsList = memo(
 
 		// Refs for confirm-button focus management in confirmation modals
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
-		const mergeConfirmButtonRef = useRef<HTMLButtonElement>(null);
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
 
 		// A queued item can be dispatched or removed while its edit modal is open
@@ -422,47 +422,15 @@ export const QueuedItemsList = memo(
 					/>
 				</div>
 
-				{/* Merge confirmation modal. Confirm holds focus, so Enter accepts. */}
+				{/* Merge confirmation. Merge holds focus, so Enter accepts. */}
 				{mergeConfirmItem && mergeConfirmTarget && (
-					<Modal
+					<QueuedMergeConfirmModal
 						theme={theme}
-						title="Merge Queued Messages?"
-						headerIcon={<Merge className="w-5 h-5" style={{ color: theme.colors.accent }} />}
-						priority={MODAL_PRIORITIES.CONFIRM}
-						onClose={() => setMergeConfirmId(null)}
-						width={560}
-						initialFocusRef={mergeConfirmButtonRef}
-						footer={
-							<ModalFooter
-								theme={theme}
-								onCancel={() => setMergeConfirmId(null)}
-								onConfirm={handleConfirmMerge}
-								confirmLabel="Merge"
-								confirmButtonRef={mergeConfirmButtonRef}
-							/>
-						}
-					>
-						<div className={`flex flex-col gap-2 ${QUEUE_PROSE_SCOPE}`}>
-							<MergePreviewBubble
-								item={mergeConfirmTarget}
-								theme={theme}
-								renderMarkdown={!chatRawTextMode}
-							/>
-							<div className="flex justify-center" aria-hidden>
-								<Merge className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-							</div>
-							<MergePreviewBubble
-								item={mergeConfirmItem}
-								theme={theme}
-								renderMarkdown={!chatRawTextMode}
-							/>
-							<p className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
-								Are you sure you want to merge these two messages into one? The second is added to
-								the first as a new paragraph, and they send together in the first one&apos;s place.
-								This can&apos;t be undone.
-							</p>
-						</div>
-					</Modal>
+						upper={mergeConfirmTarget}
+						lower={mergeConfirmItem}
+						onConfirm={handleConfirmMerge}
+						onCancel={() => setMergeConfirmId(null)}
+					/>
 				)}
 
 				{/* Queue removal confirmation modal */}
@@ -571,60 +539,6 @@ export const QueuedItemsList = memo(
 );
 
 QueuedItemsList.displayName = 'QueuedItemsList';
-
-// ============================================================================
-// MergePreviewBubble - one of the two messages shown in the merge confirmation.
-// Same accent and markdown treatment as a queued card, capped in height so two
-// long messages still fit the modal.
-// ============================================================================
-
-function MergePreviewBubble({
-	item,
-	theme,
-	renderMarkdown,
-}: {
-	item: QueuedItem;
-	theme: Theme;
-	renderMarkdown: boolean;
-}) {
-	const text = item.text ?? '';
-	const imageCount = item.images?.length ?? 0;
-	return (
-		<div
-			className="p-3 rounded-lg max-h-48 overflow-y-auto scrollbar-thin select-text"
-			style={{
-				backgroundColor: theme.colors.accent + '20',
-				borderLeft: `3px solid ${theme.colors.accent}`,
-			}}
-		>
-			<div
-				className={`text-sm break-words ${renderMarkdown ? '' : 'whitespace-pre-wrap'}`}
-				style={{ color: theme.colors.textMain }}
-			>
-				{renderMarkdown ? (
-					<MarkdownRenderer
-						content={text}
-						theme={theme}
-						onCopy={(copied) => void safeClipboardWrite(copied)}
-						chatLineBreaks
-						chatMath
-					/>
-				) : (
-					text
-				)}
-			</div>
-			{imageCount > 0 && (
-				<div
-					className="flex items-center gap-1 mt-1.5 text-xs"
-					style={{ color: theme.colors.textDim }}
-				>
-					<ImageIcon className="w-3.5 h-3.5" />
-					{imageCount} image{imageCount > 1 ? 's' : ''} attached
-				</div>
-			)}
-		</div>
-	);
-}
 
 // ============================================================================
 // QueuedItemRow - a single draggable queued item in the inline chat list.

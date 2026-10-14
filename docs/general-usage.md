@@ -476,7 +476,17 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. **Merge** appears when the card directly above is a message for the same tab. It asks first, showing both messages (`Enter` accepts, since a merge cannot be undone). The merged message keeps the upper card's place, hold state, and model/effort, and gets the lower card's text after a blank line plus its images. Slash commands, messages that start with an `@mention`, and a turn waiting on a consult do not merge. Agents can do the same with `maestro-cli queue merge <item-id> --agent <id>`. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+
+### Merging queued messages
+
+Queued two messages that belong together? **Merge** folds a message into the one above it, so they go out as a single message.
+
+- **When it shows:** only when there is a message above to merge into, for the same tab. The first message on a tab never shows it. Neither does a message whose card above is a slash command, a message that starts with an `@mention` (another agent answers those), or a turn waiting on a consult.
+- **Confirmation:** a dialog shows both messages and asks you to confirm, because a merge cannot be undone. **Merge** has focus, so `Enter` accepts and `Esc` cancels.
+- **Result:** the upper message keeps its place in the queue, its hold state, and its model and effort. The lower message's text follows it as a new paragraph (one blank line between them), and its images are added after the upper message's.
+
+Merge is on the queued cards in the chat and in the [Execution Queue view](#execution-queue-view). Agents can do the same with `maestro-cli queue merge <item-id> --agent <id>`.
 
 ### Force Send
 
@@ -523,9 +533,9 @@ Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." 
 
 ### Execution Queue view
 
-Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
+Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (merge, edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
-The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Merge into Message Above, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry, and Merge appears only when an earlier message for the same tab is queued. Messages for different tabs of one agent sit in the same list here, so the message a card merges into can be further up than the card directly above it. The confirmation shows exactly which two messages will join.
 
 Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off; clicking it explains the block and links straight to that setting. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 

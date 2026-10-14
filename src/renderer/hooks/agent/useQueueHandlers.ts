@@ -6,6 +6,7 @@
  *   - Switch to a session that has queued items
  *   - Reorder queued items within a session
  *   - Force send a queued item out of turn
+ *   - Merge a queued message into the earlier message for its tab
  *
  * Reads from: sessionStore (setSessions, setActiveSessionId)
  */
@@ -18,7 +19,7 @@ import type { QueueSteerResult } from '../../../shared/chatSteering';
 import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
-import { sendQueuedItemNow } from '../../services/queuedPrompt';
+import { mergeQueuedItemIntoAbove, sendQueuedItemNow } from '../../services/queuedPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -52,6 +53,8 @@ export interface UseQueueHandlersReturn {
 	 * getSteerEligibility.
 	 */
 	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<QueueSteerResult>;
+	/** Fold a queued message into the earlier message for its tab (Execution Queue browser) */
+	handleMergeQueueItem: (sessionId: string, itemId: string) => void;
 }
 
 // ============================================================================
@@ -180,6 +183,12 @@ export function useQueueHandlers({
 		[]
 	);
 
+	// Merge: the same service the inline card's Merge button and
+	// `maestro-cli queue merge` reach, so the rules cannot differ by surface.
+	const handleMergeQueueItem = useCallback((sessionId: string, itemId: string) => {
+		mergeQueuedItemIntoAbove(sessionId, itemId);
+	}, []);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
@@ -188,5 +197,6 @@ export function useQueueHandlers({
 		handleEditQueueItem,
 		handleForceSendQueueItem,
 		handleSteerQueueItem,
+		handleMergeQueueItem,
 	};
 }
