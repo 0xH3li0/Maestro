@@ -63,6 +63,9 @@ export const ENCORE_FEATURE_LABELS: Record<EncoreFlag, string> = {
 	concerto: 'Concerto',
 	groupsPlus: 'Groups+',
 	webLogin: 'Web Login',
+	computerHistory: 'Computer History',
+	quickChat: 'Quick Chat',
+	maestroRun: 'MaestroRun',
 };
 
 /** One `key: value` line of a provider's config, ready to print. A secret is already masked. */

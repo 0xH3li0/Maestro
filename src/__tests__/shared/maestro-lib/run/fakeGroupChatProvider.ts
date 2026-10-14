@@ -15,6 +15,7 @@ import { parseParticipantSessionId } from '../../../../shared/maestro-lib/groupc
 import type { BackgroundTurnDeps } from '../../../../shared/maestro-lib/runtime/background-turns';
 import { runTurn } from '../../../../shared/maestro-lib/run/run-to-completion';
 import type { TurnProcessSpec } from '../../../../shared/maestro-lib/run/start-turn';
+import { clearRememberedClaudeSessionCosts } from '../../../../shared/claudeCostTracker';
 import { FAKE_AGENT_PATH, writeFakeTurn } from './fakeAgent';
 
 export type FakeRole = 'moderator' | 'synthesis' | 'participant' | 'recovery' | 'consult' | 'other';
@@ -99,6 +100,10 @@ export function createFakeGroupChatProvider(
 ): FakeGroupChatProvider {
 	const calls: FakeCall[] = [];
 	const counts = new Map<FakeRole, number>();
+	// Session ids restart at 1 for every provider, and Claude's cost is reported as a
+	// session's running total, so a total remembered from an earlier provider's
+	// `session-1` would be subtracted from this one's as if it were the same session.
+	clearRememberedClaudeSessionCosts();
 	let sequence = 0;
 
 	return {

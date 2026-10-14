@@ -85,7 +85,7 @@ const DISCOVERY_FILE_MODE = 0o600;
  * to hand it (and the CLI secret inside) to a browser.
  */
 export function cliServerInfoPath(): string {
-	return getDiscoveryFilePath();
+	return path.join(getConfigDir(), DISCOVERY_FILE);
 }
 
 /**
