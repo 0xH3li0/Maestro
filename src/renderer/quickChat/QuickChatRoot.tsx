@@ -73,6 +73,7 @@ const QUICK_CHAT_KEYS = {
 	keep: 'b',
 	pin: 'p',
 	openTab: 't',
+	close: 'w',
 } as const;
 
 /**
@@ -516,6 +517,8 @@ function QuickChatWindow() {
 			[QUICK_CHAT_KEYS.keep]: togglePersistent,
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
 			[QUICK_CHAT_KEYS.openTab]: openInMaestro,
+			// Closes the window whatever is open in it, unlike Escape.
+			[QUICK_CHAT_KEYS.close]: hide,
 		};
 		const shiftChords: Record<string, () => void> = {
 			[QUICK_CHAT_SHIFT_KEYS.thinking]: cycleThinking,
@@ -841,8 +844,13 @@ function QuickChatWindow() {
 						theme={theme}
 						label="Close"
 						hint="The chat is kept. The hotkey brings it back."
-						// Escape backs out of the picker first, so it only closes without it.
-						shortcut={pickerOpen ? undefined : 'Esc'}
+						// Escape backs out of the picker first, so it only closes without it;
+						// Cmd+W always closes.
+						shortcut={
+							pickerOpen
+								? formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])
+								: `Esc / ${formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])}`
+						}
 						onClick={hide}
 					>
 						<X className="w-4 h-4" />

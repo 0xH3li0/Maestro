@@ -277,6 +277,19 @@ describe('Open in Maestro', () => {
 	});
 });
 
+describe('Close', () => {
+	it('Cmd+W hides the window, even with the agent picker open, and the overlay names it', async () => {
+		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
+		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Close\./ }).parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc \/ .*W$/);
+
+		await act(async () => fireEvent.keyDown(window, { key: 'k', metaKey: true }));
+		const filter = screen.getByTestId('quick-chat-agent-filter');
+		await act(async () => fireEvent.keyDown(filter, { key: 'w', metaKey: true }));
+		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('hide');
+	});
+});
+
 describe('header', () => {
 	it('shows only the agent, not a "Quick Chat" label', async () => {
 		await renderWith(snapshot({ messages: [{ id: 'm', role: 'user', text: 'hi' }] }));
