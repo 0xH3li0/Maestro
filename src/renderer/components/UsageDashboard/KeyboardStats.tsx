@@ -30,7 +30,7 @@ import {
 	getLevelForPercentage,
 } from '../../constants/keyboardMastery';
 import { formatNumber } from '../../../shared/formatters';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../ui/ShortcutHint';
 import { logger } from '../../utils/logger';
 import { MetricCard } from './SummaryCards';
 import { buildShortcutsSummary } from './footerSummary';
@@ -523,16 +523,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 								<span className="truncate" title={s.label}>
 									{s.label}
 								</span>
-								<kbd
-									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-									}}
-								>
-									{formatShortcutKeys(s.keys)}
-								</kbd>
+								<ShortcutKeys theme={theme} keys={s.keys} className="ml-auto" />
 							</li>
 						))}
 					</ul>

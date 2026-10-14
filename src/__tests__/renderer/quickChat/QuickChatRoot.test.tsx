@@ -287,7 +287,7 @@ describe('Close', () => {
 			})
 		);
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Close\./ }).parentElement!);
-		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc \/ .*W$/);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc or .*W$/);
 
 		await act(async () => fireEvent.keyDown(window, { key: 'o', metaKey: true }));
 		const filter = screen.getByTestId('quick-chat-agent-filter');

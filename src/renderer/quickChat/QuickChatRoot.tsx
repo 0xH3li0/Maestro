@@ -45,8 +45,8 @@ import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
+import type { ShortcutChords } from '../components/ui/ShortcutHint';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
@@ -169,7 +169,7 @@ function QuickChatTooltip({
 }: {
 	label: string;
 	hint?: string;
-	shortcut?: string;
+	shortcut?: string | ShortcutChords;
 	theme: Theme;
 	/** Wrapper classes, for a trigger that must keep shrinking in a flex row. */
 	triggerClassName?: string;
@@ -209,7 +209,7 @@ function IconButton({
 }: {
 	label: string;
 	hint?: string;
-	shortcut?: string;
+	shortcut?: string | ShortcutChords;
 	onClick: () => void;
 	theme: Theme;
 	children: React.ReactNode;
@@ -454,8 +454,8 @@ function QuickChatWindow() {
 		},
 		[run]
 	);
-	const pickerShortcut = formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.picker]);
-	const tabPickerShortcut = formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.tabPicker]);
+	const pickerShortcut = ['Meta', QUICK_CHAT_KEYS.picker];
+	const tabPickerShortcut = ['Meta', QUICK_CHAT_KEYS.tabPicker];
 	const newChat = useCallback(() => {
 		setDraft('');
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
@@ -705,9 +705,9 @@ function QuickChatWindow() {
 						tooltips="overlay"
 						target="text"
 						shortcutHint={{
-							decrease: formatShortcutKeys(['Meta', '-']),
-							increase: formatShortcutKeys(['Meta', '=']),
-							reset: formatShortcutKeys(['Meta', '0']),
+							decrease: ['Meta', '-'],
+							increase: ['Meta', '='],
+							reset: ['Meta', '0'],
 						}}
 						testId="quick-chat-font-scale"
 					/>
@@ -717,7 +717,7 @@ function QuickChatWindow() {
 					theme={theme}
 					label={THINKING_LABELS[snapshot.thinking].label}
 					hint={THINKING_LABELS[snapshot.thinking].hint}
-					shortcut={formatShortcutKeys(['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking])}
+					shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking]}
 					onClick={cycleThinking}
 				>
 					<span className="relative flex">
@@ -745,7 +745,7 @@ function QuickChatWindow() {
 							? `This chat stays as a tab on ${agentName} after you start a new one. Click to make it temporary again.`
 							: `Temporary: this chat is deleted when you start a new one. Click to keep it as a tab on ${agentName}.`
 					}
-					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.keep])}
+					shortcut={['Meta', QUICK_CHAT_KEYS.keep]}
 					onClick={togglePersistent}
 				>
 					{snapshot.persistent ? (
@@ -762,7 +762,7 @@ function QuickChatWindow() {
 							? 'Floats above other windows. Click to let it fall behind them.'
 							: 'Falls behind other windows when you click away. Click to float it on top.'
 					}
-					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.pin])}
+					shortcut={['Meta', QUICK_CHAT_KEYS.pin]}
 					onClick={togglePinned}
 				>
 					{pinned ? (
@@ -825,7 +825,7 @@ function QuickChatWindow() {
 					<IconButton
 						theme={theme}
 						label="New chat"
-						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.newChat])}
+						shortcut={['Meta', QUICK_CHAT_KEYS.newChat]}
 						onClick={newChat}
 					>
 						<PenSquare className="w-4 h-4" />
@@ -834,7 +834,7 @@ function QuickChatWindow() {
 						theme={theme}
 						label="Open in Maestro"
 						hint="Shows this chat as a tab in the main window."
-						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.openTab])}
+						shortcut={['Meta', QUICK_CHAT_KEYS.openTab]}
 						onClick={openInMaestro}
 						disabled={!snapshot.tabId}
 					>
@@ -848,8 +848,8 @@ function QuickChatWindow() {
 						// Cmd+W always closes.
 						shortcut={
 							pickerOpen
-								? formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])
-								: `Esc / ${formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])}`
+								? ['Meta', QUICK_CHAT_KEYS.close]
+								: [['Escape'], ['Meta', QUICK_CHAT_KEYS.close]]
 						}
 						onClick={hide}
 					>
