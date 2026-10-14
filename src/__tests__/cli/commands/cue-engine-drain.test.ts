@@ -2,7 +2,7 @@
  * `cue engine start` shutdown: the first SIGTERM/SIGINT drains (status server
  * reports draining, /readyz 503, the trigger inbox closes, exit 0 once the
  * drain resolves); a second signal forces it (exit 1). `--drain-timeout`
- * reaches the drain.
+ * reaches the drain. A drain that rejects still force-stops and exits 1.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -189,6 +189,15 @@ describe('cue engine start shutdown', () => {
 		newListeners('SIGINT')[0]('SIGINT');
 		expect(engine.forceStop).toHaveBeenCalledTimes(1);
 		await vi.waitFor(() => expect(exits).toEqual([1]));
+	});
+
+	it('a drain that fails still stops every run and exits 1', async () => {
+		engine.drain.mockImplementationOnce(() => Promise.reject(new Error('boom')));
+		await startEngine();
+		newListeners('SIGTERM')[0]('SIGTERM');
+		await vi.waitFor(() => expect(exits).toEqual([1]));
+		expect(engine.drain).toHaveBeenCalledTimes(1);
+		expect(engine.forceStop).toHaveBeenCalledTimes(1);
 	});
 });
 
