@@ -49,6 +49,7 @@ const mandatoryRequirement = {
 	version: '^1.0.0',
 };
 
+/** Write and sign a code-plugin fixture, optionally declaring its service dependencies. */
 function writeCodePlugin(
 	id: string,
 	options: {

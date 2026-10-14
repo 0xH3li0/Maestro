@@ -349,6 +349,8 @@ export class PluginManager {
 	 * installable + enableable for DECLARATIVE contributions only (themes,
 	 * prompts, UI slots - see getActiveRecords/getContributions, which
 	 * deliberately do NOT use this gate and only exclude tampered `invalid`).
+	 * Pass requireAvailableServices=false to identify consumers that meet all
+	 * execution gates but must wait for a mandatory service to become available.
 	 */
 	private isRunnable(record: PluginRecord, requireAvailableServices = true): boolean {
 		return (
