@@ -556,7 +556,9 @@ export type EnqueueCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	images?: string[],
-	background?: boolean
+	background?: boolean,
+	/** Queue Held: always queue, paused, even on an idle agent. */
+	held?: boolean
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -595,6 +597,18 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue hold|resume`: whether the item was found, and its paused state after. */
+export type SetQueueItemPausedResult = {
+	success: boolean;
+	found: boolean;
+	paused?: boolean;
+	error?: string;
+};
+export type SetQueueItemPausedCallback = (
+	sessionId: string,
+	itemId: string,
+	paused: boolean
+) => Promise<SetQueueItemPausedResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

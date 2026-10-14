@@ -60,6 +60,8 @@ import type {
 	RemoveQueueItemResult,
 	SteerQueueItemCallback,
 	SteerQueueItemResult,
+	SetQueueItemPausedCallback,
+	SetQueueItemPausedResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -211,6 +213,7 @@ export interface WebServerCallbacks {
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
 	steerQueueItem: SteerQueueItemCallback | null;
+	setQueueItemPaused: SetQueueItemPausedCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -320,6 +323,7 @@ export class CallbackRegistry {
 		listQueue: null,
 		removeQueueItem: null,
 		steerQueueItem: null,
+		setQueueItemPaused: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -613,10 +617,19 @@ export class CallbackRegistry {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		held?: boolean
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+		return this.callbacks.enqueueCommand(
+			sessionId,
+			command,
+			inputMode,
+			tabId,
+			images,
+			background,
+			held
+		);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {
@@ -633,6 +646,16 @@ export class CallbackRegistry {
 	async steerQueueItem(sessionId: string, itemId: string): Promise<SteerQueueItemResult> {
 		if (!this.callbacks.steerQueueItem) return { success: false, error: 'not configured' };
 		return this.callbacks.steerQueueItem(sessionId, itemId);
+	}
+
+	async setQueueItemPaused(
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	): Promise<SetQueueItemPausedResult> {
+		if (!this.callbacks.setQueueItemPaused)
+			return { success: false, found: false, error: 'not configured' };
+		return this.callbacks.setQueueItemPaused(sessionId, itemId, paused);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1286,6 +1309,10 @@ export class CallbackRegistry {
 
 	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
 		this.callbacks.steerQueueItem = callback;
+	}
+
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbacks.setQueueItemPaused = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

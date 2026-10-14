@@ -423,6 +423,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                            | -       |
 | `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                      | -       |
 | `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                        | -       |
+| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                          | -       |
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                              | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                                                                                      | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                           | -       |
@@ -460,6 +461,22 @@ List queued execution items as JSON (all agents, or one with --agent)
 ## `maestro-cli queue remove <item-id>`
 
 Remove a queued item by its id (from dispatch --queue output or queue list)
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue hold <item-id>`
+
+Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue resume <item-id>`
+
+Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |

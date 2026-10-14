@@ -518,6 +518,8 @@ A row that cannot run right now is dimmed and says why in one line. Force Send w
 
 When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
 
+Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.

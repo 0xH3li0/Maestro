@@ -14,7 +14,7 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove, queueSteer } from './commands/queue';
+import { queueHold, queueList, queueRemove, queueResume, queueSteer } from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -534,6 +534,10 @@ program
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
+		'--held',
+		"Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id."
+	)
+	.option(
 		'--notify-on-complete <agent-id>',
 		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
 	)
@@ -575,7 +579,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), and `steer`
+// (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -595,6 +600,22 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+queue
+	.command('hold <item-id>')
+	.description(
+		'Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueHold);
+
+queue
+	.command('resume <item-id>')
+	.description(
+		'Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueResume);
 
 queue
 	.command('steer <item-id>')

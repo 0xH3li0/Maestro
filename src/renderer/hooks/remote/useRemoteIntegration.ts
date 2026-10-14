@@ -18,7 +18,11 @@ import {
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
+import {
+	buildQueuedMessageItem,
+	enqueuePromptForTab,
+	setQueuedItemPaused,
+} from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
@@ -1130,7 +1134,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				_inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1170,8 +1175,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					// Idle target: no line to wait in, dispatch now through the shared
 					// remote-command path (identical to a plain `dispatch`). Respect the
-					// dispatch --focus opt-in via `background`.
-					if (session.state !== 'busy') {
+					// dispatch --focus opt-in via `background`. A held send (Queue Held,
+					// `dispatch --queue --held`) never dispatches now: it waits paused.
+					if (session.state !== 'busy' && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}
@@ -1189,12 +1195,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// including the `@mention` intent flags (fired at drain time, not
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
-					const queuedItem: QueuedItem = buildQueuedMessageItem({
-						session,
-						tab: targetTab,
-						text: command,
-						images,
-					});
+					const queuedItem: QueuedItem = {
+						...buildQueuedMessageItem({
+							session,
+							tab: targetTab,
+							text: command,
+							images,
+						}),
+						...(held && { paused: true }),
+					};
 
 					// Position is deterministic from the snapshot we already read: the item
 					// is appended to the tail, so it lands at length+1 (1-based). Computing
@@ -1297,6 +1306,32 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "hold / resume queue item" from the CLI (`queue hold`,
+		// `queue resume`). Same flag the queued card's Hold / Resume button flips.
+		const unsubscribeSetQueueItemPaused = window.maestro.process.onRemoteSetQueueItemPaused?.(
+			(sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
+				try {
+					const found = setQueuedItemPaused(sessionId, itemId, paused);
+					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
+						success: true,
+						found,
+						...(found ? { paused } : {}),
+					});
+				} catch (error) {
+					logger.error(
+						'[useRemoteIntegration] onRemoteSetQueueItemPaused failed:',
+						undefined,
+						error
+					);
+					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
+						success: false,
+						found: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1337,6 +1372,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeListQueue();
 			unsubscribeRemoveQueueItem();
 			unsubscribeSteerQueueItem?.();
+			unsubscribeSetQueueItemPaused?.();
 		};
 	}, [
 		sessionsRef,

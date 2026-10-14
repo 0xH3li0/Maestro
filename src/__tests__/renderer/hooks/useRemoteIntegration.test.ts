@@ -145,8 +145,12 @@ describe('useRemoteIntegration', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 		  ) => void)
+		| undefined;
+	let onRemoteSetQueueItemPausedHandler:
+		| ((sessionId: string, itemId: string, paused: boolean, responseChannel: string) => void)
 		| undefined;
 	let onRemoteListQueueHandler:
 		| ((sessionId: string | undefined, responseChannel: string) => void)
@@ -269,6 +273,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSteerQueueItemResponse: vi.fn(),
+		onRemoteSetQueueItemPaused: vi.fn().mockImplementation((handler) => {
+			onRemoteSetQueueItemPausedHandler = handler;
+			return () => {};
+		}),
+		sendRemoteSetQueueItemPausedResponse: vi.fn(),
 		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -514,6 +523,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
 		onRemoteSteerQueueItemHandler = undefined;
+		onRemoteSetQueueItemPausedHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
 		onRequestMovementDesignerInspectionHandler = undefined;
@@ -1859,6 +1869,42 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
+		it('queues a held send paused even when the agent is idle (dispatch --held)', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'Later',
+					'chan-held',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					true
+				);
+			});
+
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue[0]).toMatchObject({ text: 'Later', paused: true });
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-held',
+				expect.objectContaining({ success: true, queued: true, queuePosition: 1 })
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('stamps cross-agent mention intent on the queued item so the dequeue consults', () => {
 			// Without the flags the mention is inert: processQueuedItem only fires a
 			// consult for items marked crossAgentMention, and a CLI-queued item
@@ -2115,6 +2161,45 @@ describe('useRemoteIntegration', () => {
 				'chan-rm',
 				expect.objectContaining({ success: true, removed: true })
 			);
+		});
+
+		it('holds and resumes a queued item by id (queue hold / resume)', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const item = { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message' as const, text: 'x' };
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [item],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', true, 'chan-hold');
+			});
+			const held = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(held?.executionQueue[0].paused).toBe(true);
+			expect(mockProcess.sendRemoteSetQueueItemPausedResponse).toHaveBeenCalledWith('chan-hold', {
+				success: true,
+				found: true,
+				paused: true,
+			});
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', false, 'chan-resume');
+			});
+			const resumed = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(resumed?.executionQueue[0].paused).toBeUndefined();
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'ghost', true, 'chan-ghost');
+			});
+			expect(mockProcess.sendRemoteSetQueueItemPausedResponse).toHaveBeenCalledWith('chan-ghost', {
+				success: true,
+				found: false,
+			});
 		});
 
 		it('acks removed:false when the item id is not in the queue', () => {

@@ -170,6 +170,7 @@ import {
 	handleListQueue,
 	handleRemoveQueueItem,
 	handleSteerQueueItem,
+	handleSetQueueItemPaused,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -391,6 +392,10 @@ export class WebSocketMessageHandler {
 
 			case 'steer_queue_item':
 				handleSteerQueueItem(this.ctx, client, message);
+				break;
+
+			case 'set_queue_item_paused':
+				handleSetQueueItemPaused(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':

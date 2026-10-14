@@ -38,6 +38,10 @@ export interface QueueRemoveOptions {
 	agent?: string;
 }
 
+export interface QueuePauseOptions {
+	agent?: string;
+}
+
 export interface QueueSteerOptions {
 	agent?: string;
 }
@@ -159,6 +163,67 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 		emitError(mapped.error, mapped.code);
 		process.exit(1);
 	}
+}
+
+/**
+ * Hold or resume one queued item: the queued card's Hold / Resume button. A held
+ * item keeps its place in the queue, but nothing dispatches it until it is
+ * resumed. Fails with ITEM_NOT_FOUND when no item with that id exists.
+ */
+async function setQueueItemPaused(
+	verb: 'hold' | 'resume',
+	itemId: string,
+	options: QueuePauseOptions
+): Promise<void> {
+	if (!options.agent) {
+		emitError(`queue ${verb} requires --agent <id>`, 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	const paused = verb === 'hold';
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{ success?: boolean; found?: boolean; paused?: boolean; error?: string }>(
+				{ type: 'set_queue_item_paused', sessionId, itemId, paused },
+				'set_queue_item_paused_result'
+			)
+		);
+		if (result.success === false) {
+			emitError(result.error ?? `Queue ${verb} failed`, 'PAUSE_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.found) {
+			emitError(`No queued item with id ${itemId} for agent ${sessionId}`, 'ITEM_NOT_FOUND');
+			process.exit(1);
+			return;
+		}
+		console.log(JSON.stringify({ success: true, agentId: sessionId, itemId, paused }, null, 2));
+	} catch (error) {
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
+}
+
+/** `maestro-cli queue hold <item-id> --agent <id>` - park a queued item. */
+export function queueHold(itemId: string, options: QueuePauseOptions): Promise<void> {
+	return setQueueItemPaused('hold', itemId, options);
+}
+
+/** `maestro-cli queue resume <item-id> --agent <id>` - release a held item. */
+export function queueResume(itemId: string, options: QueuePauseOptions): Promise<void> {
+	return setQueueItemPaused('resume', itemId, options);
 }
 
 /**

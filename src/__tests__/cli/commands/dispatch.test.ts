@@ -561,6 +561,42 @@ describe('dispatch command', () => {
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
+		it('--held sends held:true, implies --queue, and reports held on a queued item', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 1,
+				itemId: 'item-held',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Later', { held: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', tabId: 'tab-1', held: true }),
+				'enqueue_command_result'
+			);
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({
+				success: true,
+				queued: true,
+				held: true,
+				itemId: 'item-held',
+			});
+		});
+
+		it('rejects --held combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { held: true, newTab: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
 		it('maps a renderer tab-not-found reply to TAB_NOT_FOUND', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({

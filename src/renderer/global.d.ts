@@ -854,7 +854,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -885,6 +886,18 @@ interface MaestroAPI {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		) => void;
+		onRemoteSetQueueItemPaused: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteSetQueueItemPausedResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void

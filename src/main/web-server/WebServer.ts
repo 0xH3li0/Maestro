@@ -131,6 +131,7 @@ import type {
 	ListQueueCallback,
 	RemoveQueueItemCallback,
 	SteerQueueItemCallback,
+	SetQueueItemPausedCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -707,6 +708,10 @@ export class WebServer {
 
 	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
 		this.callbackRegistry.setSteerQueueItemCallback(callback);
+	}
+
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbackRegistry.setSetQueueItemPausedCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1341,7 +1346,8 @@ export class WebServer {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1349,13 +1355,16 @@ export class WebServer {
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					held
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
 			steerQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.steerQueueItem(sessionId, itemId),
+			setQueueItemPaused: async (sessionId: string, itemId: string, paused: boolean) =>
+				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

@@ -71,6 +71,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
+			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
@@ -1760,6 +1761,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				'tab-1',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -1789,6 +1791,21 @@ describe('web-server/web-server-factory', () => {
 				'remote:removeQueueItem',
 				'session-1',
 				'item-1',
+				expect.any(String)
+			);
+		});
+
+		it('setSetQueueItemPausedCallback forwards hold / resume to the renderer', () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSetQueueItemPausedCallback.mock.calls[0][0];
+
+			void callback('session-1', 'item-1', true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:setQueueItemPaused',
+				'session-1',
+				'item-1',
+				true,
 				expect.any(String)
 			);
 		});
