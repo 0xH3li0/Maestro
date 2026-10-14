@@ -21,7 +21,7 @@ import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
 import { SectionCard } from './Settings/tabs/DisplayTab/components/SectionCard';
-import { ToggleSwitch } from './ui/ToggleSwitch';
+import { ToggleSettingRow } from './Settings/tabs/DisplayTab/components/ToggleSettingRow';
 import { useSettingsStore } from '../stores/settingsStore';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
@@ -156,88 +156,51 @@ export function NotificationsPanel({
 					Notification center
 				</SettingsSectionHeading>
 				<SectionCard theme={theme}>
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex-1">
-							<div className="font-medium" style={{ color: theme.colors.textMain }}>
-								Use a larger notification center
-							</div>
-							<p className="text-xs opacity-70 mt-0.5">
-								Use a wider, taller inbox while keeping it within the window.
-							</p>
-						</div>
-						<ToggleSwitch
-							theme={theme}
-							checked={settings.notificationCenterLarge}
-							onChange={settings.setNotificationCenterLarge}
-							ariaLabel="Use a larger notification center"
-						/>
-					</div>
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex-1">
-							<div className="font-medium" style={{ color: theme.colors.textMain }}>
-								Expand notification details
-							</div>
-							<p className="text-xs opacity-70 mt-0.5">
-								Read full source names, titles, and messages inside the inbox.
-							</p>
-						</div>
-						<ToggleSwitch
-							theme={theme}
-							checked={settings.notificationCenterDetails}
-							onChange={settings.setNotificationCenterDetails}
-							ariaLabel="Expand notification details"
-						/>
-					</div>
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex-1">
-							<div className="font-medium" style={{ color: theme.colors.textMain }}>
-								Keyboard navigation in the notification center
-							</div>
-							<p className="text-xs opacity-70 mt-0.5">
-								Focus the inbox when it opens and navigate entries with arrow keys.
-							</p>
-						</div>
-						<ToggleSwitch
-							theme={theme}
-							checked={settings.notificationCenterKeyboardNavigation}
-							onChange={settings.setNotificationCenterKeyboardNavigation}
-							ariaLabel="Keyboard navigation in the notification center"
-						/>
-					</div>
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex-1">
-							<div className="font-medium" style={{ color: theme.colors.textMain }}>
-								Record each queued reply
-							</div>
-							<p className="text-xs opacity-70 mt-0.5">
-								Keep every completed queued reply in notification history. By default, only the
-								final reply is recorded.
-							</p>
-						</div>
-						<ToggleSwitch
-							theme={theme}
-							checked={settings.notificationHistoryQueuedReplies}
-							onChange={settings.setNotificationHistoryQueuedReplies}
-							ariaLabel="Record each queued reply"
-						/>
-					</div>
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex-1">
-							<div className="font-medium" style={{ color: theme.colors.textMain }}>
-								Record each Auto Run task
-							</div>
-							<p className="text-xs opacity-70 mt-0.5">
-								Keep each completed Auto Run task in notification history. By default, run outcomes,
-								warnings, and errors are recorded.
-							</p>
-						</div>
-						<ToggleSwitch
-							theme={theme}
-							checked={settings.notificationHistoryAutoRunTasks}
-							onChange={settings.setNotificationHistoryAutoRunTasks}
-							ariaLabel="Record each Auto Run task"
-						/>
-					</div>
+					<ToggleSettingRow
+						theme={theme}
+						title="Use a larger notification center"
+						description="Use a wider, taller inbox while keeping it within the window."
+						checked={settings.notificationCenterLarge}
+						onChange={settings.setNotificationCenterLarge}
+						ariaLabel="Use a larger notification center"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Expand notification details"
+						description="Read full source names, titles, and messages inside the inbox."
+						checked={settings.notificationCenterDetails}
+						onChange={settings.setNotificationCenterDetails}
+						ariaLabel="Expand notification details"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Keyboard navigation in the notification center"
+						description="Focus the inbox when it opens and navigate entries with arrow keys."
+						checked={settings.notificationCenterKeyboardNavigation}
+						onChange={settings.setNotificationCenterKeyboardNavigation}
+						ariaLabel="Keyboard navigation in the notification center"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Record each queued reply"
+						description="Keep every completed queued reply in notification history. By default, only the final reply is recorded."
+						checked={settings.notificationHistoryQueuedReplies}
+						onChange={settings.setNotificationHistoryQueuedReplies}
+						ariaLabel="Record each queued reply"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Record each Auto Run task"
+						description="Keep each completed Auto Run task in notification history. By default, run outcomes, warnings, and errors are recorded."
+						checked={settings.notificationHistoryAutoRunTasks}
+						onChange={settings.setNotificationHistoryAutoRunTasks}
+						ariaLabel="Record each Auto Run task"
+						clickableRow
+					/>
 					<p className="text-xs opacity-70">
 						Configure Open Notification Center in Shortcuts. It starts unbound; your existing
 						binding is preserved.

@@ -1,3 +1,8 @@
+import type { ToastClickAction } from '../../shared/toastClickAction';
+import type {
+	NotificationHistoryChange,
+	NotificationHistorySnapshot,
+} from '../../shared/notificationHistory';
 /**
  * Preload API for notifications
  *
@@ -49,6 +54,30 @@ export interface NotificationCommandVars {
  */
 export function createNotificationApi() {
 	return {
+		/** Apply a history mutation in the main process and wait for durable acknowledgement. */
+		changeHistory: (change: NotificationHistoryChange): Promise<NotificationHistorySnapshot> =>
+			ipcRenderer.invoke('notification:changeHistory', change),
+		/** Observe the shared history after another window's committed mutation. */
+		onHistoryChanged: (callback: (snapshot: NotificationHistorySnapshot) => void): (() => void) => {
+			const handler = (_event: unknown, snapshot: NotificationHistorySnapshot) =>
+				callback(snapshot);
+			ipcRenderer.on('notification:historyChanged', handler);
+			return () => ipcRenderer.removeListener('notification:historyChanged', handler);
+		},
+		/** Focus the window and tab currently owning this source agent. */
+		navigateToSource: (
+			sessionId: string,
+			tabId?: string,
+			action?: ToastClickAction
+		): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('notification:navigateToSource', sessionId, tabId, action),
+		/** Run an agent-targeted action in the window that main selected for its source. */
+		onActivateAction: (callback: (action: ToastClickAction) => void): (() => void) => {
+			const handler = (_event: unknown, action: ToastClickAction) => callback(action);
+			ipcRenderer.on('notification:activateAction', handler);
+			return () => ipcRenderer.removeListener('notification:activateAction', handler);
+		},
+
 		/**
 		 * Show an OS notification
 		 * @param title - Notification title

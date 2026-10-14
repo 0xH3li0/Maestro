@@ -502,14 +502,14 @@ If the target tab was closed since the toast appeared, the click still switches 
 
 #### Notification Center
 
-A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell (or run **Open Notification Center** from the command palette) to see them newest first.
+A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell, choose **Notification Center** from the hamburger menu, or run **Open Notification Center** from the command palette to see them newest first.
 
 - **Unread / All** switches between what still needs attention and the full history.
 - Clicking an entry marks it read and does what clicking the toast would have done, such as jumping to the agent and tab it came from.
 - **Mark all as read** clears the badge. **Clear all** empties the history.
 - Closing or clicking a toast marks it read. One that times out on its own stays unread.
 
-The history keeps the most recent 200 notifications and survives a restart. If you find the popups intrusive, set the toast duration to **Off**: in-app floating toasts are suppressed and history is still recorded. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
+The history keeps the most recent 200 notifications and survives a restart. Desktop windows share the same history and read state, saved in `maestro-notification-history.json` in the app data directory. Changes are committed by the main process, so independent windows cannot overwrite each other. Existing localStorage history is imported once. If you find the popups intrusive, set the toast duration to **Off**: in-app floating toasts are suppressed and history is still recorded. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
 
 The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in:
 

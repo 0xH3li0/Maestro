@@ -5,12 +5,16 @@ import type {
 	NotificationInboxResult,
 } from '../../shared/notificationInbox';
 import {
+	flushNotificationHistoryWrites,
 	notifyToast,
 	selectUnreadNotificationCount,
 	useNotificationStore,
 	type NotificationRecord,
 } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { isWebDesktop } from '../utils/runtimeContext';
+import { logger } from '../utils/logger';
 import { jumpToAgent } from './agentNavigation';
 import { runToastClick } from './toastClickActions';
 import { openUrl } from '../utils/openUrl';
@@ -27,9 +31,38 @@ function jumpToNotificationSource(sessionId: string, tabId?: string): void {
 }
 
 /** Mark the entry read and run the same body action as its floating toast. */
-export function activateNotification(record: NotificationRecord): void {
+export async function activateNotification(record: NotificationRecord): Promise<void> {
 	const store = useNotificationStore.getState();
 	store.markNotificationRead(record.id);
+	const action = record.clickAction;
+	const sessionId =
+		action && 'sessionId' in action ? action.sessionId : !action ? record.sessionId : undefined;
+	if (
+		!record.onClick &&
+		sessionId &&
+		!isWebDesktop() &&
+		window.maestro.notification.navigateToSource &&
+		useSessionStore.getState().sessions.some((s) => s.id === sessionId)
+	) {
+		try {
+			const result = await window.maestro.notification.navigateToSource(
+				sessionId,
+				action?.kind === 'jump-session' ? action.tabId : record.tabId,
+				action
+			);
+			if (!result.success) throw new Error('Notification source could not be focused');
+			store.setNotificationCenterOpen(false);
+		} catch (error) {
+			logger.error('Notification source could not be focused', 'NotificationInbox', error);
+			notifyToast({
+				color: 'yellow',
+				title: 'Notification source unavailable',
+				message: 'The originating window or tab could not be opened.',
+			});
+		}
+		return;
+	}
+
 	if (runToastClick(record, { onSessionClick: jumpToNotificationSource }))
 		store.setNotificationCenterOpen(false);
 }
@@ -42,9 +75,9 @@ export function openNotificationLink(record: NotificationRecord): void {
 }
 
 /** Execute against the UI's store and return the resulting state, rather than delivery acknowledgement. */
-export function performNotificationInboxAction(
+export async function performNotificationInboxAction(
 	request: NotificationInboxRequest
-): NotificationInboxResult {
+): Promise<NotificationInboxResult> {
 	const store = useNotificationStore.getState();
 	const record = request.id ? store.history.find((n) => n.id === request.id) : undefined;
 	if (
@@ -90,7 +123,7 @@ export function performNotificationInboxAction(
 			store.setNotificationCenterExpandedId(null);
 			break;
 		case 'activate':
-			activateNotification(record!);
+			await activateNotification(record!);
 			break;
 		case 'link':
 			if (!record!.actionUrl) return { success: false, error: 'Notification has no inline link' };
@@ -101,10 +134,11 @@ export function performNotificationInboxAction(
 		default:
 			return { success: false, error: 'Unknown notification action' };
 	}
+	await flushNotificationHistoryWrites();
 	const current = useNotificationStore.getState();
 	const persistenceFailed =
 		current.historyPersistenceFailed &&
-		['read', 'read-all', 'clear', 'dismiss'].includes(request.action);
+		['read', 'read-all', 'clear', 'dismiss', 'activate', 'link'].includes(request.action);
 	return {
 		success: !persistenceFailed,
 		error: persistenceFailed ? NOTIFICATION_HISTORY_PERSISTENCE_ERROR : undefined,

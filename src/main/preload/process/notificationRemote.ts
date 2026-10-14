@@ -9,11 +9,17 @@ export function createNotificationRemoteApi() {
 	return {
 		/** Subscribe to inbox operations and acknowledge the resulting live-store snapshot. */
 		onRemoteNotificationInbox: (
-			callback: (request: NotificationInboxRequest) => NotificationInboxResult
+			callback: (
+				request: NotificationInboxRequest
+			) => NotificationInboxResult | Promise<NotificationInboxResult>
 		): (() => void) => {
-			const handler = (_: unknown, request: NotificationInboxRequest, responseChannel: string) => {
+			const handler = async (
+				_: unknown,
+				request: NotificationInboxRequest,
+				responseChannel: string
+			) => {
 				try {
-					ipcRenderer.send(responseChannel, callback(request));
+					ipcRenderer.send(responseChannel, await callback(request));
 				} catch (error) {
 					ipcRenderer.send(responseChannel, {
 						success: false,

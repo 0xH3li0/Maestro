@@ -17,13 +17,9 @@ import { shortcutSuffix } from './ui/ShortcutHint';
 import { useSettingsStore } from '../stores/settingsStore';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Bell, Check, Info, Sparkles, X, XCircle } from 'lucide-react';
+import { Bell, X } from 'lucide-react';
 import type { Theme } from '../types';
-import {
-	selectUnreadNotificationCount,
-	useNotificationStore,
-	type ToastColor,
-} from '../stores/notificationStore';
+import { selectUnreadNotificationCount, useNotificationStore } from '../stores/notificationStore';
 import {
 	activateNotification,
 	openNotificationLink,
@@ -36,7 +32,7 @@ import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SegmentedControl } from './ui/SegmentedControl';
-import { toastAccentColor } from './Toast';
+import { toastAccentColor, ToastIcon } from './Toast';
 
 type NotificationFilter = 'unread' | 'all';
 
@@ -44,24 +40,6 @@ const FILTER_OPTIONS: ReadonlyArray<{ value: NotificationFilter; label: string }
 	{ value: 'unread', label: 'Unread' },
 	{ value: 'all', label: 'All' },
 ];
-
-/** Same glyph per color as the floating toast, so an entry reads as the toast it was. */
-function NotificationIcon({ color }: { color: ToastColor }) {
-	const className = 'w-3.5 h-3.5';
-	switch (color) {
-		case 'green':
-			return <Check className={className} />;
-		case 'red':
-			return <XCircle className={className} />;
-		case 'yellow':
-			return <Info className={className} />;
-		case 'orange':
-			return <AlertTriangle className={className} />;
-		case 'theme':
-		default:
-			return <Sparkles className={className} />;
-	}
-}
 
 interface NotificationCenterProps {
 	theme: Theme;
@@ -326,7 +304,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 										className="shrink-0 p-1 rounded mt-0.5"
 										style={{ color: accent, backgroundColor: `${accent}20` }}
 									>
-										<NotificationIcon color={record.color} />
+										<ToastIcon color={record.color} className="w-3.5 h-3.5" />
 									</span>
 									<span className="flex-1 min-w-0">
 										<span

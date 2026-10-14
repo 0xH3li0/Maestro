@@ -66,6 +66,73 @@ export function toastAccentColor(color: ToastColor, theme: Theme): string {
 	}
 }
 
+/** Same glyph renderer for floating toasts and durable inbox entries. */
+export function ToastIcon({
+	color,
+	className = 'w-5 h-5',
+}: {
+	color: ToastColor;
+	className?: string;
+}) {
+	switch (color) {
+		case 'green':
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+				</svg>
+			);
+		case 'red':
+			// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'yellow':
+			// Info-style "i" - yellow is a soft heads-up.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'orange':
+			// AlertTriangle - more emphatic warning than yellow.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+					/>
+				</svg>
+			);
+		case 'theme':
+		default:
+			// Sparkles - themed default, no semantic.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+					/>
+				</svg>
+			);
+	}
+}
+
 const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
@@ -123,67 +190,6 @@ const ToastItem = memo(function ToastItem({
 	// Check if toast is clickable (has session navigation or custom action)
 	const isClickable = toast.onClick || toast.clickAction || (toast.sessionId && onSessionClick);
 
-	// Icon based on the toast color (5-color design language).
-	const getIcon = () => {
-		switch (toast.color) {
-			case 'green':
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-					</svg>
-				);
-			case 'red':
-				// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'yellow':
-				// Info-style "i" - yellow is a soft heads-up.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'orange':
-				// AlertTriangle - more emphatic warning than yellow.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-						/>
-					</svg>
-				);
-			case 'theme':
-			default:
-				// Sparkles - themed default, no semantic.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-						/>
-					</svg>
-				);
-		}
-	};
-
 	const offscreen = fromLeft ? 'translateX(-100%)' : 'translateX(100%)';
 
 	const getTypeColor = () => toastAccentColor(toast.color, theme);
@@ -218,7 +224,7 @@ const ToastItem = memo(function ToastItem({
 						backgroundColor: `${getTypeColor()}20`,
 					}}
 				>
-					{getIcon()}
+					<ToastIcon color={toast.color} />
 				</div>
 
 				{/* Content */}

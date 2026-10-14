@@ -14,7 +14,6 @@ import { logger } from '../../../renderer/utils/logger';
 import {
 	useNotificationStore,
 	notifyToast,
-	resetToastIdCounter,
 	getNotificationState,
 	getNotificationActions,
 	selectToasts,
@@ -264,21 +263,13 @@ describe('notificationStore', () => {
 		describe('ID generation', () => {
 			it('returns generated toast ID with expected shape', () => {
 				const id = notifyToast({ type: 'success', title: 'Test', message: 'msg' });
-				expect(id).toMatch(/^toast-\d+-\d+$/);
+				expect(id).toMatch(/^toast-[0-9a-f-]{36}$/);
 			});
 
 			it('generates unique IDs', () => {
 				const id1 = notifyToast({ type: 'success', title: 'A', message: 'a' });
 				const id2 = notifyToast({ type: 'success', title: 'B', message: 'b' });
 				expect(id1).not.toBe(id2);
-			});
-
-			it('counter portion increments between consecutive calls', () => {
-				const id1 = notifyToast({ type: 'success', title: 'A', message: 'a' });
-				const id2 = notifyToast({ type: 'success', title: 'B', message: 'b' });
-				const counter1 = Number(id1.split('-').pop());
-				const counter2 = Number(id2.split('-').pop());
-				expect(counter2).toBe(counter1 + 1);
 			});
 		});
 

@@ -1,3 +1,6 @@
+import { dispatchToastClickAction } from '../../services/toastClickActions';
+import { jumpToAgent } from '../../services/agentNavigation';
+import { startNotificationHistorySync } from '../../stores/notificationStore';
 import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -1271,6 +1274,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	useEffect(() => startNotificationHistorySync(), []);
+	useEffect(
+		() =>
+			window.maestro.notification.onActivateAction?.((action) => {
+				dispatchToastClickAction(action, {
+					onSessionClick: (sessionId, tabId) => {
+						jumpToAgent(sessionId, { tabId });
+					},
+				});
+			}),
+		[]
+	);
+
 	useEffect(
 		() => window.maestro.process.onRemoteNotificationInbox?.(performNotificationInboxAction),
 		[]
@@ -1374,7 +1390,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				color,
 				title,
 				message,
-				duration: duration !== undefined ? duration * 1000 : undefined,
+				duration,
 				dismissible,
 				sessionId,
 				tabId,
