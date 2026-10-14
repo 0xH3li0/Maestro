@@ -381,6 +381,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 						duration: 0,
 						tasksTotal: run.tasksTotal,
 						projectPath: run.projectPath,
+						kind: run.kind,
 					});
 					return result.ok ? result.id : null;
 				},
@@ -548,7 +549,8 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 			})),
 			loopEnabled: input.loop === true,
 			maxLoops: input.maxLoops ?? null,
-			prompt: '',
+			// Empty means the default Auto Run prompt, which the engine loads.
+			prompt: input.prompt ?? '',
 		};
 
 		const scan = await preflightPlaybook(playbook, folder, documents);
@@ -604,6 +606,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 				{
 					...(input.model ? { model: input.model } : {}),
 					...(input.effort ? { effort: input.effort } : {}),
+					...(input.ignoreModelHints ? { ignoreModelHints: true } : {}),
 					signal: abort.signal,
 				},
 				buildDeps(agentId, controller)

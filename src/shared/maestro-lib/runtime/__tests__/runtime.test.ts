@@ -2,6 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+/** Paths `existsSync` answers yes for without their being on disk. */
+const present = vi.hoisted(() => new Set<string>());
+
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const existsSync = (target: import('fs').PathLike): boolean =>
+		present.has(String(target)) || actual.existsSync(target);
+	return { ...actual, default: { ...actual, existsSync }, existsSync };
+});
+
 import type { ClientResult, MaestroEvent } from '../../client/types';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import { STORE_SCHEMA_KEY } from '../../store/io';
@@ -185,15 +196,17 @@ describe('createMaestroRuntime', () => {
 		});
 
 		it('refuses a synced data directory unless allowed', async () => {
+			// The folder has to exist: a custom location that is missing falls back to the data
+			// directory, as it does for the desktop, and then there is nothing synced to refuse.
+			// A real one cannot live under the temp directory (the path rule rejects /tmp and /var).
+			const synced = '/Users/someone/Dropbox/maestro';
+			present.add(synced);
 			fs.writeFileSync(
 				path.join(dir, 'maestro-bootstrap.json'),
-				JSON.stringify({ customSyncPath: '/Users/someone/Dropbox/maestro' })
+				JSON.stringify({ customSyncPath: synced })
 			);
-			const refused = await refusal(100);
-			expect(refused).toMatchObject({
-				reason: 'synced-data-dir',
-				syncDir: '/Users/someone/Dropbox/maestro',
-			});
+			const refused = await refusal(100).finally(() => present.delete(synced));
+			expect(refused).toMatchObject({ reason: 'synced-data-dir', syncDir: synced });
 			expect(fs.existsSync(lockFile())).toBe(false);
 		});
 

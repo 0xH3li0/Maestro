@@ -1,10 +1,14 @@
 /**
- * Whether a `customSyncPath` from `maestro-bootstrap.json` may be used.
+ * Why a `customSyncPath` from `maestro-bootstrap.json` cannot be used, in words.
  *
- * The desktop (`src/main/stores/utils.ts`) and any process without Electron
- * must agree on this, or the two read sessions and settings from different
- * directories: a path the desktop rejects falls back to userData, so a reader
- * that accepted it would be looking at files the desktop never writes.
+ * This explains a decision; it does not make one. Whether a path is used is
+ * `resolveSyncDir`'s call (`src/shared/syncPath.ts`), which the desktop and
+ * every process without Electron share, so they cannot read sessions and
+ * settings from different directories. `isValidSyncPath` there answers yes or
+ * no and logs; this gives the same checks in the same order with the reason
+ * returned, for `maestro-cli doctor` to print. The two are held together by a
+ * parity test, and a caller must treat a `null` here as "no known reason", not
+ * as acceptance.
  *
  * Pure: it inspects the string only and never touches the filesystem.
  */

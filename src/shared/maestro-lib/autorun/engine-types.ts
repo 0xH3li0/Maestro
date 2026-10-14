@@ -12,6 +12,7 @@
  */
 
 import type { AgentError, HistoryEntry, TaskSelectionMode, UsageStats } from '../../types';
+import type { AutoRunKind } from '../../stats-types';
 import type { PromptId } from '../../promptDefinitions';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AutoRunPolicy } from './policy';
@@ -130,6 +131,8 @@ export interface AutoRunStatsRun {
 	/** Unchecked tasks at the start; 100 for a goal run (progress is the task scale). */
 	tasksTotal: number;
 	projectPath: string;
+	/** Which engine ran it. Stamped by the runner, never inferred from the document path. */
+	kind: AutoRunKind;
 }
 
 export interface AutoRunStatsTask {

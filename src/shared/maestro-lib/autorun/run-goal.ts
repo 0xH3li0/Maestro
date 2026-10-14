@@ -164,6 +164,7 @@ export async function* runGoal(
 					startTime: runStartTime,
 					tasksTotal: 100,
 					projectPath: session.cwd,
+					kind: 'goal-driven',
 				});
 			} catch (statsError) {
 				log.warn('Failed to start Auto Run stats tracking', session.name, {

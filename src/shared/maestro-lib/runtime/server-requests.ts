@@ -20,6 +20,7 @@ import type {
 	MaestroClient,
 	ProviderInfo,
 	TabPatch,
+	TurnSendReceipt,
 } from '../client/types';
 import { groupChatToWire, type Frame } from './server-frames';
 
@@ -53,6 +54,15 @@ function outcome<T>(
 		: { type, success: false, error: errorText(result) };
 }
 
+/**
+ * A stated refusal: the request asked for something this host does not do. Nothing was done, and
+ * `error` says so in a sentence a person can act on. A request is never answered with success
+ * for work that did not happen.
+ */
+function refusal(type: string, error: string, extra: Frame = {}): Frame {
+	return { type, success: false, error, ...extra };
+}
+
 // ---------------------------------------------------------------------------
 // Wire patches back to the client's patches
 // ---------------------------------------------------------------------------
@@ -73,6 +83,12 @@ export function agentPatchFromConfig(config: Record<string, unknown>): AgentPatc
 	take('nudgeMessage', 'nudgeMessage');
 	take('newSessionMessage', 'newSessionMessage');
 	take('bookmarked', 'bookmarked');
+	take('contextWindowSource', 'contextWindowSource');
+	take('enableMaestroP', 'enableMaestroP');
+	take('maestroPMode', 'maestroPMode');
+	take('maestroPPath', 'maestroPPath');
+	// Passed as sent: `applyAgentConfigPatch` is what refuses a transport it does not know.
+	take('codexTransport', 'codexTransport');
 	return patch as AgentPatch;
 }
 
@@ -204,6 +220,85 @@ async function invokeChannel(
 }
 
 // ---------------------------------------------------------------------------
+// Messages for a tab (`maestro-cli dispatch`)
+// ---------------------------------------------------------------------------
+
+type TabTarget =
+	| { ok: true; tabId: string }
+	| { ok: false; error: string; reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs' };
+
+/**
+ * The tab a message is for: the one it names, else the agent's active tab, as the desktop
+ * resolves it. The error text is the desktop's, which `dispatch` maps to its error codes.
+ */
+async function resolveTargetTab(
+	client: MaestroClient,
+	agentId: string,
+	requested: string | undefined
+): Promise<TabTarget> {
+	const agent = await client.agents.get(agentId);
+	if (!agent.ok) {
+		return agent.error.code === 'not-found'
+			? { ok: false, error: 'Session not found', reason: 'session-not-found' }
+			: { ok: false, error: errorText(agent) };
+	}
+	if (requested) return { ok: true, tabId: requested };
+	const active = str(agent.value.activeTabId);
+	if (active) return { ok: true, tabId: active };
+	const tabs = await client.tabs.list(agentId);
+	const first = tabs.ok ? tabs.value[0]?.id : undefined;
+	return first
+		? { ok: true, tabId: first }
+		: { ok: false, error: 'The agent has no AI tab to send to.', reason: 'no-ai-tabs' };
+}
+
+/**
+ * What a dispatch message asks for that a host without a window cannot do, or undefined. Checked
+ * before anything is sent, so a refusal never leaves a message behind.
+ */
+function unsupportedDispatch(message: Request): string | undefined {
+	if (message.inputMode === 'terminal') {
+		return 'A headless host has no terminal to run a command in. Only AI messages can be sent to it.';
+	}
+	if (str(message.notifyOnComplete)) {
+		return 'A headless host cannot arm a completion callback (--notify-on-complete). Nothing was sent; dispatch without it and poll the tab, or use the desktop app.';
+	}
+	return undefined;
+}
+
+/** A dispatch message's images, when it carries any. */
+function imagesOf(message: Request): string[] | undefined {
+	const images = Array.isArray(message.images)
+		? message.images.filter((image): image is string => typeof image === 'string')
+		: [];
+	return images.length > 0 ? images : undefined;
+}
+
+/** The reply fields that say whether the message is running or waiting its turn. */
+function receiptFields(receipt: TurnSendReceipt): Frame {
+	return receipt.status === 'queued'
+		? {
+				queued: true,
+				itemId: receipt.itemId,
+				queuePosition: receipt.position,
+				queueLength: receipt.queueLength,
+			}
+		: { queued: false };
+}
+
+/** A failed send as the desktop words it: a tab that is not there is `Tab not found`. */
+function sendFailure(
+	type: string,
+	agentId: string,
+	tabId: string,
+	result: Extract<ClientResult<unknown>, { ok: false }>
+): Frame {
+	return result.error.code === 'not-found'
+		? refusal(type, `Tab not found: ${tabId}`, { sessionId: agentId, reason: 'tab-not-found' })
+		: refusal(type, errorText(result), { sessionId: agentId });
+}
+
+// ---------------------------------------------------------------------------
 // The handler
 // ---------------------------------------------------------------------------
 
@@ -330,9 +425,15 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 						await client.tabs.update(sessionId(message), tabId, tabPatchFromConfig(rest))
 					);
 				}
+				const patch = agentPatchFromConfig(config);
+				// Nothing in the patch is a field a client may write: say so, as the desktop does,
+				// rather than answer success for an update that changed nothing.
+				if (Object.keys(patch).length === 0) {
+					return refusal('update_session_config_result', 'No editable config fields in patch');
+				}
 				return outcome(
 					'update_session_config_result',
-					await client.agents.update(sessionId(message), agentPatchFromConfig(config)),
+					await client.agents.update(sessionId(message), patch),
 					(receipt) => (receipt.notices ? { notices: receipt.notices } : {})
 				);
 			}
@@ -401,35 +502,95 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 				);
 
 			// -- turns ------------------------------------------------------
+			// The three ways `maestro-cli dispatch` hands over a prompt. Each replies with the type
+			// and fields the desktop replies with, so the CLI prints what it prints for a desktop.
 			case 'enqueue_command': {
-				const tabId = str(message.tabId) ?? '';
-				const images = Array.isArray(message.images)
-					? message.images.filter((image): image is string => typeof image === 'string')
-					: undefined;
-				const result = await client.turns.send(sessionId(message), tabId, {
-					text: typeof message.command === 'string' ? message.command : '',
-					...(images && images.length > 0 ? { images } : {}),
-				});
-				if (!result.ok) {
-					return {
-						type: 'enqueue_command_result',
-						success: false,
-						error: errorText(result),
-						...(result.error.code === 'not-found' ? { reason: 'session-not-found' } : {}),
-					};
+				const type = 'enqueue_command_result';
+				const agentId = sessionId(message);
+				const unsupported = unsupportedDispatch(message);
+				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
+				// The queue here starts a waiting message as soon as its turn comes; it has no state
+				// that keeps one back until a person releases it.
+				if (message.held === true) {
+					return refusal(
+						type,
+						'A headless host cannot queue a held message (--held): its queue would run the message as soon as the agent is free. Nothing was queued.',
+						{ sessionId: agentId }
+					);
 				}
-				const receipt = result.value;
-				return receipt.status === 'queued'
-					? {
-							type: 'enqueue_command_result',
-							success: true,
-							tabId,
-							queued: true,
-							itemId: receipt.itemId,
-							queuePosition: receipt.position,
-							queueLength: receipt.queueLength,
-						}
-					: { type: 'enqueue_command_result', success: true, tabId, queued: false };
+				const target = await resolveTargetTab(client, agentId, str(message.tabId));
+				if (!target.ok) {
+					return refusal(type, target.error, {
+						sessionId: agentId,
+						...(target.reason ? { reason: target.reason } : {}),
+					});
+				}
+				const images = imagesOf(message);
+				const result = await client.turns.send(agentId, target.tabId, {
+					text: typeof message.command === 'string' ? message.command : '',
+					...(images ? { images } : {}),
+				});
+				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
+				return {
+					type,
+					success: true,
+					sessionId: agentId,
+					tabId: target.tabId,
+					...receiptFields(result.value),
+				};
+			}
+			case 'send_command': {
+				const type = 'command_result';
+				const agentId = sessionId(message);
+				const unsupported = unsupportedDispatch(message);
+				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
+				const target = await resolveTargetTab(client, agentId, str(message.tabId));
+				if (!target.ok) return refusal(type, target.error, { sessionId: agentId });
+				const images = imagesOf(message);
+				// A busy agent queues the message where the desktop turns it away, so `force` has
+				// nothing to override: the message is accepted either way, and `queued` says which.
+				const result = await client.turns.send(agentId, target.tabId, {
+					text: typeof message.command === 'string' ? message.command : '',
+					...(images ? { images } : {}),
+				});
+				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
+				return {
+					type,
+					success: true,
+					sessionId: agentId,
+					tabId: target.tabId,
+					...receiptFields(result.value),
+				};
+			}
+			case 'new_ai_tab_with_prompt': {
+				const type = 'new_ai_tab_with_prompt_result';
+				const agentId = sessionId(message);
+				const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+				// Every refusal that does not need the tab comes before the tab exists.
+				if (!agentId || !prompt.trim()) {
+					return refusal(type, 'Missing sessionId or prompt', { sessionId: agentId });
+				}
+				const unsupported = unsupportedDispatch(message);
+				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
+				const created = await client.tabs.create(agentId);
+				if (!created.ok) {
+					return refusal(
+						type,
+						created.error.code === 'not-found' ? 'Session not found' : errorText(created),
+						{ sessionId: agentId }
+					);
+				}
+				const { tabId } = created.value;
+				const result = await client.turns.send(agentId, tabId, { text: prompt });
+				// The tab exists by now, so a prompt that could not start is reported with it.
+				if (!result.ok) return refusal(type, errorText(result), { sessionId: agentId, tabId });
+				return {
+					type,
+					success: true,
+					sessionId: agentId,
+					tabId,
+					...(result.value.status === 'queued' ? { queued: true } : {}),
+				};
 			}
 			case 'list_queue': {
 				const agentId = sessionId(message);
@@ -459,9 +620,31 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 
 			// -- Auto Run ---------------------------------------------------
 			case 'configure_auto_run': {
+				const type = 'configure_auto_run_result';
+				// On the desktop this message can fill the Auto Run panel, save a playbook, or
+				// launch, in a worktree or not. A host has only the launch, and says so for the
+				// rest before anything starts.
+				if (message.saveAsPlaybook !== undefined && message.saveAsPlaybook !== null) {
+					return refusal(
+						type,
+						'A headless host cannot save a playbook (--save-as): playbooks are saved by the desktop app. Nothing was saved or launched.'
+					);
+				}
+				if (obj(message.worktree) && obj(message.worktree)?.enabled !== false) {
+					return refusal(
+						type,
+						'A headless host cannot run Auto Run in a worktree (--worktree): the desktop app creates the worktree and its branch. Nothing was launched.'
+					);
+				}
+				if (message.launch !== true) {
+					return refusal(
+						type,
+						'A headless host has no Auto Run panel to configure. Pass --launch to start the run.'
+					);
+				}
 				const documents = Array.isArray(message.documents) ? message.documents : [];
 				return outcome(
-					'configure_auto_run_result',
+					type,
 					await client.autoRun.launch(sessionId(message), {
 						documents: documents.flatMap((entry) => {
 							const document = obj(entry);
@@ -477,8 +660,10 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 						}),
 						...(message.loopEnabled === true ? { loop: true } : {}),
 						...(num(message.maxLoops) !== undefined ? { maxLoops: num(message.maxLoops) } : {}),
+						...(str(message.prompt) ? { prompt: str(message.prompt) } : {}),
 						...(str(message.model) ? { model: str(message.model) } : {}),
 						...(str(message.effort) ? { effort: str(message.effort) } : {}),
+						...(message.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
 					})
 				);
 			}

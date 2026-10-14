@@ -2,11 +2,12 @@
  * What a person configures to start an Auto Run (AR-4, AR-5), and the rules
  * both kinds of run share before anything is sent.
  *
- * Spec-driven: documents in run order, loop, reset on completion, an optional
- * model and effort for this run only. Goal-driven: a goal, exit criteria, and an
- * iteration cap (the fields of `GoalRunConfig`, `src/shared/goalDriven/types.ts`). The host
- * validates again; checking here turns a mistake into a line beside the field
- * instead of a round trip and a refusal.
+ * Spec-driven: documents in run order, loop, reset on completion, and for this
+ * run only an optional model, effort, prompt, and whether to skip model hints.
+ * Goal-driven: a goal, exit criteria, and an iteration cap (the fields of
+ * `GoalRunConfig`, `src/shared/goalDriven/types.ts`). The host validates again;
+ * checking here turns a mistake into a line beside the field instead of a round
+ * trip and a refusal.
  */
 
 /** The cap the desktop's goal panel starts at when "Infinite" is turned off. */
@@ -32,6 +33,13 @@ export interface AutoRunLaunchInput {
 	/** This run only. Absent uses the agent's model, and a `MAESTRO:MODEL` marker may still apply. */
 	model?: string;
 	effort?: string;
+	/**
+	 * The instruction every task runs under, in place of the default Auto Run prompt
+	 * (`maestro-cli auto-run --prompt`). This run only.
+	 */
+	prompt?: string;
+	/** Skip the documents' `MAESTRO:MODEL` markers for this run (`--ignore-model-hints`). */
+	ignoreModelHints?: boolean;
 }
 
 export interface GoalRunLaunchInput {
@@ -82,6 +90,9 @@ export function validateAutoRunLaunch(
 			...(input.loop && typeof input.maxLoops === 'number' ? { maxLoops: input.maxLoops } : {}),
 			...(model ? { model } : {}),
 			...(effort ? { effort } : {}),
+			// Kept as written: a prompt's own line breaks and indentation are part of it.
+			...(input.prompt?.trim() ? { prompt: input.prompt } : {}),
+			...(input.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
 		},
 	};
 }

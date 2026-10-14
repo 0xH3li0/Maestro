@@ -284,6 +284,7 @@ export async function* runPlaybook(
 					startTime: batchStartTime,
 					tasksTotal: initialTotalTasks,
 					projectPath: session.cwd,
+					kind: 'spec-driven',
 				});
 			} catch (statsError) {
 				log.warn('Failed to start Auto Run stats tracking', session.name, {

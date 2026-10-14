@@ -486,6 +486,57 @@ describe('agent config and location', () => {
 		expect(applyAgentConfigPatch(source, { toolType: 'codex' })).toMatchObject({ ok: false });
 	});
 
+	it('carries the provenance, maestro-p, and transport fields a patch states', () => {
+		const built = buildAgentConfigPatch({
+			contextWindowSource: 'user-edited',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			maestroPPath: '/opt/maestro-p',
+			codexTransport: 'app-server',
+		});
+		expect(built.fields).toEqual([
+			'contextWindowSource',
+			'enableMaestroP',
+			'maestroPMode',
+			'maestroPPath',
+			'codexTransport',
+		]);
+		expect(built.patch).toEqual({
+			contextWindowSource: 'user-edited',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			maestroPPath: '/opt/maestro-p',
+			codexTransport: 'app-server',
+		});
+		// A stated provenance outranks the one the window edit implies.
+		expect(
+			buildAgentConfigPatch({ contextWindow: 9, contextWindowSource: 'provider' }).patch
+		).toEqual({ customContextWindow: 9, contextWindowSource: 'provider' });
+	});
+
+	it('writes a known Codex transport, stores exec as unset, and refuses any other value', () => {
+		const source = agent({ toolType: 'codex' });
+		const opted = applyAgentConfigPatch(source, { codexTransport: 'app-server' });
+		if (!opted.ok) throw new Error('unreachable');
+		expect(opted.value.codexTransport).toBe('app-server');
+
+		// `exec` is the default: stored the way the Edit Agent form stores it, as no field.
+		for (const cleared of ['exec', null]) {
+			const back = applyAgentConfigPatch(opted.value, { codexTransport: cleared });
+			if (!back.ok) throw new Error('unreachable');
+			expect('codexTransport' in back.value).toBe(false);
+		}
+
+		// An unknown transport must never reach the spawner, and nothing beside it is applied.
+		for (const bad of ['websocket', '', 1, true, {}]) {
+			expect(applyAgentConfigPatch(source, { codexTransport: bad, customModel: 'm' })).toEqual({
+				ok: false,
+				code: 'invalid',
+				message: "Invalid value for field 'codexTransport'",
+			});
+		}
+	});
+
 	it('keeps keys it was not asked about (DD-5)', () => {
 		const source = agent({ rcOnlyField: { deep: [1, 2] } });
 		const result = applyAgentConfigPatch(source, { bookmarked: true });

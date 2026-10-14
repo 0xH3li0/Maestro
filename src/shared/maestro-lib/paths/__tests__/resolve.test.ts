@@ -1,7 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+/** Paths `existsSync` answers yes for without their being on disk. */
+const present = vi.hoisted(() => new Set<string>());
+
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const existsSync = (target: import('fs').PathLike): boolean =>
+		present.has(String(target)) || actual.existsSync(target);
+	return { ...actual, default: { ...actual, existsSync }, existsSync };
+});
+
+import { resolveSyncDir } from '../../../syncPath';
 import { resolveMaestroPaths } from '../resolve';
 
 /**
@@ -10,8 +22,8 @@ import { resolveMaestroPaths } from '../resolve';
  *
  * A custom sync path is validated by the desktop's rules, which reject `/tmp`
  * and `/var` (where `os.tmpdir()` lives on macOS), so the sync paths below are
- * synthetic absolute paths that are never created. The resolver must not need
- * them to exist.
+ * synthetic absolute paths that are never created. A case that needs the folder
+ * to exist adds it to `present`.
  */
 describe('resolveMaestroPaths', () => {
 	let tempDir: string;
@@ -26,9 +38,13 @@ describe('resolveMaestroPaths', () => {
 	beforeEach(() => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-paths-'));
 		userDataDir = path.join(tempDir, 'Maestro');
+		present.clear();
+		// The shared rule logs each path it refuses.
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -61,6 +77,7 @@ describe('resolveMaestroPaths', () => {
 	});
 
 	it('moves the synced stores to customSyncPath and keeps the rest under userData', () => {
+		present.add(syncDir);
 		writeBootstrap(JSON.stringify({ customSyncPath: syncDir }));
 
 		const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });
@@ -80,17 +97,47 @@ describe('resolveMaestroPaths', () => {
 		expect(paths.cliServerFile).toBe(path.join(userDataDir, 'cli-server.json'));
 	});
 
-	it('reports a customSyncPath that does not exist yet, without creating it', () => {
-		// The desktop creates the directory on startup, so it is still where
-		// the stores will live. Falling back here would read the wrong files.
+	it('falls back to userData when the customSyncPath folder is missing, without creating it', () => {
+		// The desktop creates the folder at startup, so a missing one is not in use. Every other
+		// `maestro-cli` command reads userData here, and a host must read the same files.
 		expect(fs.existsSync(syncDir)).toBe(false);
 		writeBootstrap(JSON.stringify({ customSyncPath: syncDir }));
 
 		const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });
 
-		expect(paths.syncDir).toBe(syncDir);
-		expect(paths.syncDirSource).toBe('customSyncPath');
+		expect(paths.syncDir).toBe(userDataDir);
+		expect(paths.syncDirSource).toBe('userData');
+		expect(paths.customSyncPathRejection).toBe(`Custom sync path does not exist: ${syncDir}`);
+		expect(paths.sessionsFile).toBe(path.join(userDataDir, 'maestro-sessions.json'));
 		expect(fs.existsSync(syncDir)).toBe(false);
+	});
+
+	it('answers the directory resolveSyncDir answers, in every case', () => {
+		const cases: Array<{ name: string; bootstrap?: string; exists?: boolean }> = [
+			{ name: 'no bootstrap file' },
+			{ name: 'unparseable', bootstrap: '{ "customSyncPath": ' },
+			{ name: 'not an object', bootstrap: 'null' },
+			{ name: 'no path', bootstrap: '{}' },
+			{ name: 'invalid path', bootstrap: JSON.stringify({ customSyncPath: 'relative/sync' }) },
+			{ name: 'missing directory', bootstrap: JSON.stringify({ customSyncPath: syncDir }) },
+			{
+				name: 'a directory in use',
+				bootstrap: JSON.stringify({ customSyncPath: syncDir }),
+				exists: true,
+			},
+		];
+		fs.mkdirSync(userDataDir, { recursive: true });
+		for (const { name, bootstrap, exists } of cases) {
+			present.clear();
+			if (exists) present.add(syncDir);
+			fs.rmSync(path.join(userDataDir, 'maestro-bootstrap.json'), { force: true });
+			if (bootstrap !== undefined) writeBootstrap(bootstrap);
+
+			const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });
+
+			expect(paths.syncDir, name).toBe(resolveSyncDir(userDataDir));
+			expect(paths.syncDirSource, name).toBe(exists ? 'customSyncPath' : 'userData');
+		}
 	});
 
 	it('falls back to userData when the desktop would reject customSyncPath', () => {
@@ -127,6 +174,7 @@ describe('resolveMaestroPaths', () => {
 	});
 
 	it('reads a bootstrap file that starts with a BOM', () => {
+		present.add(syncDir);
 		writeBootstrap('﻿' + JSON.stringify({ customSyncPath: syncDir }));
 
 		const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });

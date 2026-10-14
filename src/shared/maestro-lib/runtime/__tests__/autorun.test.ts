@@ -104,6 +104,8 @@ describe('runtime Auto Run', () => {
 	let script: Step[];
 	let chatRecording: string;
 	let envFiles: string[];
+	/** What each Auto Run turn was launched with, in the order the run started them. */
+	let runLaunches: Array<{ prompt: string; args: string[] }>;
 	/** The SQL the fake stats connection was asked to run, with its bind values. */
 	let statsWrites: Array<{ sql: string; params: unknown[] }>;
 
@@ -113,6 +115,7 @@ describe('runtime Auto Run', () => {
 		const isRun = turn.launch.querySource === 'auto';
 		const step = isRun ? script.shift() : undefined;
 		if (isRun && !step) throw new Error('The script has no step left for this Auto Run turn.');
+		if (isRun) runLaunches.push({ prompt: turn.launch.prompt ?? '', args: [...turn.launch.args] });
 		const recording = step
 			? writeFakeTurn(work, claudeTurn(step.text, `provider-${envFiles.length + 1}`, step.failure))
 			: chatRecording;
@@ -277,6 +280,7 @@ describe('runtime Auto Run', () => {
 		open = [];
 		script = [];
 		envFiles = [];
+		runLaunches = [];
 		statsWrites = [];
 		chatRecording = writeFakeTurn(
 			work,
@@ -354,6 +358,8 @@ describe('runtime Auto Run', () => {
 			// One run, three tasks, and one `query_events` row per turn marked as automation.
 			expect(into('auto_run_sessions')).toHaveLength(1);
 			expect(into('auto_run_sessions')[0].params).toContain('tasks');
+			// A document run is stored as spec-driven, the last bound column.
+			expect(into('auto_run_sessions')[0].params.at(-1)).toBe('spec-driven');
 			expect(into('auto_run_tasks')).toHaveLength(3);
 			const queries = into('query_events');
 			expect(queries).toHaveLength(3);
@@ -366,6 +372,52 @@ describe('runtime Auto Run', () => {
 			);
 			expect(closing).toHaveLength(1);
 			expect(closing[0].params[1]).toBe(3);
+		});
+
+		it('runs every task under the prompt the launch states, in place of the default', async () => {
+			const file = doc('tasks', tasks(1));
+			script = [{ text: 'Done with this task. Details.', tick: file }];
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			value(
+				await runtime.autoRun.launch('a1', {
+					documents: [{ file }],
+					prompt: 'CUSTOM RUN PROMPT: tick exactly one box.',
+				})
+			);
+			await run.ended();
+
+			expect(runLaunches).toHaveLength(1);
+			expect(runLaunches[0].prompt).toContain('CUSTOM RUN PROMPT: tick exactly one box.');
+		});
+
+		it('skips the documents’ model hints when the launch says to', async () => {
+			const hinted = '<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] task 1';
+			const argsOf = async (name: string, ignoreModelHints: boolean): Promise<string[]> => {
+				const file = doc(name, hinted);
+				script = [{ text: 'Done with this task. Details.', tick: file }];
+				runLaunches = [];
+				const runtime = await start();
+				const run = watchRun(runtime);
+				value(
+					await runtime.autoRun.launch('a1', {
+						documents: [{ file }],
+						...(ignoreModelHints ? { ignoreModelHints } : {}),
+					})
+				);
+				await run.ended();
+				await runtime.connection.close();
+				return runLaunches[0].args;
+			};
+			// The marker picks the model and effort of the task under it.
+			const hintedArgs = await argsOf('hinted', false);
+			expect(hintedArgs).toContain('--model');
+			expect(hintedArgs).toContain('--effort');
+			// Skipped, the task runs at the agent's own settings, which here are the provider's defaults.
+			const ignoredArgs = await argsOf('ignored', true);
+			expect(ignoredArgs).not.toContain('--model');
+			expect(ignoredArgs).not.toContain('--effort');
 		});
 
 		it('refuses before anything starts, with the reason', async () => {
@@ -673,6 +725,8 @@ describe('runtime Auto Run', () => {
 				write.sql.includes('INSERT INTO auto_run_sessions')
 			);
 			expect(sessions[0].params).toContain('Goal: Ship the parser');
+			// Stored as a goal run, not as the spec-driven default an unlabeled row reads as.
+			expect(sessions[0].params.at(-1)).toBe('goal-driven');
 		});
 
 		it('refuses an empty goal', async () => {

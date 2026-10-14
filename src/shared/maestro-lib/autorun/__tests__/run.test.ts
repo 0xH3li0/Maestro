@@ -304,6 +304,23 @@ describe('validateAutoRunLaunch', () => {
 		});
 	});
 
+	it('keeps a run prompt as written and the model hint switch only when it is on', () => {
+		const prompt = '  Do the task.\n\tThen stop.\n';
+		expect(
+			validateAutoRunLaunch({ documents: [{ file: '/p/a.md' }], prompt, ignoreModelHints: true })
+		).toEqual({
+			ok: true,
+			value: { documents: [{ file: '/p/a.md' }], prompt, ignoreModelHints: true },
+		});
+		expect(
+			validateAutoRunLaunch({
+				documents: [{ file: '/p/a.md' }],
+				prompt: ' \n',
+				ignoreModelHints: false,
+			})
+		).toEqual({ ok: true, value: { documents: [{ file: '/p/a.md' }] } });
+	});
+
 	it('ignores the loop cap unless the run loops, and refuses a bad one', () => {
 		const result = validateAutoRunLaunch({ documents: [{ file: '/p/a.md' }], maxLoops: 4 });
 		expect(result).toEqual({ ok: true, value: { documents: [{ file: '/p/a.md' }] } });

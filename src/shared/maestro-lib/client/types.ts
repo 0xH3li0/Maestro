@@ -17,6 +17,7 @@ import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
+import type { CodexTransport } from '../../codexTransport';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
@@ -208,6 +209,16 @@ export interface AgentPatch {
 	nudgeMessage?: string | null;
 	newSessionMessage?: string | null;
 	bookmarked?: boolean;
+	/**
+	 * Provenance of `contextWindow`. Setting the window marks it `user-edited` and
+	 * clearing the window clears it, so this is only for a caller that states it itself.
+	 */
+	contextWindowSource?: string | null;
+	enableMaestroP?: boolean | null;
+	maestroPMode?: 'interactive' | 'dynamic' | null;
+	maestroPPath?: string | null;
+	/** Codex only. `exec` is the default and is stored as an unset field, as is `null`. */
+	codexTransport?: CodexTransport | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;

@@ -20,6 +20,10 @@
  * - A dispatch that fails never loses the prompt. The item keeps its place. A collision (the
  *   tab's previous process has not gone) stays runnable and is looked at again; any other
  *   failure comes back held, so a cause that will not clear cannot spin the queue.
+ * - A collision is only transient while the old process is on its way out. Each one is counted
+ *   and waited out with a doubling back-off, and the one that reaches
+ *   `COLLISION_MAX_ATTEMPTS` holds the item with its error like any other failure
+ *   (`noteSpawnCollision` and `SPAWN_COLLISION_MAX_ATTEMPTS` in the desktop).
  *
  * Where it departs, on purpose:
  *
@@ -29,7 +33,8 @@
  *   starts when the interrupted turn has actually ended. The result is the same; the collision
  *   path is not part of Stop.
  * - Every trigger is an edge the queue sees (a turn ends, an item is submitted, resumed or
- *   removed), so the desktop's poll for a stalled queue is only needed after a collision.
+ *   removed), so the desktop's poll for a stalled queue is only needed after a collision, where
+ *   it is the item's own recheck timer.
  * - No transcript or busy state lives here. The queue says what ran when; the runtime writes
  *   the records.
  */
@@ -59,7 +64,8 @@ export interface QueuedTurnHandle {
 
 /**
  * `start` throws this when the tab's previous process still owns the tab. It is a timing
- * collision, not a verdict on the item: the item stays runnable and is tried again.
+ * collision, not a verdict on the item: the item stays runnable and is tried again, up to
+ * `COLLISION_MAX_ATTEMPTS` times.
  */
 export class TurnCollisionError extends Error {
 	constructor(message = 'A turn is already running on this tab') {
@@ -74,7 +80,10 @@ export type QueueEvent<T extends QueueItem> =
 	/** The item's turn started. `direct` is true when it never waited. */
 	| { type: 'started'; item: T; direct: boolean }
 	| { type: 'ended'; item: T }
-	/** `start` threw. `held` is true when the item came back paused. */
+	/**
+	 * `start` threw. `held` is true when the item came back paused: any failure but a collision,
+	 * and the collision that reached the cap.
+	 */
 	| { type: 'dispatch-failed'; item: T; error: Error; held: boolean }
 	| { type: 'removed'; item: T }
 	/** A pause or resume changed the item. */
@@ -92,7 +101,10 @@ export interface ExecutionQueueOptions<T extends QueueItem> {
 	 */
 	holdsTree?(): boolean;
 	onEvent?(event: QueueEvent<T>): void;
-	/** How long to wait before trying again after a collision. Default 4000. */
+	/**
+	 * How long to wait before trying again after an item's first collision. Each further
+	 * collision of the same item doubles it. Default 1000.
+	 */
 	recheckMs?: number;
 	/** Test seam for the recheck timer. Returns its canceller. */
 	schedule?(run: () => void, ms: number): () => void;
@@ -119,7 +131,25 @@ function blockedByTreeHold(item: QueueItem, view: { holdsTree?: boolean }): bool
 	return view.holdsTree === true && !item.readOnly && !item.forceParallel;
 }
 
-export const DEFAULT_COLLISION_RECHECK_MS = 4000;
+/** The first back-off after a collision; it doubles per collision of the same item (1 s, 2 s, 4 s, ...). */
+export const DEFAULT_COLLISION_RECHECK_MS = 1000;
+
+/**
+ * How many collisions an item may hit before it is treated as a real failure and held. An old
+ * process that never lets go of the tab would otherwise be retried for ever.
+ */
+export const COLLISION_MAX_ATTEMPTS = 6;
+
+/** Appended to the collision's message when the item is held, as the desktop's error frame says it. */
+export const COLLISION_HELD_NOTE = 'The message is held in the queue.';
+
+/** The wait after an item's `count`th collision. */
+export function collisionBackoffMs(
+	count: number,
+	baseMs: number = DEFAULT_COLLISION_RECHECK_MS
+): number {
+	return baseMs * 2 ** (count - 1);
+}
 
 /** An item that dispatch may take: the person has not paused it. */
 export function isRunnable(item: QueueItem): boolean {
@@ -238,7 +268,11 @@ export function createExecutionQueue<T extends QueueItem>(
 			timer.unref?.();
 			return () => clearTimeout(timer);
 		});
-	let cancelRecheck: (() => void) | undefined;
+	/**
+	 * Collisions per waiting item: how many, and the recheck that is counting down. Timing
+	 * bookkeeping for a retry in flight, so it lives beside the item, not on it.
+	 */
+	const collisions = new Map<string, { count: number; cancel?: () => void }>();
 	let disposed = false;
 
 	// A throwing listener must not break a dispatch half way: the item would be left starting.
@@ -269,12 +303,32 @@ export function createExecutionQueue<T extends QueueItem>(
 		for (const resolve of settledWaiters.splice(0)) resolve();
 	};
 
-	const scheduleRecheck = (): void => {
-		if (disposed || cancelRecheck) return;
-		cancelRecheck = schedule(() => {
-			cancelRecheck = undefined;
-			drain();
-		}, options.recheckMs ?? DEFAULT_COLLISION_RECHECK_MS);
+	/** Forget an item's collisions: it started, was held, or was removed. */
+	const clearCollisions = (id: string): void => {
+		collisions.get(id)?.cancel?.();
+		collisions.delete(id);
+	};
+
+	/** Is the item waiting out a collision? Only an edge that proves the old process gone skips it. */
+	const coolingDown = (id: string): boolean => collisions.get(id)?.cancel !== undefined;
+
+	/** Count a collision and start its back-off. Returns how many the item has now had. */
+	const noteCollision = (id: string): number => {
+		const previous = collisions.get(id);
+		previous?.cancel?.();
+		const count = (previous?.count ?? 0) + 1;
+		const record: { count: number; cancel?: () => void } = { count };
+		collisions.set(id, record);
+		if (count < COLLISION_MAX_ATTEMPTS && !disposed) {
+			record.cancel = schedule(
+				() => {
+					record.cancel = undefined;
+					drain();
+				},
+				collisionBackoffMs(count, options.recheckMs)
+			);
+		}
+		return count;
 	};
 
 	const dispatch = async (entry: Entry<T>, direct: boolean): Promise<void> => {
@@ -286,17 +340,24 @@ export function createExecutionQueue<T extends QueueItem>(
 		try {
 			handle = await options.start(item);
 		} catch (cause) {
-			const error = asError(cause);
-			const collision = error instanceof TurnCollisionError;
+			let error = asError(cause);
+			const collided = error instanceof TurnCollisionError;
+			// A collision is transient until it has happened too often: an old process that never
+			// goes away is a cause that will not clear, like any other.
+			const collision = collided && noteCollision(item.id) < COLLISION_MAX_ATTEMPTS;
 			starting.delete(item.tabId);
 			entry.state = 'queued';
 			// A collision stays runnable; anything else would fail the same way next tick.
-			if (!collision) entry.item = { ...item, paused: true };
+			if (!collision) {
+				clearCollisions(item.id);
+				entry.item = { ...item, paused: true };
+				// The last collision reads like the ones before it, so say what changed.
+				if (collided) error = new TurnCollisionError(`${error.message}. ${COLLISION_HELD_NOTE}`);
+			}
 			emit({ type: 'dispatch-failed', item: entry.item, error, held: !collision });
 			if (collision) {
-				// Draining now would pick the same head and collide again, in a loop. The next
-				// edge or the recheck retries it.
-				scheduleRecheck();
+				// Draining now would pick the same head and collide again, in a loop. The item's
+				// recheck retries it, or a turn that ends first.
 				notifyIfSettled();
 			} else {
 				notifyIfSettled();
@@ -305,6 +366,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			return;
 		}
 
+		clearCollisions(item.id);
 		starting.delete(item.tabId);
 		const index = entries.indexOf(entry);
 		if (index !== -1) entries.splice(index, 1);
@@ -329,6 +391,10 @@ export function createExecutionQueue<T extends QueueItem>(
 			if (decision.action !== 'dispatch') return;
 			const entry = entries.find((e) => e.item === decision.item);
 			if (!entry) return;
+			// The head collided a moment ago and its back-off has not run out. A turn that just
+			// ended is the old process going, so that edge retries at once; any other waits for
+			// the recheck, or it would dispatch into the same refusal on every change to the queue.
+			if (exitingTabId === undefined && coolingDown(entry.item.id)) return;
 			void dispatch(entry, false);
 		}
 	}
@@ -382,6 +448,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			const index = entries.findIndex((e) => e.state === 'queued' && e.item.id === id);
 			if (index === -1) return false;
 			const [entry] = entries.splice(index, 1);
+			clearCollisions(entry.item.id);
 			emit({ type: 'removed', item: entry.item });
 			// A removed head can unblock what is behind it.
 			drain();
@@ -399,8 +466,7 @@ export function createExecutionQueue<T extends QueueItem>(
 
 		dispose() {
 			disposed = true;
-			cancelRecheck?.();
-			cancelRecheck = undefined;
+			for (const id of [...collisions.keys()]) clearCollisions(id);
 		},
 	};
 }

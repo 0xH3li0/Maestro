@@ -315,6 +315,7 @@ describe('the stats port', () => {
 				documentPath: 'a',
 				tasksTotal: 2,
 				projectPath: '/work/project',
+				kind: 'spec-driven',
 			})
 		);
 		expect(recordTask).toHaveBeenCalledTimes(2);
@@ -376,7 +377,11 @@ describe('the stats port', () => {
 		);
 
 		expect(startRun).toHaveBeenCalledWith(
-			expect.objectContaining({ documentPath: 'Goal: Ship it', tasksTotal: 100 })
+			expect.objectContaining({
+				documentPath: 'Goal: Ship it',
+				tasksTotal: 100,
+				kind: 'goal-driven',
+			})
 		);
 		expect(endRun).toHaveBeenCalledWith('stats-2', expect.any(Number), 100);
 	});

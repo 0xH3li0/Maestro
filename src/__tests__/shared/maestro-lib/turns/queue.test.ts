@@ -4,8 +4,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	COLLISION_MAX_ATTEMPTS,
+	DEFAULT_COLLISION_RECHECK_MS,
 	TurnCollisionError,
 	chooseNext,
+	collisionBackoffMs,
 	createExecutionQueue,
 	decideSubmit,
 	type QueueEvent,
@@ -36,6 +39,8 @@ function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean }
 	const events: QueueEvent<Item>[] = [];
 	const failures = new Map<string, Error[]>();
 	const timers: Array<() => void> = [];
+	/** The wait each recheck was scheduled with, in the order they were scheduled. */
+	const delays: number[] = [];
 	const startOrder: string[] = [];
 
 	const queue = createExecutionQueue<Item>({
@@ -62,7 +67,8 @@ function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean }
 		isRetryHeld: (tabId) => options.retryHeld?.has(tabId) ?? false,
 		holdsTree: () => options.holdsTree?.on ?? false,
 		onEvent: (event) => events.push(event),
-		schedule: (run) => {
+		schedule: (run, ms) => {
+			delays.push(ms);
 			timers.push(run);
 			return () => {
 				const index = timers.indexOf(run);
@@ -80,7 +86,7 @@ function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean }
 	const flush = async (): Promise<void> => {
 		for (let i = 0; i < 10; i += 1) await Promise.resolve();
 	};
-	return { queue, turns, events, failures, timers, startOrder, turnFor, flush };
+	return { queue, turns, events, failures, timers, delays, startOrder, turnFor, flush };
 }
 
 describe('decideSubmit', () => {
@@ -431,6 +437,121 @@ describe('createExecutionQueue dispatch failure', () => {
 		h.timers.splice(0)[0]();
 		await h.flush();
 		expect(h.startOrder).toEqual(['a']);
+	});
+
+	it('backs off between collisions with the desktop’s numbers', () => {
+		// `SPAWN_COLLISION_BASE_DELAY_MS` and `SPAWN_COLLISION_MAX_ATTEMPTS` in the renderer's
+		// `executionQueue.ts`, which a node test cannot import.
+		expect(DEFAULT_COLLISION_RECHECK_MS).toBe(1000);
+		expect(COLLISION_MAX_ATTEMPTS).toBe(6);
+		expect([1, 2, 3, 4, 5].map((count) => collisionBackoffMs(count))).toEqual([
+			1000, 2000, 4000, 8000, 16000,
+		]);
+	});
+
+	it('holds an item whose collision never clears, after a doubling back-off', async () => {
+		const h = harness();
+		// More collisions than the cap: without one, every recheck would retry for ever.
+		h.failures.set(
+			'a',
+			Array.from({ length: COLLISION_MAX_ATTEMPTS + 4 }, () => new TurnCollisionError())
+		);
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't2'));
+		await h.flush();
+
+		for (let fired = 0; fired < COLLISION_MAX_ATTEMPTS + 4 && h.timers.length > 0; fired += 1) {
+			expect(h.timers).toHaveLength(1);
+			h.timers.splice(0)[0]();
+			await h.flush();
+		}
+
+		// Five waits, each double the last, then the sixth collision holds the item.
+		expect(h.delays).toEqual([1000, 2000, 4000, 8000, 16000]);
+		const failed = h.events.filter((e) => e.type === 'dispatch-failed');
+		expect(failed).toHaveLength(COLLISION_MAX_ATTEMPTS);
+		expect(failed.map((e) => e.type === 'dispatch-failed' && e.held)).toEqual([
+			false,
+			false,
+			false,
+			false,
+			false,
+			true,
+		]);
+		const last = failed[failed.length - 1];
+		if (last.type !== 'dispatch-failed') throw new Error('unreachable');
+		expect(last.error).toBeInstanceOf(TurnCollisionError);
+		expect(last.error.message).toBe(
+			'A turn is already running on this tab. The message is held in the queue.'
+		);
+		// Held in place, no timer left, and the item behind it runs.
+		expect(h.timers).toHaveLength(0);
+		expect(h.queue.items()).toEqual([expect.objectContaining({ id: 'a', paused: true })]);
+		expect(h.startOrder).toEqual(['b']);
+
+		// Releasing the hold starts the count again: it sends once the tab is free.
+		h.failures.set('a', []);
+		h.queue.setPaused('a', false);
+		h.turnFor('b').end();
+		await h.flush();
+		expect(h.startOrder).toEqual(['b', 'a']);
+	});
+
+	it('waits out the back-off on a queue change, but not on a turn that ends', async () => {
+		const h = harness();
+		h.queue.submit(item('a', 't1'));
+		await h.flush();
+		h.queue.submit(item('b', 't1'));
+		h.queue.submit(item('c', 't2'));
+		h.failures.set('b', [new TurnCollisionError(), new TurnCollisionError()]);
+		h.turnFor('a').end();
+		await h.flush();
+		expect(h.events.filter((e) => e.type === 'dispatch-failed')).toHaveLength(1);
+
+		// Edges that prove nothing about the old process leave the head alone.
+		h.queue.drain();
+		h.queue.submit(item('d', 't2'));
+		h.queue.remove('d');
+		await h.flush();
+		expect(h.events.filter((e) => e.type === 'dispatch-failed')).toHaveLength(1);
+		expect(h.startOrder).toEqual(['a']);
+		expect(h.timers).toHaveLength(1);
+
+		// The recheck retries it; that collision doubles the wait and replaces the timer.
+		h.timers.splice(0)[0]();
+		await h.flush();
+		expect(h.events.filter((e) => e.type === 'dispatch-failed')).toHaveLength(2);
+		expect(h.delays).toEqual([1000, 2000]);
+		expect(h.timers).toHaveLength(1);
+
+		h.timers.splice(0)[0]();
+		await h.flush();
+		expect(h.startOrder).toEqual(['a', 'b']);
+		// A started item leaves no count behind.
+		expect(h.timers).toHaveLength(0);
+	});
+
+	it('retries at once when a turn ends, and cancels the recheck of an item that is removed', async () => {
+		const h = harness();
+		h.queue.submit(item('r', 't9', { readOnly: true }));
+		await h.flush();
+		h.failures.set('a', [new TurnCollisionError()]);
+		h.queue.submit(item('a', 't1', { readOnly: true }));
+		await h.flush();
+		expect(h.timers).toHaveLength(1);
+
+		// A turn ending is the edge that says a process has gone: no wait.
+		h.turnFor('r').end();
+		await h.flush();
+		expect(h.startOrder).toEqual(['r', 'a']);
+		expect(h.timers).toHaveLength(0);
+
+		h.failures.set('b', [new TurnCollisionError()]);
+		h.queue.submit(item('b', 't2', { readOnly: true }));
+		await h.flush();
+		expect(h.timers).toHaveLength(1);
+		expect(h.queue.remove('b')).toBe(true);
+		expect(h.timers).toHaveLength(0);
 	});
 
 	it('survives a throwing event listener', async () => {

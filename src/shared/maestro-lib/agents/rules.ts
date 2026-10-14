@@ -18,6 +18,7 @@
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { isValidAgentId } from '../../agentIds';
 import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory';
+import { isCodexTransport } from '../../codexTransport';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { canCreateGroupInside, removeGroupAndPromoteChildren } from '../../groupHierarchy';
 import { PLAYBOOKS_DIR } from '../../maestro-paths';
@@ -798,6 +799,8 @@ export const AGENT_EDITABLE_KEYS: ReadonlySet<string> = new Set([
 	'enableMaestroP',
 	'maestroPMode',
 	'maestroPPath',
+	// Validated in `applyAgentConfigPatch`: an unknown transport must never reach the spawner.
+	'codexTransport',
 	'bookmarked',
 ]);
 
@@ -819,6 +822,10 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 		out.customContextWindow = patch.contextWindow;
 		out.contextWindowSource = patch.contextWindow === null ? null : 'user-edited';
 	}
+	// A stated provenance outranks the one a window edit implies. Clearing the window still clears it.
+	if (patch.contextWindowSource !== undefined) {
+		put('contextWindowSource', 'contextWindowSource', patch.contextWindowSource);
+	}
 	if (patch.customPath !== undefined) put('customPath', 'customPath', patch.customPath);
 	if (patch.customArgs !== undefined) put('customArgs', 'customArgs', patch.customArgs);
 	if (patch.env !== undefined) {
@@ -829,6 +836,14 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 		put('newSessionMessage', 'newSessionMessage', patch.newSessionMessage);
 	}
 	if (patch.bookmarked !== undefined) put('bookmarked', 'bookmarked', patch.bookmarked);
+	if (patch.enableMaestroP !== undefined) {
+		put('enableMaestroP', 'enableMaestroP', patch.enableMaestroP);
+	}
+	if (patch.maestroPMode !== undefined) put('maestroPMode', 'maestroPMode', patch.maestroPMode);
+	if (patch.maestroPPath !== undefined) put('maestroPPath', 'maestroPPath', patch.maestroPPath);
+	if (patch.codexTransport !== undefined) {
+		put('codexTransport', 'codexTransport', patch.codexTransport);
+	}
 	return { fields, patch: out };
 }
 
@@ -838,11 +853,19 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
  * otherwise a stale `user-edited` outlives the value it described and the next
  * window set without provenance inherits a precedence nobody asked for. A blank
  * `customEffort` clears, since an effort of whitespace names no effort.
+ *
+ * `codexTransport` is the one validated key: only a known transport is written,
+ * and `exec`, the default, is stored the way the Edit Agent form stores it, as
+ * an unset field. Anything else fails the whole patch, before any key is applied.
  */
 export function applyAgentConfigPatch(
 	agent: AgentRecord,
 	patch: Record<string, unknown>
 ): RuleResult<AgentRecord> {
+	const transport = patch.codexTransport;
+	if (transport !== undefined && transport !== null && !isCodexTransport(transport)) {
+		return invalid("Invalid value for field 'codexTransport'");
+	}
 	const next: AgentRecord = { ...agent };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {
@@ -850,6 +873,7 @@ export function applyAgentConfigPatch(
 		touched += 1;
 		let value = patch[key];
 		if (key === 'customEffort' && typeof value === 'string') value = value.trim() || null;
+		if (key === 'codexTransport' && value === 'exec') value = null;
 		if (value === null) delete next[key];
 		else next[key] = value;
 	}
