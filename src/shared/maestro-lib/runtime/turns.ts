@@ -139,6 +139,11 @@ interface TurnItem extends QueueItem {
 	queuedAt: number;
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
 	turnSettings: { model?: string; effort?: string };
+	/**
+	 * The provider those settings were chosen on. A model name means nothing to another provider,
+	 * so a message still queued when the agent switches runs with the new provider's settings.
+	 */
+	settingsProvider: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
@@ -225,7 +230,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
-			turnSettings: item.turnSettings,
+			// Frozen settings only hold on the provider they were frozen on (see `settingsProvider`).
+			...(item.settingsProvider === agent.toolType ? { turnSettings: item.turnSettings } : {}),
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 		};
@@ -247,31 +253,44 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (!started.ok) throw new Error(started.message);
 		const run = started.run;
 
-		// The process exists, so the message is now sent: write it down, and spend a merge it carried.
-		const startedAt = deps.now();
-		const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
-		const begun = await repository.beginTurn(agentId, item.tabId, {
-			userEntry,
-			provider: provider as ToolType,
-			consumedMergedContext: turn.consumedMergedContext,
+		// The process exists, so the registry learns of it before anything is awaited: the agent
+		// reads busy to Auto Run, and a shutdown stops this process, from this line on. `settled`
+		// stands in for the stream's end until the stream exists.
+		let settle: () => void = () => undefined;
+		const settled = new Promise<void>((resolve) => {
+			settle = resolve;
 		});
-		if (!begun.ok) {
-			// Not recorded means not sent, as far as the person can tell: stop it and hold the item.
-			run.terminate();
-			await run.result.catch(() => undefined);
-			throw new Error(begun.error.message);
-		}
-
-		emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
-		emitTurn(agentId, item.tabId, { kind: 'started' });
-
-		const done = streamTurn({ agentId, tabId: item.tabId, turn, run, startedAt });
 		registry.register(agentId, item.tabId, {
 			interrupt: () => run.interrupt(),
 			terminate: () => run.terminate(),
 			terminateNow: () => run.terminateNow(),
-			done,
+			done: settled,
 		});
+
+		let done: Promise<void>;
+		try {
+			// The message is now sent: write it down, and spend a merge it carried.
+			const startedAt = deps.now();
+			const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
+			const begun = await repository.beginTurn(agentId, item.tabId, {
+				userEntry,
+				provider: provider as ToolType,
+				consumedMergedContext: turn.consumedMergedContext,
+			});
+			// Not recorded means not sent, as far as the person can tell: stop it and hold the item.
+			if (!begun.ok) throw new Error(begun.error.message);
+
+			emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
+			emitTurn(agentId, item.tabId, { kind: 'started' });
+
+			done = streamTurn({ agentId, tabId: item.tabId, turn, run, startedAt });
+		} catch (error) {
+			run.terminate();
+			await run.result.catch(() => undefined);
+			settle();
+			throw error;
+		}
+		done.then(settle, settle);
 		return { done, interrupt: () => run.interrupt() };
 	}
 
@@ -460,6 +479,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				model: tab.customModel ?? agent.customModel,
 				effort: tab.customEffort ?? agent.customEffort,
 			},
+			settingsProvider: agent.toolType,
 		};
 
 		const queue = queueFor(agentId);

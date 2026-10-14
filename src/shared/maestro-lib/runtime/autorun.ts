@@ -552,6 +552,14 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		};
 
 		const scan = await preflightPlaybook(playbook, folder, documents);
+		// A missing document is a broken launch, not one with nothing left to do.
+		if (scan.missingDocuments.length > 0) {
+			return fail(
+				method,
+				'not-found',
+				`${scan.missingDocuments.length} of ${playbook.documents.length} document${playbook.documents.length !== 1 ? 's' : ''} not found: ${scan.missingDocuments.join(', ')}`
+			);
+		}
 		if (scan.initialTotalTasks === 0) {
 			return fail(method, 'rejected', 'There are no unchecked tasks in the chosen documents.');
 		}

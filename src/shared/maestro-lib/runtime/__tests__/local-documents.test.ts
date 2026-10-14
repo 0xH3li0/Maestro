@@ -32,8 +32,14 @@ describe('the local documents port', () => {
 		expect(documents.read(dir, 'a').content).toContain('only an example');
 	});
 
-	it('reads a missing document as empty, with no tasks', () => {
-		expect(documents.read(dir, 'ghost')).toEqual({ content: '', unchecked: 0, checked: 0 });
+	it('reads a missing document as empty, with no tasks, and says which file was missing', () => {
+		// The engine reports a missing document (DOCUMENT_NOT_FOUND); zero tasks alone reads as done.
+		expect(documents.read(dir, 'ghost')).toEqual({
+			content: '',
+			unchecked: 0,
+			checked: 0,
+			missingPath: path.join(dir, 'ghost.md'),
+		});
 		expect(documents.readTasks(dir, 'ghost')).toEqual({ content: '', tasks: [] });
 	});
 

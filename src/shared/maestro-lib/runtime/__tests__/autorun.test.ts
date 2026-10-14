@@ -396,6 +396,14 @@ describe('runtime Auto Run', () => {
 			).toMatchObject({
 				code: 'rejected',
 			});
+			// A document that does not exist is not one with nothing left to do.
+			expect(
+				errorOf(
+					await runtime.autoRun.launch('a1', {
+						documents: [{ file: open1 }, { file: path.join(path.dirname(open1), 'gone.md') }],
+					})
+				)
+			).toMatchObject({ code: 'not-found', message: expect.stringContaining('1 of 2') });
 			// Nothing started: no process, no History, no activity entry.
 			expect(envFiles).toHaveLength(0);
 			expect(runtime.runs.activeRuns()).toEqual([]);

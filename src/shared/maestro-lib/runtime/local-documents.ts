@@ -44,7 +44,17 @@ export function createLocalDocuments(): LocalDocuments {
 
 	return {
 		read(folder, name) {
-			const content = readContent(folder, name);
+			const file = documentPath(folder, name);
+			let content: string;
+			try {
+				content = fs.readFileSync(file, 'utf-8');
+			} catch (error) {
+				// A document that does not exist is a broken playbook, which the engine reports
+				// (DOCUMENT_NOT_FOUND). Any other read failure stays an empty document.
+				return (error as NodeJS.ErrnoException).code === 'ENOENT'
+					? { content: '', unchecked: 0, checked: 0, missingPath: file }
+					: { content: '', unchecked: 0, checked: 0 };
+			}
 			const { unchecked, checked } = countMarkdownTasks(content);
 			return { content, unchecked, checked };
 		},
