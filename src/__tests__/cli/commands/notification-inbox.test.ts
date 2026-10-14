@@ -37,4 +37,25 @@ describe('notification inbox CLI', () => {
 		);
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
+	it('preserves the resulting snapshot when a durable mutation fails', async () => {
+		const result = {
+			success: false,
+			error: 'History could not be saved',
+			historyPersistenceFailed: true,
+			unreadCount: 1,
+			notifications: [{ id: 'n1', read: false }],
+		};
+		sendCommand.mockResolvedValue(result);
+		await notificationInbox({ action: 'read', id: 'n1' }, { json: true });
+		expect(console.log).toHaveBeenCalledWith(JSON.stringify(result));
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+	it('reports transport failures through the shared JSON-aware failure helper', async () => {
+		sendCommand.mockRejectedValue(new Error('Desktop disconnected'));
+		await notificationInbox({ action: 'list' }, { json: true });
+		expect(console.log).toHaveBeenCalledWith(
+			JSON.stringify({ success: false, error: 'Desktop disconnected' })
+		);
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
 });
