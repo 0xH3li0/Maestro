@@ -18,6 +18,8 @@ export interface PlaybookPreflight {
 	scanned: Array<{ document: string; unchecked: number }>;
 	/** The first document that still carries a halt marker, if any. */
 	preExistingHalt: { document: string; halt: HaltMarker } | null;
+	/** The path of every document that does not exist, in playbook order. */
+	missingDocuments: string[];
 }
 
 export async function preflightPlaybook(
@@ -28,8 +30,10 @@ export async function preflightPlaybook(
 	const scanned: PlaybookPreflight['scanned'] = [];
 	let initialTotalTasks = 0;
 	let preExistingHalt: PlaybookPreflight['preExistingHalt'] = null;
+	const missingDocuments: string[] = [];
 	for (const doc of playbook.documents) {
-		const { unchecked, content } = await documents.read(folderPath, doc.filename);
+		const { unchecked, content, missingPath } = await documents.read(folderPath, doc.filename);
+		if (missingPath) missingDocuments.push(missingPath);
 		scanned.push({ document: doc.filename, unchecked });
 		initialTotalTasks += unchecked;
 		if (!preExistingHalt) {
@@ -37,5 +41,5 @@ export async function preflightPlaybook(
 			if (halt) preExistingHalt = { document: doc.filename, halt };
 		}
 	}
-	return { initialTotalTasks, scanned, preExistingHalt };
+	return { initialTotalTasks, scanned, preExistingHalt, missingDocuments };
 }

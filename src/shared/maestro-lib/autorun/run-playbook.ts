@@ -23,10 +23,10 @@ import { findActiveModelHint, countTasksUnderActiveHint } from '../../autorunMod
 import { describeStall, evaluateStall, MAX_CONSECUTIVE_NO_CHANGES } from '../../autorunStall';
 import { resolveTurnSettings, describeTurnSettings } from '../../autorunTurnSettings';
 import { countMarkdownTasks } from '../../markdownTaskScan';
-import { cheapTurnSettings } from '../../modelTiers';
+import { cheapResumeTurnSettings } from '../../modelTiers';
 import { prependNewSessionMessage } from '../../newSessionMessage';
 import { PROMPT_IDS } from '../../promptDefinitions';
-import { parseSynopsis } from '../../synopsis';
+import { isFailedSynopsisResponse, parseSynopsis } from '../../synopsis';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
 import type { Playbook, SessionInfo, UsageStats } from '../../types';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
@@ -100,9 +100,6 @@ export async function* runPlaybook(
 	const pauseOnGate = policy.onGate === 'pause' && controller !== undefined;
 	const pauseOnError = policy.onAgentError === 'pause' && controller !== undefined;
 	const batchStartTime = clock.now();
-	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
-	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = await deps.environment.gitBranch(session.cwd);
@@ -159,11 +156,8 @@ export async function* runPlaybook(
 		// Count the tasks and look for a halt marker an earlier run left behind. We
 		// refuse to start on a stale marker: the previous run halted intentionally
 		// and the user must resolve it before running again.
-		const { initialTotalTasks, scanned, preExistingHalt } = await preflightPlaybook(
-			playbook,
-			folderPath,
-			deps.documents
-		);
+		const { initialTotalTasks, scanned, preExistingHalt, missingDocuments } =
+			await preflightPlaybook(playbook, folderPath, deps.documents);
 		if (debug) {
 			for (const { document, unchecked } of scanned) {
 				yield {
@@ -179,6 +173,22 @@ export async function* runPlaybook(
 				category: 'scan',
 				message: `Total unchecked tasks: ${initialTotalTasks}`,
 			};
+		}
+
+		// A missing document is a broken playbook, not one with nothing left to
+		// do. Counting it as zero tasks once reported "No unchecked tasks" for a
+		// playbook whose every document path was wrong.
+		if (missingDocuments.length > 0) {
+			deps.activity.end(session.id);
+			yield {
+				type: 'error',
+				timestamp: clock.now(),
+				message:
+					`${missingDocuments.length} of ${playbook.documents.length} playbook document${playbook.documents.length !== 1 ? 's' : ''} not found ` +
+					`(names are relative to the Auto Run folder, without .md): ${missingDocuments.join(', ')}`,
+				code: 'DOCUMENT_NOT_FOUND',
+			};
+			return;
 		}
 
 		if (initialTotalTasks === 0) {
@@ -780,28 +790,43 @@ export async function* runPlaybook(
 					} else if (result.success && result.agentSessionId && synopsisMode === 'resume-turn') {
 						// Request synopsis from the agent. A synopsis is a throwaway
 						// summarization of work that already happened, so it runs at the
-						// bottom of both ladders regardless of what the task ran at. On a
-						// long playbook this is one premium turn per task saved. Safe
+						// bottom of both ladders regardless of what the task ran at, short
+						// of shrinking the context window the resumed transcript has to fit.
+						// On a long playbook this is one premium turn per task saved. Safe
 						// because the synopsis is a leaf: its returned agentSessionId is
 						// discarded, so the downgrade cannot follow the conversation into
-						// the next real turn. The `??` fallbacks matter on providers with
-						// no tier mapping (codex, opencode): there is nothing to downgrade
-						// TO, so the synopsis inherits, and it must inherit the same value
-						// the task ran under - the run override, not just the session's.
+						// the next real turn. It is told what the TASK ran under (document
+						// hint, then run override, then the agent's own value), because that
+						// is the model whose transcript it resumes and what it inherits on a
+						// provider with no cheap tier. Same rule as the CLI's
+						// `requestCliSynopsis`.
+						const cheapSynopsis = cheapResumeTurnSettings(session.toolType, {
+							model: turnSettings.model ?? session.customModel,
+							effort: turnSettings.effort ?? session.customEffort,
+						});
 						const synopsisResult = await deps.turns.run({
 							purpose: 'synopsis',
 							prompt: await deps.prompts.get(PROMPT_IDS.AUTORUN_SYNOPSIS),
 							resumeSessionId: result.agentSessionId,
-							model: cheapSynopsis.model ?? runModel ?? session.customModel,
-							effort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
+							model: cheapSynopsis.model,
+							effort: cheapSynopsis.effort,
 							document: docEntry.filename,
 							signal,
 						});
 
-						if (synopsisResult.success && synopsisResult.response) {
+						// No usable synopsis (failed turn, bare provider error, or
+						// NOTHING_TO_REPORT) keeps the default label above, so a failed
+						// synopsis is never written to History as if it described the work.
+						if (
+							synopsisResult.success &&
+							synopsisResult.response &&
+							!isFailedSynopsisResponse(synopsisResult.response, session.toolType)
+						) {
 							const parsed = parseSynopsis(synopsisResult.response);
-							shortSummary = parsed.shortSummary;
-							fullSynopsis = parsed.fullSynopsis;
+							if (!parsed.nothingToReport) {
+								shortSummary = parsed.shortSummary;
+								fullSynopsis = parsed.fullSynopsis;
+							}
 						}
 					} else if (result.outcome === 'interrupted') {
 						shortSummary = `[${docEntry.filename}] Task interrupted`;

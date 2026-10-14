@@ -63,11 +63,12 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 
 	const turn = (
 		request: AutoRunTurnRequest,
-		capture: { sessionId: string; source: string; prompt?: string },
+		capture: { agentId?: string; sessionId: string; source: string; prompt?: string },
 		options: SpawnAgentOptions
 	): Promise<AutoRunTurnResult> =>
 		captureCliRun(
 			{
+				...(capture.agentId ? { agentId: capture.agentId } : {}),
 				sessionId: capture.sessionId,
 				toolType: session.toolType,
 				cwd: session.cwd,
@@ -94,7 +95,12 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 					case 'task':
 						return turn(
 							request,
-							{ sessionId: session.id, source: 'cli:autorun', prompt: request.prompt },
+							{
+								agentId: session.id,
+								sessionId: session.id,
+								source: 'cli:autorun',
+								prompt: request.prompt,
+							},
 							{ ...autoRunTurnOptions(session), appendSystemPrompt }
 						);
 					case 'synopsis':
@@ -111,13 +117,19 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 					case 'goal-iteration':
 						return turn(
 							request,
-							{ sessionId: session.id, source: 'cli:goal', prompt: request.prompt },
+							{
+								agentId: session.id,
+								sessionId: session.id,
+								source: 'cli:goal',
+								prompt: request.prompt,
+							},
 							{ ...goalTurnOptions(session), appendSystemPrompt }
 						);
 					case 'goal-handoff':
 						return turn(
 							request,
 							{
+								agentId: session.id,
 								sessionId: request.resumeSessionId ?? session.id,
 								source: 'cli:goal-synopsis',
 								prompt: request.prompt,
@@ -129,8 +141,8 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 		},
 		documents: {
 			read(folder, name) {
-				const { content, taskCount } = readDocAndCountTasks(folder, name);
-				return { content, unchecked: taskCount };
+				const { content, taskCount, missingPath } = readDocAndCountTasks(folder, name);
+				return { content, unchecked: taskCount, ...(missingPath ? { missingPath } : {}) };
 			},
 			readTasks: (folder, name) => readDocAndGetTasks(folder, name),
 			write: (folder, file, content) => writeDoc(folder, file, content),

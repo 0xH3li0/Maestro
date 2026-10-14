@@ -113,6 +113,12 @@ export interface AutoRunDocumentRead {
 	 * `unchecked`, floored at zero.
 	 */
 	checked?: number;
+	/**
+	 * The path that was looked for, when the document does not exist. A missing
+	 * document is a broken playbook, which the engine reports, not one with
+	 * nothing left to do.
+	 */
+	missingPath?: string;
 }
 
 /** What the Usage Dashboard's Auto Run panels need to know about a run at its start. */
