@@ -26,7 +26,7 @@ export interface TranslationTab {
 }
 
 /** Shared parking invariant: live ID belongs to the active provider; its slot is removed. */
-export function switchTabProvider<T extends TranslationTab>(
+export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
 	tab: T,
 	fromProvider: ToolType,
 	toProvider: ToolType

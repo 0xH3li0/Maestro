@@ -97,6 +97,14 @@ the target, a fresh context, no focus, no unread, and the answer returned to the
 caller. It carries no `--background` flag because there is no foreground form of
 it - a consult that took over the screen would not be a consult.
 
+Against a headless host (`maestro-cli host`) there is no renderer to hand the
+consult to, so `cross_agent_ask` is answered by the library's consult service
+(`createRuntimeConsults()` in `src/shared/maestro-lib/runtime/consults.ts`): the
+same hidden consult tab per asking agent, the same read-only rule, the answer
+returned to the caller, and `maestro-cli group-chat` runs a whole round the same
+way (`createRuntimeGroupChats()`). A desktop keeps the renderer hop until the
+desktop hosts on the runtime.
+
 The rule for a new agent-to-agent verb: if the caller wants an ANSWER, it rides
 the consult path; if it wants the other agent to DO something, it rides dispatch
 and the placement flags apply.
@@ -239,7 +247,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                                                                                                                      | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                                                                                                                                                 |
 | Create / rename / remove an agent                                                                                                                                                                 | `create-agent`, `rename-agent`, `remove-agent`                                                                                                                                                                                                                          |
 | Edit Agent modal fields                                                                                                                                                                           | `update-agent`, `settings agent set`                                                                                                                                                                                                                                    |
-| Switch an agent's provider                                                                                                                                                                        | `update-agent --provider --force`                                                                                                                                                                                                                                       |
+| Switch an agent's provider                                                                                                                                                                        | `update-agent --provider`                                                                                                                                                                                                                                               |
 | Codex transport (Standard / App server)                                                                                                                                                           | `update-agent --codex-transport exec\|app-server`, read back via `show-agent`                                                                                                                                                                                           |
 | Move an agent to a group                                                                                                                                                                          | `update-agent --group`                                                                                                                                                                                                                                                  |
 | Change working directory                                                                                                                                                                          | `update-agent --cwd`                                                                                                                                                                                                                                                    |

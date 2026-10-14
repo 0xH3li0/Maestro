@@ -237,6 +237,8 @@ export interface TemplateContext {
 	maestroCliPath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	/** The clock for the date and time variables. Absent: the real time. */
+	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
 		eventType?: string;
@@ -583,7 +585,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		maestroRunPath,
 		conductorProfile,
 	} = context;
-	const now = new Date();
+	const now = context.now ?? new Date();
 
 	// Build replacements map
 	const replacements: Record<string, string> = {

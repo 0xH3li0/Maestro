@@ -30,66 +30,7 @@
  * `group-chat-storage.ts`.
  */
 
-import * as fs from 'fs/promises';
-import { assertSerializedJsonIsSafe } from '../../jsonUtils';
-
-/**
- * Atomically write JSON to `filePath` via a temp file + rename. Prevents
- * partial/corrupt reads if the process crashes or another reader/writer lands
- * mid-write. Retries the rename on EPERM/EBUSY (transient Windows file locks
- * from OneDrive/antivirus).
- *
- * Safety gate: `assertSerializedJsonIsSafe` validates the payload BEFORE the
- * temp file is created, so a `JSON.stringify` that produces `undefined` (e.g.
- * passing `undefined`) can never be renamed over an existing good file. We
- * refuse the write instead of destroying data.
- */
-export async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
-	const serialized = JSON.stringify(data, null, 2);
-	assertSerializedJsonIsSafe(serialized, filePath);
-	await atomicWriteFile(filePath, serialized);
-}
-
-/**
- * Atomically write arbitrary string contents to `filePath` via a temp file +
- * rename, with the same EPERM/EBUSY retry behavior as atomicWriteJson. Use for
- * non-JSON payloads (TOML, comment-preserving JSON) where the caller has already
- * produced the exact bytes to persist. A crash mid-write leaves the original
- * file intact instead of truncating it.
- *
- * Also the write path for line-oriented stores (JSONL history), where the payload
- * is many independent records rather than one document. Callers own validation:
- * unlike `atomicWriteJson` there is no parse-back gate, because the content is not
- * a single parseable value. Never hand this an empty string when the target holds
- * data you care about.
- */
-export async function atomicWriteFile(
-	filePath: string,
-	contents: string | Buffer,
-	options?: { mode?: number; durable?: boolean }
-): Promise<void> {
-	const tmp = `${filePath}.tmp`;
-	await fs.writeFile(
-		tmp,
-		contents,
-		options?.mode !== undefined || options?.durable
-			? { encoding: 'utf-8', mode: options.mode, flush: options.durable ?? false }
-			: 'utf-8'
-	);
-	const maxRetries = 3;
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		try {
-			await fs.rename(tmp, filePath);
-			return;
-		} catch (err) {
-			const code = (err as NodeJS.ErrnoException).code;
-			if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
-				await new Promise((resolve) => setTimeout(resolve, 100 * Math.pow(2, attempt)));
-				continue;
-			}
-			throw err;
-		}
-	}
-}
+// Keep the translation import path on the runtime's canonical atomic writer.
+export { atomicWriteJson, atomicWriteFile } from '../store/atomic-write';
 
 export { createKeyedWriteQueue, type KeyedWriteQueue } from '../../keyedWriteQueue';

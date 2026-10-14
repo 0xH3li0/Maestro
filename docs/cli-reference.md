@@ -1221,6 +1221,45 @@ Diagnose CLI connectivity, version skew, and configuration
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli host`
+
+Run the Maestro runtime detached, with no desktop app, and control it
+
+## `maestro-cli host start`
+
+Start a detached host that serves this data directory over the bridge
+
+| Option                   | Description                                                                                        | Default |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ------- |
+| `--data-dir <path>`      | Maestro data directory (default: resolved like the desktop app)                                    | -       |
+| `--dev`                  | Use the development data directory                                                                 | -       |
+| `--port <port>`          | Port to listen on (default: any free port)                                                         | -       |
+| `--foreground`           | Serve in this process instead of detaching (what the detached child runs)                          | -       |
+| `--stop-grace <seconds>` | On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once) | -       |
+| `--json`                 | Output as JSON (for scripting)                                                                     | -       |
+
+## `maestro-cli host status`
+
+Report the host: pid, uptime, lock holder, Cue state, and work in flight
+
+| Option              | Description                                                     | Default |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app) | -       |
+| `--dev`             | Use the development data directory                              | -       |
+| `--json`            | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli host stop`
+
+Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)
+
+| Option              | Description                                                               | Default |
+| ------------------- | ------------------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app)           | -       |
+| `--dev`             | Use the development data directory                                        | -       |
+| `--wait [seconds]`  | Wait for work in flight to finish (default 300s), then stop; never forces | -       |
+| `--force`           | Stop even with work in flight; a run records how it ended first           | -       |
+| `--json`            | Output as JSON (for scripting)                                            | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)
