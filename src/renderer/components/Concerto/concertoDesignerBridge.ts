@@ -167,6 +167,7 @@ function isMatchingReadyRecord(
 	);
 }
 
+/** Wait for a connected frame's authored revision to be ready, independent of visibility. */
 async function waitForMatchingReadyRecord(
 	key: string,
 	expectedRevision: number | undefined,
@@ -209,6 +210,7 @@ export async function waitForConcertoDesignerFrameReady(
 	);
 }
 
+/** Return diagnostics and crop geometry only for a ready frame with a nonzero viewport. */
 export async function getConcertoDesignerFrameSnapshot(
 	surface: ConcertoHtmlSurface,
 	id: string,

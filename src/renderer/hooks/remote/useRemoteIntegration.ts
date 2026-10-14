@@ -1609,8 +1609,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
-				// Screenshot inspection must respect a stage the user has left closed.
-				if (!isConcertoStageOpen()) {
+				// Screenshot inspection preserves the user's stage and minimization choices.
+				const item = useMovementStore.getState().items.find((candidate) => candidate.id === id);
+				if (!isConcertoStageOpen() || !item || item.minimized) {
 					proc.sendMovementDesignerInspectionResponse?.(responseChannel, null);
 					return;
 				}

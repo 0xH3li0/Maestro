@@ -3450,6 +3450,44 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		it('leaves a minimized panel minimized when an agent requests a designer inspection', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'begin', id: 'mockup', title: 'Mockup' });
+				useMovementStore.getState().setItemMinimized('mockup', true);
+				getModalActions().setConcertoStageOpen(true);
+			});
+			const items = useMovementStore.getState().items;
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+			});
+
+			expect(useMovementStore.getState().items[0].minimized).toBe(true);
+			expect(useMovementStore.getState().items).toBe(items);
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('returns unavailable when the requested inspection panel does not exist', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			getModalActions().setConcertoStageOpen(true);
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('missing', 21, 'inspection-response');
+			});
+
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useMovementStore.getState().items).toEqual([]);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
 		it('waits for the surfaced movement to cross a paint boundary before inspection', async () => {
 			const animationFrames: FrameRequestCallback[] = [];
 			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -3479,9 +3517,21 @@ describe('useRemoteIntegration', () => {
 				getModalActions().setConcertoStageOpen(true);
 				renderHook(() => useRemoteIntegration(createDeps()));
 				act(() => {
+					onRemoteMovementHandler?.({
+						op: 'add',
+						id: 'mockup',
+						viewType: 'html',
+						body: '<button>Continue</button>',
+						revision: 21,
+					});
+					onRemoteMovementHandler?.({ op: 'begin', id: 'overlapping-panel' });
 					onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
 				});
 
+				expect(useMovementStore.getState().items.map((item) => item.id)).toEqual([
+					'overlapping-panel',
+					'mockup',
+				]);
 				expect(animationFrames).toHaveLength(1);
 				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
 

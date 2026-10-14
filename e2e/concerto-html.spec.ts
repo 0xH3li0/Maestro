@@ -24,10 +24,9 @@ const test = base.extend({
 	},
 });
 
+/** Run the isolated CLI without blocking Playwright's iframe readiness events. */
 async function runCli(testDataDir: string, ...args: string[]): Promise<string> {
 	const cliPath = path.join(__dirname, '../dist/cli/maestro-cli.js');
-	// Playwright must keep processing iframe attachment events while the CLI
-	// waits for that frame's ready acknowledgement.
 	const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], {
 		cwd: path.join(__dirname, '..'),
 		encoding: 'utf8',
