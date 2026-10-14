@@ -306,6 +306,18 @@ describe('extractCueOutputExcerpt', () => {
 		expect(extractCueOutputExcerpt(stdout)).toBe('grep · a | b');
 	});
 
+	it('flattens a table row wrapped in inline code', () => {
+		// Seen on the Cue playground server: one row in single backticks. The
+		// row only starts with a pipe once the inline code is unwrapped.
+		const stdout = '`| reload-test | 1.0.0 | fix-check |`';
+		expect(extractCueOutputExcerpt(stdout)).toBe('reload-test · 1.0.0 · fix-check');
+	});
+
+	it('flattens a table row wrapped in emphasis', () => {
+		const stdout = '**| web | 3.0.1 | you |**';
+		expect(extractCueOutputExcerpt(stdout)).toBe('web · 3.0.1 · you');
+	});
+
 	it('returns the raw text when stripping markdown leaves nothing and there is no table', () => {
 		// An empty fence is still output, so it must not read as a silent run.
 		expect(extractCueOutputExcerpt('```\n```')).toBe('``` ```');
