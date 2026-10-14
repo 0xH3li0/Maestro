@@ -189,6 +189,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		}),
 		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
 		setQueueItemPaused: vi.fn().mockResolvedValue({ success: true, found: true, paused: true }),
+		mergeQueueItem: vi
+			.fn()
+			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -2838,6 +2841,39 @@ describe('WebSocketMessageHandler', () => {
 					true
 				);
 			});
+		});
+	});
+
+	describe('Merge Queue Item (queue merge)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId and itemId and returns the item it merged into', async () => {
+			handler.handleMessage(client, {
+				type: 'merge_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.mergeQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('merge_queue_item_result');
+				expect(response).toMatchObject({ success: true, merged: true, mergedIntoId: 'item-8' });
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'merge_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('merge_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
 		});
 	});
 

@@ -20,6 +20,8 @@ import {
 	releaseConnectionHeldQueueItems,
 	hasConsultHoldForTab,
 	dropConsultHold,
+	findQueuedMergeTarget,
+	mergeQueuedItemIntoPrevious,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -87,6 +89,62 @@ describe('executionQueue helpers', () => {
 		const { item: taken, remaining } = takeNextRunnableQueueItem(q);
 		expect(taken).toBeNull();
 		expect(remaining).toBe(q);
+	});
+});
+
+describe('mergeQueuedItemIntoPrevious', () => {
+	const msg = (id: string, overrides: Partial<QueuedItem> = {}): QueuedItem => ({
+		id,
+		timestamp: 0,
+		tabId: 'tab-1',
+		type: 'message',
+		text: `text ${id}`,
+		...overrides,
+	});
+
+	it('appends the text and images to the item above and keeps its id, place and settings', () => {
+		const q = [
+			msg('a', { images: ['img-a'], paused: true, turnSettings: { model: 'opus' } }),
+			msg('b', { images: ['img-b'], turnSettings: { model: 'haiku' } }),
+			msg('c'),
+		];
+		const result = mergeQueuedItemIntoPrevious(q, 'b');
+		expect(result?.targetId).toBe('a');
+		expect(result?.queue.map((i) => i.id)).toEqual(['a', 'c']);
+		expect(result?.queue[0]).toMatchObject({
+			text: 'text a\n\ntext b',
+			images: ['img-a', 'img-b'],
+			paused: true,
+			turnSettings: { model: 'opus' },
+		});
+	});
+
+	it('merges into the previous item for the SAME tab, skipping other tabs', () => {
+		const q = [msg('a'), msg('x', { tabId: 'tab-2' }), msg('b')];
+		expect(findQueuedMergeTarget(q, 'b')?.id).toBe('a');
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue.map((i) => i.id)).toEqual(['a', 'x']);
+	});
+
+	it('keeps an @mention from either message so dispatch re-plans the consult', () => {
+		const q = [msg('a'), msg('b', { crossAgentMention: true })];
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue[0].crossAgentMention).toBe(true);
+	});
+
+	it('refuses the first item, commands, leading-mention messages, and consult holds', () => {
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('b')], 'a')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a', { type: 'command' }), msg('b')], 'b')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('b', { type: 'command' })], 'b')).toBeNull();
+		expect(
+			mergeQueuedItemIntoPrevious([msg('a'), msg('b', { crossAgentOnly: true })], 'b')
+		).toBeNull();
+		expect(
+			mergeQueuedItemIntoPrevious(
+				[msg('a', { awaitingConsult: {} as QueuedItem['awaitingConsult'] }), msg('b')],
+				'b'
+			)
+		).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('x', { tabId: 'tab-2' })], 'x')).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([msg('a')], 'missing')).toBeNull();
 	});
 });
 

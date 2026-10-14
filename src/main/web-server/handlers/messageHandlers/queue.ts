@@ -2,7 +2,8 @@
  * Queue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
- * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused.
+ * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused,
+ * merge_queue_item.
  */
 
 import { logger } from '../../../utils/logger';
@@ -337,6 +338,59 @@ export function handleSetQueueItemPaused(
 				success: false,
 				found: false,
 				error: `Failed to set queue item paused: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle merge_queue_item message - fold a queued message into the message above
+ * it on the same tab, the same thing the queued card's Merge button does. Used
+ * by `maestro-cli queue merge`.
+ */
+export function handleMergeQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: {
+		success: boolean;
+		merged: boolean;
+		mergedIntoId?: string;
+		error?: string;
+	}) =>
+		ctx.send(client, {
+			type: 'merge_queue_item_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId) {
+		reply({ success: false, merged: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (!ctx.callbacks.mergeQueueItem) {
+		reply({ success: false, merged: false, error: 'Merge queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.mergeQueueItem(sessionId, itemId)
+		.then((result) =>
+			reply({
+				success: result.success,
+				merged: result.merged,
+				...(result.mergedIntoId ? { mergedIntoId: result.mergedIntoId } : {}),
+				...(result.error ? { error: result.error } : {}),
+			})
+		)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'merge_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				merged: false,
+				error: `Failed to merge queue item: ${error.message}`,
 			});
 		});
 }

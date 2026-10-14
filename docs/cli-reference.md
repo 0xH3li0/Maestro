@@ -482,6 +482,14 @@ Resume a held queued item, like the Resume button on its queued card: it runs wh
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue merge <item-id>`
+
+Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli queue steer <item-id>`
 
 Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.

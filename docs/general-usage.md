@@ -469,13 +469,14 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 | Control           | Icon  | What it does                                                                                            |
 | ----------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| **Merge**         | ⑂     | Fold the message into the one above it, so both go out as a single message in the upper one's place     |
 | **Edit**          | ✏️    | Reopen the message to change its text or add, annotate, and remove image attachments before it's sent   |
 | **Copy**          | ⧉     | Copy the message text (or the command) to the clipboard                                                 |
 | **Hold / Resume** | ⏸ / ▶ | Hold a message so the queue skips over it, then resume it later. Held items show a **HELD** badge       |
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. **Merge** appears when the card directly above is a message for the same tab: the merged message keeps the upper card's place, hold state, and model/effort, and gets the lower card's text after a blank line plus its images. Slash commands, messages that start with an `@mention`, and a turn waiting on a consult do not merge. Agents can do the same with `maestro-cli queue merge <item-id> --agent <id>`. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
 
 ### Force Send
 

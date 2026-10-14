@@ -46,6 +46,10 @@ export interface QueueSteerOptions {
 	agent?: string;
 }
 
+export interface QueueMergeOptions {
+	agent?: string;
+}
+
 function emitError(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
 }
@@ -224,6 +228,65 @@ export function queueHold(itemId: string, options: QueuePauseOptions): Promise<v
 /** `maestro-cli queue resume <item-id> --agent <id>` - release a held item. */
 export function queueResume(itemId: string, options: QueuePauseOptions): Promise<void> {
 	return setQueueItemPaused('resume', itemId, options);
+}
+
+/**
+ * `maestro-cli queue merge <item-id> --agent <id>` - fold a queued message into
+ * the message above it on the same tab, like the Merge button on the queued
+ * card. Fails with NOT_MERGEABLE when the item is gone, has no message above it,
+ * or either side is not a plain message (a command, a leading-mention message,
+ * or a turn waiting on a consult).
+ */
+export async function queueMerge(itemId: string, options: QueueMergeOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue merge requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{
+				success?: boolean;
+				merged?: boolean;
+				mergedIntoId?: string;
+				error?: string;
+			}>({ type: 'merge_queue_item', sessionId, itemId }, 'merge_queue_item_result')
+		);
+		if (result.success === false) {
+			emitError(result.error ?? 'Queue merge failed', 'MERGE_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.merged) {
+			emitError(
+				`Queued item ${itemId} for agent ${sessionId} cannot be merged: it is gone, has no message above it on its tab, or one of the two is not a plain message`,
+				'NOT_MERGEABLE'
+			);
+			process.exit(1);
+			return;
+		}
+		console.log(
+			JSON.stringify(
+				{ success: true, agentId: sessionId, itemId, mergedIntoId: result.mergedIntoId },
+				null,
+				2
+			)
+		);
+	} catch (error) {
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
 }
 
 /**

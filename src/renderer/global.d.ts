@@ -907,6 +907,13 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
 		) => void;
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
 		) => () => void;

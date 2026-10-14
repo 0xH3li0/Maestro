@@ -622,6 +622,17 @@ export type SetQueueItemPausedCallback = (
 	itemId: string,
 	paused: boolean
 ) => Promise<SetQueueItemPausedResult>;
+/** `maestro-cli queue merge`: whether the item was merged, and the item it was folded into. */
+export type MergeQueueItemResult = {
+	success: boolean;
+	merged: boolean;
+	mergedIntoId?: string;
+	error?: string;
+};
+export type MergeQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<MergeQueueItemResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

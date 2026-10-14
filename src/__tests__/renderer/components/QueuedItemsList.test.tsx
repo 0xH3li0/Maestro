@@ -68,6 +68,39 @@ describe('QueuedItemsList pause/hold', () => {
 	});
 });
 
+describe('QueuedItemsList merge into the message above', () => {
+	const MERGE_TITLE = /Merge into the message above/i;
+
+	it('offers Merge on every card below another message and fires with its id', () => {
+		const onMergeQueuedItem = vi.fn();
+		setup({
+			executionQueue: [item({ id: 'q1' }), item({ id: 'q2' }), item({ id: 'q3' })],
+			onMergeQueuedItem,
+		});
+		const buttons = screen.getAllByTitle(MERGE_TITLE);
+		expect(buttons).toHaveLength(2);
+		fireEvent.click(buttons[0]);
+		expect(onMergeQueuedItem).toHaveBeenCalledWith('q2');
+	});
+
+	it('hides Merge when the card above is a command or another tab', () => {
+		setup({
+			executionQueue: [
+				item({ id: 'q1', type: 'command', command: '/commit' }),
+				item({ id: 'q2' }),
+				item({ id: 'q3', tabId: 'tab-2' }),
+			],
+			onMergeQueuedItem: vi.fn(),
+		});
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+
+	it('omits Merge when no handler is wired', () => {
+		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })] });
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+});
+
 describe('QueuedItemsList held-for-retry badge', () => {
 	afterEach(() => {
 		act(() => useRetryStore.setState({ retries: {} }));

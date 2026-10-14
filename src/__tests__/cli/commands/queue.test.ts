@@ -20,6 +20,7 @@ vi.mock('../../../cli/services/storage', () => ({
 import {
 	queueHold,
 	queueList,
+	queueMerge,
 	queueRemove,
 	queueResume,
 	queueSteer,
@@ -227,6 +228,54 @@ describe('queue command', () => {
 			await queueResume('item-9', {});
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('queue merge', () => {
+		function mockReply(reply: Record<string, unknown>) {
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'merge_queue_item_result',
+				...reply,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+			return mockSendCommand;
+		}
+
+		it('sends merge_queue_item and prints the item it merged into', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			const send = mockReply({ success: true, merged: true, mergedIntoId: 'item-8' });
+
+			await queueMerge('item-9', { agent: 'ag' });
+
+			expect(send).toHaveBeenCalledWith(
+				{ type: 'merge_queue_item', sessionId: 'agent-1', itemId: 'item-9' },
+				'merge_queue_item_result'
+			);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				itemId: 'item-9',
+				mergedIntoId: 'item-8',
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('exits 1 with NOT_MERGEABLE when the desktop could not merge it', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-1');
+			mockReply({ success: true, merged: false });
+
+			await queueMerge('item-9', { agent: 'ag' });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('NOT_MERGEABLE');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('exits 1 with INVALID_OPTIONS when --agent is missing', async () => {
+			await queueMerge('item-9', {});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});

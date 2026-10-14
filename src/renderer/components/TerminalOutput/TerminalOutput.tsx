@@ -84,6 +84,7 @@ export const TerminalOutput = memo(
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
@@ -772,6 +773,7 @@ export const TerminalOutput = memo(
 								theme={theme}
 								onRemoveQueuedItem={onRemoveQueuedItem}
 								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onMergeQueuedItem={onMergeQueuedItem}
 								onEditQueuedItem={onEditQueuedItem}
 								onReorderItems={
 									onReorderQueuedItem

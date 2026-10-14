@@ -133,6 +133,7 @@ import type {
 	RemoveQueueItemCallback,
 	SteerQueueItemCallback,
 	SetQueueItemPausedCallback,
+	MergeQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -718,6 +719,10 @@ export class WebServer {
 
 	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
 		this.callbackRegistry.setSetQueueItemPausedCallback(callback);
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbackRegistry.setMergeQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1373,6 +1378,8 @@ export class WebServer {
 				this.callbackRegistry.steerQueueItem(sessionId, itemId),
 			setQueueItemPaused: async (sessionId: string, itemId: string, paused: boolean) =>
 				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
+			mergeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

@@ -153,6 +153,32 @@ export function createQueueRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to remote "merge queue item" from the CLI (`queue merge`).
+		 * Renderer replies via sendRemoteMergeQueueItemResponse.
+		 */
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, merged: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:mergeQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:mergeQueueItem', handler);
+		},
+
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote "steer queue item" from the CLI (`queue steer`).
 		 * Renderer replies via sendRemoteSteerQueueItemResponse.
 		 */

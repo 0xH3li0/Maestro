@@ -25,7 +25,11 @@ import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
-import { applyQueuedItemDispatch, getQueueBusyContext } from '../utils/executionQueue';
+import {
+	applyQueuedItemDispatch,
+	getQueueBusyContext,
+	mergeQueuedItemIntoPrevious,
+} from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
 import { generateId } from '../utils/ids';
@@ -202,6 +206,27 @@ export function setQueuedItemPaused(sessionId: string, itemId: string, paused: b
 		};
 	});
 	return found;
+}
+
+/**
+ * Fold one queued message into the message above it on the same tab: the queued
+ * card's Merge button, and `maestro-cli queue merge`. The rules for what merges
+ * and what the result keeps live in `mergeQueuedItemIntoPrevious`.
+ *
+ * @returns The id of the item it was merged into, or null when the item is gone
+ * or cannot be merged (no message above it, or either side is not a plain
+ * message). The lookup and the write are one store update, so the item cannot
+ * dispatch in between.
+ */
+export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): string | null {
+	let targetId: string | null = null;
+	updateSessionWith(sessionId, (s) => {
+		const result = mergeQueuedItemIntoPrevious(s.executionQueue ?? [], itemId);
+		if (!result) return s;
+		targetId = result.targetId;
+		return { ...s, executionQueue: result.queue };
+	});
+	return targetId;
 }
 
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */

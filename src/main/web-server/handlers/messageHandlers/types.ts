@@ -225,6 +225,10 @@ export interface MessageHandlerCallbacks {
 		itemId: string,
 		paused: boolean
 	) => Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>;
+	mergeQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; merged: boolean; mergedIntoId?: string; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
