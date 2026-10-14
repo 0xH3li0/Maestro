@@ -210,7 +210,13 @@ describe('background turns', () => {
 			await background.groupChatRunner(handlers).start(spawnOf({ appendSystemPrompt: 'BE BRIEF' }));
 
 			const args = provider!.calls[0].spec.args;
-			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('BE BRIEF');
+			if (process.platform === 'win32') {
+				// A Windows host cannot hold a large prompt on its command line: it goes to a temp file.
+				expect(args).toContain('--append-system-prompt-file');
+				expect(args).not.toContain('BE BRIEF');
+			} else {
+				expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('BE BRIEF');
+			}
 			await vi.waitFor(() => expect(background.activeCount()).toBe(0));
 		});
 
