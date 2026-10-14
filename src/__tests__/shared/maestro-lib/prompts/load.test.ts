@@ -190,8 +190,9 @@ describe('bundledPromptCandidates', () => {
 	it('probes the checkout at both bundle depths, then the packaged and standalone locations', () => {
 		const moduleDirectory = path.join('/repo', 'dist', 'cli');
 		const candidates = bundledPromptCandidates('x.md', moduleDirectory);
-		expect(candidates).toContain(path.join('/repo', 'src', 'prompts', 'x.md'));
-		expect(candidates).toContain(path.join(moduleDirectory, '..', 'prompts', 'core', 'x.md'));
+		// Candidates are resolved, which adds a drive letter on Windows.
+		expect(candidates).toContain(path.resolve('/repo', 'src', 'prompts', 'x.md'));
+		expect(candidates).toContain(path.resolve(moduleDirectory, '..', 'prompts', 'core', 'x.md'));
 		expect(new Set(candidates).size).toBe(candidates.length);
 	});
 });

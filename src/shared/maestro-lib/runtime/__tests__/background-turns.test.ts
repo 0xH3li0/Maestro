@@ -131,20 +131,25 @@ describe('background turns', () => {
 			expect(registry.size()).toBe(0);
 		});
 
-		it('answers a refusal, with no end to follow, when the binary does not exist', async () => {
-			const { background } = turns();
-			const runner = background.groupChatRunner(handlers);
+		// Windows starts agents through a shell (`getWindowsSpawnConfig`), which exists and gets a pid:
+		// there a missing binary is the shell's non-zero exit, reported as an ordinary end.
+		it.skipIf(process.platform === 'win32')(
+			'answers a refusal, with no end to follow, when the binary does not exist',
+			async () => {
+				const { background } = turns();
+				const runner = background.groupChatRunner(handlers);
 
-			const started = await runner.start(
-				spawnOf({ agent: claude('/nonexistent/dir/claude'), command: '/nonexistent/dir/claude' })
-			);
+				const started = await runner.start(
+					spawnOf({ agent: claude('/nonexistent/dir/claude'), command: '/nonexistent/dir/claude' })
+				);
 
-			expect(started.success).toBe(false);
-			expect(started.error).toMatch(/ENOENT|spawn/i);
-			expect(background.activeCount()).toBe(0);
-			await new Promise((resolve) => setTimeout(resolve, 50));
-			expect(reported).toEqual([]);
-		});
+				expect(started.success).toBe(false);
+				expect(started.error).toMatch(/ENOENT|spawn/i);
+				expect(background.activeCount()).toBe(0);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				expect(reported).toEqual([]);
+			}
+		);
 
 		it('answers a refusal for a provider with no output parser', async () => {
 			const { background } = turns();

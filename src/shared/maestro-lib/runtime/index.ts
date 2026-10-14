@@ -421,7 +421,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			lock: lock.info,
 			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
 			// The registry holds every process the runtime owns; the background ones are counted apart.
-			turnsInFlight: () => registry.size() - background.activeCount(),
+			turnsInFlight: () => registry.size() - background.registeredCount(),
 			roundsInFlight: groupChats.roundsInFlight,
 			consultsInFlight: consults.inFlight,
 		},

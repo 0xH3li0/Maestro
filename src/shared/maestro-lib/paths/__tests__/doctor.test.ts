@@ -29,16 +29,18 @@ function makeDeps(
 	entries: Record<string, string | null>,
 	overrides: Partial<DoctorDeps> = {}
 ): DoctorDeps {
+	// The entries are keyed with forward slashes; the code joins with the platform separator.
+	const key = (p: string): string => p.replace(/\\/g, '/');
 	return {
 		readFile: (p) => {
-			const value = entries[p];
+			const value = entries[key(p)];
 			if (typeof value !== 'string') {
 				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			}
 			return value;
 		},
 		pathKind: (p): PathKind =>
-			p in entries ? (entries[p] === null ? 'directory' : 'file') : 'missing',
+			key(p) in entries ? (entries[key(p)] === null ? 'directory' : 'file') : 'missing',
 		isPidAlive: () => true,
 		now: () => NOW,
 		bootTime: () => BOOT,

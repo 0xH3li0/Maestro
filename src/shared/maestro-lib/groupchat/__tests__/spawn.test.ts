@@ -165,7 +165,7 @@ describe('prepareGroupChatSpawn', () => {
 				depsOf({ sshStore: storeOf([remote]) })
 			);
 
-			expect(prepared.command).toMatch(/ssh$/);
+			expect(prepared.command).toMatch(/ssh(\.exe)?$/i);
 			expect(prepared.sshStdinScript ?? prepared.sshRemoteCommand).toBeTruthy();
 			// Nothing about the local binary survives into the process that is started.
 			expect(prepared.command).not.toBe('/usr/local/bin/claude');

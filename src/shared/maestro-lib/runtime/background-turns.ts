@@ -115,8 +115,13 @@ export interface BackgroundTurns {
 	groupChatRunner(handlers: GroupChatRunnerHandlers): GroupChatTurnRunner;
 	/** The runner a consult starts its one turn through. */
 	consultRunner(): ConsultRunner;
-	/** Turns running now (group chat and consult). */
+	/** Turns whose process is running now (group chat and consult). */
 	activeCount(): number;
+	/**
+	 * Turns the process registry still holds for this module: running, or ended and still
+	 * reporting their end. The count to subtract from the registry's size.
+	 */
+	registeredCount(): number;
 }
 
 const errorText = (error: unknown): string =>
@@ -129,6 +134,9 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 
 	/** Turns running, by their full process id: what Stop reaches. */
 	const running = new Map<string, RunningTurn>();
+	// A turn stays in the process registry until `done` settles, which is after its end has been
+	// reported (and the moderator's report starts the participants). `running` drops it earlier.
+	const registered = new Set<string>();
 
 	function readCustomShellPath(): string | undefined {
 		const settings = readSettingsStore(paths.settingsFile);
@@ -235,8 +243,11 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 				await hooks.onEnd(completed);
 			} catch (error) {
 				logger.error(`Reporting the end of ${processId} failed: ${errorText(error)}`, LOG_CONTEXT);
+			} finally {
+				registered.delete(processId);
 			}
 		});
+		registered.add(processId);
 		registry.register(owner, processId, {
 			interrupt: () => turn.handle.interrupt(),
 			terminate: () => turn.handle.terminate(),
@@ -305,5 +316,6 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 		},
 
 		activeCount: () => running.size,
+		registeredCount: () => registered.size,
 	};
 }

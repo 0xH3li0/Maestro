@@ -438,8 +438,10 @@ describe('runtime group chats', () => {
 
 			expect(provider.callsFor('synthesis')).toHaveLength(0);
 			expect(runtime.roundsInFlight()).toBe(0);
+			// Stop reports each participant idle, and so does each stopped process as it
+			// ends, so two is the floor, not the total.
 			await vi.waitFor(() =>
-				expect(chat.working().filter((w) => w.endsWith(':off')).length).toBe(2)
+				expect(chat.working().filter((w) => w.endsWith(':off')).length).toBeGreaterThanOrEqual(2)
 			);
 		});
 

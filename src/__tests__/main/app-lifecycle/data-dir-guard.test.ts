@@ -48,7 +48,8 @@ describe('claimDataDirForDesktop (mocked lock)', () => {
 		expect(claim.outcome).toBe('claimed');
 		expect(acquire).toHaveBeenCalledTimes(1);
 		const [paths, mode] = acquire.mock.calls[0] as unknown as [{ userDataDir: string }, string];
-		expect(paths.userDataDir).toBe('/data');
+		// The guard resolves the directory, which adds a drive letter on Windows.
+		expect(paths.userDataDir).toBe(path.resolve('/data'));
 		expect(mode).toBe('desktop');
 	});
 
