@@ -9,7 +9,7 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
@@ -478,6 +478,185 @@ describe('EditAgentModal', () => {
 		// The old copy promised the opposite. Tabs are preserved now, so the notice
 		// must never tell the user their tabs will be cleared.
 		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
+	});
+
+	it('marks only destinations with memory and history carry from the original provider', () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		expect(
+			screen.getByRole('option', { name: '→ Codex · Memory + history (preview)' })
+		).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Claude Code' })).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'OpenCode' })).toBeInTheDocument();
+		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
+			target: { value: 'opencode' },
+		});
+		// Selection is not a completed switch: compatibility still uses the original Claude source.
+		expect(
+			screen.getByRole('option', { name: '→ Codex · Memory + history (preview)' })
+		).toBeInTheDocument();
+	});
+
+	it('marks the reverse Claude destination for a Codex agent', () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ toolType: 'codex' })}
+				existingSessions={[]}
+			/>
+		);
+		expect(
+			screen.getByRole('option', { name: '→ Claude Code · Memory + history (preview)' })
+		).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument();
+	});
+
+	it('shows no carry badge when the source provider has no conversion adapter', () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ toolType: 'opencode' })}
+				existingSessions={[]}
+			/>
+		);
+		expect(screen.queryByRole('option', { name: /Memory \+ history/ })).not.toBeInTheDocument();
+		expect(
+			screen.getByText('Memory + session carry is not available from this provider.')
+		).toBeInTheDocument();
+	});
+
+	it('clears the reading indicator and disables save if preflight rejects', async () => {
+		vi.mocked(requestProviderTranslation).mockRejectedValueOnce(new Error('Cannot read history'));
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
+			target: { value: 'codex' },
+		});
+		expect(screen.getByRole('status')).toHaveTextContent('Reading memory and session history...');
+		expect(await screen.findByRole('alert')).toHaveTextContent('Cannot read history');
+		expect(screen.queryByText('Reading memory and session history...')).not.toBeInTheDocument();
+		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+	});
+
+	it('shows translation activity and locks the provider picker until save completes', async () => {
+		let finishSave!: () => void;
+		onSave.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSave = resolve;
+				})
+		);
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		const picker = screen.getByRole('combobox', { name: 'Agent Provider' });
+		fireEvent.change(picker, { target: { value: 'codex' } });
+		await screen.findByText('Native resume remains unverified');
+		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(screen.getByRole('status')).toHaveTextContent(
+			'Translating memory and session history...'
+		);
+		expect(picker).toBeDisabled();
+		finishSave();
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(screen.queryByText('Translating memory and session history...')).not.toBeInTheDocument();
+	});
+
+	it('advances deferred activity from waiting to translation using the live operation state', async () => {
+		const previousSessions = useSessionStore.getState().sessions;
+		const session = createSession();
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'deferred',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				limitations: [
+					{ code: 'unverified-native-resume', message: 'Review conversion', severity: 'warning' },
+				],
+			} as any,
+		});
+		let finishSave!: () => void;
+		onSave.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSave = resolve;
+				})
+		);
+		try {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
+				target: { value: 'codex' },
+			});
+			await screen.findByText('Review conversion');
+			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(screen.getByRole('status')).toHaveTextContent(
+				'Waiting for the current turn to finish...'
+			);
+			act(() =>
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							providerMigration: {
+								operationId: 'plan',
+								destination: 'codex',
+								state: 'staging',
+								verification: 'unverified',
+							},
+						},
+					],
+				})
+			);
+			expect(screen.getByRole('status')).toHaveTextContent(
+				'Translating memory and session history...'
+			);
+			finishSave();
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
+		} finally {
+			act(() => useSessionStore.setState({ sessions: previousSessions }));
+		}
 	});
 
 	it('blocks an unverified conversion until its listed limitations are accepted', async () => {

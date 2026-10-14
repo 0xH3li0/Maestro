@@ -16,6 +16,10 @@ import {
 	extractCodexItemHistory,
 } from '../../../shared/maestro-lib/translation/codex-import';
 import type { TranslationRpc } from '../../../shared/maestro-lib/translation/types';
+import {
+	TRANSLATION_DIRECTIONS,
+	getDeclaredTranslationDirection,
+} from '../../../shared/maestro-lib/translation/support';
 
 const identity = {
 	provider: 'claude-code' as const,
@@ -24,6 +28,27 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('destination native projections', () => {
+	it('uses the picker declarations for native direction and version registration', () => {
+		const registry = createTranslationRegistry();
+		for (const direction of TRANSLATION_DIRECTIONS) {
+			expect(
+				registry.direction(
+					{ ...identity, provider: direction.source, version: direction.sourceVersions[0] },
+					{
+						...identity,
+						provider: direction.destination,
+						version: direction.destinationVersions[0],
+					}
+				)
+			).toEqual(getDeclaredTranslationDirection(direction.source, direction.destination));
+			expect(registry.get(direction.source)?.versions).toEqual(direction.sourceVersions);
+			expect(direction.verification).toBe('unverified');
+		}
+		expect(getDeclaredTranslationDirection('opencode', 'codex')).toBeUndefined();
+		expect(getDeclaredTranslationDirection('claude-code', 'opencode')).toBeUndefined();
+		expect(getDeclaredTranslationDirection('codex', 'codex')).toBeUndefined();
+		expect(getDeclaredTranslationDirection('unknown-provider', 'codex')).toBeUndefined();
+	});
 	it('refuses a Codex rollout parent symlink before injecting history', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-codex-target-'));
 		try {

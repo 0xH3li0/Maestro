@@ -522,6 +522,8 @@ export interface UseSettingsReturn {
 	setShowWorktreePill: (value: boolean) => void;
 	showWorktreeBranchName: boolean;
 	setShowWorktreeBranchName: (value: boolean) => void;
+	showWorktreeProvider: boolean;
+	setShowWorktreeProvider: (value: boolean) => void;
 
 	// Left side panel
 	showStarredSessionsSection: boolean;

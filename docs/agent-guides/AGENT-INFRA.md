@@ -872,7 +872,7 @@ interface AgentSessionInfo {
 
 ### Provider translation implementation
 
-Reuse `src/shared/maestro-lib/translation/index.ts`: `TranslationRegistry`, `TranslationAdapter`, `planTranslation`, `applyTranslation`, `recoverTranslation`, `reconcileConversation`, `collectTranslationResources` and `planResourceProjections`. Register adapters/directions in `translation/adapters.ts`. The canonical atomic writer and Codex RPC now live in `maestro-lib/storage/` and `maestro-lib/codex/`; existing main imports are compatibility exports, not separate implementations. Native History parsers share `parseNativeLines` without using flattened display messages as transport.
+Reuse `src/shared/maestro-lib/translation/index.ts`: `TranslationRegistry`, `TranslationAdapter`, `planTranslation`, `applyTranslation`, `recoverTranslation`, `reconcileConversation`, `collectTranslationResources` and `planResourceProjections`. Register native adapters in `translation/adapters.ts` and keep versions/directions in renderer-safe `translation/support.ts`; the provider picker reads the same declarations. The canonical atomic writer and Codex RPC now live in `maestro-lib/storage/` and `maestro-lib/codex/`; existing main imports are compatibility exports, not separate implementations. Native History parsers share `parseNativeLines` without using flattened display messages as transport.
 
 Shared native extraction blocks duplicate calls/results, results preceding their calls, missing tool linkage and invalid tool message roles. Preserve parallel-call ordering and original bytes; never replay tools or reorder history to force a native projection.
 

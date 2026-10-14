@@ -1,5 +1,10 @@
-/** Node translation API. Renderer clients import types/session only, never native file/RPC modules. */
+/** Node translation API. Renderer clients import types/session/support directly, never this barrel. */
 export * from './types';
+export {
+	TRANSLATION_DIRECTIONS,
+	TRANSLATION_PROVIDER_VERSIONS,
+	getDeclaredTranslationDirection,
+} from './support';
 export { TranslationRegistry, planTranslation } from './registry';
 export {
 	createTranslationRegistry,

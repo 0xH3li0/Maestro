@@ -34,6 +34,54 @@ Environment variables are passed to the agent process. Use these for:
 The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming sessions - you don't need to configure this manually.
 </Note>
 
+## Switching Providers with Memory and Session Carry
+
+Memory and session conversion is available as a preview between **Claude Code 2.1.296** and **Codex 0.162.1**, in both directions. Native resume and repeated round-trip continuity remain unverified. Other provider/version combinations have no supported converter and are blocked by preflight.
+
+In **Edit Agent**, destinations with a converter from the agent's current provider are marked **→ Memory + history (preview)** in the provider list. The marker identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
+
+Select the destination to read the conversion plan, review and accept any listed limitations, then click **Save Changes**. Translation runs as part of saving. It carries project memory and session history while preserving tabs, drafts, queued messages and file previews. Additional user-level resources, such as skills, must be selected explicitly; account-global knowledge is excluded.
+
+A spinner shows when Maestro is reading history, waiting for the current turn, translating, or finishing the switch. The status follows the current migration operation. There is no percentage bar because completion units are not measured. A failed conversion reports the error and retains the source provider.
+
+The CLI uses the same conversion operation:
+
+```bash
+maestro-cli update-agent <agent-id> --provider codex --dry-run --json
+maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
+```
+
+Switch back with `--provider claude-code`. The second command accepts conversion warnings; it does not bypass a blocked plan.
+
+`--dry-run` returns the reviewed operation ID as `plan.id`. Passing it with `--migration-plan` rechecks the source and scope before applying; changed evidence requires a fresh plan. `--migration recover` and `--migration rollback` can also address an operation by ID. Failure or a deferred switch exits nonzero; a command-node pipeline must inspect the reported state rather than treating an accepted request as completed translation.
+
+The CLI and desktop must both include this translation protocol. The new CLI uses a dedicated `provider_translation` request, so an older desktop refuses it instead of interpreting a preflight as the old destructive provider change. A source build does not replace the CLI bundled in an already installed application.
+
+### Starting Translation from Cue
+
+Cue can invoke these commands using an existing shell Command node. Use a separate controller agent and trigger after the source agent completes. Replace the two agent-ID placeholders before installing this example:
+
+```yaml
+subscriptions:
+  - name: plan-provider-translation
+    pipeline_name: Provider Translation
+    agent_id: CONTROLLER_AGENT_ID
+    event: agent.completed
+    source_session_ids: [SOURCE_AGENT_ID]
+    enabled: true
+    action: command
+    command:
+      mode: shell
+      shell: >-
+        maestro-cli update-agent SOURCE_AGENT_ID
+        --provider codex --dry-run --json
+```
+
+The example prepares a plan only. Apply a reviewed ID with the second CLI command above. Shell Command nodes already capture JSON output and exit status; structured `command.mode: cli` currently supports `send`, so translation uses `mode: shell`.
+
+An applied translation **changes the source agent's active provider**. Return switches reconcile intervening history using native lineage and checkpoints. This is not continuous synchronization of two independently active agents, nor an inactive replica update that leaves the source provider unchanged. Independent destination edits currently produce a divergence block rather than being silently merged. Do not schedule alternating provider switches as a substitute for a non-switching sync operation.
+
 ## Claude Code
 
 | Feature            | Support                                                                        |
