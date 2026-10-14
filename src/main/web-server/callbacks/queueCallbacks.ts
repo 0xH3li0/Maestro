@@ -56,7 +56,8 @@ export function registerQueueCallbacks(
 			inputMode?: 'ai' | 'terminal',
 			tabId?: string,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			held?: boolean
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -104,7 +105,8 @@ export function registerQueueCallbacks(
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					held
 				);
 
 				const timeoutId = setTimeout(() => {
@@ -204,6 +206,59 @@ export function registerQueueCallbacks(
 			}, 5000);
 		});
 	});
+
+	// Round-trip `maestro-cli queue hold|resume <itemId>` into the renderer, which
+	// sets the same `paused` flag the queued card's Hold / Resume button flips.
+	server.setSetQueueItemPausedCallback(
+		async (sessionId: string, itemId: string, paused: boolean) => {
+			const mainWindow = resolveSessionWindow(sessionId);
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for setQueueItemPaused', 'WebServer');
+				return { success: false, found: false, error: 'Desktop window unavailable' };
+			}
+			return new Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>(
+				(resolve) => {
+					const responseChannel = `remote:setQueueItemPaused:response:${randomUUID()}`;
+					let resolved = false;
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							resolve({
+								success: r.success === true,
+								found: r.found === true,
+								paused: typeof r.paused === 'boolean' ? r.paused : undefined,
+								error: typeof r.error === 'string' ? r.error : undefined,
+							});
+						} else {
+							resolve({ success: false, found: false });
+						}
+					};
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Desktop window unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:setQueueItemPaused',
+						sessionId,
+						itemId,
+						paused,
+						responseChannel
+					);
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Renderer did not respond' });
+					}, 5000);
+				}
+			);
+		}
+	);
 
 	// Round-trip `maestro-cli queue steer <itemId>` into the renderer, which runs
 	// the same steerQueuedItem() the Steer button does. Waits longer than the

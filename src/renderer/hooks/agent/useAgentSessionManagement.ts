@@ -1,25 +1,14 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
-import {
-	aiTabFocusFields,
-	createTab,
-	getActiveTab,
-	isSessionIdLabel,
-} from '../../utils/tabHelpers';
+import { focusAiTabInSession, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import type { RightPanelHandle } from '../../components/RightPanel';
-import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
-import {
-	TRANSCRIPT_RESUME_READ_LIMIT,
-	isSynopsisRequest,
-	stripSynopsisTurns,
-	transcriptMessagesToLogEntries,
-	type TranscriptMessage,
-} from '../../utils/transcriptMessages';
+import { isSynopsisRequest } from '../../utils/transcriptMessages';
+import { loadResumableSession } from '../../services/resumableSession';
 
 // Re-exported from its shared home so existing importers keep working; the
 // scroll-to-top history backfill needs the same filter.
@@ -171,7 +160,15 @@ export function useAgentSessionManagement(
 	 */
 	const addHistoryEntry = useCallback(
 		async (entry: HistoryEntryInput) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
+			const storeState = useSessionStore.getState();
+			const activeSession = selectActiveSession(storeState);
+			// The agent this entry BELONGS to, which is not the one on screen: a
+			// turn that finishes in the background names its own agent, and every
+			// per-agent fact below (token source, SSH history mirror) must come
+			// from that agent rather than from whatever the user is looking at.
+			const entrySession = entry.sessionId
+				? selectSessionById(entry.sessionId)(storeState)
+				: activeSession;
 
 			// Use provided values or fall back to activeSession
 			const targetSessionId = entry.sessionId || activeSession?.id;
@@ -204,11 +201,8 @@ export function useAgentSessionManagement(
 						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
 					};
 				}
-				const tokenSession = entry.sessionId
-					? selectSessionById(entry.sessionId)(useSessionStore.getState())
-					: activeSession;
-				if (tokenSession?.toolType === 'claude-code') {
-					const ci = tokenSession.claudeInteractive;
+				if (entrySession?.toolType === 'claude-code') {
+					const ci = entrySession.claudeInteractive;
 					return {
 						tokenSource: ci?.mode ?? 'api',
 						...(ci?.modeReason ? { tokenSourceReason: ci.modeReason } : {}),
@@ -249,7 +243,11 @@ export function useAgentSessionManagement(
 					// Cross-agent attribution: which agent consulted this one (if any)
 					...(entry.sourceAgentName ? { sourceAgentName: entry.sourceAgentName } : {}),
 				},
-				buildSharedHistoryContext(activeSession)
+				// Keyed on the entry's OWN agent. Building this from the active
+				// session mirrored every background agent's entries into the SSH
+				// host of whichever agent happened to be on screen, and dropped
+				// the mirror for an SSH agent that finished while off screen.
+				buildSharedHistoryContext(entrySession)
 			);
 
 			// Refresh history panel to show the new entry
@@ -322,44 +320,30 @@ export function useAgentSessionManagement(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
 			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
-				// Switch to the existing tab instead of creating a duplicate
+				// Reveal and focus the existing tab instead of creating a duplicate.
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
-					)
+					prev.map((s) => (s.id === targetSession.id ? focusAiTabInSession(s, existingTab.id) : s))
 				);
 				setActiveAgentSessionId(agentSessionId);
 				return true;
 			}
 
 			try {
-				// Use provided messages or fetch them
-				let messages: LogEntry[];
-				if (providedMessages && providedMessages.length > 0) {
-					messages = providedMessages;
-				} else {
-					// Load the session messages using the generic agentSessions API
-					// Use projectRoot (not cwd) for consistent session storage access
-					// Pass sshRemoteId so SSH-remote sessions read from the correct host
-					const agentId = targetSession.toolType || 'claude-code';
-					const result = await window.maestro.agentSessions.read(
-						agentId,
-						resolvedProjectRoot,
-						agentSessionId,
-						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
-						sshRemoteId
-					);
+				// The transcript read, the synopsis stripping, and the name / starred /
+				// context lookup are shared with every other way a conversation is
+				// reopened (see loadResumableSession).
+				const resumable = await loadResumableSession({
+					toolType: targetSession.toolType,
+					projectRoot: resolvedProjectRoot,
+					sshRemoteId,
+					agentSessionId,
+					providedMessages,
+					sessionName,
+					starred,
+					usageStats,
+				});
 
-					// Strip the Auto Run synopsis turns, then convert. Shared with the
-					// scroll-to-top backfill (issue #1407), which matches what it reads
-					// against these entries to find where to splice older history in -
-					// so both paths must build entries the same way.
-					messages = transcriptMessagesToLogEntries(
-						stripSynopsisTurns(result.messages as TranscriptMessage[])
-					);
-				}
-
-				if (messages.length === 0) {
+				if (!resumable) {
 					// No messages came back: the session is empty or has aged out / been
 					// removed from disk. Treat as unavailable so callers can recover.
 					if (!opts?.suppressUnavailableFlash) {
@@ -367,61 +351,7 @@ export function useAgentSessionManagement(
 					}
 					return false;
 				}
-
-				// Look up starred status, session name, and context usage from stores if not provided
-				let isStarred = starred ?? false;
-				// A caller's `sessionName` is a RECORDED display name (a history entry's
-				// pill, a starred session's label), so an unnamed tab recorded its own id
-				// fallback. Writing that back as `tab.name` would look identical while
-				// permanently opting the tab out of auto-naming, so drop it and let the
-				// tab stay genuinely unnamed.
-				let name =
-					sessionName && !isSessionIdLabel(sessionName, agentSessionId) ? sessionName : null;
-				let storedContextUsage: number | undefined;
-				let finalUsageStats = usageStats;
-
-				// Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
-				if (targetSession.toolType === 'claude-code') {
-					try {
-						// Look up session metadata from session origins (name, starred, contextUsage)
-						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						const origins = await window.maestro.claude.getSessionOrigins(resolvedProjectRoot);
-						const originData = origins[agentSessionId];
-						if (originData && typeof originData === 'object') {
-							if (sessionName === undefined && originData.sessionName) {
-								name = originData.sessionName;
-							}
-							if (starred === undefined && originData.starred !== undefined) {
-								isStarred = originData.starred;
-							}
-							if (originData.contextUsage !== undefined) {
-								storedContextUsage = originData.contextUsage;
-							}
-						}
-					} catch (error) {
-						logger.warn(
-							'[handleResumeSession] Failed to lookup session metadata:',
-							undefined,
-							error
-						);
-					}
-				}
-
-				// If we have stored contextUsage, set token values to reproduce that percentage
-				// The context calculation is: (inputTokens + cacheRead + cacheCreation) / contextWindow * 100
-				// So we set inputTokens = contextUsage * contextWindow / 100 to get the correct percentage
-				if (storedContextUsage !== undefined && storedContextUsage > 0) {
-					const contextWindow = finalUsageStats?.contextWindow || FALLBACK_CONTEXT_WINDOW;
-					finalUsageStats = {
-						inputTokens: Math.round((storedContextUsage * contextWindow) / 100),
-						outputTokens: finalUsageStats?.outputTokens || 0,
-						cacheReadInputTokens: 0,
-						cacheCreationInputTokens: 0,
-						totalCostUsd: finalUsageStats?.totalCostUsd || 0,
-						contextWindow,
-						reasoningTokens: finalUsageStats?.reasoningTokens,
-					};
-				}
+				const { messages, name, starred: isStarred, usageStats: finalUsageStats } = resumable;
 
 				// Update the session and switch to AI mode
 				// IMPORTANT: Use functional update to get fresh session state and avoid race conditions
@@ -452,11 +382,7 @@ export function useAgentSessionManagement(
 										}
 									: tab
 							);
-							return {
-								...s,
-								aiTabs: updatedTabs,
-								...aiTabFocusFields(freshExistingTab.id),
-							};
+							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
 						}
 
 						// Create tab from the CURRENT session state (not stale closure value)

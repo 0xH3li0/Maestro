@@ -115,6 +115,7 @@ type SavedBounds = {
 	width?: number;
 	expandedHeight?: number;
 	pinned?: boolean;
+	fontScale?: number;
 };
 
 /** An in-memory bounds store, standing in for the window-state store. */
@@ -289,6 +290,51 @@ describe('Quick Chat window bounds', () => {
 		expect(win.maximumSize[0]).toBeGreaterThan(1000);
 		expect(win.maximumSize[1]).toBeGreaterThan(1000);
 		expect(win.minimumSize[1]).toBeGreaterThan(148);
+	});
+
+	it('grows the composer-only shape with the draft and shrinks it back', async () => {
+		const { deps: d, store } = makeDeps({ x: 100, y: 120, width: 600, expandedHeight: 520 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatCompactHeight(300);
+		// The top edge stays; the height is pinned at the composer's.
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 600, height: 300 });
+		expect(win.minimumSize[1]).toBe(300);
+		expect(win.maximumSize[1]).toBe(300);
+
+		mod.setQuickChatCompactHeight(90);
+		expect(win.getBounds().height).toBe(148);
+
+		mod.setQuickChatCompactHeight(5000);
+		expect(win.getBounds().height).toBe(480);
+
+		vi.advanceTimersByTime(1000);
+		// A draft's height is never the conversation's.
+		expect(store.value?.expandedHeight).toBe(520);
+	});
+
+	it('stops a growing draft at the bottom of the display', async () => {
+		const mod = await freshModule();
+		mod.showQuickChatWindow(makeDeps({ x: 100, y: 800, width: 600 }).deps);
+		const win = lastWindow();
+
+		mod.setQuickChatCompactHeight(400);
+		expect(win.getBounds()).toMatchObject({ y: 800, height: 200 });
+	});
+
+	it('keeps the draft height for the composer-only shape while the conversation shows', async () => {
+		const mod = await freshModule();
+		mod.showQuickChatWindow(makeDeps({ expandedHeight: 520 }).deps);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+
+		mod.setQuickChatCompactHeight(260);
+		expect(win.getBounds().height).toBe(520);
+
+		mod.setQuickChatLayout('compact');
+		expect(win.getBounds().height).toBe(260);
 	});
 
 	it('saves a resize still settling when the shape changes', async () => {
@@ -565,5 +611,64 @@ describe('Quick Chat window full view (diagram viewer)', () => {
 		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
 		mod.setQuickChatFullView(false);
 		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+	});
+});
+
+describe('Quick Chat text zoom', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('defaults to 100%, steps, sets, resets, and clamps', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ step: 1 }, d)).toBe(1.1);
+		expect(mod.setQuickChatFontScale({ step: -1 }, d)).toBe(1);
+		expect(mod.setQuickChatFontScale({ scale: 1.5 }, d)).toBe(1.5);
+		expect(mod.setQuickChatFontScale({ scale: 9 }, d)).toBe(2);
+		expect(mod.setQuickChatFontScale({ reset: true }, d)).toBe(1);
+	});
+
+	it('remembers the zoom with the window state, beside the pin and the size', async () => {
+		const { deps: d, store } = makeDeps({ width: 700, pinned: false });
+		const mod = await freshModule();
+		mod.setQuickChatFontScale({ scale: 1.3 }, d);
+		expect(store.value).toEqual({ width: 700, pinned: false, fontScale: 1.3 });
+
+		// A fresh module is a restart: it reads the zoom back.
+		const restarted = await freshModule();
+		expect(restarted.getQuickChatFontScale(d)).toBe(1.3);
+	});
+
+	it('clamps a hand-edited stored zoom on load', async () => {
+		const { deps: d } = makeDeps({ fontScale: 40 });
+		const mod = await freshModule();
+		expect(mod.getQuickChatFontScale(d)).toBe(2);
+	});
+
+	it('tells the open window so its text follows a CLI change', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ step: 1 }, d);
+		expect(win.webContents.send).toHaveBeenCalledWith('quickChat:fontScale', 1.1);
+	});
+
+	it('keeps the zoom when the user then resizes the window', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFontScale({ scale: 1.2 }, d);
+		win.setBounds({ ...win.getBounds(), width: 720 });
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toMatchObject({ width: 720, fontScale: 1.2 });
 	});
 });

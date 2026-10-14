@@ -11,6 +11,7 @@ import { ipcRenderer } from 'electron';
 import type {
 	QuickChatCommand,
 	QuickChatCommandResult,
+	QuickChatFontScaleRequest,
 	QuickChatLayout,
 	QuickChatSnapshot,
 	QuickChatStatus,
@@ -35,6 +36,10 @@ export function createQuickChatApi() {
 		/** Grow the window to show the conversation, or shrink it to the composer. */
 		setLayout: (layout: QuickChatLayout): void => ipcRenderer.send('quickChat:setLayout', layout),
 
+		/** The composer's height, which the composer-only window follows as the draft grows. */
+		setCompactHeight: (height: number): void =>
+			ipcRenderer.send('quickChat:setCompactHeight', height),
+
 		/** Grow the window to fill its display while a diagram is open full screen, or put it back. */
 		setFullView: (on: boolean): void => ipcRenderer.send('quickChat:setFullView', on),
 
@@ -44,6 +49,20 @@ export function createQuickChatApi() {
 		/** Float the window above other windows, or let it fall behind them. Resolves with the new state. */
 		setPinned: (pinned: boolean): Promise<boolean> =>
 			ipcRenderer.invoke('quickChat:setPinned', pinned),
+
+		/** The conversation's text zoom (1 = normal). */
+		getFontScale: (): Promise<number> => ipcRenderer.invoke('quickChat:getFontScale'),
+
+		/** Step, set, or reset the conversation's text zoom. Resolves with the new zoom. */
+		setFontScale: (request: QuickChatFontScaleRequest): Promise<number> =>
+			ipcRenderer.invoke('quickChat:setFontScale', request),
+
+		/** Fired when the text zoom changes, including from `maestro-cli quick-chat font`. */
+		onFontScale: (callback: (fontScale: number) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, fontScale: number) => callback(fontScale);
+			ipcRenderer.on('quickChat:fontScale', handler);
+			return () => ipcRenderer.removeListener('quickChat:fontScale', handler);
+		},
 
 		/** Fired when the pin changes from outside the window (`maestro-cli quick-chat pin`). */
 		onPinned: (callback: (pinned: boolean) => void): (() => void) => {

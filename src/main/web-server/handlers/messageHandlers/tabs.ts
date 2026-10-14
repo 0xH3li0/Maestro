@@ -692,6 +692,12 @@ export function handleNewAITabWithPrompt(
 	// background=true creates the tab without switching to/focusing it.
 	// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
 	const background = message.background === true;
+	// hidden=true creates the tab with no chip in the strip: a hand-off another
+	// agent (or Cue) dispatched runs out of sight until the user opens it from a
+	// toast or the delegation pill. `dispatch --new-tab` sets it by default;
+	// `--visible` and `--focus` clear it. Only meaningful in the background - a
+	// focused tab the strip does not draw would strand the user on it.
+	const hidden = background && message.hidden === true;
 	// Prompts can contain user-authored content with secrets or PII -
 	// log length only rather than a raw preview.
 	logger.info(
@@ -737,7 +743,7 @@ export function handleNewAITabWithPrompt(
 	}
 
 	ctx.callbacks
-		.newAITabWithPrompt(sessionId, prompt, background)
+		.newAITabWithPrompt(sessionId, prompt, background, hidden)
 		.then((result) => {
 			// Arm the callback only once the fresh tab id is known - that id is
 			// the correlation key. `isNewTab` lets the registry adopt a spawn the

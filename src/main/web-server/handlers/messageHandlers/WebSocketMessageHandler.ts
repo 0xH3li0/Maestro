@@ -76,6 +76,7 @@ import {
 	handleFeedbackCheckAuth,
 	handleFeedbackGhLoginCommand,
 	handleFeedbackAccounts,
+	handleFeedbackDiagnose,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -105,6 +106,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -169,6 +171,7 @@ import {
 	handleListQueue,
 	handleRemoveQueueItem,
 	handleSteerQueueItem,
+	handleSetQueueItemPaused,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -204,6 +207,7 @@ export class WebSocketMessageHandler {
 	 * Helper to send a JSON message to a client with timestamp
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
+		if (client.isAuthorized?.() === false) return;
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
 	}
 
@@ -323,6 +327,10 @@ export class WebSocketMessageHandler {
 				void handleMaestroRunCommand(this.ctx, client, message);
 				break;
 
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -389,6 +397,10 @@ export class WebSocketMessageHandler {
 
 			case 'steer_queue_item':
 				handleSteerQueueItem(this.ctx, client, message);
+				break;
+
+			case 'set_queue_item_paused':
+				handleSetQueueItemPaused(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -705,6 +717,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_accounts':
 				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'feedback_diagnose':
+				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

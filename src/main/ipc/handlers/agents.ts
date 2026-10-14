@@ -21,8 +21,11 @@ import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabili
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
 import { discoverCodexSkills } from '../../agents/codex-skills';
+import { checkCustomPath } from '../../agents/path-prober';
+import { CodexRpcRequestError, CodexRpcTransportError } from '../../codex-app-server/rpc-client';
 import { buildChildProcessEnv } from '../../process-manager/utils/envBuilder';
 import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
+import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -376,7 +379,12 @@ async function discoverCodexSlashCommands(
 			commands.set(skill.name, skill);
 		}
 		nativeSkillsAvailable = true;
-	} catch {
+	} catch (error) {
+		const unsupportedRequest =
+			error instanceof CodexRpcRequestError && (error.code === -32601 || error.code === -32602);
+		if (!unsupportedRequest && !(error instanceof CodexRpcTransportError)) {
+			void captureException(error, { operation: 'discoverCodexSlashCommands' });
+		}
 		logger.debug('Codex skills/list unavailable; using disk discovery', LOG_CONTEXT);
 	}
 
@@ -1746,16 +1754,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				const agent = await agentDetector.getAgent(agentId);
-				if (!agent?.available) {
-					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
-					return null;
-				}
-
-				// Agent-specific discovery paths
-				if (agentId === 'opencode') {
-					return discoverOpenCodeSlashCommands(cwd);
-				}
-
 				if (agentId === 'codex') {
 					// Codex skills/prompts live on the machine that runs the CLI.
 					// For an SSH-remote agent that is the remote host, so return
@@ -1768,13 +1766,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						);
 						return null;
 					}
+					let commandPath = agent?.available ? agent.path || agent.command : undefined;
+					if (customPath) {
+						const detection = await checkCustomPath(customPath);
+						if (detection.exists && detection.path) commandPath = detection.path;
+					}
+					if (!commandPath) {
+						logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+						return null;
+					}
 					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
 					const env = buildChildProcessEnv(
 						effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
 						false,
 						settingsStore?.get('shellEnvVars', {})
 					);
-					return discoverCodexSlashCommands(cwd, customPath || agent.path || agent.command, env);
+					return discoverCodexSlashCommands(cwd, commandPath, env);
+				}
+				if (!agent?.available) {
+					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+					return null;
+				}
+
+				// Agent-specific discovery paths
+				if (agentId === 'opencode') {
+					return discoverOpenCodeSlashCommands(cwd);
 				}
 
 				if (agentId === 'copilot-cli') {
@@ -1800,75 +1816,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						return null;
 					}
 
-					// Spawn Claude with /help which immediately exits and costs no tokens
-					// The init message contains all available slash commands
-					const args = [
-						'--print',
-						'--verbose',
-						'--output-format',
-						'stream-json',
-						'--dangerously-skip-permissions',
-						'--',
-						'/help',
-					];
-
-					logger.debug(
-						`Spawning for slash command discovery: ${commandPath} ${args.join(' ')}`,
-						LOG_CONTEXT
-					);
-
-					const result = await execFileNoThrow(commandPath, args, cwd);
-
-					if (result.exitCode !== 0 && !result.stdout) {
+					// The init message of a `/help` probe names every command; see
+					// claude-slash-command-probe.ts.
+					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					if (!names) return null;
+					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
+					// Description enrichment is best-effort: a permission/IO
+					// error on the skills dir shouldn't lose the user's
+					// entire slash-command list. Capture the exception for
+					// Sentry and fall back to names-only.
+					let skillDescriptions = new Map<string, string>();
+					try {
+						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+					} catch (err) {
+						void captureException(err);
 						logger.warn(
-							`Slash command discovery failed with exit code ${result.exitCode}`,
+							`Skill description enrichment failed; returning slash commands without descriptions`,
 							LOG_CONTEXT,
-							{
-								stderr: result.stderr?.substring(0, 500),
-							}
+							{ error: String(err) }
 						);
-						return null;
 					}
-
-					// Parse the first JSON line to get the init message
-					const lines = result.stdout.split('\n');
-					for (const line of lines) {
-						if (!line.trim()) continue;
-						try {
-							const msg = JSON.parse(line);
-							if (msg.type === 'system' && msg.subtype === 'init' && msg.slash_commands) {
-								logger.info(
-									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
-									LOG_CONTEXT
-								);
-								// Description enrichment is best-effort: a permission/IO
-								// error on the skills dir shouldn't lose the user's
-								// entire slash-command list. Capture the exception for
-								// Sentry and fall back to names-only.
-								let skillDescriptions = new Map<string, string>();
-								try {
-									skillDescriptions = await readClaudeSkillDescriptions(cwd);
-								} catch (err) {
-									void captureException(err);
-									logger.warn(
-										`Skill description enrichment failed; returning slash commands without descriptions`,
-										LOG_CONTEXT,
-										{ error: String(err) }
-									);
-								}
-								return (msg.slash_commands as string[]).map((name: string) => {
-									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
-									const description = skillDescriptions.get(lookupKey);
-									return description ? { name, description } : { name };
-								});
-							}
-						} catch {
-							// Not valid JSON, skip
-						}
-					}
-
-					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
-					return null;
+					return names.map((name: string) => {
+						const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+						const description = skillDescriptions.get(lookupKey);
+						return description ? { name, description } : { name };
+					});
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {

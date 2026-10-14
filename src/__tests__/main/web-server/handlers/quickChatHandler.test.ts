@@ -23,6 +23,7 @@ const status = {
 	hotkeyRegistered: true,
 	bounds: null,
 	pinned: true,
+	fontScale: 1,
 	snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
 };
 const controller = {
@@ -31,6 +32,7 @@ const controller = {
 	windowAction: vi.fn(),
 	setBounds: vi.fn(),
 	setPinned: vi.fn(),
+	setFontScale: vi.fn(),
 	getStatus: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
@@ -40,7 +42,10 @@ vi.mock('../../../../main/quick-chat', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
-import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import type {
+	WebClient,
+	WebClientMessage,
+} from '../../../../main/web-server/handlers/messageHandlers';
 
 function createMockClient(): WebClient {
 	return {
@@ -68,6 +73,7 @@ describe('quick_chat handler', () => {
 		controller.windowAction.mockReturnValue(status);
 		controller.setBounds.mockReturnValue(status);
 		controller.setPinned.mockReturnValue(status);
+		controller.setFontScale.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
@@ -112,8 +118,32 @@ describe('quick_chat handler', () => {
 		],
 		[{ action: 'reveal' }, { type: 'reveal' }],
 		[{ action: 'stop' }, { type: 'stop' }],
+		[
+			{ action: 'tab', tab: 'new' },
+			{ type: 'setTab', choice: { kind: 'new' } },
+		],
+		[
+			{ action: 'tab', tab: ' AUTO ' },
+			{ type: 'setTab', choice: { kind: 'auto' } },
+		],
+		[
+			{ action: 'tab', tab: 'tab-7' },
+			{ type: 'setTab', choice: { kind: 'tab', tabId: 'tab-7' } },
+		],
+		[
+			{ action: 'thinking', mode: 'sticky' },
+			{ type: 'setThinking', mode: 'sticky' },
+		],
+		[
+			{ action: 'thinking', mode: 'cycle' },
+			{ type: 'setThinking', mode: 'cycle' },
+		],
 	])('maps %o onto the engine command %o', async (message, command) => {
-		handler.handleMessage(client, { type: 'quick_chat', requestId: 'r4', ...message });
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			requestId: 'r4',
+			...message,
+		} as WebClientMessage);
 		await flush();
 		expect(controller.runCommand).toHaveBeenCalledWith(command);
 		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r4' });
@@ -194,5 +224,102 @@ describe('quick_chat handler', () => {
 
 		handler.handleMessage(client, { type: 'quick_chat', action: 'pin', requestId: 'r12' });
 		expect(controller.setPinned).toHaveBeenLastCalledWith(true);
+	});
+
+	it('changes the text zoom through the controller, and reads it with no request', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'font',
+			fontScale: { step: 1 },
+			requestId: 'r13',
+		});
+		expect(controller.setFontScale).toHaveBeenCalledWith({ step: 1 });
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r13' });
+
+		handler.handleMessage(client, { type: 'quick_chat', action: 'font', requestId: 'r14' });
+		expect(controller.setFontScale).toHaveBeenCalledTimes(1);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r14' });
+		expect(lastResponse(client).status).toMatchObject({ fontScale: 1 });
+	});
+
+	it('rejects a malformed text zoom request instead of ignoring it', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'font',
+			fontScale: { step: 3 },
+			requestId: 'r15',
+		});
+		expect(controller.setFontScale).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r15' });
+	});
+
+	it.each(['tab', 'thinking'] as const)(
+		'reads the current setting for a bare %s without calling the engine',
+		(action) => {
+			handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r20' });
+			expect(controller.runCommand).not.toHaveBeenCalled();
+			expect(lastResponse(client)).toMatchObject({
+				success: true,
+				requestId: 'r20',
+				status: { snapshot: { thinking: 'off', next: { kind: 'auto' } } },
+			});
+		}
+	);
+
+	it.each([
+		{ action: 'tab', tab: '  ' },
+		{ action: 'thinking', mode: 'loud' },
+	])('rejects %o without calling the engine', (message) => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			requestId: 'r21',
+			...message,
+		} as WebClientMessage);
+		expect(controller.runCommand).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r21' });
+	});
+
+	it('opens the tab a named message went to', async () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'reveal',
+			messageId: 'm1',
+			requestId: 'r16',
+		});
+		await flush();
+		expect(controller.runCommand).toHaveBeenCalledWith({ type: 'reveal', messageId: 'm1' });
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r16' });
+	});
+
+	it('moves a queued message to a new tab, the latest when none is named', async () => {
+		handler.handleMessage(client, { type: 'quick_chat', action: 'new-tab', requestId: 'r17' });
+		await flush();
+		expect(controller.runCommand).toHaveBeenLastCalledWith({ type: 'moveToNewTab' });
+
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'new-tab',
+			messageId: 'm7',
+			requestId: 'r18',
+		});
+		await flush();
+		expect(controller.runCommand).toHaveBeenLastCalledWith({
+			type: 'moveToNewTab',
+			messageId: 'm7',
+		});
+	});
+
+	it('reports why a message could not be moved', async () => {
+		controller.runCommand.mockResolvedValue({
+			ok: false,
+			error: 'That message is no longer waiting: it already started',
+			snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
+		});
+		handler.handleMessage(client, { type: 'quick_chat', action: 'new-tab', requestId: 'r19' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'That message is no longer waiting: it already started',
+		});
 	});
 });

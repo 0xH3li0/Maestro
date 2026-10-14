@@ -302,6 +302,74 @@ describe('useWizardHandlers', () => {
 	// Slash command discovery effect
 	// ========================================================================
 	describe('slash command discovery effect', () => {
+		it('refreshes Codex commands when global environment settings change', async () => {
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			(window as any).maestro.agents.discoverSlashCommands.mockClear();
+
+			await act(async () => {
+				useSettingsStore.setState({ shellEnvVars: { CODEX_HOME: '/other/profile' } });
+			});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+		});
+
+		it('keeps disabled SSH configuration on the local Codex discovery path', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'remote-1' },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				undefined
+			);
+		});
+
+		it('passes a persisted Codex SSH identity and removes stale local commands', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				agentCommands: [{ command: '/local-skill', description: 'Local skill' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue(null);
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				'remote-1'
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+		});
+
+		it('refreshes Codex commands when the active agent changes SSH identity', async () => {
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			(window as any).maestro.agents.discoverSlashCommands.mockClear();
+
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, { sshRemoteId: 'remote-2' });
+			});
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				undefined,
+				'remote-2'
+			);
+		});
+
 		it('refreshes persisted Codex commands without starting a discovery loop', async () => {
 			const session = createMockSession({
 				toolType: 'codex',

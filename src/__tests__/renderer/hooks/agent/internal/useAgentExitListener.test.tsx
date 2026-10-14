@@ -115,6 +115,61 @@ describe('useAgentExitListener', () => {
 		expect(updated.state).toBe('idle');
 	});
 
+	// 2026-10-12: a `--print` turn emits its whole reply on the final result, an
+	// instant before exit, so the reply was still in the batch buffer when the
+	// exit reducer appended the next queued message's card. The transcript then
+	// read "next question, previous answer" and the running turn looked finished.
+	it('lands the finished reply before the next queued message card', async () => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'first question' }],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [
+				{ id: 'q-next', timestamp: 2, tabId: 'tab-1', type: 'message', text: 'second question' },
+			] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = vi.fn().mockResolvedValue(undefined) as any;
+		// The buffered reply only reaches the store when the batch is flushed.
+		let buffered = true;
+		deps.batchedUpdater.flushNow.mockImplementation(() => {
+			if (!buffered) return;
+			buffered = false;
+			useSessionStore.getState().setSessions((prev) =>
+				prev.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((t) => ({
+						...t,
+						logs: [
+							...t.logs,
+							{ id: 'a1', timestamp: 3, source: 'stdout' as const, text: 'first answer' },
+						],
+					})),
+				}))
+			);
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs.map((l) => l.text)).toEqual(['first question', 'first answer', 'second question']);
+		expect(logs[2].queuedItemId).toBe('q-next');
+	});
+
 	describe('on a web-desktop client', () => {
 		// Every process:* event is fanned out to every connected browser, so a
 		// web-desktop client must render the exit (tab idle) but never run the

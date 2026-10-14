@@ -2,6 +2,9 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -14,11 +17,19 @@ import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
-import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
+import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
+import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
+import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
@@ -110,7 +121,7 @@ export class ChildProcessSpawner {
 		// Build final args based on batch mode and images
 		// Track whether the prompt was added to CLI args (used later to decide stdin behavior)
 		let finalArgs: string[];
-		let tempImageFiles: string[] = [];
+		let tempFiles: string[] = [];
 		// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
 		let effectivePrompt = prompt;
 		// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
@@ -131,11 +142,11 @@ export class ChildProcessSpawner {
 			// For agents that use file-based image args (like Codex, OpenCode) or
 			// prompt-embedded image mentions (like Copilot's @path syntax)
 			finalArgs = [...args];
-			tempImageFiles = [];
+			tempFiles = [];
 			for (let i = 0; i < images.length; i++) {
 				const tempPath = saveImageToTempFile(images[i], i);
 				if (tempPath) {
-					tempImageFiles.push(tempPath);
+					tempFiles.push(tempPath);
 				}
 			}
 
@@ -147,8 +158,8 @@ export class ChildProcessSpawner {
 				// Some agents consume images by mentioning temp file paths inside the prompt
 				// instead of accepting a dedicated CLI image flag.
 				const imagePrefix = imagePromptBuilder
-					? imagePromptBuilder(tempImageFiles)
-					: buildImagePromptPrefix(tempImageFiles);
+					? imagePromptBuilder(tempFiles)
+					: buildImagePromptPrefix(tempFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
 					finalArgs = [
@@ -160,13 +171,13 @@ export class ChildProcessSpawner {
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
 					imageCount: images.length,
-					tempFiles: tempImageFiles,
+					tempFiles: tempFiles,
 					embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
 					promptViaStdin,
 				});
 			} else {
 				// Initial spawn: use -i flag as before
-				for (const tempPath of tempImageFiles) {
+				for (const tempPath of tempFiles) {
 					if (!imageArgs) {
 						continue;
 					}
@@ -179,7 +190,7 @@ export class ChildProcessSpawner {
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
 					imageCount: images.length,
-					tempFiles: tempImageFiles,
+					tempFiles: tempFiles,
 					promptViaStdin,
 				});
 			}
@@ -215,7 +226,7 @@ export class ChildProcessSpawner {
 			promptLength: prompt?.length,
 			hasImages,
 			hasImageArgs: !!imageArgs,
-			tempImageFilesCount: tempImageFiles.length,
+			tempFilesCount: tempFiles.length,
 			command,
 			commandHasExtension: path.extname(command).length > 0,
 			baseArgsCount: args.length,
@@ -223,6 +234,29 @@ export class ChildProcessSpawner {
 		});
 
 		try {
+			// OMP expands @file attachments, including on resume. Keep its full prompt
+			// out of the Windows command line without assuming stdin support.
+			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
+			if (
+				isWindows() &&
+				effectivePrompt &&
+				promptAddedToArgs &&
+				promptFileArgs &&
+				!config.sshStdinScript &&
+				!config.promptAlreadyInArgs
+			) {
+				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
+				tempFiles.push(promptFile);
+				fs.writeFileSync(promptFile, effectivePrompt, {
+					encoding: 'utf8',
+					mode: 0o600,
+					flag: 'wx',
+				});
+				// `--` makes OMP treat @file as a literal message, not an attachment.
+				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
+				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
+			}
+
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -320,6 +354,24 @@ export class ChildProcessSpawner {
 			// to isolate mutable state like tool name tracking across concurrent sessions
 			const outputParser = createOutputParser(toolType) || undefined;
 
+			// Claude reports its cost and per-model usage as running SESSION totals.
+			// Hand its parser the session's total as this turn starts, read from
+			// the transcript it resumes, so the usage it emits is this turn's
+			// alone (see src/shared/claudeCostTracker.ts).
+			const resumeSessionId = config.agentSessionId ?? resumeIdFromArgs(args);
+			if (toolType === 'claude-code' && resumeSessionId && outputParser?.primeResumedSession) {
+				outputParser.primeResumedSession(
+					resumeSessionId,
+					readClaudeTurnBaseline({
+						resumeSessionId,
+						cwd,
+						env,
+						homeDir: os.homedir(),
+						remote: !!config.sshRemoteId,
+					})
+				);
+			}
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
@@ -346,9 +398,16 @@ export class ChildProcessSpawner {
 			//   agent it starts both wait for the end of input.
 			// - Batch mode with nothing to write closes stdin at once; interactive
 			//   mode with nothing to write leaves it open for `ProcessManager.write()`.
+			// A stdin-script SSH spawn records the remote agent's pid so Stop can
+			// reach it: signalling only the local ssh client leaves it running.
+			const sshRemotePidFile =
+				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
+
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
-				stdinText = config.sshStdinScript;
+				stdinText = sshRemotePidFile
+					? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+					: config.sshStdinScript;
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
@@ -500,7 +559,7 @@ export class ChildProcessSpawner {
 				stdoutBuffer: '',
 				contextWindow,
 				ompModelCatalogKey,
-				tempImageFiles: tempImageFiles.length > 0 ? tempImageFiles : undefined,
+				tempFiles: tempFiles.length > 0 ? tempFiles : undefined,
 				command,
 				args: finalArgs,
 				querySource: config.querySource,
@@ -509,6 +568,7 @@ export class ChildProcessSpawner {
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
 				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemotePidFile,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -558,6 +618,7 @@ export class ChildProcessSpawner {
 						exitCode: exit.exitCode,
 						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
+					cleanupTempFiles(managedProcess.tempFiles ?? []);
 					return;
 				}
 				if (exit.spawnError) {
@@ -573,20 +634,69 @@ export class ChildProcessSpawner {
 				return this.exitHandler
 					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
+						void captureException(err);
 						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 							sessionId,
 							error: String(err),
 						});
+						// handleExit releases the entry immediately before emitting `exit`,
+						// so an entry that is still ours means it threw before getting there.
+						// Left alone, that entry owns the tab forever: every later spawn is
+						// refused as "already running" and the renderer never learns the turn
+						// ended. Release it and report the exit so the turn settles.
+						if (this.processes.get(sessionId) === managedProcess) {
+							this.processes.delete(sessionId);
+							this.emitter.emit('exit', sessionId, exit.exitCode || 0);
+						}
 					});
 			});
 
-			return { pid: childProcess.pid || -1, success: true };
+			// The run layer settles on `close`, which waits on every holder of the
+			// stdio pipes, and an SSH ControlMaster or a stray grandchild can hold
+			// them long after the child itself is dead. Without this, a stopped SSH
+			// turn left its entry behind and the tab's queue hot-looped against the
+			// spawn refusal.
+			armStdioCloseWatchdog(childProcess, {
+				onForceClose: () => {
+					logger.warn(
+						'[ProcessManager] stdio still open after exit, forcing close',
+						'ProcessManager',
+						{ sessionId, pid: childProcess.pid }
+					);
+					// For SSH the open stdio usually means the remote agent is still
+					// running behind a ControlMaster. Settling the turn while it keeps
+					// working would put a second writer on the session next turn.
+					if (sshRemotePidFile) {
+						signalRemoteAgent(
+							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+							'terminate'
+						);
+					}
+				},
+			});
+
+			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});
-			return { pid: -1, success: false };
+			cleanupTempFiles(tempFiles);
+			return {
+				pid: -1,
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
 		}
 	}
+}
+
+/** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */
+function resumeIdFromArgs(args: readonly string[]): string | undefined {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--resume') return args[i + 1] || undefined;
+		if (arg.startsWith('--resume=')) return arg.slice('--resume='.length) || undefined;
+	}
+	return undefined;
 }

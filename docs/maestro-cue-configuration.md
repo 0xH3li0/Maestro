@@ -243,7 +243,7 @@ subscriptions:
 | ------------- | ------------------------------------- | ---------------------------- |
 | Claude Code   | haiku / sonnet / opus                 | low / high / max             |
 | Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
-| Codex         | not mapped: use `model`               | minimal / medium / xhigh     |
+| Codex         | not mapped: use `model`               | low / medium / xhigh         |
 | Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
 | OpenCode      | not mapped: use `model`               | not supported                |
 
@@ -255,7 +255,7 @@ Rules:
 - An `output_prompt` follow-up runs on the same model as its main run.
 - `tier`, `model`, and `effort` apply only to agent runs. The validator rejects them on `action: command` and `action: notify`.
 
-In the Pipeline Graph, set these with the **Model** and **Effort** selectors on an agent node. From the CLI, pass `--tier`, `--model`, and `--effort` to `maestro-cli cue schedule`.
+In the Pipeline Graph, set these with the **Model** and **Effort** selectors on an agent node. The Scheduled Tasks form has the same two selectors. From the CLI, `maestro-cli cue model <subscription>` shows or changes them on any subscription, and `maestro-cli cue schedule` accepts `--tier`, `--model`, and `--effort` when it creates a task.
 
 ### Pipelines
 

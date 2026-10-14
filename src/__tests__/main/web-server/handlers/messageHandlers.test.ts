@@ -188,6 +188,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			queues: [{ sessionId: 'session-1', name: 'Session 1', state: 'busy', items: [] }],
 		}),
 		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
+		setQueueItemPaused: vi.fn().mockResolvedValue({ success: true, found: true, paused: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -2261,6 +2262,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
+					false,
 					false
 				);
 			});
@@ -2286,7 +2288,46 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
+					true,
+					false
+				);
+			});
+		});
+
+		it('forwards hidden=true for a background dispatch (dispatch --new-tab hides by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				background: true,
+				hidden: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					true,
 					true
+				);
+			});
+		});
+
+		it('never hides a foreground tab, even when asked', async () => {
+			// A focused tab the strip does not draw would strand the user on it.
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				hidden: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					false,
+					false
 				);
 			});
 		});
@@ -2596,7 +2637,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					'tab-1',
 					undefined,
-					true
+					true,
+					false
 				);
 			});
 
@@ -2736,6 +2778,65 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('Missing sessionId or itemId');
 			expect(callbacks.removeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Set Queue Item Paused (queue hold / resume)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId, itemId, and paused to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'set_queue_item_paused',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				paused: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.setQueueItemPaused).toHaveBeenCalledWith('session-1', 'item-9', true);
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('set_queue_item_paused_result');
+				expect(response).toMatchObject({ success: true, found: true, paused: true });
+			});
+		});
+
+		it('rejects a missing paused flag without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'set_queue_item_paused',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('set_queue_item_paused_result');
+			expect(response.success).toBe(false);
+			expect(callbacks.setQueueItemPaused).not.toHaveBeenCalled();
+		});
+
+		it('forwards held:true on enqueue_command (dispatch --held)', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Later',
+				held: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Later',
+					undefined,
+					undefined,
+					undefined,
+					false,
+					true
+				);
+			});
 		});
 	});
 

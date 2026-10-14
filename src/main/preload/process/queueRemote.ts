@@ -17,7 +17,8 @@ export function createQueueRemoteApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -28,10 +29,11 @@ export function createQueueRemoteApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => {
 				try {
-					callback(sessionId, command, responseChannel, inputMode, tabId, images, background);
+					callback(sessionId, command, responseChannel, inputMode, tabId, images, background, held);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });
 					throw error;
@@ -109,6 +111,43 @@ export function createQueueRemoteApi() {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "set queue item paused" from the CLI (`queue hold`
+		 * and `queue resume`). Renderer replies via sendRemoteSetQueueItemPausedResponse.
+		 */
+		onRemoteSetQueueItemPaused: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, paused, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, found: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:setQueueItemPaused', handler);
+			return () => ipcRenderer.removeListener('remote:setQueueItemPaused', handler);
+		},
+
+		sendRemoteSetQueueItemPausedResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

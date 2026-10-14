@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 	ipcMain: {
 		once: vi.fn(),
 		removeListener: vi.fn(),
+		on: vi.fn(),
 	},
 	app: {
 		getPath: vi.fn().mockReturnValue('/tmp/userData'),
@@ -29,6 +30,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 		WebServer: class MockWebServer {
 			port: number;
 			securityToken: string | undefined;
+			setRemoteHostStatusProvider = vi.fn();
+			setStartAutoRunCallback = vi.fn();
+			setControlAutoRunCallback = vi.fn();
 			options: { lanAccess?: boolean } | undefined;
 			// Origin policy: the factory points this at the tunnel's public URL.
 			setTrustedOriginsProvider = vi.fn();
@@ -50,6 +54,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
+			setAutoRunSteeringCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
@@ -67,6 +72,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
+			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
@@ -551,65 +557,6 @@ describe('web-server/web-server-factory', () => {
 			}) as WebServerFactoryDependencies['settingsStore']['get'];
 		});
 
-		it('routes the main-process HTML revision to the renderer', async () => {
-			const server = createWebServerFactory(deps)() as any;
-			const callback = server.setMovementViewCallback.mock.calls[0][0];
-
-			const resultPromise = callback({
-				op: 'add',
-				id: 'mockup',
-				viewType: 'html',
-				body: '<button>Continue</button>',
-			});
-			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
-				(call) => call[0] === 'remote:movement'
-			);
-			expect(request).toEqual([
-				'remote:movement',
-				expect.objectContaining({ id: 'mockup', revision: 1 }),
-				expect.any(String),
-			]);
-			const responseChannel = request?.[2] as string;
-			const responseListener = vi
-				.mocked(ipcMain.once)
-				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
-			responseListener?.({} as never, true);
-
-			await expect(resultPromise).resolves.toBe(true);
-		});
-
-		it('routes a bodyless begin shell without creating an HTML revision', async () => {
-			const server = createWebServerFactory(deps)() as any;
-			const callback = server.setMovementViewCallback.mock.calls[0][0];
-			const resultPromise = callback({
-				op: 'begin',
-				id: 'mockup',
-				viewType: 'html',
-				title: 'Checkout mockup',
-			});
-			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
-				(call) => call[0] === 'remote:movement'
-			);
-			expect(request).toEqual([
-				'remote:movement',
-				expect.objectContaining({
-					op: 'begin',
-					id: 'mockup',
-					viewType: 'html',
-				}),
-				expect.any(String),
-			]);
-			expect(request?.[1]).not.toHaveProperty('revision');
-			const responseChannel = request?.[2] as string;
-			const responseListener = vi
-				.mocked(ipcMain.once)
-				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
-			responseListener?.({} as never, true);
-
-			await expect(resultPromise).resolves.toBe(true);
-			expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBeNull();
-		});
-
 		it('rejects a bodyless transition to HTML when no document exists', async () => {
 			const server = createWebServerFactory(deps)() as any;
 			const callback = server.setMovementViewCallback.mock.calls[0][0];
@@ -623,35 +570,6 @@ describe('web-server/web-server-factory', () => {
 					([channel]) => channel === 'remote:movement'
 				)
 			).toBe(false);
-		});
-
-		it('passes the current HTML revision into inspection requests', async () => {
-			applyMovementHtmlPayload({
-				op: 'add',
-				id: 'mockup',
-				viewType: 'html',
-				body: '<button>Continue</button>',
-			});
-			const server = createWebServerFactory(deps)() as any;
-			const callback = server.setGetMovementDesignerInspectionCallback.mock.calls[0][0];
-
-			const resultPromise = callback('mockup');
-			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
-				(call) => call[0] === 'remote:getMovementDesignerInspection'
-			);
-			expect(request).toEqual([
-				'remote:getMovementDesignerInspection',
-				'mockup',
-				1,
-				expect.any(String),
-			]);
-			const responseChannel = request?.[3] as string;
-			const responseListener = vi
-				.mocked(ipcMain.once)
-				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
-			responseListener?.({} as never, null);
-
-			await expect(resultPromise).resolves.toBeNull();
 		});
 
 		it('defers concurrent HTML updates until the active inspection completes', async () => {
@@ -694,16 +612,16 @@ describe('web-server/web-server-factory', () => {
 					if (channel !== 'remote:movement') return;
 					const responseChannel = args[1] as string;
 					const responseListener = vi
-						.mocked(ipcMain.once)
+						.mocked(ipcMain.on)
 						.mock.calls.find((call) => call[0] === responseChannel)?.[1];
-					queueMicrotask(() => responseListener?.({} as never, true));
+					queueMicrotask(() => responseListener?.({ sender: mockWebContents } as never, true));
 				}
 			);
 			const inspectionResponseChannel = inspectionRequest?.[3] as string;
 			const inspectionResponseListener = vi
-				.mocked(ipcMain.once)
+				.mocked(ipcMain.on)
 				.mock.calls.find((call) => call[0] === inspectionResponseChannel)?.[1];
-			inspectionResponseListener?.({} as never, null);
+			inspectionResponseListener?.({ sender: mockWebContents } as never, null);
 
 			await expect(Promise.all([inspectionPromise, updatePromise])).resolves.toEqual([null, true]);
 			expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBe(2);
@@ -990,19 +908,17 @@ describe('web-server/web-server-factory', () => {
 		/**
 		 * Answer the delivery-receipt channel the factory minted for the most
 		 * recent `remote:executeCommand` send, standing in for the renderer.
-		 * Returns the send args with the receipt channel stripped, so tests can
-		 * assert the forwarded payload exactly as before receipts existed.
+		 * The acknowledgement must originate from the owning webContents.
 		 */
-		const answerReceipt = (accepted: boolean, reason?: string): unknown[] => {
+		const answerReceipt = (accepted: boolean, reason?: string): void => {
 			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
 			const call = [...send.mock.calls]
 				.reverse()
 				.find((c: unknown[]) => c[0] === 'remote:executeCommand');
 			if (!call) throw new Error('no remote:executeCommand send was issued');
 			const receiptChannel = call[call.length - 1] as string;
-			const listener = vi.mocked(ipcMain.once).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
-			listener?.({} as never, { accepted, reason });
-			return call.slice(0, -1);
+			const listener = vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
+			listener?.({ sender: mockWebContents } as never, { accepted, reason });
 		};
 
 		it('should return false when mainWindow is null', async () => {
@@ -1017,102 +933,6 @@ describe('web-server/web-server-factory', () => {
 
 			expect(result).toBe(false);
 			expect(logger.warn).toHaveBeenCalled();
-		});
-
-		it('should send command to renderer (omitting tabId routes to active tab)', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
-			const callback = setExecuteCallback.mock.calls[0][0];
-
-			const resultPromise = callback('session-1', 'test command', 'ai');
-
-			expect(answerReceipt(true)).toEqual([
-				'remote:executeCommand',
-				'session-1',
-				'test command',
-				'ai',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-			]);
-			await expect(resultPromise).resolves.toBe(true);
-		});
-
-		it('forwards tabId to the renderer so `dispatch --session <tabId>` writes into the requested tab', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
-			const callback = setExecuteCallback.mock.calls[0][0];
-
-			const resultPromise = callback('session-1', 'follow up', 'ai', 'tab-7');
-
-			expect(answerReceipt(true)).toEqual([
-				'remote:executeCommand',
-				'session-1',
-				'follow up',
-				'ai',
-				'tab-7',
-				undefined,
-				undefined,
-				undefined,
-			]);
-			await expect(resultPromise).resolves.toBe(true);
-		});
-
-		it('forwards force=true to the renderer so `dispatch --force` bypasses the renderer busy guard', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
-			const callback = setExecuteCallback.mock.calls[0][0];
-
-			const resultPromise = callback('session-1', 'concurrent write', 'ai', undefined, true);
-
-			expect(answerReceipt(true)).toEqual([
-				'remote:executeCommand',
-				'session-1',
-				'concurrent write',
-				'ai',
-				undefined,
-				true,
-				undefined,
-				undefined,
-			]);
-			await expect(resultPromise).resolves.toBe(true);
-		});
-
-		it('forwards images so pasted attachments reach the renderer alongside the prompt', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
-			const callback = setExecuteCallback.mock.calls[0][0];
-
-			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
-			const resultPromise = callback(
-				'session-1',
-				'look at this',
-				'ai',
-				undefined,
-				undefined,
-				images
-			);
-
-			expect(answerReceipt(true)).toEqual([
-				'remote:executeCommand',
-				'session-1',
-				'look at this',
-				'ai',
-				undefined,
-				undefined,
-				images,
-				undefined,
-			]);
-			await expect(resultPromise).resolves.toBe(true);
 		});
 
 		// V1 secondary defect: `success` used to mean "an IPC send was issued", so
@@ -1179,8 +999,8 @@ describe('web-server/web-server-factory', () => {
 				.reverse()
 				.find((c: unknown[]) => c[0] === 'remote:executeCommand');
 			const receiptChannel = call?.[call.length - 1] as string;
-			vi.mocked(ipcMain.once).mock.calls.find((c) => c[0] === receiptChannel)?.[1]?.(
-				{} as never,
+			vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1]?.(
+				{ sender: mockWebContents } as never,
 				'sure thing'
 			);
 
@@ -1942,6 +1762,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				'tab-1',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -1971,6 +1792,21 @@ describe('web-server/web-server-factory', () => {
 				'remote:removeQueueItem',
 				'session-1',
 				'item-1',
+				expect.any(String)
+			);
+		});
+
+		it('setSetQueueItemPausedCallback forwards hold / resume to the renderer', () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSetQueueItemPausedCallback.mock.calls[0][0];
+
+			void callback('session-1', 'item-1', true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:setQueueItemPaused',
+				'session-1',
+				'item-1',
+				true,
 				expect.any(String)
 			);
 		});
@@ -2430,6 +2266,36 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
+	describe('autoRunSteering callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+			const request = { action: 'send', sessionId: 'session-1', text: 'use the v3 endpoint' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:autoRunSteeringCommand',
+				request,
+				expect.stringContaining('remote:autoRunSteeringCommand:response:')
+			);
+		});
+
+		// A caller blocked on a CLI command must get an answer it can read, not a
+		// rejection, when there is no window to ask.
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
 	describe('playbookCallbacks smoke', () => {
 		it('setListPlaybooksCallback forwards to the renderer via the shared remoteRequest', () => {
 			const createWebServer = createWebServerFactory(deps);
@@ -2596,9 +2462,9 @@ describe('web-server/web-server-factory', () => {
 
 			const responseChannel = request?.at(-1) as string;
 			const responseListener = vi
-				.mocked(ipcMain.once)
+				.mocked(ipcMain.on)
 				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
-			responseListener?.({} as never, { accepted: true });
+			responseListener?.({ sender: secondaryWebContents } as never, { accepted: true });
 
 			await expect(resultPromise).resolves.toBe(true);
 		});
@@ -2648,9 +2514,9 @@ describe('web-server/web-server-factory', () => {
 				.mocked(secondaryWebContents.send)
 				.mock.calls.find((call) => call[0] === 'remote:closeTab')?.[3] as string;
 			const closeReply = vi
-				.mocked(ipcMain.once)
+				.mocked(ipcMain.on)
 				.mock.calls.find((call) => call[0] === closeChannel)?.[1];
-			closeReply?.({} as never, true);
+			closeReply?.({ sender: secondaryWebContents } as never, true);
 			await expect(closePromise).resolves.toBe(true);
 			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:closeTab',

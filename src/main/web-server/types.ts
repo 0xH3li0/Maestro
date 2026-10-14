@@ -7,6 +7,10 @@ import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -225,6 +229,8 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/** Revalidate the upgrade session/current login policy before commands and delivery. */
+	isAuthorized?: () => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -273,6 +279,8 @@ export interface WebClientMessage {
 	callbackTimeout?: number;
 	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
+	hidden?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
 	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
@@ -403,6 +411,14 @@ export type StarTabCallback = (
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
 /**
+ * One Auto Run steering verb, forwarded to the renderer - which holds the notes
+ * its run loop reads - and answered with whatever it did. Resolves rather than
+ * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type AutoRunSteeringCommandCallback = (
+	request: SteeringCommandRequest
+) => Promise<SteeringCommandResult>;
+/**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
@@ -514,7 +530,9 @@ export type NewAITabWithPromptResult = {
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
-	background?: boolean
+	background?: boolean,
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
+	hidden?: boolean
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -550,7 +568,9 @@ export type EnqueueCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	images?: string[],
-	background?: boolean
+	background?: boolean,
+	/** Queue Held: always queue, paused, even on an idle agent. */
+	held?: boolean
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -589,6 +609,18 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue hold|resume`: whether the item was found, and its paused state after. */
+export type SetQueueItemPausedResult = {
+	success: boolean;
+	found: boolean;
+	paused?: boolean;
+	error?: string;
+};
+export type SetQueueItemPausedCallback = (
+	sessionId: string,
+	itemId: string,
+	paused: boolean
+) => Promise<SetQueueItemPausedResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (

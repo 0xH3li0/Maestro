@@ -22,6 +22,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -60,6 +61,8 @@ import type {
 	RemoveQueueItemResult,
 	SteerQueueItemCallback,
 	SteerQueueItemResult,
+	SetQueueItemPausedCallback,
+	SetQueueItemPausedResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -156,10 +159,21 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
+import type {
+	AutoRunRemoteControl,
+	AutoRunRemoteResult,
+	StartAutoRunCallback,
+	ControlAutoRunCallback,
+} from '../../../shared/autoRunRemote';
+import type { BatchRunConfig } from '../../../shared/types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
 
@@ -184,6 +198,7 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
@@ -204,6 +219,7 @@ export interface WebServerCallbacks {
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
 	steerQueueItem: SteerQueueItemCallback | null;
+	setQueueItemPaused: SetQueueItemPausedCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -213,6 +229,8 @@ export interface WebServerCallbacks {
 	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
 	saveAutoRunDoc: SaveAutoRunDocCallback | null;
 	stopAutoRun: StopAutoRunCallback | null;
+	startAutoRun: StartAutoRunCallback | null;
+	controlAutoRun: ControlAutoRunCallback | null;
 	resetAutoRunDocTasks: ResetAutoRunDocTasksCallback | null;
 	resumeAutoRunError: ResumeAutoRunErrorCallback | null;
 	skipAutoRunDocument: SkipAutoRunDocumentCallback | null;
@@ -291,6 +309,7 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		autoRunSteeringCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
@@ -311,6 +330,7 @@ export class CallbackRegistry {
 		listQueue: null,
 		removeQueueItem: null,
 		steerQueueItem: null,
+		setQueueItemPaused: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -320,6 +340,8 @@ export class CallbackRegistry {
 		getAutoRunDocContent: null,
 		saveAutoRunDoc: null,
 		stopAutoRun: null,
+		startAutoRun: null,
+		controlAutoRun: null,
 		resetAutoRunDocTasks: null,
 		resumeAutoRunError: null,
 		skipAutoRunDocument: null,
@@ -485,6 +507,13 @@ export class CallbackRegistry {
 		return this.callbacks.snoozeCommand(request);
 	}
 
+	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
+		if (!this.callbacks.autoRunSteeringCommand) {
+			return { success: false, error: 'Auto Run steering is not configured' };
+		}
+		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
 		if (!this.callbacks.windowCommand) {
 			return { success: false, error: 'Window commands are not configured' };
@@ -577,10 +606,11 @@ export class CallbackRegistry {
 	async newAITabWithPrompt(
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		hidden?: boolean
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -601,10 +631,19 @@ export class CallbackRegistry {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		held?: boolean
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+		return this.callbacks.enqueueCommand(
+			sessionId,
+			command,
+			inputMode,
+			tabId,
+			images,
+			background,
+			held
+		);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {
@@ -621,6 +660,16 @@ export class CallbackRegistry {
 	async steerQueueItem(sessionId: string, itemId: string): Promise<SteerQueueItemResult> {
 		if (!this.callbacks.steerQueueItem) return { success: false, error: 'not configured' };
 		return this.callbacks.steerQueueItem(sessionId, itemId);
+	}
+
+	async setQueueItemPaused(
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	): Promise<SetQueueItemPausedResult> {
+		if (!this.callbacks.setQueueItemPaused)
+			return { success: false, found: false, error: 'not configured' };
+		return this.callbacks.setQueueItemPaused(sessionId, itemId, paused);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -695,6 +744,25 @@ export class CallbackRegistry {
 	async stopAutoRun(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.stopAutoRun) return false;
 		return this.callbacks.stopAutoRun(sessionId);
+	}
+
+	async startAutoRun(
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	): Promise<AutoRunRemoteResult> {
+		if (!this.callbacks.startAutoRun)
+			return { success: false, error: 'Host Auto Run is unavailable' };
+		return this.callbacks.startAutoRun(sessionId, config, folderPath);
+	}
+
+	async controlAutoRun(
+		sessionId: string,
+		control: AutoRunRemoteControl
+	): Promise<AutoRunRemoteResult> {
+		if (!this.callbacks.controlAutoRun)
+			return { success: false, error: 'Host Auto Run is unavailable' };
+		return this.callbacks.controlAutoRun(sessionId, control);
 	}
 
 	async resetAutoRunDocTasks(sessionId: string, filename: string): Promise<boolean> {
@@ -1177,6 +1245,10 @@ export class CallbackRegistry {
 		this.callbacks.snoozeCommand = callback;
 	}
 
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1257,6 +1329,10 @@ export class CallbackRegistry {
 		this.callbacks.steerQueueItem = callback;
 	}
 
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbacks.setQueueItemPaused = callback;
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbacks.refreshAutoRunDocs = callback;
 	}
@@ -1291,6 +1367,14 @@ export class CallbackRegistry {
 
 	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
 		this.callbacks.stopAutoRun = callback;
+	}
+
+	setStartAutoRunCallback(callback: StartAutoRunCallback): void {
+		this.callbacks.startAutoRun = callback;
+	}
+
+	setControlAutoRunCallback(callback: ControlAutoRunCallback): void {
+		this.callbacks.controlAutoRun = callback;
 	}
 
 	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {

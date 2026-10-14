@@ -6,7 +6,7 @@ import { logger } from '../host';
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
 type AgentConfigOverridable = Pick<
 	AgentConfig,
-	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs'
+	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs' | 'resumeArgs' | 'batchModePrefix'
 >;
 
 const LOG_CONTEXT = '[AgentArgs]';
@@ -251,32 +251,41 @@ export function buildAgentArgs(
 		finalArgs = [...finalArgs, ...agent.modelArgs(options.modelId)];
 	}
 
-	if (options.agentSessionId && agent.resumeArgs) {
-		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
-	}
-
 	// Deduplicate repeated flag-style arguments while preserving order.
 	// Positional arguments (non-flags) are intentionally left untouched.
 	const seenFlags = new Set<string>();
-	const dedupedArgs: string[] = [];
-	for (const arg of finalArgs) {
-		if (arg.startsWith('-')) {
-			if (seenFlags.has(arg)) {
-				continue;
-			}
+	const dedupe = (args: string[]): string[] =>
+		args.filter((arg) => {
+			if (!arg.startsWith('-')) return true;
+			if (seenFlags.has(arg)) return false;
 			seenFlags.add(arg);
-		}
-		dedupedArgs.push(arg);
-	}
+			return true;
+		});
 
-	// Additional Directories are appended AFTER the dedupe on purpose. Every
-	// provider expresses a multi-directory grant by repeating its flag
-	// (`--add-dir a --add-dir b`), and the dedupe above drops repeated flag
-	// tokens - it would keep the first `--add-dir`, delete the second, and leave
-	// the orphaned path behind as a stray positional that the CLI would read as
-	// the prompt. Emitting them last also keeps them ahead of the prompt, which
-	// callers append after this function returns.
-	return [...dedupedArgs, ...buildAdditionalDirArgs(agent, options.additionalDirectories)];
+	const dedupedArgs = dedupe(finalArgs);
+	const resumeArgs =
+		options.agentSessionId && agent.resumeArgs
+			? dedupe(agent.resumeArgs(options.agentSessionId))
+			: [];
+
+	// Additional Directories skip the dedupe on purpose. Every provider expresses
+	// a multi-directory grant by repeating its flag (`--add-dir a --add-dir b`),
+	// and the dedupe above drops repeated flag tokens - it would keep the first
+	// `--add-dir`, delete the second, and leave the orphaned path behind as a
+	// stray positional that the CLI would read as the prompt.
+	//
+	// They go BEFORE the resume selector, never after it. Codex resumes with a
+	// SUBCOMMAND (`exec ... resume <id>`), and a flag placed after a subcommand
+	// belongs to that subcommand: `codex exec resume` has no `--add-dir`, so it
+	// answered `unexpected argument '--add-dir' found` and exited 2 before doing
+	// anything. A tab's first turn worked and every follow-up died in ~150ms.
+	// The selector stays last so it is still ahead of the prompt, which callers
+	// append after this function returns.
+	return [
+		...dedupedArgs,
+		...buildAdditionalDirArgs(agent, options.additionalDirectories),
+		...resumeArgs,
+	];
 }
 
 /**
@@ -296,6 +305,38 @@ export function buildAdditionalDirArgs(
 		return [];
 	}
 	return agent.additionalDirArgs(dirs);
+}
+
+/**
+ * Move a SUBCOMMAND resume selector (Codex `resume <id>`) behind every other
+ * argument, so nothing appended later lands inside the subcommand.
+ *
+ * A flag after a subcommand belongs to that subcommand, and `codex exec resume`
+ * accepts only a subset of `exec`'s flags. `--add-dir`, `-s`, `--oss`, and
+ * `-p` after it fail the turn with exit 2 before Codex does anything, so a
+ * tab's first message works and every follow-up dies. Every `exec` flag is
+ * honored ahead of `resume` (verified on codex-cli 0.162.1, including `-m`),
+ * so the selector can always go last. Flag-style selectors (`--resume <id>`)
+ * do not care about order and are returned untouched.
+ */
+export function placeResumeSelectorLast(
+	agent: Pick<AgentConfig, 'resumeArgs' | 'batchModePrefix'> | null | undefined,
+	args: string[]
+): string[] {
+	const template = agent?.resumeArgs?.('');
+	const keyword = template?.[0];
+	if (!template || !keyword || keyword.startsWith('-')) return args;
+
+	// The subcommand comes after the batch-mode subcommand (`exec`), never in
+	// front of it, so a path or value spelled like the keyword earlier on does
+	// not match.
+	const prefix = agent?.batchModePrefix ?? [];
+	const searchFrom = prefix.length > 0 ? args.indexOf(prefix[prefix.length - 1]) + 1 : 0;
+	const start = args.indexOf(keyword, searchFrom);
+	const end = start + template.length;
+	if (start < 0 || end > args.length || end === args.length) return args;
+
+	return [...args.slice(0, start), ...args.slice(end), ...args.slice(start, end)];
 }
 
 /** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
@@ -402,6 +443,10 @@ export function applyAgentConfigOverrides(
 			...(userEnvVars || {}),
 		};
 	}
+
+	// Config options and custom args were appended after `buildAgentArgs()` put
+	// the resume selector last; put it back behind them.
+	finalArgs = placeResumeSelectorLast(agent, finalArgs);
 
 	const hasEnvVars = effectiveCustomEnvVars && Object.keys(effectiveCustomEnvVars).length > 0;
 	const customEnvSource: AgentConfigResolution['customEnvSource'] = overrides.sessionCustomEnvVars

@@ -263,6 +263,21 @@ describe('tabHelpers', () => {
 			expect(result.session.inputMode).toBe('terminal');
 		});
 
+		it('creates a hidden tab that is never activated, even when activate is true', () => {
+			// A focused tab the strip does not draw strands the user on it.
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'was-active' })],
+				activeTabId: 'was-active',
+			});
+
+			const result = createTab(session, { hidden: true, activate: true })!;
+
+			expect(result.tab.hidden).toBe(true);
+			expect(result.session.activeTabId).toBe('was-active');
+			// The order ref is kept, so revealing it restores its position.
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: result.tab.id });
+		});
+
 		it('clears the higher-precedence surfaces when activate is true', () => {
 			// The other half: a browser/file/terminal selection outranks the AI tab
 			// in the render precedence, so activation that left one set would show

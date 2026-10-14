@@ -182,8 +182,11 @@ Everything after `--` is treated as positional, so any flags you need must come 
 # Dispatch to the active tab of an agent
 maestro-cli dispatch <agent-id> "review the PR description"
 
-# Open a fresh tab and dispatch the prompt into it
+# Open a fresh tab and dispatch the prompt into it (hidden: no chip in the strip)
 maestro-cli dispatch <agent-id> "start a new review pass" --new-tab
+
+# Same, but give the new tab a chip so it shows in the tab strip
+maestro-cli dispatch <agent-id> "start a new review pass" --new-tab --visible
 
 # Continue a previous dispatch by targeting its tab
 maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
@@ -203,13 +206,14 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag             | Description                                                                                                                                                                                                                                                                                          |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
-| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                            |
-| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                        |
-| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                       |
-| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                               |
+| Flag             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
+| `--visible`      | With `--new-tab`: give the new tab a chip in the tab strip instead of creating it hidden. `--focus` implies it                                                                                                                                                                                                                                                                                                                                                                         |
+| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                                                                                                                                                                                                              |
+| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                         |
+| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                                                                                 |
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
@@ -1164,7 +1168,7 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`.
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
@@ -1189,13 +1193,17 @@ Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a sys
 ```bash
 maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
 maestro-cli quick-chat send "summarize the last commit"
-maestro-cli quick-chat status --json         # window state, agent, mode, and the conversation
+maestro-cli quick-chat status --json         # window state, agent, mode, and each message with the tab it went to
 maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
 maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
-maestro-cli quick-chat new                   # start over; an ephemeral chat's hidden tab is deleted
+maestro-cli quick-chat thinking on           # show the agent's reasoning until the answer arrives (sticky keeps it, off hides it)
+maestro-cli quick-chat tab new               # next message to a new tab; or a tab id from status, or auto
+maestro-cli quick-chat reveal [message-id]   # open a message's tab in Maestro (default: the latest)
+maestro-cli quick-chat new-tab [message-id]  # send a queued message to a new tab instead of waiting
+maestro-cli quick-chat font in               # bigger conversation text (out, reset, or a size such as 120%)
+maestro-cli quick-chat new                   # start over; hidden tabs an ephemeral chat created are deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
-maestro-cli quick-chat reveal                # open the chat as a tab in the main window
-maestro-cli quick-chat stop                  # stop the reply
+maestro-cli quick-chat stop                  # stop replies in progress and withdraw queued messages
 maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
 ```
 
@@ -1893,6 +1901,24 @@ maestro-cli remove-playbook <agent-id> <playbook-id>
 
 The filename for `reset-auto-run-tasks` is relative to the agent's Auto Run folder; absolute paths and `..` traversal are rejected.
 
+### Steering a Running Auto Run
+
+A steering note changes a run's direction without stopping it: the note parks until the run dispatches its next task, then opens that task's prompt. These are the CLI half of the **Steer Auto Run** button in the Thought Stream. See [Steering a Run in Flight](autorun-playbooks.md#steering-a-run-in-flight) for what the agent is told to do with a note.
+
+```bash
+# Send a note; it is delivered at the start of the next task
+maestro-cli steer-auto-run send "Use the v3 endpoint for the rest of these tasks" -a <agent-id>
+
+# Read the notes still waiting, and each delivered note with its task's reply
+maestro-cli steer-auto-run list -a <agent-id>
+maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full reply
+
+# Take back a note no task has read yet (accepts a unique id prefix)
+maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+```
+
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
+
 ### Checking Status
 
 Check if the Maestro desktop app is running and reachable:
@@ -2020,6 +2046,9 @@ maestro-cli cue schedule --cancel standup
 | `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
 | `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
 | `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
+| `--tier <level>`           | Model tier for the prompt run: `low`, `medium`, `high`                   |
+| `--model <id>`             | Exact model id for the prompt run (instead of `--tier`)                  |
+| `--effort <level>`         | Effort for the prompt run: `low`, `medium`, `high`                       |
 | `--json`                   | Output as JSON (for scripting)                                           |
 
 Notes:
@@ -2028,6 +2057,42 @@ Notes:
 - A task with both `--prompt` and `--notify` becomes two subscriptions sharing one fire time (`<name>-prompt` and `<name>-notify`).
 - `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
 - One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
+- `--tier`, `--model`, and `--effort` apply to the prompt run and need `--prompt`. To change them on a task that already exists, use `cue model` below.
+
+### Setting a Subscription's Model
+
+`cue model` shows or changes the model one Cue subscription runs on: a model tier or an exact model, plus an effort level. It works on any subscription that runs an agent, including scheduled tasks and pipeline steps, and it is the CLI twin of the **Model** and **Effort** selectors on a Pipeline Graph agent node and in the Scheduled Tasks form. Like `cue schedule`, it edits the agent's `.maestro/cue.yaml` directly, so it works with the desktop app closed.
+
+```bash
+# Show the current choice and what it resolves to for that agent's provider
+maestro-cli cue model nightly-review
+
+# Run a step on the provider's top model at low effort
+maestro-cli cue model nightly-review --tier high --effort low
+
+# Pin an exact model (for providers with no tier mapping, such as Codex)
+maestro-cli cue model triage --model gpt-5.5-codex
+
+# Go back to the agent's own model and effort
+maestro-cli cue model nightly-review --clear-model --clear-effort
+```
+
+| Flag                       | Description                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider         |
+| `--model <id>`             | Exact model id, passed to the agent as-is                        |
+| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder |
+| `--clear-model`            | Remove the tier or model and use the agent's own model           |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                 |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)        |
+| `--json`                   | Output as JSON (for scripting)                                   |
+
+Notes:
+
+- With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
+- `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
+- When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
+- Subscriptions with `action: command` or `action: notify` run no agent, so the command refuses to set a model on them.
 
 ### Triggering a Subscription
 

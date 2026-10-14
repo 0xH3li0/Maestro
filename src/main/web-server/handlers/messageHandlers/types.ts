@@ -5,8 +5,8 @@
  */
 
 import type { QueueSteerResult } from '../../../../shared/chatSteering';
-import { WebSocket } from 'ws';
 import type {
+	WebClient,
 	AutoRunDocument,
 	AutoRunState,
 	WebSettings,
@@ -42,6 +42,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -78,19 +79,7 @@ export interface WebClientMessage {
 	[key: string]: unknown;
 }
 
-/**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
-	cliAuthenticated?: boolean;
-	/** Admitted by the CLI secret (see the root WebClient in ../../types). */
-	cli?: boolean;
-}
+export type { WebClient } from '../../types';
 
 /**
  * Session detail for command validation
@@ -151,6 +140,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
@@ -199,7 +190,8 @@ export interface MessageHandlerCallbacks {
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		hidden?: boolean
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
@@ -211,7 +203,8 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		held?: boolean
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
@@ -226,6 +219,11 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>;
+	setQueueItemPaused: (
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	) => Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,

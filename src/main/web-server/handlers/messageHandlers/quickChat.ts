@@ -8,13 +8,23 @@
 
 import { getQuickChatController } from '../../../quick-chat';
 import {
+	parseQuickChatFontScaleRequest,
+	parseQuickChatTabChoice,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatCommand,
 } from '../../../../shared/quickChat';
+import { asThinkingMode } from '../../../../shared/types';
 import { logger } from '../../../utils/logger';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+/** The message a command is about, when the caller named one. */
+function messageIdOf(message: WebClientMessage): { messageId?: string } {
+	return typeof message.messageId === 'string' && message.messageId
+		? { messageId: message.messageId }
+		: {};
+}
 
 /** Map a CLI action onto an engine command; null for window actions and status. */
 function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error: string } | null {
@@ -28,15 +38,29 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 			return { type: 'new' };
 		case 'keep':
 			return { type: 'setPersistent', persistent: message.persistent !== false };
+		case 'tab': {
+			const choice = parseQuickChatTabChoice(message.tab);
+			if (!choice) return { error: 'Give a tab id, new, or auto' };
+			return { type: 'setTab', choice };
+		}
+		case 'thinking': {
+			// `mode` is shared with other messages, which give it other values.
+			const raw: unknown = message.mode;
+			const mode = raw === 'cycle' ? 'cycle' : asThinkingMode(raw);
+			if (!mode) return { error: 'Thinking mode must be off, on, sticky, or cycle' };
+			return { type: 'setThinking', mode };
+		}
 		case 'agent': {
 			const agentId = typeof message.agentId === 'string' ? message.agentId : '';
 			if (!agentId) return { error: 'Agent id is required' };
 			return { type: 'setAgent', agentId };
 		}
 		case 'reveal':
-			return { type: 'reveal' };
+			return { type: 'reveal', ...messageIdOf(message) };
 		case 'stop':
 			return { type: 'stop' };
+		case 'new-tab':
+			return { type: 'moveToNewTab', ...messageIdOf(message) };
 		default:
 			return null;
 	}
@@ -90,6 +114,30 @@ export function handleQuickChat(
 
 	if (action === 'pin') {
 		reply({ success: true, status: controller.setPinned(message.pinned !== false) });
+		return;
+	}
+
+	if (action === 'font') {
+		// No request reads the current zoom; a malformed one is an error, not a no-op.
+		if (message.fontScale === undefined) {
+			reply({ success: true, status: controller.getStatus() });
+			return;
+		}
+		const request = parseQuickChatFontScaleRequest(message.fontScale);
+		if (!request) {
+			reply({ success: false, error: 'Invalid text zoom request' });
+			return;
+		}
+		reply({ success: true, status: controller.setFontScale(request) });
+		return;
+	}
+
+	// No mode (or tab) reads the current one, like a bare `font`.
+	if (
+		(action === 'thinking' && message.mode === undefined) ||
+		(action === 'tab' && message.tab === undefined)
+	) {
+		reply({ success: true, status: controller.getStatus() });
 		return;
 	}
 

@@ -35,6 +35,8 @@ export interface ProcessConfig {
 	cwd: string;
 	command: string;
 	args: string[];
+	/** Attach to an existing terminal handle instead of replacing it. */
+	reuseTerminal?: boolean;
 	requiresPty?: boolean;
 	prompt?: string;
 	shell?: string;
@@ -149,7 +151,8 @@ export interface ManagedProcess {
 	 *  corrected `usage` event immediately instead of the gauge staying wrong until
 	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
 	pendingOmpUsagePush?: { model: string; stats: UsageStats };
-	tempImageFiles?: string[];
+	/** Temporary CLI attachments (images and prompt files), owned until process termination. */
+	tempFiles?: string[];
 	command?: string;
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
@@ -173,6 +176,10 @@ export interface ManagedProcess {
 	/** Human-readable remote command line for SSH spawns (the agent invocation that
 	 *  runs on the remote host). Shown in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;
+	/** Remote file the launch script writes the agent's pid to, so Stop and kill
+	 *  can signal the agent on its host rather than only the local ssh client.
+	 *  See utils/ssh-remote-signal.ts. Set only for stdin-script SSH spawns. */
+	sshRemotePidFile?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
@@ -212,6 +219,9 @@ export type { UsageStats } from '../../shared/types';
 export interface SpawnResult {
 	pid: number;
 	success: boolean;
+	error?: string;
+	/** True when the existing terminal was reused; startup commands must not run again. */
+	attached?: boolean;
 }
 
 export interface CommandResult {

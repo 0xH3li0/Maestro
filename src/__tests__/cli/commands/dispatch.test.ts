@@ -99,7 +99,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('--new-tab flow', () => {
-		it('sends new_ai_tab_with_prompt in the background by default and returns the freshly-created tabId', async () => {
+		it('sends new_ai_tab_with_prompt hidden and in the background by default and returns the freshly-created tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',
@@ -121,6 +121,8 @@ describe('dispatch command', () => {
 					// The dispatched tab is created in the background; the tabId we
 					// return is how the caller follows it without stealing the view.
 					background: true,
+					// ...and hidden, so a hand-off adds no chip to the target's strip.
+					hidden: true,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -262,6 +264,38 @@ describe('dispatch command', () => {
 				},
 				'new_ai_tab_with_prompt_result'
 			);
+		});
+
+		it('gives the new tab a chip with --visible (still in the background)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'new_ai_tab_with_prompt_result',
+				success: true,
+				tabId: 'tab-fresh-42',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Open a new conversation', { newTab: true, visible: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'agent-abc-123',
+					prompt: 'Open a new conversation',
+					background: true,
+				},
+				'new_ai_tab_with_prompt_result'
+			);
+		});
+
+		it('rejects --visible without --new-tab', async () => {
+			const result = await runDispatch('agent-abc', 'Fix it', { visible: true });
+
+			expect(result).toMatchObject({ success: false, code: 'INVALID_OPTIONS' });
+			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
 		it('forwards tabId but omits background when --tab is combined with --focus', async () => {
@@ -524,6 +558,42 @@ describe('dispatch command', () => {
 			expect(output.code).toBe('INVALID_OPTIONS');
 			expect(output.error).toContain('--queue cannot be combined with --force');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('--held sends held:true, implies --queue, and reports held on a queued item', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 1,
+				itemId: 'item-held',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Later', { held: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', tabId: 'tab-1', held: true }),
+				'enqueue_command_result'
+			);
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({
+				success: true,
+				queued: true,
+				held: true,
+				itemId: 'item-held',
+			});
+		});
+
+		it('rejects --held combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { held: true, newTab: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 

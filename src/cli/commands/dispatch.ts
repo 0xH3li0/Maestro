@@ -14,6 +14,14 @@ export interface DispatchOptions {
 	tab?: string;
 	force?: boolean;
 	/**
+	 * With `--new-tab`: draw the new tab's chip in the strip. Without it the tab
+	 * is created hidden - named, running, and reachable from the completion toast
+	 * or the caller's delegation pill, but out of the user's tab space. A
+	 * hand-off between agents (or from a Cue pipeline) is background work, and a
+	 * chip per hand-off is clutter the user never asked for. `--focus` implies it.
+	 */
+	visible?: boolean;
+	/**
 	 * Ask for background placement: the active agent and the active tab both stay
 	 * where the user left them. Already the default with `--new-tab`; on the plain
 	 * `send_command` path it suppresses the agent switch the desktop does today.
@@ -30,6 +38,9 @@ export interface DispatchOptions {
 	queue?: boolean;
 	/** Alias for `queue`. */
 	wait?: boolean;
+	/** Queue Held: queue the prompt PAUSED, even on an idle agent, so it waits
+	 *  until `queue resume` (or the card's Resume). Implies `queue`. */
+	held?: boolean;
 	/**
 	 * Agent to wake with a real turn when THIS dispatch finishes. The callback is
 	 * correlated to (target agent, target tab) established at dispatch time, so
@@ -60,6 +71,8 @@ export interface DispatchResponse {
 	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
 	 *  agent's busy state and so queues behind the turn already running. */
 	queued?: boolean;
+	/** True when --held queued the prompt paused; release it with `queue resume`. */
+	held?: boolean;
 	/** 1-based position in the execution queue (only when queued). */
 	queuePosition?: number;
 	/** Id of the queued item (only when queued); usable with `queue remove`. */
@@ -266,6 +279,14 @@ export async function runDispatch(
 		};
 	}
 
+	if (options.visible && !options.newTab) {
+		return {
+			success: false,
+			error: '--visible only applies to --new-tab (an existing tab is already in the strip)',
+			code: 'INVALID_OPTIONS',
+		};
+	}
+
 	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
 	// and a prompt that cannot start because the AGENT is mid-turn is queued for
 	// the new tab rather than rejected. Reject the combo rather than silently
@@ -284,7 +305,7 @@ export async function runDispatch(
 	// contradictory. And --new-tab already does what --queue asks for - a prompt
 	// it cannot start now waits in the agent's queue - so the flag is redundant
 	// there; reject both combos rather than silently ignoring --queue.
-	const queue = options.queue === true || options.wait === true;
+	const queue = options.queue === true || options.wait === true || options.held === true;
 	if (queue && options.newTab) {
 		return {
 			success: false,
@@ -360,6 +381,9 @@ export async function runDispatch(
 						// Background by default: a dispatched prompt is an agent talking to
 						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
+						// Hidden by default too, so hand-offs do not pile up chips in the
+						// target's tab strip. A focused tab is never hidden.
+						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
 						...caller,
 					},
@@ -471,6 +495,7 @@ async function runQueueDispatch(
 					inputMode: 'ai',
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(background ? { background: true } : {}),
+					...(options.held ? { held: true } : {}),
 					...callbackFields,
 					...callerFields,
 				},
@@ -499,6 +524,7 @@ async function runQueueDispatch(
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
 			queued: result.queued === true,
+			...(options.held && result.queued ? { held: true } : {}),
 			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 			...(result.itemId ? { itemId: result.itemId } : {}),
 			...(result.callbackId ? { callbackId: result.callbackId } : {}),
@@ -532,6 +558,7 @@ export async function dispatch(
 				sessionId: result.sessionId,
 				tabId: result.tabId,
 				...(result.queued !== undefined ? { queued: result.queued } : {}),
+				...(result.held ? { held: true } : {}),
 				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
 				...(result.itemId ? { itemId: result.itemId } : {}),
 				...(result.callbackId ? { callbackId: result.callbackId } : {}),

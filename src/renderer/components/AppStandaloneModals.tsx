@@ -29,6 +29,7 @@ import { MaestroWizard, WizardResumeModal } from './Wizard';
 import { TourOverlay } from './Wizard/tour';
 import type { SymphonyContributionData } from './SymphonyModal';
 import type { MindMapLayoutType } from './DocumentGraph/mindMapLayouts';
+import { HostFolderPicker } from './HostFolderPicker';
 
 import type {
 	Theme,
@@ -317,6 +318,7 @@ function AppStandaloneModalsInner({
 
 	return (
 		<>
+			<HostFolderPicker theme={theme} />
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal
 				theme={theme}

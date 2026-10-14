@@ -13,7 +13,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -224,6 +224,12 @@ export type ProcessInputOptions = {
 	 * no turn to steer and is an ordinary send.
 	 */
 	steer?: boolean;
+	/**
+	 * Queue Held: always queue this send, paused, even when the agent is idle. It
+	 * waits on the queue card until the user resumes it (the Send menu's Queue
+	 * Held row). Never dispatches on its own.
+	 */
+	hold?: boolean;
 	images?: string[];
 	/** Prefer this agent over the live activeSessionId when the callback runs. */
 	sessionId?: string;
@@ -552,6 +558,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								activeTab?.id || activeSession.activeTabId
 							);
 							const sessionIsIdle =
+								!options?.hold &&
 								!retryHoldsTab &&
 								(forceParallel
 									? activeTab?.state !== 'busy'
@@ -570,6 +577,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
+								...(options?.hold && { paused: true }),
 								// Freeze the model/effort now: the queue may not drain until
 								// after the user has switched to something else, and this
 								// command must run under - and be labeled with - what was
@@ -812,6 +820,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						(item) => item.waitingForConnection
 					);
 					if (
+						options?.hold ||
 						mentionProbe.probeFailed ||
 						mentionProbe.anyActive ||
 						hasWorkAheadOfNewMessage(liveMentionSession, {
@@ -834,6 +843,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							readOnlyMode: activeTab?.readOnlyMode === true,
 							crossAgentMention: true,
 							crossAgentOnly: true,
+							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
 								waitingForConnection: true,
 							}),
@@ -1043,6 +1053,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 
 				const shouldQueue =
+					options?.hold ||
 					connectionHold ||
 					retryHoldsTab ||
 					consultHoldsTab ||
@@ -1086,6 +1097,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
+						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
@@ -1541,12 +1553,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
 						// Prefix new session message if present (only for the first message in a new session)
-						if (!tabAgentSessionId) {
-							effectivePrompt = prependNewSessionMessage(
-								effectivePrompt,
-								freshSession.newSessionMessage
-							);
-						}
+						effectivePrompt = prependNewSessionMessageOnFirstTurn(
+							effectivePrompt,
+							freshSession.newSessionMessage,
+							tabAgentSessionId
+						);
 
 						// For read-only mode, append instruction to return plan in response instead of writing files
 						if (isReadOnly) {

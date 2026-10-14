@@ -13,12 +13,26 @@
  * setting, and history rule works the same as in the main window, and nothing
  * here re-implements a spawn path.
  *
- * Two modes, switchable per chat:
- * - Ephemeral: the tab is hidden (no chip in the tab strip). Starting a new
- *   chat deletes it. Whether its turns reach History is a setting.
- * - Persistent: the tab is visible on the agent and stays when a new chat
+ * One chat is a THREAD of messages in ONE tab. Its first message is routed: to
+ * an open tab of the agent that is already about its subject, to a conversation
+ * closed in the last two weeks (reopened for it), or to a new tab. Every later
+ * message goes to that same tab, queued behind the reply it follows. The chat
+ * moves only when the user says so (picks another tab or a new one for the next
+ * message, or moves a queued message to a new tab), or when its tab is closed
+ * (the next message is routed again). Each message carries a
+ * {@link QuickChatRoute} saying where it went. See src/shared/quickChatRouting.ts
+ * for how the first message's tab is chosen.
+ *
+ * Two modes, switchable per chat. They apply to the tabs the chat CREATES; a tab
+ * the agent already had, or one reopened for a message, is the user's own and is
+ * never hidden or deleted:
+ * - Ephemeral: a created tab is hidden (no chip in the tab strip). Starting a
+ *   new chat deletes it. Whether its turns reach History is a setting.
+ * - Persistent: a created tab is visible on the agent and stays when a new chat
  *   starts, like any other tab.
  */
+
+import { asThinkingMode, type ThinkingMode } from './types';
 
 /** Encore Feature flag key. */
 export const QUICK_CHAT_ENCORE_FLAG = 'quickChat' as const;
@@ -35,6 +49,12 @@ export interface QuickChatSettings {
 	persistent: boolean;
 	/** Whether turns in an ephemeral chat write History entries. */
 	ephemeralHistory: boolean;
+	/**
+	 * Whether the window shows the agent's reasoning: `on` while a reply is being
+	 * written (gone once the answer arrives), `sticky` kept above the answer.
+	 * Applied to the tabs the chat sends into; see quickChatEngine.
+	 */
+	thinking: ThinkingMode;
 }
 
 export const DEFAULT_QUICK_CHAT_SETTINGS: Readonly<QuickChatSettings> = {
@@ -42,6 +62,7 @@ export const DEFAULT_QUICK_CHAT_SETTINGS: Readonly<QuickChatSettings> = {
 	agentId: '',
 	persistent: false,
 	ephemeralHistory: true,
+	thinking: 'off',
 };
 
 /**
@@ -66,14 +87,71 @@ export function resolveQuickChatSettings(raw: unknown): QuickChatSettings {
 			typeof stored.ephemeralHistory === 'boolean'
 				? stored.ephemeralHistory
 				: DEFAULT_QUICK_CHAT_SETTINGS.ephemeralHistory,
+		thinking: asThinkingMode(stored.thinking) ?? DEFAULT_QUICK_CHAT_SETTINGS.thinking,
 	};
+}
+
+/**
+ * What became of a message sent from Quick Chat:
+ * - `searching`: a tab is being chosen for it.
+ * - `queued`: it is waiting in the agent's queue, because the tab it belongs in
+ *   is mid-reply.
+ * - `running`: the agent is answering it.
+ * - `done`: the reply finished (or the tab it ran in is gone).
+ * - `cancelled`: stopped, or removed from the queue, before it ran.
+ * - `failed`: no tab could be reached; an error message follows it.
+ */
+export type QuickChatRouteStatus =
+	| 'searching'
+	| 'queued'
+	| 'running'
+	| 'done'
+	| 'cancelled'
+	| 'failed';
+
+/** How the tab a message went to came to be: already open, reopened, or created. */
+export type QuickChatRouteOrigin = 'open' | 'reopened' | 'new';
+
+/** Where one message went. Rendered as the pill under it. */
+export interface QuickChatRoute {
+	status: QuickChatRouteStatus;
+	/** The tab it went to. Null while searching, and when none was reached. */
+	tabId: string | null;
+	/** That tab's name as last seen, so the pill survives the tab closing. */
+	tabName: string | null;
+	origin: QuickChatRouteOrigin | null;
+	/** Whether the tab still exists to jump to. */
+	tabOpen: boolean;
+	/** When the running reply started (ms epoch), for the elapsed counter. */
+	since: number | null;
+}
+
+/** One line saying where a message went, for `maestro-cli quick-chat status`. */
+export function describeQuickChatRoute(route: QuickChatRoute): string {
+	if (route.status === 'searching') return 'searching for a tab';
+	if (!route.tabId || !route.origin) return route.status;
+	const how = { open: 'open tab', reopened: 'reopened tab', new: 'new tab' }[route.origin];
+	const tab = `${how} "${route.tabName ?? route.tabId}"`;
+	switch (route.status) {
+		case 'queued':
+			return `queued for ${tab}`;
+		case 'running':
+			return `running in ${tab}`;
+		case 'cancelled':
+			return `cancelled, was for ${tab}`;
+		default:
+			return `sent to ${tab}`;
+	}
 }
 
 export interface QuickChatMessage {
 	id: string;
-	role: 'user' | 'assistant' | 'error';
+	/** `thinking` is the agent's reasoning, present only while it is shown (see QuickChatSettings.thinking). */
+	role: 'user' | 'assistant' | 'thinking' | 'error';
 	text: string;
 	timestamp: number;
+	/** On a message the user sent from Quick Chat: where it went. */
+	route?: QuickChatRoute;
 }
 
 export interface QuickChatAgentOption {
@@ -85,16 +163,63 @@ export interface QuickChatAgentOption {
 	provider?: string;
 }
 
+/** One of the agent's tabs a message can be sent to. */
+export interface QuickChatTabOption {
+	id: string;
+	name: string;
+	/** Mid-reply: a message sent there waits its turn. */
+	busy: boolean;
+	/** The tab the chat is in now. */
+	inChat: boolean;
+}
+
+/**
+ * Where the user wants the NEXT message to go, overriding the chat's tab:
+ * - `tab`: that tab, which becomes the chat's tab from then on.
+ * - `new`: a new tab, which becomes the chat's tab.
+ * - `auto`: let Maestro find the tab, as for a chat's first message.
+ */
+export type QuickChatTabChoice =
+	| { kind: 'auto' }
+	| { kind: 'new' }
+	| { kind: 'tab'; tabId: string };
+
+/** Where the next message will go, as the window shows it. */
+export type QuickChatNextTarget =
+	| { kind: 'auto' }
+	| { kind: 'new' }
+	/** `chosen`: the user picked it; otherwise it is the tab the chat is in. */
+	| { kind: 'tab'; tabId: string; name: string; chosen: boolean };
+
+/**
+ * `new`, `auto`, or a tab id, as `maestro-cli quick-chat tab` and the
+ * WebSocket take it. Null for an empty value.
+ */
+export function parseQuickChatTabChoice(raw: unknown): QuickChatTabChoice | null {
+	if (typeof raw !== 'string' || !raw.trim()) return null;
+	const value = raw.trim();
+	if (value.toLowerCase() === 'new') return { kind: 'new' };
+	if (value.toLowerCase() === 'auto') return { kind: 'auto' };
+	return { kind: 'tab', tabId: value };
+}
+
 /** What the quick window renders. Produced by the engine, relayed by main. */
 export interface QuickChatSnapshot {
 	/** Agent the chat runs on, or null when no agent could be resolved. */
 	agentId: string | null;
 	agentName: string | null;
-	/** The tab backing the current chat; null before the first message. */
+	/** The tab the latest message went to; null before the first one lands. */
 	tabId: string | null;
+	/** Where the next message goes. */
+	next: QuickChatNextTarget;
+	/** The agent's tabs the user can send the next message to: its visible ones and the chat's own. */
+	tabs: QuickChatTabOption[];
 	persistent: boolean;
+	/** Whether the agent's reasoning is shown, and for how long. */
+	thinking: ThinkingMode;
+	/** Whether any message is still searching, queued, or being answered. */
 	busy: boolean;
-	/** When the running turn started (ms epoch), for the elapsed counter. */
+	/** When the oldest running reply started (ms epoch); null when none is running. */
 	busySince: number | null;
 	messages: QuickChatMessage[];
 	/** Agents the user can switch the chat to. */
@@ -107,7 +232,10 @@ export const EMPTY_QUICK_CHAT_SNAPSHOT: Readonly<QuickChatSnapshot> = {
 	agentId: null,
 	agentName: null,
 	tabId: null,
+	next: { kind: 'auto' },
+	tabs: [],
 	persistent: DEFAULT_QUICK_CHAT_SETTINGS.persistent,
+	thinking: DEFAULT_QUICK_CHAT_SETTINGS.thinking,
 	busy: false,
 	busySince: null,
 	messages: [],
@@ -120,9 +248,21 @@ export type QuickChatCommand =
 	| { type: 'send'; text: string }
 	| { type: 'new' }
 	| { type: 'setPersistent'; persistent: boolean }
+	/** Send the next message to another tab, a new tab, or wherever Maestro finds. */
+	| { type: 'setTab'; choice: QuickChatTabChoice }
+	/** Show the agent's reasoning (`on`, `sticky`) or not; `cycle` steps off, on, sticky. Remembered. */
+	| { type: 'setThinking'; mode: ThinkingMode | 'cycle' }
 	| { type: 'setAgent'; agentId: string }
-	| { type: 'reveal' }
+	/** Open a tab in Maestro: the one `messageId` went to, else the latest. */
+	| { type: 'reveal'; messageId?: string }
+	/** Stop every reply in progress and withdraw every message still queued. */
 	| { type: 'stop' }
+	/**
+	 * Take a QUEUED message out of the queue and send it to a new tab instead, so
+	 * it stops waiting on the tab it was routed to. `messageId` defaults to the
+	 * latest queued message.
+	 */
+	| { type: 'moveToNewTab'; messageId?: string }
 	| { type: 'sync' };
 
 /** The engine's answer to a command. `snapshot` is the state after it ran. */
@@ -149,17 +289,49 @@ export interface QuickChatWindowBounds {
 	 * window that falls behind whatever the user clicks next. Absent means pinned.
 	 */
 	pinned?: boolean;
+	/** Text zoom for the conversation (1 = normal). Absent means 1. */
+	fontScale?: number;
+}
+
+/**
+ * A change to the conversation's text zoom: one step up or down, an exact
+ * multiplier, or back to normal. The window's buttons and chords and
+ * `maestro-cli quick-chat font` all send one of these.
+ */
+export type QuickChatFontScaleRequest = { step: 1 | -1 } | { scale: number } | { reset: true };
+
+/**
+ * Read a text zoom request off the wire (IPC from the window, a WS message from
+ * the CLI), or null when it is not one. Out-of-range scales are allowed here and
+ * clamped where they are applied.
+ */
+export function parseQuickChatFontScaleRequest(raw: unknown): QuickChatFontScaleRequest | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	if (r.reset === true) return { reset: true };
+	if (r.step === 1 || r.step === -1) return { step: r.step };
+	if (typeof r.scale === 'number' && Number.isFinite(r.scale) && r.scale > 0) {
+		return { scale: r.scale };
+	}
+	return null;
 }
 
 /** The narrowest the window can be dragged, in either shape. */
 export const QUICK_CHAT_MIN_WIDTH = 380;
 /** The shortest the conversation shape can be dragged. */
 export const QUICK_CHAT_MIN_EXPANDED_HEIGHT = 320;
+/** The composer-only shape at rest: an empty two-line draft. */
+export const QUICK_CHAT_COMPACT_HEIGHT = 148;
+/**
+ * The tallest the composer-only shape grows as the draft gets longer. Past it
+ * the draft scrolls inside the composer.
+ */
+export const QUICK_CHAT_MAX_COMPACT_HEIGHT = 480;
 
 /**
  * `maestro-cli quick-chat bounds`: the same move or resize a drag makes.
  * `height` is the conversation shape's height (the composer-only shape's height
- * is fixed), and `x`/`y` come as a pair.
+ * follows the draft), and `x`/`y` come as a pair.
  */
 export interface QuickChatBoundsRequest {
 	x?: number;
@@ -197,6 +369,8 @@ export interface QuickChatStatus {
 	bounds: { x: number; y: number; width: number; height: number } | null;
 	/** Whether the window floats above other windows (see `QuickChatWindowBounds.pinned`). */
 	pinned: boolean;
+	/** The conversation's text zoom (1 = normal). */
+	fontScale: number;
 	snapshot: QuickChatSnapshot;
 }
 
@@ -219,24 +393,45 @@ export interface QuickChatLogLike {
 
 /**
  * Turn an AI tab's log into chat messages. Agent output arrives as `stdout`
- * (streamed) or `ai` (consult bubbles); thinking, tool, and system entries are
- * process detail the quick window deliberately leaves out.
+ * (streamed) or `ai` (consult bubbles); tool and system entries are process
+ * detail the quick window deliberately leaves out.
+ *
+ * Thinking follows `options.thinking`, the same rule a tab's own thinking chip
+ * applies, so the window never depends on which mode the tab happens to be in:
+ * - `off` (the default): left out.
+ * - `on`: only the reasoning since the last piece of the answer, and only while
+ *   the reply is `running`. Once the answer arrives it goes away.
+ * - `sticky`: all of it, in place, kept after the reply finishes.
  */
-export function logsToQuickChatMessages(logs: readonly QuickChatLogLike[]): QuickChatMessage[] {
-	const messages: QuickChatMessage[] = [];
+export function logsToQuickChatMessages(
+	logs: readonly QuickChatLogLike[],
+	options: { thinking?: ThinkingMode; running?: boolean } = {}
+): QuickChatMessage[] {
+	const thinking = options.thinking ?? 'off';
+	let messages: QuickChatMessage[] = [];
 	for (const log of logs) {
 		let role: QuickChatMessage['role'] | null = null;
 		if (log.source === 'user') role = 'user';
 		else if (log.source === 'stdout' || log.source === 'ai') role = 'assistant';
+		else if (log.source === 'thinking' && thinking !== 'off') role = 'thinking';
 		else if (log.source === 'error' || log.source === 'stderr') role = 'error';
 		if (!role || !log.text.trim()) continue;
 		const previous = messages[messages.length - 1];
 		// Consecutive output entries are one reply split by the streaming batcher.
-		if (role === 'assistant' && previous?.role === 'assistant') {
+		if ((role === 'assistant' || role === 'thinking') && previous?.role === role) {
 			previous.text += log.text;
 			continue;
 		}
 		messages.push({ id: log.id, role, text: log.text, timestamp: log.timestamp });
+	}
+	if (thinking === 'on') {
+		let lastAnswer = -1;
+		messages.forEach((m, i) => {
+			if (m.role === 'assistant') lastAnswer = i;
+		});
+		messages = messages.filter(
+			(m, i) => m.role !== 'thinking' || (options.running === true && i > lastAnswer)
+		);
 	}
 	return messages.length > QUICK_CHAT_MAX_MESSAGES
 		? messages.slice(-QUICK_CHAT_MAX_MESSAGES)

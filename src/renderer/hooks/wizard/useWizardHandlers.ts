@@ -45,6 +45,7 @@ import {
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
+import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
 import { parseSynopsis } from '../../../shared/synopsis';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
@@ -202,6 +203,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		const session = selectActiveSession(s);
 		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
 	});
+	const codexShellEnv = useSettingsStore((s) =>
+		activeToolType === 'codex' ? s.shellEnvVars : undefined
+	);
+	const activeSshRemoteId = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return isSessionRemote(session) ? getSessionSshRemoteId(session) : undefined;
+	});
 	const activeProjectRoot = useSessionStore((s) => selectActiveSession(s)?.projectRoot);
 
 	// --- Store actions (stable) ---
@@ -295,7 +303,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.toolType,
 					currentSession.cwd,
 					currentSession.customPath,
-					currentSession.sshRemote?.id,
+					activeSshRemoteId,
 					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
 						? [currentSession.customEnvVars]
 						: [])
@@ -311,7 +319,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				if (
 					agentCommandObjects.length > 0 ||
-					(currentSession.toolType === 'codex' && agentSlashCommands !== null)
+					(currentSession.toolType === 'codex' &&
+						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
@@ -350,6 +359,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		activeCustomPath,
 		activeAgentCommands,
 		activeCodexEnv,
+		codexShellEnv,
+		activeSshRemoteId,
 		activeProjectRoot,
 	]);
 

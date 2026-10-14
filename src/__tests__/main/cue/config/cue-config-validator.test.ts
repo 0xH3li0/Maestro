@@ -15,6 +15,43 @@ function errs(sub: unknown): string[] {
 	return validateSubscription(sub, 'sub');
 }
 
+describe('validateSubscription - structured CLI send tab placement', () => {
+	const base = {
+		name: 'triage',
+		event: 'app.startup',
+		action: 'command',
+	};
+
+	it.each([true, false, undefined])('accepts new_tab: %s', (newTab) => {
+		expect(
+			errs({
+				...base,
+				command: {
+					mode: 'cli',
+					cli: {
+						command: 'send',
+						target: 'agent-xyz',
+						message: '/triage',
+						...(newTab !== undefined ? { new_tab: newTab } : {}),
+					},
+				},
+			})
+		).toEqual([]);
+	});
+
+	it.each(['true', 1, null, [], {}])('rejects nonboolean new_tab: %s', (newTab) => {
+		expect(
+			errs({
+				...base,
+				command: {
+					mode: 'cli',
+					cli: { command: 'send', target: 'agent-xyz', new_tab: newTab },
+				},
+			})
+		).toContain('sub: "command.cli.new_tab" must be a boolean when provided');
+	});
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // time.once event validation
 // ────────────────────────────────────────────────────────────────────────────

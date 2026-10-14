@@ -8,6 +8,172 @@ icon: book
 
 > Generated from the CLI command tree by `maestro-cli reference`. Do not edit by hand - run `npm run gen:cli-reference` to refresh.
 
+## `maestro-cli lite`
+
+Control a running isolated Maestro Lite client through its native connection actions (JSON output)
+
+| Option               | Description                                                                       | Default |
+| -------------------- | --------------------------------------------------------------------------------- | ------- |
+| `--user-data <path>` | Final isolated Lite user-data directory (same as Maestro --lite --lite-user-data) | -       |
+| `--json`             | Output JSON (Lite controls always return JSON)                                    | -       |
+
+## `maestro-cli lite profile`
+
+Read and manage local Lite connection profiles through the running client
+
+## `maestro-cli lite profile list`
+
+Read saved Lite profiles and current connection state
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite profile read <id>`
+
+Read one saved profile, including validated host identity
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite profile save`
+
+Save a complete profile JSON using native URL, SSH, and identity validation; returns the saved profile
+
+| Option          | Description                                                                                | Default |
+| --------------- | ------------------------------------------------------------------------------------------ | ------- |
+| `--file <path>` | Profile JSON file (same fields as profile read; id, name, transport, url, and ssh for SSH) | -       |
+| `--json`        | Output JSON                                                                                | -       |
+
+## `maestro-cli lite profile remove <id>`
+
+Remove local connection preferences only; never stops host work
+
+| Option   | Description                                                 | Default |
+| -------- | ----------------------------------------------------------- | ------- |
+| `--yes`  | Explicitly confirm profile deletion without a native dialog | -       |
+| `--json` | Output JSON                                                 | -       |
+
+## `maestro-cli lite profile reset-identity <id>`
+
+Disconnect and forget the validated host identity; verify the host out of band before connecting again
+
+| Option   | Description                                               | Default |
+| -------- | --------------------------------------------------------- | ------- |
+| `--yes`  | Explicitly confirm identity reset without a native dialog | -       |
+| `--json` | Output JSON                                               | -       |
+
+## `maestro-cli lite connect <id>`
+
+Connect to a saved profile using the native TLS, SSH, authentication, and identity checks
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite discovery`
+
+Local-network and consented Tailscale peer or advertised Service discovery
+
+## `maestro-cli lite discovery show`
+
+## `maestro-cli lite discovery status`
+
+## `maestro-cli lite discovery stop`
+
+## `maestro-cli lite discovery start`
+
+| Option               | Description                                                                                                        | Default |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--interface <ipv4>` | Advanced override: use one approved LAN interface instead of automatic selection                                   | -       |
+| `--no-lan`           | Do not browse local-network advertisements                                                                         | -       |
+| `--no-tailscale`     | Do not read existing Tailscale client service metadata                                                             | -       |
+| `--tailscale-peers`  | Allow direct HTTP Maestro checks on Tailscale TCP 56036 for up to 32 existing peers per refresh; no login or trust | -       |
+
+## `maestro-cli lite discovery import`
+
+Read an expiring host invitation from stdin; never connect or save trust
+
+## `maestro-cli lite pair`
+
+Attended metadata-only PIN proof; never creates a full Maestro login
+
+## `maestro-cli lite pair request <key>`
+
+| Option             | Description                      | Default |
+| ------------------ | -------------------------------- | ------- |
+| `--generation <n>` | Generation from discovery status | -       |
+| `--name <label>`   | Self-asserted client label       | -       |
+
+## `maestro-cli lite pair submit`
+
+| Option        | Description                                          | Default |
+| ------------- | ---------------------------------------------------- | ------- |
+| `--pin-stdin` | Read six-digit PIN from stdin, not process arguments | -       |
+
+## `maestro-cli lite pair read`
+
+## `maestro-cli lite pair cancel`
+
+## `maestro-cli lite status`
+
+Read connection status, errors, selected profile, and local presentation state
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite reconnect`
+
+Reconnect the selected profile without replaying host commands
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite disconnect`
+
+Disconnect this client and stop only its owned SSH tunnel; host work continues
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite connections`
+
+Show the native connection picker
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite commands`
+
+Show the native connection command palette
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite dismiss`
+
+Return to the remote view or stay on setup; never close Lite
+
+| Option   | Description                                           | Default |
+| -------- | ----------------------------------------------------- | ------- |
+| `--json` | Output JSON                                           | -       |
+| `--yes`  | Accepted for compatibility; dismiss never closes Lite | -       |
+
+## `maestro-cli lite close`
+
+Close Maestro Lite only; host work continues
+
+| Option   | Description                                                    | Default |
+| -------- | -------------------------------------------------------------- | ------- |
+| `--json` | Output JSON                                                    | -       |
+| `--yes`  | Explicitly confirm closing this client without a native dialog | -       |
+
 ## `maestro-cli agent-run`
 
 Record and inspect agent runs
@@ -247,19 +413,21 @@ Send a message to an agent and get a JSON response
 
 Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
 
-| Option                            | Description                                                                                                                                                                                                                                                                                                    | Default |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).                                                                                             | -       |
-| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                     | -       |
-| `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                       | -       |
-| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                 | -       |
-| `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                  | -       |
-| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                            | -       |
-| `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                              | -       |
-| `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                    | -       |
-| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                            | -       |
-| `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted. | -       |
-| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                  | -       |
+| Option                            | Description                                                                                                                                                                                                                                                                                                                                                              | Default |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true). | -       |
+| `--visible`                       | With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)                                                                                                                                                                                                                                 | -       |
+| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                                                                               | -       |
+| `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                                                                                 | -       |
+| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                                                                           | -       |
+| `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                            | -       |
+| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                      | -       |
+| `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                        | -       |
+| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                          | -       |
+| `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                              | -       |
+| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                                                                                      | -       |
+| `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                           | -       |
+| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                            | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -272,7 +440,7 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work in a visible tab and returns a tab ID. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
@@ -293,6 +461,22 @@ List queued execution items as JSON (all agents, or one with --agent)
 ## `maestro-cli queue remove <item-id>`
 
 Remove a queued item by its id (from dispatch --queue output or queue list)
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue hold <item-id>`
+
+Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue resume <item-id>`
+
+Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |
@@ -710,6 +894,43 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
 
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
@@ -772,6 +993,20 @@ List all Cue subscriptions across agents
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli cue model <subscription-name>`
+
+Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
+
+| Option                     | Description                                               | Default |
+| -------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
+| `--json`                   | Output as JSON (for scripting)                            | -       |
 
 ## `maestro-cli cue enable <subscription>`
 
@@ -1374,7 +1609,7 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
+| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 `test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.
@@ -2121,6 +2356,30 @@ Float the window above other windows ("off" lets it fall behind them)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat tab [target]`
+
+Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat thinking [mode]`
+
+Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat font [size]`
+
+Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat agent <agent-id>`
 
 Switch Quick Chat to another agent and start a new chat there
@@ -2129,9 +2388,17 @@ Switch Quick Chat to another agent and start a new chat there
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat reveal`
+## `maestro-cli quick-chat reveal [message-id]`
 
-Open the current chat as a tab in the main Maestro window
+Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat new-tab [message-id]`
+
+Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2139,7 +2406,7 @@ Open the current chat as a tab in the main Maestro window
 
 ## `maestro-cli quick-chat stop`
 
-Stop the reply the agent is writing
+Stop the replies in progress and withdraw the messages still queued
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2361,6 +2628,14 @@ List the provider accounts the Feedback chat can run as, in the order it tries t
 | `--use <key>` | Make this account (a key from the list) the one the next chat tries first | -       |
 | `--clear`     | Forget the remembered account and pick automatically again                | -       |
 | `--json`      | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli feedback diagnose`
+
+Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli feedback search <query>`
 

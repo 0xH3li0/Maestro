@@ -15,18 +15,29 @@
  *
  * The user can resize it and move it, and both survive a restart (see
  * `QuickChatWindowBounds`). Width resizes in both shapes; height only in the
- * conversation shape, because the composer-only shape is exactly the composer.
+ * conversation shape. The composer-only shape is exactly the composer, so its
+ * height follows the draft: the window reports the composer's height as it
+ * grows and shrinks (see setQuickChatCompactHeight).
  */
 
 import { BrowserWindow, screen } from 'electron';
 import { isMacOS } from '../../shared/platformDetection';
 import {
+	QUICK_CHAT_COMPACT_HEIGHT as COMPACT_HEIGHT,
+	QUICK_CHAT_MAX_COMPACT_HEIGHT as MAX_COMPACT_HEIGHT,
 	QUICK_CHAT_MIN_EXPANDED_HEIGHT as MIN_EXPANDED_HEIGHT,
 	QUICK_CHAT_MIN_WIDTH as MIN_WIDTH,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
 	type QuickChatLayout,
 	type QuickChatWindowBounds,
 } from '../../shared/quickChat';
+import {
+	clampFontScale,
+	FONT_SCALE_DEFAULT,
+	FONT_SCALE_RANGE,
+	stepScale,
+} from '../../shared/scaleRange';
 import { resolveVisibleWindowPosition } from '../app-lifecycle/window-position';
 import { debounce, type DebouncedFunction } from '../utils/debounce';
 import { logger } from '../utils/logger';
@@ -51,8 +62,6 @@ export interface QuickChatWindowDeps {
 }
 
 const DEFAULT_WIDTH = 560;
-/** Composer only. Fixed: the user cannot resize this shape's height. */
-const COMPACT_HEIGHT = 148;
 /** Composer plus conversation, before the user resizes it. */
 const DEFAULT_EXPANDED_HEIGHT = 600;
 /** The window's top edge sits this far down the work area on first show. */
@@ -70,6 +79,11 @@ const NO_LIMIT = 10_000;
 let quickWindow: BrowserWindow | null = null;
 let quickWindowId: string | null = null;
 let layout: QuickChatLayout = 'compact';
+/**
+ * The composer-only shape's height: the composer's own, as the window last
+ * reported it. The user cannot drag it; the draft decides it.
+ */
+let compactHeight = COMPACT_HEIGHT;
 /** Set once the user drags the window (or a saved spot was restored). */
 let userPlaced = false;
 /** A show was asked for while a fresh window has not painted yet. */
@@ -114,6 +128,10 @@ function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
 		width: positive(raw.width),
 		expandedHeight: positive(raw.expandedHeight),
 		pinned: typeof raw.pinned === 'boolean' ? raw.pinned : undefined,
+		fontScale:
+			typeof raw.fontScale === 'number' && Number.isFinite(raw.fontScale)
+				? clampFontScale(raw.fontScale)
+				: undefined,
 	};
 	if (saved.x !== undefined && saved.y !== undefined) userPlaced = true;
 	return saved;
@@ -124,7 +142,7 @@ function widthNow(): number {
 }
 
 function heightFor(next: QuickChatLayout): number {
-	if (next === 'compact') return COMPACT_HEIGHT;
+	if (next === 'compact') return compactHeight;
 	return Math.max(
 		MIN_EXPANDED_HEIGHT,
 		Math.round(saved?.expandedHeight ?? DEFAULT_EXPANDED_HEIGHT)
@@ -173,17 +191,17 @@ function boundsFor(next: QuickChatLayout): Electron.Rectangle {
 
 /**
  * Resize limits per shape. The composer-only shape pins its height (min and
- * max both the composer); the conversation shape takes any height above a
- * floor. Loosen before moving to the new size and tighten after, or the
- * outgoing shape's limits clamp the incoming size.
+ * max both the height it is given); the conversation shape takes any height
+ * above a floor. Loosen before moving to the new size and tighten after, or
+ * the outgoing shape's limits clamp the incoming size.
  */
 function applyLayout(win: BrowserWindow, next: QuickChatLayout, bounds: Electron.Rectangle): void {
 	win.setMinimumSize(MIN_WIDTH, Math.min(COMPACT_HEIGHT, MIN_EXPANDED_HEIGHT));
 	win.setMaximumSize(NO_LIMIT, NO_LIMIT);
 	win.setBounds(bounds);
 	if (next === 'compact') {
-		win.setMinimumSize(MIN_WIDTH, COMPACT_HEIGHT);
-		win.setMaximumSize(NO_LIMIT, COMPACT_HEIGHT);
+		win.setMinimumSize(MIN_WIDTH, bounds.height);
+		win.setMaximumSize(NO_LIMIT, bounds.height);
 	} else {
 		win.setMinimumSize(MIN_WIDTH, MIN_EXPANDED_HEIGHT);
 	}
@@ -192,7 +210,7 @@ function applyLayout(win: BrowserWindow, next: QuickChatLayout, bounds: Electron
 /**
  * Record the window's size (and its spot, once the user has placed it). The
  * height is recorded only in the conversation shape: the composer shape's
- * height is fixed, and saving it would shrink the next conversation to it.
+ * height is the draft's, and saving it would size the next conversation to it.
  *
  * Takes the bounds and shape as they were when the event fired, not when the
  * debounced save runs: by the time a save is flushed on close, the window is
@@ -316,6 +334,8 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		// close (feature toggled off and on) the same way it survives a restart.
 		saved = null;
 		userPlaced = false;
+		// The next window's composer reports its own height once it renders.
+		compactHeight = COMPACT_HEIGHT;
 	});
 
 	// The window only ever shows its own bundle: deny popups and navigation away.
@@ -423,6 +443,29 @@ export function setQuickChatLayout(next: QuickChatLayout): void {
 }
 
 /**
+ * Follow the composer's height in the composer-only shape, so a draft that
+ * grows past two lines grows the window instead of being clipped by it. The
+ * top edge stays put and the window grows downward, stopping at the bottom of
+ * its display (past that the draft scrolls). Kept but not applied while the
+ * conversation shows; it applies on the way back to the composer-only shape.
+ */
+export function setQuickChatCompactHeight(height: number): void {
+	if (!Number.isFinite(height)) return;
+	const next = Math.round(Math.min(MAX_COMPACT_HEIGHT, Math.max(COMPACT_HEIGHT, height)));
+	if (next === compactHeight) return;
+	compactHeight = next;
+	const win = getQuickChatWindow();
+	if (!win || layout !== 'compact' || fullViewRestore) return;
+	const bounds = win.getBounds();
+	const area = screen.getDisplayMatching(bounds).workArea;
+	const room = area.y + area.height - bounds.y;
+	applyLayout(win, 'compact', {
+		...bounds,
+		height: Math.max(COMPACT_HEIGHT, Math.min(next, room)),
+	});
+}
+
+/**
  * Take the whole display for the diagram viewer, or give it back. The window
  * is sized to fit a chat, which is far too small to read a diagram in, so the
  * viewer grows it to the work area of the display it is on and puts it back
@@ -444,8 +487,11 @@ export function setQuickChatFullView(on: boolean): void {
 	fullViewRestore = null;
 	// The shape may have changed underneath the viewer (a reply arrived): keep
 	// the spot and width, and take the height of the shape the chat is in now.
+	// The composer-only height follows the draft, which may have changed too.
 	const bounds =
-		restore.layout === layout ? restore.bounds : { ...restore.bounds, height: heightFor(layout) };
+		restore.layout === layout && layout === 'expanded'
+			? restore.bounds
+			: { ...restore.bounds, height: heightFor(layout) };
 	applyLayout(win, layout, bounds);
 }
 
@@ -498,6 +544,36 @@ export function setQuickChatWindowPinned(next: boolean, deps: QuickChatWindowDep
 	if (!win) return;
 	win.setAlwaysOnTop(next, 'floating');
 	win.webContents.send('quickChat:pinned', next);
+}
+
+/** The conversation's text zoom (1 = normal). */
+export function getQuickChatFontScale(deps: QuickChatWindowDeps): number {
+	return loadSaved(deps).fontScale ?? FONT_SCALE_DEFAULT;
+}
+
+/**
+ * Change the conversation's text zoom and remember it with the window's other
+ * per-device state, so it survives a hide, a close, and a restart. The window's
+ * buttons and chords and `maestro-cli quick-chat font` all land here; the window
+ * is told so its text follows a CLI change. Returns the new zoom.
+ */
+export function setQuickChatFontScale(
+	request: QuickChatFontScaleRequest,
+	deps: QuickChatWindowDeps
+): number {
+	const current = getQuickChatFontScale(deps);
+	const next =
+		'reset' in request
+			? FONT_SCALE_DEFAULT
+			: 'step' in request
+				? stepScale(current, request.step, FONT_SCALE_RANGE)
+				: clampFontScale(request.scale);
+	if (next === current) return current;
+	pendingSave?.flush();
+	saved = { ...loadSaved(deps), fontScale: next };
+	deps.boundsStore.set(saved);
+	getQuickChatWindow()?.webContents.send('quickChat:fontScale', next);
+	return next;
 }
 
 /** The window's current bounds, for `quick-chat status`. */

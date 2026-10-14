@@ -1,17 +1,17 @@
 /**
  * IPC Bridge - generic Web↔Main mirror of Electron's window.maestro.*
  *
- * Lets a web client invoke any registered ipcMain handler and receive every
- * webContents.send push the desktop renderer would have received. This is the
- * core of the "remote-control desktop UI in a browser tab" path.
+ * Lets an owner-operator invoke the explicitly reviewed remote IPC inventory
+ * and receive its workload events. Host administration and trusted renderer
+ * request/reply channels never cross this boundary.
  *
  * Wire format:
  *   client→server  { type: 'bridge.invoke', requestId, channel, args }
  *   server→client  { type: 'bridge.response', requestId, ok, result|error }
  *   server→client  { type: 'bridge.event',    channel, args }
  *
- * No per-channel subscription tracking yet - every webContents.send is fanned
- * out to all WS clients as bridge.event. Clients filter via their own ipcRenderer.on.
+ * Events are allowlisted before fanout; clients filter permitted events via
+ * their own ipcRenderer.on.
  */
 
 import { ipcMain } from 'electron';
@@ -20,8 +20,17 @@ import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
 import { runAsActingUser } from '../auth/acting-user';
 import { isDesktopOnlyChannel } from '../../ipc/desktop-only-channels';
-import { bridgeDeniedChannelError, isBridgeDeniedChannel } from './bridgeDenyList';
 import { bridgeGuardViolation } from './bridgePathGuard';
+import {
+	isRemoteMethodAllowed,
+	isRemoteEventAllowed,
+	remoteDeniedChannelError,
+	isRemoteSecretField,
+	isRemoteSettingReadable,
+	isRemoteSettingWritable,
+	sanitizeRemoteConfiguration,
+	sanitizeRemoteResult,
+} from './bridgeDenyList';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -100,10 +109,12 @@ export function uninstallWebContentsBridgeHook(): void {
  * may not invoke `computerHistory:*` must not receive its pushes.
  */
 export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
-	if (!broadcastSink) return;
-	if (isBridgeDeniedChannel(channel) || isDesktopOnlyChannel(channel)) return;
+	if (!broadcastSink || !isRemoteEventAllowed(channel) || isDesktopOnlyChannel(channel)) return;
 	try {
-		broadcastSink(channel, args);
+		broadcastSink(
+			channel,
+			channel === 'sessions:lifecycleSync' ? (sanitizeRemoteConfiguration(args) as unknown[]) : args
+		);
 	} catch (err) {
 		logger.warn(`bridge fanout failed: ${(err as Error).message}`, LOG_CONTEXT);
 	}
@@ -120,7 +131,8 @@ export async function handleBridgeInvoke(
 ): Promise<void> {
 	const requestId = message.requestId;
 	const channel = message.channel;
-	const args = Array.isArray(message.args) ? message.args : [];
+	let args = Array.isArray(message.args) ? message.args : [];
+	const event = { ...FAKE_EVENT, clientId: client.id };
 
 	if (typeof channel !== 'string' || !channel) {
 		send(client, {
@@ -132,16 +144,19 @@ export async function handleBridgeInvoke(
 		return;
 	}
 
-	// Refused BEFORE any lookup: a denied channel must not be distinguishable
-	// from an unregistered one by timing, and more importantly must not reach a
-	// handler at all. See bridgeDenyList.ts.
-	if (isBridgeDeniedChannel(channel)) {
+	// Default deny, including any subsequently registered host-only channel.
+	if (
+		!isRemoteMethodAllowed(channel) ||
+		(channel === 'settings:set' && !isRemoteSettingWritable(args[0])) ||
+		(channel === 'agents:setConfigValue' &&
+			(typeof args[1] !== 'string' || /[.\[\]]/.test(args[1]) || isRemoteSecretField(args[1])))
+	) {
 		logger.warn(`Refused bridge channel "${channel}" from ${client.id}`, LOG_CONTEXT);
 		send(client, {
 			type: 'bridge.response',
 			requestId,
 			ok: false,
-			error: bridgeDeniedChannelError(channel),
+			error: remoteDeniedChannelError(channel),
 		});
 		return;
 	}
@@ -164,6 +179,14 @@ export async function handleBridgeInvoke(
 	// handler is looked up and no listener is run, so the reply below is the one
 	// an unknown channel gets. See ipc/desktop-only-channels.ts.
 	const desktopOnly = isDesktopOnlyChannel(channel);
+	if (
+		(channel === 'settings:get' && !isRemoteSettingReadable(args[0])) ||
+		(channel === 'agents:getConfigValue' &&
+			(typeof args[1] !== 'string' || /[.\[\]]/.test(args[1]) || isRemoteSecretField(args[1])))
+	) {
+		send(client, { type: 'bridge.response', requestId, ok: true, result: undefined });
+		return;
+	}
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;
 	const handler = desktopOnly ? undefined : handlers?.get(channel);
 	if (!handler) {
@@ -192,7 +215,7 @@ export async function handleBridgeInvoke(
 				// Same acting-user context as the invoke path below: a `send`-style
 				// API mutates state too, and a turn started through one has to be
 				// attributed to the account that asked for it.
-				runAsActingUser(client.user, () => ipcMain.emit(channel, FAKE_EVENT, ...args));
+				runAsActingUser(client.user, () => ipcMain.emit(channel, event, ...args));
 				send(client, { type: 'bridge.response', requestId, ok: true, result: undefined });
 			} catch (err) {
 				const error = err instanceof Error ? err.message : String(err);
@@ -215,12 +238,27 @@ export async function handleBridgeInvoke(
 		// handler performs still reads the same account from `getActingUser()`.
 		// `client.user` is undefined for maestro-cli (admitted by its secret) and
 		// for every client when the gate is off, which reads as "the desktop".
-		const result = await runAsActingUser(client.user, () => handler(FAKE_EVENT, ...args));
+		if (channel === 'agents:setConfig') {
+			const incoming = args[1];
+			if (
+				!incoming ||
+				typeof incoming !== 'object' ||
+				Array.isArray(incoming) ||
+				JSON.stringify(incoming) !== JSON.stringify(sanitizeRemoteConfiguration(incoming))
+			) {
+				throw new Error('Provider credentials must be managed on the host');
+			}
+			const getConfig = handlers?.get('agents:getConfig');
+			if (!getConfig) throw new Error('Host agent configuration is unavailable');
+			const existing = (await getConfig(event, args[0])) as Record<string, unknown>;
+			args = [args[0], { ...existing, ...incoming }];
+		}
+		const result = await runAsActingUser(client.user, () => handler(event, ...args));
 		send(client, {
 			type: 'bridge.response',
 			requestId,
 			ok: true,
-			result,
+			result: sanitizeRemoteResult(channel, result),
 		});
 	} catch (err) {
 		const error = err instanceof Error ? err.message : String(err);

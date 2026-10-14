@@ -14,7 +14,7 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove, queueSteer } from './commands/queue';
+import { queueHold, queueList, queueRemove, queueResume, queueSteer } from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -52,6 +52,7 @@ import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
+import { cueModel } from './commands/cue-model';
 import {
 	cuePipelineAdd,
 	cuePipelineExport,
@@ -124,6 +125,7 @@ import { supportPackage } from './commands/support-package';
 import {
 	feedbackAccounts,
 	feedbackAuth,
+	feedbackDiagnose,
 	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
@@ -142,6 +144,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -216,6 +219,7 @@ import {
 import { mcpServe } from './commands/mcp';
 import { logger } from '../main/utils/logger';
 
+import { registerLiteCommands } from './commands/lite';
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
 // throwing a ReferenceError; in those paths the constant is never substituted.
@@ -239,6 +243,8 @@ program.name('maestro-cli').description('Command-line interface for Maestro').ve
 program
 	.option('-q, --quiet', 'Suppress incidental success output (errors still print)')
 	.option('--verbose', 'Print extra detail where available');
+
+registerLiteCommands(program);
 
 program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
@@ -501,7 +507,11 @@ program
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+	)
+	.option(
+		'--visible',
+		'With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)'
 	)
 	.option(
 		'--background',
@@ -524,6 +534,10 @@ program
 		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
+	.option(
+		'--held',
+		"Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id."
+	)
 	.option(
 		'--notify-on-complete <agent-id>',
 		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
@@ -566,7 +580,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), and `steer`
+// (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -586,6 +601,22 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+queue
+	.command('hold <item-id>')
+	.description(
+		'Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueHold);
+
+queue
+	.command('resume <item-id>')
+	.description(
+		'Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueResume);
 
 queue
 	.command('steer <item-id>')
@@ -1036,6 +1067,41 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
 
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
+
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
 	.command('marketplace')
@@ -1087,6 +1153,22 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Read or change the model one subscription runs on. No setting flag = read.
+// Works with the desktop app closed; the engine's YAML watcher picks it up.
+cue
+	.command('model <subscription-name>')
+	.description(
+		'Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)'
+	)
+	.option('-a, --agent <id-or-name>', 'Scope to one agent (required when the name exists on two)')
+	.option('--tier <level>', 'Model tier: low, medium, high (mapped per provider)')
+	.option('--model <id>', 'Exact model id (instead of --tier)')
+	.option('--effort <level>', 'Effort: low, medium, high (mapped per provider)')
+	.option('--clear-model', "Remove the tier / model and use the agent's own model")
+	.option('--clear-effort', "Remove the effort and use the agent's own effort")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueModel);
 
 cue
 	.command('enable <subscription>')
@@ -2497,20 +2579,54 @@ quickChatCmd
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
+	.command('tab [target]')
+	.description(
+		'Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((target: string | undefined, options) => quickChat('tab', { state: target }, options));
+
+quickChatCmd
+	.command('thinking [mode]')
+	.description(
+		"Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode: string | undefined, options) => quickChat('thinking', { state: mode }, options));
+
+quickChatCmd
+	.command('font [size]')
+	.description(
+		'Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((size: string | undefined, options) => quickChat('font', { state: size }, options));
+
+quickChatCmd
 	.command('agent <agent-id>')
 	.description('Switch Quick Chat to another agent and start a new chat there')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => quickChat('agent', { agent }, options));
 
 quickChatCmd
-	.command('reveal')
-	.description('Open the current chat as a tab in the main Maestro window')
+	.command('reveal [message-id]')
+	.description(
+		'Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => quickChat('reveal', {}, options));
+	.action((messageId: string | undefined, options) => quickChat('reveal', { messageId }, options));
+
+quickChatCmd
+	.command('new-tab [message-id]')
+	.description(
+		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
 	.command('stop')
-	.description('Stop the reply the agent is writing')
+	.description('Stop the replies in progress and withdraw the messages still queued')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('stop', {}, options));
 
@@ -2746,6 +2862,14 @@ feedback
 	.option('--clear', 'Forget the remembered account and pick automatically again')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAccounts);
+
+feedback
+	.command('diagnose')
+	.description(
+		'Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackDiagnose);
 
 feedback
 	.command('search <query>')

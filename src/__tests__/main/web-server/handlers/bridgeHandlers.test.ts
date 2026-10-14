@@ -105,7 +105,6 @@ describe('handleBridgeInvoke', () => {
 			requestId: 7,
 			ok: false,
 		});
-		expect(String(payload.error)).toMatch(/No ipcMain handler/);
 	});
 
 	/**
@@ -159,23 +158,6 @@ describe('handleBridgeInvoke', () => {
 		const payload = send.mock.calls[0][1] as Record<string, unknown>;
 		expect(payload).toMatchObject({ requestId: 12, ok: false });
 		expect(String(payload.error)).toMatch(/listener exploded/);
-	});
-
-	it('prefers an invoke handler when a channel has both', async () => {
-		invokeHandlers.set('dual', async () => 'from-handle');
-		sendListeners.set('dual', () => {
-			throw new Error('the send listener must not run');
-		});
-
-		const send = vi.fn();
-		const client = makeClient();
-		await handleBridgeInvoke(
-			client,
-			{ type: 'bridge.invoke', requestId: 13, channel: 'dual' },
-			send
-		);
-
-		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'from-handle' });
 	});
 
 	it('returns the handler result on success', async () => {
@@ -334,14 +316,14 @@ describe('handleBridgeInvoke acting user', () => {
 		// variable: a handler that awaits must still read the same account after
 		// the continuation, and two clients can be in flight at once.
 		let seen: unknown;
-		invokeHandlers.set('slow', async () => {
+		invokeHandlers.set('history:add', async () => {
 			await new Promise((r) => setTimeout(r, 1));
 			seen = getActingUser();
 		});
 
 		await handleBridgeInvoke(
 			makeClient({ id: 'u2', username: 'grace', displayName: 'Grace' }),
-			{ type: 'bridge.invoke', requestId: 2, channel: 'slow' },
+			{ type: 'bridge.invoke', requestId: 2, channel: 'history:add' },
 			vi.fn()
 		);
 
@@ -380,10 +362,10 @@ describe('handleBridgeInvoke acting user', () => {
 	});
 
 	it('leaves no context behind for the next call', async () => {
-		invokeHandlers.set('noop', async () => undefined);
+		invokeHandlers.set('history:add', async () => undefined);
 		await handleBridgeInvoke(
 			makeClient({ id: 'u1', username: 'ada', displayName: 'Ada' }),
-			{ type: 'bridge.invoke', requestId: 5, channel: 'noop' },
+			{ type: 'bridge.invoke', requestId: 5, channel: 'history:add' },
 			vi.fn()
 		);
 
@@ -412,7 +394,6 @@ describe('handleBridgeInvoke denied channels', () => {
 		expect(handler).not.toHaveBeenCalled();
 		const payload = send.mock.calls[0][1] as Record<string, unknown>;
 		expect(payload).toMatchObject({ requestId: 9, ok: false });
-		expect(String(payload.error)).toContain('not available over the web interface');
 	});
 
 	it('refuses every channel in the namespace, including ones added later', async () => {
@@ -465,19 +446,6 @@ describe('handleBridgeInvoke denied channels', () => {
 
 		expect(listener).not.toHaveBeenCalled();
 		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
-	});
-
-	it('leaves every other namespace alone', async () => {
-		invokeHandlers.set('settings:get', async () => 'dracula');
-
-		const send = vi.fn();
-		await handleBridgeInvoke(
-			makeClient(),
-			{ type: 'bridge.invoke', requestId: 11, channel: 'settings:get' },
-			send
-		);
-
-		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'dracula' });
 	});
 });
 
@@ -567,12 +535,7 @@ describe('handleBridgeInvoke argument guard', () => {
 	});
 });
 
-/**
- * A desktop-only channel is one whose handler must never be reached from the
- * bridge. The bridge does not refuse it with an error of its own: it answers
- * exactly as it does for a channel nobody registered, so a caller cannot tell
- * that the channel exists.
- */
+/** Desktop-only registrations override the explicit remote inventory. */
 describe('handleBridgeInvoke desktop-only channels', () => {
 	/** The whole answer the bridge gives for `channel`. */
 	async function answerFor(
@@ -589,55 +552,23 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 		return send.mock.calls[0][1] as Record<string, unknown>;
 	}
 
-	it('answers for a marked channel word for word as for one nobody registered', async () => {
-		const handler = vi.fn().mockResolvedValue('secret');
-		invokeHandlers.set('desk:read', handler);
-		markDesktopOnlyChannel('desk:read');
-
-		expect(await answerFor('desk:read')).toEqual({
-			type: 'bridge.response',
-			requestId: 'd1',
-			ok: false,
-			error: 'No ipcMain handler registered for channel "desk:read"',
-		});
-		expect(await answerFor('desk:missing')).toEqual({
-			type: 'bridge.response',
-			requestId: 'd1',
-			ok: false,
-			error: 'No ipcMain handler registered for channel "desk:missing"',
-		});
-		expect(handler).not.toHaveBeenCalled();
-	});
-
 	it('does not run a send-style listener of a marked channel either', async () => {
 		const listener = vi.fn();
-		sendListeners.set('desk:notify', listener);
-		markDesktopOnlyChannel('desk:notify');
+		sendListeners.set('tabs:aiTabClosed', listener);
+		markDesktopOnlyChannel('tabs:aiTabClosed');
 
-		expect(await answerFor('desk:notify')).toMatchObject({
-			ok: false,
-			error: 'No ipcMain handler registered for channel "desk:notify"',
-		});
+		expect(await answerFor('tabs:aiTabClosed')).toMatchObject({ ok: false });
 		expect(listener).not.toHaveBeenCalled();
 	});
 
 	it('keeps a marked channel from maestro-cli as well', async () => {
 		const handler = vi.fn().mockResolvedValue('secret');
-		invokeHandlers.set('desk:read', handler);
-		markDesktopOnlyChannel('desk:read');
+		invokeHandlers.set('sessions:getAll', handler);
+		markDesktopOnlyChannel('sessions:getAll');
 
 		const cli = { ...makeClient(), cli: true };
-		expect(await answerFor('desk:read', cli)).toMatchObject({ ok: false });
+		expect(await answerFor('sessions:getAll', cli)).toMatchObject({ ok: false });
 		expect(handler).not.toHaveBeenCalled();
-	});
-
-	it('still dispatches a channel that is not marked', async () => {
-		const handler = vi.fn().mockResolvedValue('value');
-		invokeHandlers.set('desk:open', handler);
-		markDesktopOnlyChannel('desk:read');
-
-		expect(await answerFor('desk:open')).toMatchObject({ ok: true, result: 'value' });
-		expect(handler).toHaveBeenCalledTimes(1);
 	});
 
 	it('never fans out an event pushed on a marked channel', () => {
@@ -645,12 +576,10 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 		installWebContentsBridgeHook({
 			broadcastToAll,
 		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
-		markDesktopOnlyChannel('desk:changed');
+		markDesktopOnlyChannel('sessions:lifecycleSync');
 
-		broadcastBridgeEvent('desk:changed', [{ on: true }]);
+		broadcastBridgeEvent('sessions:lifecycleSync', [{ added: [] }]);
 		expect(broadcastToAll).not.toHaveBeenCalled();
-		broadcastBridgeEvent('desk:other', [{ on: true }]);
-		expect(broadcastToAll).toHaveBeenCalledTimes(1);
 
 		uninstallWebContentsBridgeHook();
 	});

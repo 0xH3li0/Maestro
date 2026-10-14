@@ -91,6 +91,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				forcedParallelExecution={settings.forcedParallelExecution}
 				forcedParallelAlways={settings.forcedParallelAlways}
 				setForcedParallelAlways={settings.setForcedParallelAlways}
+				sendButtonMenu={settings.sendButtonMenu}
+				setSendButtonMenu={settings.setSendButtonMenu}
 				shortcuts={settings.shortcuts}
 				forcedParallelWarning={forcedParallelWarning}
 			/>
@@ -98,6 +100,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crossAgentMentionsWritable={settings.crossAgentMentionsWritable}
 				setCrossAgentMentionsWritable={settings.setCrossAgentMentionsWritable}
+				crossAgentHandoffsWritable={settings.crossAgentHandoffsWritable}
+				setCrossAgentHandoffsWritable={settings.setCrossAgentHandoffsWritable}
 			/>
 			<AutoRunInactivitySection
 				theme={theme}
