@@ -10,6 +10,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
+import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
 import type { MovementPayload } from '../../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
@@ -542,6 +543,7 @@ describe('useRemoteIntegration', () => {
 		useSessionStore.setState({ sessions: [], initialLoadComplete: false, sessionsReadOk: false });
 		useNotificationStore.setState({ toasts: [] });
 		useMovementStore.setState({ items: [], dismissedItems: [] });
+		getModalActions().setConcertoStageOpen(false);
 		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 		clearDesktopAiTabSelections();
@@ -3529,22 +3531,11 @@ describe('useRemoteIntegration', () => {
 			expect(mockProcess.sendMovementAppliedResponse).not.toHaveBeenCalled();
 		});
 
-		it('waits for the routed HTML revision to register and become ready', async () => {
+		it('acknowledges the ready HTML revision even while its stage is hidden', async () => {
 			const deps = createDeps();
 			renderHook(() => useRemoteIntegration(deps));
 			const frame = document.createElement('iframe');
 			document.body.appendChild(frame);
-			vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
-				x: 0,
-				y: 0,
-				width: 640,
-				height: 480,
-				top: 0,
-				right: 640,
-				bottom: 480,
-				left: 0,
-				toJSON: () => ({}),
-			});
 			registerConcertoDesignerFrame('movement', 'mockup', 21, frame);
 
 			act(() => {
@@ -3574,7 +3565,64 @@ describe('useRemoteIntegration', () => {
 				'movement-response',
 				true
 			);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
 			frame.remove();
+		});
+
+		it('leaves the stage closed when an agent requests a designer inspection', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'begin', id: 'mockup', title: 'Mockup' });
+			});
+			getModalActions().setConcertoStageOpen(false);
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+		});
+
+		it('leaves a minimized panel minimized when an agent requests a designer inspection', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'begin', id: 'mockup', title: 'Mockup' });
+				useMovementStore.getState().setItemMinimized('mockup', true);
+				getModalActions().setConcertoStageOpen(true);
+			});
+			const items = useMovementStore.getState().items;
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+			});
+
+			expect(useMovementStore.getState().items[0].minimized).toBe(true);
+			expect(useMovementStore.getState().items).toBe(items);
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('returns unavailable when the requested inspection panel does not exist', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			getModalActions().setConcertoStageOpen(true);
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('missing', 21, 'inspection-response');
+			});
+
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useMovementStore.getState().items).toEqual([]);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
 		});
 
 		it('waits for the surfaced movement to cross a paint boundary before inspection', async () => {
@@ -3603,11 +3651,24 @@ describe('useRemoteIntegration', () => {
 			} as MessageEvent);
 
 			try {
+				getModalActions().setConcertoStageOpen(true);
 				renderHook(() => useRemoteIntegration(createDeps()));
 				act(() => {
+					onRemoteMovementHandler?.({
+						op: 'add',
+						id: 'mockup',
+						viewType: 'html',
+						body: '<button>Continue</button>',
+						revision: 21,
+					});
+					onRemoteMovementHandler?.({ op: 'begin', id: 'overlapping-panel' });
 					onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
 				});
 
+				expect(useMovementStore.getState().items.map((item) => item.id)).toEqual([
+					'overlapping-panel',
+					'mockup',
+				]);
 				expect(animationFrames).toHaveLength(1);
 				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
 
@@ -3629,6 +3690,7 @@ describe('useRemoteIntegration', () => {
 					expect.objectContaining({ id: 'mockup', ready: true, revision: 21 })
 				);
 			} finally {
+				getModalActions().setConcertoStageOpen(false);
 				rafSpy.mockRestore();
 				frame.remove();
 			}
