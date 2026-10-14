@@ -1032,17 +1032,18 @@ export async function handleProcessSpawn(
 	// to the renderer on the same channel the init event uses. Local only: the
 	// probe would run this machine's claude, not the remote host's.
 	if (interactiveClaudeBinPath && !sshRemoteUsed && safeSend) {
-		const probeEnvVars = { ...(customEnvVarsToPass ?? {}) };
-		delete probeEnvVars.MAESTRO_CLAUDE_BIN;
-		void probeClaudeSlashCommandsCached(
-			interactiveClaudeBinPath,
-			config.cwd,
-			buildChildProcessEnv(probeEnvVars, false, globalShellEnvVars)
-		).then((commands) => {
-			if (commands && commands.length > 0) {
-				safeSend('process:slash-commands', config.sessionId, commands);
+		// The probe runs claude itself, never maestro-p driving claude, so the
+		// wrapper's pointer is stripped from the FINAL env: it can arrive through
+		// the user's custom vars or be inherited from whatever launched Maestro.
+		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
+		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
+			(commands) => {
+				if (commands && commands.length > 0) {
+					safeSend('process:slash-commands', config.sessionId, commands);
+				}
 			}
-		});
+		);
 	}
 
 	// Arm the interactive-mode replay controller when this turn ran
