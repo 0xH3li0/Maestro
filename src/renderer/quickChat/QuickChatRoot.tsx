@@ -590,7 +590,8 @@ function QuickChatWindow() {
 			label="Switch agent"
 			hint="Switching starts a new chat."
 			shortcut={pickerShortcut}
-			triggerClassName="inline-flex min-w-0"
+			// The agent keeps its name (capped below); a long tab name is what gives way.
+			triggerClassName="inline-flex min-w-0 shrink-0"
 		>
 			<button
 				type="button"
@@ -636,7 +637,9 @@ function QuickChatWindow() {
 				onClick={toggleTabPicker}
 				aria-label={`Choose the tab: ${tabLabel}`}
 				aria-expanded={picker === 'tab'}
-				className="flex items-center gap-1 text-sm max-w-[220px] min-w-0 rounded-md px-1 hover:opacity-100 opacity-80"
+				// No fixed cap: a long tab name takes the room the header has and
+				// truncates only when it runs out (the header keeps a gap before its buttons).
+				className="flex items-center gap-1 text-sm max-w-full min-w-0 rounded-md px-1 hover:opacity-100 opacity-80"
 				style={{ ...NO_DRAG_REGION, color: next.kind === 'auto' ? c.textDim : c.textMain }}
 				data-testid="quick-chat-tab-button"
 			>
@@ -821,7 +824,10 @@ function QuickChatWindow() {
 			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
 				<div className="h-7 mb-3 flex items-center gap-2 px-4 shrink-0" style={DRAG_REGION}>
-					<div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm">{headerPickers}</div>
+					{/* pr-6: the tab name never runs right up to the buttons. */}
+					<div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm pr-6">
+						{headerPickers}
+					</div>
 					<IconButton
 						theme={theme}
 						label="New chat"
