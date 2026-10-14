@@ -41,6 +41,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 12. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
 13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
+15. **Declare translation support or explicit limitations**: follow the [Provider Translation Contract](#provider-translation-contract). Native History browsing, native resume, and cross-provider context translation are separate capabilities; do not infer one from another. This contract is an onboarding requirement, not an additional completeness-test check today.
 
 #### CI Enforcement
 
@@ -64,6 +65,7 @@ See detailed instructions below.
 - [Architecture Overview](#architecture-overview)
 - [Agent Capability Model](#agent-capability-model)
 - [Step-by-Step: Adding a New Agent](#step-by-step-adding-a-new-agent)
+- [Provider Translation Contract](#provider-translation-contract)
 - [Implementation Details](#implementation-details)
 - [Error Handling](#error-handling)
 - [Testing Your Agent](#testing-your-agent)
@@ -658,6 +660,99 @@ export class YourAgentSessionStorage implements AgentSessionStorage {
 	// ... other methods
 }
 ```
+
+### Provider Translation Contract
+
+Every provider integration must document whether sessions, memories, instructions, skills, and custom subagents can be translated in each direction, including unsupported cases. Claude Code and Codex use the shared implementation in `src/shared/maestro-lib/translation/`; [the implementation and evidence ledger](Plans/provider-translation-layer.md) and [native mapping](Plans/provider-translation-native-formats.md) describe its limits. Until an adapter has native resume evidence, keep its direction unverified and retain the switching warning.
+
+Implement translation in `src/shared/maestro-lib/`, with thin desktop and CLI callers using the same migration operation. Search existing storage parsers, memory operations, RPC clients, path/account resolvers, atomic writers, and launch helpers before adding code. Extract environment-neutral pieces with compatibility wrappers; do not make the library import Electron, renderer, or main modules.
+
+#### Implemented entry points and registration
+
+| Surface                     | Entry point                                                                         | Responsibility                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Node library                | `translation/index.ts`: `planTranslation`, `applyTranslation`, `recoverTranslation` | Portable plan, durable staging/readback, mappings, recovery                                                       |
+| Provider adapters           | `translation/adapters.ts`: `createTranslationRegistry`                              | Register `TranslationAdapter` and explicit `TranslationDirection` pairs                                           |
+| Desktop host                | `src/main/provider-translation-service.ts`: `ProviderTranslationService.run`        | Resolve effective accounts, native ownership, live processes, scope, private storage, atomic agent mapping commit |
+| IPC/preload                 | `agents:translateProvider` / `window.maestro.agents.translateProvider`              | Typed `TranslationRequest` and `TranslationReport`; actions `plan`, `apply`, `status`, `recover`, `rollback`      |
+| Renderer and remote callers | `src/renderer/services/providerTranslation.ts`                                      | Preserve local drafts/tabs and defer accepted operations until source turns settle                                |
+| CLI                         | `update-agent --provider <id>`                                                      | Same remote service; `--dry-run`, `--migration <action>`, `--json`, repeatable `--translation-resource <path>`    |
+
+`--accept-translation-limitations` accepts the displayed warnings; `--force` is a compatibility alias. Neither bypasses blocking conflicts. Refused, failed, and deferred applies do not report a completed switch. Provider migration is separate from changing the working directory, provider binary, account, or environment.
+
+The registered pairs are **Claude Code 2.1.296 → Codex 0.162.1** and the reverse, both **unverified**. Unknown versions/providers block. Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. No native acceptance or test cases were executed for this implementation.
+
+Minimal adapter registration, using the actual contract (replace `grok` and its schema reader/writer with the provider being integrated):
+
+```typescript
+import { TranslationRegistry, type TranslationAdapter } from './src/shared/maestro-lib/translation';
+
+// These provider-specific functions must implement the declared native mapping.
+declare const readGrokNative: TranslationAdapter['extract'];
+declare const stageGrokNative: TranslationAdapter['stage'];
+const grok: TranslationAdapter = {
+	provider: 'grok',
+	versions: ['documented-schema-version'],
+	extract: readGrokNative,
+	stage: stageGrokNative,
+};
+const registry = new TranslationRegistry();
+registry.register(grok);
+registry.declareDirection({
+	source: 'claude-code',
+	destination: 'grok',
+	sourceVersions: ['2.1.296'],
+	destinationVersions: grok.versions,
+	verification: 'unverified',
+});
+// Register the source adapter too before calling planTranslation.
+```
+
+`extract` accepts a host-resolved `TranslationIdentity`, tab ID, native session ID and original bytes. It returns ordered `PortableRecord`s, byte/hash artifacts and exact limitations. `stage` receives the destination identity, operation ID, shared RPC connection and `recordIntent`; journal ownership before every native mutation, return fresh native IDs, ownership/readback hashes and original-record lineage. Reuse `assertTranslationTarget` before native writes or history injection to refuse parent symlink escapes from the selected account. Add the adapter and both independently supported directions to `createTranslationRegistry`. The library must not import Electron, main, or renderer code.
+
+#### Native history and identity
+
+- Declare supported provider versions, native formats, account roots, project/worktree identity, and import/export mechanisms. Prefer provider-supported imports to internal database writes.
+- Preserve ordered messages and roles, content blocks, attachments, tool call/result linkage, branches, timestamps, compaction boundaries, and source provenance. Flattened History display messages are not a lossless transport.
+- Block missing or duplicate tool linkage, results preceding their calls, and invalid tool message roles before staging. Keep parallel calls and their independently ordered results intact; never reorder or replay tools to repair native history.
+- Retain original bytes and unknown records in a recoverable archive. Signed or encrypted reasoning is native evidence, not valid foreign reasoning; do not forge signatures or replay tool execution.
+- Track native session IDs separately per provider and keep the active resume ID bound to the active provider. Import only intervening records on a return switch, using stable source identity and checkpoints rather than text deduplication.
+
+#### Memory and resource discovery
+
+- Document the memory root, account/config overrides, indexing, evidence links, and how the destination discovers imported knowledge. Copying a memory file does not prove the provider loads it.
+- Use three-way memory/resource synchronization. Preserve conflicting edits and deletion tombstones instead of overwriting by timestamp. Scope migration to owned conversations and selected knowledge; do not copy unrelated account data or credentials.
+- Share portable instruction and skill bodies where discovery rules permit it. Preserve existing symlinks and relative resources; project instructions must not be loaded twice.
+- Translate provider-specific skill/subagent metadata into the destination's supported format. Record unsupported hooks, tool restrictions, runtime dependencies, and model settings; symlinking different definition formats does not provide equivalent behavior.
+
+The current bridge archives project instruction bodies, project memories (including linked topics and subagent memory), skill scripts/assets and custom subagent definitions, plus exact selected user-level resources. Effective `CLAUDE_CONFIG_DIR`/`CODEX_HOME`, settings overrides and Git repository/worktree memory identity are resolved by the host. Account-global generated summaries, credentials, hooks, MCP and account-wide databases are excluded. A shared account-level memory directory requires an explicit resource selection.
+
+Imported knowledge lives under `.maestro/provider-knowledge/<agent-hash>/<operation-id>/`; its discovery index is bound on every shared launch, including native resume, through `MAESTRO_TRANSLATION_KNOWLEDGE`. Claude also receives per-launch `--settings` for the managed memory directory. The existing Memory Viewer resolves the stored agent binding and remains unavailable for an unbridged unsupported provider. Discovery bindings are implemented; actual recall remains unverified.
+
+Compatible project instructions share an existing body through a relative alias when safe; distinct instruction files block. Portable skills use `.agents/skills` for Codex or `.claude/skills` for Claude. Supported subagents become `.codex/agents/*.toml` or `.claude/agents/*.md`; YAML/TOML are parsed, not split with regex. Preserve original metadata and bytes; unsupported execution/model/tool/memory/hook settings prevent native installation of that definition and its skill assets. Owner execute bits are retained for scripts. Symlink directory contents require explicit selection, and target escapes/conflicts block.
+
+#### Switching, recovery, and certification
+
+Nested file links outside the project or selected resource subtree retain link evidence with a limitation; their unselected bodies are not imported. Explicit user-resource selections must resolve inside the approved resource category, so a skill alias cannot import account credentials. Missing explicit resources block rather than silently disappearing from the selected payload.
+
+Native transcript reads and their pre-commit rechecks use `assertTranslationTarget` against the selected source, parked destination or checkpoint account root. Matching bytes do not authorize a link outside that account. Return-trip knowledge directories must remain inside the project; managed resource reads stay inside that directory, and owned native projections stay inside the project. Managed memory links cannot import unselected account knowledge, and collection limitations remain in the return-trip plan.
+
+- Stage all selected tabs/resources, read back the destination, and commit provider/session mappings only after successful migration. `commitTranslationSession` rechecks each tab's native source ID against its staged mapping, including closed tabs and the saved inventory; changed IDs refuse the commit. Already applied destination mappings remain idempotent for lifecycle/IPC delivery. Keep the source active on failure and retain a recoverable operation journal.
+- Defer migration commit until active source turns settle. The shared renderer client resumes saved deferrals after reload, retaining the original warning acceptance and verification state. Store complete accepted limitations using `canonicalJson`, including tab, artifact, severity and message; a matching warning code alone does not authorize changed evidence. Legacy code/artifact-only acceptance requires renewed review when warnings remain. Clean plans require no acceptance flag; newly discovered limitations require another review before apply. Preserve final events, queued messages, tab IDs, closed histories, drafts, and file tabs; never delete them to avoid an invalid resume ID.
+- Treat support as directional, versioned, and specific to the selected payload. Suppress warnings only for a validated complete conversion; unsupported directions, missing attachments, memory conflicts, capability differences, and context limits require an accurate limitation report.
+- Update adapter, sync, recovery, and CLI/UI parity tests with implementation changes. Native resume and repeated round-trip evidence are required before declaring a direction verified; lint or authored tests alone do not certify conversion. Follow the user's authorization for test execution.
+
+The local archive is `app.getPath('userData')/provider-translations`, separate from synced Session data. Journals retain original bytes, backups, hashes, lineage, tombstones, scoped account roots and owned native artifacts. Cross-process agent/project migration locks and source liveness/hash rechecks precede mutation; arbitrary outside provider processes are not locked by Maestro. Claude writes exclusively created linked transcripts. Codex uses `thread/start` plus persisted `thread/inject_items`, refuses tools/approvals, and requires matching rollout readback; it does not write SQLite or fall back to context-free `exec`. The scoped native importer and paginated history reader are reusable utilities; a paginated-only projection without a complete native rollout blocks conversion.
+
+Keep queued messages, drafts, file tabs and closed/snoozed History. Queued source-provider model/effort captures remain stored but destination defaults apply to those messages, since model names are not portable. Native source IDs are parked using the existing `providerSessions` invariant. Original History IDs, including those attached to open tabs, follow the new native mappings on later hops. An entry with unresolved native ownership remains recorded and refuses resume under the wrong provider. Recovery can finalize an already staged/committed operation without replaying an uncertain RPC. Rollback before commit restores only unchanged owned files/backups; Codex threads/indexes remain for inspection. Committed operations and later native work cannot be deleted by rollback. Use a new reverse migration to switch back.
+
+Journals persist `destinationObserved` hashes during staged readback, before mapping commit. Recovery uses this saved baseline instead of treating later native edits or turns as already synchronized; an already committed journal missing that baseline requires inspection. An unfinished or failed operation must be recovered or rolled back before a new plan/apply. The library also guards direct apply retries: a committed journal returns its saved result without native writes, while any other non-planned journal or existing mapping/write requires recovery or rollback without replacing its evidence. Status/recovery default to the persisted agent operation ID. An explicit `planId` may inspect historical journals with status; recovery/rollback cannot replace a different current operation. A committed journal remains ineligible for rollback after later switches replace its active ID.
+
+The Codex import channel uses `buildAgentEnvironment` with destination provider defaults, global settings and destination environment overrides, then pins the planned `CODEX_HOME`. It must use the same configured credentials and launch environment as the destination provider, without carrying source-specific session overrides into the import. The host opens it for a ready plan with no limitations or explicitly accepted warnings; blocked, deferred, no-op and unaccepted-warning plans do not start the channel. A certified complete plan does not require an acceptance flag.
+
+The host preserves a reviewed `planId` after refreshing and matching its fingerprint, rather than allocating a second operation on apply. A retry with that ID reads the durable journal before opening an import channel. Only the current, settled committed operation returns its saved result; a historical commit requires status inspection, and unfinished staging, mappings or write intents require recovery/rollback. A commit whose persisted agent state still needs settlement also requires recovery.
+
+Creation intents keep `created: false` until exclusive file or alias creation succeeds. Resource bodies and discovery indexes use the same journaled writer in maestro-lib; rollback refuses unproved ownership even for matching bytes or dangling links. Archive writes and journal reloads validate backup hashes from projections, resource writes and native mappings; retain their original bytes separately. Direct library rollback also checks every backup hash before restoring or deleting any target. Validate rollback targets against their selected roots even when the files are absent. A backup may restore an absent file only when the journal records its deletion; a file removed after staging requires inspection. CLI and its web response bridge allow migration staging to finish beyond the ordinary settings timeout. A response timeout is uncertain completion, so inspect `--migration status` before retrying.
 
 ### Step 8: Test Your Integration
 

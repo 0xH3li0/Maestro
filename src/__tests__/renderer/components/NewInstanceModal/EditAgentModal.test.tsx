@@ -1,3 +1,7 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * @fileoverview Tests for EditAgentModal component
  * Tests: rendering, form population, validation, save handling,
@@ -78,6 +82,23 @@ describe('EditAgentModal', () => {
 	let onSave: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'ready',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				verification: 'unverified',
+				limitations: [
+					{
+						code: 'unverified-native-resume',
+						message: 'Native resume remains unverified',
+						severity: 'warning',
+					},
+				],
+			} as any,
+		});
 		theme = createTheme();
 		onClose = vi.fn();
 		onSave = vi.fn();
@@ -421,13 +442,14 @@ describe('EditAgentModal', () => {
 	});
 
 	it('should show provider change notice when provider is changed', async () => {
-		render(
+		const session = createSession({ toolType: 'claude-code' });
+		const { rerender } = render(
 			<EditAgentModal
 				isOpen={true}
 				onClose={onClose}
 				onSave={onSave}
 				theme={theme}
-				session={createSession({ toolType: 'claude-code' })}
+				session={session}
 				existingSessions={[]}
 			/>
 		);
@@ -436,13 +458,46 @@ describe('EditAgentModal', () => {
 
 		// Change provider
 		fireEvent.change(providerSelect, { target: { value: 'codex' } });
+		rerender(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={{ ...session, providerTranslationTabInventory: [] }}
+				existingSessions={[]}
+			/>
+		);
+		expect((providerSelect as HTMLSelectElement).value).toBe('codex');
 
 		await waitFor(() => {
-			expect(screen.getByText(/Your tabs and their transcripts are kept/)).toBeInTheDocument();
+			expect(
+				screen.getByText(/Tabs, transcripts, drafts, queue and file previews are preserved/)
+			).toBeInTheDocument();
 		});
 		// The old copy promised the opposite. Tabs are preserved now, so the notice
 		// must never tell the user their tabs will be cleared.
 		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
+	});
+
+	it('blocks an unverified conversion until its listed limitations are accepted', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
+			target: { value: 'codex' },
+		});
+		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
+		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight

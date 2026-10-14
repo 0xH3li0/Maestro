@@ -224,6 +224,20 @@ describe('captureQueuedTurnSettings', () => {
 });
 
 describe('codifyQueuedTurnSettings', () => {
+	it('uses destination settings for migrated queued items while keeping their saved settings intact', () => {
+		const item = { id: 'queued', turnSettings: { model: 'haiku', effort: 'low' } };
+		const session = makeSession('codex', {
+			providerTranslationQueuedOrigins: { queued: 'claude-code' },
+			customModel: 'gpt-6',
+			customEffort: 'high',
+		});
+		expect(codifyQueuedTurnSettings(item, undefined, session)).toEqual({
+			turnProvider: 'codex',
+			turnModel: 'gpt-6',
+			turnEffort: 'high',
+		});
+		expect(item.turnSettings.model).toBe('haiku');
+	});
 	it('runs a queued item under what it was queued with, not the live values', () => {
 		const item = { turnSettings: { model: 'haiku', effort: 'low' } };
 		// The user has since switched the tab to a big model.

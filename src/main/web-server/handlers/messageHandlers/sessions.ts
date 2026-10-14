@@ -398,6 +398,8 @@ export function handleUpdateSessionConfig(
 				type: 'update_session_config_result',
 				success: result.success,
 				error: result.error,
+				plan: result.plan,
+				result: result.result,
 				sessionId,
 				requestId: message.requestId,
 			});

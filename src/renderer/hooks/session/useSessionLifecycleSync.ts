@@ -1,3 +1,4 @@
+import { resumeDeferredProviderTranslations } from '../../services/providerTranslation';
 /**
  * useSessionLifecycleSync.ts
  *
@@ -85,9 +86,13 @@ export function useSessionLifecycleSync(
 		// like it names an agent this client never had, and the add then commits
 		// the agent the user just closed.
 		let queue: Promise<void> = Promise.resolve();
+		void whenSessionsLoaded().then(() => {
+			if (!disposed) resumeDeferredProviderTranslations(useSessionStore.getState().sessions);
+		});
 
 		const applyDelta = async (payload: SessionLifecycleSyncPayload): Promise<void> => {
 			await whenSessionsLoaded();
+			resumeDeferredProviderTranslations(useSessionStore.getState().sessions);
 			if (disposed) return;
 
 			const known = new Set(useSessionStore.getState().sessions.map((s) => s.id));

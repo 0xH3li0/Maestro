@@ -1,3 +1,7 @@
+import type {
+	TranslationRequest,
+	TranslationReport,
+} from '../shared/maestro-lib/translation/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -1089,7 +1093,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string }
+			result: TranslationReport
 		) => void;
 		onRemoteCreateGroup: (
 			callback: (
@@ -1910,6 +1914,7 @@ interface MaestroAPI {
 	 */
 	maestroRun: MaestroRunApi;
 	agents: {
+		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
 		refresh: (
 			agentId?: string,

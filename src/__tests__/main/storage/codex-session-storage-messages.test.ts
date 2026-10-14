@@ -226,6 +226,37 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		}
 	);
 
+	it('keeps distinct response items around malformed rows after shared native parsing', async () => {
+		vi.spyOn(storage, 'findSessionFile').mockResolvedValue('/isolated/rollout.jsonl');
+		vi.mocked(fs.readFile).mockResolvedValue(
+			'broken\n' +
+				[
+					{
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							id: 'one',
+							role: 'user',
+							content: [{ type: 'input_text', text: 'same' }],
+						},
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							id: 'two',
+							role: 'user',
+							content: [{ type: 'input_text', text: 'same' }],
+						},
+					},
+				]
+					.map((r) => JSON.stringify(r))
+					.join('\n')
+		);
+		const result = await storage.readSessionMessages('/project', 's', { offset: 0, limit: 50 });
+		expect(result.messages.map((m) => m.uuid)).toEqual(['one', 'two']);
+	});
+
 	it('should parse function_call entries with toolUse', async () => {
 		const content = createSessionContent();
 
