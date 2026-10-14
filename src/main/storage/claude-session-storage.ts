@@ -48,6 +48,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
 import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
+import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -321,6 +322,38 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private getProjectsDir(configDir?: string): string {
 		return path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
+	}
+
+	/**
+	 * The local transcript of `sessionId`, in whichever account it was written.
+	 *
+	 * Session ids are UUIDs, so one names one file across every account dir.
+	 * The default account is tried first (the common case, and the only one when
+	 * accounts share a pool through a symlinked `projects/`); the other account
+	 * dirs are only scanned when it is not there. Without this, a tab whose agent
+	 * runs under a different `CLAUDE_CONFIG_DIR` could not be opened, resumed into
+	 * view, or edited from Maestro. Falls back to the default path so a missing
+	 * file still fails with the usual read error.
+	 */
+	private async locateLocalSessionFile(projectPath: string, sessionId: string): Promise<string> {
+		const defaultFile = path.join(this.getEncodedProjectDir(projectPath), `${sessionId}.jsonl`);
+		const exists = async (file: string): Promise<boolean> => {
+			try {
+				await fs.access(file);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		if (await exists(defaultFile)) return defaultFile;
+		for (const accountDir of await getProviderAccountDirs('claude-code')) {
+			const candidate = path.join(
+				this.getEncodedProjectDir(projectPath, accountDir),
+				`${sessionId}.jsonl`
+			);
+			if (candidate !== defaultFile && (await exists(candidate))) return candidate;
+		}
+		return defaultFile;
 	}
 
 	/**
@@ -617,8 +650,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return this.listSessionsPaginatedRemote(projectPath, options, sshConfig);
 		}
 
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
 
 		const sortedFiles = await this.statProjectSessionFiles(projectDir);
 		const totalCount = sortedFiles.length;
@@ -671,8 +704,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		options: SessionListOptions | undefined,
 		sshConfig: SshRemoteConfig
 	): Promise<PaginatedSessionsResult> {
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {
@@ -759,8 +792,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			}
 			content = result.data;
 		} else {
-			const projectDir = this.getEncodedProjectDir(projectPath);
-			const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 			content = await fs.readFile(sessionFile, 'utf-8');
 		}
 
@@ -859,8 +891,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (!result.success || !result.data) return [];
 				content = result.data;
 			} else {
-				const projectDir = this.getEncodedProjectDir(projectPath);
-				const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+				const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 				content = await fs.readFile(sessionFile, 'utf-8');
 			}
 		} catch {
@@ -917,8 +948,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return { success: false, error: 'Delete not supported for remote sessions' };
 		}
 
-		const projectDir = this.getEncodedProjectDir(projectPath);
-		const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+		const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 
 		try {
 			const content = await fs.readFile(sessionFile, 'utf-8');

@@ -49,6 +49,11 @@ export interface ListSessionsOptions {
 	limit?: number;
 	skip?: number;
 	search?: string;
+	/**
+	 * The agent's Claude config dir (`resolveAgentAccountDir`). Lists that
+	 * account's pool; omitted reads the default `~/.claude`.
+	 */
+	configDir?: string;
 }
 
 export interface ListSessionsResult {
@@ -241,10 +246,14 @@ export function listClaudeSessions(
 	projectPath: string,
 	options: ListSessionsOptions = {}
 ): ListSessionsResult {
-	const { limit = 25, skip = 0, search } = options;
+	const { limit = 25, skip = 0, search, configDir } = options;
 
 	const encodedPath = encodeClaudeProjectPath(projectPath);
-	const projectDir = path.join(os.homedir(), '.claude', 'projects', encodedPath);
+	const projectDir = path.join(
+		configDir ?? path.join(os.homedir(), '.claude'),
+		'projects',
+		encodedPath
+	);
 
 	// Check if the directory exists
 	if (!fs.existsSync(projectDir)) {
