@@ -10,6 +10,7 @@ import {
 	computeClaudeUsageWithSubagents,
 	readClaudeSubagentTranscriptsSync,
 } from '../../shared/claudeSessionUsage';
+import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
 
 // ============================================================================
 // Constants (inlined from main/constants.ts to avoid Electron dependencies)
@@ -146,9 +147,7 @@ function parseSessionContent(
 		let firstUserMessage = '';
 		let timestamp = new Date(stats.mtimeMs).toISOString();
 
-		const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-		const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-		const messageCount = userMessageCount + assistantMessageCount;
+		const messageCount = countClaudeTranscriptMessages(content);
 
 		for (let i = 0; i < Math.min(lines.length, PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES); i++) {
 			try {

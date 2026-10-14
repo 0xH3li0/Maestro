@@ -42,6 +42,7 @@ import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
 } from '../../storage/starred-transcript-mirror';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -78,7 +79,8 @@ interface LegacyGlobalStatsCache {
 
 // v2: Claude usage counted once per API response, not once per JSONL line.
 // v3: subagent transcripts priced into their parent session.
-const LEGACY_GLOBAL_STATS_CACHE_VERSION = 3;
+// v4: messages counted as prompts and responses, not transcript lines.
+const LEGACY_GLOBAL_STATS_CACHE_VERSION = 4;
 
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
@@ -208,10 +210,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						let firstUserMessage = '';
 						let timestamp = stats.mtime.toISOString();
 
-						// Fast regex-based extraction
-						const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-						const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-						const messageCount = userMessageCount + assistantMessageCount;
+						const messageCount = countClaudeTranscriptMessages(content);
 
 						// Extract first meaningful message content
 						for (
@@ -406,10 +405,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							let firstUserMessage = '';
 							let timestamp = new Date(fileInfo.modifiedAt).toISOString();
 
-							const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-							const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || [])
-								.length;
-							const messageCount = userMessageCount + assistantMessageCount;
+							const messageCount = countClaudeTranscriptMessages(content);
 
 							// Extract first meaningful message
 							for (
@@ -548,9 +544,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				content: string,
 				fileStat: { size: number }
 			) => {
-				const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-				const messages = userMessageCount + assistantMessageCount;
+				const messages = countClaudeTranscriptMessages(content);
 
 				// Per-model token + cost extraction (a session may mix models).
 				const { inputTokens, outputTokens, costUsd } = await computeClaudeSessionUsage(
@@ -736,7 +730,12 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 			}
 
 			if (derivationStale && cache) {
-				rescaleArchivedEntries(newCache.sessions, cache.sessions, ['costUsd', 'tokens']);
+				rescaleArchivedEntries(
+					newCache.sessions,
+					cache.sessions,
+					['costUsd', 'tokens', 'messages'],
+					['costUsd']
+				);
 			}
 
 			// Calculate final totals
@@ -973,9 +972,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const content = await fs.readFile(filePath, 'utf-8');
 					const fileStat = await fs.stat(filePath);
 
-					const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-					const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-					const messages = userMessageCount + assistantMessageCount;
+					const messages = countClaudeTranscriptMessages(content);
 
 					// Per-model token + cost extraction (a session may mix models).
 					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =

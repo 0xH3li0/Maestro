@@ -47,6 +47,7 @@ import type {
 import { BaseSessionStorage } from './base-session-storage';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
+import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -117,10 +118,7 @@ function parseSessionContent(
 		let firstUserMessage = '';
 		let timestamp = new Date(stats.mtimeMs).toISOString();
 
-		// Fast regex-based extraction for message counts
-		const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-		const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-		const messageCount = userMessageCount + assistantMessageCount;
+		const messageCount = countClaudeTranscriptMessages(content);
 
 		// Extract first meaningful message content
 		// Prefer first assistant response as preview (more meaningful than system context)

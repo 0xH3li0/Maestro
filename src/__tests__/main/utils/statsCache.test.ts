@@ -639,7 +639,7 @@ describe('Derivation upgrades', () => {
 		// half of its tokens.
 		const after = { live: entry(20, 150), gone: { ...before.gone } };
 
-		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
 
 		expect(after.gone.costUsd).toBeCloseTo(6, 10);
 		expect(after.gone.tokens).toBeCloseTo(45, 10);
@@ -647,11 +647,25 @@ describe('Derivation upgrades', () => {
 		expect(after.live).toEqual(entry(20, 150));
 	});
 
+	it('rounds scaled counts but keeps cents on fractional fields', () => {
+		const before = {
+			live: { ...entry(3, 3), messages: 3 },
+			gone: { ...entry(10, 10, true), messages: 10 },
+		};
+		const after = { live: { ...entry(2, 2), messages: 2 }, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens', 'messages'], ['costUsd']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6.6667, 3);
+		expect(after.gone.tokens).toBe(7);
+		expect(after.gone.messages).toBe(7);
+	});
+
 	it('leaves archived sessions alone when no live session gives a baseline', () => {
 		const before = { gone: entry(9, 90, true) };
 		const after = { gone: { ...before.gone } };
 
-		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
 
 		expect(after.gone).toEqual(entry(9, 90, true));
 	});
@@ -661,7 +675,7 @@ describe('Derivation upgrades', () => {
 		const before = { live: entry(30, 300), stuck: unchanged, gone: entry(9, 90, true) };
 		const after = { live: entry(15, 150), stuck: unchanged, gone: { ...before.gone } };
 
-		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
 
 		// Only `live` moved, by half; `stuck` (same object, parse failed) is no evidence.
 		expect(after.gone.costUsd).toBeCloseTo(4.5, 10);

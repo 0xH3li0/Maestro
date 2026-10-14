@@ -64,6 +64,7 @@ import {
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -136,14 +137,11 @@ function parseClaudeSessionContent(
 	sizeBytes: number,
 	subagentContents: readonly string[]
 ): Omit<CachedSessionStats, 'fileMtimeMs'> {
-	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-
 	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
 		computeClaudeUsageWithSubagents(content, subagentContents);
 
 	return {
-		messages: userMessageCount + assistantMessageCount,
+		messages: countClaudeTranscriptMessages(content),
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -1133,13 +1131,19 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			);
 
 			if (claudeSessionsBefore) {
-				rescaleArchivedEntries(cache.providers['claude-code'].sessions, claudeSessionsBefore, [
-					'inputTokens',
-					'outputTokens',
-					'cacheReadTokens',
-					'cacheCreationTokens',
-					'costUsd',
-				]);
+				rescaleArchivedEntries(
+					cache.providers['claude-code'].sessions,
+					claudeSessionsBefore,
+					[
+						'inputTokens',
+						'outputTokens',
+						'cacheReadTokens',
+						'cacheCreationTokens',
+						'costUsd',
+						'messages',
+					],
+					['costUsd']
+				);
 			}
 
 			// Update cache timestamp and save

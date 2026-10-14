@@ -94,8 +94,10 @@ export interface SessionStatsCache {
  *       `rescaleArchivedEntries`.
  * - v4: Subagent transcripts (`<sessionId>/subagents/*.jsonl`) priced into their
  *       session. Derivation-only, upgraded in place like v3.
+ * - v5: Messages counted as prompts and model responses
+ *       (`countClaudeTranscriptMessages`), not transcript lines. Upgraded in place.
  */
-export const STATS_CACHE_VERSION = 4;
+export const STATS_CACHE_VERSION = 5;
 
 /**
  * Oldest per-project cache version with the CURRENT shape. Anything from here up
@@ -210,8 +212,9 @@ export interface GlobalStatsCache {
  * summed) is invisible to the fingerprint and would keep serving old numbers.
  * v5: Claude usage counted once per API response instead of once per JSONL line.
  * v6: Claude subagent transcripts priced into their parent session.
+ * v7: Claude messages counted as prompts and responses, not transcript lines.
  */
-export const GLOBAL_STATS_CACHE_VERSION = 6;
+export const GLOBAL_STATS_CACHE_VERSION = 7;
 
 /**
  * Oldest global cache version with the current shape whose CLAUDE entries can be
@@ -286,12 +289,15 @@ type NumericKeys<T> = {
  *
  * `entries` is the upgraded map (re-parsed live entries already in it) and is
  * mutated in place; `before` is the map as loaded from the stale cache. A field
- * with no re-parsed baseline is left unscaled rather than guessed.
+ * with no re-parsed baseline is left unscaled rather than guessed. Scaled values
+ * are rounded, since they are counts (tokens, messages); list money fields in
+ * `fractional` to keep their cents.
  */
 export function rescaleArchivedEntries<T extends { archived?: boolean }>(
 	entries: Record<string, T>,
 	before: Record<string, T>,
-	fields: readonly NumericKeys<T>[]
+	fields: readonly NumericKeys<T>[],
+	fractional: readonly NumericKeys<T>[] = []
 ): void {
 	for (const field of fields) {
 		let oldSum = 0;
@@ -307,7 +313,10 @@ export function rescaleArchivedEntries<T extends { archived?: boolean }>(
 		for (const entry of Object.values(entries)) {
 			const value = entry[field] as number | undefined;
 			if (!entry.archived || typeof value !== 'number') continue;
-			entry[field] = (value * ratio) as T[NumericKeys<T>];
+			const scaled = value * ratio;
+			entry[field] = (
+				fractional.includes(field) ? scaled : Math.round(scaled)
+			) as T[NumericKeys<T>];
 		}
 	}
 }
