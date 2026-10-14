@@ -266,7 +266,10 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 	markAllNotificationsRead: () =>
 		set((s) => {
 			if (!s.history.some((n) => !n.read)) return s;
-			persistNotificationHistoryChange({ action: 'read' });
+			persistNotificationHistoryChange({
+				action: 'read',
+				ids: s.history.filter((n) => !n.read).map((n) => n.id),
+			});
 			return { history: s.history.map((n) => (n.read ? n : { ...n, read: true })) };
 		}),
 

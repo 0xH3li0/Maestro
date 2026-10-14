@@ -173,6 +173,45 @@ describe('authoritative notification history across windows', () => {
 		expect(firstWindow.useNotificationStore.getState().history[0].read).toBe(true);
 	});
 
+	it('keeps later peer notifications unread while mark-all waits behind an earlier write', async () => {
+		let releaseAck!: () => void;
+		let sent!: () => void;
+		const sentPromise = new Promise<void>((resolve) => {
+			sent = resolve;
+		});
+		const ackGate = new Promise<void>((resolve) => {
+			releaseAck = resolve;
+		});
+		window.maestro.notification.changeHistory = async (change) => {
+			const snapshot = await host.handlers.get('notification:changeHistory')!({}, change);
+			if (change.action === 'append') {
+				sent();
+				await ackGate;
+			}
+			return snapshot;
+		};
+		const id = firstWindow.notifyToast({ title: 'Waiting write', message: '', historyOnly: true });
+		await sentPromise;
+		firstWindow.useNotificationStore.getState().markAllNotificationsRead();
+		const record = firstWindow.useNotificationStore.getState().history.find((n) => n.id === id)!;
+		await host.handlers.get('notification:changeHistory')!(
+			{},
+			{
+				action: 'append',
+				record: { ...record, id: 'later-peer', title: 'Later peer completion', read: false },
+			}
+		);
+		releaseAck();
+		await firstWindow.flushNotificationHistoryWrites();
+		expect(host.data.records).toContainEqual(expect.objectContaining({ id, read: true }));
+		expect(host.data.records).toContainEqual(
+			expect.objectContaining({ id: 'later-peer', read: false })
+		);
+		expect(
+			firstWindow.useNotificationStore.getState().history.find((n) => n.id === 'later-peer')?.read
+		).toBe(false);
+	});
+
 	it('retains failed writes in the inbox and retries them with the next mutation', async () => {
 		host.set.mockImplementationOnce(() => {
 			throw new Error('Disk full');

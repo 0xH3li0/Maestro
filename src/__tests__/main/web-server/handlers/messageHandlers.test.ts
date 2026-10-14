@@ -309,8 +309,8 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('External toast duration units', () => {
-		it.each([5000, 60000])(
-			'accepts %s milliseconds and forwards it unchanged',
+		it.each([5, 60])(
+			'accepts legacy %s seconds and normalizes to renderer milliseconds',
 			async (duration) => {
 				handler.handleMessage(client, {
 					type: 'notify_toast',
@@ -320,13 +320,15 @@ describe('WebSocketMessageHandler', () => {
 					requestId: 'timeout',
 				});
 				await new Promise((resolve) => setTimeout(resolve, 0));
-				expect(callbacks.notifyToast).toHaveBeenCalledWith(expect.objectContaining({ duration }));
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: duration * 1000 })
+				);
 				expect(
 					JSON.parse(vi.mocked(client.socket.send).mock.calls.at(-1)![0] as string)
 				).toMatchObject({ type: 'notify_toast_result', success: true, requestId: 'timeout' });
 			}
 		);
-		it.each([0, -1, 60001, NaN, Infinity])('rejects invalid duration %s', (duration) => {
+		it.each([0, -1, 61, NaN, Infinity])('rejects invalid duration %s', (duration) => {
 			handler.handleMessage(client, {
 				type: 'notify_toast',
 				title: 'Timeout test',

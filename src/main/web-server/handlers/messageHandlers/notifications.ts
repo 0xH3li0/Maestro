@@ -53,12 +53,12 @@ const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor>
 const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
 
 /**
- * Hard upper bound on toast duration (milliseconds) for externally-triggered
+ * Hard upper bound on toast duration (seconds) for externally-triggered
  * toasts. Toasts are corner notifications so the cap is more generous than
  * Center Flash, but `0` (never auto-dismiss) is rejected - external scripts
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
-const EXTERNAL_TOAST_MAX_DURATION_MS = 60000;
+const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
 
 /**
  * Handle notify_toast - show a toast notification in the desktop app.
@@ -134,14 +134,14 @@ export function handleNotifyToast(
 		if (!Number.isFinite(duration) || duration <= 0) {
 			sendResult(
 				false,
-				'duration must be a positive number of milliseconds (use dismissible:true for sticky toasts)'
+				'duration must be a positive number of seconds (use dismissible:true for sticky toasts)'
 			);
 			return;
 		}
-		if (duration > EXTERNAL_TOAST_MAX_DURATION_MS) {
+		if (duration > EXTERNAL_TOAST_MAX_DURATION_SECONDS) {
 			sendResult(
 				false,
-				`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_MS} milliseconds for externally-triggered toasts (use dismissible:true to make it sticky)`
+				`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_SECONDS} seconds for externally-triggered toasts (use dismissible:true to make it sticky)`
 			);
 			return;
 		}
@@ -158,7 +158,8 @@ export function handleNotifyToast(
 			message: body,
 			color,
 			dismissible,
-			duration,
+			// Normalize the legacy seconds wire contract once, before renderer delivery.
+			duration: duration === undefined ? undefined : duration * 1000,
 			sessionId,
 			sourceAgent,
 			tabId,
