@@ -93,7 +93,8 @@ describe('settings agent', () => {
 			expect(() => settingsAgentGet(codexAgent.id, 'bogus', { json: true })).toThrow(
 				'process.exit(1)'
 			);
-			expect(String(errorSpy.mock.calls[0][0])).toContain('Unknown setting "bogus"');
+			const { error } = JSON.parse(String(errorSpy.mock.calls[0][0]));
+			expect(error).toContain('Unknown setting "bogus"');
 		});
 
 		it('keeps a provider type on the provider config store', () => {
