@@ -35,7 +35,11 @@ function getSharedDb(): InMemoryCueDb {
 const executeCuePrompt = vi.fn();
 vi.mock('../../../main/cue/cue-db', () => buildCueDbModuleMock(() => getSharedDb()));
 vi.mock('../../../shared/maestro-lib/parsers', () => ({ initializeOutputParsers: vi.fn() }));
-vi.mock('../../../main/cue/cue-executor', () => ({ executeCuePrompt, stopCueRun: vi.fn() }));
+vi.mock('../../../main/cue/cue-executor', () => ({
+	executeCuePrompt,
+	stopCueRun: vi.fn(),
+	getActiveProcesses: () => new Map(),
+}));
 vi.mock('../../../main/cue/cue-shell-executor', () => ({
 	executeCueShell: vi.fn(),
 	stopCueShellRun: vi.fn(),

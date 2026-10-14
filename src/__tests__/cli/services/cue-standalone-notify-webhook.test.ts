@@ -15,7 +15,14 @@ const executeCueNotify = vi.fn();
 const detectCueAuthFailure = vi.fn<(...args: unknown[]) => string | null>(() => null);
 
 vi.mock('../../../shared/maestro-lib/parsers', () => ({ initializeOutputParsers: vi.fn() }));
-vi.mock('../../../main/cue/cue-executor', () => ({ executeCuePrompt, stopCueRun: vi.fn() }));
+vi.mock('../../../main/cue/cue-executor', () => ({
+	executeCuePrompt,
+	stopCueRun: vi.fn(),
+	getActiveProcesses: () => new Map(),
+}));
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: async () => undefined,
+}));
 vi.mock('../../../main/cue/cue-shell-executor', () => ({ executeCueShell: vi.fn() }));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({ executeCueCli: vi.fn() }));
 vi.mock('../../../main/cue/cue-notify-executor', () => ({ executeCueNotify }));

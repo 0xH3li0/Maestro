@@ -26,6 +26,9 @@ vi.mock('../../../main/cue/cue-executor', async (importOriginal) => ({
 	executeCuePrompt,
 }));
 vi.mock('../../../main/cue/cue-shell-executor', () => ({ executeCueShell: vi.fn() }));
+vi.mock('../../../cli/services/system-prompt', () => ({
+	prepareMaestroSystemPromptCli: async () => undefined,
+}));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({ executeCueCli: vi.fn() }));
 vi.mock('../../../main/cue/cue-notify-executor', () => ({ executeCueNotify: vi.fn() }));
 vi.mock('../../../main/cue/cue-auth-detector', () => ({ detectCueAuthFailure: () => null }));
