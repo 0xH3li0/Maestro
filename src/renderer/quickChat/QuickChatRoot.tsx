@@ -68,9 +68,9 @@ const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 /** The window's in-window chords: Cmd (Ctrl off macOS) plus this letter. */
 const QUICK_CHAT_KEYS = {
 	newChat: 'n',
-	picker: 'k',
+	picker: 'o',
 	tabPicker: 'j',
-	keep: 'b',
+	keep: 's',
 	pin: 'p',
 	openTab: 't',
 	close: 'w',
@@ -320,7 +320,7 @@ function QuickChatWindow() {
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	/** Which picker is open: the agent's (Cmd+K) or the next message's tab (Cmd+J). */
+	/** Which picker is open: the agent's (Cmd+O) or the next message's tab (Cmd+J). */
 	const [picker, setPicker] = useState<'agent' | 'tab' | null>(null);
 	const pickerOpen = picker !== null;
 	const [pinned, setPinned] = useState(true);
@@ -614,7 +614,7 @@ function QuickChatWindow() {
 	// message Maestro finds the tab; after it, the chat stays in its tab until
 	// the user picks another one (or a new one) here.
 	const next = snapshot.next;
-	const tabLabel = next.kind === 'tab' ? next.name : next.kind === 'new' ? 'New tab' : 'Any tab';
+	const tabLabel = next.kind === 'tab' ? next.name : next.kind === 'new' ? 'New tab' : 'Choose tab';
 	const tabHint =
 		next.kind === 'tab'
 			? next.chosen

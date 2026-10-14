@@ -89,9 +89,9 @@ describe('tab picker', () => {
 		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Blog: Waste No Tokens');
 	});
 
-	it('says "Any tab" before the chat has one', async () => {
+	it('says "Choose tab" before the chat has one', async () => {
 		await renderWith(snapshot());
-		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Any tab');
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
 	});
 
 	it('Cmd+J opens it with New tab first, and Enter on it forces a new tab', async () => {
@@ -196,13 +196,13 @@ describe('Thinking button', () => {
 });
 
 describe('keyboard chords', () => {
-	it('Cmd+B toggles keep, the same command the bookmark sends', async () => {
+	it('Cmd+S toggles keep, the same command the bookmark sends', async () => {
 		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
 			ok: true,
 			snapshot: snapshot({ persistent: true }),
 		});
 		await renderWith(snapshot({ persistent: false }));
-		await act(async () => fireEvent.keyDown(window, { key: 'b', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 's', metaKey: true }));
 		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
 			type: 'setPersistent',
 			persistent: true,
@@ -234,13 +234,13 @@ describe('keyboard chords', () => {
 	it('answers chords typed in the agent picker filter', async () => {
 		vi.mocked(window.maestro.quickChat.setPinned).mockClear();
 		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
-		await act(async () => fireEvent.keyDown(window, { key: 'k', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 'o', metaKey: true }));
 		const filter = screen.getByTestId('quick-chat-agent-filter');
 		await act(async () => fireEvent.keyDown(filter, { key: 'p', metaKey: true }));
 		expect(window.maestro.quickChat.setPinned).toHaveBeenCalledWith(false);
 
-		// Cmd+K from the filter closes the picker again.
-		await act(async () => fireEvent.keyDown(filter, { key: 'k', metaKey: true }));
+		// Cmd+O from the filter closes the picker again.
+		await act(async () => fireEvent.keyDown(filter, { key: 'o', metaKey: true }));
 		expect(screen.queryByTestId('quick-chat-agent-filter')).toBeNull();
 	});
 
@@ -254,7 +254,7 @@ describe('keyboard chords', () => {
 	it('names the chord in the Keep and Pin overlays', async () => {
 		await renderWith(snapshot());
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Keep as a tab\./ }).parentElement!);
-		expect(screen.getByRole('tooltip')).toHaveTextContent(/B$/);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/S$/);
 	});
 });
 
@@ -289,7 +289,7 @@ describe('Close', () => {
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Close\./ }).parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc \/ .*W$/);
 
-		await act(async () => fireEvent.keyDown(window, { key: 'k', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 'o', metaKey: true }));
 		const filter = screen.getByTestId('quick-chat-agent-filter');
 		await act(async () => fireEvent.keyDown(filter, { key: 'w', metaKey: true }));
 		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('hide');

@@ -3,7 +3,7 @@
  *
  * A chat stays in the tab its first message found. This is how the user moves
  * it: to another of the agent's tabs, to a new tab, or back to letting Maestro
- * find one ("Any tab"). The two fixed rows come first, so Cmd+J then Enter
+ * find one ("Any tab"). The two fixed rows come first, so the tab chord then Enter
  * starts a new tab without a search.
  */
 
