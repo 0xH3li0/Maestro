@@ -290,6 +290,57 @@ describe('checkCueReadiness', () => {
 		expect(formatCueReadiness(report).join('\n')).not.toContain(SENTINEL);
 	});
 
+	describe('a webhook secret shared by several subscriptions', () => {
+		const hook = (name: string) =>
+			`  - name: ${name}\n    event: webhook.received\n    prompt: deploy\n    webhook:\n      secret_env: HOOK_SECRET\n`;
+
+		async function sharedSecretGaps() {
+			// Two on one agent, one in another workspace.
+			const one = workspace(
+				'hooks-one',
+				`subscriptions:\n${hook('deploy-hook')}${hook('rollback-hook')}`
+			);
+			const two = workspace('hooks-two', `subscriptions:\n${hook('audit-hook')}`);
+			const report = await checkCueReadiness(
+				inputs({
+					sessions: [
+						agent({ id: 'one', projectRoot: one, toolType: 'terminal' }),
+						agent({ id: 'two', projectRoot: two, toolType: 'terminal' }),
+					],
+				})
+			);
+			return report.gaps.filter((g) => g.secret === 'HOOK_SECRET');
+		}
+
+		it('names every subscription when the secret is missing', async () => {
+			const gaps = await sharedSecretGaps();
+			expect(gaps.map((g) => [g.kind, g.subscription, path.basename(g.workspace ?? '')])).toEqual([
+				['secret-missing', 'deploy-hook', 'hooks-one'],
+				['secret-missing', 'rollback-hook', 'hooks-one'],
+				['secret-missing', 'audit-hook', 'hooks-two'],
+			]);
+			for (const gap of gaps) {
+				expect(gap.message).toMatch(
+					new RegExp(`^Webhook "${gap.subscription}" needs secret HOOK_SECRET, which is not set`)
+				);
+			}
+		});
+
+		it('names every subscription when the secret cannot be used', async () => {
+			fs.writeFileSync(path.join(runSecrets, 'HOOK_SECRET'), '');
+			const gaps = await sharedSecretGaps();
+			expect(gaps.map((g) => [g.kind, g.subscription])).toEqual([
+				['secret-unusable', 'deploy-hook'],
+				['secret-unusable', 'rollback-hook'],
+				['secret-unusable', 'audit-hook'],
+			]);
+			for (const gap of gaps) {
+				expect(gap.message).toContain(`Webhook "${gap.subscription}" needs secret HOOK_SECRET (`);
+				expect(gap.message).toContain('is empty');
+			}
+		});
+	});
+
 	it('does not ask for a provider binary from an agent that only runs commands', async () => {
 		const root = workspace(
 			'shell',

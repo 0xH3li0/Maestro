@@ -978,7 +978,7 @@ Interact with Maestro Cue automation
 
 ## `maestro-cli cue trigger <subscription-name>`
 
-Manually trigger a Cue subscription by name
+Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)
 
 | Option                   | Description                                                                     | Default |
 | ------------------------ | ------------------------------------------------------------------------------- | ------- |
@@ -1681,7 +1681,7 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
+| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 `test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.

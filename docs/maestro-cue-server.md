@@ -261,6 +261,19 @@ Notes:
 - **A login:** `sudo -iu maestro` then `gh auth login`, or `docker exec -it maestro-cue gh auth login`. It is kept in the `maestro` user's home.
 - **`GH_TOKEN` in `maestro.env`** works too, but every agent receives it.
 
+**What the token needs.** Cue only reads from GitHub: `gh pr list` and `gh pr view --json comments` for `github.pull_request`, `gh issue list` and `gh issue view --json comments` for `github.issue`, and `gh api repos/<owner>/<repo>/issues/events` for `github.label`. The comment reads run only with `retrigger_on_comments`. Read access to the watched repositories is enough:
+
+| Token        | Public repositories                                 | Private repositories                                                       |
+| ------------ | --------------------------------------------------- | -------------------------------------------------------------------------- |
+| Fine-grained | Repository access "Public repositories (read-only)" | Those repositories selected, with Metadata, Issues and Pull requests: read |
+| Classic      | No scope                                            | `repo`                                                                     |
+
+No write permission is needed, and neither is Contents. With a fine-grained token, `github.pull_request` needs Pull requests and `github.issue` and `github.label` need Issues (Metadata is always granted); granting both covers every trigger. The classic `public_repo` scope grants write access and adds nothing for these reads.
+
+A GitHub trigger with a `webhook` block still needs the token: the engine keeps polling as a reconcile, and a comment delivery on a pull request makes it poll at once to fetch the whole pull request. The webhook secret only verifies deliveries.
+
+The permissions are derived from GitHub's table of the endpoints each fine-grained permission covers, matched to the calls above. What was tested: every call ran with `gh` 2.101 against a public repository, using a token with the broader `repo` scope. A fine-grained token and a classic token with no scope have not been tried.
+
 ## Import
 
 Each workspace in a bundle is bound to a folder that must already exist, usually a clone of the project. Each workspace needs its own folder: mapping two workspaces to the same folder (directly or through a symlink) is refused, since both would write the same `cue.yaml`. A workspace folder may sit inside another one's, as long as no two bundle files land on the same path. `bundle inspect` lists the workspace keys. `bundle import --dry-run` prints the plan, including every shell command the bundle runs, and writes nothing.
@@ -425,7 +438,7 @@ How an on-demand run differs from an engine run:
 
 - **Environment.** An on-demand run passes the command's whole environment to the agent; server mode filters only what the engine passes. Declared secrets are looked up the same way, but on a VM the service's `LoadCredential=` files are not visible to the command, so supply those as variables or use a provider login.
 - **Records.** Each turn is recorded in the data directory's run ledger with its token usage. `playbook`, `run-doc` and `goal-run` also write history entries; `send` writes none.
-- **No triggers.** Nothing fires on its own. To fire a subscription by hand while the engine runs, use `maestro-cli cue trigger <subscription-name>` (in a container, `docker exec maestro-cue maestro-cli cue trigger <subscription-name>`).
+- **No triggers.** Nothing fires on its own. To fire a subscription by hand while the engine runs, use `maestro-cli cue trigger <subscription-name>` (in a container, `docker exec maestro-cue maestro-cli cue trigger <subscription-name>`). Like a real tick, it also fires every subscription in the same pipeline with identical trigger settings; give a subscription a pipeline of its own, or different trigger settings, to fire it alone (see [Triggering a Subscription](./cli#triggering-a-subscription)).
 
 ## Webhooks behind a proxy
 
@@ -631,11 +644,8 @@ Then start it with the same `docker run -d` command as in [Start](#start-in-a-co
 
 What an operator can run into today. The full, current list, including what has not been verified, is kept in the [verification record](https://github.com/RunMaestro/Maestro/blob/rc/Plans/headless-cue-verification.md#known-limits-current).
 
-- **`cue trigger <name>` fires the whole trigger.** It also runs every other subscription in the same pipeline that has the same trigger settings. Give a subscription you want to fire on its own a pipeline of its own.
 - **No run history from the command line.** `maestro-cli cue activity` needs the desktop app. On a server, read the engine's log (each run logs `Run started` and `Run finished` with its `runId`); `cue engine status` and `inspect` report counts only.
 - **No log level in JSON mode.** Debug output is left out of the JSON logs and cannot be turned on there (see [Logs](#logs)).
 - **After a hard kill.** The next engine refuses to start for up to 3 minutes while the old lock goes stale (see [Start in a container](#start-in-a-container)). Its refusal message names the process id recorded in the old lock; in a container the dead engine usually had the same id as the new one, so the message reads as if the engine were blocking itself. Once it starts it logs one `Sleep detected` line for the gap, which runs nothing.
-- **GitHub token permissions.** The minimum permissions a token needs for `github.*` triggers are not documented yet.
-- **A webhook secret shared by two subscriptions.** If it is missing, the readiness gap names only one of them.
 - **GitHub triggers quiet for 30 days.** What a GitHub trigger has already seen is kept for 30 days, so after 30 days with no new items a subscription treats its next poll as its first: it records the items it finds and runs none of them.
 - **Stop over SSH for shell steps.** Stopping a Cue `action: command` step that runs on an SSH remote stops only the local `ssh` client, not the command on the remote host. Agent runs over SSH are stopped on the remote.

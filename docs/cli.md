@@ -52,7 +52,7 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 | `4`  | The running app does not support the command (older build) |
 | `5`  | The app was reachable but did not respond in time          |
 
-Every verb that needs the desktop app reports its absence the same way: the message `Maestro desktop app is not running or not reachable`, exit code `3`, and with `--json` (or on verbs that always print JSON) the code `MAESTRO_NOT_RUNNING`:
+Almost every verb that needs the desktop app reports its absence the same way: the message `Maestro desktop app is not running or not reachable`, exit code `3`, and with `--json` (or on verbs that always print JSON) the code `MAESTRO_NOT_RUNNING`:
 
 ```json
 {
@@ -63,6 +63,8 @@ Every verb that needs the desktop app reports its absence the same way: the mess
 ```
 
 This covers a missing or stale discovery file, a connection that never opens, and one refused at the network level. An app that answers but refuses the connection (for example the Web Login gate) is running, so it reports its own error instead.
+
+A few verbs do not follow this yet: `steer-auto-run`, `quick-chat`, `window`, `maestro-run` and `plugin list|update` print the same message but exit `1` with no `code`, and the `computer-history` writes exit `1` with the message wrapped in `Could not reach the Maestro app (...)`. In a script, treat exit `1` from these as possibly meaning the app is not running.
 
 ### Who Moves the View (`--background` / `--focus`)
 
@@ -2110,7 +2112,9 @@ Notes:
 
 ### Triggering a Subscription
 
-Manually trigger a Cue subscription by name, bypassing its normal event conditions:
+Manually trigger a Cue subscription by name, bypassing its normal event conditions.
+
+A subscription in a pipeline fires together with its siblings: every subscription in the same pipeline whose trigger settings (event, schedule, interval, filter, and so on) are identical to its own. That is what a real tick does, since the pipeline editor writes a fan-out to several targets as one subscription per target, each repeating the trigger. To fire one subscription alone, give it a pipeline of its own or trigger settings that differ from the others'. A chain step (`agent.completed`), a subscription with no pipeline, and a trigger with `--prompt` fire only the named subscription.
 
 ```bash
 # Trigger a subscription

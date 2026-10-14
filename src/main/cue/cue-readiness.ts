@@ -209,7 +209,9 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	// ─── Which agents Cue runs: config owners, plus fan-out targets ─────────
 	const promptAgents = new Map<string, SessionInfo>();
 	const involved = new Map<string, SessionInfo>();
-	const webhookSecrets = new Map<string, string>(); // secret name -> subscription
+	// Secret name -> every subscription that reads it. Each one fails to
+	// listen on its own, so each gets its own gap.
+	const webhookSecrets = new Map<string, Array<{ subscription: string; workspace?: string }>>();
 	let needsGh: CueSubscription | undefined;
 	const repoInferredRoots = new Map<string, CueSubscription>();
 	let runsSomething = false;
@@ -246,7 +248,11 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 				needsGh ??= sub;
 				if (!sub.repo && session.projectRoot) repoInferredRoots.set(session.projectRoot, sub);
 			}
-			if (sub.webhook?.secret_env) webhookSecrets.set(sub.webhook.secret_env, sub.name);
+			if (sub.webhook?.secret_env) {
+				const users = webhookSecrets.get(sub.webhook.secret_env) ?? [];
+				users.push({ subscription: sub.name, workspace: session.projectRoot });
+				webhookSecrets.set(sub.webhook.secret_env, users);
+			}
 			for (let i = 0; i < (sub.fan_out?.length ?? 0); i++) {
 				const name = sub.fan_out![i];
 				const target = findFanOutTarget(sessions, name, sub.fan_out_ids?.[i]);
@@ -373,18 +379,21 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	}
 
 	// ─── Webhook secrets (read by the engine itself) ────────────────────────
-	for (const [name, subscription] of webhookSecrets) {
+	for (const [name, users] of webhookSecrets) {
 		const lookup = lookupSecret(name, inputs.secretLookup);
 		if (lookup.status === 'found') continue;
-		add({
-			kind: lookup.status === 'missing' ? 'secret-missing' : 'secret-unusable',
-			subscription,
-			secret: name,
-			message:
-				lookup.status === 'missing'
-					? `Webhook "${subscription}" needs secret ${name}, which is not set, so it will not listen. Provide $CREDENTIALS_DIRECTORY/${name}, /run/secrets/${name}, or the environment variable ${name}.`
-					: `Webhook "${subscription}" needs secret ${describeSecretProblem({ name, ...lookup })}.`,
-		});
+		for (const { subscription, workspace } of users) {
+			add({
+				kind: lookup.status === 'missing' ? 'secret-missing' : 'secret-unusable',
+				subscription,
+				workspace,
+				secret: name,
+				message:
+					lookup.status === 'missing'
+						? `Webhook "${subscription}" needs secret ${name}, which is not set, so it will not listen. Provide $CREDENTIALS_DIRECTORY/${name}, /run/secrets/${name}, or the environment variable ${name}.`
+						: `Webhook "${subscription}" needs secret ${describeSecretProblem({ name, ...lookup })}.`,
+			});
+		}
 	}
 
 	// ─── Host tools, only where something needs them ────────────────────────

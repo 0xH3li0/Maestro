@@ -1144,7 +1144,9 @@ const cue = program.command('cue').description('Interact with Maestro Cue automa
 
 cue
 	.command('trigger <subscription-name>')
-	.description('Manually trigger a Cue subscription by name')
+	.description(
+		'Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)'
+	)
 	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('--source-agent-id <id>', 'Agent ID to pass as source context for write-back')
