@@ -11,7 +11,8 @@ import {
 	writeDoc,
 } from './agent-spawner';
 import { captureCliRun } from './agent-run-capture';
-import { addHistoryEntry, readGroups, readHistory } from './storage';
+import { addHistoryEntry, readGroups, readHistory, readSettings } from './storage';
+import { autoRunMaestroPMaxWaitSeconds } from '../../shared/claudeTokenMode';
 import {
 	aggregateAutoRunHistoryTotals,
 	mergeFinalSummaryTotals,
@@ -677,6 +678,11 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								// A TUI task gets Auto Run's idle budget, not maestro-p's 300s.
+								maestroPMaxWaitSeconds: autoRunMaestroPMaxWaitSeconds({
+									autoRunInactivityTimeoutMin: readSettings().autoRunInactivityTimeoutMin,
+									autoRunMaxTaskDurationMin: readSettings().autoRunMaxTaskDurationMin,
+								}),
 							}),
 						(r) => (r.success ? 0 : 1)
 					);
