@@ -12,6 +12,21 @@
  *      onActivityUpdate listener.
  */
 
+/**
+ * Why a queued event was dropped without running. `stale`, `malformed`,
+ * `session-missing` and `subscription-missing` come from the restore at start
+ * (and `stale` from the runtime drain too). A cue.yaml reload drops with
+ * `subscription-missing` (the subscription was removed, renamed or switched
+ * off), `superseded` (a heartbeat whose timing changed fires on load instead
+ * of running its waiting tick) or `session-missing` (the agent is gone).
+ */
+export type CueQueueDropReason =
+	| 'stale'
+	| 'malformed'
+	| 'session-missing'
+	| 'subscription-missing'
+	| 'superseded';
+
 export type CueLogPayload =
 	| { type: 'engineStarted' }
 	| { type: 'engineStopped' }
@@ -61,7 +76,7 @@ export type CueLogPayload =
 			/** Omitted for aggregate restore-path drops that span multiple sessions. */
 			sessionId?: string;
 			count: number;
-			reason: 'stale' | 'malformed' | 'session-missing' | 'subscription-missing';
+			reason: CueQueueDropReason;
 	  }
 	| {
 			type: 'fanInTimeout';

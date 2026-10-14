@@ -1,5 +1,7 @@
 import type { MainLogLevel } from '../../shared/logger-types';
+import type { CueQueueDropReason } from '../../shared/cue-log-types';
 import type { SessionInfo } from '../../shared/types';
+import type { QueuedEvent } from './cue-run-manager';
 import { loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
 import { resolveCueConfigPath, type readCueConfigFile } from './config/cue-config-repository';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
@@ -37,11 +39,13 @@ export type SessionInitReason = 'system-boot' | 'user-toggle' | 'refresh' | 'dis
 export interface InitSessionOptions {
 	reason: SessionInitReason;
 	/**
-	 * Set only by a cue.yaml reload (`refreshSession`): the schedules of the
-	 * session's running heartbeats, keyed by {@link scheduleCarryKey}. A
-	 * subscription whose key is still present in the new config resumes its
-	 * schedule instead of firing on load. Its queued `time.heartbeat` runs are
-	 * kept; those of every other carried-out subscription are dropped.
+	 * Set only by a reload of a loaded session (`refreshSession`), which also
+	 * means the reload held the session's queue for this init to settle: the
+	 * schedules of the session's running heartbeats, keyed by
+	 * {@link scheduleCarryKey} (empty when it had none). A subscription whose
+	 * key is still present in the new config resumes its schedule instead of
+	 * firing on load, and its queued `time.heartbeat` runs are kept. See
+	 * {@link reloadQueueDecision} for every other queued event.
 	 */
 	carry?: ReadonlyMap<string, CueScheduleCarry>;
 }
@@ -53,6 +57,31 @@ export interface InitSessionOptions {
  */
 function scheduleCarryKey(sub: CueSubscription): string {
 	return `${sub.name}\u0000${triggerGroupKey(sub)}`;
+}
+
+/**
+ * What a cue.yaml reload does with one queued event: null keeps it, otherwise
+ * the reason it is dropped (the run manager records the drop).
+ *
+ * A queued event was accepted work (a webhook delivery is already answered
+ * 2xx) and carries the prompt and settings it was fired with, so it stays
+ * while its subscription is in a loaded config and switched on, in this
+ * agent's config or another's (a fan-out target queues the source's
+ * subscription). `app.startup` entries always stay. A heartbeat's waiting tick
+ * stays only when the reload carried that heartbeat's schedule: a changed one
+ * fires on load instead, so its old tick is superseded.
+ */
+function reloadQueueDecision(
+	entry: Pick<QueuedEvent, 'event' | 'subscriptionName'>,
+	carriedHeartbeats: ReadonlySet<string>,
+	liveSubscriptions: ReadonlySet<string>
+): CueQueueDropReason | null {
+	if (entry.event.type === 'app.startup') return null;
+	if (!liveSubscriptions.has(entry.subscriptionName)) return 'subscription-missing';
+	if (entry.event.type === 'time.heartbeat' && !carriedHeartbeats.has(entry.subscriptionName)) {
+		return 'superseded';
+	}
+	return null;
 }
 
 export interface CueSessionRuntimeServiceDeps {
@@ -75,11 +104,12 @@ export interface CueSessionRuntimeServiceDeps {
 		sourceSessionName: string,
 		chainDepth?: number
 	) => number;
-	clearQueue: (
+	clearQueue: (sessionId: string, preserveStartup?: boolean) => void;
+	/** Settle a reloaded session's queue: see `CueRunManager.retainQueue`. */
+	retainQueue: (
 		sessionId: string,
-		preserveStartup?: boolean,
-		preserveHeartbeats?: ReadonlySet<string>
-	) => void;
+		classify: (entry: QueuedEvent) => CueQueueDropReason | null
+	) => number;
 	clearFanInState: (sessionId: string) => void;
 	/**
 	 * Remove a subscription from cue.yaml on behalf of a trigger source's
@@ -153,8 +183,23 @@ export function createCueSessionRuntimeService(
 	/** Sources `disarmAll` stopped, kept only so `settleAll` can wait on them. */
 	let disarmedSources: CueTriggerSource[] = [];
 
+	/** Sessions whose reload held the queue but whose config then failed to
+	 *  load: the next good load settles it (see refreshSession). */
+	const heldQueues = new Set<string>();
+
 	function getSession(sessionId: string): SessionInfo | undefined {
 		return deps.getSessions().find((session) => session.id === sessionId);
+	}
+
+	/** Names of the switched-on subscriptions in every loaded config. */
+	function enabledSubscriptionNames(): Set<string> {
+		const names = new Set<string>();
+		for (const state of registry.snapshot().values()) {
+			for (const sub of state.config.subscriptions) {
+				if (sub.enabled !== false) names.add(sub.name);
+			}
+		}
+		return names;
 	}
 
 	function initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome {
@@ -295,9 +340,14 @@ export function createCueSessionRuntimeService(
 				if (carry) carried.set(sub, carry);
 			}
 			// The reload held this session's queue back (see refreshSession).
-			// Settle it now, before any source can enqueue: keep the waiting
-			// runs of carried heartbeats, drop everything else as before.
-			deps.clearQueue(session.id, true, new Set([...carried.keys()].map((sub) => sub.name)));
+			// Settle it now, before any source can enqueue, so a fire on load
+			// is never mistaken for a waiting run. The new config is already
+			// registered above, so it counts as live.
+			const carriedHeartbeats = new Set([...carried.keys()].map((sub) => sub.name));
+			const liveSubscriptions = enabledSubscriptionNames();
+			deps.retainQueue(session.id, (entry) =>
+				reloadQueueDecision(entry, carriedHeartbeats, liveSubscriptions)
+			);
 		}
 		const sessionCarryable = new Map<string, CueTriggerSource>();
 		carryableSources.set(session.id, sessionCarryable);
@@ -434,8 +484,8 @@ export function createCueSessionRuntimeService(
 		state.triggerSources = [];
 
 		deps.clearFanInState(sessionId);
-		// A reload carrying heartbeat schedules settles the queue itself once
-		// it knows which of them survived (initSession / refreshSession).
+		// A reload settles the queue itself once it knows what survived
+		// (initSession / refreshSession).
 		if (!holdQueue) deps.clearQueue(sessionId, true);
 
 		// Drop time.scheduled dedup keys for this session - they only matter while
@@ -479,14 +529,23 @@ export function createCueSessionRuntimeService(
 			const schedule = source.scheduleCarry?.();
 			if (schedule) carry.set(key, schedule);
 		}
-		const holdQueue = carry.size > 0;
+		// A reload of a loaded session holds its queue and settles it once the
+		// new config is known (initSession, below), and so does the first good
+		// load after a config that failed to load held it. Any other first load
+		// leaves the queue alone: what waits there was restored at start and
+		// checked then.
+		const holdQueue = hadSession || heldQueues.delete(sessionId);
 		teardownSession(sessionId, true, holdQueue);
 		registry.unregister(sessionId);
 
 		const session = getSession(sessionId);
 		if (!session) {
 			teardownSession(sessionId);
-			if (holdQueue) deps.clearQueue(sessionId, true);
+			if (holdQueue) {
+				deps.retainQueue(sessionId, (entry) =>
+					entry.event.type === 'app.startup' ? null : 'session-missing'
+				);
+			}
 			return { reloaded: false, configRemoved: false };
 		}
 
@@ -494,9 +553,19 @@ export function createCueSessionRuntimeService(
 			{ ...session, projectRoot },
 			holdQueue ? { reason, carry } : { reason }
 		);
-		// The config did not load (or the engine is off): nothing was carried,
-		// so the held queue gets the clear teardown would have given it.
-		if (holdQueue && !registry.has(sessionId)) deps.clearQueue(sessionId, true);
+		// The config did not load. A parse or validation error is usually a
+		// save in the middle of an edit, so the queue stays held for the next
+		// good load to settle rather than losing accepted work to a typo. A
+		// config that is gone (or an engine that is off) has nothing to run it.
+		if (holdQueue && !registry.has(sessionId)) {
+			if (outcome.kind === 'parse-error' || outcome.kind === 'invalid') {
+				heldQueues.add(sessionId);
+			} else {
+				deps.retainQueue(sessionId, (entry) =>
+					entry.event.type === 'app.startup' ? null : 'subscription-missing'
+				);
+			}
+		}
 		const newState = registry.get(sessionId);
 		if (newState) {
 			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
@@ -560,6 +629,7 @@ export function createCueSessionRuntimeService(
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
+		heldQueues.delete(sessionId);
 		deps.clearQueue(sessionId);
 		// Removing a session means its app.startup history is no longer relevant -
 		// if the same session id is re-added later (rare), we want startup to fire.
@@ -589,6 +659,7 @@ export function createCueSessionRuntimeService(
 			}
 			registry.clear();
 			carryableSources.clear();
+			heldQueues.clear();
 
 			for (const { cleanup } of yamlWatchers.values()) cleanup();
 			yamlWatchers.clear();

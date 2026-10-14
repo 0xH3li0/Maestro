@@ -481,7 +481,7 @@ describe('CueEngine session lifecycle', () => {
 
 		// Call the onChange callback (simulates config file change -> refreshSession internally).
 		// The change alters the heartbeat's interval, so it is a changed heartbeat:
-		// refreshSession calls teardownSession which clears the queue, then initSession
+		// the reload drops its waiting ticks (superseded), then initSession
 		// re-creates the session and fires the immediate heartbeat. Since the old in-flight
 		// run still occupies the slot (activeRunCount=1), the new immediate fire is queued.
 		// (An unchanged heartbeat keeps its queued runs: cue-heartbeat-reload.test.ts.)
@@ -652,6 +652,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue,
+				retainQueue: vi.fn(() => 0),
 				clearFanInState,
 			});
 
@@ -712,6 +713,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue: vi.fn(),
+				retainQueue: vi.fn(() => 0),
 				clearFanInState: vi.fn(),
 				selfDestruct,
 			});
@@ -742,6 +744,7 @@ describe('CueEngine session lifecycle', () => {
 				registry,
 				dispatchSubscription: vi.fn(),
 				clearQueue: vi.fn(),
+				retainQueue: vi.fn(() => 0),
 				clearFanInState: vi.fn(),
 			});
 

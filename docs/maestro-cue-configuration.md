@@ -412,6 +412,8 @@ settings:
   queue_size: 1024 # Buffer up to 1024 events
 ```
 
+Saving `cue.yaml` while events wait (by hand, from the Pipeline Graph, or with `maestro-cli cue model`) keeps every queued event whose subscription is still in the file and switched on. It runs with the prompt and settings it was fired with. A queued event for a subscription the save removed, renamed or switched off is dropped, logged, and shown in the activity log as never run. A save that fails to parse keeps the queue until the next good save. A heartbeat whose timing changed fires on load, so its waiting tick is dropped the same way.
+
 ## Validation
 
 The engine validates your YAML on every load. Common validation errors:

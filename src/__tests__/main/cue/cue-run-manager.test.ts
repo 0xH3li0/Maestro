@@ -58,7 +58,11 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `run-${++uuidCounter}`),
 }));
 
-import { updateCueEventStatus, safeUpdateCueEventStatus } from '../../../main/cue/cue-db';
+import {
+	updateCueEventStatus,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
+} from '../../../main/cue/cue-db';
 import {
 	createCueRunManager,
 	type CueRunManagerDeps,
@@ -1694,6 +1698,80 @@ describe('createCueRunManager', () => {
 			persistence.remove.mockClear();
 			manager.execute('session-1', 'p3', createEvent(), 'sub-3'); // overflow → drops oldest
 			expect(persistence.remove).toHaveBeenCalledTimes(1);
+		});
+
+		it('retainQueue keeps what classify accepts, and drops, unpersists and records the rest', () => {
+			const persistence = makeMockPersistence();
+			const onLog = vi.fn();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+				onLog,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'running'); // dispatched
+			const webhook = createEvent({ type: 'webhook.received', payload: { path: 'deploy' } });
+			manager.execute('session-1', 'p2', webhook, 'kept'); // queued
+			manager.execute('session-1', 'p3', webhook, 'gone'); // queued
+			manager.execute('session-1', 'p4', createEvent(), 'beat'); // queued
+			const persistIdOf = (name: string) =>
+				persistence.persist.mock.calls.find(
+					(call) => (call[2] as { subscriptionName: string }).subscriptionName === name
+				)![1] as string;
+
+			const dropped = manager.retainQueue('session-1', (entry) =>
+				entry.subscriptionName === 'kept'
+					? null
+					: entry.subscriptionName === 'gone'
+						? 'subscription-missing'
+						: 'superseded'
+			);
+
+			expect(dropped).toBe(2);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+			expect(persistence.remove).toHaveBeenCalledTimes(2);
+			expect(persistence.remove).toHaveBeenCalledWith(persistIdOf('gone'));
+			expect(persistence.remove).toHaveBeenCalledWith(persistIdOf('beat'));
+			expect(persistence.remove).not.toHaveBeenCalledWith(persistIdOf('kept'));
+
+			// Each drop is a finalized row the activity log can explain.
+			const recorded = vi
+				.mocked(safeRecordCueEvent)
+				.mock.calls.map(([row]) => row)
+				.filter((row) => row.subscriptionName === 'gone');
+			expect(recorded).toHaveLength(1);
+			expect(recorded[0]).toMatchObject({ status: 'timeout', type: 'webhook.received' });
+			expect(JSON.parse(recorded[0].payload)).toMatchObject({
+				path: 'deploy',
+				droppedFromQueue: true,
+				reason: 'subscription-missing',
+			});
+
+			// One log line per reason, counted in the metrics as dropped events.
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining(
+					'Dropped 1 queued event(s) for "Test Session" on a cue.yaml reload'
+				),
+				{ type: 'queueDropped', sessionId: 'session-1', count: 1, reason: 'subscription-missing' }
+			);
+			expect(onLog).toHaveBeenCalledWith(
+				'cue',
+				expect.stringContaining('a heartbeat whose timing changed fires on load instead'),
+				{ type: 'queueDropped', sessionId: 'session-1', count: 1, reason: 'superseded' }
+			);
+		});
+
+		it('retainQueue on a session with nothing queued drops nothing and logs nothing', () => {
+			const onLog = vi.fn();
+			const manager = createCueRunManager(createDeps({ onLog }));
+			expect(manager.retainQueue('session-1', () => 'subscription-missing')).toBe(0);
+			expect(onLog).not.toHaveBeenCalled();
 		});
 
 		it('calls queuePersistence.clearAll on stopAll', () => {
