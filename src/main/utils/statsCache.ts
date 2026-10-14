@@ -92,8 +92,10 @@ export interface SessionStatsCache {
  *       (each content block repeats the response's usage). Derivation-only, so a
  *       v2 cache is upgraded in place rather than dropped - see
  *       `rescaleArchivedEntries`.
+ * - v4: Subagent transcripts (`<sessionId>/subagents/*.jsonl`) priced into their
+ *       session. Derivation-only, upgraded in place like v3.
  */
-export const STATS_CACHE_VERSION = 3;
+export const STATS_CACHE_VERSION = 4;
 
 /**
  * Oldest per-project cache version with the CURRENT shape. Anything from here up
@@ -207,8 +209,9 @@ export interface GlobalStatsCache {
  * mtime, so a parsing fix (v4: Codex's cumulative `total_token_usage` was being
  * summed) is invisible to the fingerprint and would keep serving old numbers.
  * v5: Claude usage counted once per API response instead of once per JSONL line.
+ * v6: Claude subagent transcripts priced into their parent session.
  */
-export const GLOBAL_STATS_CACHE_VERSION = 5;
+export const GLOBAL_STATS_CACHE_VERSION = 6;
 
 /**
  * Oldest global cache version with the current shape whose CLAUDE entries can be

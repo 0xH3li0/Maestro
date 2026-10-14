@@ -19,7 +19,10 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { computeClaudeUsageCost } from '../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../shared/claudeSessionUsage';
 import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
@@ -104,7 +107,8 @@ function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[] = []
 ): AgentSessionInfo | null {
 	try {
 		const lines = content.split('\n').filter((l) => l.trim());
@@ -161,7 +165,7 @@ function parseSessionContent(
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
 			byModel,
-		} = computeClaudeUsageCost(content);
+		} = computeClaudeUsageWithSubagents(content, subagentContents);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -229,7 +233,13 @@ async function parseSessionFile(
 		}
 
 		const content = await fs.readFile(filePath, 'utf-8');
-		return parseSessionContent(content, sessionId, projectPath, stats);
+		return parseSessionContent(
+			content,
+			sessionId,
+			projectPath,
+			stats,
+			await readClaudeSubagentTranscripts(filePath)
+		);
 	} catch (error) {
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });

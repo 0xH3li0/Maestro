@@ -38,8 +38,9 @@ const LOG_CONTEXT = '[TokenUsageCache]';
  * size, so the fingerprint alone would keep serving the old numbers forever.
  * v5 counts Claude usage once per API response rather than once per JSONL line
  * (each content block repeats its response's usage), the same kind of fix.
+ * v6 prices a session's subagent transcripts into it.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 5;
+export const TOKEN_USAGE_CACHE_VERSION = 6;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

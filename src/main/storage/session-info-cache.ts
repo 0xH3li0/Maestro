@@ -46,8 +46,9 @@ const LOG_CONTEXT = '[SessionInfoCache]';
  * field that existing cached entries would be missing), or when the DERIVATION
  * of an existing field changes - the fingerprint cannot see that.
  * v2: Claude usage counted once per API response, not once per JSONL line.
+ * v3: Claude subagent transcripts priced into their parent session.
  */
-export const SESSION_INFO_CACHE_VERSION = 2;
+export const SESSION_INFO_CACHE_VERSION = 3;
 
 /** One source file to resolve: its identity within the scope plus its fingerprint. */
 export interface SessionFileRef {

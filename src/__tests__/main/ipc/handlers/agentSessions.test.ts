@@ -646,6 +646,32 @@ describe('agentSessions:getGlobalStats discovery', () => {
 		expect(saved.version).toBe(GLOBAL_STATS_CACHE_VERSION);
 	});
 
+	it("prices a Claude session's subagent transcripts into the totals without counting them as sessions", async () => {
+		const project = path.join(home, '.claude', 'projects', '-Users-a');
+		const line = (id: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				requestId: `req_${id}`,
+				message: { id, model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+			});
+		await realFs.mkdir(path.join(project, 's1', 'subagents'), { recursive: true });
+		await realFs.writeFile(path.join(project, 's1.jsonl'), `${line('parent')}\n`);
+		await realFs.writeFile(
+			path.join(project, 's1', 'subagents', 'agent-x.jsonl'),
+			`${line('child')}\n`
+		);
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalSessions: number;
+			totalInputTokens: number;
+			totalCostUsd: number;
+		};
+
+		expect(stats.totalSessions).toBe(1);
+		expect(stats.totalInputTokens).toBe(2_000_000);
+		expect(stats.totalCostUsd).toBeCloseTo(6, 10);
+	});
+
 	it('reports zero when neither provider has a transcript directory', async () => {
 		const stats = await getGlobalStats();
 		expect(stats.totalSessions).toBe(0);

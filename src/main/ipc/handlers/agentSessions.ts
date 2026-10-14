@@ -24,7 +24,11 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../../shared/claudeSessionUsage';
 import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
@@ -124,17 +128,19 @@ interface SessionFileInfo {
 }
 
 /**
- * Parse a Claude Code session file and extract stats
+ * Parse a Claude Code session file and extract stats. Usage and cost include the
+ * session's subagent transcripts, which Claude Code keeps in separate files.
  */
 function parseClaudeSessionContent(
 	content: string,
-	sizeBytes: number
+	sizeBytes: number,
+	subagentContents: readonly string[]
 ): Omit<CachedSessionStats, 'fileMtimeMs'> {
 	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
 	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 
 	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		computeClaudeUsageCost(content);
+		computeClaudeUsageWithSubagents(content, subagentContents);
 
 	return {
 		messages: userMessageCount + assistantMessageCount,
@@ -1080,7 +1086,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						const content = await fs.readFile(file.filePath, 'utf-8');
 						const stats =
 							provider === 'claude-code'
-								? parseClaudeSessionContent(content, file.sizeBytes)
+								? parseClaudeSessionContent(
+										content,
+										file.sizeBytes,
+										await readClaudeSubagentTranscripts(file.filePath)
+									)
 								: parseCodexSessionContent(content, file.sizeBytes);
 
 						cache.providers[provider].sessions[file.sessionKey] = {

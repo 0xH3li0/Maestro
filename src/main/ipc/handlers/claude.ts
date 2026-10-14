@@ -25,7 +25,8 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import { computeClaudeSessionUsage } from '../../../shared/claudeSessionUsage';
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
@@ -76,7 +77,8 @@ interface LegacyGlobalStatsCache {
 }
 
 // v2: Claude usage counted once per API response, not once per JSONL line.
-const LEGACY_GLOBAL_STATS_CACHE_VERSION = 2;
+// v3: subagent transcripts priced into their parent session.
+const LEGACY_GLOBAL_STATS_CACHE_VERSION = 3;
 
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
@@ -246,7 +248,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							cacheReadTokens: totalCacheReadTokens,
 							cacheCreationTokens: totalCacheCreationTokens,
 							costUsd,
-						} = computeClaudeUsageCost(content);
+						} = await computeClaudeSessionUsage(filePath, content);
 
 						// Extract last timestamp for duration
 						let lastTimestamp = timestamp;
@@ -444,7 +446,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								cacheReadTokens: totalCacheReadTokens,
 								cacheCreationTokens: totalCacheCreationTokens,
 								costUsd,
-							} = computeClaudeUsageCost(content);
+							} = await computeClaudeSessionUsage(fileInfo.filePath, content);
 
 							// Extract last timestamp for duration
 							let lastTimestamp = timestamp;
@@ -541,13 +543,20 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 			};
 
 			// Helper to parse a single session file
-			const parseSessionFile = async (content: string, fileStat: { size: number }) => {
+			const parseSessionFile = async (
+				filePath: string,
+				content: string,
+				fileStat: { size: number }
+			) => {
 				const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
 				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 				const messages = userMessageCount + assistantMessageCount;
 
 				// Per-model token + cost extraction (a session may mix models).
-				const { inputTokens, outputTokens, costUsd } = computeClaudeUsageCost(content);
+				const { inputTokens, outputTokens, costUsd } = await computeClaudeSessionUsage(
+					filePath,
+					content
+				);
 
 				let oldestTimestamp: string | null = null;
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -695,7 +704,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				try {
 					const content = await fs.readFile(filePath, 'utf-8');
 					const fileStat = await fs.stat(filePath);
-					const stats = await parseSessionFile(content, { size: fileStat.size });
+					const stats = await parseSessionFile(filePath, content, { size: fileStat.size });
 
 					newCache.sessions[sessionId] = {
 						fileMtimeMs: mtimeMs,
@@ -970,7 +979,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 
 					// Per-model token + cost extraction (a session may mix models).
 					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-						computeClaudeUsageCost(content);
+						await computeClaudeSessionUsage(filePath, content);
 
 					newCache.sessions[sessionKey] = {
 						fileMtimeMs: mtimeMs,
