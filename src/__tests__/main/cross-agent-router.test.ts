@@ -6,10 +6,12 @@ import {
 	CROSS_AGENT_SESSION_PREFIX,
 	buildCrossAgentPrompt,
 	serializeTranscript,
+	getCrossAgentConsultParties,
 	type CrossAgentTargetSession,
 } from '../../main/cross-agent/cross-agent-router';
 import type { CrossAgentRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
 
 /**
  * The desktop's binding of the consult service: the dispatch rules themselves (prompt, budgets,
@@ -23,6 +25,11 @@ import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
 // agent CLI. The parser is an identity fn: the buffer IS the answer.
 vi.mock('../../main/group-chat/spawnGroupChatAgent', () => ({
 	spawnGroupChatAgent: vi.fn(async () => ({ pid: 123, success: true })),
+}));
+// The consulted agent's Maestro system prompt is built from the persisted
+// stores; stub the builder so the dispatch tests can assert it is threaded.
+vi.mock('../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: vi.fn(async (id: string) => `SYSTEM PROMPT FOR ${id}`),
 }));
 vi.mock('../../main/group-chat/output-parser', () => ({
 	extractTextFromStreamJson: vi.fn((raw: string) => raw),
@@ -110,6 +117,30 @@ describe('the desktop consult runner', () => {
 	it('exports the prompt builders the renderer and tests still import from here', () => {
 		expect(serializeTranscript([{ source: 'user', text: 'Hi' }])).toBe('**User:** Hi');
 		expect(buildCrossAgentPrompt(request())).toContain('There is no prior conversation to read');
+	});
+
+	it('hands the consulted agent its own Maestro system prompt (fresh session)', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
+		expect(config.isResume).toBe(false);
+	});
+
+	it('says who asks and who answers while a consult is in flight, and nothing once it settled', async () => {
+		const { dispatch, emitExit } = harness();
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
+
+		await dispatch();
+		expect(getCrossAgentConsultParties('r1')).toEqual({
+			sourceSessionId: 'src',
+			targetSessionId: 'tgt',
+		});
+
+		emitExit(0);
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
 	});
 
 	it('spawns through the group chat spawn helper over this process manager and SSH store', async () => {

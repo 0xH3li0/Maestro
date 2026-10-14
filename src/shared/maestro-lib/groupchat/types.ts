@@ -200,6 +200,15 @@ export interface GroupChatSpawn {
 	debugLabel?: string;
 	/** The silence budget a maestro-p run is told, in seconds (`--max-wait`). */
 	maxWaitSeconds?: number;
+	/**
+	 * The Maestro system prompt this turn carries, when the host built one. The
+	 * host delivers it exactly like a tab spawn: the native flag when the agent
+	 * has one, otherwise embedded into `prompt`, and not re-embedded when
+	 * `isResume`.
+	 */
+	appendSystemPrompt?: string;
+	/** True when `args` resume an existing provider session. */
+	isResume?: boolean;
 }
 
 /** Starts and stops the processes a round is made of. */

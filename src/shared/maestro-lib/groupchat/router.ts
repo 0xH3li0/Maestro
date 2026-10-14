@@ -345,6 +345,23 @@ export interface GroupChatEngineOptions {
 	metrics: GroupChatTurnMetrics;
 	/** Id for a new participant record. Defaults to a random UUID. */
 	newId?: () => string;
+	/**
+	 * The Maestro system prompt each turn carries. Optional: a host that cannot
+	 * build one passes none, and its turns start without it.
+	 */
+	systemPrompts?: {
+		/**
+		 * A participant: the full prompt of the Maestro agent it stands for, or
+		 * just the enabled plugin sections when no stored agent matches.
+		 */
+		forParticipant(session: GroupChatSessionInfo | undefined): Promise<string | undefined>;
+		/**
+		 * The moderator and synthesis turns. No Maestro agent stands behind the
+		 * moderator, so it carries only the enabled plugin sections (its role
+		 * prompt is in the turn's own prompt).
+		 */
+		forModerator(input: { isSsh: boolean }): string | undefined;
+	};
 }
 
 /**
@@ -354,7 +371,7 @@ export interface GroupChatEngineOptions {
  * its own.
  */
 export function createGroupChatEngine(options: GroupChatEngineOptions) {
-	const { store, events, agents, prompts, power, metrics } = options;
+	const { store, events, agents, prompts, power, metrics, systemPrompts } = options;
 	const { loadGroupChat, updateParticipant, addGroupChatHistoryEntry, getGroupChatDir } = store;
 
 	const moderators = createGroupChatModerators({ store, prompts, power });
@@ -1192,6 +1209,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						// Match maestro-p's idle budget to the moderator supervising timeout
 						// so a still-working moderator isn't killed at maestro-p's 300s default.
 						maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
+						appendSystemPrompt: systemPrompts?.forModerator({
+							isSsh: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+						}),
 					});
 
 					logger.debug(`[GroupChat:Debug] Spawn result: ${JSON.stringify(spawnResult)}`);
@@ -1965,6 +1985,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						// Match maestro-p's idle budget to the participant supervising timeout
 						// so a still-working participant isn't killed at maestro-p's 300s default.
 						maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
+						appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
+						isResume,
 					});
 
 					logger.debug(
@@ -2421,6 +2443,10 @@ Review the agent responses above. Either:
 				// Match maestro-p's idle budget to the moderator supervising timeout
 				// so a still-working synthesis turn isn't killed at maestro-p's 300s default.
 				maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
+				// Same as the moderator turn: plugin sections only.
+				appendSystemPrompt: systemPrompts?.forModerator({
+					isSsh: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+				}),
 			});
 
 			logger.debug(`[GroupChat:Debug] Synthesis spawn result: ${JSON.stringify(spawnResult)}`);
@@ -2588,6 +2614,8 @@ Review the agent responses above. Either:
 			// Match maestro-p's idle budget to the participant supervising timeout
 			// so a still-working recovery turn isn't killed at maestro-p's 300s default.
 			maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
+			// A fresh session (no resume), so a non-native agent gets it embedded again.
+			appendSystemPrompt: await systemPrompts?.forParticipant(matchingSession),
 		});
 
 		logger.debug(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);

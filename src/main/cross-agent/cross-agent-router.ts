@@ -26,6 +26,7 @@ import {
 	serializeTranscript,
 } from '../../shared/maestro-lib/agents/consult-prompt';
 import { createDesktopConsultRunner } from './consult-runner';
+import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 
 /**
  * Session-id prefix for the ephemeral processes cross-agent dispatch spawns.
@@ -45,6 +46,18 @@ const consultService = createConsultService();
  */
 export function cancelCrossAgentRequestsForSource(sourceSessionId: string): number {
 	return consultService.cancelForSource(sourceSessionId);
+}
+
+/**
+ * Who is asking and who is answering in a consult that is still in flight, or
+ * null once it has settled. A consult runs as an ephemeral
+ * `cross-agent-<requestId>` process that carries neither agent's id, so this
+ * is the only way a process listener can tell which agents it belongs to.
+ */
+export function getCrossAgentConsultParties(
+	requestId: string
+): { sourceSessionId: string; targetSessionId: string } | null {
+	return consultService.parties(requestId);
 }
 
 export interface StartCrossAgentRequestOptions {
@@ -87,6 +100,7 @@ export function startCrossAgentRequest(
 		getCustomEnvVars: opts.getCustomEnvVars,
 		getAgentConfig: opts.getAgentConfig,
 		writable: opts.writable,
+		getSystemPrompt: (target) => buildMaestroSystemPromptForSession(target.id),
 		onChunk: opts.onChunk,
 	});
 }

@@ -143,6 +143,12 @@ export interface ConsultStartOptions {
 	 * Defaults to false: consults are read-only.
 	 */
 	writable?: boolean;
+	/**
+	 * The Maestro system prompt the consulted agent answers with: the same one
+	 * its own tabs carry. Optional: a host that cannot build one passes none and
+	 * the consult starts without it.
+	 */
+	getSystemPrompt?: (target: CrossAgentTargetSession) => Promise<string | undefined>;
 	/** Called with each response chunk; `done: true` marks completion/failure. */
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
@@ -162,6 +168,8 @@ export interface ConsultStartOptions {
 interface ActiveConsult {
 	/** The agent the mention was typed in - what Stop is addressed to. */
 	sourceSessionId: string;
+	/** The agent that is answering. */
+	targetSessionId: string;
 	/** Terminate this consult and emit its terminal chunk. Idempotent. */
 	cancel: () => void;
 }
@@ -261,6 +269,7 @@ export function createConsultService() {
 		let cancelRequested = false;
 		const registration: ActiveConsult = {
 			sourceSessionId: request.sourceSessionId,
+			targetSessionId: request.targetSessionId,
 			cancel: () => {
 				cancelRequested = true;
 			},
@@ -494,6 +503,11 @@ export function createConsultService() {
 					// default and kills a still-working consult long before our budget.
 					maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
 					debugLabel: `cross-agent:${target.name}`,
+					// The consulted agent is a real Maestro agent: it answers with the same
+					// system prompt its own tabs carry. A resumed consult skips re-embedding
+					// for agents without the native flag (already in that transcript).
+					appendSystemPrompt: await opts.getSystemPrompt?.(target),
+					isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 				},
 				observer
 			);
@@ -540,7 +554,27 @@ export function createConsultService() {
 		}
 	}
 
-	return { start, cancel, cancelForSource, cancelAll, activeCount: () => activeConsults.size };
+	/**
+	 * Who is asking and who is answering in a consult that is still in flight, or
+	 * null once it has settled. A consult runs as an ephemeral
+	 * `cross-agent-<requestId>` process that carries neither agent's id, so this
+	 * is the only way a process listener can tell which agents it belongs to.
+	 */
+	function parties(requestId: string): { sourceSessionId: string; targetSessionId: string } | null {
+		const consult = activeConsults.get(requestId);
+		return consult
+			? { sourceSessionId: consult.sourceSessionId, targetSessionId: consult.targetSessionId }
+			: null;
+	}
+
+	return {
+		start,
+		cancel,
+		cancelForSource,
+		cancelAll,
+		parties,
+		activeCount: () => activeConsults.size,
+	};
 }
 
 export type ConsultService = ReturnType<typeof createConsultService>;

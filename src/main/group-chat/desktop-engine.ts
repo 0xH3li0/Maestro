@@ -41,6 +41,10 @@ import { desktopTurnMetrics } from './group-chat-turn-metrics';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { toSpawnGroupChatAgentConfig } from './spawn-config';
 import type { IProcessManager } from './group-chat-moderator';
+import {
+	buildMaestroSystemPromptForSession,
+	buildPluginSystemPromptSections,
+} from '../utils/maestro-system-prompt';
 
 // ---------------------------------------------------------------------------
 // The agent directory: six callbacks the main process registers at startup
@@ -149,6 +153,18 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 	},
 	metrics: desktopTurnMetrics,
 	newId: uuidv4,
+	systemPrompts: {
+		forParticipant: async (matchingSession) => {
+			if (matchingSession) {
+				const full = await buildMaestroSystemPromptForSession(matchingSession.id);
+				if (full) return full;
+			}
+			return buildPluginSystemPromptSections({
+				isSsh: !!matchingSession?.sshRemoteConfig?.enabled,
+			});
+		},
+		forModerator: ({ isSsh }) => buildPluginSystemPromptSections({ isSsh }),
+	},
 });
 
 // ---------------------------------------------------------------------------

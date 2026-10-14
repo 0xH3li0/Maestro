@@ -48,7 +48,10 @@ interface Harness {
 	nextStart: { value: unknown };
 }
 
-function createHarness(dir: string): Harness {
+function createHarness(
+	dir: string,
+	systemPrompts?: Parameters<typeof createGroupChatEngine>[0]['systemPrompts']
+): Harness {
 	const store = createGroupChatStore({ groupChatsDir: () => dir });
 	const messages: Harness['messages'] = [];
 	const states: Harness['states'] = [];
@@ -93,6 +96,7 @@ function createHarness(dir: string): Harness {
 		metrics: createGroupChatTurnMetrics({
 			spans: { begin: tracker.beginSpan, elapsedMs: tracker.elapsedMs },
 		}),
+		systemPrompts,
 	});
 
 	const launcher: GroupChatLauncher = {
@@ -177,6 +181,39 @@ describe('group chat engine', () => {
 
 	const moderatorSpawns = () => h.spawns.filter((s) => s.processId.includes('-moderator-'));
 	const lastState = (chatId: string) => h.states.filter((s) => s.chatId === chatId).at(-1)?.state;
+
+	describe('the Maestro system prompt a turn carries', () => {
+		it('starts turns without one when the host supplies none', async () => {
+			const chat = await chatWith('Alice');
+			await delegateTo(chat.id, 'Alice');
+
+			expect(h.spawns.length).toBeGreaterThan(0);
+			for (const spawn of h.spawns) expect(spawn.appendSystemPrompt).toBeUndefined();
+		});
+
+		it('gives a participant the prompt of the agent it stands for, and the synthesis the moderator one', async () => {
+			const forParticipant = vi.fn(async (session?: GroupChatSessionInfo) =>
+				session ? `AGENT PROMPT ${session.id}` : 'PLUGIN SECTIONS'
+			);
+			const forModerator = vi.fn(() => 'MODERATOR SECTIONS');
+			h = createHarness(dir, { forParticipant, forModerator });
+			h.sessions.push({ id: 'agent-alice', name: 'Alice', toolType: 'claude-code', cwd: dir });
+			const chat = await chatWith('Alice');
+
+			const [alice] = await delegateTo(chat.id, 'Alice');
+			const participantSpawn = h.spawns.find((s) => s.processId === alice);
+			expect(participantSpawn?.appendSystemPrompt).toBe('AGENT PROMPT agent-alice');
+			// A first turn on a participant with no provider session is not a resume.
+			expect(participantSpawn?.isResume).toBe(false);
+
+			h.spawns.length = 0;
+			await h.engine.turnEnded({ processId: alice, text: 'Done.', exitCode: 0 }, h.launcher);
+			const synthesis = moderatorSpawns();
+			expect(synthesis).toHaveLength(1);
+			expect(synthesis[0].appendSystemPrompt).toBe('MODERATOR SECTIONS');
+			expect(forModerator).toHaveBeenCalledWith({ isSsh: false });
+		});
+	});
 
 	describe('a participant turn ends', () => {
 		it('counts a participant that exited non-zero after emitting text as responded (B1)', async () => {
