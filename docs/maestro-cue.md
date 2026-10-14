@@ -7,7 +7,8 @@ icon: bolt
 Maestro Cue is an event-driven automation engine that watches for things happening in your projects and automatically sends prompts to your agents in response. Instead of manually kicking off tasks, you define **subscriptions** - trigger-prompt pairings - in a YAML file, and Cue handles the rest.
 
 <Note>
-Maestro Cue is an **Encore Feature** - it's on by default. Turn it off in **Settings > Encore Features** to hide the shortcut, modal, and automation engine.
+Maestro Cue is an **Encore Feature** and is on by default. Turn it off in **Settings > Plugins** to hide the shortcut and modal and stop the automation engine.
+The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and earlier it is called **Encore Features**.
 </Note>
 
 ## What Can Cue Do?
@@ -29,7 +30,7 @@ Cue is on out of the box. Maestro automatically scans all your active agents for
 To turn Cue off entirely:
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
-2. Navigate to the **Encore Features** tab
+2. Navigate to the **Plugins** tab
 3. Toggle **Maestro Cue** off
 
 ## Quick Start
@@ -371,3 +372,4 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 - **Prompt files vs inline** - For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
 - **Hot reload** - The engine watches `.maestro/cue.yaml` for changes and reloads automatically - no need to restart Maestro
 - **Template variables** - Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it
+- **Standing instructions** - Every Cue run starts a new provider session, so the target agent's New Session Message is prefixed to each run's prompt. Its Nudge Message is not sent. See [When Each Message Is Sent](./general-usage#when-each-message-is-sent)

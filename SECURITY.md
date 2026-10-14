@@ -21,6 +21,8 @@ If you discover a vulnerability that could cause significant harm if disclosed p
 
 This allows us to develop and release a patch before public disclosure.
 
+Maintainers handle every report with the same procedure, from triage to advisory, CVE, patched releases, and credit: [docs/agent-guides/SECURITY-RUNBOOK.md](docs/agent-guides/SECURITY-RUNBOOK.md).
+
 ## Scope
 
 ### In Scope
@@ -62,7 +64,7 @@ We appreciate security researchers who help improve Maestro. Contributors who re
 
 **Security Contributors:**
 
-- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026)
+- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026), with thanks to their mentor [notwo1f](https://github.com/notwo1f), who guided the audit
 - [YoAm](https://github.com/YoAm) - web control server exposure and token file permissions (August 2026)
 
 ## Bug Bounty
@@ -77,7 +79,7 @@ The following are known aspects of Maestro's design that users should be aware o
 
 ### Process Execution
 
-Maestro spawns AI agents and terminal processes with the same privileges as the user running the application. This is by design-the agents need filesystem and command access to function. Users should:
+Maestro spawns AI agents and terminal processes with the same privileges as the user running the application. This is by design - the agents need filesystem and command access to function. Users should:
 
 - Only run Maestro on projects they trust
 - Be aware that AI agents can execute commands on your system
@@ -104,15 +106,15 @@ Maestro uses Electron's IPC for communication between the main process and rende
 
 ### Sentry DSN
 
-The Sentry DSN in the codebase is a **public secret by design**. This is standard practice for client-side error reporting-the DSN is intentionally exposed to allow error telemetry. Reporting this as a vulnerability is not necessary. We monitor for abuse and will rotate keys if needed.
+The Sentry DSN in the codebase is a **public secret by design**. This is standard practice for client-side error reporting - the DSN is intentionally exposed to allow error telemetry. Reporting this as a vulnerability is not necessary. We monitor for abuse and will rotate keys if needed.
 
 ## Security Best Practices in Codebase
 
 For contributors, Maestro enforces these security patterns:
 
-- **Always use `execFileNoThrow`** for external commands-never shell-based execution
+- **Always use `execFileNoThrow`** for external commands - never shell-based execution
 - **Validate all IPC inputs** in main process handlers
-- **Minimize preload API surface**-only expose what's necessary
+- **Minimize preload API surface** - only expose what's necessary
 - **Sanitize file paths** before filesystem operations
 
 See [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for more details.

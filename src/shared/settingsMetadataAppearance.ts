@@ -209,6 +209,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	tabBarWheelScroll: {
+		description:
+			'Pan an overflowing tab strip horizontally with the mouse wheel while hovering over the tab bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	autoHideMenuBar: {
 		description: 'Auto-hide the menu bar (press Alt to show). Only applies on Windows/Linux.',
 		type: 'boolean',
@@ -265,6 +272,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	showLeftPanelCollapsedInitials: {
+		description:
+			'When the left side bar is collapsed, label each agent with two letters from its name (e.g. "MR" for "Maestro RC"), tinted with its status color. Turn off to show a plain status dot instead.',
+		type: 'boolean',
+		default: true,
 		category: 'appearance',
 	},
 	leftPanelCollapsedPillsPerRow: {

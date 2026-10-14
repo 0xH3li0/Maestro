@@ -24,6 +24,25 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+// Platform is mockable per-test. Default is the POSIX kill path
+// (child.kill('SIGTERM')) so the SIGTERM → SIGKILL assertions hold regardless
+// of host OS - mirroring what CI exercises on Unix. The Windows process-tree
+// kill tests flip this to true to exercise the taskkill branch.
+const { mockIsWindows, mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+	mockExecFileSync: vi.fn(),
+}));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
+
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;
@@ -60,12 +79,22 @@ vi.mock('child_process', async (importOriginal) => {
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+		execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+			execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		},
 	};
 });
+
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
 
 // Must import after mocks
 import {
@@ -103,6 +132,8 @@ function createOptions(overrides = {}) {
 describe('cue-process-lifecycle', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; Windows tests opt in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 		vi.useFakeTimers();
 		getActiveProcessMap().clear();
 	});
@@ -274,6 +305,34 @@ describe('cue-process-lifecycle', () => {
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			// Killing the local ssh client alone leaves the remote agent running, so a
+			// stop must also reach the remote host.
+			it('records the remote pid and terminates the remote agent on stop', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const written = mockChild.stdin.write.mock.calls[0][0] as string;
+				const pidFile = getActiveProcessMap().get('run-ssh')?.sshRemotePidFile;
+				expect(pidFile).toMatch(/^\/tmp\/maestro-agent-/);
+				expect(written).toContain(pidFile);
+				expect(written.endsWith('exec claude\n')).toBe(true);
+
+				expect(stopProcess('run-ssh')).toBe(true);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
 				await resultPromise;
 			});
 
@@ -567,6 +626,52 @@ describe('cue-process-lifecycle', () => {
 			// Process hasn't exited - SIGKILL should fire after delay
 			await vi.advanceTimersByTimeAsync(5000);
 			expect(childKill).toHaveBeenCalledWith('SIGKILL');
+
+			mockChild.emit('close', null);
+			await resultPromise;
+		});
+	});
+
+	describe('Windows process-tree kill (taskkill)', () => {
+		it('kills via taskkill /pid <pid> /t /f instead of POSIX signals', async () => {
+			mockIsWindows.mockReturnValue(true);
+
+			const resultPromise = runProcess('win-stop', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			const childKill = vi.spyOn(mockChild, 'kill');
+
+			const stopped = stopProcess('win-stop');
+			expect(stopped).toBe(true);
+			expect(mockExecFile).toHaveBeenCalledWith(
+				'taskkill',
+				['/pid', String(mockChild.pid), '/t', '/f'],
+				expect.any(Function)
+			);
+			// POSIX signals must not be used on Windows (no-op for shell-spawned trees).
+			expect(childKill).not.toHaveBeenCalled();
+
+			mockChild.emit('close', null);
+			await resultPromise;
+		});
+
+		it('tolerates taskkill failing because the process is already dead', async () => {
+			mockIsWindows.mockReturnValue(true);
+			mockExecFile.mockImplementationOnce((_cmd: unknown, _args: unknown, cb?: unknown) => {
+				if (typeof cb === 'function') {
+					(cb as (e: Error | null) => void)(new Error('ERROR: The process "12345" not found.'));
+				}
+			});
+
+			const resultPromise = runProcess('win-dead', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			// The child exited before taskkill ran. The exit code, not the
+			// (localized) error text, is what marks the failure as benign.
+			mockChild.exitCode = 1;
+			stopProcess('win-dead');
+			// Already-dead is expected on Windows and must not be reported to Sentry.
+			expect(mockCaptureException).not.toHaveBeenCalled();
 
 			mockChild.emit('close', null);
 			await resultPromise;

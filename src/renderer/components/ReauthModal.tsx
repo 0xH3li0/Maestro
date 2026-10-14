@@ -60,7 +60,8 @@ import {
 } from '../../shared/providerProfiles';
 import { useSshRemoteNames } from '../hooks/stats/useProviderProfiles';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
-import type { Session, Theme } from '../types';
+import type { Theme } from '../types';
+import type { ReauthHost } from '../stores/modalStore';
 
 export interface ReauthModalProps {
 	theme: Theme;
@@ -69,9 +70,10 @@ export interface ReauthModalProps {
 	/**
 	 * An agent backed by the failed provider, used to run the login in the right
 	 * place (its cwd, its custom binary path, its SSH remote). Any blocked agent
-	 * will do - they share the credential store, which is the whole point.
+	 * will do - they share the credential store, which is the whole point. An
+	 * account login (Usage Dashboard) passes a host built for that account.
 	 */
-	session: Session;
+	session: ReauthHost;
 	onClose: () => void;
 }
 
@@ -358,7 +360,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleDismiss}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						{userInitiated ? 'Cancel' : 'Not Now'}
@@ -366,7 +368,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleResume}
-						className="px-4 py-2 rounded transition-colors"
+						className="px-4 py-1.5 rounded transition-colors text-sm"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,

@@ -195,6 +195,18 @@ export function calculateModelCost(tokens: TokenCounts, modelId?: string | null)
 	return calculateWithPricing(tokens, resolveModelPricing(modelId));
 }
 
+/** Token counts plus a rate-table cost for a single model. */
+export interface ModelCost {
+	/** Raw model id as it appeared in the transcript (empty string when absent). */
+	model: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	/** USD cost priced with this model's rate. */
+	costUsd: number;
+}
+
 /** Grand-total token counts plus a per-model-accurate cost for a Claude session. */
 export interface ClaudeUsageBreakdown {
 	inputTokens: number;
@@ -202,6 +214,12 @@ export interface ClaudeUsageBreakdown {
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	costUsd: number;
+	/**
+	 * Per-model split (tokens + rate-table cost) the grand totals were summed
+	 * from. Sessions can mix models, so this preserves the breakdown callers need
+	 * for a by-model view instead of collapsing straight to totals.
+	 */
+	byModel: ModelCost[];
 }
 
 interface TokenBucket {
@@ -227,17 +245,25 @@ function toInt(value: unknown): number {
  * Only lines containing a `"usage"` object are JSON-parsed, keeping this close to
  * the cost of the previous whole-file regex scan while recovering the model ID
  * that lives on the same assistant message line.
+ *
+ * Claude Code writes ONE line per content block (thinking, text, each tool_use)
+ * and repeats the whole API response's `usage` on every one of them, so a
+ * response is counted once per `message.id` + `requestId`. Summing every line
+ * overstated cost and tokens by roughly 1.5x on real transcripts. A line with no
+ * message id cannot be matched to its siblings and is counted as-is.
  */
 export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 	const totals = emptyBucket();
 	const byModel = new Map<string, TokenBucket>();
+	const seenResponses = new Set<string>();
 
 	for (const line of content.split('\n')) {
 		if (line.indexOf('"usage"') === -1) continue;
 		let entry: {
 			model?: unknown;
+			requestId?: unknown;
 			usage?: Record<string, unknown>;
-			message?: { model?: unknown; usage?: Record<string, unknown> };
+			message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown> };
 		};
 		try {
 			entry = JSON.parse(line);
@@ -254,6 +280,14 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 		const cacheRead = toInt(usage.cache_read_input_tokens);
 		const cacheCreation = toInt(usage.cache_creation_input_tokens);
 		if (input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) continue;
+
+		const messageId = entry.message?.id;
+		if (typeof messageId === 'string' && messageId) {
+			const requestId = typeof entry.requestId === 'string' ? entry.requestId : '';
+			const responseKey = `${messageId}:${requestId}`;
+			if (seenResponses.has(responseKey)) continue;
+			seenResponses.add(responseKey);
+		}
 
 		totals.inputTokens += input;
 		totals.outputTokens += output;
@@ -274,8 +308,18 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 	}
 
 	let costUsd = 0;
+	const byModelCosts: ModelCost[] = [];
 	for (const [model, bucket] of byModel) {
-		costUsd += calculateModelCost(bucket, model || undefined);
+		const modelCost = calculateModelCost(bucket, model || undefined);
+		costUsd += modelCost;
+		byModelCosts.push({
+			model,
+			inputTokens: bucket.inputTokens,
+			outputTokens: bucket.outputTokens,
+			cacheReadTokens: bucket.cacheReadTokens,
+			cacheCreationTokens: bucket.cacheCreationTokens,
+			costUsd: modelCost,
+		});
 	}
 
 	return {
@@ -284,5 +328,6 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 		cacheReadTokens: totals.cacheReadTokens,
 		cacheCreationTokens: totals.cacheCreationTokens,
 		costUsd,
+		byModel: byModelCosts,
 	};
 }

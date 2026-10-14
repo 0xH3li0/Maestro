@@ -23,7 +23,11 @@ import type {
 	NewTabCallback,
 	CloseTabCallback,
 	RenameTabCallback,
+	RenameTabResult,
 	StarTabCallback,
+	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
+	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -49,8 +53,19 @@ import type {
 	ReadTerminalTabPayload,
 	ReadTerminalTabResult,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
+	NoteAgentDelegationCallback,
+	EnqueueCommandCallback,
+	EnqueueCommandResult,
+	ListQueueCallback,
+	ListQueueResult,
+	RemoveQueueItemCallback,
+	RemoveQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -75,6 +90,7 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -121,6 +137,11 @@ import type {
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
 	NotifyToastCallback,
+	CadenzaViewCallback,
+	MovementViewCallback,
+	GetMovementStateCallback,
+	GetMovementDesignerInspectionCallback,
+	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
 	GetDebugPackageDepsCallback,
 	NotifyToastParams,
@@ -137,6 +158,15 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
+import type { CadenzaPayload } from '../../../shared/cadenza-types';
+import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
 
@@ -159,6 +189,9 @@ export interface WebServerCallbacks {
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
+	snoozeCommand: SnoozeCommandCallback | null;
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
@@ -175,8 +208,14 @@ export interface WebServerCallbacks {
 	listTerminalTabs: ListTerminalTabsCallback | null;
 	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	consultAgent: ConsultAgentCallback | null;
+	noteAgentDelegation: NoteAgentDelegationCallback | null;
+	enqueueCommand: EnqueueCommandCallback | null;
+	listQueue: ListQueueCallback | null;
+	removeQueueItem: RemoveQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	launchGoalRun: LaunchGoalRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
@@ -196,6 +235,7 @@ export interface WebServerCallbacks {
 	getGroups: GetGroupsCallback | null;
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
+	updateGroup: UpdateGroupCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -226,6 +266,11 @@ export interface WebServerCallbacks {
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
+	cadenzaView: CadenzaViewCallback | null;
+	movementView: MovementViewCallback | null;
+	getMovementState: GetMovementStateCallback | null;
+	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
+	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
 	getDebugPackageDeps: GetDebugPackageDepsCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
@@ -253,6 +298,9 @@ export class CallbackRegistry {
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
+		snoozeCommand: null,
+		autoRunSteeringCommand: null,
+		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
@@ -267,8 +315,14 @@ export class CallbackRegistry {
 		listTerminalTabs: null,
 		readTerminalTab: null,
 		newAITabWithPrompt: null,
+		consultAgent: null,
+		noteAgentDelegation: null,
+		enqueueCommand: null,
+		listQueue: null,
+		removeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		launchGoalRun: null,
 		setSessionAutoRunFolder: null,
 		getHistory: null,
 		getAutoRunDocs: null,
@@ -288,6 +342,7 @@ export class CallbackRegistry {
 		getGroups: null,
 		createGroup: null,
 		renameGroup: null,
+		updateGroup: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -318,6 +373,11 @@ export class CallbackRegistry {
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
+		cadenzaView: null,
+		movementView: null,
+		getMovementState: null,
+		getMovementDesignerInspection: null,
+		interactMovementDesigner: null,
 		notifyCenterFlash: null,
 		getDebugPackageDeps: null,
 		getMarketplaceManifest: null,
@@ -408,7 +468,11 @@ export class CallbackRegistry {
 		return this.callbacks.closeTab(sessionId, tabId);
 	}
 
-	async renameTab(sessionId: string, tabId: string, newName: string): Promise<boolean> {
+	async renameTab(
+		sessionId: string,
+		tabId: string,
+		newName: string
+	): Promise<boolean | RenameTabResult> {
 		if (!this.callbacks.renameTab) return false;
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
@@ -416,6 +480,27 @@ export class CallbackRegistry {
 	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
 		if (!this.callbacks.starTab) return false;
 		return this.callbacks.starTab(sessionId, tabId, starred);
+	}
+
+	async snoozeCommand(request: SnoozeCommandRequest): Promise<SnoozeCommandResult> {
+		if (!this.callbacks.snoozeCommand) {
+			return { success: false, error: 'Snooze is not configured' };
+		}
+		return this.callbacks.snoozeCommand(request);
+	}
+
+	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
+		if (!this.callbacks.autoRunSteeringCommand) {
+			return { success: false, error: 'Auto Run steering is not configured' };
+		}
+		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
+	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
+		if (!this.callbacks.windowCommand) {
+			return { success: false, error: 'Window commands are not configured' };
+		}
+		return this.callbacks.windowCommand(request);
 	}
 
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
@@ -524,6 +609,41 @@ export class CallbackRegistry {
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
 	}
 
+	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
+		if (!this.callbacks.consultAgent) {
+			return { success: false, error: 'Cross-agent consults are not configured' };
+		}
+		return this.callbacks.consultAgent(params);
+	}
+
+	noteAgentDelegation(notice: Parameters<NoteAgentDelegationCallback>[0]): void {
+		if (!this.callbacks.noteAgentDelegation) return;
+		this.callbacks.noteAgentDelegation(notice);
+	}
+
+	async enqueueCommand(
+		sessionId: string,
+		command: string,
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		images?: string[],
+		background?: boolean
+	): Promise<EnqueueCommandResult> {
+		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
+		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+	}
+
+	async listQueue(sessionId?: string): Promise<ListQueueResult> {
+		if (!this.callbacks.listQueue) return { success: false, queues: [], error: 'not configured' };
+		return this.callbacks.listQueue(sessionId);
+	}
+
+	async removeQueueItem(sessionId: string, itemId: string): Promise<RemoveQueueItemResult> {
+		if (!this.callbacks.removeQueueItem)
+			return { success: false, removed: false, error: 'not configured' };
+		return this.callbacks.removeQueueItem(sessionId, itemId);
+	}
+
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
 		if (!this.callbacks.refreshAutoRunDocs) return false;
 		return this.callbacks.refreshAutoRunDocs(sessionId, background);
@@ -538,6 +658,11 @@ export class CallbackRegistry {
 			maxLoops?: number;
 			saveAsPlaybook?: string;
 			launch?: boolean;
+			/** Per-run model/effort override - wins over the session model for this run only. */
+			model?: string;
+			effort?: string;
+			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
+			ignoreModelHints?: boolean;
 			worktree?: {
 				enabled: boolean;
 				path: string;
@@ -549,6 +674,16 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async launchGoalRun(
+		sessionId: string,
+		config: Parameters<LaunchGoalRunCallback>[1]
+	): ReturnType<LaunchGoalRunCallback> {
+		if (!this.callbacks.launchGoalRun) {
+			return { success: false, code: 'NOT_CONFIGURED', error: 'Not configured' };
+		}
+		return this.callbacks.launchGoalRun(sessionId, config);
 	}
 
 	async setSessionAutoRunFolder(
@@ -671,14 +806,24 @@ export class CallbackRegistry {
 		return this.callbacks.getGroups?.() ?? [];
 	}
 
-	async createGroup(name: string, emoji?: string): Promise<{ id: string } | null> {
+	async createGroup(
+		name: string,
+		emoji?: string,
+		parentGroupId?: string,
+		appearance?: GroupAppearance
+	): Promise<{ id: string } | null> {
 		if (!this.callbacks.createGroup) return null;
-		return this.callbacks.createGroup(name, emoji);
+		return this.callbacks.createGroup(name, emoji, parentGroupId, appearance);
 	}
 
 	async renameGroup(groupId: string, name: string): Promise<boolean> {
 		if (!this.callbacks.renameGroup) return false;
 		return this.callbacks.renameGroup(groupId, name);
+	}
+
+	async updateGroup(groupId: string, update: GroupUpdateRequest): Promise<boolean> {
+		if (!this.callbacks.updateGroup) return false;
+		return this.callbacks.updateGroup(groupId, update);
 	}
 
 	async deleteGroup(groupId: string): Promise<boolean> {
@@ -890,6 +1035,41 @@ export class CallbackRegistry {
 		return this.callbacks.notifyToast(params);
 	}
 
+	async cadenzaView(params: CadenzaPayload): Promise<boolean> {
+		if (!this.callbacks.cadenzaView) return false;
+		return this.callbacks.cadenzaView(params);
+	}
+
+	async movementView(params: MovementPayload): Promise<boolean> {
+		if (!this.callbacks.movementView) return false;
+		return this.callbacks.movementView(params);
+	}
+
+	async getMovementState(): Promise<MovementStateSnapshot | null> {
+		if (!this.callbacks.getMovementState) return null;
+		return this.callbacks.getMovementState();
+	}
+
+	async getMovementDesignerInspection(id: string) {
+		if (!this.callbacks.getMovementDesignerInspection) return null;
+		return this.callbacks.getMovementDesignerInspection(id);
+	}
+
+	async interactMovementDesigner(
+		id: string,
+		action: Parameters<InteractMovementDesignerCallback>[1]
+	) {
+		if (!this.callbacks.interactMovementDesigner) {
+			return {
+				ok: false,
+				action: action.kind,
+				selector: action.selector,
+				message: 'Movement designer interaction is not configured',
+			};
+		}
+		return this.callbacks.interactMovementDesigner(id, action);
+	}
+
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
@@ -1009,6 +1189,18 @@ export class CallbackRegistry {
 		this.callbacks.starTab = callback;
 	}
 
+	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
+		this.callbacks.snoozeCommand = callback;
+	}
+
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbacks.windowCommand = callback;
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbacks.reorderTab = callback;
 	}
@@ -1061,12 +1253,36 @@ export class CallbackRegistry {
 		this.callbacks.newAITabWithPrompt = callback;
 	}
 
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbacks.consultAgent = callback;
+	}
+
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbacks.noteAgentDelegation = callback;
+	}
+
+	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
+		this.callbacks.enqueueCommand = callback;
+	}
+
+	setListQueueCallback(callback: ListQueueCallback): void {
+		this.callbacks.listQueue = callback;
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbacks.removeQueueItem = callback;
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbacks.refreshAutoRunDocs = callback;
 	}
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbacks.launchGoalRun = callback;
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
@@ -1143,6 +1359,10 @@ export class CallbackRegistry {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbacks.renameGroup = callback;
+	}
+
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbacks.updateGroup = callback;
 	}
 
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
@@ -1263,6 +1483,26 @@ export class CallbackRegistry {
 
 	setNotifyToastCallback(callback: NotifyToastCallback): void {
 		this.callbacks.notifyToast = callback;
+	}
+
+	setCadenzaViewCallback(callback: CadenzaViewCallback): void {
+		this.callbacks.cadenzaView = callback;
+	}
+
+	setMovementViewCallback(callback: MovementViewCallback): void {
+		this.callbacks.movementView = callback;
+	}
+
+	setGetMovementStateCallback(callback: GetMovementStateCallback): void {
+		this.callbacks.getMovementState = callback;
+	}
+
+	setGetMovementDesignerInspectionCallback(callback: GetMovementDesignerInspectionCallback): void {
+		this.callbacks.getMovementDesignerInspection = callback;
+	}
+
+	setInteractMovementDesignerCallback(callback: InteractMovementDesignerCallback): void {
+		this.callbacks.interactMovementDesigner = callback;
 	}
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {

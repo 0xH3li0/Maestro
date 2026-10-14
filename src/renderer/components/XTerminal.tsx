@@ -15,7 +15,11 @@ import {
 } from './TerminalSelectionContextMenu';
 import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { toControlChar } from '../utils/terminalKeys';
+import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
+import { parseOsc52 } from '../utils/terminalClipboard';
+import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
 import {
 	createCanvasMeasureAdvance,
@@ -237,6 +241,14 @@ export interface XTerminalProps {
 	onCopySelection?: (text: string) => void;
 	/** Called when the user chooses "Send to Agent" on the selection right-click menu. */
 	onSendSelectionToAgent?: (text: string) => void;
+	/** Sticky-Ctrl bridge for the touch key bar. When `isActive()` returns true,
+	 *  the next single character typed into the terminal is converted to its
+	 *  control code (Ctrl-C, etc.) and `onConsume()` clears the armed state. Inert
+	 *  (pure pass-through) when omitted, so the desktop app is unaffected. */
+	stickyCtrl?: {
+		isActive: () => boolean;
+		onConsume: () => void;
+	};
 }
 
 // ============================================================================
@@ -255,6 +267,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		isActive = true,
 		onCopySelection,
 		onSendSelectionToAgent,
+		stickyCtrl,
 	},
 	ref
 ) {
@@ -316,6 +329,10 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	onCopySelectionRef.current = onCopySelection;
 	const onSendSelectionToAgentRef = useRef(onSendSelectionToAgent);
 	onSendSelectionToAgentRef.current = onSendSelectionToAgent;
+	// Sticky-Ctrl bridge read through a ref so the onData subscription (registered
+	// once per sessionId) always sees the latest armed state without re-subscribing.
+	const stickyCtrlRef = useRef(stickyCtrl);
+	stickyCtrlRef.current = stickyCtrl;
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -488,7 +505,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// isActive effect) can drop the subscription before discarding the addon.
 			// Without this, every re-init leaks an EventEmitter slot.
 			const ctxLossDisposable = addon.onContextLoss(() => {
-				logger.warn('[XTerminal] WebGL context lost — recovering renderer');
+				logger.warn('[XTerminal] WebGL context lost - recovering renderer');
 				ctxLossDisposable.dispose();
 				webglCtxLossDisposableRef.current = null;
 				addon.dispose();
@@ -557,6 +574,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.loadAddon(searchAddon);
 		term.loadAddon(unicode11Addon);
 		term.unicode.activeVersion = '11';
+
+		// OSC 52: the program in the PTY asking the terminal to copy text for it.
+		// xterm.js drops the sequence unless something handles it, so "press c to
+		// copy" in a TUI (and the TUI's own drag-select, which copies the same way)
+		// did nothing at all. Write-only: a clipboard QUERY is consumed and never
+		// answered, since the reply would hand the clipboard to whatever asked.
+		// The flash is not just an ack - it is what keeps a program from replacing
+		// the clipboard without the user seeing it happen.
+		const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+			const request = parseOsc52(data);
+			if (request.kind === 'write') void copyTextWithFlash(request.text);
+			return true;
+		});
 
 		// Custom link provider: detects URLs, tracks hover for right-click context menu
 		const linkProviderDisposable = term.registerLinkProvider({
@@ -726,6 +756,30 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		};
 		termElement.addEventListener('contextmenu', handleContextMenu);
 
+		// Mobile: reliably summon the on-screen keyboard on tap. xterm focuses its
+		// hidden `.xterm-helper-textarea` on mousedown, but the synthesized mouse
+		// events from a touch are unreliable on phones - iOS in particular only shows
+		// the soft keyboard when .focus() runs synchronously inside a user gesture. We
+		// focus the terminal explicitly on touchend for a genuine tap (not a scroll or
+		// selection drag, guarded by the shared tap tolerance) so the keyboard appears
+		// every time. Inert on desktop: touch events never fire from a mouse.
+		let touchStart: TouchPoint | null = null;
+		const handleTouchStart = (e: TouchEvent) => {
+			const touch = e.touches[0];
+			touchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
+		};
+		const handleTouchEnd = (e: TouchEvent) => {
+			if (!touchStart) return;
+			const touch = e.changedTouches[0];
+			const end: TouchPoint = touch ? { x: touch.clientX, y: touch.clientY } : touchStart;
+			if (isTapGesture(touchStart, end)) {
+				term.focus();
+			}
+			touchStart = null;
+		};
+		termElement.addEventListener('touchstart', handleTouchStart, { passive: true });
+		termElement.addEventListener('touchend', handleTouchEnd, { passive: true });
+
 		const selectionChangeDisposable = term.onSelectionChange(() => {
 			if (selectionCopyTimerRef.current) {
 				clearTimeout(selectionCopyTimerRef.current);
@@ -774,7 +828,10 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 
 		return () => {
 			termElement.removeEventListener('contextmenu', handleContextMenu);
+			termElement.removeEventListener('touchstart', handleTouchStart);
+			termElement.removeEventListener('touchend', handleTouchEnd);
 			selectionChangeDisposable.dispose();
+			osc52Disposable.dispose();
 			linkProviderDisposable.dispose();
 			titleChangeDisposable?.dispose();
 			resizeObserver.disconnect();
@@ -807,10 +864,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		if (!term) return;
 
 		const disposable = term.onData((data: string) => {
-			window.maestro.process.write(sessionId, data).catch(() => {
+			// Sticky-Ctrl (touch key bar): when armed, fold the next single typed
+			// character into its control code, then disarm. Multi-byte input (paste,
+			// IME) is left untouched by toControlChar and does not consume the arm.
+			let out = data;
+			const sticky = stickyCtrlRef.current;
+			if (sticky?.isActive() && data.length === 1) {
+				out = toControlChar(data);
+				sticky.onConsume();
+			}
+			window.maestro.process.write(sessionId, out).catch(() => {
 				// Write failures are surfaced by the process exit handler
 			});
-			onData?.(data);
+			onData?.(out);
 		});
 
 		return () => disposable.dispose();

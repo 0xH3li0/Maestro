@@ -2,12 +2,14 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
+import { captureCliRun } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 
 interface SendOptions {
 	session?: string;
@@ -130,25 +132,50 @@ export async function send(
 		? await prepareMaestroSystemPromptCli(agent)
 		: undefined;
 
-	// Spawn agent - spawnAgent handles --resume vs fresh session internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
-		readOnlyMode: options.readOnly,
-		customModel: agent.customModel,
-		customEffort: agent.customEffort,
-		customArgs: agent.customArgs,
-		customEnvVars: agent.customEnvVars,
-		sshRemoteConfig: agent.sessionSshRemoteConfig,
-		appendSystemPrompt,
-		// Honor the agent's Claude token source for `maestro-cli send` turns.
-		enableMaestroP: agent.enableMaestroP,
-		maestroPMode: agent.maestroPMode,
-		maestroPPath: agent.maestroPPath,
-	});
+	// A send without `--session` opens a new provider session, so it carries the
+	// agent's New Session Message like the first message of a desktop tab does.
+	// Agent-only: the run ledger below records the message as it was sent.
+	const agentPrompt = prependNewSessionMessageOnFirstTurn(
+		message,
+		agent.newSessionMessage,
+		agentSessionId
+	);
+
+	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
+	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
+	const result = await captureCliRun(
+		{
+			sessionId: agentSessionId ?? agentId,
+			toolType: agent.toolType,
+			cwd: agent.cwd,
+			prompt: message,
+			source: 'cli:send',
+		},
+		() =>
+			spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
+				readOnlyMode: options.readOnly,
+				customModel: agent.customModel,
+				customEffort: agent.customEffort,
+				customArgs: agent.customArgs,
+				additionalDirectories: agent.additionalDirectories,
+				customEnvVars: agent.customEnvVars,
+				sshRemoteConfig: agent.sessionSshRemoteConfig,
+				appendSystemPrompt,
+				// Honor the agent's Claude token source for `maestro-cli send` turns.
+				enableMaestroP: agent.enableMaestroP,
+				maestroPMode: agent.maestroPMode,
+				maestroPPath: agent.maestroPPath,
+			}),
+		(r) => (r.success ? 0 : 1)
+	);
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
+		// The JSON on stdout is the contract, but a caller that only reads stderr
+		// would otherwise see a silent exit 1.
+		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		process.exit(1);
 	}
 

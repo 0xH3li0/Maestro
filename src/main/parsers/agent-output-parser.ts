@@ -28,6 +28,7 @@
 
 import type { ToolType, AgentError } from '../../shared/types';
 import { isValidAgentId } from '../../shared/agentIds';
+import type { ClaudeCostState } from '../../shared/claudeCostTracker';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../shared/types';
@@ -86,6 +87,15 @@ export interface ParsedEvent {
 	toolState?: unknown;
 
 	/**
+	 * Id of the parent tool call that spawned the subagent producing this event.
+	 * Set on every event a subagent emits (tool_use, text, thinking), and
+	 * references the spawning tool_use id (claude-code's Task tool). Absent for
+	 * main-transcript events. Only claude-code populates this today; other
+	 * parsers leave it undefined.
+	 */
+	parentToolUseId?: string;
+
+	/**
 	 * Token usage statistics (for 'usage' type)
 	 */
 	usage?: {
@@ -94,6 +104,25 @@ export interface ParsedEvent {
 		cacheReadTokens?: number;
 		cacheCreationTokens?: number;
 		contextWindow?: number;
+		/**
+		 * Authority marker for `contextWindow`: true only when the window value
+		 * came from the provider's own payload, never from a config value or a
+		 * static-table fallback the parser injected. Parsers routinely seed
+		 * `contextWindow` with a fallback (see `usage-aggregator.ts` and
+		 * `codex-output-parser.ts`), so the presence of a window says nothing
+		 * about its provenance - only this flag does. Downstream,
+		 * `StdoutHandler.buildUsageStats` forwards it into
+		 * `UsageStats.contextWindowResolved`, which the renderer ranks above a
+		 * stored `customContextWindow` (finding P1).
+		 */
+		contextWindowReported?: boolean;
+		/**
+		 * Model identifier the provider reported for this turn (e.g.
+		 * `claude-opus-4-8`). Enables downstream resolution of the model's real
+		 * context window from the provider catalog. Set by providers whose window
+		 * is model-dependent (Oh My Pi); omitted otherwise.
+		 */
+		model?: string;
 		costUsd?: number;
 		/**
 		 * Reasoning/thinking tokens (separate from outputTokens)
@@ -101,6 +130,23 @@ export interface ParsedEvent {
 		 * These are already included in outputTokens but tracked separately for UI display.
 		 */
 		reasoningTokens?: number;
+		/**
+		 * Absolute context-occupancy snapshot for the turn, when the provider can
+		 * report one. Distinct from the fields above, which for some providers are
+		 * per-turn token SPEND (claude-code sums every internal API call of a turn,
+		 * so a tool-heavy turn can exceed the context window). Set by the
+		 * claude-code parser from the LAST internal API call's `message.usage`,
+		 * which is real occupancy because a single call's input is what was
+		 * physically sent to the model. Copied straight onto `UsageStats.absoluteUsage`
+		 * by StdoutHandler.buildUsageStats.
+		 */
+		absoluteUsage?: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadInputTokens: number;
+			cacheCreationInputTokens: number;
+			reasoningTokens: number;
+		};
 	};
 
 	/**
@@ -132,6 +178,21 @@ export interface ParsedEvent {
 		name: string;
 		id?: string;
 		input?: unknown;
+	}>;
+
+	/**
+	 * Additional terminal-state tool results carried alongside a primary
+	 * 'tool_use' event when one message bundles several parallel tool_result
+	 * blocks (Claude Code returns parallel tool calls this way). The primary
+	 * result stays in the top-level toolName/toolCallId/toolState fields; the
+	 * remaining results live here so no parallel call is left stuck 'running'.
+	 * Process-manager emits a tool-execution for each.
+	 */
+	toolResultBlocks?: Array<{
+		toolName: string;
+		toolCallId: string;
+		toolState: unknown;
+		parentToolUseId?: string;
 	}>;
 
 	/**
@@ -242,6 +303,17 @@ export interface AgentOutputParser {
 	 * @returns true if the error must wait for the turn to show whether it recovered
 	 */
 	isProvisionalErrorNotice?(parsed: unknown): boolean;
+
+	/**
+	 * Tell a parser whose agent reports running SESSION totals which session this
+	 * process resumes, and the session's tracker as it stood when the turn
+	 * spawned, so the usage it emits is this turn's alone. Optional: only Claude
+	 * Code reports that way (see src/shared/claudeCostTracker.ts).
+	 *
+	 * @param resumeSessionId - The provider session this process resumes
+	 * @param baseline - The tracker at spawn: `null` for none, `undefined` for unknown
+	 */
+	primeResumedSession?(resumeSessionId: string, baseline: ClaudeCostState | null | undefined): void;
 
 	/**
 	 * Detect an error from process exit information

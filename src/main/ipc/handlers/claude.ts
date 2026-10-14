@@ -23,22 +23,26 @@ import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import { computeClaudeSessionUsage } from '../../../shared/claudeSessionUsage';
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
+	rescaleArchivedEntries,
 	saveStatsCache,
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
 import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
 } from '../../storage/starred-transcript-mirror';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -73,7 +77,10 @@ interface LegacyGlobalStatsCache {
 	version: number;
 }
 
-const LEGACY_GLOBAL_STATS_CACHE_VERSION = 1;
+// v2: Claude usage counted once per API response, not once per JSONL line.
+// v3: subagent transcripts priced into their parent session.
+// v4: messages counted as prompts and responses, not transcript lines.
+const LEGACY_GLOBAL_STATS_CACHE_VERSION = 4;
 
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
@@ -149,6 +156,7 @@ function extractTextFromContent(content: unknown): string {
  */
 export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	const { claudeSessionOriginsStore, getMainWindow } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// ============ List Sessions ============
 
@@ -202,10 +210,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						let firstUserMessage = '';
 						let timestamp = stats.mtime.toISOString();
 
-						// Fast regex-based extraction
-						const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-						const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-						const messageCount = userMessageCount + assistantMessageCount;
+						const messageCount = countClaudeTranscriptMessages(content);
 
 						// Extract first meaningful message content
 						for (
@@ -242,7 +247,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							cacheReadTokens: totalCacheReadTokens,
 							cacheCreationTokens: totalCacheCreationTokens,
 							costUsd,
-						} = computeClaudeUsageCost(content);
+						} = await computeClaudeSessionUsage(filePath, content);
 
 						// Extract last timestamp for duration
 						let lastTimestamp = timestamp;
@@ -400,10 +405,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							let firstUserMessage = '';
 							let timestamp = new Date(fileInfo.modifiedAt).toISOString();
 
-							const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-							const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || [])
-								.length;
-							const messageCount = userMessageCount + assistantMessageCount;
+							const messageCount = countClaudeTranscriptMessages(content);
 
 							// Extract first meaningful message
 							for (
@@ -440,7 +442,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								cacheReadTokens: totalCacheReadTokens,
 								cacheCreationTokens: totalCacheCreationTokens,
 								costUsd,
-							} = computeClaudeUsageCost(content);
+							} = await computeClaudeSessionUsage(fileInfo.filePath, content);
 
 							// Extract last timestamp for duration
 							let lastTimestamp = timestamp;
@@ -522,8 +524,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getProjectStats',
 		withIpcErrorLogging(handlerOpts('getProjectStats'), async (projectPath: string) => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates to renderer
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -535,19 +535,22 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				processedCount?: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:projectStatsUpdate', { projectPath, ...stats });
-				}
+				safeSend('claude:projectStatsUpdate', { projectPath, ...stats });
 			};
 
 			// Helper to parse a single session file
-			const parseSessionFile = async (content: string, fileStat: { size: number }) => {
-				const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-				const messages = userMessageCount + assistantMessageCount;
+			const parseSessionFile = async (
+				filePath: string,
+				content: string,
+				fileStat: { size: number }
+			) => {
+				const messages = countClaudeTranscriptMessages(content);
 
 				// Per-model token + cost extraction (a session may mix models).
-				const { inputTokens, outputTokens, costUsd } = computeClaudeUsageCost(content);
+				const { inputTokens, outputTokens, costUsd } = await computeClaudeSessionUsage(
+					filePath,
+					content
+				);
 
 				let oldestTimestamp: string | null = null;
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -595,8 +598,11 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				};
 			}
 
-			// Load existing cache
+			// Load existing cache. An older-but-compatible cache was derived by an
+			// earlier parser, so every live session is re-parsed and the archived
+			// ones are rescaled once the re-parse is done.
 			const cache = await loadStatsCache(projectPath);
+			const derivationStale = !!cache && cache.version < STATS_CACHE_VERSION;
 
 			// List all .jsonl files
 			const files = await fs.readdir(projectDir);
@@ -618,7 +624,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					currentSessionIds.add(sessionId);
 					const cachedSession = cache?.sessions[sessionId];
 
-					if (!cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
+					if (derivationStale || !cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
 						sessionsToProcess.push({ filename, filePath, mtimeMs: fileStat.mtimeMs });
 					}
 				} catch {
@@ -692,7 +698,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				try {
 					const content = await fs.readFile(filePath, 'utf-8');
 					const fileStat = await fs.stat(filePath);
-					const stats = await parseSessionFile(content, { size: fileStat.size });
+					const stats = await parseSessionFile(filePath, content, { size: fileStat.size });
 
 					newCache.sessions[sessionId] = {
 						fileMtimeMs: mtimeMs,
@@ -710,9 +716,26 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						isComplete: processedCount >= sessionsToProcess.length,
 					});
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					// A transcript we merely discovered under `~/.claude/projects` can be
+					// unreadable or gone by the time we read it - environmental, not a
+					// Maestro fault, so warn locally and keep it out of Sentry
+					// (MAESTRO-YJ). Everything else still reports.
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					}
 				}
+			}
+
+			if (derivationStale && cache) {
+				rescaleArchivedEntries(
+					newCache.sessions,
+					cache.sessions,
+					['costUsd', 'tokens', 'messages'],
+					['costUsd']
+				);
 			}
 
 			// Calculate final totals
@@ -789,8 +812,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async () => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -803,9 +824,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				totalSizeBytes: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:globalStatsUpdate', stats);
-				}
+				safeSend('claude:globalStatsUpdate', stats);
 			};
 
 			const homeDir = os.homedir();
@@ -953,13 +972,11 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const content = await fs.readFile(filePath, 'utf-8');
 					const fileStat = await fs.stat(filePath);
 
-					const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-					const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-					const messages = userMessageCount + assistantMessageCount;
+					const messages = countClaudeTranscriptMessages(content);
 
 					// Per-model token + cost extraction (a session may mix models).
 					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-						computeClaudeUsageCost(content);
+						await computeClaudeSessionUsage(filePath, content);
 
 					newCache.sessions[sessionKey] = {
 						fileMtimeMs: mtimeMs,
@@ -978,8 +995,13 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const currentTotals = calculateGlobalTotals(newCache);
 					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					// See the per-project loop above (MAESTRO-YJ).
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Global session file not readable: ${sessionKey}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					}
 				}
 			}
 

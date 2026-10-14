@@ -22,6 +22,7 @@ import type {
 // Import the exported functions directly
 import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -703,9 +704,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -725,9 +726,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -763,9 +764,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -785,9 +786,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -808,9 +809,9 @@ describe('useBatchProcessor hook', () => {
 			];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -835,9 +836,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -856,9 +857,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -886,9 +887,9 @@ describe('useBatchProcessor hook', () => {
 			];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -912,9 +913,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -945,9 +946,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -974,9 +975,9 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1006,9 +1007,9 @@ describe('useBatchProcessor hook', () => {
 			// Mock empty document with no tasks
 			mockReadDoc.mockResolvedValue({ success: true, content: '# Empty document\nNo tasks here.' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1029,6 +1030,91 @@ describe('useBatchProcessor hook', () => {
 			});
 
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
+		});
+
+		it('should not start over a halt marker an earlier run left in a document', async () => {
+			const sessions = [createMockSession()];
+			// Checkboxes were reset for a fresh launch, but the previous run's halt
+			// marker is still in the document (#1588).
+			mockReadDoc.mockResolvedValue({
+				success: true,
+				content: '# Review\n- [ ] Review the queue\n\n<!-- maestro:halt: queue already empty -->',
+			});
+
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'review', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: true,
+						maxLoops: 12,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockOnAddHistoryEntry).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'Auto Run Not Started',
+					message: expect.stringContaining(
+						'Document "review" contains an unresolved halt marker on line 4: queue already empty'
+					),
+				})
+			);
+		});
+
+		it('should not start when another client wins the main-process claim', async () => {
+			const sessions = [createMockSession()];
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			vi.mocked(window.maestro.web.claimAutoRunStart).mockResolvedValueOnce(false);
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+						worktree: {
+							enabled: true,
+							path: '/test/worktree',
+							branchName: 'feature/test',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockWorktreeSetup).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Auto Run Already Active' })
+			);
 		});
 
 		it('should start batch run and process tasks', async () => {
@@ -1048,9 +1134,9 @@ describe('useBatchProcessor hook', () => {
 				}
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1106,9 +1192,9 @@ describe('useBatchProcessor hook', () => {
 			// Mock agent failure
 			mockOnSpawnAgent.mockResolvedValue({ success: false });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1135,6 +1221,45 @@ describe('useBatchProcessor hook', () => {
 			// Should have added history entry with failure
 			expect(mockOnAddHistoryEntry).toHaveBeenCalled();
 		});
+
+		it('prefixes the agent New Session Message onto the task spawn prompt', async () => {
+			const sessions = [createMockSession({ newSessionMessage: 'Always check linting first.' })];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) {
+					return { success: true, content: '# Tasks\n- [ ] Task 1' };
+				}
+				return { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the task',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			const prompt = mockOnSpawnAgent.mock.calls[0][1] as string;
+			expect(prompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
+		});
 	});
 
 	describe('stopBatchRun', () => {
@@ -1149,9 +1274,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			mockOnSpawnAgent.mockReturnValue(agentPromise);
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1214,9 +1339,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			mockOnSpawnAgent.mockReturnValue(agentPromise);
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1300,9 +1425,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			mockOnSpawnAgent.mockReturnValue(agentPromise);
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1365,9 +1490,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			mockOnSpawnAgent.mockReturnValue(agentPromise);
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1434,9 +1559,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1478,9 +1603,9 @@ describe('useBatchProcessor hook', () => {
 			// Mock worktree setup failure
 			mockWorktreeSetup.mockResolvedValue({ success: false, error: 'Worktree setup failed' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1508,6 +1633,8 @@ describe('useBatchProcessor hook', () => {
 
 			// Should not have spawned agent due to worktree failure
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith('test-session-id');
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
 		it('should checkout different branch when worktree exists with branch mismatch', async () => {
@@ -1525,9 +1652,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1575,9 +1702,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1629,9 +1756,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1679,9 +1806,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1751,9 +1878,9 @@ describe('useBatchProcessor hook', () => {
 					return { success: true, agentSessionId: `session-${spawnCount}` };
 				});
 
+				useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
 				const { result } = renderHook(() =>
 					useBatchProcessor({
-						sessions,
 						groups,
 						onUpdateSession: mockOnUpdateSession,
 						onSpawnAgent: mockOnSpawnAgent,
@@ -1808,9 +1935,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task 1' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1855,9 +1982,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1897,9 +2024,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1938,9 +2065,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -1983,9 +2110,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2044,9 +2171,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2102,9 +2229,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2155,9 +2282,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2211,9 +2338,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2268,9 +2395,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2325,9 +2452,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2366,9 +2493,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2408,9 +2535,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task for MySession' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2451,9 +2578,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2494,9 +2621,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2534,9 +2661,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2572,9 +2699,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2612,9 +2739,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2677,9 +2804,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2721,9 +2848,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2774,9 +2901,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, agentSessionId: 'session-2' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2854,7 +2981,6 @@ describe('useBatchProcessor hook', () => {
 
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -2932,9 +3058,9 @@ describe('useBatchProcessor hook', () => {
 				throw new Error('Agent exited with error');
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3021,7 +3147,6 @@ describe('useBatchProcessor hook', () => {
 
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3118,7 +3243,6 @@ describe('useBatchProcessor hook', () => {
 
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3202,9 +3326,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, agentSessionId: 'session-1' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3319,7 +3443,6 @@ describe('useBatchProcessor hook', () => {
 
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3399,9 +3522,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, agentSessionId: `claude-session-${spawnCount}` };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3449,9 +3572,9 @@ describe('useBatchProcessor hook', () => {
 			// Spawn succeeds but no claude session ID
 			mockOnSpawnAgent.mockResolvedValue({ success: true });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3503,9 +3626,9 @@ describe('useBatchProcessor hook', () => {
 				},
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3557,9 +3680,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, agentSessionId: 'test' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3599,9 +3722,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3647,9 +3770,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task 1\n- [x] Task 2' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3686,9 +3809,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3736,9 +3859,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3777,9 +3900,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3823,9 +3946,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockOnSpawnAgent.mockResolvedValue({ success: true, agentSessionId: 'test' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3870,9 +3993,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockOnSpawnAgent.mockResolvedValue({ success: true, agentSessionId: 'test' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3912,9 +4035,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			window.maestro.git.worktreeSetup = mockWorktreeSetup;
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -3968,9 +4091,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			window.maestro.git.worktreeCheckout = mockWorktreeCheckout;
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4034,9 +4157,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			window.maestro.git.worktreeCheckout = mockWorktreeCheckout;
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4100,9 +4223,9 @@ describe('useBatchProcessor hook', () => {
 
 			const mockOnPRResult = vi.fn();
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4170,9 +4293,9 @@ describe('useBatchProcessor hook', () => {
 
 			const mockOnPRResult = vi.fn();
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4232,9 +4355,9 @@ describe('useBatchProcessor hook', () => {
 			});
 			window.maestro.git.createPR = mockCreatePR;
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4302,9 +4425,9 @@ describe('useBatchProcessor hook', () => {
 			const mockSpeak = vi.fn().mockResolvedValue(undefined);
 			window.maestro.notification.speak = mockSpeak;
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4350,9 +4473,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockOnSpawnAgent.mockResolvedValue({ success: true, agentSessionId: 'test' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4402,9 +4525,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4460,9 +4583,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4518,9 +4641,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4583,9 +4706,9 @@ describe('useBatchProcessor hook', () => {
 				response: '**Summary:** Fixed it\n\n**Details:** Done.',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4628,9 +4751,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4673,9 +4796,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4718,9 +4841,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4762,9 +4885,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4808,9 +4931,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4849,9 +4972,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4903,9 +5026,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -4967,9 +5090,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5026,9 +5149,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5073,9 +5196,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5121,9 +5244,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'new-claude-session-123',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5170,9 +5293,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5206,9 +5329,9 @@ describe('useBatchProcessor hook', () => {
 			// Document read fails (no content)
 			mockReadDoc.mockResolvedValue({ success: true, content: '' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5239,9 +5362,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: false });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5287,9 +5410,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5342,9 +5465,9 @@ describe('useBatchProcessor hook', () => {
 				response: '**Summary:** Done',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5392,9 +5515,9 @@ describe('useBatchProcessor hook', () => {
 				agentSessionId: 'test-session',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5449,9 +5572,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5499,9 +5622,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5546,9 +5669,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5595,9 +5718,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5644,9 +5767,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Completed' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5691,9 +5814,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Done' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5762,9 +5885,9 @@ describe('useBatchProcessor hook', () => {
 				prUrl: 'https://github.com/test/repo/pull/42',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5844,9 +5967,9 @@ describe('useBatchProcessor hook', () => {
 
 			mockGetDefaultBranch.mockResolvedValue({ success: true, branch: 'main' });
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5910,9 +6033,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -5966,9 +6089,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -6028,9 +6151,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -6092,9 +6215,9 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task 1\n- [x] Task 2' };
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -6167,9 +6290,9 @@ describe('useBatchProcessor hook', () => {
 				prUrl: 'https://github.com/test/repo/pull/99',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -6253,9 +6376,9 @@ describe('useBatchProcessor hook', () => {
 				error: 'gh: not authenticated',
 			});
 
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
 				useBatchProcessor({
-					sessions,
 					groups,
 					onUpdateSession: mockOnUpdateSession,
 					onSpawnAgent: mockOnSpawnAgent,
@@ -6309,6 +6432,109 @@ describe('useBatchProcessor hook', () => {
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');
 			expect(prEntry.fullResponse).toContain('gh: not authenticated');
+		});
+	});
+
+	describe('per-run model/effort override', () => {
+		// The override lives on the BatchRunConfig and has to survive the
+		// startBatchRun -> useBatchRunner -> useDocumentProcessor delegation chain
+		// to reach onSpawnAgent as the 4th argument.
+		const startRun = async (
+			extraConfig: Partial<{ model: string; effort: string; ignoreModelHints: boolean }>,
+			content = '- [ ] Task'
+		): Promise<void> => {
+			// Claude Code, so a tier marker resolves to a real model name.
+			const sessions = [createMockSession({ toolType: 'claude-code' })];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content });
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						...extraConfig,
+					},
+					'/test/folder'
+				);
+			});
+		};
+
+		it('forwards config.model and config.effort to onSpawnAgent', async () => {
+			await startRun({ model: 'opus', effort: 'high' });
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+				effortOverride: 'high',
+			});
+		});
+
+		it('forwards only the field that was set', async () => {
+			await startRun({ model: 'opus' });
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+			});
+		});
+
+		it('lets a document marker win over the run model by default', async () => {
+			await startRun({ model: 'sonnet' }, '<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task');
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+				effortOverride: undefined,
+			});
+		});
+
+		it('runs at the run model when ignoreModelHints is set, whatever the document asks', async () => {
+			await startRun(
+				{ model: 'sonnet', ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" effort="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'sonnet',
+				effortOverride: undefined,
+			});
+		});
+
+		it('falls back to the agent settings when hints are ignored and no model was picked', async () => {
+			await startRun(
+				{ ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
+			});
+		});
+
+		it('resolves both axes to undefined when the config omits them', async () => {
+			await startRun({});
+
+			// The document processor always resolves a turn-settings object now (it
+			// has to, to carry a document's model hint), so the 4th argument is
+			// present but empty on both axes. That is what "no override" looks like:
+			// the spawn falls through to the agent's own configured values.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
+			});
 		});
 	});
 });

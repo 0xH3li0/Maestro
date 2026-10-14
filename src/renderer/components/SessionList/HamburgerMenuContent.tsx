@@ -1,4 +1,5 @@
 import {
+	Bell,
 	Wand2,
 	Plus,
 	Settings,
@@ -15,13 +16,19 @@ import {
 	Music,
 	Command,
 	Zap,
+	Music2,
+	LogOut,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { openUrl } from '../../utils/openUrl';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
@@ -40,6 +47,15 @@ export function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	// A phone has no keyboard and no room for a guided tour's anchored
+	// callouts, so the two entries that exist only for those are not offered.
+	// (The chord badges beside every other row are hidden by CSS via
+	// data-shortcut-hint.)
+	const phone = usePhoneLayout();
+	// Only a browser that actually signed in has somewhere to sign out to. On
+	// the desktop there is no session and no login page, so the row is absent
+	// rather than disabled.
+	const webLoginUser = isWebDesktop() ? currentWebLoginUser() : null;
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
@@ -49,6 +65,8 @@ export function HamburgerMenuContent({
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
 		setCueModalOpen,
+		setPianolaModalOpen,
+		setConcertoStageOpen,
 		setUpdateCheckModalOpen,
 		setAboutModalOpen,
 		setQuickActionOpen,
@@ -75,6 +93,7 @@ export function HamburgerMenuContent({
 					</div>
 					<span
 						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
 						{shortcuts.newInstance ? formatShortcutKeys(shortcuts.newInstance.keys) : '⌘N'}
@@ -100,6 +119,7 @@ export function HamburgerMenuContent({
 					</div>
 					<span
 						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
 						{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
@@ -124,12 +144,39 @@ export function HamburgerMenuContent({
 				</div>
 				<span
 					className="text-xs font-mono px-1.5 py-0.5 rounded"
+					data-shortcut-hint=""
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 				>
 					{shortcuts.quickAction ? formatShortcutKeys(shortcuts.quickAction.keys) : '⌘K'}
 				</span>
 			</button>
-			{startTour && (
+			<button
+				onClick={() => {
+					openUiSurface('notification-center');
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Bell className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Notification Center
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Unread notifications and history
+					</div>
+				</div>
+				{!!shortcuts.openNotificationCenter?.keys.length && (
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.openNotificationCenter.keys)}
+					</span>
+				)}
+			</button>
+			{startTour && !phone && (
 				<button
 					onClick={() => {
 						startTour();
@@ -149,29 +196,32 @@ export function HamburgerMenuContent({
 				</button>
 			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-			<button
-				onClick={() => {
-					setShortcutsHelpOpen(true);
-					setMenuOpen(false);
-				}}
-				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-			>
-				<Keyboard className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Keyboard Shortcuts
-					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						View all available shortcuts
-					</div>
-				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+			{!phone && (
+				<button
+					onClick={() => {
+						setShortcutsHelpOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					{formatShortcutKeys(shortcuts.help.keys)}
-				</span>
-			</button>
+					<Keyboard className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Keyboard Shortcuts
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							View all available shortcuts
+						</div>
+					</div>
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.help.keys)}
+					</span>
+				</button>
+			)}
 			<button
 				onClick={() => {
 					setSettingsModalOpen(true);
@@ -190,6 +240,7 @@ export function HamburgerMenuContent({
 				</div>
 				<span
 					className="text-xs font-mono px-1.5 py-0.5 rounded"
+					data-shortcut-hint=""
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 				>
 					{formatShortcutKeys(shortcuts.settings.keys)}
@@ -213,6 +264,7 @@ export function HamburgerMenuContent({
 				</div>
 				<span
 					className="text-xs font-mono px-1.5 py-0.5 rounded"
+					data-shortcut-hint=""
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 				>
 					{formatShortcutKeys(shortcuts.systemLogs.keys)}
@@ -236,6 +288,7 @@ export function HamburgerMenuContent({
 				</div>
 				<span
 					className="text-xs font-mono px-1.5 py-0.5 rounded"
+					data-shortcut-hint=""
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 				>
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
@@ -260,6 +313,7 @@ export function HamburgerMenuContent({
 					</div>
 					<span
 						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
 						{formatShortcutKeys(shortcuts.usageDashboard.keys)}
@@ -286,6 +340,7 @@ export function HamburgerMenuContent({
 					{shortcuts.directorNotes && (
 						<span
 							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{formatShortcutKeys(shortcuts.directorNotes.keys)}
@@ -312,6 +367,7 @@ export function HamburgerMenuContent({
 					</div>
 					<span
 						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
 						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
@@ -338,11 +394,59 @@ export function HamburgerMenuContent({
 					{shortcuts.openCue && (
 						<span
 							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{formatShortcutKeys(shortcuts.openCue.keys)}
 						</span>
 					)}
+				</button>
+			)}
+			{encoreFeatures.concerto && (
+				<button
+					onClick={() => {
+						setConcertoStageOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Concerto
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Agent-composed interactive views
+						</div>
+					</div>
+					{shortcuts.toggleConcerto && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.toggleConcerto.keys)}
+						</span>
+					)}
+				</button>
+			)}
+			{encoreFeatures.pianola && (
+				<button
+					onClick={() => {
+						setPianolaModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Pianola
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Autonomous manager
+						</div>
+					</div>
 				</button>
 			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -382,23 +486,28 @@ export function HamburgerMenuContent({
 				</div>
 				<ExternalLink className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 			</button>
-			<button
-				onClick={() => {
-					setUpdateCheckModalOpen(true);
-					setMenuOpen(false);
-				}}
-				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-			>
-				<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Check for Updates
+			{/* Check for Updates assumes the user is running the Electron binary
+			    directly - it would dump a misleading dialog when the renderer is
+			    served through the web-desktop bridge. Hide it in that context. */}
+			{!isWebDesktop() && (
+				<button
+					onClick={() => {
+						setUpdateCheckModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Check for Updates
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Get the latest version
+						</div>
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						Get the latest version
-					</div>
-				</div>
-			</button>
+				</button>
+			)}
 			<button
 				onClick={() => {
 					setAboutModalOpen(true);
@@ -416,6 +525,26 @@ export function HamburgerMenuContent({
 					</div>
 				</div>
 			</button>
+			{webLoginUser && (
+				<button
+					data-testid="hamburger-sign-out"
+					onClick={() => {
+						setMenuOpen(false);
+						void signOutWebLogin();
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<LogOut className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Sign out ({webLoginUser.displayName})
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							End this browser&apos;s Web Login session
+						</div>
+					</div>
+				</button>
+			)}
 		</div>
 	);
 }

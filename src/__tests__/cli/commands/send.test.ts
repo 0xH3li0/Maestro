@@ -168,6 +168,48 @@ describe('send command', () => {
 		expect(output.usage.contextUsagePercent).toBe(4);
 	});
 
+	describe('New Session Message', () => {
+		const withMessage = () => mockAgent({ newSessionMessage: 'Always check linting' });
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'ok',
+				agentSessionId: 'session-xyz-789',
+			});
+		});
+
+		it('prefixes the message when the send opens a new session', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', {});
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Always check linting\n\n---\n\nRun the report',
+				undefined,
+				expect.anything()
+			);
+		});
+
+		it('leaves the message alone when --session resumes a conversation', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', { session: 'session-xyz-789' });
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Run the report',
+				'session-xyz-789',
+				expect.anything()
+			);
+		});
+	});
+
 	it('should use the agent cwd from Maestro session', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent({ cwd: '/custom/project/path' }));
@@ -288,9 +330,13 @@ describe('send command', () => {
 			},
 		});
 		vi.mocked(estimateContextUsage).mockReturnValue(0);
+		const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		await send('agent-abc', 'Bad request', {});
 
+		// A caller that only reads stderr must still see the failure (#1770).
+		expect(stderrSpy).toHaveBeenCalledWith('maestro-cli send failed: Agent crashed');
+		stderrSpy.mockRestore();
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(false);
 		expect(output.error).toBe('Agent crashed');
