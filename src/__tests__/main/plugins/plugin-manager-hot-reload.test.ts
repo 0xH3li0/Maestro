@@ -10,12 +10,23 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { EventEmitter } from 'events';
+
+const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }));
 
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
+	utilityProcess: { fork: forkMock },
+}));
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { PluginManager, type PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
+import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
+import type { PermissionBroker } from '../../../main/plugins/permission-broker';
+import { logger } from '../../../main/utils/logger';
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
@@ -88,7 +99,7 @@ afterEach(() => {
 });
 
 describe('PluginManager hot reload reconciliation', () => {
-	it('refreshes a manifest edit and restarts the still-runnable sandbox', () => {
+	it('refreshes a manifest edit and restarts the still-runnable sandbox', async () => {
 		const sandbox = makeSandbox();
 		const onChange = vi.fn();
 		const manager = new PluginManager({
@@ -102,6 +113,7 @@ describe('PluginManager hot reload reconciliation', () => {
 
 		writeCodePlugin('demo', { version: '1.0.1', code: 'module.exports = "v1";' });
 		manager.refresh();
+		await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalledTimes(1));
 
 		expect(
 			manager.getRegistry().records.find((record) => record.id === 'demo')?.manifest?.version
@@ -114,7 +126,7 @@ describe('PluginManager hot reload reconciliation', () => {
 		expect(sandbox.isRunning('demo')).toBe(true);
 	});
 
-	it('refreshes a code edit and restarts the affected sandbox', () => {
+	it('refreshes a code edit and restarts the affected sandbox', async () => {
 		const sandbox = makeSandbox();
 		const manager = new PluginManager({
 			isEnabled: () => true,
@@ -127,6 +139,7 @@ describe('PluginManager hot reload reconciliation', () => {
 		fs.writeFileSync(path.join(pluginsDir(), 'demo', 'main.js'), 'module.exports = "v2";');
 		signPluginDir(path.join(pluginsDir(), 'demo'), keys);
 		manager.refresh();
+		await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalledTimes(1));
 
 		expect(sandbox.stop).toHaveBeenCalledTimes(1);
 		expect(sandbox.stop).toHaveBeenCalledWith('demo');
@@ -153,5 +166,211 @@ describe('PluginManager hot reload reconciliation', () => {
 		expect(sandbox.start).not.toHaveBeenCalled();
 		expect(sandbox.isRunning('demo')).toBe(false);
 		expect(manager.getRegistry().records.some((record) => record.id === 'demo')).toBe(false);
+	});
+});
+
+describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
+	let sandbox: PluginSandboxHost;
+	let manager: PluginManager;
+	let finishCleanup: () => void;
+	let rejectCleanup: (error: Error) => void;
+	let cleanup: Promise<void>;
+	let pluginsEnabled: boolean;
+
+	beforeEach(() => {
+		pluginsEnabled = true;
+		vi.mocked(logger.warn).mockClear();
+		forkMock.mockReset();
+		forkMock.mockImplementation(() =>
+			Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn() })
+		);
+		cleanup = new Promise<void>((resolve, reject) => {
+			finishCleanup = resolve;
+			rejectCleanup = reject;
+		});
+		sandbox = new PluginSandboxHost({
+			broker: {} as PermissionBroker,
+			handlers: {},
+			onStop: vi
+				.fn()
+				.mockImplementationOnce(() => cleanup)
+				.mockResolvedValue(undefined),
+		});
+		manager = new PluginManager({
+			isEnabled: () => pluginsEnabled,
+			sandbox,
+			trustedKeys: () => [keys.publicKeyB64],
+		});
+		writeCodePlugin('demo');
+		manager.refresh();
+		manager.setEnabled('demo', true);
+		expect(sandbox.isRunning('demo')).toBe(true);
+	});
+
+	afterEach(async () => {
+		manager.stopAllSandboxes();
+		const drain = sandbox.stopAll();
+		for (const result of forkMock.mock.results) {
+			if (result.type === 'return') result.value.emit('exit', 0);
+		}
+		finishCleanup();
+		await drain;
+	});
+
+	it('resumes panel commands only after child exit and resource cleanup', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		manager.refresh();
+		expect(manager.getRegistry().records[0].enabled).toBe(true);
+		expect(manager.invokeCommand('demo/save-token', { token: 'test-token' })).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+
+		forkMock.mock.results[0].value.emit('exit', 0);
+		await Promise.resolve();
+		expect(forkMock).toHaveBeenCalledTimes(1);
+		finishCleanup();
+		await vi.waitFor(() => expect(sandbox.isRunning('demo')).toBe(true));
+		expect(forkMock).toHaveBeenCalledTimes(2);
+		expect(manager.invokeCommand('demo/save-token', { token: 'test-token' })).toBe(true);
+	});
+
+	it('does not refresh or restart an unrelated plugin that crashes during the drain', async () => {
+		writeCodePlugin('other');
+		manager.refresh();
+		manager.setEnabled('other', true);
+		expect(sandbox.isRunning('other')).toBe(true);
+
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		forkMock.mock.results[1].value.emit('exit', 1);
+		writeCodePlugin('other', { version: '1.0.1' });
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+
+		await vi.waitFor(() => expect(sandbox.isRunning('demo')).toBe(true));
+		expect(sandbox.isRunning('other')).toBe(false);
+		expect(
+			manager.getRegistry().records.find((record) => record.id === 'other')?.manifest?.version
+		).toBe('1.0.0');
+		expect(forkMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('does not replace an unrelated record when the reloaded manifest changes identity', async () => {
+		writeCodePlugin('other');
+		manager.refresh();
+		manager.setEnabled('other', true);
+
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		const pluginDir = path.join(pluginsDir(), 'demo');
+		const manifestPath = path.join(pluginDir, 'plugin.json');
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+		manifest.id = 'other';
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		signPluginDir(pluginDir, keys);
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+
+		await vi.waitFor(() => expect(manager.getRegistry().records).toHaveLength(1));
+		expect(manager.getRegistry().records[0]).toMatchObject({
+			id: 'other',
+			source: path.join(pluginsDir(), 'other'),
+			manifest: { version: '1.0.0' },
+		});
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(sandbox.isRunning('other')).toBe(true);
+		expect(forkMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not restart a plugin disabled during the drain', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		manager.setEnabled('demo', false);
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await manager.stopAndDrain('demo');
+		await Promise.resolve();
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not restart a plugin whose bytes were tampered with during the drain', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		fs.writeFileSync(path.join(pluginsDir(), 'demo', 'main.js'), 'unsigned edit');
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await vi.waitFor(() =>
+			expect(manager.getRegistry().records[0].signature?.status).toBe('invalid')
+		);
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not restart a plugin being uninstalled during the drain', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		const removal = manager.uninstall('demo');
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await removal;
+		expect(manager.getRegistry().records).toEqual([]);
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not restart while the plugins feature is disabled during the drain', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		pluginsEnabled = false;
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await vi.waitFor(() => expect(manager.getRegistry().records).toEqual([]));
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('cancels a pending reload when all sandboxes are stopped', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		manager.stopAllSandboxes();
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await manager.stopAndDrain('demo');
+		await Promise.resolve();
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps a failed resource drain stopped and reports the reload failure', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		forkMock.mock.results[0].value.emit('exit', 0);
+		rejectCleanup(new Error('cleanup failed'));
+		await vi.waitFor(() =>
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Could not reload plugin "demo": Error: cleanup failed',
+				'Plugins'
+			)
+		);
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports a replacement child that cannot start', async () => {
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		forkMock.mockImplementationOnce(() => {
+			throw new Error('fork failed');
+		});
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await vi.waitFor(() =>
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Could not start plugin "demo": Error: fork failed',
+				'Plugins'
+			)
+		);
+		expect(sandbox.isRunning('demo')).toBe(false);
 	});
 });

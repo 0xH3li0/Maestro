@@ -125,7 +125,15 @@ export async function encoreSet(
 		failCommand(`${FEATURES[key]} is not available on this operating system.`, options.json);
 	}
 
-	const flags = readFlags();
+	// The desktop replaces the whole object, so retain flags outside this
+	// command's target list (including flags introduced by a newer desktop).
+	const storedFlags = readSettingValue('encoreFeatures');
+	const flags: Record<string, unknown> = {
+		...(storedFlags && typeof storedFlags === 'object' && !Array.isArray(storedFlags)
+			? storedFlags
+			: {}),
+		...resolveEncoreFeatures(storedFlags),
+	};
 	flags[key] = enabled;
 
 	try {

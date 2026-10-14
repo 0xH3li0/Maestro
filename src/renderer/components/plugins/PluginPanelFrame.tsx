@@ -144,6 +144,15 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			if (typeof commandId !== 'string' || commandId.length === 0) return;
 			void window.maestro.plugins
 				.invokeCommand(`${panel.pluginId}/${commandId}`, args)
+				.then(({ dispatched }) => {
+					if (!dispatched) {
+						notifyToast({
+							color: 'red',
+							title: 'Plugin',
+							message: `Plugin "${panel.pluginId}" is not running. Disable and re-enable it in Settings > Extensions, then try again.`,
+						});
+					}
+				})
 				.catch((err) => {
 					notifyToast({
 						color: 'red',
