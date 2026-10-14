@@ -78,6 +78,7 @@ interface PanelIpcMessageEvent extends Event {
 	args?: unknown[];
 }
 
+/** Render an isolated plugin panel and report command delivery failures without exposing arguments. */
 export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFrameProps) {
 	const [failed, setFailed] = useState(false);
 	const webviewRef = useRef<PanelWebviewElement | null>(null);
@@ -149,7 +150,7 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 						notifyToast({
 							color: 'red',
 							title: 'Plugin',
-							message: `Plugin "${panel.pluginId}" is not running. Disable and re-enable it in Settings > Extensions, then try again.`,
+							message: `Command could not be delivered to plugin "${panel.pluginId}". Check its status and the command input, then try again.`,
 						});
 					}
 				})

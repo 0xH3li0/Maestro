@@ -94,7 +94,7 @@ describe('PluginPanelFrame render isolation', () => {
 		expect(window.maestro.plugins.invokeCommand).not.toHaveBeenCalled();
 	});
 
-	it('explains when a stopped plugin cannot receive a panel command without exposing its arguments', async () => {
+	it('reports an undelivered panel command without guessing plugin state or exposing arguments', async () => {
 		vi.mocked(window.maestro.plugins.invokeCommand).mockResolvedValue({ dispatched: false });
 		const { container } = render(React.createElement(PluginPanelFrame, { theme, panel: panel() }));
 		const webview = container.querySelector('webview')!;
@@ -109,7 +109,7 @@ describe('PluginPanelFrame render isolation', () => {
 				color: 'red',
 				title: 'Plugin',
 				message:
-					'Plugin "acme.tools" is not running. Disable and re-enable it in Settings > Extensions, then try again.',
+					'Command could not be delivered to plugin "acme.tools". Check its status and the command input, then try again.',
 			})
 		);
 		expect(JSON.stringify(vi.mocked(notifyToast).mock.calls)).not.toContain(

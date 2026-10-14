@@ -23,21 +23,40 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { PluginManager, type PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
 import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
 import type { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
+import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
+import { TRANSCRIPTION_CONTRACT } from '../../../shared/plugins/services';
 import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 
 // FC1 Option-B gate: code only RUNS with a trusted signature, so every fixture
 // write is followed by a re-sign with this test key (stale signature = invalid
 // = never runs) and the manager registers the key as trusted.
 const keys = makeSigningKeys();
+const mandatoryRequirement = {
+	id: 'voice',
+	provider: 'example.media',
+	service: 'transcription',
+	contract: TRANSCRIPTION_CONTRACT,
+	version: '^1.0.0',
+};
 
 function writeCodePlugin(
 	id: string,
-	options: { version?: string; entry?: string; code?: string } = {}
+	options: {
+		version?: string;
+		entry?: string;
+		code?: string;
+		requires?: PluginManifest['requires'];
+	} = {}
 ): void {
 	const entry = options.entry ?? 'main.js';
 	const dir = path.join(pluginsDir(), id);
@@ -49,6 +68,7 @@ function writeCodePlugin(
 		tier: 1,
 		entry,
 		maestro: { minHostApi: '1.0.0' },
+		requires: options.requires,
 	};
 	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
 	fs.writeFileSync(path.join(dir, entry), options.code ?? 'module.exports = "v1";');
@@ -176,10 +196,13 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	let rejectCleanup: (error: Error) => void;
 	let cleanup: Promise<void>;
 	let pluginsEnabled: boolean;
+	let servicesReady: boolean;
 
 	beforeEach(() => {
 		pluginsEnabled = true;
+		servicesReady = true;
 		vi.mocked(logger.warn).mockClear();
+		vi.mocked(captureException).mockClear();
 		forkMock.mockReset();
 		forkMock.mockImplementation(() =>
 			Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn() })
@@ -200,6 +223,9 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 			isEnabled: () => pluginsEnabled,
 			sandbox,
 			trustedKeys: () => [keys.publicKeyB64],
+			serviceAvailable: () => servicesReady,
+			// Production publishes registry changes through this dependency pass.
+			onChange: () => manager.reconcileServiceDependencies(),
 		});
 		writeCodePlugin('demo');
 		manager.refresh();
@@ -253,6 +279,68 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 			manager.getRegistry().records.find((record) => record.id === 'other')?.manifest?.version
 		).toBe('1.0.0');
 		expect(forkMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('preserves supervisor ownership of a crashed consumer through production change callbacks', async () => {
+		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
+		manager.refresh();
+		manager.setEnabled('consumer', true);
+		expect(sandbox.isRunning('consumer')).toBe(true);
+
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		forkMock.mock.results[1].value.emit('exit', 1);
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+
+		await vi.waitFor(() => expect(sandbox.isRunning('demo')).toBe(true));
+		expect(sandbox.isRunning('consumer')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(3);
+
+		servicesReady = false;
+		manager.reconcileServiceDependencies();
+		servicesReady = true;
+		manager.reconcileServiceDependencies();
+		expect(sandbox.isRunning('consumer')).toBe(false);
+
+		// Explicit discovery retains the host's deliberate restart behavior.
+		manager.refresh();
+		expect(sandbox.isRunning('consumer')).toBe(true);
+		expect(forkMock).toHaveBeenCalledTimes(4);
+	});
+
+	it('resumes a dependency-stopped consumer after its own resource drain', async () => {
+		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
+		manager.refresh();
+		manager.setEnabled('consumer', true);
+
+		servicesReady = false;
+		manager.reconcileServiceDependencies();
+		forkMock.mock.results[1].value.emit('exit', 0);
+		servicesReady = true;
+		manager.reconcileServiceDependencies();
+		expect(sandbox.isRunning('consumer')).toBe(false);
+		expect(captureException).not.toHaveBeenCalled();
+
+		finishCleanup();
+		await vi.waitFor(() => expect(sandbox.isRunning('consumer')).toBe(true));
+		expect(forkMock).toHaveBeenCalledTimes(3);
+		expect(captureException).not.toHaveBeenCalled();
+	});
+
+	it('does not resume a waiting consumer after all sandboxes are stopped', () => {
+		servicesReady = false;
+		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
+		manager.refresh();
+		manager.setEnabled('consumer', true);
+		expect(sandbox.isRunning('consumer')).toBe(false);
+
+		manager.stopAllSandboxes();
+		servicesReady = true;
+		manager.reconcileServiceDependencies();
+
+		expect(sandbox.isRunning('consumer')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not replace an unrelated record when the reloaded manifest changes identity', async () => {
@@ -343,25 +431,31 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	});
 
 	it('keeps a failed resource drain stopped and reports the reload failure', async () => {
+		const error = new Error('cleanup failed');
 		writeCodePlugin('demo', { version: '1.0.1' });
 		manager.refresh();
 		forkMock.mock.results[0].value.emit('exit', 0);
-		rejectCleanup(new Error('cleanup failed'));
+		rejectCleanup(error);
 		await vi.waitFor(() =>
 			expect(logger.warn).toHaveBeenCalledWith(
 				'Could not reload plugin "demo": Error: cleanup failed',
 				'Plugins'
 			)
 		);
+		expect(captureException).toHaveBeenCalledWith(error, {
+			operation: 'plugins:reload',
+			pluginId: 'demo',
+		});
 		expect(sandbox.isRunning('demo')).toBe(false);
 		expect(forkMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('reports a replacement child that cannot start', async () => {
+		const error = new Error('fork failed');
 		writeCodePlugin('demo', { version: '1.0.1' });
 		manager.refresh();
 		forkMock.mockImplementationOnce(() => {
-			throw new Error('fork failed');
+			throw error;
 		});
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -371,6 +465,28 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 				'Plugins'
 			)
 		);
+		expect(captureException).toHaveBeenCalledWith(error, {
+			operation: 'plugins:start',
+			pluginId: 'demo',
+		});
 		expect(sandbox.isRunning('demo')).toBe(false);
+	});
+
+	it('reports unexpected registry change callback errors after reload', async () => {
+		const error = new Error('change callback failed');
+		writeCodePlugin('demo', { version: '1.0.1' });
+		manager.refresh();
+		vi.spyOn(manager, 'reconcileServiceDependencies').mockImplementationOnce(() => {
+			throw error;
+		});
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+
+		await vi.waitFor(() =>
+			expect(captureException).toHaveBeenCalledWith(error, {
+				operation: 'plugins:reload',
+				pluginId: 'demo',
+			})
+		);
 	});
 });

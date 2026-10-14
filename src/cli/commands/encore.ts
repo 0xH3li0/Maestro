@@ -106,6 +106,7 @@ export function encoreList(options: EncoreOptions): void {
 	}
 }
 
+/** Toggle one supported Encore feature while preserving the desktop's other saved flags. */
 export async function encoreSet(
 	feature: string,
 	enabled: boolean,
