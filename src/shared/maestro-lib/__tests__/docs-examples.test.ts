@@ -145,7 +145,9 @@ describe('docs/maestro-lib.md examples', () => {
 				? getSourceFile.call(host, file, languageVersion, ...rest)
 				: ts.createSourceFile(file, text, languageVersion, true);
 		};
-		const program = ts.createProgram(files, options, host);
+		// The ambient declarations the project relies on, as `build:maestro-lib` adds them.
+		const ambient = parsed!.fileNames.filter((file) => file.includes('/src/types/'));
+		const program = ts.createProgram([...files, ...ambient], options, host);
 		const exampleFiles = new Set(files);
 		const errors = ts
 			.getPreEmitDiagnostics(program)

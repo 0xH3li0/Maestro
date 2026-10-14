@@ -183,9 +183,13 @@ describe('the built maestro-lib entry', () => {
 		expect(fs.readFileSync(path.join(libDir, 'README.md'), 'utf8')).toBe(
 			fs.readFileSync(path.join(REPO_ROOT, 'docs/maestro-lib.md'), 'utf8')
 		);
-		expect(
-			fs.readFileSync(path.join(libDir, 'types/shared/maestro-lib/index.d.ts'), 'utf8')
-		).toContain('planSessionTurn');
+		// The entry re-exports whole modules (`export * from './run/session'`), so the
+		// name lives in that module's declarations and the entry's point at it.
+		const types = path.join(libDir, 'types/shared/maestro-lib');
+		expect(fs.readFileSync(path.join(types, 'index.d.ts'), 'utf8')).toContain("'./run/session'");
+		expect(fs.readFileSync(path.join(types, 'run/session.d.ts'), 'utf8')).toContain(
+			'planSessionTurn'
+		);
 	});
 });
 
