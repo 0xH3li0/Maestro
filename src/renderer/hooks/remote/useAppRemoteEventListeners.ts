@@ -32,7 +32,7 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig } from '../../types';
+import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
