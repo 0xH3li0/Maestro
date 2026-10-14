@@ -1,3 +1,7 @@
+import type {
+	ProviderMigrationState,
+	HistoryTranslationMapping,
+} from '../../shared/maestro-lib/translation/types';
 // Type definitions for Maestro renderer
 import type { BrowserTab } from '../../shared/browserPage';
 
@@ -38,6 +42,14 @@ export type {
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
+import type { LogEntrySource } from '../../shared/maestro-lib/store/transcript';
+import type {
+	ProviderAgentOverrides,
+	ProviderTabSession,
+} from '../../shared/maestro-lib/agents/providerSwap';
+
+// Provider swap parking types, defined beside the swap itself in maestro-lib
+export type { ProviderAgentOverrides, ProviderTabSession };
 
 // Import for extension in this file
 import type {
@@ -223,7 +235,8 @@ export interface FileArtifact {
 export interface LogEntry {
 	id: string;
 	timestamp: number;
-	source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
+	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
+	source: LogEntrySource;
 	text: string;
 	interactive?: boolean;
 	options?: string[];
@@ -765,25 +778,6 @@ export interface OnboardingStats {
 	averageTasksPerPhase: number; // Average tasks per document
 }
 
-/**
- * A tab's parked state for one provider it is not currently using.
- *
- * `agentSessionId` is a provider-specific resume token (`--resume <id>` for
- * Claude, `resume <id>` for Codex, `--session <id>` for OpenCode), so a single
- * slot goes invalid the moment the agent's provider changes. Parking the old
- * provider's values here - instead of discarding them - is what lets a user
- * switch away and back and land on the same conversation. Token counts and the
- * per-tab model are parked alongside it because they are equally
- * provider-specific: blending two providers' usage produces a meaningless
- * total, and a Claude model name means nothing to Codex.
- */
-export interface ProviderTabSession {
-	agentSessionId: string | null;
-	usageStats?: UsageStats;
-	customModel?: string;
-	customEffort?: string;
-}
-
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -1289,6 +1283,13 @@ export interface PendingSteer {
 }
 
 export interface Session {
+	providerMigration?: ProviderMigrationState;
+	providerTranslationQueuedOrigins?: Record<string, ToolType>;
+	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
+	providerTranslationKnowledgeDirectory?: string;
+	providerTranslationTabInventory?: Array<
+		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
 	deferredContent?: import('../../shared/deferredSessionContent').DeferredSessionContent;
@@ -1590,6 +1591,15 @@ export interface Session {
 	// Absent means 'exec'. Experimental. Always read it through
 	// `resolveCodexTransport` in shared/codexTransport, never directly.
 	codexTransport?: CodexTransport;
+	/**
+	 * Parked agent-level overrides (the per-session fields above that belong to
+	 * one provider: path, args, env, model, effort, context window, token
+	 * source) for every provider this agent is NOT currently using. The live
+	 * provider's values stay in those fields, so this map never holds an entry
+	 * for `toolType`. Changing the provider parks and restores through
+	 * `switchAgentProvider()` rather than clearing them.
+	 */
+	providerOverrides?: Partial<Record<ToolType, ProviderAgentOverrides>>;
 
 	// Agent Resilience (auto-retry). Both default ON - `undefined` reads as
 	// enabled via `resilienceEnabled` in shared/agentConstants, so existing

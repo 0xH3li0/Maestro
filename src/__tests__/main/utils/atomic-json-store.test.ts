@@ -1,14 +1,18 @@
+import { atomicWriteJson as sharedAtomicWriteJson } from '../../../shared/maestro-lib/storage/atomic-json-store';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import {
-	atomicWriteFile,
 	atomicWriteJson,
+	atomicWriteFile,
 	createKeyedWriteQueue,
 } from '../../../main/utils/atomic-json-store';
 
 describe('atomicWriteJson', () => {
+	it('keeps the main facade on the shared implementation', () => {
+		expect(atomicWriteJson).toBe(sharedAtomicWriteJson);
+	});
 	let dir: string;
 
 	beforeEach(async () => {
@@ -19,17 +23,17 @@ describe('atomicWriteJson', () => {
 		await fs.rm(dir, { recursive: true, force: true });
 	});
 
+	it('retains non-UTF8 resource bytes on atomic replacement', async () => {
+		const file = path.join(dir, 'asset.bin');
+		const bytes = Buffer.from([0, 255, 128, 1, 2]);
+		await atomicWriteFile(file, bytes);
+		expect(await fs.readFile(file)).toEqual(bytes);
+	});
+
 	it('writes JSON that round-trips', async () => {
 		const file = path.join(dir, 'data.json');
 		await atomicWriteJson(file, { a: 1, b: [2, 3] });
 		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ a: 1, b: [2, 3] });
-	});
-
-	it('writes raw bytes unchanged through atomicWriteFile', async () => {
-		const file = path.join(dir, 'blob.bin');
-		const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x41, 0xc3]);
-		await atomicWriteFile(file, bytes);
-		expect((await fs.readFile(file)).equals(bytes)).toBe(true);
 	});
 
 	it('leaves no .tmp file behind', async () => {

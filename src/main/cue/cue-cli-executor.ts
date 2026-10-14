@@ -89,6 +89,16 @@ export function resolveMaestroCliScriptPath(): string {
 	candidates.push(path.resolve(__dirname, '..', '..', 'cli', 'maestro-cli.js'));
 	// Legacy single-level fallback (kept for any flattened/bundled layout).
 	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
+	// Outside Electron this code runs INSIDE a maestro-cli bundle (`maestro-cli
+	// host`, `maestro-cli cue engine`), which can sit in any directory, not only
+	// one named `cli`. The running script is that bundle, or sits beside it.
+	const runningScript = process.argv[1];
+	if (runningScript) {
+		if (path.basename(runningScript) === 'maestro-cli.js') {
+			candidates.push(path.resolve(runningScript));
+		}
+		candidates.push(path.resolve(path.dirname(runningScript), 'maestro-cli.js'));
+	}
 
 	for (const candidate of candidates) {
 		try {

@@ -1,3 +1,7 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * Covers the `update_session_config` allowlist in useAppRemoteEventListeners -
  * the single gate every CLI-driven per-agent edit passes through.
@@ -346,5 +350,26 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 			success: false,
 			error: 'No editable tab fields in patch',
 		});
+	});
+});
+
+describe('provider migration parity', () => {
+	it('passes the library report through and never resets tabs or kills source work', async () => {
+		const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
+		const { setSessions } = setup([session]);
+		const report = {
+			success: false,
+			error: 'unverified native resume',
+			plan: { id: 'plan', status: 'ready' },
+		} as any;
+		vi.mocked(requestProviderTranslation).mockResolvedValue(report);
+		dispatchPatch(session.id, { toolType: 'codex', migrationAction: 'plan' });
+		await flush();
+		expect(requestProviderTranslation).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'plan', agentId: session.id, destination: 'codex' })
+		);
+		expect(ack).toHaveBeenCalledWith('ch', report);
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
 	});
 });

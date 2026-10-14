@@ -13,7 +13,7 @@ import {
 	CueBundleImportError,
 	type CueBundleImportHost,
 } from '../../../../main/cue/bundle/cue-bundle-importer';
-import { claudeMemoryDir } from '../../../../main/memory-manager';
+import { resolveClaudeMemoryPath } from '../../../../shared/maestro-lib/translation/memory';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
 import { readSessionsStoreFile } from '../../../../main/stores/sessions-store-file';
 import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
@@ -70,7 +70,10 @@ beforeEach(() => {
 		})
 	);
 	write(path.join(root, 'CLAUDE.md'), '# App\nBuild with npm.\n');
-	write(path.join(claudeMemoryDir(claudeDir, root), 'MEMORY.md'), '- deploys go out on Fridays\n');
+	write(
+		path.join(resolveClaudeMemoryPath(root, claudeDir), 'MEMORY.md'),
+		'- deploys go out on Fridays\n'
+	);
 });
 
 afterEach(() => {
@@ -127,7 +130,10 @@ describe('Claude Code assets in an agent bundle', () => {
 
 	it("reads memory from the account the agent runs as, not Maestro's default", async () => {
 		const workAccount = path.join(tmp, 'claude-work');
-		write(path.join(claudeMemoryDir(workAccount, src.root), 'MEMORY.md'), '- work account notes\n');
+		write(
+			path.join(resolveClaudeMemoryPath(src.root, workAccount), 'MEMORY.md'),
+			'- work account notes\n'
+		);
 		const sessions = JSON.parse(
 			fs.readFileSync(path.join(src.dataDir, 'maestro-sessions.json'), 'utf-8')
 		);
@@ -208,7 +214,7 @@ describe('Claude Code assets in an agent bundle', () => {
 			local: { command: 'local-mcp' },
 			github: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' } },
 		});
-		const memory = path.join(claudeMemoryDir(dst.claudeDir, dst.root), 'MEMORY.md');
+		const memory = path.join(resolveClaudeMemoryPath(dst.root, dst.claudeDir), 'MEMORY.md');
 		expect(fs.readFileSync(memory, 'utf-8')).toBe('- deploys go out on Fridays\n');
 		expect(plan.files.find((f) => f.kind === 'claude-memory')?.target).toBe(memory);
 		expect(plan.secrets.find((s) => s.name === 'GITHUB_TOKEN')).toMatchObject({

@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
  *
@@ -43,6 +44,7 @@ import { useSessionStore, selectSessionById, takePendingMergedContext } from './
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
+import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -373,6 +375,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return false;
 		}
 
+		if (migrationHoldsTurns(session.providerMigration)) return false;
+
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
 		// was closed while it still had queued work lives on in orphanedThinkingTabs
@@ -604,17 +608,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}
 
 					// Substitute $ARGUMENTS with command arguments, or append args if no placeholder
-					let promptWithArgs = matchingCommand.prompt;
-					if (item.commandArgs) {
-						if (/\$ARGUMENTS/g.test(promptWithArgs)) {
-							promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
-						} else {
-							// No $ARGUMENTS placeholder - append trailing text after the prompt
-							promptWithArgs = `${promptWithArgs}\n\n${item.commandArgs}`;
-						}
-					} else {
-						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, '');
-					}
+					const promptWithArgs = expandCommandArguments(matchingCommand.prompt, item.commandArgs);
 
 					// Substitute {{TEMPLATE_VARIABLES}}
 					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {

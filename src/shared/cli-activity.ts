@@ -15,9 +15,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveUserDataDir } from './userDataDir';
+import { resolveUserDataDir } from './maestro-lib/paths/userDataDir';
 
-interface CliActivityStatus {
+export interface CliActivityStatus {
 	sessionId: string;
 	playbookId: string;
 	playbookName: string;
@@ -33,16 +33,21 @@ interface CliActivityFile {
 
 const ACTIVITY_FILE = 'cli-activity.json';
 
-function getActivityFilePath(): string {
-	return path.join(resolveUserDataDir(), ACTIVITY_FILE);
+/**
+ * Where the activity file lives. `dir` is the data directory a caller on a non-default one (a
+ * dev build, a test, a headless runtime) serves; without it the file is the user's own, which a
+ * process on another data directory must not write into (F9).
+ */
+function getActivityFilePath(dir?: string): string {
+	return path.join(dir ?? resolveUserDataDir(), ACTIVITY_FILE);
 }
 
 /**
  * Read all CLI activities
  */
-function readCliActivities(): CliActivityStatus[] {
+function readCliActivities(dir?: string): CliActivityStatus[] {
 	try {
-		const filePath = getActivityFilePath();
+		const filePath = getActivityFilePath(dir);
 		const content = fs.readFileSync(filePath, 'utf-8');
 		const data = JSON.parse(content) as CliActivityFile;
 		return data.activities || [];
@@ -54,12 +59,12 @@ function readCliActivities(): CliActivityStatus[] {
 /**
  * Write CLI activities
  */
-function writeCliActivities(activities: CliActivityStatus[]): void {
+function writeCliActivities(activities: CliActivityStatus[], dir?: string): void {
 	try {
-		const filePath = getActivityFilePath();
-		const dir = path.dirname(filePath);
-		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
+		const filePath = getActivityFilePath(dir);
+		const parent = path.dirname(filePath);
+		if (!fs.existsSync(parent)) {
+			fs.mkdirSync(parent, { recursive: true });
 		}
 		fs.writeFileSync(filePath, JSON.stringify({ activities }, null, 2), 'utf-8');
 	} catch (error) {
@@ -70,28 +75,31 @@ function writeCliActivities(activities: CliActivityStatus[]): void {
 /**
  * Register CLI activity for a session (called when playbook starts)
  */
-export function registerCliActivity(status: CliActivityStatus): void {
-	const activities = readCliActivities();
+export function registerCliActivity(status: CliActivityStatus, dir?: string): void {
+	const activities = readCliActivities(dir);
 	// Remove any stale entry for this session
 	const filtered = activities.filter((a) => a.sessionId !== status.sessionId);
 	filtered.push(status);
-	writeCliActivities(filtered);
+	writeCliActivities(filtered, dir);
 }
 
 /**
  * Unregister CLI activity for a session (called when playbook ends)
  */
-export function unregisterCliActivity(sessionId: string): void {
-	const activities = readCliActivities();
+export function unregisterCliActivity(sessionId: string, dir?: string): void {
+	const activities = readCliActivities(dir);
 	const filtered = activities.filter((a) => a.sessionId !== sessionId);
-	writeCliActivities(filtered);
+	writeCliActivities(filtered, dir);
 }
 
 /**
  * Get CLI activity for a specific session
  */
-export function getCliActivityForSession(sessionId: string): CliActivityStatus | undefined {
-	const activities = readCliActivities();
+export function getCliActivityForSession(
+	sessionId: string,
+	dir?: string
+): CliActivityStatus | undefined {
+	const activities = readCliActivities(dir);
 	return activities.find((a) => a.sessionId === sessionId);
 }
 
@@ -109,14 +117,14 @@ export function getCliActivityForSession(sessionId: string): CliActivityStatus |
  * - Anything else is an unexplained probe failure. Report not-busy for this
  *   call, but do not mutate the file on a guess.
  */
-function isActivityProcessAlive(activity: CliActivityStatus): boolean {
+function isActivityProcessAlive(activity: CliActivityStatus, dir?: string): boolean {
 	try {
 		process.kill(activity.pid, 0);
 		return true;
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === 'EPERM') return true;
-		if (code === 'ESRCH') unregisterCliActivity(activity.sessionId);
+		if (code === 'ESRCH') unregisterCliActivity(activity.sessionId, dir);
 		return false;
 	}
 }
@@ -124,10 +132,10 @@ function isActivityProcessAlive(activity: CliActivityStatus): boolean {
 /**
  * Check if a session has active CLI activity
  */
-export function isSessionBusyWithCli(sessionId: string): boolean {
-	const activity = getCliActivityForSession(sessionId);
+export function isSessionBusyWithCli(sessionId: string, dir?: string): boolean {
+	const activity = getCliActivityForSession(sessionId, dir);
 	if (!activity) return false;
-	return isActivityProcessAlive(activity);
+	return isActivityProcessAlive(activity, dir);
 }
 
 /**

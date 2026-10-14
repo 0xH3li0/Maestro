@@ -64,7 +64,7 @@ import {
 	validateCueBundleArchive,
 	type CueBundleValidationIssue,
 } from './cue-bundle-validator';
-import { resolveClaudeConfigDir } from '../../memory-manager';
+import { resolveConfigDirKeyFromEnv } from '../../../shared/maestro-lib/launch/interactive-mode';
 
 /** Every entry gets this date, so the archive bytes depend only on content. */
 export const CUE_BUNDLE_FIXED_MTIME = new Date('2026-01-01T00:00:00Z');
@@ -825,7 +825,8 @@ export async function exportCueBundle(
 	const sessions = options.sessions ?? readSessionsStoreFile(dataDir).sessions;
 	const agentConfigsDir = options.agentConfigsDir ? path.resolve(options.agentConfigsDir) : dataDir;
 	const claudeSelection = resolveClaudeAssetSelection(options.claudeAssets);
-	const claudeConfigDir = options.claudeConfigDir ?? resolveClaudeConfigDir(options.env);
+	const claudeConfigDir =
+		options.claudeConfigDir ?? resolveConfigDirKeyFromEnv(options.env ?? process.env);
 	const sessionById = new Map(sessions.map((s) => [s.id, s]));
 	const builder = new BundleBuilder();
 	const createdAt = resolveCreatedAt(options);

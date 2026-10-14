@@ -48,7 +48,7 @@ import { isValidAgentId } from '../../../shared/agentIds';
 import { getSettingDefault } from '../../../shared/settingsMetadata';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { generateUUID } from '../../../shared/uuid';
-import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
+import { readCliServerInfoFrom, isPidAlive } from '../../../shared/cli-server-discovery';
 import { filterServerProcessEnv } from '../../../shared/maestro-lib/launch/env';
 import {
 	describeSecretProblem,
@@ -92,7 +92,8 @@ import {
 	mcpConfigSecretNames,
 	mergeMcpConfig,
 } from './cue-bundle-claude-assets';
-import { claudeMemoryDir, resolveClaudeConfigDir } from '../../memory-manager';
+import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
+import { resolveConfigDirKeyFromEnv } from '../../../shared/maestro-lib/launch/interactive-mode';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -524,14 +525,15 @@ function assertDataDirIdle(
 			{ pid: lock.pid, mode: lock.mode }
 		);
 	}
-	const discovery = readCliServerInfo(dataDir);
+	const discovery = readCliServerInfoFrom(dataDir);
 	if (discovery) {
-		if (isCliServerRunning(dataDir)) {
-			throw new CueBundleImportError(
-				'DESKTOP_RUNNING',
-				`The Maestro desktop app (PID ${discovery.pid}) is running against ${dataDir}. Quit it before importing.`,
-				{ pid: discovery.pid }
-			);
+		if (isPidAlive(discovery.pid)) {
+			// A detached `maestro-cli host` publishes the same file and writes the same stores.
+			const running =
+				discovery.hostKind === 'headless'
+					? `The headless Maestro host (\`maestro-cli host\`, PID ${discovery.pid}) is running against ${dataDir}. Stop it (\`maestro-cli host stop\`) before importing.`
+					: `The Maestro desktop app (PID ${discovery.pid}) is running against ${dataDir}. Quit it before importing.`;
+			throw new CueBundleImportError('DESKTOP_RUNNING', running, { pid: discovery.pid });
 		}
 		log(
 			'warn',
@@ -830,7 +832,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		files.push({ kind: 'workspace', source, target, action });
 		if (action !== 'unchanged') writes.push({ target, content, before, via: 'file' });
 	};
-	const claudeConfigDir = options.claudeConfigDir ?? resolveClaudeConfigDir(options.env);
+	const claudeConfigDir =
+		options.claudeConfigDir ?? resolveConfigDirKeyFromEnv(options.env ?? process.env);
 	/** `${VAR}` names the bundle's `.mcp.json` files reference, with who reads them. */
 	const mcpSecrets: Array<[string, string]> = [];
 
@@ -1068,7 +1071,10 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 		const memory = new RegExp(`^${CUE_BUNDLE_CLAUDE_MEMORY_DIR}/([^/]+)/([^/]+)$`).exec(source);
 		if (memory && roots.has(memory[1]) && isClaudeMemoryFileName(memory[2])) {
-			const dir = claudeMemoryDir(claudeConfigDir, realpathOrResolve(roots.get(memory[1])!));
+			const dir = resolveClaudeMemoryPath(
+				realpathOrResolve(roots.get(memory[1])!),
+				claudeConfigDir
+			);
 			planFile(
 				'claude-memory',
 				source,

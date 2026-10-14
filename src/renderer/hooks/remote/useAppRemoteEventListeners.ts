@@ -1,3 +1,4 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
 /**
  * useAppRemoteEventListeners.ts
  *
@@ -1731,70 +1732,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const patchObj = configPatch as Record<string, unknown>;
 
-		// Provider switch (toolType change) is destructive and handled separately
-		// from plain settings edits: it resets tabs, clears provider-specific
-		// config, and kills the running agent process - mirroring the Edit Agent
-		// modal's toolType-change branch. The CLI gates this behind --force. When a
-		// toolType is present and actually differs, do the switch and ignore any
-		// other keys in the same patch (the CLI sends it exclusively).
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
-		if (requestedToolType && requestedToolType !== session.toolType) {
-			const newTabId = generateId();
-			const freshTab: AITab = {
-				id: newTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: true,
-			};
-			const providerSwitch: Partial<Session> = {
-				toolType: requestedToolType,
-				aiTabs: [freshTab],
-				activeTabId: newTabId,
-				closedTabHistory: [],
-				// Clear provider-specific overrides - they don't carry across providers.
-				customPath: undefined,
-				customArgs: undefined,
-				customEnvVars: undefined,
-				customModel: undefined,
-				customContextWindow: undefined,
-				// Provenance describes the value cleared above and must not outlive
-				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
-				contextWindowSource: undefined,
-				enableMaestroP: undefined,
-				maestroPPath: undefined,
-				maestroPMode: undefined,
-				// Reset file preview tabs and unified tab order to just the new AI tab.
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-				unifiedClosedTabHistory: [],
-				// Reset runtime state.
-				state: 'idle' as const,
-				aiPid: 0,
-				executionQueue: [],
-			};
-
-			// Kill the existing AI process for the old provider (no-op if none).
-			window.maestro.process.kill(`${sessionId}-ai`).catch(() => {});
-
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))
-			);
-			try {
-				await window.maestro.sessions.setMany([{ ...session, ...providerSwitch } as any], []);
-			} catch (persistErr) {
-				logger.error('[Remote] Failed to persist provider switch:', undefined, persistErr);
+		const migrationAction =
+			typeof patchObj.migrationAction === 'string' ? patchObj.migrationAction : undefined;
+		if (requestedToolType || migrationAction) {
+			const action = migrationAction ?? 'apply';
+			if (!['plan', 'apply', 'status', 'recover', 'rollback'].includes(action)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Invalid migration action',
+				});
+				return;
 			}
-			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-				success: true,
+			const report = await requestProviderTranslation({
+				agentId: sessionId,
+				destination:
+					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
+				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',
+				acceptLimitations: patchObj.acceptTranslationLimitations === true,
+				planId: typeof patchObj.migrationPlanId === 'string' ? patchObj.migrationPlanId : undefined,
+				selectedUserResources: Array.isArray(patchObj.selectedUserResources)
+					? (patchObj.selectedUserResources as string[])
+					: undefined,
 			});
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, report);
 			return;
 		}
 

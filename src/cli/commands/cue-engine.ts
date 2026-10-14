@@ -293,6 +293,8 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		: null;
 	if (webhook) log('info', `Notify webhook: ${webhook.display}`);
 
+	// No runtime lives in this process, so the engine gets no `runAutoRun`: an
+	// `action: autorun` subscription fails here and says to use `maestro-cli host`.
 	const engine = await createStandaloneCueEngine({
 		...(webhook ? { onExternalNotification: (n) => webhook.send(n) } : {}),
 		onLog: log,

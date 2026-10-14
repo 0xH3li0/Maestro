@@ -1,3 +1,7 @@
+import { resumeDeferredProviderTranslations } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	resumeDeferredProviderTranslations: vi.fn(),
+}));
 /**
  * Tests for useSessionLifecycleSync.
  *
@@ -24,6 +28,18 @@ type Payload = {
 };
 
 describe('useSessionLifecycleSync', () => {
+	it('resumes only after persisted sessions have loaded', async () => {
+		useSessionStore.setState({ initialLoadComplete: false });
+		vi.mocked(resumeDeferredProviderTranslations).mockClear();
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		expect(resumeDeferredProviderTranslations).not.toHaveBeenCalled();
+		useSessionStore.setState({ initialLoadComplete: true });
+		await waitFor(() =>
+			expect(resumeDeferredProviderTranslations).toHaveBeenCalledWith(
+				useSessionStore.getState().sessions
+			)
+		);
+	});
 	let handler: ((payload: Payload) => void) | null;
 	let unsubscribe: ReturnType<typeof vi.fn>;
 	let setActiveSessionId: ReturnType<typeof vi.fn>;

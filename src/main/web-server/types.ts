@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -1285,7 +1286,7 @@ export type UpdateSessionSshCallback = (
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<{ success: boolean; error?: string }>;
+) => Promise<TranslationReport>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (

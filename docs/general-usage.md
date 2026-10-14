@@ -801,6 +801,8 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
+Changing the **Agent Provider** here opens a native conversation translation preflight. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Review the reported limits and accept them before saving. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded.
+
 ### Deleting Agents
 
 Right-click an agent and select **Remove Agent** to delete it. This removes the agent from Maestro but does not delete any files or AI session data.

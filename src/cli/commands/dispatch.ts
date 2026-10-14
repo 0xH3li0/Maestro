@@ -213,6 +213,15 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 	};
 }
 
+/** What an accepted `new_ai_tab_with_prompt` or `send_command` reply said. */
+interface DispatchedPrompt {
+	tabId?: string;
+	callbackId?: string;
+	queued: boolean;
+	itemId?: string;
+	queuePosition?: number;
+}
+
 function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	if (error instanceof MaestroNotRunningError) {
 		return { success: false, error: error.message, code: error.code };
@@ -224,12 +233,10 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	// Checked before the substring sniffing below: this reason came from the
 	// desktop verbatim, so it must not be re-classified by whatever words it
 	// happens to contain.
-	if (msg.startsWith('NEW_TAB_REFUSED:')) {
-		return {
-			success: false,
-			error: msg.slice('NEW_TAB_REFUSED:'.length),
-			code: 'DISPATCH_REFUSED',
-		};
+	for (const prefix of ['NEW_TAB_REFUSED:', 'DISPATCH_REFUSED:']) {
+		if (msg.startsWith(prefix)) {
+			return { success: false, error: msg.slice(prefix.length), code: 'DISPATCH_REFUSED' };
+		}
 	}
 	const lowerMsg = msg.toLowerCase();
 	if (
@@ -354,7 +361,7 @@ export async function runDispatch(
 		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
 	}
 	try {
-		const dispatched = await withMaestroClient(async (client) => {
+		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
 			if (options.newTab) {
 				const result = await client.sendCommand<{
 					success?: boolean;
@@ -403,7 +410,15 @@ export async function runDispatch(
 					queued: result.queued === true,
 				};
 			}
-			const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
+			const result = await client.sendCommand<{
+				success?: boolean;
+				tabId?: string;
+				callbackId?: string;
+				queued?: boolean;
+				itemId?: string;
+				queuePosition?: number;
+				error?: string;
+			}>(
 				{
 					type: 'send_command',
 					sessionId: agentId,
@@ -423,7 +438,23 @@ export async function runDispatch(
 				},
 				'command_result'
 			);
-			return { tabId: result.tabId, callbackId: result.callbackId, queued: false };
+			// Same rule as the new-tab branch above: `sendCommand` resolves on any
+			// reply, so a `command_result` that says `success: false` (a headless
+			// host refusing what it cannot do, or the desktop renderer turning the
+			// command away) has to be read here. Reporting it as delivered would
+			// tell the caller a message landed that was in fact dropped.
+			if (result.success === false) {
+				throw new Error(`DISPATCH_REFUSED:${result.error || 'Maestro refused the message'}`);
+			}
+			return {
+				tabId: result.tabId,
+				callbackId: result.callbackId,
+				// The desktop turns a busy agent away; a headless host queues the
+				// message behind the running turn and says so.
+				queued: result.queued === true,
+				itemId: result.itemId,
+				queuePosition: result.queuePosition,
+			};
 		});
 		// `--tab <tabId>` is the authoritative target; the desktop handler
 		// echoes it back when we pass one. If the desktop omitted it (older
@@ -441,6 +472,10 @@ export async function runDispatch(
 			// `--new-tab` at a working agent creates the tab and queues the prompt
 			// behind the turn already running, so say which of the two happened.
 			...(dispatched.queued ? { queued: true } : {}),
+			...(dispatched.queued && dispatched.queuePosition !== undefined
+				? { queuePosition: dispatched.queuePosition }
+				: {}),
+			...(dispatched.queued && dispatched.itemId ? { itemId: dispatched.itemId } : {}),
 			...(dispatched.callbackId ? { callbackId: dispatched.callbackId } : {}),
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};

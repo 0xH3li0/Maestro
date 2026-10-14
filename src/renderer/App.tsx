@@ -1527,7 +1527,8 @@ function MaestroConsoleInner() {
 
 	// Get capabilities for the active session's agent type
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(
-		activeSession?.toolType
+		activeSession?.toolType,
+		activeSession?.providerTranslationKnowledgeDirectory
 	);
 
 	// Merge & Transfer handlers (Phase 2.5)

@@ -179,5 +179,24 @@ To add support for a new agent:
 11. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
 12. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
 13. (If the agent has an output parser) Add error patterns to `src/shared/agentErrorPatterns.ts` - required, not optional: `agent-completeness.test.ts` fails CI when a registered parser has no patterns. The bank is shared so the renderer wizard classifies through the same patterns; `src/main/parsers/error-patterns.ts` is the main-process face of it
+14. **Declare provider translation support or its explicit limits**: follow [Provider Translation Contract](PROVIDER-SUPPORT.md#provider-translation-contract) for native session import/export, memory discovery, skill/subagent projection, incremental sync, and directional/versioned validation. A History reader or resume flag alone does not qualify a provider for warning-free switching.
+
+Translation registration lives in `src/shared/maestro-lib/translation/adapters.ts` (`createTranslationRegistry`). Implement `TranslationAdapter.extract`/`stage`, declare each direction and version pair, and use `planTranslation`/`applyTranslation`/`recoverTranslation` through the shared host service. Both current Claude Code 2.1.296 ↔ Codex 0.162.1 directions remain unverified. Project knowledge and explicitly selected user resources are the scope; account-global imports and file-write-only certification are excluded. See the [implemented contract](PROVIDER-SUPPORT.md#implemented-entry-points-and-registration).
+
+Reuse native extraction's tool-link validation: duplicate calls/results, results preceding their calls, missing linkage and invalid message roles block staging. Preserve original evidence and parallel-call ordering instead of repairing history by replay or reordering.
+
+Reuse selected-root validation for native targets and resource links. Persist the staged destination checkpoint before mapping commit; recovery must preserve later native work and settle the previous operation before another migration. Reuse `commitTranslationSession` to reject changed native source IDs across open/closed tabs and the saved inventory while permitting already applied destination mappings.
+
+Apply `assertTranslationTarget` to native transcript reads and rechecks, not only writes. Confine return-trip managed knowledge and owned projections to their project roots, retain link evidence without importing unselected account bodies, and include managed collection limitations in preflight.
+
+Recovery/rollback may mutate only the current operation; historical status is read only. Committed journals cannot be rolled back after another switch. Build import-channel environments with the destination's shared launch resolver and pin the selected account root. Start the channel only for ready plans with no limitations or accepted warnings; certified complete plans need no acceptance flag.
+
+Direct `applyTranslation` retries return the saved committed result or refuse existing staging evidence without writes. Use recovery/rollback for non-planned operations or journals with native mappings/writes; never replay an uncertain import.
+
+The host retains the reviewed `planId` on apply after a fresh fingerprint check. It returns a saved committed result only for the current, settled operation; historical retries and unfinished staging require status or recovery rather than a new import.
+
+Journal creation intent separately from confirmed exclusive ownership; rollback must retain unowned collisions and dangling links. Archive and validate all projection/write/mapping backups on write and reload; direct library rollback validates every backup hash before any target mutation. Validate absent rollback targets against the selected root before restoring backups, and restore missing files only for journaled deletions. Keep migration replies open through the CLI/web bridge, and treat a reply timeout as uncertain completion requiring status inspection.
+
+Resume saved turn deferrals through the shared renderer client, preserving their warning acceptance. Match complete canonical limitations, including tab, artifact, severity and message; changed evidence or legacy code/artifact-only acceptance requires renewed review. Clean deferrals need no acceptance flag; limitations discovered after the source finishes require a new review.
 
 The `agent-completeness.test.ts` CI test will fail if required steps are missed. See [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for comprehensive integration documentation.

@@ -420,20 +420,33 @@ describe('update-agent command', () => {
 		});
 	});
 
-	it('refuses --provider without --force', async () => {
+	it('reports library refusal and sends no blanket destructive switch', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({
 			id: 'full-session-id',
 			toolType: 'claude-code',
 		} as never);
-		const sendCommand = vi.fn();
+		const sendCommand = vi.fn().mockResolvedValue({
+			success: false,
+			error: 'Native translation is unverified; explicit limitation acceptance required',
+		});
 		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
 			action({ sendCommand } as never)
 		);
 
 		await updateAgent('agent-1', { provider: 'codex' });
 
-		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--force to confirm'));
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'apply',
+					acceptTranslationLimitations: false,
+				},
+			}),
+			'update_session_config_result',
+			120000
+		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -457,9 +470,14 @@ describe('update-agent command', () => {
 			expect.objectContaining({
 				type: 'update_session_config',
 				sessionId: 'full-session-id',
-				configPatch: { toolType: 'codex' },
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'apply',
+					acceptTranslationLimitations: true,
+				},
 			}),
-			'update_session_config_result'
+			'update_session_config_result',
+			120000
 		);
 	});
 
@@ -559,4 +577,53 @@ describe('update-agent command', () => {
 		expect(parsed).toMatchObject({ success: false, error: 'Connection lost' });
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
+	it('uses the same provider route for dry-run and status without forcing acceptance', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		const sendCommand = vi.fn().mockResolvedValue({ success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await updateAgent('agent-1', { provider: 'codex', dryRun: true });
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'plan',
+					acceptTranslationLimitations: false,
+				},
+			}),
+			'update_session_config_result',
+			120000
+		);
+		await updateAgent('agent-1', { migration: 'status' });
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				configPatch: { migrationAction: 'status', acceptTranslationLimitations: false },
+			}),
+			'update_session_config_result',
+			120000
+		);
+	});
+	it.each(['recover', 'rollback'] as const)(
+		'waits for a %s migration report before closing the CLI connection',
+		async (migration) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn().mockResolvedValue({ success: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			await updateAgent('agent-1', { migration });
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					configPatch: { migrationAction: migration, acceptTranslationLimitations: false },
+				}),
+				'update_session_config_result',
+				120000
+			);
+		}
+	);
 });

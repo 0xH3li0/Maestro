@@ -293,6 +293,17 @@ describe('reopenClosedConversation', () => {
 		vi.mocked(window.maestro.agentSessions.read).mockReset().mockResolvedValue(transcript);
 	});
 
+	it('does not attempt a foreign native resume for an unresolved migration History entry', async () => {
+		agentWith([buildTab()], {
+			providerTranslationHistoryMappings: [
+				{ tabId: 'history:unmapped', sourceSessionId: 'unmapped', destinationSessionId: null },
+			],
+		});
+		expect(
+			await reopenClosedConversation('agent', { agentSessionId: 'unmapped', name: null })
+		).toBeNull();
+		expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+	});
 	it('brings the conversation back as a background tab, with its messages and name', async () => {
 		agentWith([buildTab()]);
 		const tabId = await reopenClosedConversation('agent', {

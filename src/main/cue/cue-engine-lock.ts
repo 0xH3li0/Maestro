@@ -91,6 +91,16 @@
  * All of this relies on `mkdir`, `link` and `rename` being atomic, which holds
  * on local filesystems, including one volume shared between containers on the
  * same host. Network filesystems (NFS, SMB) are out of scope.
+ *
+ * The library's lock primitive (`src/shared/maestro-lib/runtime/lock.ts`, which
+ * the runtime's data-dir lock is built on) supplies the parts both locks share:
+ * the file name and timings (`CUE_ENGINE_LOCK_SPEC`, which `maestro-cli doctor`
+ * reads too), the parse of the common fields, and the pid / boot / heartbeat
+ * judgement of a lock in our own PID namespace. The ownership and takeover rules
+ * stay here, beside it rather than inside it: the primitive decides ownership by
+ * pid, takes over with unlink + `wx` and rewrites the file in place, which are
+ * exactly the three races described above. The file this module writes is a
+ * superset of the primitive's, so the doctor reads it unchanged.
  */
 
 import * as fs from 'fs';
@@ -99,15 +109,19 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { isWindows } from '../../shared/platformDetection';
+import {
+	CUE_ENGINE_LOCK_SPEC,
+	classifyProcessLock,
+	parseProcessLock,
+	type ProcessLockInfo,
+} from '../../shared/maestro-lib/runtime/lock';
 
 export type CueEngineRunnerMode = 'desktop' | 'standalone';
 
 /** How often the owning engine refreshes the lock's heartbeat. */
-export const CUE_ENGINE_LOCK_HEARTBEAT_MS = 30_000;
+export const CUE_ENGINE_LOCK_HEARTBEAT_MS = CUE_ENGINE_LOCK_SPEC.heartbeatMs;
 /** A lock whose heartbeat is older than this is stale even if its PID is alive (six missed beats). */
-export const CUE_ENGINE_LOCK_STALE_MS = 180_000;
-/** Two boot-time readings closer than this are the same boot: `os.uptime()` is coarse and drifts slightly. */
-const BOOT_TIME_TOLERANCE_MS = 60_000;
+export const CUE_ENGINE_LOCK_STALE_MS = CUE_ENGINE_LOCK_SPEC.staleMs;
 /** A claim directory older than this belongs to a holder that died inside it (see the module doc). */
 const CLAIM_STALE_MS = CUE_ENGINE_LOCK_HEARTBEAT_MS;
 /** How many orphaned claims on one generation can be stepped past before giving up. */
@@ -141,21 +155,15 @@ function readPidNsInode(): number | undefined {
 	}
 }
 
-export interface CueEngineLockInfo {
-	pid: number;
+/**
+ * The primitive's fields (`pid`, `mode`, `startedAt`, `heartbeatAt`, `bootTime`,
+ * `host`) plus the three this lock adds.
+ */
+export interface CueEngineLockInfo extends ProcessLockInfo<CueEngineRunnerMode> {
 	/** Random per-process owner identity. Absent on lock files written before tokens existed. */
 	token?: string;
 	/** PID namespace inode of the owner (Linux only). Absent elsewhere and on older lock files. */
 	pidNsInode?: number;
-	mode: CueEngineRunnerMode;
-	/** ISO timestamp the lock was acquired. */
-	startedAt: string;
-	/** ISO timestamp of the owner's last heartbeat. Older lock files lack it; `startedAt` stands in. */
-	heartbeatAt?: string;
-	/** Epoch ms the system booted, as seen by the owner. Absent on older lock files. */
-	bootTime?: number;
-	/** Free-text hint for a human reading the lock file directly (hostname, etc). Best-effort, not load-bearing. */
-	host?: string;
 	/**
 	 * Loopback port of the owner's status server (`--status-port`), so
 	 * `cue engine status` can say where to ask. Absent when the owner runs none.
@@ -164,7 +172,7 @@ export interface CueEngineLockInfo {
 }
 
 function lockFilePath(dataDir: string = resolveUserDataDir()): string {
-	return path.join(dataDir, 'cue-engine.lock');
+	return path.join(dataDir, CUE_ENGINE_LOCK_SPEC.fileName);
 }
 
 function currentBootTime(): number {
@@ -224,35 +232,28 @@ function isHeartbeatFresh(info: CueEngineLockInfo): boolean {
  */
 function isLockLive(info: CueEngineLockInfo): boolean {
 	if (isCueEngineLockInForeignPidNamespace(info)) return isHeartbeatFresh(info);
-	if (!isProcessAlive(info.pid)) return false;
-	if (
-		typeof info.bootTime === 'number' &&
-		Math.abs(info.bootTime - currentBootTime()) > BOOT_TIME_TOLERANCE_MS
-	) {
-		return false;
-	}
-	return isHeartbeatFresh(info);
+	// Same namespace: the primitive's judgement (pid, then boot, then heartbeat),
+	// so the engine and `doctor` cannot disagree about one of these.
+	return (
+		classifyProcessLock(info, CUE_ENGINE_LOCK_SPEC, {
+			now: () => Date.now(),
+			bootTime: currentBootTime,
+			isPidAlive: isProcessAlive,
+		}).state === 'live'
+	);
 }
 
+/** The primitive's parse, plus this lock's own fields. */
 function parseLock(raw: string): CueEngineLockInfo | null {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return null;
-	}
-	const info = parsed as Partial<CueEngineLockInfo> | null;
-	if (!info || typeof info.pid !== 'number' || typeof info.mode !== 'string') return null;
+	const base = parseProcessLock<CueEngineRunnerMode>(raw);
+	if (!base) return null;
+	// Parses: `parseProcessLock` accepted it.
+	const extra = JSON.parse(raw) as Partial<CueEngineLockInfo>;
 	return {
-		pid: info.pid,
-		token: typeof info.token === 'string' ? info.token : undefined,
-		pidNsInode: typeof info.pidNsInode === 'number' ? info.pidNsInode : undefined,
-		mode: info.mode as CueEngineRunnerMode,
-		startedAt: typeof info.startedAt === 'string' ? info.startedAt : new Date(0).toISOString(),
-		heartbeatAt: typeof info.heartbeatAt === 'string' ? info.heartbeatAt : undefined,
-		bootTime: typeof info.bootTime === 'number' ? info.bootTime : undefined,
-		host: typeof info.host === 'string' ? info.host : undefined,
-		statusPort: typeof info.statusPort === 'number' ? info.statusPort : undefined,
+		...base,
+		token: typeof extra.token === 'string' ? extra.token : undefined,
+		pidNsInode: typeof extra.pidNsInode === 'number' ? extra.pidNsInode : undefined,
+		statusPort: typeof extra.statusPort === 'number' ? extra.statusPort : undefined,
 	};
 }
 

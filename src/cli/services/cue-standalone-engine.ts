@@ -22,10 +22,12 @@
  *    boot sequence (`src/main/stores/instances.ts`). Standing that up here
  *    would mean either duplicating a chunk of the desktop's Electron
  *    bootstrap or half-initializing it - both worse than the gap. Resolution
- *    instead prefers an explicit per-agent override
- *    (`getAgentCustomPath()`, read straight from the settings JSON file) and
- *    otherwise leaves the bare command name for `spawn()`'s own PATH search,
- *    which is correct for the common case (the agent CLI installed normally).
+ *    instead runs the first two rungs of the desktop's own precedence
+ *    (`resolveCueAgentBinary`): the agent's own custom path, then the
+ *    provider-level one (`getAgentCustomPath()`, read straight from the
+ *    settings JSON file). Past those it leaves the bare command name for
+ *    `spawn()`'s own PATH search, which is correct for the common case (the
+ *    agent CLI installed normally).
  * 2. **`action: notify` degrades to a log line**, not a toast. Desktop toasts
  *    need a `BrowserWindow`; a headless runner has none, and passing
  *    `mainWindow: null` to `executeCueNotify` already exercises the SAME
@@ -40,6 +42,12 @@
  *    classification half, no store dependency) is reused directly instead,
  *    logged clearly enough for `maestro-cli cue engine status` to surface
  *    later (see that command).
+ *
+ * And one thing the engine cannot do alone: **`action: autorun` needs a
+ * runtime.** An Auto Run is driven by whoever hosts the agents, so the host
+ * hands one in (`StandaloneCueEngineOptions.runAutoRun`; `maestro-cli host`
+ * binds it to its in-process runtime in `host-cue.ts`). Without it the run
+ * fails with a reason that says so. It is never sent as a prompt.
  */
 
 // Only TYPE imports from the main-process Cue graph at the top level. Every
@@ -55,6 +63,7 @@
 // broke a real docker-based smoke test of an UNRELATED command). Dynamic
 // imports defer that whole graph to the moment a subscription actually fires.
 import type { CueEngine, CueEngineDeps } from '../../main/cue/cue-engine';
+import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
 import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolver';
 // The one static VALUE import from that graph, and safe: the router takes
 // every executor through its deps and imports them as types only, so it
@@ -74,6 +83,7 @@ import {
 	readAgentConfig,
 	readSettings,
 } from './storage';
+import { prepareMaestroSystemPromptCli } from './system-prompt';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
 let executorsPromise: ReturnType<typeof loadExecutorsUncached> | undefined;
@@ -93,11 +103,16 @@ function loadExecutorsUncached() {
 		// Every executor registers its children here; the drain counts and
 		// kills through it (see CueEngineDeps.countLiveCueProcesses).
 		import('../../main/cue/cue-process-lifecycle'),
-	]).then(([, executor, shell, cli, notify, authDetector, lifecycle]) => ({
+		import('../../main/cue/cue-autorun-executor'),
+		import('../../main/cue/cue-agent-binary'),
+	]).then(([, executor, shell, cli, notify, authDetector, lifecycle, autoRun, agentBinary]) => ({
 		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
 		killAllCueProcessesNow: lifecycle.stopAllProcesses,
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
+		getActiveProcesses: executor.getActiveProcesses,
+		executeCueAutoRun: autoRun.executeCueAutoRun,
+		resolveCueAgentBinary: agentBinary.resolveCueAgentBinary,
 		executeCueShell: shell.executeCueShell,
 		executeCueCli: cli.executeCueCli,
 		executeCueNotify: notify.executeCueNotify,
@@ -179,6 +194,101 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
 	return { getSshRemotes: () => readSshRemotes() };
 }
 
+/** How an Auto Run a Cue subscription launched ended. */
+export type StandaloneCueAutoRunEnd = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Runs one `action: autorun` launch in whatever hosts the agents. Answers once
+ * the launch is accepted or refused; `ended` settles when the run is over, so
+ * the Cue run records how the Auto Run went and not only that it began.
+ * `signal` aborts when the Cue run is stopped: the Auto Run is stopped with it.
+ */
+export type StandaloneCueAutoRun = (
+	params: CueAutoRunLaunchParams,
+	signal: AbortSignal
+) => Promise<
+	{ started: false; error: string } | { started: true; ended: Promise<StandaloneCueAutoRunEnd> }
+>;
+
+/** Why an `action: autorun` run fails in an engine nobody gave a runtime to. */
+export const AUTO_RUN_NEEDS_HOST =
+	'Auto Run actions need `maestro-cli host`: this Cue engine has no runtime to run an Auto Run in. ' +
+	'Stop it and run `maestro-cli host start`, or use the desktop app.';
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+type LoadedExecutors = Awaited<ReturnType<typeof loadExecutorsUncached>>;
+
+/**
+ * The router's `onAutoRun` for a standalone runner: hand the launch to the
+ * host's runtime (`runAutoRun`), then keep the Cue run open until the Auto Run
+ * itself ends, so the run records how it went. The router has already refused
+ * a run with no documents; without a runtime the launch is refused with
+ * {@link AUTO_RUN_NEEDS_HOST}.
+ */
+function buildOnAutoRun(
+	executors: LoadedExecutors,
+	onLog: StandaloneCueLog,
+	runAutoRun: StandaloneCueAutoRun | undefined,
+	autoRunStops: Map<string, AbortController>
+): NonNullable<CueRunActionDeps['onAutoRun']> {
+	return async (params) => {
+		const documents = params.autoRun?.documents ?? [];
+		const stop = new AbortController();
+		autoRunStops.set(params.runId, stop);
+		try {
+			let ended: Promise<StandaloneCueAutoRunEnd> | undefined;
+			const launched = await executors.executeCueAutoRun({
+				...params,
+				autoRun: params.autoRun ?? { documents },
+				// The launcher contract is to answer, never to reject.
+				launch: async (launchParams) => {
+					if (!runAutoRun) return { success: false, error: AUTO_RUN_NEEDS_HOST };
+					try {
+						const answer = await runAutoRun(launchParams, stop.signal);
+						if (!answer.started) return { success: false, error: answer.error };
+						ended = answer.ended;
+						return { success: true };
+					} catch (error) {
+						return { success: false, error: errorText(error) };
+					}
+				},
+				onLog,
+			});
+			if (launched.status !== 'completed' || !ended) return launched;
+
+			// The launch record becomes the run's own: it ends when the Auto Run does.
+			let end: StandaloneCueAutoRunEnd;
+			try {
+				end = await ended;
+			} catch (error) {
+				end = { ok: false, reason: errorText(error) };
+			}
+			const endedAt = new Date().toISOString();
+			const timing = {
+				endedAt,
+				durationMs: Date.parse(endedAt) - Date.parse(launched.startedAt),
+			};
+			if (end.ok) {
+				return { ...launched, ...timing, stdout: `Auto Run finished: ${documents.join(', ')}` };
+			}
+			onLog('error', `[CUE] Auto Run "${params.subscription.name}" failed: ${end.reason}`);
+			return {
+				...launched,
+				...timing,
+				status: 'failed',
+				stdout: '',
+				stderr: `Auto Run failed: ${end.reason}`,
+				exitCode: 1,
+			};
+		} finally {
+			autoRunStops.delete(params.runId);
+		}
+	};
+}
+
 /**
  * Build the `onCueRun` dependency: dispatches a fired subscription through the
  * same router the desktop uses (`cue-run-router.ts`), minus the three
@@ -200,7 +310,9 @@ function forward(
 
 function buildOnCueRun(
 	onLog: StandaloneCueLog,
-	onExternalNotification?: (notification: CueExternalNotification) => void
+	onExternalNotification: ((notification: CueExternalNotification) => void) | undefined,
+	runAutoRun: StandaloneCueAutoRun | undefined,
+	autoRunStops: Map<string, AbortController>
 ): CueEngineDeps['onCueRun'] {
 	return async (params) => {
 		const executors = await loadExecutors();
@@ -211,9 +323,23 @@ function buildOnCueRun(
 			stopCueRun: executors.stopCueRun,
 			findSession: (sessionId) =>
 				readSessions().find((s) => s.id === sessionId) as CueRunSessionRecord | undefined,
-			// Point 1 (module doc): an explicit override if the user set one,
-			// else leave it to spawn()'s own PATH search.
-			resolveAgentPath: (toolType) => getAgentCustomPath(toolType),
+			// Point 1 (module doc): the agent's own binary first, then the
+			// provider's, else spawn()'s own PATH search.
+			resolveAgentBinary: ({ session }) =>
+				executors.resolveCueAgentBinary({
+					sessionCustomPath: session.customPath,
+					providerCustomPath: getAgentCustomPath(session.toolType),
+					sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
+					// No detector here: past the two custom paths it is spawn()'s own PATH search.
+					getDetectedPath: async () => undefined,
+					onWarn: (message) => onLog('warn', `[CUE] "${params.subscriptionName}": ${message}`),
+				}),
+			// The same Maestro system prompt a `maestro-cli send` turn on this agent carries.
+			getAppendSystemPrompt: async (sessionId) => {
+				const session = readSessions().find((s) => s.id === sessionId);
+				return session ? prepareMaestroSystemPromptCli(session) : undefined;
+			},
+			onAutoRun: buildOnAutoRun(executors, onLog, runAutoRun, autoRunStops),
 			sshStore: sshStoreAdapter(),
 			getAgentConfigValues: (toolType) => readAgentConfig(toolType),
 			onLog,
@@ -291,6 +417,8 @@ export interface StandaloneCueEngineOptions {
 	 * inline with the run.
 	 */
 	onExternalNotification?: (notification: CueExternalNotification) => void;
+	/** How an `action: autorun` subscription runs. Absent means it cannot: the run fails and says why. */
+	runAutoRun?: StandaloneCueAutoRun;
 }
 
 /** Build the full `CueEngineDeps` for a standalone runner. Exported separately from the engine construction so a caller (tests, `inspect`) can build deps without booting a real engine loop. */
@@ -298,10 +426,23 @@ export function buildStandaloneCueEngineDeps(
 	options: StandaloneCueEngineOptions = {}
 ): CueEngineDeps {
 	const onLog = options.onLog ?? consoleCueLog;
+	// An Auto Run a subscription launched has no Cue child process to signal:
+	// stopping it is aborting the signal its runner was handed.
+	const autoRunStops = new Map<string, AbortController>();
 	return {
 		getSessions: () => readSessions(),
-		onCueRun: buildOnCueRun(onLog, options.onExternalNotification),
+		onCueRun: buildOnCueRun(
+			onLog,
+			options.onExternalNotification,
+			options.runAutoRun,
+			autoRunStops
+		),
 		onStopCueRun: (runId) => {
+			const autoRunStop = autoRunStops.get(runId);
+			if (autoRunStop) {
+				autoRunStop.abort();
+				return true;
+			}
 			if (!settledExecutors) return false; // see settledExecutors' doc comment
 			// One registry holds every Cue spawn (agent, shell, maestro-cli), so
 			// stopCueRun reaches all three.
@@ -334,4 +475,42 @@ export async function createStandaloneCueEngine(
 	// cost is worth paying.
 	const { CueEngine: CueEngineCtor } = await import('../../main/cue/cue-engine');
 	return new CueEngineCtor(buildStandaloneCueEngineDeps(options));
+}
+
+/** A stopped child is given SIGTERM and then, after the stop ladder's grace period, SIGKILL. This outlasts both. */
+const CUE_PROCESS_EXIT_WAIT_MS = 10_000;
+
+/**
+ * Wait until every Cue child process (agent, shell, maestro-cli) has exited.
+ *
+ * Stopping a run only signals its child and records the run as stopped; the
+ * child may still be on its way out. A process that exits before it is gone
+ * leaves it reparented and running, so a host that stops its runs waits here
+ * before it lets go of the data directory. Resolves with the number still
+ * alive after `timeoutMs`, which is 0 unless a child ignored SIGKILL's wait.
+ * (`maestro-cli cue engine start` does not need it: its drain counts the same
+ * registry through `countLiveCueProcesses`.)
+ */
+export async function waitForStandaloneCueProcesses(
+	timeoutMs: number = CUE_PROCESS_EXIT_WAIT_MS
+): Promise<number> {
+	// Nothing was ever dispatched, so nothing was ever spawned.
+	if (!settledExecutors) return 0;
+	const children = [...settledExecutors.getActiveProcesses().values()].map((entry) => entry.child);
+	const alive = (child: (typeof children)[number]): boolean =>
+		child.exitCode === null && child.signalCode === null;
+	const waiting = children.filter(alive);
+	if (waiting.length === 0) return 0;
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	await Promise.race([
+		Promise.all(
+			waiting.map((child) => new Promise<void>((resolve) => child.once('exit', () => resolve())))
+		),
+		new Promise<void>((resolve) => {
+			timer = setTimeout(resolve, timeoutMs);
+		}),
+	]);
+	if (timer) clearTimeout(timer);
+	return waiting.filter(alive).length;
 }

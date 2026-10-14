@@ -4,9 +4,9 @@
  *
  * The exporter calls {@link collectClaudeAssets} once per workspace a Claude
  * agent works in; the importer uses {@link mergeMcpConfig}, and
- * `claudeMemoryDir()` from `memory-manager.ts` (the Memory Viewer's home for
- * Claude memory paths) to place auto memory. Like the rest of `bundle/`,
- * nothing here imports Electron.
+ * `resolveClaudeMemoryPath()` from `maestro-lib/translation/memory.ts` (the
+ * Memory Viewer and provider translation build the path the same way) to place
+ * auto memory. Like the rest of `bundle/`, nothing here imports Electron.
  *
  * Secrets never travel:
  * - `.mcp.json` values that look secret (by env name, header name, flag name,
@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import { containsCredentialToken, redactCredentialTokens } from '../../../shared/agent-run/redact';
-import { claudeMemoryDir } from '../../memory-manager';
+import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
 import {
 	CUE_BUNDLE_CLAUDE_MEMORY_DIR,
 	type CueBundleClaudeAssetSelection,
@@ -529,7 +529,7 @@ function listAutoMemory(root: string, claudeConfigDir: string): { dir: string; n
 	} catch {
 		// Keep the given path.
 	}
-	const dir = claudeMemoryDir(claudeConfigDir, real);
+	const dir = resolveClaudeMemoryPath(real, claudeConfigDir);
 	const names: string[] = [];
 	if (isRealDirectory(dir)) {
 		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

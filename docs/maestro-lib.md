@@ -38,7 +38,7 @@ It is not:
 | `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a prompt with a line break, `%` or `^`, for a provider that cannot read its prompt from stdin). See [Windows](#windows). |
 | `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                |
 
-What each provider supports in maestro-lib `0.2.0`:
+What each provider supports in maestro-lib `0.3.0`:
 
 | Agent id        | Name            | Runs a turn | Resume | Read-only |
 | --------------- | --------------- | ----------- | ------ | --------- |
@@ -431,6 +431,18 @@ export async function runByHand(spec: TurnProcessSpec, agentId: string): Promise
 	return outcome;
 }
 ```
+
+## The headless runtime
+
+Since `0.3.0` the entry also exports what lets Maestro run with no desktop. This page does not cover these yet; each line points at where they are described.
+
+- **Paths:** `resolveMaestroPaths` and the data directory resolvers, plus the doctor that reports on a data directory (`paths/`).
+- **Locks:** the cross-process lock primitive (`createProcessLock`) and the data-dir lock that makes one process the only writer of a data directory (`acquireDataDirLock`). See `Plans/maestro-tui-runtime.md`, sections 3 and 4.
+- **Runtime and in-process client:** `createMaestroRuntime()`, the in-process `MaestroClient` that owns writes to a data directory, and the server `maestro-cli host` runs it in. See [Headless Host](./cli#headless-host-maestro-cli-host).
+- **Store readers:** read-only readers of the agent, group, settings and history stores, without electron-store.
+- **Auto Run:** the playbook and goal engines the CLI and the runtime share. See `Plans/maestro-tui-autorun-engine.md`.
+- **Group chat and consults:** the group chat engine, its storage, and the cross-agent consult service.
+- **Client and discovery:** the `MaestroClient` interface with its WebSocket implementation, and the discovery file (`cli-server.json`) a client finds a running host by. See `Plans/maestro-tui-client-api.md`.
 
 ## See also
 

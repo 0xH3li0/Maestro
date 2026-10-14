@@ -89,6 +89,7 @@ export function exitIfMaestroNotRunning(
 		else console.log(payload);
 	} else {
 		console.error(formatError(error.message));
+		console.error(error.hint);
 	}
 	exitWith(ExitCode.NotRunning);
 }

@@ -14,7 +14,8 @@ import {
 	resolveClaudeAssetSelection,
 	scrubMcpConfig,
 } from '../../../../main/cue/bundle/cue-bundle-claude-assets';
-import { claudeMemoryDir, resolveClaudeConfigDir } from '../../../../main/memory-manager';
+import { resolveClaudeMemoryPath } from '../../../../shared/maestro-lib/translation/memory';
+import { resolveConfigDirKeyFromEnv } from '../../../../shared/maestro-lib/launch/interactive-mode';
 import { REDACTED_PLACEHOLDER as REDACTED } from '../../../../shared/agent-run/redact';
 
 const ANTHROPIC_KEY = 'sk-ant-api03-' + 'a'.repeat(40);
@@ -201,12 +202,12 @@ describe('mergeMcpConfig', () => {
 	});
 });
 
-describe('resolveClaudeConfigDir and resolveClaudeAssetSelection', () => {
+describe('resolveConfigDirKeyFromEnv and resolveClaudeAssetSelection', () => {
 	it('prefers CLAUDE_CONFIG_DIR', () => {
-		expect(resolveClaudeConfigDir({ CLAUDE_CONFIG_DIR: '/opt/claude-work' })).toBe(
+		expect(resolveConfigDirKeyFromEnv({ CLAUDE_CONFIG_DIR: '/opt/claude-work' })).toBe(
 			path.resolve('/opt/claude-work')
 		);
-		expect(resolveClaudeConfigDir({})).toBe(path.join(os.homedir(), '.claude'));
+		expect(resolveConfigDirKeyFromEnv({})).toBe(path.join(os.homedir(), '.claude'));
 	});
 
 	it('turns every kind on unless switched off', () => {
@@ -258,7 +259,7 @@ describe('collectClaudeAssets', () => {
 		);
 		write('CLAUDE.md', `# Project\nThe staging key is ${ANTHROPIC_KEY}.\n`);
 		write('CLAUDE.local.md', 'personal notes');
-		const memoryDir = claudeMemoryDir(configDir, root);
+		const memoryDir = resolveClaudeMemoryPath(root, configDir);
 		write('MEMORY.md', '- [Build](build.md)\n', memoryDir);
 		write('build.md', 'Run npm run build.\n', memoryDir);
 		write('not memory.txt', 'ignored', memoryDir);

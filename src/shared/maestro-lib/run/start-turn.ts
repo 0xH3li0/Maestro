@@ -7,11 +7,8 @@ import { createOutputParser } from '../parsers/parser-factory';
 import { BufferedLineReader } from '../streaming/buffered-line-reader';
 import { stopProcess, type StopHandle, type StopStage } from '../control/termination';
 import type { AgentLaunchPlan } from '../launch/launch-plan';
-import {
-	escapeCmdArgs,
-	quoteCommandForCmdShell,
-	windowsShellReason,
-} from '../launch/windows-command';
+import { quoteCommandForCmdShell, windowsShellReason } from '../launch/windows-command';
+import { escapeCmdArgs } from '../launch/windows-shell-escape';
 import { isWindows } from '../../platformDetection';
 
 /**
