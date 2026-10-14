@@ -29,6 +29,7 @@ import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { ShortcutHint } from '../ui/ShortcutHint';
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
@@ -166,15 +167,7 @@ export function HamburgerMenuContent({
 						Unread notifications and history
 					</div>
 				</div>
-				{!!shortcuts.openNotificationCenter?.keys.length && (
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{formatShortcutKeys(shortcuts.openNotificationCenter.keys)}
-					</span>
-				)}
+				<ShortcutHint keys={shortcuts.openNotificationCenter?.keys ?? []} theme={theme} />
 			</button>
 			{startTour && !phone && (
 				<button
