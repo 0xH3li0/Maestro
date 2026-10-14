@@ -4,11 +4,14 @@
  * the stop timeouts from drifting apart (see docs/maestro-cue-server.md).
  * They also pin server mode in both, what it lets an agent inherit from the
  * service's environment, core dumps being off, Compose's names and build
- * argument, and the installer's --enable gate and exit statuses.
+ * argument, and the installer's --enable gate, exit statuses and npm registry
+ * check.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync, spawnSync } from 'child_process';
+import { execFile, execFileSync, spawnSync } from 'child_process';
+import * as http from 'http';
+import type { AddressInfo } from 'net';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -396,5 +399,190 @@ describe('install.sh --enable', () => {
 	// Needs a POSIX sh, which a Windows runner does not promise (like the gate tests above).
 	it.skipIf(process.platform === 'win32')('parses as a POSIX shell script', () => {
 		expect(() => execFileSync('sh', ['-n', path.join(packagingDir, 'install.sh')])).not.toThrow();
+	});
+});
+
+describe('install.sh npm registry check', () => {
+	// The check shells out to npm under coreutils `timeout`, which a Debian or
+	// Ubuntu host always has; a Windows runner or a stock macOS does not.
+	const canRun =
+		process.platform !== 'win32' && spawnSync('sh', ['-c', 'command -v timeout']).status === 0;
+
+	/** CONNECT_TIMEOUT and the two registry functions, as install.sh defines them. */
+	function probeFunctions(): string {
+		const pick = (re: RegExp, what: string) => {
+			const found = installer.match(re)?.[0];
+			if (!found) throw new Error(`${what} not found in install.sh`);
+			return found;
+		};
+		return [
+			pick(/^CONNECT_TIMEOUT=\d+$/m, 'CONNECT_TIMEOUT'),
+			pick(/^npm_registry\(\) \{\n[\s\S]*?\n\}$/m, 'npm_registry()'),
+			pick(/^npm_registry_problem\(\) \{\n[\s\S]*?\n\}$/m, 'npm_registry_problem()'),
+		].join('\n');
+	}
+
+	/**
+	 * Runs npm_registry_problem() in sh with the real npm, pointed at `registry`
+	 * and isolated from this machine's npm config, and returns what it printed.
+	 */
+	async function registryProblem(
+		registry: string,
+		opts: { connectTimeout?: number; env?: Record<string, string> } = {}
+	): Promise<{ status: number; stdout: string }> {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'install-registry-'));
+		// Empty user and global config files (npm refuses one file as both).
+		const userrc = path.join(dir, 'user-npmrc');
+		const globalrc = path.join(dir, 'global-npmrc');
+		fs.writeFileSync(userrc, '');
+		fs.writeFileSync(globalrc, '');
+		const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: dir };
+		Object.assign(env, {
+			npm_config_userconfig: userrc,
+			npm_config_globalconfig: globalrc,
+			npm_config_cache: path.join(dir, 'cache'),
+			npm_config_registry: registry,
+			...opts.env,
+		});
+		const script = [
+			'set -eu',
+			probeFunctions(),
+			opts.connectTimeout ? `CONNECT_TIMEOUT=${opts.connectTimeout}` : '',
+			'NPM_BIN=$(command -v npm)',
+			'npm_registry_problem',
+		].join('\n');
+		try {
+			return await new Promise((resolve) => {
+				execFile('sh', ['-c', script], { env, encoding: 'utf8' }, (error, stdout) => {
+					resolve({ status: error ? Number(error.code) : 0, stdout: stdout.trim() });
+				});
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	/** A local registry answering every request with `handler`. */
+	async function withRegistry<T>(
+		handler: http.RequestListener,
+		body: (url: string) => Promise<T>
+	): Promise<T> {
+		const server = http.createServer(handler);
+		await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+		const { port } = server.address() as AddressInfo;
+		try {
+			return await body(`http://127.0.0.1:${port}/`);
+		} finally {
+			server.closeAllConnections();
+			await new Promise((resolve) => server.close(resolve));
+		}
+	}
+
+	/** A port on this host nothing listens on. */
+	async function closedPort(): Promise<number> {
+		const server = http.createServer();
+		await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+		const { port } = server.address() as AddressInfo;
+		await new Promise((resolve) => server.close(resolve));
+		return port;
+	}
+
+	it.skipIf(!canRun)('prints nothing when the registry serves better-sqlite3', async () => {
+		const requested: string[] = [];
+		const result = await withRegistry(
+			(req, res) => {
+				requested.push(req.url ?? '');
+				res.setHeader('content-type', 'application/json');
+				res.end(
+					JSON.stringify({
+						name: 'better-sqlite3',
+						'dist-tags': { latest: '1.0.0' },
+						versions: { '1.0.0': { name: 'better-sqlite3', version: '1.0.0' } },
+					})
+				);
+			},
+			(url) => registryProblem(url)
+		);
+		expect(result).toEqual({ status: 0, stdout: '' });
+		expect(requested).toContain('/better-sqlite3');
+	});
+
+	it.skipIf(!canRun)(
+		'names the registry and the cause when nothing listens there',
+		async () => {
+			const registry = `http://127.0.0.1:${await closedPort()}/`;
+			const started = Date.now();
+			const { status, stdout } = await registryProblem(registry);
+			expect(status).toBe(0);
+			expect(stdout).toContain(`npm cannot fetch from the registry ${registry} (ECONNREFUSED)`);
+			expect(stdout).toContain('npm config get registry');
+			// One try, not npm's default retries.
+			expect(Date.now() - started).toBeLessThan(15_000);
+		},
+		20_000
+	);
+
+	it.skipIf(!canRun)(
+		'gives up on a registry that accepts but never answers',
+		async () => {
+			const { stdout } = await withRegistry(
+				() => {
+					// Hold the request open.
+				},
+				(url) => registryProblem(url, { connectTimeout: 1 })
+			);
+			expect(stdout).toMatch(/^npm cannot fetch from the registry http:\/\/127\.0\.0\.1:\d+\/ /);
+			expect(stdout).toContain('(no answer in 1s)');
+		},
+		20_000
+	);
+
+	it.skipIf(!canRun)('reports what the registry said when it refuses', async () => {
+		const { stdout } = await withRegistry(
+			(_req, res) => {
+				res.statusCode = 404;
+				res.end('{}');
+			},
+			(url) => registryProblem(url)
+		);
+		expect(stdout).toContain('(E404)');
+	});
+
+	it.skipIf(!canRun)(
+		'names the proxy without its credentials',
+		async () => {
+			const port = await closedPort();
+			// npm 11 refuses to print a proxy setting with a password, so the
+			// environment variable is what can be named.
+			const fromEnv = await registryProblem('https://registry.invalid/', {
+				env: { HTTPS_PROXY: `http://user:secret@127.0.0.1:${port}` },
+			});
+			expect(fromEnv.stdout).toContain(`through the proxy http://127.0.0.1:${port} (`);
+			expect(fromEnv.stdout).not.toContain('secret');
+			const fromConfig = await registryProblem('https://registry.invalid/', {
+				env: { npm_config_https_proxy: `http://127.0.0.1:${port}` },
+			});
+			expect(fromConfig.stdout).toContain(`through the proxy http://127.0.0.1:${port} (`);
+			const withPassword = await registryProblem('https://registry.invalid/', {
+				env: { npm_config_https_proxy: `http://user:secret@127.0.0.1:${port}` },
+			});
+			expect(withPassword.stdout).toMatch(
+				/through the proxy (http:\/\/127\.0\.0\.1:\d+|set in npm config \(https-proxy\)) \(/
+			);
+			expect(withPassword.stdout).not.toContain('secret');
+		},
+		30_000
+	);
+
+	it('checks once before the first npm install, and again before blaming a missing compiler', () => {
+		const check = installer.indexOf(
+			'problem=$(npm_registry_problem)\n[ -z "$problem" ] || die "$problem"'
+		);
+		expect(check).toBeGreaterThan(-1);
+		expect(check).toBeLessThan(installer.indexOf('"$NPM_BIN" install -g'));
+		expect(check).toBeLessThan(installer.indexOf('"$NPM_BIN" install --omit=dev'));
+		expect(installer).toMatch(
+			/if ! sqlite_install; then\n(?:\t#.*\n)*\tproblem=\$\(npm_registry_problem\)\n\t\[ -z "\$problem" \] \|\| die "\$problem"\n\twarn "no prebuilt/
+		);
 	});
 });

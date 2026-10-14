@@ -15,8 +15,9 @@
 #   4. Picks the Node.js the service will run: the one on PATH when it is 22 or
 #      newer and the maestro user can run it, otherwise Node.js from
 #      nodejs.org (checksum verified) in /usr/local.
-#   5. Installs the agent CLIs (Claude Code unless told otherwise) with that
-#      Node.js, where the service finds them.
+#   5. Checks that npm can reach its registry, and stops within seconds when it
+#      cannot. Then installs the agent CLIs (Claude Code unless told otherwise)
+#      with that Node.js, where the service finds them.
 #   6. Copies the bundle to /opt/maestro, installs better-sqlite3 for that
 #      Node.js, and links the `maestro-cli` wrapper into /usr/local/bin.
 #   7. Installs the maestro-cue systemd unit. It is not started unless you pass
@@ -57,6 +58,9 @@ INSTALL_GH=1
 DEFAULT_AGENT_CLIS="@anthropic-ai/claude-code"
 AGENT_CLIS=""
 AGENT_CLIS_SET=0
+# Seconds to wait for a host to answer before giving up on it. The kernel's
+# own connect timeout is about two minutes, and npm retries on top of that.
+CONNECT_TIMEOUT=30
 
 # ---- output --------------------------------------------------------------
 if [ -t 1 ]; then
@@ -89,7 +93,7 @@ trap on_exit EXIT
 trap 'exit 130' HUP INT TERM
 
 usage() {
-	sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -142,8 +146,9 @@ if [ "$INSTALL_GH" = 1 ]; then
 		ok "gh already installed"
 	else
 		install -m 0755 -d /etc/apt/keyrings
-		curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-			-o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+		curl -fsSL --connect-timeout "$CONNECT_TIMEOUT" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+			-o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+			|| die "could not download the GitHub CLI key from cli.github.com: check the network and any proxy (HTTPS_PROXY), or pass --skip-gh"
 		chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
 		echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
 			> /etc/apt/sources.list.d/github-cli.list
@@ -196,10 +201,12 @@ else
 	info "Installing Node.js $NODE_MAJOR from nodejs.org"
 	tmp=$(mktemp -d)
 	base="https://nodejs.org/dist/latest-v$NODE_MAJOR.x"
-	curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
+	curl -fsSL --connect-timeout "$CONNECT_TIMEOUT" "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt" \
+		|| die "could not download from $base: check the network and any proxy (HTTPS_PROXY)"
 	file=$(grep -o "node-v[0-9.]*-linux-$NODE_ARCH\.tar\.gz" "$tmp/SHASUMS256.txt" | head -n1)
 	[ -n "$file" ] || die "no Node.js $NODE_MAJOR build for linux-$NODE_ARCH on nodejs.org"
-	curl -fsSL "$base/$file" -o "$tmp/$file"
+	curl -fsSL --connect-timeout "$CONNECT_TIMEOUT" "$base/$file" -o "$tmp/$file" \
+		|| die "could not download $base/$file: check the network and any proxy (HTTPS_PROXY)"
 	(cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c - >/dev/null) \
 		|| die "checksum mismatch for $file"
 	tar -xzf "$tmp/$file" -C /usr/local --strip-components=1 --no-same-owner \
@@ -216,6 +223,58 @@ NPM_BIN="$NODE_DIR/npm"
 # npm's own scripts call `node`: make it this one.
 PATH="$NODE_DIR:$PATH"
 export PATH
+
+# ---- npm registry --------------------------------------------------------
+# Without a registry, the npm steps below wait in silence for minutes: npm's
+# fetch-timeout does not cover connecting, so each of its retries sits out the
+# kernel's connect timeout. One bounded request first fails the install in
+# seconds, with the reason.
+
+# The registry npm uses, without any credentials in its URL.
+npm_registry() {
+	"$NPM_BIN" config get registry 2>/dev/null | sed 's|//[^/@]*@|//|' || true
+}
+
+# Why npm cannot fetch from its registry, or nothing when it can. npm makes
+# the request, so the operator's registry, proxy and CA settings apply. It
+# asks for better-sqlite3, which every install fetches (`npm ping` needs an
+# endpoint some private registries do not serve), with a throwaway cache:
+# from its own cache npm answers even with no network.
+npm_registry_problem() {
+	probe_dir=$(mktemp -d)
+	if timeout "$CONNECT_TIMEOUT" "$NPM_BIN" view better-sqlite3 version --cache="$probe_dir" \
+		--prefer-online --fetch-retries=0 --no-update-notifier --loglevel=error \
+		>/dev/null 2>"$probe_dir/stderr"; then
+		rm -rf "$probe_dir"
+		return 0
+	else
+		probe_status=$?
+	fi
+	if [ "$probe_status" = 124 ]; then
+		why="no answer in ${CONNECT_TIMEOUT}s"
+	else
+		why=$(sed -n 's/^npm error code //p' "$probe_dir/stderr" | head -n1)
+		[ -n "$why" ] || why="npm exited with status $probe_status"
+	fi
+	rm -rf "$probe_dir"
+	# npm 11 will not print a proxy setting that holds a password.
+	proxy=""
+	for key in https-proxy proxy; do
+		proxy=$("$NPM_BIN" config get "$key" 2>/dev/null) || proxy="set in npm config ($key)"
+		case $proxy in null|undefined) proxy="" ;; esac
+		[ -z "$proxy" ] || break
+	done
+	[ -n "$proxy" ] || proxy=${HTTPS_PROXY:-${https_proxy:-}}
+	via=""
+	[ -z "$proxy" ] || via=" through the proxy $(printf '%s' "$proxy" | sed 's|//[^/@]*@|//|')"
+	printf 'npm cannot fetch from the registry %s%s (%s). Check the network, the proxy (HTTPS_PROXY, or npm config get https-proxy) and the registry (npm config get registry)\n' \
+		"$(npm_registry)" "$via" "$why"
+}
+
+info "Checking the npm registry"
+problem=$(npm_registry_problem)
+[ -z "$problem" ] || die "$problem"
+ok "npm registry $(npm_registry)"
 
 # ---- agent CLIs ----------------------------------------------------------
 if [ -n "$AGENT_CLIS" ]; then
@@ -244,6 +303,9 @@ sqlite_install() {
 	(cd "$staging" && MAESTRO_SERVER_INSTALL=1 "$NPM_BIN" install --omit=dev --no-audit --no-fund --loglevel=error)
 }
 if ! sqlite_install; then
+	# A compiler does not help when the registry has gone away since the check.
+	problem=$(npm_registry_problem)
+	[ -z "$problem" ] || die "$problem"
 	warn "no prebuilt better-sqlite3 for this system; installing a compiler to build it"
 	apt-get install -y -q --no-install-recommends python3 make g++
 	sqlite_install || die "could not install better-sqlite3"

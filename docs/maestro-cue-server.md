@@ -66,6 +66,14 @@ sudo ./maestro-server/install.sh --agent-cli @anthropic-ai/claude-code --agent-c
 
 The installer adds git and the GitHub CLI, creates the `maestro` user, and picks one Node.js for everything: the one on PATH when it is 22 or newer and the `maestro` user can run it, otherwise Node.js 24 from nodejs.org. With that Node.js it installs Claude Code, the SQLite driver and the CLI, then installs the `maestro-cue` service without starting it.
 
+Before its first `npm install`, the installer checks that npm can fetch from its registry, with npm's own registry, proxy and CA settings (`npm config`, `NPM_CONFIG_*`, `HTTPS_PROXY`). A registry that cannot be reached stops the install within 30 seconds with exit status 1 and a message naming the registry, the proxy if there is one, and npm's error code, for example:
+
+```text
+error npm cannot fetch from the registry https://registry.npmjs.org/ (ENOTFOUND). Check the network, the proxy (HTTPS_PROXY, or npm config get https-proxy) and the registry (npm config get registry)
+```
+
+Downloads from nodejs.org and cli.github.com likewise stop, with a message, when no connection is made within 30 seconds.
+
 | Option                      | What it does                                                                                                      |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `--agent-cli <npm package>` | Agent CLI to install instead of Claude Code. Repeat it for several, for example `@openai/codex` or `opencode-ai`. |
@@ -622,12 +630,6 @@ Then start it with the same `docker run -d` command as in [Start](#start-in-a-co
 ## Known limits
 
 What an operator can run into today. The full, current list, including what has not been verified, is kept in the [verification record](https://github.com/RunMaestro/Maestro/blob/rc/Plans/headless-cue-verification.md#known-limits-current).
-
-- **The installer does not time out without network.** `install.sh` installs the agent CLIs and its own runtime with `npm install`, which waits silently when the npm registry cannot be reached. Check from the machine first; anything but `200` means the install will hang at that step:
-
-  ```bash
-  curl -4 -sS -m 10 -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/
-  ```
 
 - **`cue trigger <name>` fires the whole trigger.** It also runs every other subscription in the same pipeline that has the same trigger settings. Give a subscription you want to fire on its own a pipeline of its own.
 - **No run history from the command line.** `maestro-cli cue activity` needs the desktop app. On a server, read the engine's log (each run logs `Run started` and `Run finished` with its `runId`); `cue engine status` and `inspect` report counts only.
