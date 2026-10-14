@@ -154,6 +154,22 @@ describe('update_session_config', () => {
 		}
 		expect(await stored()).toEqual(before);
 	});
+
+	it.each(['plan', 'apply', 'status', 'recover', 'rollback'])(
+		'refuses provider translation %s without switching the provider or editing settings',
+		async (migrationAction) => {
+			const before = await stored();
+			expect(
+				await update({ toolType: 'claude-code', customModel: 'opus', migrationAction })
+			).toEqual({
+				type: 'update_session_config_result',
+				success: false,
+				error:
+					'Provider translation requires the desktop app; the headless host cannot migrate native conversations.',
+			});
+			expect(await stored()).toEqual(before);
+		}
+	);
 });
 
 /** A client that records what it is asked and answers from a script. Only what these messages reach exists. */

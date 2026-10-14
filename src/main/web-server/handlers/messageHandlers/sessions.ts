@@ -367,10 +367,6 @@ export function handleUpdateSessionSsh(
  * (starred / hasUnread / saveToHistory / readOnlyMode / showThinking /
  * customModel / customEffort / enterToSend - the composer chips). The
  * renderer owns both allowlists and type-checks the tab values.
- *
- * A `configPatch.toolType` switches the agent's provider without dropping tabs
- * (`switchAgentProvider`); the result's `notices` lists what the switch could
- * not park and cleared.
  */
 export function handleUpdateSessionConfig(
 	ctx: MessageHandlerContext,
@@ -402,7 +398,8 @@ export function handleUpdateSessionConfig(
 				type: 'update_session_config_result',
 				success: result.success,
 				error: result.error,
-				...(result.notices?.length ? { notices: result.notices } : {}),
+				plan: result.plan,
+				result: result.result,
 				sessionId,
 				requestId: message.requestId,
 			});

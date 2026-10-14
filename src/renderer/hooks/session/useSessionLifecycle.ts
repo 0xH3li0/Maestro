@@ -1,3 +1,4 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
 /**
  * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
@@ -24,8 +25,6 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from '../../stores/sessionStore';
-import { switchAgentProvider } from '../../utils/providerTabSessions';
-import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -101,8 +100,11 @@ export interface SessionLifecycleReturn {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
-	) => void;
+		codexTransport?: CodexTransport,
+		acceptTranslationLimitations?: boolean,
+		selectedUserResources?: string[],
+		migrationPlanId?: string
+	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
 	/** Auto-name the currently-selected tab: close modal, show spinner, generate name via agent */
@@ -160,7 +162,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// ====================================================================
 
 	const handleSaveEditAgent = useCallback(
-		(
+		async (
 			sessionId: string,
 			name: string,
 			toolType?: ToolType,
@@ -194,8 +196,33 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-			codexTransport?: CodexTransport
+			codexTransport?: CodexTransport,
+			acceptTranslationLimitations?: boolean,
+			selectedUserResources?: string[],
+			migrationPlanId?: string
 		) => {
+			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (toolType && before && toolType !== before.toolType) {
+				if (customPath || customArgs || Object.keys(customEnvVars ?? {}).length)
+					throw new Error(
+						'Save provider migration separately from binary, arguments or account environment edits'
+					);
+				if (workingDirectory && withWorkingDirectory(before, workingDirectory) !== before)
+					throw new Error('Change the working directory separately from provider migration');
+				const report = await requestProviderTranslation(
+					{
+						agentId: sessionId,
+						destination: toolType,
+						action: 'apply',
+						acceptLimitations: acceptTranslationLimitations,
+						selectedUserResources,
+						planId: migrationPlanId,
+					},
+					{ waitForDeferred: true }
+				);
+				if (!report.success)
+					throw new Error(report.error ?? report.result?.error ?? 'Provider migration refused');
+			}
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
 			// silently keeping the old directory.
@@ -212,9 +239,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
 			}
 
-			// What a provider switch could not park, for the notice below (PS-3).
-			let switchNotices: string[] = [];
-
 			updateSessionWith(sessionId, (s) => {
 				const updatedFields: Partial<Session> = {
 					name,
@@ -225,7 +249,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					additionalDirectories,
 					customPath,
 					customArgs,
-					customEnvVars,
+					customEnvVars: toolType
+						? { ...(s.customEnvVars ?? {}), ...(customEnvVars ?? {}) }
+						: customEnvVars,
 					customEnvVarsDisabled,
 					customModel,
 					customEffort,
@@ -235,9 +261,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					enableMaestroP,
 					maestroPPath,
 					maestroPMode,
-					// Agent Resilience: resilience is provider-agnostic, so the provider
-					// switch below never touches it (unlike the maestro-p fields, which
-					// it parks with the outgoing provider).
+					// Agent Resilience: resilience is provider-agnostic, so it is NOT
+					// cleared on a provider switch below (unlike maestroP fields).
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
 					// Codex automatic usage resets. Like resilience above, this is left
@@ -251,30 +276,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
 				};
 
-				// A provider change goes through the library's one implementation of a
-				// switch (`switchAgentProvider`, requirement PS-5), the same one
-				// `maestro-cli update-agent --provider` reaches. Every tab and its
-				// transcript survives, each tab's provider session is parked under the
-				// outgoing provider, and so are the outgoing provider's overrides (PS-3),
-				// so switching back restores both. The dialog's override fields are then
-				// applied on top of the switched agent: on a provider change the dialog
-				// seeds them from what the incoming provider parked
-				// (`providerOverridesFor`), so they ARE the incoming provider's
-				// configuration, including anything the user edited after switching.
-				//
-				// Any turn already in flight keeps running under the provider it was
-				// sent with: settings are codified at send, and this change applies from
-				// the next message. So the agent process is deliberately left alone, and
-				// the session's busy state with it. `turnProvider` on each tab is what
-				// keeps that turn's late events attributed to the old provider (PS-2).
-				let base = s;
-				if (toolType && toolType !== s.toolType) {
-					const switched = switchAgentProvider(s, toolType);
-					base = switched.agent;
-					switchNotices = switched.unparked.map((item) => item.message);
-				}
-
-				const next = { ...base, ...updatedFields };
+				const next = { ...s, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
 			// The spawn path routes from the PERSISTED record (Codex transport, Claude
@@ -283,14 +285,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// change, so while any agent streams this save could still be unwritten
 			// when the next turn spawns. Write it now.
 			setTimeout(() => flushSessionPersistence(), 0);
-
-			if (toolType && switchNotices.length > 0) {
-				notifyToast({
-					color: 'yellow',
-					title: `Switched to ${getAgentDisplayName(toolType)}`,
-					message: switchNotices.join(' '),
-				});
-			}
 		},
 		[flushSessionPersistence]
 	);

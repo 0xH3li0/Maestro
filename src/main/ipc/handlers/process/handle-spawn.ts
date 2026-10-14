@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
@@ -128,6 +129,18 @@ async function handleProcessSpawnImpl(
 
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+	const migrationAgentId = config.sessionId.replace(/-ai(?:-.+)?$/, '');
+	const migrationAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id: string;
+			providerMigration?: import('../../../../shared/maestro-lib/translation/types').ProviderMigrationState;
+		}>
+	).find((s) => s.id === migrationAgentId);
+	if (config.toolType !== 'terminal' && migrationHoldsTurns(migrationAgent?.providerMigration)) {
+		throw new Error(
+			'Provider migration is pending; the next turn remains queued until migration settles'
+		);
+	}
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);

@@ -405,7 +405,10 @@ export const MainPanel = React.memo(
 		const { gitInfo, refreshGitStatus } = useGitInfo(activeSession);
 
 		// Get agent capabilities for conditional feature rendering
-		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
+		const { hasCapability } = useAgentCapabilities(
+			activeSession?.toolType,
+			activeSession?.providerTranslationKnowledgeDirectory
+		);
 
 		// Model/Effort pills: available options, current values, and agent-level
 		// defaults. Shared with the keyboard-only Model & Effort modal and with the

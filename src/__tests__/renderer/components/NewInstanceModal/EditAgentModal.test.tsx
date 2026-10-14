@@ -1,3 +1,7 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * @fileoverview Tests for EditAgentModal component
  * Tests: rendering, form population, validation, save handling,
@@ -78,6 +82,23 @@ describe('EditAgentModal', () => {
 	let onSave: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'ready',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				verification: 'unverified',
+				limitations: [
+					{
+						code: 'unverified-native-resume',
+						message: 'Native resume remains unverified',
+						severity: 'warning',
+					},
+				],
+			} as any,
+		});
 		theme = createTheme();
 		onClose = vi.fn();
 		onSave = vi.fn();
@@ -421,13 +442,14 @@ describe('EditAgentModal', () => {
 	});
 
 	it('should show provider change notice when provider is changed', async () => {
-		render(
+		const session = createSession({ toolType: 'claude-code' });
+		const { rerender } = render(
 			<EditAgentModal
 				isOpen={true}
 				onClose={onClose}
 				onSave={onSave}
 				theme={theme}
-				session={createSession({ toolType: 'claude-code' })}
+				session={session}
 				existingSessions={[]}
 			/>
 		);
@@ -436,129 +458,46 @@ describe('EditAgentModal', () => {
 
 		// Change provider
 		fireEvent.change(providerSelect, { target: { value: 'codex' } });
+		rerender(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={{ ...session, providerTranslationTabInventory: [] }}
+				existingSessions={[]}
+			/>
+		);
+		expect((providerSelect as HTMLSelectElement).value).toBe('codex');
 
 		await waitFor(() => {
-			expect(screen.getByText(/Your tabs and their transcripts are kept/)).toBeInTheDocument();
+			expect(
+				screen.getByText(/Tabs, transcripts, drafts, queue and file previews are preserved/)
+			).toBeInTheDocument();
 		});
 		// The old copy promised the opposite. Tabs are preserved now, so the notice
 		// must never tell the user their tabs will be cleared.
 		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
 	});
 
-	// Saving a provider change runs `switchAgentProvider`, which parks the outgoing
-	// provider's overrides and restores the incoming provider's. The dialog then
-	// writes its own fields over the result, so they must start from what the
-	// switch restores: blanks here would clear the restored values on save.
-	describe('provider change', () => {
-		const withConfigFields = (id: string, name: string, path: string) =>
-			({
-				id,
-				name,
-				available: true,
-				path,
-				binaryName: id,
-				hidden: false,
-				configOptions: [
-					{ key: 'model', type: 'text', label: 'Model', default: '' },
-					{ key: 'contextWindow', type: 'number', label: 'Context Window Size', default: 0 },
-				],
-			}) as unknown as AgentConfig;
-
-		beforeEach(() => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				withConfigFields('claude-code', 'Claude Code', '/usr/local/bin/claude'),
-				withConfigFields('codex', 'Codex', '/usr/local/bin/codex'),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockImplementation(async (agentId: string) =>
-				agentId === 'codex'
-					? { model: 'gpt-5', contextWindow: 400000 }
-					: { model: 'claude-sonnet', contextWindow: 200000 }
-			);
+	it('blocks an unverified conversion until its listed limitations are accepted', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
+			target: { value: 'codex' },
 		});
-
-		function renderAndSwitchToCodex(session: Session) {
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-			return screen.findByDisplayValue('Claude Code').then((select) => {
-				fireEvent.change(select, { target: { value: 'codex' } });
-			});
-		}
-
-		it('seeds the form from what the incoming provider parked, and saves it', async () => {
-			await renderAndSwitchToCodex(
-				createSession({
-					providerOverrides: {
-						codex: {
-							customPath: '/opt/codex',
-							customArgs: '--search',
-							customEnvVars: { CODEX_HOME: '/Users/me/.codex-work' },
-							customModel: 'gpt-5-codex',
-							customContextWindow: 272000,
-							contextWindowSource: 'user-edited',
-						},
-					},
-				})
-			);
-
-			// Codex's parked values are on screen, not blanks and not Claude's.
-			expect(await screen.findByDisplayValue('272000')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('/opt/codex')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('--search')).toBeInTheDocument();
-			expect(screen.queryByDisplayValue('/custom/claude')).not.toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('Save Changes'));
-
-			const args = onSave.mock.calls[0];
-			expect(args[2]).toBe('codex');
-			expect(args[5]).toBe('/opt/codex');
-			expect(args[6]).toBe('--search');
-			expect(args[7]).toEqual({ CODEX_HOME: '/Users/me/.codex-work' });
-			expect(args[8]).toBe('gpt-5-codex');
-			expect(args[10]).toBe(272000);
-			// An untouched window keeps the provenance Codex parked with it, never
-			// the outgoing provider's (finding AD1).
-			expect(args[18]).toBe('user-edited');
-		});
-
-		it("starts a provider the agent never ran on from that provider's defaults", async () => {
-			await renderAndSwitchToCodex(createSession({ contextWindowSource: 'user-edited' }));
-
-			expect(await screen.findByDisplayValue('400000')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('Save Changes'));
-
-			const args = onSave.mock.calls[0];
-			expect(args[2]).toBe('codex');
-			// None of Claude's overrides follow it across.
-			expect(args[5]).toBeUndefined();
-			expect(args[6]).toBeUndefined();
-			expect(args[7]).toBeUndefined();
-			// Claude's provenance stays with Claude's window.
-			expect(args[18]).toBeUndefined();
-		});
-
-		it('leaves Agent Resilience alone, since it is not provider-specific', async () => {
-			await renderAndSwitchToCodex(
-				createSession({ retryOnAvailabilityErrors: false, retryOnTokenExhaustion: false })
-			);
-
-			expect(await screen.findByDisplayValue('400000')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('Save Changes'));
-
-			const args = onSave.mock.calls[0];
-			expect(args[2]).toBe('codex');
-			expect(args[15]).toBe(false); // retryOnAvailabilityErrors
-			expect(args[16]).toBe(false); // retryOnTokenExhaustion
-		});
+		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
+		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight

@@ -6,7 +6,7 @@ import { logger } from '../host';
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
 type AgentConfigOverridable = Pick<
 	AgentConfig,
-	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs'
+	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs' | 'resumeArgs' | 'batchModePrefix'
 >;
 
 const LOG_CONTEXT = '[AgentArgs]';
@@ -307,6 +307,38 @@ export function buildAdditionalDirArgs(
 	return agent.additionalDirArgs(dirs);
 }
 
+/**
+ * Move a SUBCOMMAND resume selector (Codex `resume <id>`) behind every other
+ * argument, so nothing appended later lands inside the subcommand.
+ *
+ * A flag after a subcommand belongs to that subcommand, and `codex exec resume`
+ * accepts only a subset of `exec`'s flags. `--add-dir`, `-s`, `--oss`, and
+ * `-p` after it fail the turn with exit 2 before Codex does anything, so a
+ * tab's first message works and every follow-up dies. Every `exec` flag is
+ * honored ahead of `resume` (verified on codex-cli 0.162.1, including `-m`),
+ * so the selector can always go last. Flag-style selectors (`--resume <id>`)
+ * do not care about order and are returned untouched.
+ */
+export function placeResumeSelectorLast(
+	agent: Pick<AgentConfig, 'resumeArgs' | 'batchModePrefix'> | null | undefined,
+	args: string[]
+): string[] {
+	const template = agent?.resumeArgs?.('');
+	const keyword = template?.[0];
+	if (!template || !keyword || keyword.startsWith('-')) return args;
+
+	// The subcommand comes after the batch-mode subcommand (`exec`), never in
+	// front of it, so a path or value spelled like the keyword earlier on does
+	// not match.
+	const prefix = agent?.batchModePrefix ?? [];
+	const searchFrom = prefix.length > 0 ? args.indexOf(prefix[prefix.length - 1]) + 1 : 0;
+	const start = args.indexOf(keyword, searchFrom);
+	const end = start + template.length;
+	if (start < 0 || end > args.length || end === args.length) return args;
+
+	return [...args.slice(0, start), ...args.slice(end), ...args.slice(start, end)];
+}
+
 /** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
 export function applyAgentConfigOverrides(
 	agent: AgentConfigOverridable | AgentDefinition | AgentConfig | null | undefined,
@@ -411,6 +443,10 @@ export function applyAgentConfigOverrides(
 			...(userEnvVars || {}),
 		};
 	}
+
+	// Config options and custom args were appended after `buildAgentArgs()` put
+	// the resume selector last; put it back behind them.
+	finalArgs = placeResumeSelectorLast(agent, finalArgs);
 
 	const hasEnvVars = effectiveCustomEnvVars && Object.keys(effectiveCustomEnvVars).length > 0;
 	const customEnvSource: AgentConfigResolution['customEnvSource'] = overrides.sessionCustomEnvVars

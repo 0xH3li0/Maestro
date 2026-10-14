@@ -44,14 +44,14 @@ function makeSession(toolType: ToolType, overrides: Partial<Session> = {}): Sess
 }
 
 describe('provider swap re-exports', () => {
-	it('are the library implementation, so the desktop and the TUI cannot drift', () => {
+	it('are the library implementation, so renderer turn attribution and runtime parking cannot drift', () => {
 		expect(switchAgentProvider).toBe(providerSwap.switchAgentProvider);
 		expect(switchTabProvider).toBe(providerSwap.switchTabProvider);
 		expect(resolveTurnProvider).toBe(providerSwap.resolveTurnProvider);
 		expect(updateProviderSlot).toBe(providerSwap.updateProviderSlot);
 	});
 
-	it('switch a desktop agent without dropping a tab', () => {
+	it('parks an agent provider without dropping a tab', () => {
 		const session = makeSession('claude-code', {
 			customModel: 'opus',
 			aiTabs: [makeTab({ agentSessionId: 'claude-abc' }), makeTab({ id: 'tab-2' })],
@@ -121,6 +121,20 @@ describe('captureQueuedTurnSettings', () => {
 });
 
 describe('codifyQueuedTurnSettings', () => {
+	it('uses destination settings for migrated queued items while keeping their saved settings intact', () => {
+		const item = { id: 'queued', turnSettings: { model: 'haiku', effort: 'low' } };
+		const session = makeSession('codex', {
+			providerTranslationQueuedOrigins: { queued: 'claude-code' },
+			customModel: 'gpt-6',
+			customEffort: 'high',
+		});
+		expect(codifyQueuedTurnSettings(item, undefined, session)).toEqual({
+			turnProvider: 'codex',
+			turnModel: 'gpt-6',
+			turnEffort: 'high',
+		});
+		expect(item.turnSettings.model).toBe('haiku');
+	});
 	it('runs a queued item under what it was queued with, not the live values', () => {
 		const item = { turnSettings: { model: 'haiku', effort: 'low' } };
 		// The user has since switched the tab to a big model.

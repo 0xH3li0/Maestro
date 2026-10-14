@@ -67,7 +67,6 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
-import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1402,51 +1401,6 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
 
-// Host commands - run Maestro's runtime detached (no desktop) and control that process
-const host = program
-	.command('host')
-	.description('Run the Maestro runtime detached, with no desktop app, and control it');
-
-host
-	.command('start')
-	.description('Start a detached host that serves this data directory over the bridge')
-	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
-	.option('--dev', 'Use the development data directory')
-	.option('--port <port>', 'Port to listen on (default: any free port)')
-	.option(
-		'--foreground',
-		'Serve in this process instead of detaching (what the detached child runs)'
-	)
-	.option(
-		'--stop-grace <seconds>',
-		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
-	)
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => hostStart(options, cliVersion));
-
-host
-	.command('status')
-	.description('Report the host: pid, uptime, lock holder, Cue state, and work in flight')
-	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
-	.option('--dev', 'Use the development data directory')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => hostStatus(options));
-
-host
-	.command('stop')
-	.description(
-		'Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)'
-	)
-	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
-	.option('--dev', 'Use the development data directory')
-	.option(
-		'--wait [seconds]',
-		'Wait for work in flight to finish (default 300s), then stop; never forces'
-	)
-	.option('--force', 'Stop even with work in flight; a run records how it ended first')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => hostStop(options));
-
 // Completions command - emit a shell completion script (introspects the program)
 program
 	.command('completions <shell>')
@@ -1648,12 +1602,21 @@ program
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
-		'Switch the agent provider (tabs kept; old provider settings parked for a switch back)'
+		'Translate owned conversations and selected project knowledge to another provider'
 	)
-	// A provider switch used to destroy tabs and demanded --force. It no longer
-	// does, so the flag has no effect; it is still accepted so scripts written
-	// against the old switch keep working instead of failing on an unknown flag.
-	.option('--force', 'No longer needed for --provider; accepted for older scripts')
+	.option('--force', 'Alias for --accept-translation-limitations')
+	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
+	.option(
+		'--accept-translation-limitations',
+		'Accept the reported unverified or partial conversion limitations'
+	)
+	.option('--migration <action>', 'Migration operation: plan | apply | status | recover | rollback')
+	.option(
+		'--translation-resource <path>',
+		'Select one user-level resource (repeatable; no account-global import)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
 
@@ -2762,7 +2725,7 @@ const movement = program
 
 movement
 	.command('begin <id>')
-	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.description('Reserve a host-rendered Concerto shell without opening the stage')
 	.requiredOption('--title <text>', 'Concerto title shown in its frame')
 	.option('--x <px>', 'X position (px from the Concerto stage left)')
 	.option('--y <px>', 'Y position (px from the Concerto stage top)')
@@ -2773,7 +2736,7 @@ movement
 
 movement
 	.command('add <id>')
-	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.description('Add or replace a native data view or HTML mockup without opening the stage')
 	.option('--type <type>', 'view | html (default: view)')
 	.option('--x <px>', 'X position (px from movement left)')
 	.option('--y <px>', 'Y position (px from movement top)')
@@ -2846,7 +2809,7 @@ movement
 
 movement
 	.command('inspect <id>')
-	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.description('Capture a visible HTML Movement preview (requires an open stage) and diagnostics')
 	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInspect);

@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
  *
@@ -373,6 +374,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
 		}
+
+		if (migrationHoldsTurns(session.providerMigration)) return false;
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that

@@ -467,6 +467,19 @@ describe('ClaudeSessionStorage', () => {
 	describe('readSessionMessages - image reconstruction', () => {
 		const jsonl = (entries: unknown[]): string => entries.map((e) => JSON.stringify(e)).join('\n');
 
+		it('keeps valid repeated native messages around malformed and unknown records', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				('broken\n' +
+					jsonl([
+						{ type: 'unknown', uuid: 'raw' },
+						{ type: 'user', uuid: 'one', message: { role: 'user', content: 'same' } },
+						{ type: 'user', uuid: 'two', message: { role: 'user', content: 'same' } },
+					])) as never
+			);
+			const result = await storage.readSessionMessages('/project', 's');
+			expect(result.messages.map((m) => m.uuid)).toEqual(['one', 'two']);
+		});
+
 		it('reconstructs base64 data URLs from image content blocks', async () => {
 			const transcript = jsonl([
 				{

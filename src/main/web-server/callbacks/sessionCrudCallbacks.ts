@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -274,13 +275,13 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to update an agent's editable per-session
 	// config (nudge/new-session message, custom path/args/env, model, effort,
-	// context window, Claude token source) or switch its provider (`toolType`).
-	// Same IPC request-response shape as updateSessionSsh; the renderer merges
-	// the partial patch and flushes to disk. Applied even while the agent runs
-	// (these are spawn-time settings, and a switch leaves a turn in flight on
-	// the provider that started it).
+	// context window, Claude token source). Same IPC request-response shape as
+	// updateSessionSsh; the renderer merges the partial patch and flushes to
+	// disk. Applied even while the agent runs (these are spawn-time settings).
 	server.setUpdateSessionConfigCallback(
 		async (sessionId: string, configPatch: Record<string, unknown>) => {
+			const migration =
+				typeof configPatch.toolType === 'string' || typeof configPatch.migrationAction === 'string';
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for updateSessionConfig', 'WebServer');
@@ -293,7 +294,7 @@ export function registerSessionCrudCallbacks(
 
 				const handleResponse = (
 					_event: Electron.IpcMainEvent,
-					result: { success?: boolean; error?: string; notices?: string[] } | undefined
+					result: TranslationReport | undefined
 				) => {
 					if (resolved) return;
 					resolved = true;
@@ -301,8 +302,8 @@ export function registerSessionCrudCallbacks(
 					resolve({
 						success: Boolean(result?.success),
 						error: result?.error,
-						// A provider switch reports what it could not park (PS-3).
-						...(result?.notices?.length ? { notices: result.notices } : {}),
+						plan: result?.plan,
+						result: result?.result,
 					});
 				};
 
@@ -320,16 +321,25 @@ export function registerSessionCrudCallbacks(
 					responseChannel
 				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`updateSessionConfig callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({ success: false, error: 'Renderer did not respond in time' });
-				}, 5000);
+				const timeoutId = setTimeout(
+					() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`updateSessionConfig callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({
+							success: false,
+							error: migration
+								? 'Provider migration response timed out. The operation may still be running; query --migration status before retrying.'
+								: 'Renderer did not respond in time',
+						});
+						// Leave time for this report to reach the CLI before its migration deadline.
+					},
+					migration ? 110000 : 5000
+				);
 			});
 		}
 	);

@@ -143,7 +143,7 @@ const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
  * is harmless: applying it is a no-op (the added agent is already in its tree,
  * the removed one already gone).
  */
-function broadcastSessionLifecycle(
+export function broadcastSessionLifecycle(
 	senderWebContentsId: number | undefined,
 	payload: SessionLifecycleSyncPayload
 ): void {

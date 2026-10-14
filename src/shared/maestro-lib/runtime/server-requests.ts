@@ -417,6 +417,12 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 				);
 			case 'update_session_config': {
 				const config = obj(message.configPatch) ?? {};
+				if ('migrationAction' in config) {
+					return refusal(
+						'update_session_config_result',
+						'Provider translation requires the desktop app; the headless host cannot migrate native conversations.'
+					);
+				}
 				const tabId = str(config.tabId);
 				if (tabId) {
 					const { tabId: _tab, ...rest } = config;

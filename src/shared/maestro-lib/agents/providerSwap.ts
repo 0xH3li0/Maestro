@@ -21,10 +21,9 @@
  *   - `Session.providerOverrides` parks the agent-level overrides named in
  *     {@link PROVIDER_OVERRIDE_KEYS}.
  *
- * {@link switchAgentProvider} is the one implementation of a provider switch
- * (requirement PS-5). A surface that changes an agent's provider calls it
- * rather than editing those fields itself, so the desktop, the TUI, and
- * `maestro-cli update-agent --provider` cannot disagree about what survives.
+ * {@link switchAgentProvider} parks provider state for the headless runtime.
+ * Desktop provider changes use native translation instead. Both paths use
+ * `translation/session.ts` for the same per-tab parking invariant.
  *
  * The types below name only the fields a switch reads or writes. The desktop's
  * `Session` and `AITab` satisfy them, and every other field is carried through
@@ -33,6 +32,9 @@
 
 import { getAgentDisplayName } from '../../agentMetadata';
 import type { ToolType, UsageStats } from '../../types';
+import { switchTabProvider } from '../translation/session';
+
+export { switchTabProvider } from '../translation/session';
 
 /**
  * A tab's parked state for one provider it is not currently using.
@@ -163,53 +165,6 @@ export interface ProviderSwitchResult<A> {
 	agent: A;
 	/** Whatever could not be parked and was cleared, for a notice. Empty in the common case. */
 	unparked: UnparkedProviderState[];
-}
-
-/**
- * Move a tab's live provider-specific state into `providerSessions` under
- * `fromProvider`, and lift `toProvider`'s parked state into the live fields.
- *
- * Everything else on the tab - `logs` above all - is left untouched: the
- * transcript is not provider-specific and survives any number of switches.
- * Returns the tab unchanged when the provider did not actually change.
- */
-export function switchTabProvider<T extends ProviderSwitchTab>(
-	tab: T,
-	fromProvider: ToolType,
-	toProvider: ToolType
-): T {
-	if (fromProvider === toProvider) return tab;
-
-	const parked: Partial<Record<ToolType, ProviderTabSession>> = {
-		...(tab.providerSessions ?? {}),
-	};
-
-	// Park the outgoing provider's live values. A tab that never ran under the
-	// outgoing provider still gets an entry, so switching back restores its
-	// "fresh tab" state rather than inheriting whatever the detour left behind.
-	parked[fromProvider] = {
-		agentSessionId: tab.agentSessionId,
-		usageStats: tab.usageStats,
-		customModel: tab.customModel,
-		customEffort: tab.customEffort,
-	};
-
-	const restored = parked[toProvider];
-	// The incoming provider must never keep an entry in the map - the live
-	// fields are its home now.
-	delete parked[toProvider];
-
-	return {
-		...tab,
-		agentSessionId: restored?.agentSessionId ?? null,
-		usageStats: restored?.usageStats,
-		customModel: restored?.customModel,
-		customEffort: restored?.customEffort,
-		// A restored session ID is a real resume target, not something we are
-		// waiting on the agent to hand back.
-		awaitingSessionId: false,
-		providerSessions: parked,
-	};
 }
 
 /**

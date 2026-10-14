@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -1281,15 +1282,11 @@ export type UpdateSessionSshCallback = (
  * tri-state `enableMaestroP` / `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
  * present with value `null` clears that field to undefined. Typed as a plain
  * record because the payload crosses the IPC bridge to the renderer.
- *
- * A `toolType` key switches the agent's provider without dropping tabs
- * (`switchAgentProvider`). `notices` then lists, one line each, what the switch
- * could not park and cleared, for the caller to show.
  */
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<{ success: boolean; error?: string; notices?: string[] }>;
+) => Promise<TranslationReport>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (

@@ -2075,36 +2075,73 @@ describe('web-server/web-server-factory', () => {
 				expect.any(String)
 			);
 		});
-
-		/** Send a config patch, answer it as the renderer would, and return the result. */
-		async function answerUpdateSessionConfig(reply: unknown) {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
-
-			const resultPromise = callback('session-1', { toolType: 'codex' });
-			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
-				(call) => call[0] === 'remote:updateSessionConfig'
-			);
-			const responseChannel = request?.[3] as string;
-			vi.mocked(ipcMain.once).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
-				{} as never,
-				reply
-			);
-			return resultPromise;
-		}
-
-		it('setUpdateSessionConfigCallback relays what a provider switch could not park', async () => {
-			await expect(
-				answerUpdateSessionConfig({ success: true, notices: ['cleared a queued model'] })
-			).resolves.toEqual({ success: true, error: undefined, notices: ['cleared a queued model'] });
+		it.each([{ toolType: 'codex' }, { migrationAction: 'recover' }])(
+			'keeps the migration response channel open beyond the settings timeout for %j',
+			async (patch) => {
+				vi.useFakeTimers();
+				try {
+					const server = createWebServerFactory(deps)() as any;
+					const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
+					const completed = vi.fn();
+					const resultPromise = callback('session-1', patch);
+					void resultPromise.then(completed);
+					await vi.advanceTimersByTimeAsync(6000);
+					expect(completed).not.toHaveBeenCalled();
+					const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+						(call) => call[0] === 'remote:updateSessionConfig'
+					);
+					const responseListener = vi
+						.mocked(ipcMain.once)
+						.mock.calls.find((call) => call[0] === request?.[3])?.[1];
+					const report = {
+						success: true,
+						plan: { id: 'migration' },
+						result: { state: 'committed', mappings: [{ tabId: 'preserved-tab' }] },
+					};
+					responseListener?.({} as never, report);
+					await expect(resultPromise).resolves.toMatchObject(report);
+				} finally {
+					vi.clearAllTimers();
+					vi.useRealTimers();
+				}
+			}
+		);
+		it('reports migration timeout as uncertain completion and removes its response listener', async () => {
+			vi.useFakeTimers();
+			try {
+				const server = createWebServerFactory(deps)() as any;
+				const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
+				const resultPromise = callback('session-1', { toolType: 'codex' });
+				const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+					(call) => call[0] === 'remote:updateSessionConfig'
+				);
+				await vi.advanceTimersByTimeAsync(110000);
+				await expect(resultPromise).resolves.toEqual({
+					success: false,
+					error:
+						'Provider migration response timed out. The operation may still be running; query --migration status before retrying.',
+				});
+				expect(ipcMain.removeListener).toHaveBeenCalledWith(request?.[3], expect.any(Function));
+			} finally {
+				vi.clearAllTimers();
+				vi.useRealTimers();
+			}
 		});
-
-		it('setUpdateSessionConfigCallback leaves notices off when the switch cleared nothing', async () => {
-			const result = await answerUpdateSessionConfig({ success: true, notices: [] });
-
-			expect(result).toEqual({ success: true, error: undefined });
-			expect(result).not.toHaveProperty('notices');
+		it('keeps the short response deadline for ordinary settings edits', async () => {
+			vi.useFakeTimers();
+			try {
+				const server = createWebServerFactory(deps)() as any;
+				const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
+				const resultPromise = callback('session-1', { nudge: 'be careful' });
+				await vi.advanceTimersByTimeAsync(5000);
+				await expect(resultPromise).resolves.toMatchObject({
+					success: false,
+					error: 'Renderer did not respond in time',
+				});
+			} finally {
+				vi.clearAllTimers();
+				vi.useRealTimers();
+			}
 		});
 	});
 

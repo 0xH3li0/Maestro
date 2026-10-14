@@ -460,15 +460,15 @@ maestro-cli image save --all -t <tab-id> -o screenshots/
   2  f8d010b2  9h ago        Kensho   Fibonacci Ingest     notes from a verbal session, see the image
 ```
 
-| Flag                  | Command | Description                                                       |
-| --------------------- | ------- | ----------------------------------------------------------------- |
-| `-a, --agent <id>`    | both    | Only this agent (defaults to every agent)                         |
-| `-t, --tab <tab-id>`  | both    | Only this AI tab                                                  |
-| `--limit <n>`         | `list`  | Maximum images to show (default: 20)                              |
-| `-o, --output <path>` | `save`  | File or directory to write (default: a generated name in the cwd) |
-| `--all`               | `save`  | Save every image in scope instead of just the newest              |
-| `--force`             | `save`  | Overwrite an existing file named by `--output`                    |
-| `--json`              | both    | Output as JSON (for scripting)                                    |
+| Flag                  | Command                                      | Description                                                       |
+| --------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
+| `-a, --agent <id>`    | both                                         | Only this agent (defaults to every agent)                         |
+| `-t, --tab <tab-id>`  | both                                         | Only this AI tab                                                  |
+| `--limit <n>`         | `list`                                       | Maximum images to show (default: 20)                              |
+| `-o, --output <path>` | `save`                                       | File or directory to write (default: a generated name in the cwd) |
+| `--all`               | `save`                                       | Save every image in scope instead of just the newest              |
+| `--force`             | Alias for `--accept-translation-limitations` | -                                                                 |
+| `--json`              | both                                         | Output as JSON (for scripting)                                    |
 
 Details worth knowing:
 
@@ -543,8 +543,8 @@ maestro-cli update-agent <agent-id> --clear-env
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
-# Switch the provider; tabs survive and the old provider's settings are parked
-maestro-cli update-agent <agent-id> --provider codex
+# Review native provider translation before applying it (desktop required)
+maestro-cli update-agent <agent-id> --provider codex --dry-run
 
 # Opt a Codex agent into the experimental app-server transport (enables steering)
 maestro-cli update-agent <agent-id> --codex-transport app-server
@@ -561,30 +561,30 @@ The group update reuses the same write path as drag-and-drop in the Left Bar. Th
 
 For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running local chat turn be steered. SSH, image, Auto Run, and Cue turns keep using `codex exec` either way.
 
-`--provider` switches the agent to another provider without losing anything. Every tab keeps its transcript. Each tab's provider session and the agent's provider-specific settings (custom path, args, env, model, effort, context window, token source) are parked under the old provider and come back when you switch back. A turn that is already running finishes on the provider that started it. Anything the switch could not keep, such as the model a queued message was set to run with, is printed as a notice (`notices` in `--json` output). Run the switch on its own, then adjust settings for the new provider.
+`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run`, then apply with `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Native resume and round-trip conversion remain unverified until live acceptance checks pass. Provider translation is refused by a headless host without changing agent state.
 
-| Flag                              | Description                                                                                                                                        | Default |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                              | -       |
-| `-d, --cwd <path>`                | New working directory (resolved to absolute). Agent must be stopped                                                                                | -       |
-| `--ssh-remote <id>`               | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                              | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote. Agent must be stopped                                                                                | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to `.maestro/history/` on the remote host                                                                                     | -       |
-| `--nudge <message>`               | Nudge message appended to every message. Empty string clears                                                                                       | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions. Empty string clears                                                                         | -       |
-| `--custom-path <path>`            | Override the agent binary path. Empty string clears                                                                                                | -       |
-| `--custom-args <args>`            | Custom CLI arguments. Empty string clears                                                                                                          | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                                                     | -       |
-| `--clear-env`                     | Clear all per-agent environment variables                                                                                                          | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                                                            | -       |
-| `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                                               | -       |
-| `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |
-| `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                     | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                                                            | -       |
-| `--codex-transport <transport>`   | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only                              | -       |
-| `--provider <type>`               | Switch the agent's provider. Tabs are kept; the old provider's settings are parked for a switch back. Cannot be combined with other settings edits | -       |
-| `--force`                         | No longer needed for `--provider`; accepted so older scripts keep working                                                                          | -       |
-| `--json`                          | Machine-readable JSON output                                                                                                                       | -       |
+| Flag                              | Description                                                                                                           | Default |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                 | -       |
+| `-d, --cwd <path>`                | New working directory (resolved to absolute). Agent must be stopped                                                   | -       |
+| `--ssh-remote <id>`               | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                 | -       |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote. Agent must be stopped                                                   | -       |
+| `--sync-history-to-remote <bool>` | Sync history entries to `.maestro/history/` on the remote host                                                        | -       |
+| `--nudge <message>`               | Nudge message appended to every message. Empty string clears                                                          | -       |
+| `--new-session-message <message>` | Message prefixed to the first message of new sessions. Empty string clears                                            | -       |
+| `--custom-path <path>`            | Override the agent binary path. Empty string clears                                                                   | -       |
+| `--custom-args <args>`            | Custom CLI arguments. Empty string clears                                                                             | -       |
+| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                        | -       |
+| `--clear-env`                     | Clear all per-agent environment variables                                                                             | -       |
+| `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                               | -       |
+| `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                  | -       |
+| `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                   | -       |
+| `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                        | -       |
+| `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                               | -       |
+| `--codex-transport <transport>`   | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only | -       |
+| `--provider <type>`               | Translate native conversations to another provider (desktop required)                                                 | -       |
+| `--force`                         | Alias for `--accept-translation-limitations`                                                                          | -       |
+| `--json`                          | Machine-readable JSON output                                                                                          | -       |
 
 The flag table below covers `create-agent`:
 
@@ -2049,6 +2049,7 @@ The host refuses these in so many words, and nothing is started when it does:
 
 | Request                                                         | Why                                                                                      |
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `update-agent --provider` or `--migration`                      | Native conversation translation requires the desktop app                                 |
 | Images on a turn                                                | Not sent from a headless host yet. Send the message without them, or use the desktop app |
 | A terminal-mode command                                         | The host has no terminal. Only AI messages can be sent to it                             |
 | `dispatch --notify-on-complete`                                 | The host cannot arm a completion callback. Dispatch without it and poll the tab          |

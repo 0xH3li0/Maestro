@@ -1,3 +1,4 @@
+import { translatedHistorySessionId } from '../../../shared/maestro-lib/translation/session';
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
@@ -297,6 +298,13 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
+			try {
+				agentSessionId = translatedHistorySessionId(targetSession, agentSessionId);
+			} catch (error) {
+				if (!opts?.suppressUnavailableFlash)
+					showFlash?.(error instanceof Error ? error.message : String(error));
+				return false;
+			}
 			// Resolve the host and path the transcript lives on the same way the
 			// sessions browser does. `targetSession.sshRemoteId` alone is empty until
 			// the agent spawns in this app run, so an SSH agent opened from History

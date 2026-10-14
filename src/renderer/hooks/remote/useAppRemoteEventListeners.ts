@@ -1,3 +1,4 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
 /**
  * useAppRemoteEventListeners.ts
  *
@@ -14,8 +15,6 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
-import { isValidAgentId } from '../../../shared/agentIds';
-import { switchAgentProvider } from '../../utils/providerTabSessions';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
 	getRemoteMediaKind,
@@ -1781,46 +1780,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const patchObj = configPatch as Record<string, unknown>;
 
-		// A `toolType` key switches the agent's provider through the library's one
-		// implementation (`switchAgentProvider`, requirement PS-5). Nothing is
-		// destroyed: every tab keeps its transcript, and each tab's provider
-		// session plus the agent's provider-specific overrides are parked under
-		// the outgoing provider and restored when the agent switches back. The
-		// agent process is left alone on purpose, and the busy state with it: a
-		// turn in flight finishes under the provider that started it, and the
-		// tab's `turnProvider` keeps that turn's late events attributed to it
-		// (PS-2). Whatever the switch could not park comes back in `notices` so
-		// the caller can show it (PS-3). The CLI sends the switch on its own, so
-		// other keys in the same patch are ignored.
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
-		if (requestedToolType && requestedToolType !== session.toolType) {
-			// Checked here rather than trusted from the wire: the value lands in the
-			// persisted agent and decides which binary every later turn spawns.
-			if (!isValidAgentId(requestedToolType) || requestedToolType === 'terminal') {
+		const migrationAction =
+			typeof patchObj.migrationAction === 'string' ? patchObj.migrationAction : undefined;
+		if (requestedToolType || migrationAction) {
+			const action = migrationAction ?? 'apply';
+			if (!['plan', 'apply', 'status', 'recover', 'rollback'].includes(action)) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
-					error: `Unknown provider '${requestedToolType}'`,
+					error: 'Invalid migration action',
 				});
 				return;
 			}
-
-			const { agent: switched, unparked } = switchAgentProvider(session, requestedToolType);
-			// The store gets the switch re-applied to its live entry instead of the
-			// snapshot written back over it: a busy tab may have streamed output
-			// since `sessionsRef` was read, and a stale `aiTabs` would drop it.
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? switchAgentProvider(s, requestedToolType).agent : s))
-			);
-			try {
-				await window.maestro.sessions.setMany([switched as any], []);
-			} catch (persistErr) {
-				logger.error('[Remote] Failed to persist provider switch:', undefined, persistErr);
-			}
-			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-				success: true,
-				...(unparked.length > 0 && { notices: unparked.map((item) => item.message) }),
+			const report = await requestProviderTranslation({
+				agentId: sessionId,
+				destination:
+					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
+				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',
+				acceptLimitations: patchObj.acceptTranslationLimitations === true,
+				planId: typeof patchObj.migrationPlanId === 'string' ? patchObj.migrationPlanId : undefined,
+				selectedUserResources: Array.isArray(patchObj.selectedUserResources)
+					? (patchObj.selectedUserResources as string[])
+					: undefined,
 			});
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, report);
 			return;
 		}
 

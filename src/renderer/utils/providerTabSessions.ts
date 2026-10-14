@@ -4,11 +4,10 @@
  * Turn settings codified at send, plus the renderer's import site for the
  * provider swap.
  *
- * The swap itself (per-provider parking of each tab's provider session and of
- * the agent-level overrides) moved to `maestro-lib/agents/providerSwap.ts` so
- * the desktop, the TUI, and the CLI share one implementation (requirement
- * PS-5). It is re-exported here so renderer import sites keep working; read
- * that module for the parking invariant the rest of the renderer relies on.
+ * Parking and turn attribution come from `maestro-lib/agents/providerSwap.ts`.
+ * Desktop provider changes use the native translation flow; the headless
+ * runtime parks provider state without translating native conversations.
+ * Re-exports keep existing renderer import sites on the shared helpers.
  */
 
 import type { AITab, QueuedItem, QueuedTurnSettings, Session } from '../types';
@@ -74,12 +73,18 @@ export function captureQueuedTurnSettings(
  * binary belong to that provider.
  */
 export function codifyQueuedTurnSettings(
-	item: Pick<QueuedItem, 'turnSettings'>,
+	item: Pick<QueuedItem, 'turnSettings'> & Partial<Pick<QueuedItem, 'id'>>,
 	tab: AITab | undefined,
 	session: Session
 ): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
 	const live = codifyTurnSettings(tab, session);
-	if (!item.turnSettings) return live;
+	if (
+		!item.turnSettings ||
+		(item.id &&
+			session.providerTranslationQueuedOrigins?.[item.id] &&
+			session.providerTranslationQueuedOrigins[item.id] !== session.toolType)
+	)
+		return live;
 	return {
 		turnProvider: live.turnProvider,
 		turnModel: item.turnSettings.model,

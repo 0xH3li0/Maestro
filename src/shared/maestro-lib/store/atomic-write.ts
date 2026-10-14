@@ -50,14 +50,16 @@ export async function atomicWriteJson(filePath: string, data: unknown): Promise<
  */
 export async function atomicWriteFile(
 	filePath: string,
-	contents: string,
-	options?: { mode?: number }
+	contents: string | Buffer,
+	options?: { mode?: number; durable?: boolean }
 ): Promise<void> {
 	const tmp = `${filePath}.tmp`;
 	await fs.writeFile(
 		tmp,
 		contents,
-		options?.mode !== undefined ? { encoding: 'utf-8', mode: options.mode } : 'utf-8'
+		options?.mode !== undefined || options?.durable
+			? { encoding: 'utf-8', mode: options.mode, flush: options.durable ?? false }
+			: 'utf-8'
 	);
 	for (let attempt = 0; attempt <= RENAME_MAX_RETRIES; attempt++) {
 		try {

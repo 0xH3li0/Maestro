@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 // Update agent command - mutate fields on an existing agent in the Maestro
 // desktop app (group assignment, working directory, and SSH execution config).
 //
@@ -18,7 +19,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveCliPath } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -31,6 +32,11 @@ interface UpdateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	provider?: string;
+	force?: boolean;
+	dryRun?: boolean;
+	acceptTranslationLimitations?: boolean;
+	migration?: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
+	translationResource?: string[];
 	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
 	// bookmark). Empty-string values clear the field; see buildConfigPatch.
 	nudge?: string;
@@ -173,7 +179,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.cwd === undefined &&
 		!sshFlagsPresent &&
 		configPatch === undefined &&
-		options.provider === undefined
+		options.provider === undefined &&
+		options.migration === undefined
 	) {
 		emitError(
 			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
@@ -219,32 +226,32 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		);
 	}
 
-	// A provider switch is not destructive: the desktop runs it through
-	// `switchAgentProvider`, so every tab and transcript survives, the outgoing
-	// provider's settings are parked for a switch back, and a turn in flight
-	// finishes on the provider that started it. It is still sent on its own,
-	// because settings edits in the same call would land on the outgoing
-	// provider and be parked with it rather than apply to the new one.
 	let providerType: string | undefined;
 	if (options.provider !== undefined) {
 		const requested = options.provider.trim().toLowerCase();
-		if (!VALID_PROVIDER_TYPES.has(requested)) {
+		if (!VALID_PROVIDER_TYPES.has(requested))
 			emitError(
 				`Invalid provider "${options.provider}". Must be one of: ${[...VALID_PROVIDER_TYPES].join(', ')}`,
 				options
 			);
-		}
-		if (currentToolType !== undefined && requested === currentToolType) {
-			emitError(`Agent "${sessionId}" is already a ${requested} agent.`, options);
-		}
-		if (configPatch !== undefined) {
-			emitError(
-				'--provider cannot be combined with other settings edits. Switch the provider on its own first, then adjust settings for the new provider.',
-				options
-			);
-		}
 		providerType = requested;
 	}
+	if (
+		(providerType !== undefined || options.migration !== undefined) &&
+		(configPatch || options.group !== undefined || options.cwd !== undefined || sshFlagsPresent)
+	) {
+		emitError(
+			'Provider migration must be a separate operation from settings, directory, group or SSH edits.',
+			options
+		);
+	}
+	if (options.dryRun && providerType === undefined)
+		emitError('--dry-run requires --provider.', options);
+	if (
+		options.migration &&
+		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(options.migration)
+	)
+		emitError('Invalid migration action.', options);
 
 	// Build the SSH patch from the SSH-related flags. Only keys the caller
 	// touched are included so the renderer merges rather than clobbers.
@@ -299,8 +306,6 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		ssh?: Record<string, unknown>;
 		config?: Record<string, unknown>;
 		provider?: string;
-		/** What the provider switch could not park and cleared, one line each. */
-		notices?: string[];
 	} = {};
 
 	try {
@@ -381,36 +386,48 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				applied.config = configPatch;
 			}
 
-			// Provider switch routes through the same message but with a `toolType`
-			// key, which the renderer hands to `switchAgentProvider`. Sent
-			// exclusively (guarded above), so it never mixes with a settings patch
-			// in the same call. `notices` lists what the switch could not park.
-			if (providerType !== undefined) {
-				const result = await client.sendCommand<{
-					type: string;
-					success: boolean;
-					error?: string;
-					notices?: string[];
-				}>(
+			if (providerType !== undefined || options.migration !== undefined) {
+				const action = options.dryRun ? 'plan' : (options.migration ?? 'apply');
+				const report = await client.sendCommand<TranslationReport>(
 					{
 						type: 'update_session_config',
 						sessionId,
-						configPatch: { toolType: providerType },
+						configPatch: {
+							...(providerType && { toolType: providerType }),
+							migrationAction: action,
+							acceptTranslationLimitations:
+								options.acceptTranslationLimitations || options.force || false,
+							...(options.translationResource && {
+								selectedUserResources: options.translationResource.map(resolveCliPath),
+							}),
+						},
 					},
-					'update_session_config_result'
+					'update_session_config_result',
+					120000
 				);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to switch agent provider');
+				if (options.json) console.log(JSON.stringify({ ...report, agentId: sessionId }));
+				else {
+					if (report.plan) {
+						console.log(
+							`Provider migration: ${report.plan.source.provider} -> ${report.plan.destination.provider}; ${report.result?.state ?? report.plan.status}; ${report.plan.verification}`
+						);
+						console.log(
+							`  ${report.plan.tabs.length} conversations; ${report.plan.counts.records} records; ${report.plan.counts.artifacts} artifacts`
+						);
+						for (const limitation of report.plan.limitations)
+							console.log(`  [${limitation.severity}] ${limitation.code}: ${limitation.message}`);
+					}
+					if (report.error) console.error(formatError(report.error));
 				}
-				applied.provider = providerType;
-				if (result.notices && result.notices.length > 0) {
-					applied.notices = result.notices;
-				}
+				if (!report.success) process.exit(1);
+				return;
 			}
 		});
 	} catch (error) {
 		emitError(error instanceof Error ? error.message : String(error), options);
 	}
+
+	if (providerType !== undefined || options.migration !== undefined) return;
 
 	if (options.json) {
 		console.log(
@@ -425,12 +442,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 
 	console.log(formatSuccess(`Updated agent ${sessionId}`));
 	if (applied.provider !== undefined) {
-		console.log(
-			`  Provider: ${applied.provider} (tabs kept; the previous provider's settings are parked for a switch back)`
-		);
-		for (const notice of applied.notices ?? []) {
-			console.log(`  Notice: ${notice}`);
-		}
+		console.log(`  Provider: ${applied.provider}`);
 	}
 	if (applied.group !== undefined) {
 		console.log(`  Group: ${applied.group ?? '(ungrouped)'}`);

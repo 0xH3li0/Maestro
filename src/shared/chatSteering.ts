@@ -119,6 +119,17 @@ export type SteeringVerdict =
 	| 'refused'
 	| 'unknown';
 
+/**
+ * What a steered message's transcript bubble knows about its own steer.
+ *
+ * `pending` is the gap between the two answers: the text is typed and the
+ * transcript has not yet said what the agent did with it. The other two are the
+ * verdicts that leave the bubble in the transcript; `dropped`, `refused` and
+ * `unknown` all take the bubble back out and return the message to the queue, so
+ * they never need drawing.
+ */
+export type SteerBubbleState = 'pending' | Extract<SteeringVerdict, 'absorbed' | 'queued'>;
+
 /** Why an injection was refused. Each maps to a different thing to tell the user. */
 export type SteeringRefusal =
 	| 'not-running' // no turn in flight; this is an ordinary message, not a steer

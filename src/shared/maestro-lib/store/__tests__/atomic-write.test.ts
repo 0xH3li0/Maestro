@@ -44,6 +44,13 @@ describe('atomicWriteFile', () => {
 		expect(fs.readdirSync(dir)).toEqual(['store.json']);
 	});
 
+	it('preserves binary translation resources through a durable atomic replacement', async () => {
+		const bytes = Buffer.from([0, 255, 128, 1, 2]);
+		await atomicWriteFile(target, bytes, { durable: true, mode: 0o600 });
+		expect(fs.readFileSync(target)).toEqual(bytes);
+		expect(fs.readdirSync(dir)).toEqual(['store.json']);
+	});
+
 	it('leaves the original intact when the process dies between the temp write and the rename', async () => {
 		await atomicWriteFile(target, 'original');
 		hooks.rename = () => Promise.reject(errnoError('EIO'));

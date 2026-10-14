@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 import { ipcRenderer } from 'electron';
 
 export function createSessionCrudRemoteApi() {
@@ -185,9 +186,8 @@ export function createSessionCrudRemoteApi() {
 		/**
 		 * Subscribe to remote requests to update an agent's editable per-session
 		 * config (nudge/new-session message, custom path/args/env vars, model,
-		 * effort, context window, Claude token source), or to switch its provider
-		 * (a `toolType` key). The renderer merges the partial patch and responds
-		 * with { success, error?, notices? }.
+		 * effort, context window, Claude token source). The renderer merges the
+		 * partial patch and responds with { success, error? }.
 		 */
 		onRemoteUpdateSessionConfig: (
 			callback: (
@@ -207,13 +207,11 @@ export function createSessionCrudRemoteApi() {
 		},
 
 		/**
-		 * Send response for remote update session config. `notices` lists what a
-		 * provider switch could not park and cleared, one line each, for the caller
-		 * to show.
+		 * Send response for remote update session config
 		 */
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string; notices?: string[] }
+			result: TranslationReport
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
