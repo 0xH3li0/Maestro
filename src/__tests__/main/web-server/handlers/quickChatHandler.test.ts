@@ -42,7 +42,10 @@ vi.mock('../../../../main/quick-chat', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
-import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import type {
+	WebClient,
+	WebClientMessage,
+} from '../../../../main/web-server/handlers/messageHandlers';
 
 function createMockClient(): WebClient {
 	return {
@@ -115,8 +118,32 @@ describe('quick_chat handler', () => {
 		],
 		[{ action: 'reveal' }, { type: 'reveal' }],
 		[{ action: 'stop' }, { type: 'stop' }],
+		[
+			{ action: 'tab', tab: 'new' },
+			{ type: 'setTab', choice: { kind: 'new' } },
+		],
+		[
+			{ action: 'tab', tab: ' AUTO ' },
+			{ type: 'setTab', choice: { kind: 'auto' } },
+		],
+		[
+			{ action: 'tab', tab: 'tab-7' },
+			{ type: 'setTab', choice: { kind: 'tab', tabId: 'tab-7' } },
+		],
+		[
+			{ action: 'thinking', mode: 'sticky' },
+			{ type: 'setThinking', mode: 'sticky' },
+		],
+		[
+			{ action: 'thinking', mode: 'cycle' },
+			{ type: 'setThinking', mode: 'cycle' },
+		],
 	])('maps %o onto the engine command %o', async (message, command) => {
-		handler.handleMessage(client, { type: 'quick_chat', requestId: 'r4', ...message });
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			requestId: 'r4',
+			...message,
+		} as WebClientMessage);
 		await flush();
 		expect(controller.runCommand).toHaveBeenCalledWith(command);
 		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r4' });
@@ -224,6 +251,32 @@ describe('quick_chat handler', () => {
 		});
 		expect(controller.setFontScale).not.toHaveBeenCalled();
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r15' });
+	});
+
+	it.each(['tab', 'thinking'] as const)(
+		'reads the current setting for a bare %s without calling the engine',
+		(action) => {
+			handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r20' });
+			expect(controller.runCommand).not.toHaveBeenCalled();
+			expect(lastResponse(client)).toMatchObject({
+				success: true,
+				requestId: 'r20',
+				status: { snapshot: { thinking: 'off', next: { kind: 'auto' } } },
+			});
+		}
+	);
+
+	it.each([
+		{ action: 'tab', tab: '  ' },
+		{ action: 'thinking', mode: 'loud' },
+	])('rejects %o without calling the engine', (message) => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			requestId: 'r21',
+			...message,
+		} as WebClientMessage);
+		expect(controller.runCommand).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r21' });
 	});
 
 	it('opens the tab a named message went to', async () => {

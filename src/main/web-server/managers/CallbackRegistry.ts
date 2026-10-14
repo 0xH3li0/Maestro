@@ -22,6 +22,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -158,6 +159,10 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
@@ -193,6 +198,7 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
@@ -303,6 +309,7 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		autoRunSteeringCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
@@ -498,6 +505,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Snooze is not configured' };
 		}
 		return this.callbacks.snoozeCommand(request);
+	}
+
+	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
+		if (!this.callbacks.autoRunSteeringCommand) {
+			return { success: false, error: 'Auto Run steering is not configured' };
+		}
+		return this.callbacks.autoRunSteeringCommand(request);
 	}
 
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
@@ -1229,6 +1243,10 @@ export class CallbackRegistry {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbacks.snoozeCommand = callback;
+	}
+
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbacks.autoRunSteeringCommand = callback;
 	}
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {

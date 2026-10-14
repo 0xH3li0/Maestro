@@ -36,6 +36,10 @@ export function createQuickChatApi() {
 		/** Grow the window to show the conversation, or shrink it to the composer. */
 		setLayout: (layout: QuickChatLayout): void => ipcRenderer.send('quickChat:setLayout', layout),
 
+		/** The composer's height, which the composer-only window follows as the draft grows. */
+		setCompactHeight: (height: number): void =>
+			ipcRenderer.send('quickChat:setCompactHeight', height),
+
 		/** Grow the window to fill its display while a diagram is open full screen, or put it back. */
 		setFullView: (on: boolean): void => ipcRenderer.send('quickChat:setFullView', on),
 

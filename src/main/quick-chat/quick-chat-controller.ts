@@ -37,6 +37,7 @@ import {
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
 	setQuickChatFontScale,
+	setQuickChatCompactHeight,
 	setQuickChatFullView,
 	setQuickChatLayout,
 	setQuickChatWindowPinned,
@@ -205,6 +206,10 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		ipcMain.on('quickChat:setLayout', (event, next: QuickChatLayout) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatLayout(next === 'expanded' ? 'expanded' : 'compact');
+		});
+		ipcMain.on('quickChat:setCompactHeight', (event, height: unknown) => {
+			if (event.sender !== getQuickChatWindow()?.webContents) return;
+			if (typeof height === 'number') setQuickChatCompactHeight(height);
 		});
 		ipcMain.on('quickChat:setFullView', (event, on: boolean) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;

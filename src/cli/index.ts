@@ -144,6 +144,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -1065,6 +1066,41 @@ program
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -2541,6 +2577,22 @@ quickChatCmd
 	.description('Float the window above other windows ("off" lets it fall behind them)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
+
+quickChatCmd
+	.command('tab [target]')
+	.description(
+		'Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((target: string | undefined, options) => quickChat('tab', { state: target }, options));
+
+quickChatCmd
+	.command('thinking [mode]')
+	.description(
+		"Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode: string | undefined, options) => quickChat('thinking', { state: mode }, options));
 
 quickChatCmd
 	.command('font [size]')

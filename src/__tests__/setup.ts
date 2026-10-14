@@ -884,6 +884,7 @@ const mockMaestro = {
 		window: vi.fn().mockResolvedValue(null),
 		getSnapshot: vi.fn().mockResolvedValue(null),
 		setLayout: vi.fn(),
+		setCompactHeight: vi.fn(),
 		setFullView: vi.fn(),
 		getPinned: vi.fn().mockResolvedValue(true),
 		setPinned: vi.fn((pinned: boolean) => Promise.resolve(pinned)),
