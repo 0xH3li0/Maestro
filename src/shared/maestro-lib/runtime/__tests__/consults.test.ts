@@ -54,6 +54,15 @@ const agentRecord = (
 
 const ANSWER: FakeScript = (call) => ({ text: `Answer ${call.nth}: use a queue.` });
 
+/**
+ * The value of `--permission-mode`, read as a flag pair. The args also carry the Maestro system
+ * prompt, whose text mentions plans, so a substring search over them proves nothing.
+ */
+function permissionMode(args: readonly string[]): string | undefined {
+	const at = args.indexOf('--permission-mode');
+	return at === -1 ? undefined : args[at + 1];
+}
+
 describe('runtime consults', () => {
 	let dir: string;
 	let work: string;
@@ -147,12 +156,12 @@ describe('runtime consults', () => {
 		it('is read-only by default, and writable only when the user opted in (B19)', async () => {
 			const readOnly = await start();
 			value(await readOnly.consults.ask({ targetAgentId: 'a2', question: 'Look at this' }));
-			expect(provider.callsFor('consult')[0].spec.args.join(' ')).toContain('plan');
+			expect(permissionMode(provider.callsFor('consult')[0].spec.args)).toBe('plan');
 			await readOnly.connection.close();
 
 			const writable = await start(ANSWER, undefined, { crossAgentMentionsWritable: true });
 			value(await writable.consults.ask({ targetAgentId: 'a2', question: 'Fix this' }));
-			expect(provider.callsFor('consult')[0].spec.args.join(' ')).not.toContain('plan');
+			expect(permissionMode(provider.callsFor('consult')[0].spec.args)).toBeUndefined();
 		});
 
 		it('creates no tab, no tab event, and no unread on the consulted agent (XM-2)', async () => {

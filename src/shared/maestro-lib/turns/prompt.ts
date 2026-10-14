@@ -9,8 +9,9 @@
  * fixed in one change for both (see `Plans/maestro-tui-prompt-assembly.md`, F1 to F13).
  */
 
-import { prependNewSessionMessage } from '../../newSessionMessage';
-import { substituteTemplateVariables, type TemplateSessionInfo } from '../../templateVariables';
+import { assembleMaestroSystemPrompt } from '../../maestroSystemPrompt';
+import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
+import type { TemplateSessionInfo } from '../../templateVariables';
 
 /** The rule between two layers of a prompt. */
 export const PROMPT_LAYER_SEPARATOR = '\n\n---\n\n';
@@ -37,8 +38,8 @@ export interface MessagePromptInput {
 	hasImages: boolean;
 	/** The prompt an image-only message is sent as (`image-only-default`). */
 	imageOnlyDefault: string;
-	/** The tab already has a provider session. The new-session message rides the first turn only. */
-	hasProviderSession: boolean;
+	/** The tab's provider session id. The new-session message rides the first turn only. */
+	agentSessionId?: string | null;
 	newSessionMessage?: string;
 	readOnly: boolean;
 }
@@ -53,9 +54,11 @@ export interface MessagePromptInput {
  */
 export function buildMessagePrompt(input: MessagePromptInput): string {
 	let prompt = input.hasImages && !input.text.trim() ? input.imageOnlyDefault : input.text;
-	if (!input.hasProviderSession) {
-		prompt = prependNewSessionMessage(prompt, input.newSessionMessage);
-	}
+	prompt = prependNewSessionMessageOnFirstTurn(
+		prompt,
+		input.newSessionMessage,
+		input.agentSessionId
+	);
 	if (input.readOnly) {
 		prompt += READ_ONLY_PLAN_INSTRUCTION;
 	}
@@ -136,39 +139,102 @@ export function resolveSlashCommand(
 	return undefined;
 }
 
-export interface MaestroSystemPromptInput {
-	/** The `maestro-system-prompt` template, directives resolved. */
-	template: string;
-	session: TemplateSessionInfo;
-	gitBranch?: string;
+/** The agent fields Maestro's system prompt reads. A `TurnAgent` fits. */
+export interface SystemPromptAgent extends TemplateSessionInfo {
 	groupId?: string;
-	activeTabId?: string;
+	isPianola?: boolean;
+	sessionSshRemoteConfig?: { enabled?: boolean } | null;
+}
+
+/**
+ * What Maestro's system prompt is made of, already read (`loadSystemPromptContext`). A
+ * `TurnContext` fits, so a chat turn and a turn with no tab (a group chat participant, a
+ * consult) build the same text from the same fields.
+ */
+export interface SystemPromptContext {
+	prompts: {
+		/** The `maestro-system-prompt` template, directives resolved. Absent: no system prompt. */
+		maestroSystem?: string;
+		/** The Pianola manager instructions, appended for the pinned manager agent. */
+		pianolaSystem?: string;
+		/**
+		 * The enabled first-party plugin sections, in `systemPromptSectionsFor` order, already
+		 * chosen for this agent (`localOnly` ones left out over SSH).
+		 */
+		pluginSections?: readonly string[];
+	};
+	gitBranch?: string;
 	/** The agent's history file, when it exists and the agent runs on this machine. */
 	historyFilePath?: string;
 	conductorProfile?: string;
 	/** The `maestro-cli.js` script `{{MAESTRO_CLI_PATH}}` names. Absent: the host's default. */
 	maestroCliPath?: string;
+	/** `<userData>/computer-history` on this machine, for the Computer History section. */
+	computerHistoryDir?: string;
+	/** The MaestroRun launcher while it is ready on this machine, for the MaestroRun section. */
+	maestroRunPath?: string;
 	now?: Date;
-	/** The Pianola manager instructions, appended for the pinned manager agent. */
-	pianolaPrompt?: string;
 }
 
 /**
- * Maestro's system prompt for one turn: the template with its variables filled in. The
- * pinned Pianola manager agent gets its manager instructions appended, which is what
- * turns a plain chat into Maestro's orchestrator. The CLI path and the agent's own id
- * reach that agent as env vars, so its prompt names them as shell variables.
+ * Maestro's system prompt for one agent: the template, the Pianola manager instructions for
+ * the pinned manager agent (what turns a plain chat into Maestro's orchestrator), then every
+ * enabled plugin section, each with its variables filled in. The shared assembler owns the
+ * order and the separator, so this cannot drift from the desktop's three builders. Undefined
+ * when the template did not load: the turn goes without a system prompt, as on the desktop.
+ *
+ * Everything read from this machine (branch, history file, Computer History store, MaestroRun
+ * launcher) is left out for an SSH agent, whose shell cannot reach it.
  */
-export function buildMaestroSystemPrompt(input: MaestroSystemPromptInput): string {
-	const base = substituteTemplateVariables(input.template, {
-		session: input.session,
-		gitBranch: input.gitBranch,
-		groupId: input.groupId,
-		activeTabId: input.activeTabId,
-		historyFilePath: input.historyFilePath,
-		conductorProfile: input.conductorProfile,
-		maestroCliPath: input.maestroCliPath,
-		now: input.now,
+export function buildAgentSystemPrompt(
+	agent: SystemPromptAgent,
+	activeTabId: string | undefined,
+	context: SystemPromptContext
+): string | undefined {
+	const template = context.prompts.maestroSystem;
+	if (!template) return undefined;
+	const isSsh = agent.sessionSshRemoteConfig?.enabled === true;
+	return assembleMaestroSystemPrompt({
+		template,
+		context: {
+			session: agent,
+			gitBranch: isSsh ? undefined : context.gitBranch,
+			groupId: agent.groupId,
+			activeTabId,
+			historyFilePath: isSsh ? undefined : context.historyFilePath,
+			conductorProfile: context.conductorProfile,
+			computerHistoryDir: isSsh ? undefined : context.computerHistoryDir,
+			maestroRunPath: isSsh ? undefined : context.maestroRunPath,
+			maestroCliPath: context.maestroCliPath,
+			now: context.now,
+		},
+		roleSections: agent.isPianola ? [context.prompts.pianolaSystem] : [],
+		pluginSections: context.prompts.pluginSections,
 	});
-	return input.pianolaPrompt ? `${base}${PROMPT_LAYER_SEPARATOR}${input.pianolaPrompt}` : base;
+}
+
+/**
+ * Just the enabled plugin sections, for a turn with no Maestro agent behind it (the Group Chat
+ * moderator and its synthesis turn), as the desktop's `buildPluginSystemPromptSections` builds
+ * them: agent variables render empty. Undefined when no section applies, so the caller passes
+ * nothing at all.
+ */
+export function buildPluginSectionsSystemPrompt(
+	context: Omit<SystemPromptContext, 'gitBranch' | 'historyFilePath'>
+): string | undefined {
+	const sections = (context.prompts.pluginSections ?? []).filter((text) => !!text.trim());
+	if (sections.length === 0) return undefined;
+	const [first, ...rest] = sections;
+	return assembleMaestroSystemPrompt({
+		template: first,
+		context: {
+			session: { id: '', name: '', toolType: '', cwd: '' },
+			conductorProfile: context.conductorProfile,
+			computerHistoryDir: context.computerHistoryDir,
+			maestroRunPath: context.maestroRunPath,
+			maestroCliPath: context.maestroCliPath,
+			now: context.now,
+		},
+		pluginSections: rest,
+	});
 }

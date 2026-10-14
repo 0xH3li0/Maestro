@@ -8,28 +8,41 @@
  * same sources from the data directory. It runs once per turn, so an edit made in the
  * desktop (a prompt, the conductor profile, a provider setting) applies to the next TUI
  * turn.
+ *
+ * The system prompt's inputs are read by one function, for a chat turn and for a turn with no
+ * tab alike (a group chat participant, a consult), so the same agent is told the same thing
+ * however its turn was started.
  */
 
 import * as fs from 'fs';
+import { computerHistoryDir } from '../../computer-history/paths';
+import { readMaestroRunReadyPath } from '../../maestro-run/state-file';
+import { systemPromptSectionsFor } from '../../maestroSystemPrompt';
 import { PROMPT_IDS } from '../../promptDefinitions';
 import { logger } from '../host';
 import { getShellPath } from '../launch/getShellPath';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import type { MaestroPaths } from '../paths/resolve';
 import { readGitBranch } from '../runtime/git';
-import { createPromptLoaderFor } from '../prompts/load';
+import { createPromptLoaderFor, type PromptLoader } from '../prompts/load';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
-import type { TurnCommand } from './prompt';
+import {
+	buildAgentSystemPrompt,
+	buildPluginSectionsSystemPrompt,
+	type SystemPromptContext,
+	type TurnCommand,
+} from './prompt';
 
 const LOG_CONTEXT = '[TurnContext]';
 
-export interface TurnContextSources {
-	paths: Pick<MaestroPaths, 'userDataDir' | 'settingsFile' | 'agentConfigsFile' | 'historyDir'>;
+/** Where the inputs of Maestro's system prompt are read from. */
+export interface SystemPromptSources {
+	paths: Pick<MaestroPaths, 'userDataDir' | 'settingsFile' | 'historyDir'>;
 	/**
 	 * The directory holding the bundled `.md` prompts. Found by probing from
 	 * `moduleDirectory` when omitted.
@@ -43,11 +56,25 @@ export interface TurnContextSources {
 	moduleDirectory?: string;
 	/** The `maestro-cli.js` script agents should call (a bare path). */
 	maestroCliPath?: string;
-	isWindowsHost?: boolean;
+	/**
+	 * The MaestroRun launcher, from a host that inspects it itself and found it ready. Absent:
+	 * the answer the desktop app last recorded in the data directory, which is all a process with
+	 * no MaestroRun service can know (the CLI reads the same file). No record reads as not ready,
+	 * and the section stays out.
+	 */
+	maestroRunPath?: string;
+	/** The Computer History store, from a host that keeps it elsewhere. Absent: `<userData>/computer-history`. */
+	computerHistoryDir?: string;
 	now?: () => Date;
-	/** Test seams. */
-	probeBinary?(binaryName: string, customPath?: string): Promise<BinaryDetectionResult>;
+	/** Test seam. */
 	readGitBranch?(cwd: string): Promise<string | undefined>;
+}
+
+export interface TurnContextSources extends SystemPromptSources {
+	paths: Pick<MaestroPaths, 'userDataDir' | 'settingsFile' | 'agentConfigsFile' | 'historyDir'>;
+	isWindowsHost?: boolean;
+	/** Test seam. */
+	probeBinary?(binaryName: string, customPath?: string): Promise<BinaryDetectionResult>;
 }
 
 export type TurnContextResult =
@@ -65,6 +92,155 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 		(entry): entry is [string, string] => typeof entry[1] === 'string'
 	);
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/**
+ * The global settings. A file that is missing is "nothing set", and one that is corrupt is
+ * reported and treated the same, so one torn file does not stop a turn.
+ */
+function readSettingsData(settingsFile: string): Record<string, unknown> {
+	const settings = readSettingsStore(settingsFile);
+	if (settings.status === 'corrupt' || settings.status === 'unreadable') {
+		logger.warn(`Settings are ${settings.status}: ${settings.reason}`, LOG_CONTEXT);
+	}
+	return settings.status === 'ok' ? settings.data : {};
+}
+
+/**
+ * The prompt loader. No bundled directory means no prompt can load: the turn goes without
+ * Maestro's system prompt, as a desktop turn does when the template did not load.
+ */
+function promptLoaderOf(sources: SystemPromptSources): PromptLoader | undefined {
+	return createPromptLoaderFor({
+		userDataDir: sources.paths.userDataDir,
+		...(sources.bundledPromptsDir ? { bundledPromptsDir: sources.bundledPromptsDir } : {}),
+		...(sources.moduleDirectory ? { moduleDirectory: sources.moduleDirectory } : {}),
+	});
+}
+
+/**
+ * The part of the system prompt no agent decides: the enabled plugin sections and the variables
+ * they name. The MaestroRun launcher and the Computer History store are on this machine, so a
+ * turn on an SSH remote is told about neither, and its `localOnly` sections are not loaded.
+ */
+function readPluginSectionContext(
+	isSsh: boolean,
+	sources: SystemPromptSources,
+	settingsData: Record<string, unknown>,
+	loader: PromptLoader | undefined
+): SystemPromptContext & { prompts: { pluginSections: string[] }; now: Date } {
+	const maestroRunPath = isSsh
+		? undefined
+		: (sources.maestroRunPath ?? readMaestroRunReadyPath(sources.paths.userDataDir));
+	// A section whose prompt does not load (an older bundle than the app that enabled it) is
+	// skipped, so it never costs the agent the rest of its system prompt.
+	const pluginSections = systemPromptSectionsFor(settingsData.encoreFeatures, {
+		isSsh,
+		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+	})
+		.map((ref) => loader?.get(ref.promptId))
+		.filter((text): text is string => !!text && !!text.trim());
+	return {
+		prompts: { pluginSections },
+		conductorProfile:
+			typeof settingsData.conductorProfile === 'string' ? settingsData.conductorProfile : undefined,
+		maestroCliPath: sources.maestroCliPath,
+		computerHistoryDir: isSsh
+			? undefined
+			: (sources.computerHistoryDir ?? computerHistoryDir(sources.paths.userDataDir)),
+		maestroRunPath,
+		now: (sources.now ?? (() => new Date()))(),
+	};
+}
+
+/** Everything `buildAgentSystemPrompt` reads for `agent`, from settings and a loader already in hand. */
+async function readSystemPromptContext(
+	agent: TurnAgent,
+	sources: SystemPromptSources,
+	settingsData: Record<string, unknown>,
+	loader: PromptLoader | undefined
+): Promise<SystemPromptContext & { now: Date }> {
+	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
+
+	// Git branch and history path are local reads: for an SSH agent they would describe a path on
+	// this machine that is not the one the agent works in (F7).
+	let gitBranch: string | undefined;
+	let historyPath: string | undefined;
+	if (!sshEnabled) {
+		if (agent.isGitRepo) {
+			try {
+				gitBranch = await (sources.readGitBranch ?? readGitBranch)(agent.cwd);
+			} catch {
+				// A branch that cannot be read is an empty variable, not a failed turn.
+			}
+		}
+		const file = historyFilePath(sources.paths.historyDir, agent.id);
+		if (fs.existsSync(file)) historyPath = file;
+	}
+
+	const shared = readPluginSectionContext(sshEnabled, sources, settingsData, loader);
+	return {
+		...shared,
+		prompts: {
+			maestroSystem: loader?.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT),
+			pianolaSystem: agent.isPianola ? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM) : undefined,
+			pluginSections: shared.prompts.pluginSections,
+		},
+		gitBranch,
+		historyFilePath: historyPath,
+	};
+}
+
+/**
+ * The full Maestro system prompt of a stored agent, for a turn that has no tab: a group chat
+ * participant standing for the agent, or a consult put to it. The text the agent's own chat turn
+ * carries, less the tab id. Undefined when the template did not load.
+ */
+export async function loadAgentSystemPrompt(
+	agent: TurnAgent,
+	sources: SystemPromptSources
+): Promise<string | undefined> {
+	const context = await readSystemPromptContext(
+		agent,
+		sources,
+		readSettingsData(sources.paths.settingsFile),
+		promptLoaderOf(sources)
+	);
+	return buildAgentSystemPrompt(agent, undefined, context);
+}
+
+/**
+ * Just the enabled plugin sections, for a turn with no Maestro agent behind it (the Group Chat
+ * moderator and its synthesis turn). Synchronous, as the engine's moderator port is. Undefined
+ * when no section applies.
+ */
+export function loadPluginSectionsSystemPrompt(
+	sources: SystemPromptSources,
+	opts: { isSsh: boolean }
+): string | undefined {
+	return buildPluginSectionsSystemPrompt(
+		readPluginSectionContext(
+			opts.isSsh,
+			sources,
+			readSettingsData(sources.paths.settingsFile),
+			promptLoaderOf(sources)
+		)
+	);
+}
+
+/**
+ * The system prompt of a turn that stands for a stored agent but has no tab of its own: a group
+ * chat participant, or a consult put to the agent. The agent's full prompt, else (no stored agent
+ * matches, or its template did not load) the plugin sections alone, as the desktop's group chat
+ * builds it. `fallback.isSsh` says where that turn runs when there is no agent to ask.
+ */
+export async function loadStandInSystemPrompt(
+	agent: TurnAgent | undefined,
+	sources: SystemPromptSources,
+	fallback: { isSsh: boolean }
+): Promise<string | undefined> {
+	const full = agent ? await loadAgentSystemPrompt(agent, sources) : undefined;
+	return full ?? loadPluginSectionsSystemPrompt(sources, fallback);
 }
 
 /**
@@ -87,8 +263,8 @@ export async function loadTurnContext(
 	const capabilities = getAgentCapabilities(agent.toolType);
 	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
 
-	// Provider config and the global settings: a file that is missing is "nothing set", and
-	// one that is corrupt is reported and treated the same, so one torn file does not stop a turn.
+	// Provider config: a file that is missing is "nothing set", and one that is corrupt is
+	// reported and treated the same, so one torn file does not stop a turn.
 	const configs = readAgentConfigsStore(sources.paths.agentConfigsFile);
 	if (configs.status === 'corrupt' || configs.status === 'unreadable') {
 		logger.warn(`Agent configs are ${configs.status}: ${configs.reason}`, LOG_CONTEXT);
@@ -96,11 +272,7 @@ export async function loadTurnContext(
 	const providerConfig = asRecord(
 		configs.status === 'ok' ? asRecord(configs.data.configs)[agent.toolType] : undefined
 	);
-	const settings = readSettingsStore(sources.paths.settingsFile);
-	if (settings.status === 'corrupt' || settings.status === 'unreadable') {
-		logger.warn(`Settings are ${settings.status}: ${settings.reason}`, LOG_CONTEXT);
-	}
-	const settingsData = settings.status === 'ok' ? settings.data : {};
+	const settingsData = readSettingsData(sources.paths.settingsFile);
 
 	// The binary. A turn on an SSH remote runs the remote's own binary, so nothing is probed here.
 	const command = await locateProviderBinary(definition, {
@@ -118,29 +290,9 @@ export async function loadTurnContext(
 		};
 	}
 
-	// Prompts. No bundled directory means no prompt can load: the turn goes without Maestro's
-	// system prompt, as a desktop turn does when the template did not load.
-	const loader = createPromptLoaderFor({
-		userDataDir: sources.paths.userDataDir,
-		...(sources.bundledPromptsDir ? { bundledPromptsDir: sources.bundledPromptsDir } : {}),
-		...(sources.moduleDirectory ? { moduleDirectory: sources.moduleDirectory } : {}),
-	});
-
-	// Git branch and history path are local reads: for an SSH agent they would describe a path on
-	// this machine that is not the one the agent works in (F7).
-	let gitBranch: string | undefined;
-	let historyPath: string | undefined;
-	if (!sshEnabled) {
-		if (agent.isGitRepo) {
-			try {
-				gitBranch = await (sources.readGitBranch ?? readGitBranch)(agent.cwd);
-			} catch {
-				// A branch that cannot be read is an empty variable, not a failed turn.
-			}
-		}
-		const file = historyFilePath(sources.paths.historyDir, agent.id);
-		if (fs.existsSync(file)) historyPath = file;
-	}
+	// Prompts, and what the system prompt's variables are filled from.
+	const loader = promptLoaderOf(sources);
+	const system = await readSystemPromptContext(agent, sources, settingsData, loader);
 
 	// The login-shell PATH is cached by the first call; `buildSpawnPath` reads the cache later.
 	await getShellPath().catch(() => '');
@@ -169,7 +321,6 @@ export async function loadTurnContext(
 			})
 		: [];
 
-	const pianolaLoaded = agent.isPianola ? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM) : undefined;
 	const copilotPreamble =
 		agent.toolType === 'copilot-cli' ? loader?.get(PROMPT_IDS.COPILOT_PREAMBLE) : undefined;
 
@@ -181,23 +332,15 @@ export async function loadTurnContext(
 			command,
 			providerConfig,
 			globalEnvVars: stringRecord(settingsData.shellEnvVars),
-			conductorProfile:
-				typeof settingsData.conductorProfile === 'string'
-					? settingsData.conductorProfile
-					: undefined,
+			...system,
 			prompts: {
-				maestroSystem: loader?.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT),
-				pianolaSystem: pianolaLoaded,
+				...system.prompts,
 				imageOnlyDefault: loader?.get(PROMPT_IDS.IMAGE_ONLY_DEFAULT) ?? '',
 				copilotPreamble,
 			},
-			gitBranch,
-			historyFilePath: historyPath,
-			maestroCliPath: sources.maestroCliPath,
 			userDataDir: sources.paths.userDataDir,
 			autoRunHoldsTree: false,
 			isWindowsHost: sources.isWindowsHost ?? process.platform === 'win32',
-			now: (sources.now ?? (() => new Date()))(),
 		},
 	};
 }

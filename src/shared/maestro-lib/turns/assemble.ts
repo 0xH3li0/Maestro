@@ -18,6 +18,7 @@
 import * as path from 'path';
 import { buildCallerIdentityEnv } from '../../agentDelegation';
 import { resolveTabPermissionMode } from '../../agentMetadata';
+import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
 import { substituteTemplateVariables } from '../../templateVariables';
 import type { AdditionalDirectory, AgentSshRemoteConfig } from '../../types';
 import { filterYoloArgs, getContextWindowValue } from '../launch/agent-args';
@@ -27,7 +28,7 @@ import type { AgentConfig } from '../providers/definitions';
 import { applyCopilotPreamble, applySystemPromptDelivery, buildTurnArgs } from './args';
 import {
 	appendNudgeMessage,
-	buildMaestroSystemPrompt,
+	buildAgentSystemPrompt,
 	buildMessagePrompt,
 	expandCommandArguments,
 	prependMergedContext,
@@ -102,6 +103,12 @@ export interface TurnContext {
 		/** Absent when it could not be loaded: the turn goes without one, as on desktop. */
 		maestroSystem?: string;
 		pianolaSystem?: string;
+		/**
+		 * The enabled first-party plugin sections (Computer History, MaestroRun, ...), in
+		 * `systemPromptSectionsFor` order and already chosen for this agent: `loadTurnContext`
+		 * leaves the `localOnly` ones out for an SSH agent.
+		 */
+		pluginSections?: readonly string[];
 		imageOnlyDefault: string;
 		copilotPreamble?: string;
 	};
@@ -111,6 +118,16 @@ export interface TurnContext {
 	historyFilePath?: string;
 	/** The `maestro-cli.js` script agents should call (PA6). */
 	maestroCliPath?: string;
+	/**
+	 * `<userData>/computer-history` on this machine, which the Computer History section names.
+	 * Ignored for SSH.
+	 */
+	computerHistoryDir?: string;
+	/**
+	 * The MaestroRun launcher while it is installed, verified, and granted on this machine. The
+	 * MaestroRun section is loaded under the same condition. Ignored for SSH.
+	 */
+	maestroRunPath?: string;
 	/** The data dir the host serves, stamped as `MAESTRO_USER_DATA` (PA8). */
 	userDataDir?: string;
 	/** An Auto Run on this agent holds its working tree. Always false until L6 (PA13). */
@@ -137,7 +154,8 @@ export interface AssembledTurn {
 	/**
 	 * The prompt before the system prompt and the Copilot preamble are folded in: every
 	 * hidden layer of the message (nudge, new-session message, read-only instruction,
-	 * merged context). The desktop's renderer hands the spawn exactly this as `prompt`.
+	 * merged context), or a command's prompt behind the new-session message. The desktop's
+	 * renderer hands the spawn exactly this as `prompt`.
 	 */
 	userPrompt: string;
 	/** The prompt the provider receives: `userPrompt` with the embedded system prompt and the Copilot preamble. */
@@ -224,9 +242,9 @@ export function assembleTurn(
 	let entry: TurnUserEntry;
 	if (message.command) {
 		// A Maestro command follows the desktop's command path: arguments expanded, then template
-		// variables (without the history path, F13). No nudge, no new-session message, no merged
-		// context, and no read-only instruction.
-		userPrompt = substituteTemplateVariables(
+		// variables (without the history path, F13). No nudge, no merged context, and no
+		// read-only instruction.
+		const commandPrompt = substituteTemplateVariables(
 			expandCommandArguments(message.command.prompt, message.command.args),
 			{
 				session: agent,
@@ -238,8 +256,16 @@ export function assembleTurn(
 				now: context.now,
 			}
 		);
+		// A command that is the tab's first turn opens a provider session, so the agent's standing
+		// instructions ride it like a typed message. Agent-only: the transcript keeps the bare
+		// command prompt.
+		userPrompt = prependNewSessionMessageOnFirstTurn(
+			commandPrompt,
+			agent.newSessionMessage,
+			tab.agentSessionId
+		);
 		entry = {
-			text: userPrompt,
+			text: commandPrompt,
 			aiCommand: {
 				command: message.command.command,
 				...(message.command.description ? { description: message.command.description } : {}),
@@ -250,7 +276,7 @@ export function assembleTurn(
 			text: appendNudgeMessage(message.text, agent.nudgeMessage),
 			hasImages,
 			imageOnlyDefault: context.prompts.imageOnlyDefault,
-			hasProviderSession: !!resumeSessionId,
+			agentSessionId: tab.agentSessionId,
 			newSessionMessage: agent.newSessionMessage,
 			readOnly,
 		});
@@ -262,20 +288,7 @@ export function assembleTurn(
 	if (readOnly) entry.readOnly = true;
 
 	// The system prompt. The template not loading means the turn goes without one.
-	const systemPrompt = context.prompts.maestroSystem
-		? buildMaestroSystemPrompt({
-				template: context.prompts.maestroSystem,
-				session: agent,
-				gitBranch: sshEnabled ? undefined : context.gitBranch,
-				groupId: agent.groupId,
-				activeTabId: tab.id,
-				historyFilePath: sshEnabled ? undefined : context.historyFilePath,
-				conductorProfile: context.conductorProfile,
-				maestroCliPath: context.maestroCliPath,
-				now: context.now,
-				pianolaPrompt: agent.isPianola ? context.prompts.pianolaSystem : undefined,
-			})
-		: undefined;
+	const systemPrompt = buildAgentSystemPrompt(agent, tab.id, context);
 
 	// Arguments: the provider's own, minus bypass flags when read-only, then the system prompt.
 	const providerArgs = provider.args ?? [];

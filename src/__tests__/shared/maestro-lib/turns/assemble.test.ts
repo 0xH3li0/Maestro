@@ -131,16 +131,37 @@ describe('a Maestro command', () => {
 		});
 	});
 
-	it('applies no nudge, no new-session message, no merged context, no read-only instruction', () => {
+	it('applies no nudge, no merged context, no read-only instruction', () => {
 		const turn = assemble({
 			agent: { nudgeMessage: 'nudge', newSessionMessage: 'rules' },
-			tab: { pendingMergedContext: 'CTX', readOnlyMode: true },
+			tab: { agentSessionId: 'sess-1', pendingMergedContext: 'CTX', readOnlyMode: true },
 			message: { text: '/review a.ts', command },
 			toolType: 'codex',
 			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
 		});
 		expect(turn.prompt).toBe('Review a.ts');
 		expect(turn.consumedMergedContext).toBe(false);
+	});
+
+	it("carries the new-session message on the tab's first turn, and keeps the entry bare", () => {
+		const first = assemble({
+			agent: { newSessionMessage: 'rules' },
+			message: { text: '/review a.ts', command },
+			toolType: 'codex',
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
+		});
+		expect(first.userPrompt).toBe(`rules${SEP}Review a.ts`);
+		expect(first.prompt).toBe(`rules${SEP}Review a.ts`);
+		expect(first.entry.text).toBe('Review a.ts');
+
+		const resumed = assemble({
+			agent: { newSessionMessage: 'rules' },
+			tab: { agentSessionId: 'sess-1' },
+			message: { text: '/review a.ts', command },
+			toolType: 'codex',
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
+		});
+		expect(resumed.userPrompt).toBe('Review a.ts');
 	});
 
 	it('leaves the history path empty inside a command (F13)', () => {
@@ -311,6 +332,28 @@ describe('the system prompt', () => {
 			},
 		});
 		expect(turn.systemPrompt).toBe('feature/x|/h/agent-1.jsonl|Pedram|node "/opt/maestro-cli.js"');
+	});
+
+	it('appends each enabled plugin section after the Pianola instructions, substituted', () => {
+		const prompts = {
+			imageOnlyDefault: '',
+			maestroSystem: 'BASE {{AGENT_NAME}}',
+			pianolaSystem: 'MANAGER',
+			pluginSections: ['HISTORY at {{COMPUTER_HISTORY_DIR}}', 'RUN {{MAESTRO_RUN_PATH}}'],
+		};
+		const context = {
+			prompts,
+			computerHistoryDir: '/data/computer-history',
+			maestroRunPath: '/Apps/maestro-run',
+		};
+		expect(assemble({ agent: { isPianola: true }, context }).systemPrompt).toBe(
+			`BASE Test Agent${SEP}MANAGER${SEP}HISTORY at /data/computer-history${SEP}RUN /Apps/maestro-run`
+		);
+		// Over SSH the local paths render empty: the sections were chosen by the loader.
+		expect(
+			assemble({ agent: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }, context })
+				.systemPrompt
+		).toBe(`BASE Test Agent${SEP}HISTORY at ${SEP}RUN `);
 	});
 
 	it('appends the Pianola instructions for the manager agent only', () => {

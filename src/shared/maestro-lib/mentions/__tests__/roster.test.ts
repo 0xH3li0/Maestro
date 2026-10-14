@@ -83,10 +83,31 @@ describe('planning a message', () => {
 	it('suppresses the local send only when the message LEADS with a mention', () => {
 		expect(planMentions('@Backend which branch?', AGENTS, GROUPS, 'src')).toEqual({
 			targetAgentIds: ['be'],
+			routing: 'only',
 			suppressLocal: true,
 		});
 		expect(planMentions('ask @Backend which branch?', AGENTS, GROUPS, 'src')).toEqual({
 			targetAgentIds: ['be'],
+			routing: 'parallel',
+			suppressLocal: false,
+		});
+	});
+
+	it("routes a mid-message mention by the person's wording, as the desktop does", () => {
+		expect(
+			planMentions('check with @Backend first, then fix the build', AGENTS, GROUPS, 'src')
+		).toEqual({ targetAgentIds: ['be'], routing: 'consult-first', suppressLocal: true });
+		expect(
+			planMentions(
+				'look into the flake, then send what you find to @Backend',
+				AGENTS,
+				GROUPS,
+				'src'
+			)
+		).toEqual({ targetAgentIds: ['be'], routing: 'handoff', suppressLocal: false });
+		expect(planMentions('what does @Backend think too?', AGENTS, GROUPS, 'src')).toEqual({
+			targetAgentIds: ['be'],
+			routing: 'parallel',
 			suppressLocal: false,
 		});
 	});

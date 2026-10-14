@@ -2,11 +2,19 @@
  * Cross-agent `@mentions`, the pure half: who a message can mention, which
  * agents a message names, and what to do with it.
  *
- * The desktop composer and the TUI composer both read this, so a name the picker
- * inserts is a name dispatch resolves, and a message leading with `@agent`
- * suppresses the local send the same way on both. The renderer's
- * `useAgentMentionCompletion` and `crossAgentMentions` re-export from here; what
- * stays there is what needs the store, React, or the consult transport.
+ * The roster functions are the desktop's own: the renderer's
+ * `useAgentMentionCompletion` re-exports `buildAgentMentionSuggestions`,
+ * `buildKnownMentionNameSet` and `resolveMentionedTargetSessionIds` from here, so
+ * a name the picker inserts is a name dispatch resolves.
+ *
+ * `planMentions` is the planner for a client that holds store records instead of
+ * the renderer's session store. The desktop does not call it: its
+ * `planCrossAgentMentions` (`src/renderer/services/crossAgentMentions.ts`) plans
+ * over the store with these same roster functions and the same shared timing
+ * rules (`messageStartsWithAgentMention`, `inferMentionTiming`), and a parity
+ * test feeds both planners the same messages. Nothing outside tests calls
+ * `planMentions` yet: the headless runtime's consults take a target the caller
+ * already resolved.
  *
  * The roster is structural (`MentionableAgent`, `MentionableGroup`) so a
  * renderer `Session`, a TUI `AgentRecord`, and a test literal all satisfy it
@@ -20,7 +28,12 @@ import {
 	getMentionNameForContext,
 	normalizeMentionName,
 } from '../../group-chat-types';
-import { messageStartsWithAgentMention, parseAgentMentions } from '../../crossAgentContext';
+import {
+	inferMentionTiming,
+	messageStartsWithAgentMention,
+	parseAgentMentions,
+	type MentionRouting,
+} from '../../crossAgentContext';
 import { fuzzyMatchWithScore } from '../../fuzzyMatch';
 import { scanMentionSpans } from '../../mentionPatterns';
 import type { AgentRecord, GroupRecord } from '../store/records';
@@ -301,8 +314,17 @@ export interface CrossAgentMentionPlan {
 	/** The agents to consult, de-duped, self-mention filtered. Never empty. */
 	targetAgentIds: string[];
 	/**
-	 * The message LEADS with an `@agent` mention, so it is addressed only at the
-	 * consulted agent(s): the source agent must not be sent to at all.
+	 * How the mention runs relative to the source agent's turn: `only` for a
+	 * message that LEADS with a mention, otherwise the timing inferred from the
+	 * person's wording (`parallel`, `consult-first`, or a `handoff` of the turn's
+	 * answer once it ends).
+	 */
+	routing: MentionRouting;
+	/**
+	 * The source agent must not be sent to when this message dispatches. True for
+	 * a leading mention (`only`: the message is addressed at the consulted agents
+	 * alone) and for `consult-first` (the source agent answers later, once the
+	 * replies are in hand).
 	 */
 	suppressLocal: boolean;
 }
@@ -329,9 +351,13 @@ export function planMentions(
 	// file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local send
 	// just like a bare `@Codex` does.
 	const knownMentionNames = buildKnownMentionNameSet(agents, groups, sourceAgentId);
+	const routing: MentionRouting = messageStartsWithAgentMention(message, knownMentionNames)
+		? 'only'
+		: inferMentionTiming(message, knownMentionNames);
 	return {
 		targetAgentIds,
-		suppressLocal: messageStartsWithAgentMention(message, knownMentionNames),
+		routing,
+		suppressLocal: routing === 'only' || routing === 'consult-first',
 	};
 }
 

@@ -8,6 +8,7 @@
  * | events | the client's `groupChat` bus event: a line, the moderator's state, a participant working, the roster |
  * | agents | the repository's agents, with settings read per call so a desktop edit applies to the next turn |
  * | prompts | the loader chat turns use: the user's edit over the bundled prompt, a missing one throws |
+ * | systemPrompts | a participant: its agent's own system prompt (`loadStandInSystemPrompt`); the moderator: the plugin sections |
  * | power | none: a headless host has no sleep to block |
  * | launcher | `createBackgroundTurns`: SSH wrap, Claude token source, Windows shell, then the run layer |
  *
@@ -64,6 +65,12 @@ import { logger } from '../host';
 import type { MaestroPaths } from '../paths/resolve';
 import { createPromptLoaderFor } from '../prompts/load';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
+import {
+	loadPluginSectionsSystemPrompt,
+	loadStandInSystemPrompt,
+	type SystemPromptSources,
+} from '../turns/context';
+import { toTurnAgent } from '../turns/records';
 import type { BackgroundTurns } from './background-turns';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
@@ -240,6 +247,15 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 		return promptLoader;
 	};
 
+	// What the Maestro system prompt of a round's turns is read from: the sources a chat turn reads.
+	const promptSources: SystemPromptSources = {
+		paths,
+		...(host.bundledPromptsDir ? { bundledPromptsDir: host.bundledPromptsDir } : {}),
+		...(host.moduleDirectory ? { moduleDirectory: host.moduleDirectory } : {}),
+		...(host.maestroCliPath ? { maestroCliPath: host.maestroCliPath } : {}),
+		now: () => new Date(now()),
+	};
+
 	const engine = createGroupChatEngine({
 		store,
 		events: sink,
@@ -256,6 +272,18 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 		// No sleep to block on a host with no window.
 		power: { block: () => {}, unblock: () => {} },
 		metrics,
+		systemPrompts: {
+			// A participant is the agent it stands for, so it is told what that agent's own chat turn
+			// is told. A name no stored agent answers to gets the plugin sections alone.
+			forParticipant: (session) => {
+				const record = session ? repository.getAgent(session.id) : undefined;
+				return loadStandInSystemPrompt(record ? toTurnAgent(record) : undefined, promptSources, {
+					isSsh: session?.sshRemoteConfig?.enabled === true,
+				});
+			},
+			// No Maestro agent stands behind the moderator: its role is in the turn's own prompt.
+			forModerator: ({ isSsh }) => loadPluginSectionsSystemPrompt(promptSources, { isSsh }),
+		},
 	});
 
 	/** Where a group chat's process id belongs. */
@@ -557,6 +585,9 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 			}
 			try {
 				await stopChat(chatId);
+				// A stopped turn still reports its end, and that report writes into the chat's folder:
+				// deleting first let a late report put the folder back.
+				await background.whenSettled((processId) => belongsToChat(processId, chatId));
 				await operations.deleteChat(chatId);
 				states.delete(chatId);
 				working.delete(chatId);
@@ -566,6 +597,14 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 			}
 		},
 	};
+
+	/** Whether a background process is one of this chat's turns (its moderator or a participant). */
+	function belongsToChat(processId: string, chatId: string): boolean {
+		return (
+			parseModeratorSessionId(processId) === chatId ||
+			parseParticipantSessionId(processId)?.groupChatId === chatId
+		);
+	}
 
 	/** Everything a chat has running: its round, and any Auto Run it started in a participant. */
 	async function stopChat(chatId: string): Promise<void> {

@@ -750,6 +750,9 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
 					withContext: message.withContext === true,
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
+					...(typeof message.handoffAnswer === 'string'
+						? { handoffAnswer: message.handoffAnswer }
+						: {}),
 				});
 				if (result.ok) {
 					return {

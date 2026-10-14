@@ -13,9 +13,13 @@
  * | Context | none, unless asked for: then the asking tab, windowed by the question |
  * | The consult tab | `repository.openConsultTab`: found or created per asking agent, hidden, never active |
  * | Order | consults sharing a consult tab run one at a time (two processes resuming one provider session corrupt it); consults to different agents run at once |
- * | Run | `createConsultService` over the background runner: read-only, the 10 and 30 minute budgets |
+ * | Run | `createConsultService` over the background runner, with the target's own system prompt: the 10 and 30 minute budgets |
+ * | Access | a consult is read-only unless `crossAgentMentionsWritable`; a hand-off may write unless `crossAgentHandoffsWritable` is off |
  * | Record | the answer or the failure on the consult tab, a History entry on the target |
  * | Answer | the text, or a failure that says why |
+ *
+ * A HAND-OFF (`handoffAnswer`) goes through the same steps: the asking agent already did the work,
+ * and the target is told it is receiving that answer to act on, not a question to answer.
  *
  * The caller's `timeoutMs` stops the consult when it runs out (GD19), and Stop on the asking agent
  * stops every consult it started (B20).
@@ -50,17 +54,20 @@ import type {
 	ClientErrorCode,
 	ClientMethod,
 	ClientResult,
-	ConsultsApi,
+	ConsultAnswer,
+	ConsultAskInput,
 } from '../client/types';
 import { logger } from '../host';
 import type { MaestroPaths } from '../paths/resolve';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import type { AgentRecord } from '../store/records';
 import { transcriptOf, type LogEntryRecord } from '../store/transcript';
+import { loadStandInSystemPrompt, type SystemPromptSources } from '../turns/context';
 import { toTurnAgent } from '../turns/records';
 import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import type { BackgroundTurns } from './background-turns';
 import type { DataDirVerdict } from './data-dir-lock';
+import type { RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[RuntimeConsults]';
 
@@ -83,10 +90,20 @@ export interface RuntimeConsultsOptions {
 	now?: () => number;
 	/** Test seam: the shortest wait a caller may ask for. Default 10 seconds, the desktop's floor. */
 	minTimeoutMs?: number;
+	/** Where the bundled prompts and the CLI are, as chat turns read them for the target's system prompt. */
+	options?: Pick<RuntimeTurnOptions, 'bundledPromptsDir' | 'moduleDirectory' | 'maestroCliPath'>;
 }
 
+/**
+ * `ConsultsApi.ask`'s input. With `handoffAnswer` it is a hand-off: the asking agent's final answer,
+ * forwarded because the person said to pass the result on ("then send what you find to @X"), and
+ * `question` is the person's message that asked for it.
+ */
+export type RuntimeConsultInput = ConsultAskInput;
+
 export interface RuntimeConsults {
-	readonly api: ConsultsApi;
+	/** A `ConsultsApi`, which also takes a hand-off. */
+	readonly api: { ask(input: RuntimeConsultInput): Promise<ClientResult<ConsultAnswer>> };
 	/** Stop every consult `agentId` asked for. Answers how many were stopped. */
 	cancelForSource(agentId: string): number;
 	/** Consults running now. With the group chat rounds, the work `host stop` refuses to cut off. */
@@ -159,10 +176,29 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 			: {};
 	};
 
-	/** Whether the user opted into consults that may write (`crossAgentMentionsWritable`, B19). */
-	const writable = (): boolean => {
+	/**
+	 * Whether the request may modify files, as the desktop's `resolveCrossAgentWritable` decides
+	 * it. A consult answers a question, so it is read-only unless the user opted in
+	 * (`crossAgentMentionsWritable`, default off, B19). A hand-off passes work on, which usually
+	 * means the target should save it, so it may write unless the user opted out
+	 * (`crossAgentHandoffsWritable`, default on). Settings that cannot be read are "nothing set".
+	 */
+	const writableFor = (isHandoff: boolean): boolean => {
 		const settings = readSettingsStore(paths.settingsFile);
-		return settings.status === 'ok' && settings.data.crossAgentMentionsWritable === true;
+		const data = settings.status === 'ok' ? settings.data : {};
+		return isHandoff
+			? data.crossAgentHandoffsWritable !== false
+			: data.crossAgentMentionsWritable === true;
+	};
+
+	// The target's system prompt is read from the sources its own chat turn reads.
+	const host = options.options ?? {};
+	const promptSources: SystemPromptSources = {
+		paths,
+		...(host.bundledPromptsDir ? { bundledPromptsDir: host.bundledPromptsDir } : {}),
+		...(host.moduleDirectory ? { moduleDirectory: host.moduleDirectory } : {}),
+		...(host.maestroCliPath ? { maestroCliPath: host.maestroCliPath } : {}),
+		now: () => new Date(now()),
 	};
 
 	/** The windowed transcript of the asking tab, or none: a consult sends a self-contained question. */
@@ -187,10 +223,10 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		};
 	}
 
-	type AnswerValue = { answer: string; agentName?: string };
+	type AnswerValue = ConsultAnswer;
 	type Answer = ClientResult<AnswerValue>;
 
-	function ask(input: Parameters<ConsultsApi['ask']>[0]): Promise<Answer> {
+	function ask(input: RuntimeConsultInput): Promise<Answer> {
 		const running = askNow(input);
 		pending.add(running);
 		const forget = (): void => void pending.delete(running);
@@ -198,7 +234,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		return running;
 	}
 
-	async function askNow(input: Parameters<ConsultsApi['ask']>[0]): Promise<Answer> {
+	async function askNow(input: RuntimeConsultInput): Promise<Answer> {
 		const method: ClientMethod = 'consults.ask';
 		if (disposed) return fail(method, 'host-unavailable', 'The runtime is closing.');
 		const question = input.question.trim();
@@ -208,6 +244,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {
 			return fail(method, 'invalid', 'An agent cannot consult itself.');
 		}
+		const isHandoff = input.handoffAnswer !== undefined;
 		const target = toTargetSession(record);
 		if (!target) {
 			return fail(method, 'rejected', `${record.name} has no working directory to run in.`);
@@ -290,6 +327,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 					transcript,
 					strategy,
 					...(source?.cwd ? { sourceCwd: source.cwd } : {}),
+					...(isHandoff ? { handoffAnswer: input.handoffAnswer } : {}),
 					createdAt: now(),
 				};
 
@@ -305,7 +343,18 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 						getCustomEnvVars: (toolType) =>
 							agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
 						getAgentConfig: (toolType) => agentConfigs()[toolType],
-						writable: writable(),
+						writable: writableFor(isHandoff),
+						// The target answers as itself: the system prompt its own chat turn carries.
+						getSystemPrompt: (consulted) => {
+							const stored = repository.getAgent(consulted.id);
+							return loadStandInSystemPrompt(
+								stored ? toTurnAgent(stored) : undefined,
+								promptSources,
+								{
+									isSsh: consulted.sshRemoteConfig?.enabled === true,
+								}
+							);
+						},
 						onChunk: (piece) => {
 							if (piece.done) resolve(piece);
 						},

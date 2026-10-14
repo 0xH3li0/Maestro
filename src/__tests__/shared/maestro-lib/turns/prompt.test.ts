@@ -6,8 +6,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	appendNudgeMessage,
-	buildMaestroSystemPrompt,
+	buildAgentSystemPrompt,
 	buildMessagePrompt,
+	buildPluginSectionsSystemPrompt,
 	expandCommandArguments,
 	prependMergedContext,
 	READ_ONLY_PLAN_INSTRUCTION,
@@ -36,7 +37,7 @@ describe('buildMessagePrompt', () => {
 		text: 'fix it',
 		hasImages: false,
 		imageOnlyDefault: 'DESCRIBE',
-		hasProviderSession: true,
+		agentSessionId: 'sess-1',
 		readOnly: false,
 	};
 
@@ -59,7 +60,7 @@ describe('buildMessagePrompt', () => {
 
 	it('puts the new-session message in front on the first turn of a provider session', () => {
 		expect(
-			buildMessagePrompt({ ...base, hasProviderSession: false, newSessionMessage: 'house rules' })
+			buildMessagePrompt({ ...base, agentSessionId: null, newSessionMessage: 'house rules' })
 		).toBe(`house rules${SEP}fix it`);
 	});
 
@@ -68,9 +69,9 @@ describe('buildMessagePrompt', () => {
 	});
 
 	it('skips a blank new-session message', () => {
-		expect(
-			buildMessagePrompt({ ...base, hasProviderSession: false, newSessionMessage: '  ' })
-		).toBe('fix it');
+		expect(buildMessagePrompt({ ...base, agentSessionId: null, newSessionMessage: '  ' })).toBe(
+			'fix it'
+		);
 	});
 
 	it('appends the plan instruction on a read-only turn', () => {
@@ -83,7 +84,7 @@ describe('buildMessagePrompt', () => {
 	it('layers new-session message, text and instruction in that order', () => {
 		const out = buildMessagePrompt({
 			...base,
-			hasProviderSession: false,
+			agentSessionId: null,
 			newSessionMessage: 'N',
 			readOnly: true,
 		});
@@ -173,23 +174,24 @@ describe('resolveSlashCommand', () => {
 	});
 });
 
-describe('buildMaestroSystemPrompt', () => {
-	const session = { id: 'a-1', name: 'Alpha', toolType: 'claude-code', cwd: '/w' };
+describe('buildAgentSystemPrompt', () => {
+	const agent = { id: 'a-1', name: 'Alpha', toolType: 'claude-code', cwd: '/w' };
+	const ssh = { ...agent, sessionSshRemoteConfig: { enabled: true } };
 
 	it('fills template variables', () => {
-		const out = buildMaestroSystemPrompt({
-			template: 'I am {{AGENT_NAME}} ({{AGENT_ID}}) in {{CWD}} on {{GIT_BRANCH}}, tab {{TAB_ID}}',
-			session,
+		const out = buildAgentSystemPrompt(agent, 't-1', {
+			prompts: {
+				maestroSystem:
+					'I am {{AGENT_NAME}} ({{AGENT_ID}}) in {{CWD}} on {{GIT_BRANCH}}, tab {{TAB_ID}}',
+			},
 			gitBranch: 'main',
-			activeTabId: 't-1',
 		});
 		expect(out).toBe('I am Alpha (a-1) in /w on main, tab t-1');
 	});
 
 	it('uses the stated CLI path as a node command, and the injected clock', () => {
-		const out = buildMaestroSystemPrompt({
-			template: '{{MAESTRO_CLI_PATH}} / {{YEAR}}',
-			session,
+		const out = buildAgentSystemPrompt(agent, undefined, {
+			prompts: { maestroSystem: '{{MAESTRO_CLI_PATH}} / {{YEAR}}' },
 			maestroCliPath: '/opt/m/maestro-cli.js',
 			now: new Date(2031, 0, 2),
 		});
@@ -197,18 +199,62 @@ describe('buildMaestroSystemPrompt', () => {
 	});
 
 	it('fills the history path and conductor profile', () => {
-		const out = buildMaestroSystemPrompt({
-			template: '{{AGENT_HISTORY_PATH}} | {{CONDUCTOR_PROFILE}}',
-			session,
+		const out = buildAgentSystemPrompt(agent, undefined, {
+			prompts: { maestroSystem: '{{AGENT_HISTORY_PATH}} | {{CONDUCTOR_PROFILE}}' },
 			historyFilePath: '/h/a-1.jsonl',
 			conductorProfile: 'Pedram',
 		});
 		expect(out).toBe('/h/a-1.jsonl | Pedram');
 	});
 
-	it('appends the Pianola instructions after a rule', () => {
-		expect(buildMaestroSystemPrompt({ template: 'BASE', session, pianolaPrompt: 'MANAGER' })).toBe(
-			`BASE${SEP}MANAGER`
+	it('is the template, then Pianola, then each plugin section, every one substituted', () => {
+		const out = buildAgentSystemPrompt({ ...agent, isPianola: true }, undefined, {
+			prompts: {
+				maestroSystem: 'BASE',
+				pianolaSystem: 'MANAGER {{AGENT_NAME}}',
+				pluginSections: ['CH {{COMPUTER_HISTORY_DIR}}', '  ', 'MR {{MAESTRO_RUN_PATH}}'],
+			},
+			computerHistoryDir: '/d/computer-history',
+			maestroRunPath: '/bin/maestro-run',
+		});
+		expect(out).toBe(
+			`BASE${SEP}MANAGER Alpha${SEP}CH /d/computer-history${SEP}MR /bin/maestro-run`
 		);
+	});
+
+	it('leaves out what is read from this machine for an SSH agent', () => {
+		const out = buildAgentSystemPrompt(ssh, undefined, {
+			prompts: {
+				maestroSystem:
+					'[{{GIT_BRANCH}}][{{AGENT_HISTORY_PATH}}][{{COMPUTER_HISTORY_DIR}}][{{MAESTRO_RUN_PATH}}]',
+			},
+			gitBranch: 'main',
+			historyFilePath: '/h',
+			computerHistoryDir: '/c',
+			maestroRunPath: '/m',
+		});
+		expect(out).toBe('[][][][]');
+	});
+
+	it('is undefined when the template did not load', () => {
+		expect(
+			buildAgentSystemPrompt(agent, undefined, { prompts: { pluginSections: ['X'] } })
+		).toBeUndefined();
+	});
+});
+
+describe('buildPluginSectionsSystemPrompt', () => {
+	it('joins the sections with agent variables empty', () => {
+		expect(
+			buildPluginSectionsSystemPrompt({
+				prompts: { pluginSections: ['A [{{AGENT_NAME}}]', 'B {{COMPUTER_HISTORY_DIR}}'] },
+				computerHistoryDir: '/c',
+			})
+		).toBe(`A []${SEP}B /c`);
+	});
+
+	it('is undefined when no section applies', () => {
+		expect(buildPluginSectionsSystemPrompt({ prompts: {} })).toBeUndefined();
+		expect(buildPluginSectionsSystemPrompt({ prompts: { pluginSections: [' '] } })).toBeUndefined();
 	});
 });

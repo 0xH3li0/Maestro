@@ -6,9 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadTurnContext } from '../../../../shared/maestro-lib/turns/context';
+import {
+	loadAgentSystemPrompt,
+	loadPluginSectionsSystemPrompt,
+	loadStandInSystemPrompt,
+	loadTurnContext,
+} from '../../../../shared/maestro-lib/turns/context';
+import { assembleTurn } from '../../../../shared/maestro-lib/turns/assemble';
 import { historyFilePath } from '../../../../shared/maestro-lib/store/read-history';
-import { makeAgent } from './fixtures';
+import { makeAgent, makeTab } from './fixtures';
 
 let dir: string;
 let prompts: string;
@@ -232,5 +238,118 @@ describe('loadTurnContext', () => {
 			expect(result.context.gitBranch).toBeUndefined();
 			expect(result.context.historyFilePath).toBeUndefined();
 		});
+	});
+});
+
+describe('the plugin sections of the system prompt', () => {
+	const SEP = '\n\n---\n\n';
+	const ssh = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
+
+	beforeEach(() => {
+		write(path.join(prompts, 'concerto-system.md'), 'CONCERTO');
+		write(path.join(prompts, 'computer-history-system.md'), 'HISTORY {{COMPUTER_HISTORY_DIR}}');
+		write(path.join(prompts, 'maestro-run-system.md'), 'RUN {{MAESTRO_RUN_PATH}}');
+	});
+
+	const enable = (flags: Record<string, boolean>, extra: Record<string, unknown> = {}) =>
+		write(paths.settingsFile, { encoreFeatures: flags, ...extra });
+	const recordMaestroRun = (ready: boolean) =>
+		write(path.join(dir, 'maestro-run', 'state.json'), {
+			ready,
+			binaryPath: '/Apps/maestro-run',
+			version: '1.0.0',
+			checkedAt: 1,
+		});
+
+	async function sectionsOf(agent = makeAgent(), sources = {}) {
+		const result = await load(agent, sources);
+		if (!result.ok) throw new Error(result.message);
+		return result.context;
+	}
+
+	it('loads no section while every plugin is off', async () => {
+		expect((await sectionsOf()).prompts.pluginSections).toEqual([]);
+	});
+
+	it('loads each enabled plugin section, in the shared order', async () => {
+		enable({ concerto: true, computerHistory: true });
+		const context = await sectionsOf();
+		expect(context.prompts.pluginSections).toEqual([
+			'CONCERTO',
+			'HISTORY {{COMPUTER_HISTORY_DIR}}',
+		]);
+		expect(context.computerHistoryDir).toBe(path.join(dir, 'computer-history'));
+	});
+
+	it('drops localOnly sections and local paths for an SSH agent', async () => {
+		enable({ concerto: true, computerHistory: true, maestroRun: true });
+		recordMaestroRun(true);
+		const context = await sectionsOf(makeAgent(ssh));
+		expect(context.prompts.pluginSections).toEqual(['CONCERTO']);
+		expect(context.computerHistoryDir).toBeUndefined();
+		expect(context.maestroRunPath).toBeUndefined();
+	});
+
+	it('includes MaestroRun only once the app recorded it ready, or the host says so', async () => {
+		enable({ maestroRun: true });
+		expect((await sectionsOf()).prompts.pluginSections).toEqual([]);
+		recordMaestroRun(false);
+		expect((await sectionsOf()).prompts.pluginSections).toEqual([]);
+		recordMaestroRun(true);
+		const recorded = await sectionsOf();
+		expect(recorded.prompts.pluginSections).toEqual(['RUN {{MAESTRO_RUN_PATH}}']);
+		expect(recorded.maestroRunPath).toBe('/Apps/maestro-run');
+		fs.rmSync(path.join(dir, 'maestro-run'), { recursive: true });
+		const stated = await sectionsOf(makeAgent(), { maestroRunPath: '/host/maestro-run' });
+		expect(stated.maestroRunPath).toBe('/host/maestro-run');
+		expect(stated.prompts.pluginSections).toEqual(['RUN {{MAESTRO_RUN_PATH}}']);
+	});
+
+	it('skips a section whose prompt does not load', async () => {
+		enable({ concerto: true, computerHistory: true });
+		fs.rmSync(path.join(prompts, 'concerto-system.md'));
+		expect((await sectionsOf()).prompts.pluginSections).toEqual([
+			'HISTORY {{COMPUTER_HISTORY_DIR}}',
+		]);
+	});
+
+	it("gives a turn with no tab the agent's own system prompt, less the tab id", async () => {
+		enable({ computerHistory: true }, { conductorProfile: 'Pedram' });
+		write(
+			path.join(prompts, 'maestro-system-prompt.md'),
+			'SYSTEM {{AGENT_NAME}} [{{TAB_ID}}] {{CONDUCTOR_PROFILE}}'
+		);
+		const agent = makeAgent();
+		const loaded = await sectionsOf(agent);
+		const turn = assembleTurn(agent, makeTab({ id: '' }), { text: 'hi' }, loaded);
+		if (!turn.ok) throw new Error(turn.message);
+		const sources = { paths, bundledPromptsDir: prompts, now: () => new Date(2026, 0, 1) };
+		const tabless = await loadAgentSystemPrompt(agent, sources);
+		expect(tabless).toBe(
+			`SYSTEM Test Agent [] Pedram${SEP}HISTORY ${path.join(dir, 'computer-history')}`
+		);
+		expect(tabless).toBe(turn.turn.systemPrompt);
+	});
+
+	it('gives a turn with no agent behind it the plugin sections alone', async () => {
+		enable({ concerto: true, computerHistory: true });
+		const sources = { paths, bundledPromptsDir: prompts };
+		expect(loadPluginSectionsSystemPrompt(sources, { isSsh: false })).toBe(
+			`CONCERTO${SEP}HISTORY ${path.join(dir, 'computer-history')}`
+		);
+		expect(loadPluginSectionsSystemPrompt(sources, { isSsh: true })).toBe('CONCERTO');
+		enable({});
+		expect(loadPluginSectionsSystemPrompt(sources, { isSsh: false })).toBeUndefined();
+	});
+
+	it('falls back to the plugin sections when no stored agent stands behind a turn', async () => {
+		enable({ concerto: true });
+		const sources = { paths, bundledPromptsDir: prompts };
+		expect(await loadStandInSystemPrompt(undefined, sources, { isSsh: false })).toBe('CONCERTO');
+		expect(await loadStandInSystemPrompt(makeAgent(), sources, { isSsh: false })).toBe(
+			`SYSTEM${SEP}CONCERTO`
+		);
+		fs.rmSync(path.join(prompts, 'maestro-system-prompt.md'));
+		expect(await loadStandInSystemPrompt(makeAgent(), sources, { isSsh: false })).toBe('CONCERTO');
 	});
 });

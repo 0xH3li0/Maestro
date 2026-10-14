@@ -18,6 +18,11 @@
  *
  * Mocked: the process manager, the agent detector, the stores, git, and the history path.
  * Real: prompts, template substitution, argument building, system prompt delivery.
+ *
+ * A second block compares the system prompt alone with the renderer's
+ * `prepareMaestroSystemPrompt`, from the library's own reads (`loadTurnContext` over a data
+ * directory) rather than a hand-built context: enabled plugin sections, an SSH agent whose
+ * `localOnly` sections are dropped, MaestroRun's readiness, and the Pianola manager.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
@@ -107,6 +112,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AITab, BatchRunState, Session } from '../../../renderer/types';
 import { assembleTurn } from '../../../shared/maestro-lib/turns/assemble';
+import { loadTurnContext } from '../../../shared/maestro-lib/turns/context';
+import { historyFilePath } from '../../../shared/maestro-lib/store/read-history';
+import { computerHistoryDir } from '../../../shared/computer-history/paths';
+import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 import { createPromptLoader } from '../../../shared/maestro-lib/prompts/load';
 import { PROMPT_CUSTOMIZATIONS_FILE } from '../../../shared/maestro-lib/settings/snapshot';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
@@ -436,6 +445,139 @@ describe('assembleTurn parity with the desktop', () => {
 				delete stated.MAESTRO_USER_DATA;
 				expect(stated).toEqual(recorded.customEnvVars ?? {});
 			}
+		});
+	}
+});
+
+describe('the system prompt: library reads against prepareMaestroSystemPrompt', () => {
+	let tmp: string;
+	const originalMaestro = { ...win.maestro };
+	const RUN_BINARY = '/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+
+	interface SystemPromptFixture {
+		name: string;
+		encoreFeatures: Record<string, boolean>;
+		session?: Partial<Session>;
+		/** MaestroRun is installed, verified and granted on this machine. */
+		maestroRunReady?: boolean;
+		/** What the joined prompt must hold, so a fixture cannot pass by both sides leaving it out. */
+		contains: string[];
+		lacks?: string[];
+	}
+
+	const FIXTURES: SystemPromptFixture[] = [
+		{
+			name: 'a local agent with Concerto and Computer History on',
+			encoreFeatures: { concerto: true, computerHistory: true },
+			session: { isGitRepo: true },
+			contains: ['concerto', 'computer-history'],
+		},
+		{
+			name: 'an SSH agent: the localOnly sections are dropped',
+			encoreFeatures: { concerto: true, computerHistory: true, maestroRun: true },
+			session: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } as never },
+			maestroRunReady: true,
+			contains: ['concerto'],
+			lacks: ['computer-history', RUN_BINARY],
+		},
+		{
+			name: 'the Pianola manager with MaestroRun ready',
+			encoreFeatures: { maestroRun: true },
+			session: { isPianola: true },
+			maestroRunReady: true,
+			contains: [RUN_BINARY, 'Pianola'],
+		},
+		{
+			name: 'MaestroRun on but not ready: its section stays out',
+			encoreFeatures: { maestroRun: true },
+			contains: [],
+			lacks: [RUN_BINARY],
+		},
+	];
+
+	beforeAll(() => {
+		tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-parity-sections-'));
+	});
+
+	afterAll(() => {
+		Object.assign(win.maestro, originalMaestro);
+		fs.rmSync(tmp, { recursive: true, force: true });
+	});
+
+	for (const fixture of FIXTURES) {
+		it(fixture.name, async () => {
+			const session = createMockSession({
+				id: 'agent-1',
+				name: 'Parity Agent',
+				toolType: 'claude-code',
+				cwd: '/work/project',
+				...fixture.session,
+			});
+			const historyFile = historyFilePath(path.join(tmp, 'history'), session.id);
+			fs.mkdirSync(path.dirname(historyFile), { recursive: true });
+			fs.writeFileSync(historyFile, '');
+
+			// The desktop: the renderer's builder over the real prompt manager.
+			win.maestro = {
+				...win.maestro,
+				prompts: {
+					get: vi.fn(async (id: string) => ({ success: true, content: getPrompt(id) })),
+					getSystemPromptPaths: vi.fn(async () => ({
+						success: true,
+						computerHistoryDir: computerHistoryDir(tmp),
+					})),
+				},
+				history: { getFilePath: vi.fn().mockResolvedValue(historyFile) },
+				maestroRun: {
+					...win.maestro?.maestroRun,
+					readyPath: vi.fn(async () => (fixture.maestroRunReady ? RUN_BINARY : null)),
+				},
+			};
+			useSettingsStore.setState({
+				conductorProfile: 'Pedram, security researcher',
+				encoreFeatures: fixture.encoreFeatures,
+			} as never);
+			const desktop = await prepareMaestroSystemPrompt({ session, activeTabId: 'tab-1' });
+
+			// The library: the same settings and MaestroRun record in a data directory.
+			const settingsFile = path.join(tmp, 'maestro-settings.json');
+			fs.writeFileSync(
+				settingsFile,
+				JSON.stringify({
+					conductorProfile: 'Pedram, security researcher',
+					encoreFeatures: fixture.encoreFeatures,
+				})
+			);
+			fs.rmSync(path.join(tmp, 'maestro-run'), { recursive: true, force: true });
+			if (fixture.maestroRunReady) {
+				fs.mkdirSync(path.join(tmp, 'maestro-run'), { recursive: true });
+				fs.writeFileSync(
+					path.join(tmp, 'maestro-run', 'state.json'),
+					JSON.stringify({ ready: true, binaryPath: RUN_BINARY, version: '1.0.0', checkedAt: 1 })
+				);
+			}
+			const loaded = await loadTurnContext(session as never, {
+				paths: {
+					userDataDir: tmp,
+					settingsFile,
+					agentConfigsFile: path.join(tmp, 'maestro-agent-configs.json'),
+					historyDir: path.join(tmp, 'history'),
+				},
+				bundledPromptsDir: REPO_PROMPTS,
+				probeBinary: async () => ({ exists: true, path: '/usr/local/bin/claude' }),
+				readGitBranch: async () => 'feature/parity',
+				isWindowsHost: false,
+				now: () => NOW,
+			});
+			if (!loaded.ok) throw new Error(loaded.message);
+			const tab = createMockAITab({ id: 'tab-1', createdAt: 1700000000000 });
+			const result = assembleTurn(session as never, tab as never, { text: 'hi' }, loaded.context);
+			if (!result.ok) throw new Error(result.message);
+
+			expect(result.turn.systemPrompt).toBe(desktop);
+			const lower = desktop!.toLowerCase();
+			for (const needle of fixture.contains) expect(lower).toContain(needle.toLowerCase());
+			for (const needle of fixture.lacks ?? []) expect(lower).not.toContain(needle.toLowerCase());
 		});
 	}
 });

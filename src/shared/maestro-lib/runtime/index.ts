@@ -351,6 +351,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		fence,
 		background,
 		rules: deps.rules,
+		// Where the prompts and the CLI script are, as the chat turns are told.
+		...(options.turns ? { options: options.turns } : {}),
 		...(deps.consults?.minTimeoutMs !== undefined
 			? { minTimeoutMs: deps.consults.minTimeoutMs }
 			: {}),
