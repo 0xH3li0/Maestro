@@ -42,7 +42,7 @@ export interface HostCommandOptions {
 	foreground?: boolean;
 	/** `start` only: a port to listen on. Default: any free one. */
 	port?: string | number;
-	/** `stop` only: stop even with a turn or run in flight. */
+	/** `stop` only: stop even with a turn, an Auto Run, or a Cue run in flight. */
 	force?: boolean;
 }
 
@@ -175,6 +175,26 @@ async function startDetached(
 	deps: HostCommandDeps
 ): Promise<void> {
 	const running = liveHost(paths.userDataDir, deps);
+	if (running && running.hostKind !== 'headless') {
+		// The desktop app is the host there. Calling that "a host is already running" and exiting 0
+		// would tell a script it has the detached host it asked for.
+		const message =
+			`The Maestro desktop app is running on this data directory (pid ${running.pid}), so a headless host cannot start there. ` +
+			'The desktop app is the host while it runs: quit it first to run `maestro-cli host` instead.';
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{ started: false, reason: 'desktop-running', pid: running.pid, error: message },
+					null,
+					2
+				)
+			);
+		} else {
+			console.error(`Error: ${message}`);
+		}
+		process.exitCode = ExitCode.GeneralError;
+		return;
+	}
 	if (running) {
 		say(
 			options,
@@ -209,10 +229,19 @@ async function startDetached(
 	for (let waited = 0; waited < START_WAIT_MS; waited += POLL_MS) {
 		const info = readCliServerInfoFrom(paths.userDataDir);
 		if (info?.pid === child.pid && deps.isPidAlive(child.pid)) {
+			// Cue starts before the host publishes, so its state is settled by now.
+			let cue: HostCueState | undefined;
+			let cueLine: string;
+			try {
+				cue = (await deps.requestStatus(paths.userDataDir)).cue;
+				cueLine = describeCueAtStart(cue);
+			} catch (error) {
+				cueLine = `Cue: unknown (the host did not answer a status request: ${error instanceof Error ? error.message : String(error)})`;
+			}
 			say(
 				options,
-				{ started: true, pid: info.pid, port: info.port, log: logFile },
-				`Host started (pid ${info.pid}, port ${info.port}). Log: ${logFile}`
+				{ started: true, pid: info.pid, port: info.port, log: logFile, ...(cue ? { cue } : {}) },
+				`Host started (pid ${info.pid}, port ${info.port}). Log: ${logFile}\n${cueLine}`
 			);
 			return;
 		}
@@ -256,10 +285,11 @@ async function runForeground(
 	const shutdown = (): void => void host.stop();
 	process.on('SIGINT', shutdown);
 	process.on('SIGTERM', shutdown);
+	const cue = host.cue.state();
 	say(
 		options,
-		{ started: true, pid: process.pid, port: host.server.port },
-		`Host started (pid ${process.pid}, port ${host.server.port}).`
+		{ started: true, pid: process.pid, port: host.server.port, cue },
+		`Host started (pid ${process.pid}, port ${host.server.port}).\n${describeCueAtStart(cue)}`
 	);
 	await host.stopped;
 	process.exit(ExitCode.Success);
@@ -282,11 +312,24 @@ function describeCue(cue: HostCueState): string {
 	}
 }
 
+/**
+ * What `start` says about Cue. A host serves turns and Auto Runs without Cue, so a Cue that did not
+ * start does not fail the start; it is said in so many words instead, because "Host started" alone
+ * reads as "everything is running".
+ */
+function describeCueAtStart(cue: HostCueState): string {
+	const line = `Cue: ${describeCue(cue)}`;
+	return cue.state === 'failed'
+		? `${line}\nThe host is up, but Cue is not: no Cue subscription will fire from this host. Fix the reason above, then restart the host.`
+		: line;
+}
+
 function describeWork(work: HostWork): string {
 	if (!hostHasWork(work)) return 'idle';
 	const parts = [plural(work.turns, 'turn')];
 	if (work.rounds) parts.push(plural(work.rounds, 'group chat round'));
 	if (work.consults) parts.push(plural(work.consults, 'consult'));
+	if (work.cueRuns) parts.push(plural(work.cueRuns, 'Cue run'));
 	for (const run of work.runs) {
 		parts.push(`${run.kind} run on ${run.agentId}${run.paused ? ' (paused)' : ''}`);
 	}

@@ -6,9 +6,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { HostCue } from '../../../cli/services/host-cue';
 import {
+	HostPromptsMissingError,
 	HostStartError,
 	startRuntimeHost,
 	type RunningHost,
@@ -38,9 +40,13 @@ describe('startRuntimeHost', () => {
 		log: (line: string) => lines.push(line),
 	});
 
-	const noCue = {
-		startCue: async () => ({ state: () => ({ state: 'disabled' as const }), stop() {} }),
-	};
+	const idleCue = (): HostCue => ({
+		state: () => ({ state: 'disabled' as const }),
+		activeRuns: () => 0,
+		stop: async () => undefined,
+	});
+	// The temp directory is no bundle, so the prompt probe is answered for it.
+	const noCue = { startCue: async () => idleCue(), promptsLoad: () => true };
 
 	async function start(): Promise<RunningHost> {
 		const host = await startRuntimeHost(options(), noCue);
@@ -149,5 +155,118 @@ describe('startRuntimeHost', () => {
 		await expect(startRuntimeHost(options(), noCue)).rejects.toBeInstanceOf(HostStartError);
 		// Nothing was served and the other host's file is untouched.
 		expect(readCliServerInfoFrom(dir)?.pid).toBe(process.ppid);
+	});
+
+	it('refuses to start from a bundle whose prompts cannot load, before it takes the directory', async () => {
+		// `dir` holds no prompts/core, which is the bundle copied without its prompts.
+		const createRuntime = vi.fn();
+		await expect(
+			startRuntimeHost(options(), { startCue: async () => idleCue(), createRuntime })
+		).rejects.toBeInstanceOf(HostPromptsMissingError);
+		await expect(
+			startRuntimeHost(options(), { startCue: async () => idleCue(), createRuntime })
+		).rejects.toThrow(/prompts/);
+
+		expect(createRuntime).not.toHaveBeenCalled();
+		expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(false);
+		expect(readCliServerInfoFrom(dir)).toBeNull();
+	});
+
+	it('starts from a checkout, where the prompts are found from the bundle directory', async () => {
+		// `dist/cli` is where the CLI bundle sits in a checkout; the probe is the real one.
+		const host = await startRuntimeHost(
+			{ ...options(), moduleDirectory: path.resolve(__dirname, '../../../../dist/cli') },
+			{ startCue: async () => idleCue() }
+		);
+		running.push(host);
+		expect(readCliServerInfoFrom(dir)?.pid).toBe(process.pid);
+	});
+
+	describe('Cue in the host', () => {
+		it('hands Cue the runtime it serves', async () => {
+			const startCue = vi.fn(async () => idleCue());
+			const host = await startRuntimeHost(options(), { ...noCue, startCue });
+			running.push(host);
+
+			expect(startCue).toHaveBeenCalledWith({
+				userDataDir: dir,
+				settingsFile: path.join(dir, 'maestro-settings.json'),
+				runtime: host.runtime,
+			});
+		});
+
+		it('reports a Cue run as work and will not stop over it without force', async () => {
+			let cueRuns = 1;
+			const host = await startRuntimeHost(options(), {
+				...noCue,
+				startCue: async () => ({ ...idleCue(), activeRuns: () => cueRuns }),
+			});
+			running.push(host);
+
+			expect((await requestHostStatus(dir)).work).toMatchObject({ turns: 0, cueRuns: 1 });
+			expect(await requestHostStop(dir, {})).toMatchObject({
+				stopping: false,
+				reason: 'work-in-flight',
+				work: { cueRuns: 1 },
+			});
+			// Still serving: the refusal stopped nothing.
+			expect(readCliServerInfoFrom(dir)?.pid).toBe(process.pid);
+
+			cueRuns = 0;
+			expect(await requestHostStop(dir, {})).toEqual({ stopping: true });
+			await host.stopped;
+		});
+
+		it('on a forced stop ends the Cue runs and waits for them before the runtime closes', async () => {
+			const seen: string[] = [];
+			let cueStopped!: () => void;
+			const host = await startRuntimeHost(options(), {
+				...noCue,
+				startCue: async () => ({
+					...idleCue(),
+					activeRuns: () => 1,
+					stop: () =>
+						new Promise<void>((resolve) => {
+							// The runtime still holds the directory while Cue's runs are being ended.
+							seen.push(
+								fs.existsSync(path.join(dir, 'maestro-runtime.lock'))
+									? 'cue-stop:locked'
+									: 'cue-stop'
+							);
+							cueStopped = () => {
+								seen.push('cue-stopped');
+								resolve();
+							};
+						}),
+				}),
+			});
+			running.push(host);
+
+			expect(await requestHostStop(dir, { force: true })).toEqual({ stopping: true });
+			await vi.waitFor(() => expect(seen).toEqual(['cue-stop:locked']));
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(true);
+			expect(lines).not.toContain('Host stopped.');
+
+			cueStopped();
+			await host.stopped;
+			expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(false);
+			expect(lines[lines.length - 1]).toBe('Host stopped.');
+		});
+
+		it('finishes stopping when Cue fails to stop, and says so', async () => {
+			const host = await startRuntimeHost(options(), {
+				...noCue,
+				startCue: async () => ({
+					...idleCue(),
+					stop: async () => {
+						throw new Error('db closed');
+					},
+				}),
+			});
+			await host.stop();
+			expect(lines).toContain('Stopping Cue failed: db closed');
+			expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(false);
+		});
 	});
 });

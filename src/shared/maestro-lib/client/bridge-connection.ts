@@ -23,18 +23,26 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 
 /**
  * Thrown when the running app echoes a command back unhandled - i.e. it does
- * not recognize the message type. This almost always means the desktop app is
- * an older build than this client (a new command was added since the app was last
- * built/restarted). Carrying a distinct type lets callers map it to the
+ * not recognize the message type. From a desktop this almost always means the
+ * app is an older build than this client (a new command was added since the app
+ * was last built/restarted). Carrying a distinct type lets callers map it to the
  * `Unsupported` exit code and print a "rebuild/restart the app" hint instead of
  * a generic timeout.
+ *
+ * A headless host (`maestro-cli host`) echoes too, for a different reason: it
+ * serves the runtime's commands and has no window to serve the rest with. So
+ * the message names the peer that answered, and does not send someone with no
+ * desktop running off to restart one.
  */
 export class UnsupportedCommandError extends Error {
 	readonly commandType: string;
-	constructor(commandType: string) {
+	constructor(commandType: string, hostKind?: CliServerInfo['hostKind']) {
 		super(
-			`The running Maestro app does not support the '${commandType}' command. ` +
-				'It is likely an older build - rebuild and restart the desktop app, then retry.'
+			hostKind === 'headless'
+				? `The headless Maestro host (\`maestro-cli host\`) does not support the '${commandType}' command. ` +
+						'It may need the desktop app, or a newer build of the host.'
+				: `The running Maestro app does not support the '${commandType}' command. ` +
+						'It is likely an older build - rebuild and restart the desktop app, then retry.'
 		);
 		this.name = 'UnsupportedCommandError';
 		this.commandType = commandType;
@@ -122,6 +130,8 @@ interface PendingRequest {
 export class BridgeConnection {
 	private ws: WebSocket | null = null;
 	private pendingRequests: Map<string, PendingRequest> = new Map();
+	/** What kind of peer the discovery file named, so an error can say who refused. */
+	private hostKind: CliServerInfo['hostKind'];
 
 	constructor(private readonly options: BridgeConnectionOptions = {}) {}
 
@@ -134,8 +144,12 @@ export class BridgeConnection {
 			? readCliServerInfoFrom(this.options.userDataDir)
 			: readCliServerInfo();
 		if (!info) {
-			throw new Error('Maestro desktop app is not running');
+			// Callers match on the first sentence, so it stays as it was.
+			throw new Error(
+				'Maestro desktop app is not running. Start it, or run `maestro-cli host start` for a headless host.'
+			);
 		}
+		this.hostKind = info.hostKind;
 
 		// The authenticated WebSocket connection remains the authoritative
 		// reachability check; this only says the recorded process still exists.
@@ -314,7 +328,7 @@ export class BridgeConnection {
 				const pending = this.pendingRequests.get(originalReqId)!;
 				clearTimeout(pending.timeout);
 				this.pendingRequests.delete(originalReqId);
-				pending.reject(new UnsupportedCommandError(originalType));
+				pending.reject(new UnsupportedCommandError(originalType, this.hostKind));
 				return true;
 			}
 			// Fall back to matching by the echoed command type.
@@ -322,7 +336,7 @@ export class BridgeConnection {
 				if (pending.matchByType && pending.sentType === originalType) {
 					clearTimeout(pending.timeout);
 					this.pendingRequests.delete(reqId);
-					pending.reject(new UnsupportedCommandError(originalType));
+					pending.reject(new UnsupportedCommandError(originalType, this.hostKind));
 					return true;
 				}
 			}

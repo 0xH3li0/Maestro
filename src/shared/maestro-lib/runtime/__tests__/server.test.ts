@@ -48,6 +48,8 @@ describe('runtime server', () => {
 	let client: MaestroClient;
 	let stopRequests: number;
 	let inFlight: { turns: number };
+	/** Cue runs the host process says are in flight; undefined for a host that reports none. */
+	let cueRuns: number | undefined;
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
 
@@ -115,6 +117,7 @@ describe('runtime server', () => {
 				key === 'turnsInFlight' ? () => inFlight.turns : Reflect.get(target, key),
 		});
 		stopRequests = 0;
+		cueRuns = undefined;
 		server = await startRuntimeServer({
 			runtime,
 			token: TOKEN,
@@ -122,7 +125,11 @@ describe('runtime server', () => {
 			onStopRequested: () => {
 				stopRequests += 1;
 			},
-			describe: () => ({ cue: { state: 'disabled' }, version: '9.9.9' }),
+			describe: () => ({
+				cue: { state: 'disabled' },
+				version: '9.9.9',
+				...(cueRuns !== undefined ? { cueRuns } : {}),
+			}),
 		});
 		publish();
 		client = createWsMaestroClient({
@@ -305,6 +312,28 @@ describe('runtime server', () => {
 
 			const forced = await requestHostStop(dir, { force: true });
 			expect(forced).toEqual({ stopping: true });
+			await vi.waitFor(() => expect(stopRequests).toBe(1));
+		});
+
+		it('counts a Cue run as work: it shows in status and a plain stop is refused', async () => {
+			cueRuns = 2;
+			expect((await requestHostStatus(dir)).work).toMatchObject({ turns: 0, cueRuns: 2 });
+
+			const refused = await requestHostStop(dir, {});
+			expect(refused).toEqual({
+				stopping: false,
+				reason: 'work-in-flight',
+				work: { turns: 0, runs: [], rounds: 0, consults: 0, cueRuns: 2 },
+			});
+			expect(stopRequests).toBe(0);
+
+			expect(await requestHostStop(dir, { force: true })).toEqual({ stopping: true });
+			await vi.waitFor(() => expect(stopRequests).toBe(1));
+		});
+
+		it('stops with Cue running and none of its runs in flight', async () => {
+			cueRuns = 0;
+			expect(await requestHostStop(dir, {})).toEqual({ stopping: true });
 			await vi.waitFor(() => expect(stopRequests).toBe(1));
 		});
 

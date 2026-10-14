@@ -55,8 +55,8 @@ export interface RuntimeServerOptions {
 	address?: string;
 	/** The host agreed to stop and said so; the caller shuts the process down. */
 	onStopRequested(): void;
-	/** What only the host process knows: where Cue stands, and the build version. */
-	describe?(): { cue: HostCueState; version?: string };
+	/** What only the host process knows: where Cue stands, how many Cue runs are in flight, and the build version. */
+	describe?(): { cue: HostCueState; cueRuns?: number; version?: string };
 }
 
 export interface RuntimeServer {
@@ -115,11 +115,13 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 		for (const ws of sockets) send(ws, numbered);
 	};
 
-	const work = (): HostWork => ({
+	/** A Cue run is the host's work too: it is a process only this host can end. */
+	const work = (cueRuns: number | undefined = options.describe?.().cueRuns): HostWork => ({
 		turns: runtime.turnsInFlight(),
 		runs: runtime.runs.activeRuns(),
 		rounds: runtime.roundsInFlight(),
 		consults: runtime.consultsInFlight(),
+		...(cueRuns !== undefined ? { cueRuns } : {}),
 	});
 
 	const statusReport = (): HostStatusReport => {
@@ -132,7 +134,7 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 			...(described.version ? { version: described.version } : {}),
 			lock: runtime.lock,
 			clients: sockets.size,
-			work: work(),
+			work: work(described.cueRuns),
 			cue: described.cue,
 		};
 	};

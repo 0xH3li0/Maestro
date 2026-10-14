@@ -47,6 +47,8 @@ export interface CueEngineStatusOptions {
  * here is safe by construction, not by this command's own checking.
  */
 export async function cueEngineStart(options: CueEngineStartOptions = {}): Promise<void> {
+	// No runtime lives in this process, so the engine gets no `runAutoRun`: an
+	// `action: autorun` subscription fails here and says to use `maestro-cli host`.
 	const engine = await createStandaloneCueEngine();
 
 	let shuttingDown = false;

@@ -111,6 +111,13 @@ describe('BridgeConnection', () => {
 			await expect(client.connect()).rejects.toThrow('Maestro desktop app is not running');
 		});
 
+		it('names the headless host as the other way to get a peer when nothing is running', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue(null);
+
+			const client = new BridgeConnection();
+			await expect(client.connect()).rejects.toThrow('maestro-cli host start');
+		});
+
 		it('should throw when PID is stale', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue(RUNNING_SERVER);
 			vi.mocked(isCliServerRunning).mockReturnValue(false);
@@ -289,6 +296,32 @@ describe('BridgeConnection', () => {
 			await expect(commandPromise).rejects.toThrow("does not support the 'brand_new_cmd' command");
 			await expect(commandPromise).rejects.toBeInstanceOf(UnsupportedCommandError);
 			await expect(commandPromise).rejects.toMatchObject({ commandType: 'brand_new_cmd' });
+		});
+
+		it('says the headless host does not support the command when the peer is one', async () => {
+			mockRunningServer({ ...RUNNING_SERVER, hostKind: 'headless' });
+			const client = new BridgeConnection();
+			const connectPromise = client.connect();
+			mockWsInstance.emit('open');
+			await connectPromise;
+
+			const commandPromise = client.sendCommand({ type: 'open_file_tab' }, 'open_file_tab_result');
+			const sent = lastSentPayload();
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({
+					type: 'echo',
+					originalType: 'open_file_tab',
+					data: { type: 'open_file_tab', requestId: sent.requestId },
+				})
+			);
+
+			await expect(commandPromise).rejects.toBeInstanceOf(UnsupportedCommandError);
+			await expect(commandPromise).rejects.toThrow(
+				"The headless Maestro host (`maestro-cli host`) does not support the 'open_file_tab' command"
+			);
+			// Nobody with only a headless host running has a desktop app to rebuild.
+			await expect(commandPromise).rejects.not.toThrow('rebuild and restart the desktop app');
 		});
 
 		it('should ignore non-matching response types', async () => {

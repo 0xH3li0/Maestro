@@ -112,6 +112,90 @@ describe('maestro-cli host', () => {
 			expect(out.join('\n')).toContain('already running');
 		});
 
+		it('says the desktop app holds the directory, and fails, instead of calling it a running host', async () => {
+			// A desktop's discovery file has no `hostKind`.
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 't',
+				pid: process.pid,
+				startedAt: Date.now(),
+			});
+			const d = deps();
+			await hostStart({ dataDir: dir }, undefined, d);
+
+			expect(d.spawnDetached).not.toHaveBeenCalled();
+			expect(err.join('\n')).toContain('desktop app is running on this data directory');
+			expect(out.join('\n')).not.toContain('already running');
+			expect(process.exitCode).toBe(1);
+		});
+
+		it('says the same as JSON, with a non-zero exit', async () => {
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 't',
+				pid: process.pid,
+				startedAt: Date.now(),
+			});
+			await hostStart({ dataDir: dir, json: true }, undefined, deps());
+
+			expect(JSON.parse(out[0])).toMatchObject({
+				started: false,
+				reason: 'desktop-running',
+				pid: process.pid,
+			});
+			expect(process.exitCode).toBe(1);
+		});
+
+		const startedWith = (requestStatus: HostCommandDeps['requestStatus'], json = false) =>
+			hostStart(
+				{ dataDir: dir, json },
+				undefined,
+				deps({
+					requestStatus,
+					spawnDetached: () => {
+						publish(process.pid, 4321);
+						return { pid: process.pid, exited: () => undefined };
+					},
+				})
+			);
+
+		it('says where Cue stands once the host is up', async () => {
+			await startedWith(async () => report());
+			expect(out.join('\n')).toContain('Host started (pid');
+			expect(out.join('\n')).toContain('Cue: running');
+		});
+
+		it('says the host is up but Cue is not, with the reason, when Cue failed to start', async () => {
+			await startedWith(async () =>
+				report({ cue: { state: 'failed', reason: 'better-sqlite3 could not be loaded' } })
+			);
+			const text = out.join('\n');
+			expect(text).toContain('Host started (pid');
+			expect(text).toContain('Cue: failed to start: better-sqlite3 could not be loaded');
+			expect(text).toContain('The host is up, but Cue is not');
+			// The host itself did start, and the output says exactly that.
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('puts the Cue state in the JSON a script reads', async () => {
+			await startedWith(
+				async () => report({ cue: { state: 'failed', reason: 'no sqlite' } }),
+				true
+			);
+			expect(JSON.parse(out[0])).toMatchObject({
+				started: true,
+				cue: { state: 'failed', reason: 'no sqlite' },
+			});
+		});
+
+		it('does not claim a Cue state it could not read', async () => {
+			await startedWith(async () => {
+				throw new Error('Connection to Maestro timed out');
+			});
+			expect(out.join('\n')).toContain('Cue: unknown');
+			expect(out.join('\n')).toContain('timed out');
+		});
+
 		it('prints the log tail when the child dies before it is ready', async () => {
 			fs.mkdirSync(path.dirname(hostLogFilePath(dir)), { recursive: true });
 			fs.writeFileSync(
@@ -186,6 +270,14 @@ describe('maestro-cli host', () => {
 			expect(formatHostStatus(report({ work: { turns: 0, runs: [] } }))).toContain('Work: idle');
 		});
 
+		it('names the Cue runs a stop would cut off', () => {
+			const text = formatHostStatus(report({ work: { turns: 0, runs: [], cueRuns: 1 } }));
+			expect(text).toContain('Work: 0 turns, 1 Cue run');
+			expect(formatHostStatus(report({ work: { turns: 0, runs: [], cueRuns: 0 } }))).toContain(
+				'Work: idle'
+			);
+		});
+
 		it('reports no host with the not-running exit code', async () => {
 			await hostStatus(
 				{ dataDir: dir },
@@ -253,6 +345,23 @@ describe('maestro-cli host', () => {
 				})
 			);
 			expect(err.join('\n')).toContain('1 group chat round');
+			expect(process.exitCode).toBe(1);
+		});
+
+		it('refuses while only a Cue run is in flight', async () => {
+			publish(process.pid);
+			await hostStop(
+				{ dataDir: dir },
+				deps({
+					requestStop: async () => ({
+						stopping: false,
+						reason: 'work-in-flight',
+						work: { turns: 0, runs: [], cueRuns: 2 },
+					}),
+				})
+			);
+			expect(err.join('\n')).toContain('2 Cue runs');
+			expect(err.join('\n')).toContain('--force');
 			expect(process.exitCode).toBe(1);
 		});
 

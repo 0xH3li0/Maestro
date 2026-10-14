@@ -29,6 +29,8 @@ export interface HostWork {
 	rounds?: number;
 	/** Consults waiting on another agent's answer. Absent from a host that predates them. */
 	consults?: number;
+	/** Cue runs in flight in the host's own engine. Absent from a host that predates the count. */
+	cueRuns?: number;
 }
 
 /** Where the Cue engine stands in the host process (spec D3, Q5). */
@@ -68,7 +70,11 @@ export const HOST_STOP_REPLY = 'host_stop_result';
 /** `true` when the host has anything a stop would interrupt. */
 export function hostHasWork(work: HostWork): boolean {
 	return (
-		work.turns > 0 || work.runs.length > 0 || (work.rounds ?? 0) > 0 || (work.consults ?? 0) > 0
+		work.turns > 0 ||
+		work.runs.length > 0 ||
+		(work.rounds ?? 0) > 0 ||
+		(work.consults ?? 0) > 0 ||
+		(work.cueRuns ?? 0) > 0
 	);
 }
 
@@ -109,8 +115,8 @@ export function requestHostStatus(
 }
 
 /**
- * Ask the host to stop. It refuses while a turn or run is in flight unless `force`; a refusal is a
- * value, not a throw, so the caller can name the work.
+ * Ask the host to stop. It refuses while a turn, an Auto Run, or a Cue run is in flight unless
+ * `force`; a refusal is a value, not a throw, so the caller can name the work.
  */
 export function requestHostStop(
 	userDataDir: string,
