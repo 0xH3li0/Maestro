@@ -29,6 +29,10 @@ import { formatRelativeTime } from '../../shared/formatters';
 import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import { getViewportSize } from '../utils/modalSizing';
+import { ResizeHandles } from './ui/ResizeHandles';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SegmentedControl } from './ui/SegmentedControl';
@@ -88,6 +92,7 @@ export const NotificationCenter = memo(function NotificationCenter({
 /** App-level host: history remains reachable when the Main Panel header is absent. */
 export function NotificationCenterHost({ theme }: NotificationCenterProps) {
 	const open = useNotificationStore((s) => s.notificationCenterOpen);
+	const large = useSettingsStore((s) => s.notificationCenterLarge);
 	const setOpen = useNotificationStore((s) => s.setNotificationCenterOpen);
 	const close = useCallback(() => setOpen(false), [setOpen]);
 	const fallbackRef = useRef<HTMLSpanElement | null>(null);
@@ -100,7 +105,14 @@ export function NotificationCenterHost({ theme }: NotificationCenterProps) {
 				className="fixed right-4 top-12 pointer-events-none"
 				ref={fallbackRef}
 			/>
-			{open && <NotificationCenterPopover theme={theme} anchorRef={anchorRef} onClose={close} />}
+			{open && (
+				<NotificationCenterPopover
+					key={large ? 'large' : 'compact'}
+					theme={theme}
+					anchorRef={anchorRef}
+					onClose={close}
+				/>
+			)}
 		</>
 	);
 }
@@ -114,7 +126,12 @@ interface NotificationCenterPopoverProps {
 /** History controls and entry actions, positioned against the bell or the app fallback. */
 function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCenterPopoverProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
-	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, { align: 'end' });
+	const [viewport, setViewport] = useState(getViewportSize);
+	useEventListener('resize', () => setViewport(getViewportSize()));
+	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
+		align: 'end',
+		contentKey: `${viewport.width}:${viewport.height}`,
+	});
 
 	// Escape closes the popover before any modal underneath it.
 	useModalLayer(MODAL_PRIORITIES.NOTIFICATION_CENTER, 'Notification Center', onClose);
@@ -124,6 +141,25 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	});
 
 	const large = useSettingsStore((s) => s.notificationCenterLarge);
+	const [defaultSize] = useState(() => {
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+		return { width: (large ? 38 : 22) * rem, height: (large ? 48 : 32) * rem };
+	});
+	// Align to the bell on opening, then keep the top-left fixed while dragging.
+	// The remaining viewport space bounds east/south growth, including the fallback anchor.
+	const resize = useResizableModal({
+		resizeKey: large ? 'notification-center-large' : 'notification-center',
+		defaultSize,
+		minSize: { width: 320, height: 240 },
+		maxSize: ready
+			? {
+					width: Math.max(320, viewport.width - left - 8),
+					height: Math.max(240, viewport.height - top - 8),
+				}
+			: undefined,
+		anchor: 'top-left',
+		externalRef: menuRef as React.RefObject<HTMLDivElement>,
+	});
 	const details = useSettingsStore((s) => s.notificationCenterDetails);
 	const keyboardNavigation = useSettingsStore((s) => s.notificationCenterKeyboardNavigation);
 	const expandedId = useNotificationStore((s) => s.notificationCenterExpandedId);
@@ -217,14 +253,14 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	return createPortal(
 		<div
 			ref={menuRef}
-			className={`fixed z-[100] ${large ? 'w-[38rem]' : 'w-[22rem]'} max-w-[calc(100vw-1rem)] flex flex-col rounded-lg shadow-xl overflow-hidden select-none`}
+			className="fixed z-[100] flex flex-col rounded-lg shadow-xl overflow-hidden select-none"
 			tabIndex={keyboardNavigation ? -1 : undefined}
 			onKeyDown={onEntryKeyDown}
 			style={{
+				...resize.style,
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				maxHeight: large ? 'min(48rem, calc(100vh - 5rem))' : 'min(32rem, calc(100vh - 5rem))',
 				backgroundColor: theme.colors.bgSidebar,
 				border: `1px solid ${theme.colors.border}`,
 			}}
@@ -269,7 +305,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 			)}
 			{visible.length === 0 ? (
 				<div
-					className="px-3 py-8 text-center text-xs"
+					className="flex-1 min-h-0 overflow-y-auto px-3 py-8 text-center text-xs"
 					style={{ color: theme.colors.textDim }}
 					data-testid="notification-center-empty"
 				>
@@ -408,7 +444,11 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 			)}
 
 			{keyboardNavigation && (
-				<p className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+				<p
+					data-shortcut-hint
+					className="px-3 py-2 text-xs shrink-0"
+					style={{ color: theme.colors.textDim }}
+				>
 					Arrows: navigate · Enter: open · R: read · Delete: dismiss{details ? ' · D: details' : ''}
 				</p>
 			)}
@@ -438,6 +478,15 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 					Clear all
 				</button>
 			</div>
+			<ResizeHandles
+				directions={['s', 'e', 'se']}
+				contained
+				onResizeStart={resize.onResizeStart}
+				onResetSize={resize.onResetSize}
+				canReset={resize.canReset}
+				accentColor={theme.colors.accent}
+				testIdPrefix="notification-center-resize"
+			/>
 		</div>,
 		document.body
 	);

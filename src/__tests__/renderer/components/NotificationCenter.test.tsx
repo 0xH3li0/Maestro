@@ -322,7 +322,7 @@ describe('NotificationCenter', () => {
 				<NotificationCenterHost theme={mockTheme} />
 			</>
 		);
-		expect(screen.getByTestId('notification-center')).toHaveClass('w-[22rem]');
+		expect(screen.getByTestId('notification-center')).toHaveStyle({ width: '352px' });
 		expect(screen.getByText('All done')).toHaveClass('line-clamp-3');
 		expect(screen.queryByRole('button', { name: 'Show details' })).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Composer' })).toHaveFocus();
@@ -332,10 +332,7 @@ describe('NotificationCenter', () => {
 		useSettingsStore.setState({ notificationCenterLarge: true });
 		seed([], true);
 		render(<NotificationCenterHost theme={mockTheme} />);
-		expect(screen.getByTestId('notification-center')).toHaveClass('w-[38rem]');
-		expect(screen.getByTestId('notification-center')).toHaveStyle({
-			maxHeight: 'min(48rem, calc(100vh - 5rem))',
-		});
+		expect(screen.getByTestId('notification-center')).toHaveStyle({ width: '608px' });
 	});
 
 	it('expands full content without activating the entry or marking it read', () => {

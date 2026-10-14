@@ -156,6 +156,24 @@ describe('useAnchoredMenuPosition', () => {
 		expect(top).toBe(46);
 	});
 
+	it('remeasures the anchor and menu after an explicit layout change', () => {
+		const { rerender } = render(
+			<Harness
+				anchorRect={{ left: 340, top: 20, right: 400, bottom: 40 }}
+				menuSize={{ width: 200, height: 100 }}
+				options={{ align: 'end', contentKey: 'wide' }}
+			/>
+		);
+		rerender(
+			<Harness
+				anchorRect={{ left: 220, top: 30, right: 280, bottom: 50 }}
+				menuSize={{ width: 240, height: 100 }}
+				options={{ align: 'end', contentKey: 'narrow' }}
+			/>
+		);
+		expect(readPosition()).toEqual({ left: 40, top: 56, ready: true });
+	});
+
 	it('combines above and end, the media transport case', () => {
 		render(
 			<Harness

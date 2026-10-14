@@ -58,6 +58,8 @@ export interface AnchoredMenuOptions {
 	 * menu rather than opening leftwards.
 	 */
 	flip?: boolean;
+	/** Remeasure the anchor and menu when the caller's viewport/layout changes. */
+	contentKey?: unknown;
 }
 
 export interface AnchoredMenuPosition {
@@ -92,7 +94,13 @@ export function useAnchoredMenuPosition(
 	options: number | AnchoredMenuOptions = {}
 ): AnchoredMenuPosition {
 	const resolved = typeof options === 'number' ? { gap: options } : options;
-	const { gap = DEFAULT_GAP_PX, placement = 'below', align = 'start', flip = false } = resolved;
+	const {
+		gap = DEFAULT_GAP_PX,
+		placement = 'below',
+		align = 'start',
+		flip = false,
+		contentKey,
+	} = resolved;
 	// Non-null exactly for the beside-the-anchor placements, which keeps the side
 	// narrowed for the flip helper below.
 	const sidePlacement = placement === 'right' || placement === 'left' ? placement : null;
@@ -107,10 +115,19 @@ export function useAnchoredMenuPosition(
 	// Fallback for the case where the anchor mounts in the same commit as the
 	// menu - refs aren't attached yet during render, so measure after layout.
 	useLayoutEffect(() => {
-		if (anchor) return;
+		if (anchor && contentKey === undefined) return;
 		const measured = measureAnchor(anchorRef);
-		if (measured) setAnchor(measured);
-	}, [anchor, anchorRef]);
+		if (measured)
+			setAnchor((prev) =>
+				prev &&
+				prev.left === measured.left &&
+				prev.right === measured.right &&
+				prev.top === measured.top &&
+				prev.bottom === measured.bottom
+					? prev
+					: measured
+			);
+	}, [anchor, anchorRef, contentKey]);
 
 	// A menu that grows up or leftwards has to know its own size before it can be
 	// placed, so it takes one extra pass at opacity 0. Growing down-right needs
@@ -129,7 +146,7 @@ export function useAnchoredMenuPosition(
 		setMenuSize((prev) =>
 			prev && prev.width === width && prev.height === height ? prev : { width, height }
 		);
-	}, [needsMenuSize, menuRef, anchor]);
+	}, [needsMenuSize, menuRef, anchor, contentKey]);
 
 	const size = menuSize ?? { width: 0, height: 0 };
 
@@ -160,7 +177,7 @@ export function useAnchoredMenuPosition(
 		: 0;
 
 	// Clamps into the viewport - the same helper the right-click menus use.
-	const position = useContextMenuPosition(menuRef, x, y);
+	const position = useContextMenuPosition(menuRef, x, y, 8, contentKey);
 
 	// Stay "not ready" until everything the placement depends on is known, so
 	// callers keep the menu at opacity 0 rather than flashing it in a corner.
