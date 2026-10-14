@@ -611,6 +611,52 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// Claude Code answers a `--permission-mode plan` turn on Sonnet even when
+		// `--model haiku` is passed, so plan mode turned every cheap naming turn into
+		// a Sonnet turn. With every tool switched off it protects nothing.
+		it('drops read-only mode when the agent can switch all tools off', async () => {
+			const { buildAgentArgs, applyAgentConfigOverrides } =
+				await import('../../../../main/utils/agent-args');
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				noToolsArgs: ['--tools', ''],
+			});
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me with something',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildAgentArgs).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ readOnlyMode: false })
+			);
+			expect(applyAgentConfigOverrides).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.objectContaining({ readOnlyMode: false })
+			);
+			const spawnArgs = (mockProcessManager.spawn as Mock).mock.calls[0][0].args as string[];
+			expect(spawnArgs).toEqual(expect.arrayContaining(['--tools', '']));
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Test Tab');
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			await expect(resultPromise).resolves.toBe('Test Tab');
+		});
+
 		it('extracts tab name from agent output with ANSI codes', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;

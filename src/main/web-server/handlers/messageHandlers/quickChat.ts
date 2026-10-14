@@ -9,10 +9,12 @@
 import { getQuickChatController } from '../../../quick-chat';
 import {
 	parseQuickChatFontScaleRequest,
+	parseQuickChatTabChoice,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatCommand,
 } from '../../../../shared/quickChat';
+import { asThinkingMode } from '../../../../shared/types';
 import { logger } from '../../../utils/logger';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -36,6 +38,18 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 			return { type: 'new' };
 		case 'keep':
 			return { type: 'setPersistent', persistent: message.persistent !== false };
+		case 'tab': {
+			const choice = parseQuickChatTabChoice(message.tab);
+			if (!choice) return { error: 'Give a tab id, new, or auto' };
+			return { type: 'setTab', choice };
+		}
+		case 'thinking': {
+			// `mode` is shared with other messages, which give it other values.
+			const raw: unknown = message.mode;
+			const mode = raw === 'cycle' ? 'cycle' : asThinkingMode(raw);
+			if (!mode) return { error: 'Thinking mode must be off, on, sticky, or cycle' };
+			return { type: 'setThinking', mode };
+		}
 		case 'agent': {
 			const agentId = typeof message.agentId === 'string' ? message.agentId : '';
 			if (!agentId) return { error: 'Agent id is required' };
@@ -115,6 +129,15 @@ export function handleQuickChat(
 			return;
 		}
 		reply({ success: true, status: controller.setFontScale(request) });
+		return;
+	}
+
+	// No mode (or tab) reads the current one, like a bare `font`.
+	if (
+		(action === 'thinking' && message.mode === undefined) ||
+		(action === 'tab' && message.tab === undefined)
+	) {
+		reply({ success: true, status: controller.getStatus() });
 		return;
 	}
 

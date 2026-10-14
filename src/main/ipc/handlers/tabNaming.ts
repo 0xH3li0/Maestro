@@ -179,16 +179,23 @@ export async function generateTabName(
 		// Build the prompt: combine the tab naming prompt with the user's message
 		const fullPrompt = `${getPrompt('tab-naming')}\n\n---\n\nUser's message:\n\n${config.userMessage}`;
 
-		// Build agent arguments - read-only mode, runs in parallel
-		// Filter out --dangerously-skip-permissions from base args since tab naming
-		// runs in read-only/plan mode. Without skip-permissions, the agent doesn't
-		// need to acquire a workspace lock and can run in parallel with other instances.
+		// Build agent arguments. Filter out --dangerously-skip-permissions: without
+		// it the agent doesn't need to acquire a workspace lock and can run in
+		// parallel with other instances.
 		const baseArgs = (agent.args ?? []).filter((arg) => arg !== '--dangerously-skip-permissions');
+		// An agent that can switch every tool off (`noToolsArgs`, added below) has
+		// nothing left to write with, so read-only mode protects nothing - and it
+		// costs. Claude Code answers a `--permission-mode plan` turn on Sonnet even
+		// when `--model haiku` is passed (its init still names Haiku), so every tab
+		// name was billed at Sonnet rates. Pi and OMP's read-only flag is a
+		// `--tools <list>` that contradicts their own `--no-tools`. Agents with no
+		// way to disable tools stay read-only.
+		const readOnlyMode = !agent.noToolsArgs?.length;
 		let finalArgs = buildAgentArgs(agent, {
 			baseArgs,
 			prompt: fullPrompt,
 			cwd: config.cwd,
-			readOnlyMode: true, // Always read-only since we're not modifying anything
+			readOnlyMode,
 			// Only apply the model override when a utility agent is actually in use.
 			modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 		});
@@ -213,7 +220,7 @@ export async function generateTabName(
 		const agentConfigValues = allConfigs[effectiveAgentType] || {};
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 			agentConfigValues,
-			readOnlyMode: true,
+			readOnlyMode,
 			sessionCustomModel: cheapNaming.model,
 			sessionCustomEffort: cheapNaming.effort,
 		});

@@ -2543,6 +2543,22 @@ quickChatCmd
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
+	.command('tab [target]')
+	.description(
+		'Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((target: string | undefined, options) => quickChat('tab', { state: target }, options));
+
+quickChatCmd
+	.command('thinking [mode]')
+	.description(
+		"Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode: string | undefined, options) => quickChat('thinking', { state: mode }, options));
+
+quickChatCmd
 	.command('font [size]')
 	.description(
 		'Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)'

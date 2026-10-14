@@ -8,12 +8,15 @@ import { resolveAgentId } from '../services/storage';
 import { parseCliBool } from '../utils/parse';
 import {
 	describeQuickChatRoute,
+	parseQuickChatTabChoice,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatFontScaleRequest,
+	type QuickChatNextTarget,
 	type QuickChatStatus,
 } from '../../shared/quickChat';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
+import { asThinkingMode, type ThinkingMode } from '../../shared/types';
 
 export interface QuickChatOptions {
 	json?: boolean;
@@ -40,6 +43,8 @@ export type QuickChatAction =
 	| 'new'
 	| 'keep'
 	| 'pin'
+	| 'thinking'
+	| 'tab'
 	| 'font'
 	| 'agent'
 	| 'reveal'
@@ -76,6 +81,33 @@ export function parseQuickChatFontArg(arg: string): QuickChatFontScaleRequest {
 	return { scale };
 }
 
+/** What `quick-chat status` and `quick-chat thinking` say about each thinking mode. */
+const THINKING_DESCRIPTIONS: Record<ThinkingMode, string> = {
+	off: 'hidden',
+	on: 'shown while a reply is written',
+	sticky: 'kept above each answer',
+};
+
+/**
+ * `quick-chat thinking <mode>`: `off`, `on` (shown until the answer arrives),
+ * `sticky` (kept), or `cycle` to step the way the window's button does. Throws
+ * on anything else, so a typo never changes the mode.
+ */
+export function parseQuickChatThinkingArg(arg: string): ThinkingMode | 'cycle' {
+	const word = arg.trim().toLowerCase();
+	if (word === 'cycle') return 'cycle';
+	const mode = asThinkingMode(word);
+	if (!mode) throw new Error(`Unknown thinking mode "${arg}". Use off, on, sticky, or cycle`);
+	return mode;
+}
+
+/** Where the next message goes, in words. */
+export function describeQuickChatNextTarget(next: QuickChatNextTarget): string {
+	if (next.kind === 'new') return 'a new tab';
+	if (next.kind === 'auto') return 'any tab (Maestro finds the one that fits)';
+	return `tab "${next.name}" (${next.tabId})${next.chosen ? ', chosen' : ''}`;
+}
+
 function fail(message: string, options: QuickChatOptions): void {
 	if (options.json) {
 		console.log(JSON.stringify({ success: false, error: message }));
@@ -99,6 +131,15 @@ function printStatus(status: QuickChatStatus): void {
 	}
 	console.log(`Pinned: ${status.pinned ? 'yes, floats above other windows' : 'no'}`);
 	console.log(`Text size: ${Math.round(status.fontScale * 100)}%`);
+	console.log(`Thinking: ${snapshot.thinking}, ${THINKING_DESCRIPTIONS[snapshot.thinking]}`);
+	console.log(`Next message goes to: ${describeQuickChatNextTarget(snapshot.next)}`);
+	if (snapshot.tabs.length > 0) {
+		console.log('Tabs (pass an id to `quick-chat tab`):');
+		for (const tab of snapshot.tabs) {
+			const notes = [tab.inChat ? 'this chat' : '', tab.busy ? 'working' : ''].filter(Boolean);
+			console.log(`  ${tab.id}  ${tab.name}${notes.length ? ` (${notes.join(', ')})` : ''}`);
+		}
+	}
 	console.log(
 		`Agent: ${snapshot.agentName ?? 'none'}${snapshot.agentId ? ` (${snapshot.agentId})` : ''}`
 	);
@@ -106,7 +147,12 @@ function printStatus(status: QuickChatStatus): void {
 		`Chat: ${snapshot.tabId ? `tab ${snapshot.tabId}` : 'not started'}, ${snapshot.persistent ? 'kept as a tab' : 'ephemeral'}${snapshot.busy ? ', working' : ''}`
 	);
 	for (const message of snapshot.messages) {
-		const who = message.role === 'user' ? 'You' : message.role === 'error' ? 'Error' : 'Agent';
+		const who = {
+			user: 'You',
+			assistant: 'Agent',
+			thinking: 'Agent (thinking)',
+			error: 'Error',
+		}[message.role];
 		// A message the user sent names where it went, and its id is what
 		// `reveal <id>` and `new-tab <id>` take.
 		const route = message.route
@@ -145,6 +191,22 @@ export async function quickChat(
 	}
 	if ((action === 'reveal' || action === 'new-tab') && args.messageId) {
 		message.messageId = args.messageId;
+	}
+	if (action === 'tab' && args.state !== undefined) {
+		const choice = parseQuickChatTabChoice(args.state);
+		if (!choice) {
+			fail('Give a tab id, new, or auto', options);
+			return;
+		}
+		message.tab = args.state.trim();
+	}
+	if (action === 'thinking' && args.state !== undefined) {
+		try {
+			message.mode = parseQuickChatThinkingArg(args.state);
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options);
+			return;
+		}
 	}
 	if (action === 'font' && args.state !== undefined) {
 		try {
@@ -193,6 +255,13 @@ export async function quickChat(
 		}
 		if (action === 'font' && result.status) {
 			console.log(`Text size: ${Math.round(result.status.fontScale * 100)}%`);
+		} else if (action === 'tab' && result.status) {
+			console.log(
+				`Next message goes to: ${describeQuickChatNextTarget(result.status.snapshot.next)}`
+			);
+		} else if (action === 'thinking' && result.status) {
+			const mode = result.status.snapshot.thinking;
+			console.log(`Thinking: ${mode}, ${THINKING_DESCRIPTIONS[mode]}`);
 		} else if (
 			(action === 'status' ||
 				action === 'bounds' ||

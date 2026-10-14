@@ -377,24 +377,51 @@ describe('send', () => {
 		expect(tab('b', message.route!.tabId).quickChat).toBe(true);
 	});
 
-	it('tells the router which tab the chat is in and which tabs are its own', async () => {
-		const first = await send('one');
-		await send('two');
-		const context = vi.mocked(routeQuickChatMessage).mock.calls[1][2];
-		expect(context.currentTabId).toBe(first.message.route!.tabId);
-		expect([...context.ownedTabIds]).toEqual([first.message.route!.tabId]);
-	});
-
-	it('runs two messages sent back to back in two tabs at once', async () => {
+	it("routes only the chat's first message; a follow-up stays in that tab", async () => {
 		vi.mocked(routeQuickChatMessage).mockResolvedValueOnce({ kind: 'open', tabId: 'b-main' });
 		const first = await send('about the build');
-		const second = await send('about lunch');
+		// Whatever the router would say about it, a follow-up is never routed.
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'new' });
+		const second = await send('and when does it arrive?');
 
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
 		expect(first.message.route!.tabId).toBe('b-main');
-		expect(second.message.route!.tabId).not.toBe('b-main');
-		expect(sent().map((m) => m.route?.status)).toEqual(['running', 'running']);
-		// The second ran beside a busy tab on purpose, and its card says so.
-		expect(tab('b', second.message.route!.tabId).logs[0]).toMatchObject({ forceParallel: true });
+		expect(second.message.route).toMatchObject({ tabId: 'b-main', origin: 'open' });
+		// It waits for the reply it follows, in the same tab.
+		expect(sent().map((m) => m.route?.status)).toEqual(['running', 'queued']);
+		expect(session('b').aiTabs).toHaveLength(1);
+	});
+
+	it('sends a message typed while the first is still being routed to the same tab', async () => {
+		let found: (target: { kind: 'new' }) => void = () => {};
+		vi.mocked(routeQuickChatMessage).mockReturnValue(new Promise((resolve) => (found = resolve)));
+		await runQuickChatCommand({ type: 'send', text: 'one' });
+		await runQuickChatCommand({ type: 'send', text: 'two' });
+		found({ kind: 'new' });
+
+		await vi.waitFor(() => expect(sent().every((m) => m.route?.tabId)).toBe(true));
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		const [one, two] = sent();
+		expect(two.route!.tabId).toBe(one.route!.tabId);
+		expect(session('b').aiTabs).toHaveLength(2);
+	});
+
+	it("routes again when the chat's tab was closed", async () => {
+		const first = await send('one');
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) =>
+					s.id === 'b'
+						? { ...s, aiTabs: s.aiTabs.filter((t) => t.id !== first.message.route!.tabId) }
+						: s
+				),
+		});
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const second = await send('two');
+
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(2);
+		expect(second.message.route!.tabId).toBe('b-main');
 	});
 
 	it('queues behind a tab that is mid-reply instead of running over it', async () => {
@@ -556,6 +583,14 @@ describe('move to a new tab', () => {
 		expect(tab('b', 'b-main').logs).toEqual([]);
 	});
 
+	it('takes the conversation with it: the next message follows to the new tab', async () => {
+		await queueBehindBusyMain();
+		const result = await runQuickChatCommand({ type: 'moveToNewTab' });
+		const movedTo = sent(result.snapshot.messages)[0].route!.tabId;
+		const next = await send('and then?');
+		expect(next.message.route!.tabId).toBe(movedTo);
+	});
+
 	it('defaults to the latest queued message', async () => {
 		await queueBehindBusyMain();
 		const result = await runQuickChatCommand({ type: 'moveToNewTab' });
@@ -686,6 +721,204 @@ describe('keep (setPersistent)', () => {
 		const result = await runQuickChatCommand({ type: 'setPersistent', persistent: false });
 		expect(result.ok).toBe(true);
 		expect(tab('b', 'b-main').hidden).toBeFalsy();
+	});
+});
+
+describe('choosing the tab (setTab)', () => {
+	it("lists the visible tabs and the chat's own, and says where the next message goes", async () => {
+		const empty = buildQuickChatSnapshot();
+		expect(empty.next).toEqual({ kind: 'auto' });
+		expect(empty.tabs.map((t) => t.id)).toEqual(['b-main']);
+
+		const { message } = await send('hi');
+		const own = message.route!.tabId!;
+		const snapshot = buildQuickChatSnapshot();
+		// The chat's tab is hidden (ephemeral), and still listed: it is the chat's.
+		expect(snapshot.tabs.map((t) => [t.id, t.inChat, t.busy])).toEqual([
+			['b-main', false, false],
+			[own, true, true],
+		]);
+		expect(snapshot.next).toMatchObject({ kind: 'tab', tabId: own, chosen: false });
+	});
+
+	it('sends the next message to the tab picked, without routing, and the chat stays there', async () => {
+		const first = await send('one');
+		vi.mocked(routeQuickChatMessage).mockClear();
+		const picked = await runQuickChatCommand({
+			type: 'setTab',
+			choice: { kind: 'tab', tabId: 'b-main' },
+		});
+		expect(picked.snapshot.next).toMatchObject({ kind: 'tab', tabId: 'b-main', chosen: true });
+
+		const second = await send('two');
+		const third = await send('three');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(first.message.route!.tabId).not.toBe('b-main');
+		expect(second.message.route).toMatchObject({ tabId: 'b-main', origin: 'open' });
+		expect(third.message.route!.tabId).toBe('b-main');
+		expect(buildQuickChatSnapshot().next).toMatchObject({ tabId: 'b-main', chosen: false });
+	});
+
+	it('starts a new tab for the next message when asked, even mid-chat', async () => {
+		const first = await send('one');
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'new' } });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'new' });
+		vi.mocked(routeQuickChatMessage).mockClear();
+
+		const second = await send('two');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(second.message.route).toMatchObject({ origin: 'new' });
+		expect(second.message.route!.tabId).not.toBe(first.message.route!.tabId);
+		// And the chat continues there.
+		expect((await send('three')).message.route!.tabId).toBe(second.message.route!.tabId);
+	});
+
+	it('picks a tab before the first message, skipping the search', async () => {
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'tab', tabId: 'b-main' } });
+		const { message } = await send('hi');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(message.route!.tabId).toBe('b-main');
+	});
+
+	it('routes the next message again when asked to find any tab', async () => {
+		await send('one');
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'auto' } });
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const second = await send('two');
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(2);
+		expect(second.message.route!.tabId).toBe('b-main');
+	});
+
+	it('picking the tab the chat is in clears the choice', async () => {
+		const { message } = await send('one');
+		const result = await runQuickChatCommand({
+			type: 'setTab',
+			choice: { kind: 'tab', tabId: message.route!.tabId! },
+		});
+		expect(result.snapshot.next).toMatchObject({ chosen: false });
+	});
+
+	it("refuses a tab that is not open, or is hidden and not the chat's", async () => {
+		patchTab('b', 'b-main', () => ({ hidden: true }));
+		for (const tabId of ['nope', 'b-main']) {
+			const result = await runQuickChatCommand({ type: 'setTab', choice: { kind: 'tab', tabId } });
+			expect(result.ok).toBe(false);
+		}
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+	});
+
+	it('fails the message when the chosen tab closed before it was sent', async () => {
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'tab', tabId: 'b-main' } });
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) =>
+					s.id === 'b' ? { ...s, aiTabs: s.aiTabs.filter((t) => t.id !== 'b-main') } : s
+				),
+		});
+		const { snapshot } = await send('hi');
+		expect(snapshot.messages.at(-1)).toMatchObject({
+			role: 'error',
+			text: 'The tab you chose for this message is no longer open',
+		});
+	});
+
+	it('a new chat forgets the choice', async () => {
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'new' } });
+		await runQuickChatCommand({ type: 'new' });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+	});
+});
+
+describe('thinking (setThinking)', () => {
+	/** The agent reasons in a tab, then (optionally) answers. */
+	function think(tabId: string, text: string): void {
+		patchTab('b', tabId, (t) => ({
+			logs: [...t.logs, { id: `th-${t.logs.length}`, timestamp: 2, source: 'thinking', text }],
+		}));
+	}
+
+	it('is off by default and records nothing extra in the tab', async () => {
+		const { message, snapshot } = await send('hi');
+		expect(snapshot.thinking).toBe('off');
+		expect(tab('b', message.route!.tabId).showThinking).toBe('off');
+	});
+
+	it('cycles off, on, sticky, off, and remembers the mode as a setting', async () => {
+		const steps: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			const result = await runQuickChatCommand({ type: 'setThinking', mode: 'cycle' });
+			steps.push(result.snapshot.thinking);
+		}
+		expect(steps).toEqual(['on', 'sticky', 'off']);
+		await runQuickChatCommand({ type: 'setThinking', mode: 'sticky' });
+		expect(useSettingsStore.getState().quickChatSettings.thinking).toBe('sticky');
+	});
+
+	it('records reasoning in a tab it creates, and shows it while the reply runs', async () => {
+		setQuickChatSettings({ thinking: 'on' });
+		const { message } = await send('hi');
+		const tabId = message.route!.tabId!;
+		expect(tab('b', tabId).showThinking).toBe('on');
+
+		think(tabId, 'Looking it up.');
+		expect(buildQuickChatSnapshot().messages.map((m) => m.role)).toEqual(['user', 'thinking']);
+
+		reply('b', tabId, 'Done.');
+		expect(buildQuickChatSnapshot().messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+	});
+
+	it('keeps the reasoning above the answer when sticky', async () => {
+		setQuickChatSettings({ thinking: 'sticky' });
+		const { message } = await send('hi');
+		const tabId = message.route!.tabId!;
+		think(tabId, 'Looking it up.');
+		reply('b', tabId, 'Done.');
+		expect(buildQuickChatSnapshot().messages.map((m) => m.role)).toEqual([
+			'user',
+			'thinking',
+			'assistant',
+		]);
+	});
+
+	it('applies a change mid-chat to the tabs the chat already used', async () => {
+		const { message } = await send('hi');
+		await runQuickChatCommand({ type: 'setThinking', mode: 'sticky' });
+		expect(tab('b', message.route!.tabId).showThinking).toBe('sticky');
+	});
+
+	it("raises the user's own tab to show thinking, but never lowers it", async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		patchTab('b', 'b-main', () => ({ showThinking: 'sticky' }));
+		think('b-main', 'Earlier reasoning the user kept.');
+		setQuickChatSettings({ thinking: 'on' });
+		await send('hi');
+		await runQuickChatCommand({ type: 'setThinking', mode: 'off' });
+
+		// Lowering it would have deleted the reasoning already in the tab.
+		expect(tab('b', 'b-main').showThinking).toBe('sticky');
+		expect(tab('b', 'b-main').logs.some((l) => l.source === 'thinking')).toBe(true);
+
+		patchTab('b', 'b-main', () => ({ showThinking: 'off' }));
+		await runQuickChatCommand({ type: 'setThinking', mode: 'on' });
+		expect(tab('b', 'b-main').showThinking).toBe('on');
+	});
+
+	it("hides the thinking in the window when off, even when the tab's chip keeps it", async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		patchTab('b', 'b-main', () => ({ showThinking: 'sticky' }));
+		await send('hi');
+		think('b-main', 'Hidden from the window.');
+		expect(buildQuickChatSnapshot().messages.map((m) => m.role)).toEqual(['user']);
+	});
+
+	it('rejects an unknown mode', async () => {
+		const result = await runQuickChatCommand({
+			type: 'setThinking',
+			mode: 'loud' as unknown as 'on',
+		});
+		expect(result.ok).toBe(false);
+		expect(useSettingsStore.getState().quickChatSettings.thinking).toBe('off');
 	});
 });
 
@@ -825,9 +1058,13 @@ describe('snapshot', () => {
 			] as LogEntry[],
 		}));
 		const first = await send('about the build');
-		const second = await send('about lunch');
+		await send('about lunch');
+		// Queued behind the first reply, then moved to a tab of its own.
+		expect((await runQuickChatCommand({ type: 'moveToNewTab' })).ok).toBe(true);
+		const second = sent()[1];
+		expect(second.route!.tabId).not.toBe('b-main');
 		// The second message is answered first.
-		reply('b', second.message.route!.tabId!, 'sandwich');
+		reply('b', second.route!.tabId!, 'sandwich');
 		reply('b', 'b-main', 'it passed');
 
 		const snapshot = buildQuickChatSnapshot();

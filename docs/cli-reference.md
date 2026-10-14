@@ -2319,6 +2319,22 @@ Float the window above other windows ("off" lets it fall behind them)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat tab [target]`
+
+Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat thinking [mode]`
+
+Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat font [size]`
 
 Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
