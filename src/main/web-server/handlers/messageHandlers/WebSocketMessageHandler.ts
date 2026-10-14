@@ -102,6 +102,7 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -305,6 +306,10 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':

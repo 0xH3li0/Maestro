@@ -706,6 +706,43 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
 
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)

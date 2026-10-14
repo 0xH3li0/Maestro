@@ -214,6 +214,10 @@ import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 
@@ -883,6 +887,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
+		onRemoteAutoRunSteeringCommand: (
+			callback: (request: SteeringCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteAutoRunSteeringCommandResponse: (
+			responseChannel: string,
+			result: SteeringCommandResult
+		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;

@@ -62,7 +62,11 @@ import {
 	useAutoRunSteeringStore,
 	type SteeringDelivery,
 } from '../stores/autoRunSteeringStore';
-import { cancelSteeringNote, submitSteeringNote } from '../services/autoRunSteering';
+import {
+	cancelSteeringNote,
+	steeringBlocker,
+	submitSteeringNote,
+} from '../services/autoRunSteering';
 import { MAX_STEERING_NOTE_LENGTH, type AutoRunSteeringNote } from '../../shared/autorunSteering';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
@@ -422,13 +426,11 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const steerRef = useRef<HTMLTextAreaElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 
-	// Only a run THIS client owns can be steered: the notes are renderer state,
-	// so a mirrored run's loop is in another client and would never read them.
-	// A Steer button that quietly did nothing is worse than no button.
-	const canSteer = useBatchStore((st) => {
-		const run = panelSessionId ? st.batchRunStates[panelSessionId] : undefined;
-		return !!run?.isRunning && run.mirrored !== true;
-	});
+	// Only a run THIS client owns can be steered. `steeringBlocker` is the one
+	// statement of that rule, shared with `maestro-cli steer-auto-run`.
+	const canSteer = useBatchStore(
+		(st) => steeringBlocker(panelSessionId ? st.batchRunStates[panelSessionId] : undefined) === null
+	);
 	const pendingNotes = useAutoRunSteeringStore(selectPendingSteeringNotes(panelSessionId ?? ''));
 	const deliveredNotes = useAutoRunSteeringStore(
 		selectDeliveredSteeringNotes(panelSessionId ?? '')

@@ -41,6 +41,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -146,6 +147,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;

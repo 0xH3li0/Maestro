@@ -273,6 +273,8 @@ Use it for the things you notice while watching:
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
+**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, and `steer-auto-run cancel <note-id>` takes back a waiting one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
+
 **When the Steer button is not there.** It only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so the bar is the search box alone.
 
 Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run. Delivered notes and their replies stay readable after the run finishes, since the reply to a run's last note arrives as it ends, and are cleared when the next run starts.
