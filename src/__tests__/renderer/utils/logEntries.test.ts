@@ -174,7 +174,7 @@ describe('steerJoinsRunningTurn', () => {
 		expect(steerJoinsRunningTurn(entry({ source: 'user', steered: true, steerState }))).toBe(true);
 	});
 
-	it('is false for a steer the agent answered as a follow-up', () => {
+	it('is false for a steer the agent took as a follow-up', () => {
 		// It ran as a turn of its own, so stitching it to the running turn would say
 		// the opposite of what happened.
 		expect(

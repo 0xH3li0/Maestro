@@ -30,7 +30,7 @@ describe('SteeredMessageHeader', () => {
 		expect(screen.queryByTestId('steered-message-spinner')).not.toBeInTheDocument();
 	});
 
-	it('mutes a steer answered as a follow-up and claims no success', () => {
+	it('mutes a steer taken as a follow-up and claims no success', () => {
 		const { unmount } = render(<SteeredMessageHeader state="absorbed" theme={mockTheme} />);
 		const steerColor = screen.getByTestId('steered-message-header').style.color;
 		unmount();
@@ -38,7 +38,10 @@ describe('SteeredMessageHeader', () => {
 		render(<SteeredMessageHeader state="queued" theme={mockTheme} />);
 
 		const header = screen.getByTestId('steered-message-header');
-		expect(header).toHaveTextContent('Answered as a follow-up');
+		expect(header).toHaveTextContent('Sent as a follow-up');
+		// The verdict lands when the follow-up turn starts, before any reply exists.
+		expect(header.textContent).not.toMatch(/answered/i);
+		expect(header.title).not.toMatch(/answered/i);
 		expect(header.querySelector(CHECK)).toBeNull();
 		// Not the Steer accent: it did not steer anything.
 		expect(header.style.color).not.toBe(steerColor);

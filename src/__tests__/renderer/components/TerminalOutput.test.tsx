@@ -333,7 +333,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTestId('steer-turn-connector')).toBeInTheDocument();
 		});
 
-		it('does not stitch a steer the agent answered as a follow-up', () => {
+		it('does not stitch a steer the agent took as a follow-up', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'first', source: 'user' }),
 				createLogEntry({
@@ -354,9 +354,7 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByTestId('steered-message-header')).toHaveTextContent(
-				'Answered as a follow-up'
-			);
+			expect(screen.getByTestId('steered-message-header')).toHaveTextContent('Sent as a follow-up');
 			expect(screen.queryByTestId('steer-turn-connector')).not.toBeInTheDocument();
 		});
 

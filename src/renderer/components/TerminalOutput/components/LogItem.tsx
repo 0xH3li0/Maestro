@@ -258,7 +258,7 @@ export const LogItem = memo(
 			: userMessageAlignment === 'right';
 		// A message steered into a turn that was already running wears a header
 		// saying so. One the turn took (or may yet take) is also stitched to the
-		// entry above it; one answered as a follow-up stands alone.
+		// entry above it; one taken as a follow-up stands alone.
 		const isSteered = isUserMessage && isAIMode && Boolean(log.steered);
 		const isStitchedSteer = isSteered && steerJoinsRunningTurn(log);
 

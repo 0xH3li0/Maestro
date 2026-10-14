@@ -11,7 +11,9 @@
  *   - `pending`   typed into the turn; the transcript has not answered yet.
  *   - `absorbed`  the running turn took it and changed course. The only state
  *                 that earns the check.
- *   - `queued`    the agent could not fold it in and answered it as a follow-up.
+ *   - `queued`    the agent could not fold it in and took it as a follow-up turn.
+ *                 The verdict lands when that turn STARTS, so the label says
+ *                 "sent", never "answered": the reply may not exist yet.
  *                 Muted, and drawn WITHOUT the connector: it did not join the
  *                 turn, so stitching it there would say the opposite.
  *   - absent      steered before the state was recorded. Says "Steered" and
@@ -42,9 +44,9 @@ const STEER_BUBBLE_COPY: Record<SteerBubbleState | 'unrecorded', SteerBubbleCopy
 		title: 'The turn that was already running took this message and changed course.',
 	},
 	queued: {
-		label: 'Answered as a follow-up',
+		label: 'Sent as a follow-up',
 		title:
-			'The agent could not fold this into the turn that was already running, so it answered it after that turn ended.',
+			'The agent could not fold this into the turn that was already running, so it took it as a follow-up turn once that one ended.',
 	},
 	unrecorded: {
 		label: 'Steered',
