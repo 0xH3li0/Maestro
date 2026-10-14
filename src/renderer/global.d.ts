@@ -97,6 +97,9 @@ interface ProcessConfig {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
+	 *  300s default; Auto Run raises it to its own inactivity budget. */
+	maestroPMaxWaitSeconds?: number;
 }
 
 type AgentConfigOption = import('../shared/types').AgentConfigOption;
@@ -250,6 +253,8 @@ interface MaestroAPI {
 				// grooming or transfer - their output becomes the context every later
 				// turn reads, so a cheap compaction compounds silently.
 				cheapTurn?: boolean;
+				// The agent's Claude token source: a TUI agent runs this turn through maestro-p.
+				claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
@@ -4343,6 +4348,7 @@ interface MaestroAPI {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customEffort?: string;
+			claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			recentCommands?: {
 				command: string;
 				exitCode?: number;

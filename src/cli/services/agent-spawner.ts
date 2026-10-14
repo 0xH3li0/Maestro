@@ -151,6 +151,7 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'maestroPMaxWaitSeconds'
 >;
 
 /**
@@ -597,6 +598,7 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		const remoteEnv = buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars);
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -629,6 +631,7 @@ async function spawnClaudeAgent(
 			customEnvVars: userCustomEnvVars,
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1230,6 +1233,12 @@ export interface SpawnAgentOptions {
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
 	/**
+	 * maestro-p idle cap (`--max-wait`) when the turn runs through the TUI.
+	 * Unset keeps maestro-p's 300s default; Auto Run passes its own inactivity
+	 * budget (see autoRunMaestroPMaxWaitSeconds) so a silent test run survives.
+	 */
+	maestroPMaxWaitSeconds?: number;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1289,6 +1298,7 @@ async function spawnAgentOnce(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

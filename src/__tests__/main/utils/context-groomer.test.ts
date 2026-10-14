@@ -6,6 +6,7 @@
  * env vars via the correct ProcessConfig field.
  */
 
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { groomContext, type GroomingProcessManager } from '../../../main/utils/context-groomer';
 import type { AgentDetector } from '../../../main/agents';
@@ -174,6 +175,62 @@ describe('groomContext', () => {
 			yoloMode: false,
 			permissionMode: 'standard',
 			agentSessionId: undefined,
+		});
+	});
+
+	// A one-shot turn that belongs to an agent (AI command mode, summarization,
+	// a participant's context summary) honors that agent's TUI setting.
+	describe('Claude token source', () => {
+		const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+		const tuiAgent = () =>
+			makeAgent({
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+			} as Partial<AgentConfig>);
+
+		it('runs through maestro-p when the agent is set to TUI', async () => {
+			await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					timeoutMs: 60_000,
+					claudeTokenSource: { enableMaestroP: true, maestroPMode: 'interactive', maestroPPath },
+				},
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			const spawned = mockPM._lastSpawnConfig!;
+			expect(spawned.command).toBe(process.execPath);
+			const args = spawned.args as string[];
+			expect(args[0]).toBe(maestroPPath);
+			expect(args[args.indexOf('--max-wait') + 1]).toBe('60');
+		});
+
+		it('stays on claude --print when the agent is set to API', async () => {
+			await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					claudeTokenSource: { enableMaestroP: false, maestroPPath },
+				},
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			expect(mockPM._lastSpawnConfig!.command).toBe('/usr/local/bin/claude');
+		});
+
+		it('stays on claude --print when the caller names no agent', async () => {
+			await groomContext(
+				{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			expect(mockPM._lastSpawnConfig!.command).toBe('/usr/local/bin/claude');
 		});
 	});
 
