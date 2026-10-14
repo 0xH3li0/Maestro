@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { captureException } from '../utils/sentry';
 import { resolveUserDataDir } from '../../shared/userDataDir';
+import { buildCuePersistedOutput } from './cue-text-utils';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -382,6 +383,18 @@ export function initCueDb(
 	for (const sql of CREATE_CUE_EVENTS_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
+	db.prepare(CREATE_CUE_EVENTS_UNEXCERPTED_INDEX_SQL).run();
+	try {
+		backfillOutputExcerpts(db);
+	} catch (err) {
+		// A repair that cannot run must not take the journal down with it. It
+		// runs on every launch, so the next one tries again.
+		log(
+			'warn',
+			`Output excerpt backfill failed: ${err instanceof Error ? err.message : String(err)}`
+		);
+		captureException(err, { operation: 'cue:backfillOutputExcerpts' });
+	}
 	db.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
 	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
 	migrateCueGitHubSeenAdditiveColumns(db);
@@ -516,6 +529,65 @@ function migrateCueEventsAdditiveColumns(database: Database.Database): void {
 		if (!existingNames.has(column.name)) {
 			database.prepare(`ALTER TABLE cue_events ADD COLUMN ${column.name} ${column.type}`).run();
 		}
+	}
+}
+
+/**
+ * A run that has output but no excerpt: exactly the rows the excerpt backfill
+ * re-derives. One string so the partial index and the backfill query cannot
+ * drift apart - SQLite only reads the index when the query's WHERE matches it.
+ */
+const UNEXCERPTED_OUTPUT_WHERE = `output_excerpt IS NULL AND full_output IS NOT NULL`;
+
+/**
+ * Partial index holding only {@link UNEXCERPTED_OUTPUT_WHERE} rows, which is
+ * normally none or a few whose output had no visible text. It is what lets
+ * {@link backfillOutputExcerpts} run on every launch: the first launch builds
+ * it in one scan, and after that the backfill reads only these rows instead
+ * of every `full_output` in the table.
+ */
+const CREATE_CUE_EVENTS_UNEXCERPTED_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_cue_events_unexcerpted ON cue_events(id) WHERE ${UNEXCERPTED_OUTPUT_WHERE}`;
+
+/**
+ * Give an excerpt to every finished run that has output but was stored with a
+ * NULL one.
+ *
+ * Builds before the excerpt fix stored no excerpt for a run whose stdout was
+ * only a markdown table, or whose first sentence ran past the cap. NULL is
+ * what History reads as "this run printed nothing"
+ * ({@link CUE_EVENT_WORTH_SHOWING_SQL}), so a completed run that had answered
+ * was hidden. The excerpt is re-derived from `full_output` through the same
+ * `buildCuePersistedOutput()` a finishing run goes through, and a row whose
+ * output has no visible text stays NULL.
+ *
+ * It runs on every launch and needs no version marker: cue.db takes
+ * `IF NOT EXISTS` schema changes only, never numbered migrations, and the
+ * repair is idempotent - a row it cannot excerpt re-derives to NULL again and
+ * is left alone. The partial index keeps each run to the affected rows.
+ *
+ * Status is not filtered on. A failed run was visible already, but its row
+ * read as the bare trigger label where one failing today shows its output.
+ */
+function backfillOutputExcerpts(database: Database.Database): void {
+	// Streamed rather than `.all()`: each `full_output` is up to 10,000 chars
+	// and a long retention window can hold many affected rows, so only the
+	// short derived excerpts are kept. The writes wait until iteration is done,
+	// because better-sqlite3 refuses a write while a read is still open.
+	const select = database.prepare(
+		`SELECT id, full_output FROM cue_events WHERE ${UNEXCERPTED_OUTPUT_WHERE}`
+	);
+	const repairs: Array<{ id: string; excerpt: string }> = [];
+	for (const row of select.iterate() as IterableIterator<{ id: string; full_output: string }>) {
+		const { excerpt } = buildCuePersistedOutput({ stdout: row.full_output, stderr: '' });
+		if (excerpt) repairs.push({ id: row.id, excerpt });
+	}
+
+	if (repairs.length > 0) {
+		const update = database.prepare(`UPDATE cue_events SET output_excerpt = ? WHERE id = ?`);
+		database.transaction(() => {
+			for (const repair of repairs) update.run(repair.excerpt, repair.id);
+		})();
+		log('info', `Backfilled output excerpts for ${repairs.length} Cue run(s)`);
 	}
 }
 
