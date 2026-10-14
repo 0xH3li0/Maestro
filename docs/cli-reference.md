@@ -2472,7 +2472,7 @@ Compose the agent-driven movement (free-placed data views) in the Maestro main w
 
 ## `maestro-cli movement begin <id>`
 
-Immediately show a host-rendered Concerto shell before its HTML is ready
+Reserve a host-rendered Concerto shell without opening the stage
 
 | Option           | Description                                  | Default |
 | ---------------- | -------------------------------------------- | ------- |
@@ -2485,7 +2485,7 @@ Immediately show a host-rendered Concerto shell before its HTML is ready
 
 ## `maestro-cli movement add <id>`
 
-Add (or replace by id) a native data view or interactive HTML mockup
+Add or replace a native data view or HTML mockup without opening the stage
 
 | Option               | Description                                                             | Default |
 | -------------------- | ----------------------------------------------------------------------- | ------- |
@@ -2566,7 +2566,7 @@ Read the current movement layout (items + size) to compose around it
 
 ## `maestro-cli movement inspect <id>`
 
-Capture a live HTML Movement preview and report its runtime diagnostics
+Capture a visible HTML Movement preview (requires an open stage) and diagnostics
 
 | Option           | Description                                       | Default |
 | ---------------- | ------------------------------------------------- | ------- |

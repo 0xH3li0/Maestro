@@ -2725,7 +2725,7 @@ const movement = program
 
 movement
 	.command('begin <id>')
-	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.description('Reserve a host-rendered Concerto shell without opening the stage')
 	.requiredOption('--title <text>', 'Concerto title shown in its frame')
 	.option('--x <px>', 'X position (px from the Concerto stage left)')
 	.option('--y <px>', 'Y position (px from the Concerto stage top)')
@@ -2736,7 +2736,7 @@ movement
 
 movement
 	.command('add <id>')
-	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.description('Add or replace a native data view or HTML mockup without opening the stage')
 	.option('--type <type>', 'view | html (default: view)')
 	.option('--x <px>', 'X position (px from movement left)')
 	.option('--y <px>', 'Y position (px from movement top)')
@@ -2809,7 +2809,7 @@ movement
 
 movement
 	.command('inspect <id>')
-	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.description('Capture a visible HTML Movement preview (requires an open stage) and diagnostics')
 	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInspect);

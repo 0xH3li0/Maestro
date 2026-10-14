@@ -371,6 +371,21 @@ describe('Agents Preload API', () => {
 	});
 
 	describe('discoverSlashCommands', () => {
+		it('passes the Codex session environment to discovery', async () => {
+			mockInvoke.mockResolvedValue([]);
+			await api.discoverSlashCommands('codex', '/project', undefined, undefined, {
+				CODEX_HOME: '/profile',
+			});
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'agents:discoverSlashCommands',
+				'codex',
+				'/project',
+				undefined,
+				undefined,
+				{ CODEX_HOME: '/profile' }
+			);
+		});
+
 		it('should invoke agents:discoverSlashCommands', async () => {
 			const commands = ['compact', 'help', 'review'];
 			mockInvoke.mockResolvedValue(commands);

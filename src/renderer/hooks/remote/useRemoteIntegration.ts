@@ -40,6 +40,7 @@ import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore'
 import {
 	applyMovementPayload,
 	getMovementSnapshot,
+	isConcertoStageOpen,
 	useMovementStore,
 } from '../../stores/movementStore';
 import { openUiSurface } from '../../utils/openUiSurface';
@@ -53,6 +54,7 @@ import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../share
 import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
+	waitForConcertoDesignerFrameReady,
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import {
@@ -1615,8 +1617,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				recordConcertoCreationActivity(params.id, phase, params.revision);
 			}
 			if (params.id && params.revision !== undefined) {
-				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
-					.then((snapshot) => reply(snapshot !== null))
+				void waitForConcertoDesignerFrameReady('movement', params.id, 3500, params.revision)
+					.then(reply)
 					.catch(() => reply(false));
 				return;
 			}
@@ -1645,6 +1647,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
+				// Screenshot inspection preserves the user's stage and minimization choices.
+				const item = useMovementStore.getState().items.find((candidate) => candidate.id === id);
+				if (!isConcertoStageOpen() || !item || item.minimized) {
+					proc.sendMovementDesignerInspectionResponse?.(responseChannel, null);
+					return;
+				}
 				// Inspection is read-only for the iframe, but the requested panel must be
 				// visible above overlapping peers for Chromium's compositor crop to show it.
 				flushSync(() => useMovementStore.getState().surfaceItem(id));

@@ -103,6 +103,12 @@ export interface LogItemProps {
 	 */
 	responseDurationMs?: number;
 	/**
+	 * The entry right below this one is a steered message stitched to the same
+	 * turn (`steerJoinsRunningTurn`), so a stitched steer draws its connector on
+	 * down to it instead of ending at its own header.
+	 */
+	steerRunContinues?: boolean;
+	/**
 	 * Draw Codex's assistant directives (`:codex-followup[...]{...}`) as chips
 	 * on this entry's markdown body. True only for a Codex agent: the syntax is
 	 * Codex's own emitting convention, so the same string from any other
