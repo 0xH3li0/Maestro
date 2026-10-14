@@ -2648,6 +2648,10 @@ Review the agent responses above. Either:
 			killTimedOutSession(running.processId, running.runner, 'moderator');
 		}
 		await moderators.killModerator(groupChatId, control);
+		// The stopped turn's exit is dropped, so nothing else will ever report this room idle.
+		// Without this a moderator changed, archived or stopped mid-turn left the room on
+		// `moderator-thinking`, and every later message queued behind a turn that no longer exists.
+		if (running) settleGroupChatToIdle(groupChatId);
 	}
 
 	// ==========================================================================

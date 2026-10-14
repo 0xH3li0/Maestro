@@ -18,6 +18,7 @@
 import {
 	acquireDataDirLock,
 	type DataDirLock,
+	type DataDirLockResult,
 	type DataDirRefusal,
 } from '../../shared/maestro-lib/runtime/data-dir-lock';
 import { resolveMaestroPaths } from '../../shared/maestro-lib/paths/resolve';
@@ -80,8 +81,19 @@ export function claimDataDirForDesktop(
 	deps: DataDirGuardDeps = {}
 ): DataDirClaim {
 	const acquire = deps.acquire ?? acquireDataDirLock;
-	const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });
-	const result = acquire(paths, 'desktop');
+	// This runs at module load, before the stores exist. A guard that throws (an unreadable
+	// bootstrap file, a lock file it cannot write) must never be the reason the app does not
+	// open: the desktop then starts as it did before there was a guard.
+	let result: DataDirLockResult;
+	try {
+		const paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userDataDir } });
+		result = acquire(paths, 'desktop');
+	} catch (error) {
+		return {
+			outcome: 'proceed',
+			reason: `the lock could not be checked (${error instanceof Error ? error.message : String(error)})`,
+		};
+	}
 
 	if (!result.ok) {
 		const blocked = describeBlock(result.refusal);

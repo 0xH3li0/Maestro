@@ -135,6 +135,17 @@ describe('claimDataDirForDesktop (mocked lock)', () => {
 		expect(claim).toEqual({ outcome: 'proceed', reason: 'another desktop' });
 	});
 
+	it('proceeds when checking the lock throws, so the guard is never why the app does not open', () => {
+		const acquire = vi.fn((): DataDirLockResult => {
+			throw new Error('EACCES: permission denied');
+		});
+
+		const claim = claimDataDirForDesktop('/data', { acquire });
+
+		expect(claim).toMatchObject({ outcome: 'proceed' });
+		expect(claim.outcome === 'proceed' && claim.reason).toContain('EACCES');
+	});
+
 	it('proceeds when the lock cannot be taken, so a read-only directory does not brick the app', () => {
 		const claim = claimDataDirForDesktop('/data', {
 			acquire: () => ({

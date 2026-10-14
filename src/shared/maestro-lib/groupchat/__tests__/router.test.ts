@@ -523,6 +523,30 @@ describe('group chat engine', () => {
 			expect(h.engine.isModeratorActive(chat.id)).toBe(false);
 		});
 
+		it('reports the room idle and releases the power block, since the stopped turn never will', async () => {
+			// Changing the moderator, archiving and Stop Moderator all kill the turn and then wait
+			// for a state change. The stopped turn's own report is dropped, so without this the
+			// room stayed on moderator-thinking and every later message queued behind nothing.
+			const chat = await chatWith('Alice');
+			await runningModerator(chat.id);
+			expect(lastState(chat.id)).not.toBe('idle');
+			h.power.unblock.mockClear();
+
+			await h.engine.killModerator(chat.id);
+
+			expect(lastState(chat.id)).toBe('idle');
+			expect(h.power.unblock).toHaveBeenCalledWith(`groupchat:${chat.id}`);
+		});
+
+		it('says nothing about a room with no moderator turn running', async () => {
+			const chat = await chatWith('Alice');
+			const before = h.states.length;
+
+			await h.engine.killModerator(chat.id);
+
+			expect(h.states).toHaveLength(before);
+		});
+
 		it('drops the stopped turn when it finally reports, so Stop cannot dispatch participants', async () => {
 			const chat = await chatWith('Alice');
 			const moderator = await runningModerator(chat.id);
