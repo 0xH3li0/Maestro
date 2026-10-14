@@ -452,7 +452,12 @@ export function mergeQueuedItemIntoPrevious(
 	const target = findQueuedMergeTarget(queue, itemId);
 	const item = queue.find((i) => i.id === itemId);
 	if (!target || !item) return null;
-	const text = [target.text, item.text].filter((t) => t && t.trim()).join('\n\n');
+	// Exactly one blank line between the two, so the second reads as its own
+	// paragraph: trailing whitespace of the first and leading blank lines of the
+	// second are dropped (the second's own indentation is kept).
+	const text = [target.text?.replace(/\s+$/, ''), item.text?.replace(/^(\s*\n)+/, '')]
+		.filter((t) => t && t.trim())
+		.join('\n\n');
 	const images = [...(target.images ?? []), ...(item.images ?? [])];
 	const merged: QueuedItem = {
 		...target,

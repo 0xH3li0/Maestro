@@ -119,6 +119,11 @@ describe('mergeQueuedItemIntoPrevious', () => {
 		});
 	});
 
+	it('separates the two with exactly one blank line, whatever whitespace they carried', () => {
+		const q = [msg('a', { text: 'first\n\n\n  ' }), msg('b', { text: '\n\n  second' })];
+		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue[0].text).toBe('first\n\n  second');
+	});
+
 	it('merges into the previous item for the SAME tab, skipping other tabs', () => {
 		const q = [msg('a'), msg('x', { tabId: 'tab-2' }), msg('b')];
 		expect(findQueuedMergeTarget(q, 'b')?.id).toBe('a');
