@@ -17,8 +17,9 @@
 import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from './agentSettingsTabs';
 import { resolveEncoreFeatures } from './encoreFeatureDefaults';
 import {
-	MODELS_SETTINGS_PANELS,
-	MODELS_SETTINGS_PANEL_LABELS,
+	MODELS_SETTINGS_SUB_TAB_PATHS,
+	modelsSettingsPlaceLabel,
+	parseModelsSettingsSubTab,
 } from './local-models/settings-location';
 
 /** A deep-linkable tab inside a surface. */
@@ -105,11 +106,14 @@ export interface UiSurface {
 	encore?: UiSurfaceEncoreFlag;
 }
 
-/** The inner tabs of Settings > Models, from the one list the tab itself draws. */
-export const MODELS_SETTINGS_SUB_TABS: UiSurfaceTab[] = MODELS_SETTINGS_PANELS.map((id) => ({
-	id,
-	label: MODELS_SETTINGS_PANEL_LABELS[id],
-}));
+/**
+ * The places inside Settings > Models, from the one list the tab itself draws:
+ * each panel (`gateway`) and each Library section (`library/speech`).
+ */
+export const MODELS_SETTINGS_SUB_TABS: UiSurfaceTab[] = MODELS_SETTINGS_SUB_TAB_PATHS.map((id) => {
+	const place = parseModelsSettingsSubTab(id)!;
+	return { id, label: modelsSettingsPlaceLabel(place.panel, place.librarySection) };
+});
 
 /** The tabs of the agent settings form, from the one list the form itself draws. */
 export const AGENT_SETTINGS_SURFACE_TABS: UiSurfaceTab[] = AGENT_SETTINGS_TAB_IDS.map((id) => ({

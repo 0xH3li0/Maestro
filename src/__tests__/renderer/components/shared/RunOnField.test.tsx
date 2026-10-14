@@ -95,7 +95,7 @@ describe('RunOnField: the picker', () => {
 
 		expect(optionLabels()).toEqual([
 			'Provider (default)',
-			'gpt-oss 20B (MXFP4) (Fits, Runs agents)',
+			'gpt-oss 20B (MXFP4) (Fits, Agent-ready)',
 			'Qwen3 1.7B Instruct (Q4_K_M) (Fits)',
 			'qwen3:latest',
 		]);

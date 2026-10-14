@@ -9,39 +9,19 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, act } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { AgentVoiceIndicator } from '../../../../renderer/components/SessionList/AgentVoiceIndicator';
 import { getEnhancedStatusColor } from '../../../../renderer/components/SessionItem';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
-import type { VoiceEvent } from '../../../../shared/acappella/protocol';
+import { applyVoiceEvents, resetVoiceEventSeq, voiceEvent } from '../../../helpers/voiceEvents';
 import type { Session } from '../../../../renderer/types';
 
 const AGENT = 'agent-1';
-const VOICE_SESSION = 'voice-1';
-let seq = 0;
-
-function event<T extends VoiceEvent['type']>(
-	type: T,
-	body: Omit<Extract<VoiceEvent, { type: T }>, 'type' | 'sessionId' | 'seq' | 'ts'>
-): VoiceEvent {
-	seq += 1;
-	return {
-		type,
-		sessionId: VOICE_SESSION,
-		seq,
-		ts: 1_700_000_000_000 + seq,
-		...body,
-	} as unknown as VoiceEvent;
-}
-
-function apply(...events: VoiceEvent[]): void {
-	act(() => {
-		for (const e of events) useVoiceSessionStore.getState().applyEvent(e);
-	});
-}
+const event = voiceEvent;
+const apply = applyVoiceEvents;
 
 function renderIndicator(sessionId = AGENT) {
 	return render(<AgentVoiceIndicator sessionId={sessionId} theme={mockTheme} />);
@@ -59,7 +39,7 @@ function holdFloor(sessionId = AGENT): void {
 }
 
 beforeEach(() => {
-	seq = 0;
+	resetVoiceEventSeq();
 	vi.clearAllMocks();
 	useVoiceSessionStore.getState().reset();
 	useVoiceUiStore.setState({ wakePhrases: {}, loaded: true });

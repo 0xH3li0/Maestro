@@ -7,6 +7,14 @@
  * instruction routed to a background tab is invisible until the user goes
  * looking for it.
  *
+ * Two facts, the same two the Left Bar draws for an agent:
+ *
+ *   - **Holding the floor.** Tab mode pins the session to this tab, so what is
+ *     said next lands here. The shared filled microphone, the same mark the
+ *     agent row shows, so a pinned tab and its agent read as one binding.
+ *   - **Where the last prompt landed.** In Agent and Conductor mode the router
+ *     picks a tab per turn; this marks the one it picked last.
+ *
  * Reads the voice store itself and renders null when the Encore Feature is off,
  * so the tab bar wires up nothing - the same arrangement as the Left Bar's
  * `AgentVoiceIndicator`, and for the same reason: the tab components are
@@ -22,6 +30,8 @@ import { usePrefersReducedMotion } from '../../hooks/utils/usePrefersReducedMoti
 import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import { voiceScopeTabId } from '../../../shared/acappella/voice-mode';
+import { VoiceFloorMark } from '../ACappella/VoiceFloorMark';
 
 export interface TabVoiceIndicatorProps {
 	tabId: string;
@@ -34,14 +44,26 @@ export const TabVoiceIndicator = memo(function TabVoiceIndicator({
 }: TabVoiceIndicatorProps) {
 	const enabled = useSettingsStore(selectACappellaEnabled);
 	const state = useVoiceSessionStore((s) => s.state);
+	const scope = useVoiceSessionStore((s) => s.scope);
 	const lastDispatch = useVoiceSessionStore((s) => s.lastDispatch);
 	const reducedMotion = usePrefersReducedMotion();
 
-	if (!enabled) return null;
+	if (!enabled || !isVoiceSessionActive(state)) return null;
+
+	if (voiceScopeTabId(scope) === tabId) {
+		return (
+			<VoiceFloorMark
+				theme={theme}
+				testId="tab-voice-floor"
+				label="Holding the voice floor: what you say next goes to this tab"
+			/>
+		);
+	}
+
 	// The dispatch address outlives the turn, which is what makes the marker
 	// useful: it says where the last thing you said went, not merely where audio
 	// is being processed this instant. It clears when the session ends.
-	if (!isVoiceSessionActive(state) || lastDispatch?.tabId !== tabId) return null;
+	if (lastDispatch?.tabId !== tabId) return null;
 
 	const accent = readableTextOn(theme.colors.accent, [theme.colors.bgMain, theme.colors.bgSidebar]);
 	const live = state === 'listening' || state === 'speaking';

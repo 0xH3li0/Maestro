@@ -23,6 +23,8 @@
  * widget where it was, showing a closed microphone one click from open. A
  * control row where one button quietly hangs up, or a panel that vanishes while
  * someone is reading it, is a surface people stop trusting.
+ * Blocking modals temporarily hide the widget without ending its session;
+ * closing the last modal restores it.
  *
  * **Tab walks Tab / Agent / Conductor** while the widget is up, on top, and has
  * a live session to re-bind. The listener runs in the bubble phase and stands
@@ -43,6 +45,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { useLayerStack } from '../../contexts/LayerStackContext';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
@@ -342,6 +345,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	}, [active, setDismissed]);
 
 	const micIssue = mic?.issue ?? null;
+	const { hasOpenModal } = useLayerStack();
 
 	/**
 	 * Every reason the widget is on screen, in one place.
@@ -375,6 +379,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const visible =
 		enabled &&
 		!dismissed &&
+		// Temporarily yield to blocking dialogs without dismissing or stopping the
+		// session. The shared stack excludes passive panels, including this HUD.
+		!hasOpenModal() &&
 		(devHarness || (ownsSession && (active || surfaced || !!error || !!micIssue)));
 
 	// Read when the widget comes up rather than once at mount: the default behind

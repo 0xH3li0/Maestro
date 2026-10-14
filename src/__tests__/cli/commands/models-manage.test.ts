@@ -169,14 +169,15 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 			await modelsList({});
 
 			const output = logSpy.mock.calls[0][0] as string;
-			// Group order is the Library's: agents, then judges, then the user's own.
+			// Group order is the Library's: agent models, then housekeeping (a judge
+			// is a housekeeping model with a Judge badge), then the user's own.
 			const at = (text: string) => output.indexOf(text);
-			expect(at('Runs agents')).toBeGreaterThan(-1);
-			expect(at('Runs agents')).toBeLessThan(at('Judge'));
-			expect(at('Judge')).toBeLessThan(at('Added from Hugging Face'));
+			expect(at('Agent Models')).toBeGreaterThan(-1);
+			expect(at('Agent Models')).toBeLessThan(at('Housekeeping'));
+			expect(at('Housekeeping')).toBeLessThan(at('Added from Hugging Face'));
 			expect(output).not.toMatch(/Text generation/);
 			expect(output).toContain(`good at: ${getLocalModel(GPT_OSS_20B_ID)!.goodAt}`);
-			expect(output).toContain('[Runs agents: Claude Code, Codex]');
+			expect(output).toContain('[Agent-ready: Claude Code, Codex]');
 			expect(output).toContain(`[${USER_MODEL_UNVERIFIED_LABEL}]`);
 			expect(output).toMatch(/Cloud only: .*DeepSeek V4.*GLM-5\.3/);
 			// No fit was asked for, so none is claimed.
@@ -227,6 +228,7 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 			expect(parsed.models[0]).toMatchObject({
 				id: GPT_OSS_120B_ID,
 				group: 'agent',
+				section: 'agents',
 				roles: ['agent', 'housekeeping'],
 				agentHarnesses: ['claude-code', 'codex'],
 				fit: 'too-large',
@@ -236,6 +238,7 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 			expect(parsed.models[1]).toMatchObject({
 				id: USER_ENTRY.id,
 				group: 'user',
+				section: 'custom',
 				userAdded: true,
 				verifiedByMaestro: false,
 				roles: [],

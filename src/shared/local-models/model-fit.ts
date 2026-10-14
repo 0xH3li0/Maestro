@@ -306,6 +306,25 @@ export function describeHardwareProfile(profile: HardwareProfile): string {
 }
 
 /**
+ * The memory a model is judged against, in two short parts for a stat card:
+ * the headline (system memory) and a caption naming what kind it is. The same
+ * facts as {@link describeHardwareProfile}, cut to fit a tile.
+ */
+export function hardwareProfileStat(profile: HardwareProfile): { value: string; caption: string } {
+	const value = formatSize(profile.totalMemoryBytes);
+	if (profile.unifiedMemory) return { value, caption: 'Unified memory, Apple Silicon' };
+	const gpu = largestVramGpu(profile) ?? profile.gpus[0];
+	if (!gpu) return { value, caption: 'RAM, no GPU' };
+	return {
+		value,
+		caption:
+			gpu.vramBytes !== null && gpu.vramBytes > 0
+				? `RAM, ${gpu.name} (${formatSize(gpu.vramBytes)})`
+				: `RAM, ${gpu.name}`,
+	};
+}
+
+/**
  * Why the verdicts on this computer are harsher than the hardware deserves, or
  * null when they are not.
  *

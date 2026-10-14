@@ -1,14 +1,16 @@
 /**
  * Models tab searchable-settings entries.
  *
- * One entry per section of `ModelsSettingsTab`, plus the Utility Agent controls,
- * the tier defaults table and the semantic index card beside the task tables;
- * each `id` matches a rendered `data-setting-id`, and each `subTab` is the
- * inner tab that renders it.
+ * One entry per section of `ModelsSettingsTab` and per Library section, plus the
+ * Utility Agent controls, the tier defaults table and the semantic index card
+ * beside the task tables; each `id` matches a rendered `data-setting-id`, and
+ * each `subTab` is the sub-tab path of the place that renders it.
  */
 
+import type { LocalModelLibrarySectionId } from '../../../shared/local-models/library';
 import {
-	MODELS_SETTINGS_PANEL_LABELS,
+	modelsSettingsPlaceLabel,
+	modelsSettingsSubTab,
 	type ModelsSettingsPanel,
 } from '../../../shared/local-models/settings-location';
 import type { SearchableSetting } from './searchableSettings';
@@ -16,26 +18,53 @@ import type { SearchableSetting } from './searchableSettings';
 const TAB = 'models' as const;
 
 /**
- * The tab, the inner tab and the label a result shows ("Models > System One"),
- * all from the one panel id, so a result cannot name a place it does not open.
+ * The tab, the place and the label a result shows ("Models > Library >
+ * Engines"), all from the one panel (and Library section), so a result cannot
+ * name a place it does not open.
  */
 function inPanel(
-	subTab: ModelsSettingsPanel
+	panel: ModelsSettingsPanel,
+	librarySection?: LocalModelLibrarySectionId
 ): Pick<SearchableSetting, 'tab' | 'tabLabel' | 'subTab'> {
 	return {
 		tab: TAB,
-		tabLabel: `Models > ${MODELS_SETTINGS_PANEL_LABELS[subTab]}`,
-		subTab,
+		tabLabel: `Models > ${modelsSettingsPlaceLabel(panel, librarySection)}`,
+		subTab: modelsSettingsSubTab(panel, librarySection),
 	};
 }
 
 export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 	{
+		id: 'local-models-overview',
+		...inPanel('overview'),
+		label: 'Models overview',
+		description:
+			'What Local Models is for, disk use, installed models, engines, active tasks, memory, and a guide to every part of the tab',
+		keywords: [
+			'overview',
+			'models',
+			'local models',
+			'summary',
+			'stats',
+			'on disk',
+			'installed',
+			'engines',
+			'active tasks',
+			'tasks assigned',
+			'needs attention',
+			'where things live',
+			'this computer',
+			'memory',
+			'hardware',
+		],
+	},
+	{
 		id: 'local-models-models',
 		...inPanel('library'),
-		label: 'Models',
+		label: 'Library',
 		description: 'Download, verify, and remove models that run on this machine',
 		keywords: [
+			'library',
 			'local',
 			'model',
 			'models',
@@ -59,8 +88,111 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'local-models-agents',
+		...inPanel('library', 'agents'),
+		label: 'Agent Models',
+		description:
+			'Local models strong enough to be the model behind an agent, set as its Run on target',
+		keywords: [
+			'agent models',
+			'agent-ready',
+			'runs agents',
+			'run on',
+			'agent qualification',
+			'qualified',
+			'harness',
+			'claude code',
+			'codex',
+			'opencode',
+			'coding model',
+			'gpt-oss',
+			'qwen3-coder',
+			'gemma',
+		],
+	},
+	{
+		id: 'local-models-housekeeping',
+		...inPanel('library', 'housekeeping'),
+		label: 'Housekeeping models',
+		description:
+			"Smaller text models for Maestro's own background work: tab names, summaries, judgments and images",
+		keywords: [
+			'housekeeping',
+			'background',
+			'judge',
+			'vision',
+			'images',
+			'screenshots',
+			'small model',
+			'tab names',
+			'summaries',
+			'qwen',
+			'devstral',
+		],
+	},
+	{
+		id: 'local-models-speech',
+		...inPanel('library', 'speech'),
+		label: 'Speech models',
+		description: 'Speech-to-text, text-to-speech and wake word models, for voice and dictation',
+		keywords: [
+			'speech',
+			'speech-to-text',
+			'stt',
+			'transcription',
+			'text-to-speech',
+			'tts',
+			'wake word',
+			'wake phrase',
+			'hey jarvis',
+			'parakeet',
+			'whisper',
+			'kokoro',
+			'openwakeword',
+			'voice',
+			'dictation',
+		],
+	},
+	{
+		id: 'local-models-search',
+		...inPanel('library', 'search'),
+		label: 'Search & Safety models',
+		description: 'Embedding models for search by meaning, and prompt injection classifiers',
+		keywords: [
+			'search',
+			'safety',
+			'embedding',
+			'embeddings',
+			'classifier',
+			'classifiers',
+			'bge',
+			'embeddinggemma',
+			'prompt guard',
+			'deberta',
+			'prompt injection',
+		],
+	},
+	{
+		id: 'local-models-engines',
+		...inPanel('library', 'engines'),
+		label: 'Engines',
+		description: 'The native libraries models run on (llama.cpp, ONNX Runtime): install or update',
+		keywords: [
+			'engine',
+			'engines',
+			'runtime',
+			'runtimes',
+			'native',
+			'llama.cpp',
+			'onnx runtime',
+			'install engine',
+			'update engine',
+			'not available',
+		],
+	},
+	{
 		id: 'local-models-add-hf',
-		...inPanel('library'),
+		...inPanel('library', 'custom'),
 		label: 'Add from Hugging Face',
 		description:
 			'Add a GGUF text model the Library does not list, by repo id and file name. Not verified by Maestro',
@@ -77,11 +209,12 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'not verified',
 			'unverified',
 			'own model',
+			'custom',
 		],
 	},
 	{
 		id: 'local-models-download-source',
-		...inPanel('library'),
+		...inPanel('sources'),
 		label: 'Download source',
 		description:
 			'Where model files are downloaded from. Point it at a mirror when your network blocks Hugging Face',
@@ -104,7 +237,7 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'local-models-model-server',
-		...inPanel('library'),
+		...inPanel('sources'),
 		label: 'Model server',
 		description:
 			"Maestro's own model server (llama-server): serve downloaded models to agent harnesses over HTTP",
@@ -163,6 +296,11 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'detect local servers',
 			'url',
 			'api key',
+			'sources',
+			'cloud only',
+			'deepseek',
+			'kimi',
+			'glm',
 		],
 	},
 	{

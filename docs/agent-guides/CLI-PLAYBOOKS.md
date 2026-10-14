@@ -509,7 +509,7 @@ maestro-cli models run <task-id> --input <text> [--system <text>] [--max-tokens 
 
 ### `models server status|start|stop|set|key`
 
-The Maestro model server (`llama-server`), the card in Settings -> Models -> Library. Implemented in `src/cli/commands/models-server.ts`. Every verb runs in the desktop over the WS bridge through `getModelServerReport()`, `startModelServer()`, `stopModelServer()` and `installModelServerEngine()`, so a server started here is the one the card shows.
+The Maestro model server (`llama-server`), the card in Settings -> Models -> Sources. Implemented in `src/cli/commands/models-server.ts`. Every verb runs in the desktop over the WS bridge through `getModelServerReport()`, `startModelServer()`, `stopModelServer()` and `installModelServerEngine()`, so a server started here is the one the card shows.
 
 ```bash
 maestro-cli models server status [--json]

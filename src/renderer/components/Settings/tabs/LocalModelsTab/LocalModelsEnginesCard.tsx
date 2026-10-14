@@ -1,6 +1,8 @@
 /**
  * LocalModelsEnginesCard - the native runtimes ("engines") local models run on.
  *
+ * The card of Models > Library > Engines.
+ *
  * A model is a file of weights; an engine is the native library that reads it
  * (ONNX Runtime for speech, embeddings and classifiers; llama.cpp for text).
  * Engines are downloaded, not bundled, so a model can be installed and verified
@@ -62,18 +64,11 @@ export interface LocalModelsEnginesCardProps {
 	runtimes: LocalRuntimesState;
 }
 
+/** The card body. Its heading and description are the Engines section's, above it. */
 export function LocalModelsEnginesCard({ theme, runtimes }: LocalModelsEnginesCardProps) {
-	if (runtimes.listings.length === 0) return null;
+	if (runtimes.listings.length === 0 && !runtimes.error) return null;
 	return (
-		<SectionCard theme={theme}>
-			<div data-testid="local-models-engines">
-				<div className="font-medium" style={{ color: theme.colors.textMain }}>
-					Engines
-				</div>
-				<p className="text-xs opacity-70 mt-0.5">
-					The libraries that run a model. Downloading a model installs its engine with it.
-				</p>
-			</div>
+		<SectionCard theme={theme} testId="local-models-engines">
 			{runtimes.error && (
 				<p className="text-xs select-text" style={{ color: theme.colors.error }}>
 					{runtimes.error}

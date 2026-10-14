@@ -19,6 +19,7 @@ import {
 import {
 	describeHardwareProfile,
 	estimateKvBytesPer1kTokens,
+	hardwareProfileStat,
 	estimateKvLayout,
 	hardwareFitCaveat,
 	largestVramGpu,
@@ -349,6 +350,28 @@ describe('modelFit', () => {
 			'32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB), Intel(R) UHD Graphics 770 (memory not reported)'
 		);
 		expect(Object.keys(MODEL_FIT_LABELS).sort()).toEqual(['fits', 'tight', 'too-large']);
+	});
+
+	it('cuts the hardware down to a value and a caption for a stat tile', () => {
+		expect(hardwareProfileStat(MAC_128GB)).toEqual({
+			value: '128.0 GB',
+			caption: 'Unified memory, Apple Silicon',
+		});
+		expect(hardwareProfileStat(CPU_ONLY_16GB)).toEqual({
+			value: '16.0 GB',
+			caption: 'RAM, no GPU',
+		});
+		// The GPU named is the one with the most memory, not the first listed.
+		expect(hardwareProfileStat(WINDOWS_32GB_RTX_8GB)).toEqual({
+			value: '32.0 GB',
+			caption: 'RAM, NVIDIA GeForce RTX 4060 (8.0 GB)',
+		});
+		expect(
+			hardwareProfileStat({
+				...WINDOWS_32GB_RTX_8GB,
+				gpus: [{ name: 'NVIDIA GeForce RTX 4060', vramBytes: null, source: 'electron' }],
+			}).caption
+		).toBe('RAM, NVIDIA GeForce RTX 4060');
 	});
 
 	it('warns that a GPU with no memory reading is judged as a CPU, and only then', () => {

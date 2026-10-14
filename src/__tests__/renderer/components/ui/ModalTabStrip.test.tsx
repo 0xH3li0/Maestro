@@ -108,6 +108,33 @@ describe('ModalTabStrip', () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	// The strip scrolls sideways with no scrollbar, so a selected tab past its
+	// edge has to be brought into view or nothing shows which panel is open.
+	it('scrolls the selected tab into view, on mount and when the selection moves', () => {
+		const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+		scrollIntoView.mockClear();
+		const props = {
+			theme: mockTheme,
+			tabs: TABS,
+			onChange: vi.fn(),
+			label: 'Agent settings',
+			idPrefix: 'edit-agent',
+		};
+		const { rerender } = render(<ModalTabStrip {...props} activeTab="ssh" />);
+
+		expect(scrollIntoView).toHaveBeenCalledTimes(1);
+		expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole('tab', { name: 'SSH' }));
+		expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: 'auto', block: 'nearest' });
+
+		rerender(<ModalTabStrip {...props} activeTab="general" />);
+		expect(scrollIntoView).toHaveBeenCalledTimes(2);
+		expect(scrollIntoView.mock.contexts[1]).toBe(screen.getByRole('tab', { name: 'General' }));
+
+		// A render that does not move the selection scrolls nothing.
+		rerender(<ModalTabStrip {...props} activeTab="general" />);
+		expect(scrollIntoView).toHaveBeenCalledTimes(2);
+	});
+
 	it('draws an error dot only on a tab that has an error', () => {
 		renderStrip('general', vi.fn(), [
 			{ id: 'general', label: 'General', hasError: true },

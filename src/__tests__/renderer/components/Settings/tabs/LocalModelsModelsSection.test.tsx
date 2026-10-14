@@ -1,14 +1,18 @@
 /**
- * Tests for LocalModelsModelsSection - the Models section of the Local Models tab.
+ * Tests for LocalModelsModelsSection - the Library panel of the Models tab.
  *
- * Verifies the catalog renders grouped by what each model is for under the disk
- * total, that each row says what the model is good at and whether it fits this
- * computer, that a model too large is hidden behind a toggle, that mounting
- * reads but never downloads, that Download fires only on a click, that removing
- * a model a task is assigned to warns and names the task first, and that a
- * model the user added is labeled and can leave the Library.
+ * Verifies the summary line, the section strip (one section per pane, an error
+ * dot on a section holding a model that failed verification), that each section
+ * lists only its own models (a judge or vision model under Housekeeping, the
+ * voice kinds under Speech, each in its own card), that each row says what the
+ * model is good at and whether it fits this computer, that a model too large is
+ * hidden behind a toggle, that mounting reads but never downloads, that
+ * Download fires only on a click, that removing a model a task is assigned to
+ * warns and names the task first, and that a model the user added is labeled
+ * and can leave the Library.
  */
 
+import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { Theme } from '../../../../../renderer/types';
@@ -19,9 +23,11 @@ import {
 } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsModelsSection';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useLocalModels, useLocalRuntimes } from '../../../../../renderer/hooks/localModels';
+import type { LocalModelLibrarySectionId } from '../../../../../shared/local-models/library';
 import {
 	BGE_SMALL_EN_ID,
 	GEMMA_4_12B_ID,
+	GEMMA_4_E4B_ID,
 	GPT_OSS_120B_ID,
 	GPT_OSS_20B_ID,
 	LOCAL_MODEL_CATALOG,
@@ -97,11 +103,24 @@ function listing(id: string, installed: boolean, entry?: LocalModelEntry): Local
 	};
 }
 
-/** The section takes the tab's hook state; this stands in for the tab. */
-function ModelsSection() {
+/** The section takes the tab's hook state and the nav's section; this stands in for both. */
+function ModelsSection({ initial = 'agents' }: { initial?: LocalModelLibrarySectionId }) {
 	const models = useLocalModels();
 	const runtimes = useLocalRuntimes();
-	return <LocalModelsModelsSection theme={theme} models={models} runtimes={runtimes} />;
+	const [section, setSection] = useState<LocalModelLibrarySectionId>(initial);
+	return (
+		<LocalModelsModelsSection
+			theme={theme}
+			models={models}
+			runtimes={runtimes}
+			section={section}
+			onSectionChange={setSection}
+		/>
+	);
+}
+
+function openSection(label: string) {
+	fireEvent.click(screen.getByRole('tab', { name: label }));
 }
 
 const api = () => window.maestro.localModels as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -154,32 +173,85 @@ describe('LocalModelsModelsSection', () => {
 		useSettingsStore.setState({ localModelAssignments: {} });
 	});
 
-	it('groups the catalog by what each model is for and shows the disk total', async () => {
+	it('shows the disk total and this computer on one line above the section strip', async () => {
 		render(<ModelsSection />);
-		expect(await screen.findByTestId('local-models-group-embedding')).toBeInTheDocument();
-		// Text models sit under a role; the other kinds under their kind.
-		expect(screen.getByTestId('local-models-group-agent')).toHaveTextContent('Runs agents');
-		expect(screen.getByTestId('local-models-group-housekeeping')).toBeInTheDocument();
-		expect(screen.getByTestId('local-models-group-judge')).toBeInTheDocument();
-		expect(screen.getByTestId('local-models-group-vision')).toBeInTheDocument();
-		expect(screen.queryByText('Text generation')).not.toBeInTheDocument();
-		expect(screen.getByText('Embeddings')).toBeInTheDocument();
-		expect(screen.getByText('Classifiers')).toBeInTheDocument();
-		expect(screen.getByText('Speech-to-text')).toBeInTheDocument();
-		expect(screen.getByText('Wake word')).toBeInTheDocument();
-		expect(screen.getByText('On disk')).toBeInTheDocument();
-		for (const entry of LOCAL_MODEL_CATALOG) {
-			expect(screen.getByText(entry.displayName)).toBeInTheDocument();
-		}
-		// A model is listed once, under its most specific role.
-		const agents = screen.getByTestId('local-models-group-agent').parentElement as HTMLElement;
+		const summary = await screen.findByTestId('local-models-summary');
+		await waitFor(() => expect(summary).toHaveTextContent('1 installed'));
+		expect(summary).toHaveTextContent(/on disk/);
+		expect(await screen.findByTestId('local-models-hardware')).toHaveTextContent(
+			'128.0 GB of unified memory'
+		);
+		// No big stat tiles any more.
+		expect(screen.queryByText('Needs attention')).not.toBeInTheDocument();
+	});
+
+	it('lists only the open section, a judge and a vision model under Housekeeping', async () => {
+		render(<ModelsSection />);
+		const agents = await screen.findByTestId('local-models-group-agent');
 		expect(
 			within(agents).getByText(getLocalModel(GPT_OSS_20B_ID)!.displayName)
 		).toBeInTheDocument();
-		const vision = screen.getByTestId('local-models-group-vision').parentElement as HTMLElement;
+		// An agent that also reads images is still listed with the agents.
 		expect(
-			within(vision).getByText(getLocalModel(GEMMA_4_12B_ID)!.displayName)
+			within(agents).getByText(getLocalModel(GEMMA_4_E4B_ID)!.displayName)
 		).toBeInTheDocument();
+		expect(screen.queryByText(getLocalModel(QWEN3_1_7B_ID)!.displayName)).not.toBeInTheDocument();
+		expect(screen.queryByText(getLocalModel(BGE_SMALL_EN_ID)!.displayName)).not.toBeInTheDocument();
+
+		openSection('Housekeeping');
+		const housekeeping = screen.getByTestId('local-models-group-housekeeping');
+		for (const id of [QWEN3_1_7B_ID, QWEN3_5_9B_ID, GEMMA_4_12B_ID]) {
+			expect(within(housekeeping).getByText(getLocalModel(id)!.displayName)).toBeInTheDocument();
+		}
+		expect(screen.queryByTestId('local-models-group-judge')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('local-models-group-vision')).not.toBeInTheDocument();
+		expect(screen.queryByText(getLocalModel(GPT_OSS_20B_ID)!.displayName)).not.toBeInTheDocument();
+	});
+
+	it('gives each kind in a section of several its own card, naming who can use it', async () => {
+		render(<ModelsSection initial="speech" />);
+		const stt = await screen.findByTestId('local-models-group-stt');
+		expect(stt).toHaveTextContent('Speech-to-text');
+		expect(stt).toHaveTextContent(/Can be used by .*Voice/);
+		expect(screen.getByTestId('local-models-group-tts')).toHaveTextContent('Text-to-speech');
+		expect(screen.getByTestId('local-models-group-wake-word')).toHaveTextContent('Wake word');
+
+		openSection('Search & Safety');
+		expect(screen.getByTestId('local-models-group-embedding')).toHaveTextContent('Embeddings');
+		expect(screen.getByTestId('local-models-group-classifier')).toHaveTextContent('Classifiers');
+	});
+
+	it('lists every catalog model in exactly one section', async () => {
+		window.localStorage.setItem(SHOW_TOO_LARGE_MODELS_STORAGE_KEY, 'true');
+		render(<ModelsSection />);
+		await screen.findByTestId('local-models-group-agent');
+		const seen: string[] = [];
+		for (const label of ['Agent Models', 'Housekeeping', 'Speech', 'Search & Safety']) {
+			openSection(label);
+			for (const entry of LOCAL_MODEL_CATALOG) {
+				if (screen.queryByText(entry.displayName)) seen.push(entry.id);
+			}
+		}
+		expect(seen.sort()).toEqual(LOCAL_MODEL_CATALOG.map((entry) => entry.id).sort());
+	});
+
+	it('marks the section that holds a model that failed verification', async () => {
+		api().list.mockResolvedValue(
+			LOCAL_MODEL_CATALOG.map((entry) =>
+				entry.id === PARAKEET_TDT_V2_ID
+					? {
+							...listing(entry.id, false),
+							status: { id: entry.id, status: 'corrupt', manifest: null, bytesOnDisk: 1 },
+						}
+					: listing(entry.id, false)
+			)
+		);
+		render(<ModelsSection />);
+		expect(await screen.findByTestId('local-models-needs-attention')).toHaveTextContent(
+			'One model failed verification'
+		);
+		expect(screen.getByTestId('settings-models-library-tab-speech-error')).toBeInTheDocument();
+		expect(screen.queryByTestId('settings-models-library-tab-agents-error')).toBeNull();
 	});
 
 	it('says what each model is good at, and names the harnesses an agent model passed', async () => {
@@ -188,7 +260,7 @@ describe('LocalModelsModelsSection', () => {
 		const gpt = getLocalModel(GPT_OSS_20B_ID)!;
 		const row = rowOf(gpt.displayName);
 		expect(row).toHaveTextContent(gpt.goodAt);
-		expect(row).toHaveTextContent('Runs agents: Claude Code, Codex');
+		expect(row).toHaveTextContent('Agent-ready: Claude Code, Codex');
 		// The size and the license are on the row too.
 		expect(within(row).getByRole('link', { name: gpt.license.spdx })).toHaveAttribute(
 			'href',
@@ -204,18 +276,22 @@ describe('LocalModelsModelsSection', () => {
 		expect(await screen.findByTestId('local-models-hardware')).toHaveTextContent(
 			'32.0 GB of unified memory'
 		);
-		const fits = await screen.findByTestId(`local-model-fit-${QWEN3_5_9B_ID}`);
-		expect(fits).toHaveAttribute('data-fit', 'fits');
-		expect(fits).toHaveTextContent(/^Fits$/);
-
-		const tooLarge = screen.getByTestId(`local-model-fit-${GPT_OSS_120B_ID}`);
+		const tooLarge = await screen.findByTestId(`local-model-fit-${GPT_OSS_120B_ID}`);
 		expect(tooLarge).toHaveAttribute('data-fit', 'too-large');
 		expect(tooLarge).toHaveTextContent(/^Too large: Needs /);
 
-		const tight = LOCAL_MODEL_CATALOG.map((entry) =>
-			screen.getByTestId(`local-model-fit-${entry.id}`)
-		).filter((line) => line.getAttribute('data-fit') === 'tight');
-		for (const line of tight) expect(line).toHaveTextContent(/^Tight: Needs /);
+		const lines: HTMLElement[] = [];
+		for (const label of ['Agent Models', 'Housekeeping', 'Speech', 'Search & Safety']) {
+			openSection(label);
+			lines.push(...screen.getAllByTestId(/^local-model-fit-/));
+		}
+		expect(lines).toHaveLength(LOCAL_MODEL_CATALOG.length);
+		const fits = lines.find((line) => line.dataset.testid === `local-model-fit-${QWEN3_5_9B_ID}`);
+		expect(fits).toHaveAttribute('data-fit', 'fits');
+		expect(fits).toHaveTextContent(/^Fits$/);
+		for (const line of lines.filter((line) => line.getAttribute('data-fit') === 'tight')) {
+			expect(line).toHaveTextContent(/^Tight: Needs /);
+		}
 	});
 
 	it('hides models too large for this machine behind a toggle', async () => {
@@ -226,7 +302,7 @@ describe('LocalModelsModelsSection', () => {
 		expect(screen.queryByText(big)).not.toBeInTheDocument();
 		expect(toggle).toHaveTextContent(/^Show models too large for this machine \(\d+\)$/);
 		// A small model still shows.
-		expect(screen.getByText(getLocalModel(BGE_SMALL_EN_ID)!.displayName)).toBeInTheDocument();
+		expect(screen.getByText(getLocalModel(GEMMA_4_E4B_ID)!.displayName)).toBeInTheDocument();
 
 		fireEvent.click(toggle);
 		expect(screen.getByText(big)).toBeInTheDocument();
@@ -257,48 +333,19 @@ describe('LocalModelsModelsSection', () => {
 		);
 	});
 
-	it('points at Sources for the models that are cloud only', async () => {
-		const onOpenSources = vi.fn();
-		function WithSources() {
-			const models = useLocalModels();
-			const runtimes = useLocalRuntimes();
-			return (
-				<LocalModelsModelsSection
-					theme={theme}
-					models={models}
-					runtimes={runtimes}
-					onOpenSources={onOpenSources}
-				/>
-			);
-		}
-		render(<WithSources />);
-		const note = await screen.findByTestId('local-models-cloud-only');
-		for (const name of ['DeepSeek V4', 'Kimi K3', 'Kimi K2.7', 'GLM-5.3']) {
-			expect(note).toHaveTextContent(name);
-		}
-		fireEvent.click(screen.getByTestId('local-models-open-sources'));
-		expect(onOpenSources).toHaveBeenCalled();
-	});
-
-	it('lists a model the user added in its own group, labeled as not verified', async () => {
+	it('lists a model the user added under Custom, labeled as not verified', async () => {
 		api().list.mockResolvedValue([
 			...LOCAL_MODEL_CATALOG.map((entry) => listing(entry.id, false)),
 			listing(USER_ENTRY.id, false, USER_ENTRY),
 		]);
-		render(<ModelsSection />);
-		const group = await screen.findByTestId('local-models-group-user');
-		expect(group).toHaveTextContent('Added from Hugging Face');
+		render(<ModelsSection initial="custom" />);
+		await screen.findByTestId('local-models-group-user');
+		expect(screen.getByTestId('local-models-add-hf')).toBeInTheDocument();
 		expect(screen.getByTestId(`local-model-unverified-${USER_ENTRY.id}`)).toHaveTextContent(
 			USER_MODEL_UNVERIFIED_LABEL
 		);
 		const row = rowOf(USER_ENTRY.displayName);
 		expect(within(row).getByRole('link', { name: 'apache-2.0' })).toBeInTheDocument();
-		// A curated row has no way out of the Library.
-		expect(
-			within(rowOf(getLocalModel(BGE_SMALL_EN_ID)!.displayName)).queryByRole('button', {
-				name: 'Remove from Library',
-			})
-		).not.toBeInTheDocument();
 
 		hfApi().remove.mockResolvedValue({
 			ok: true,
@@ -309,13 +356,29 @@ describe('LocalModelsModelsSection', () => {
 		expect(api().remove).not.toHaveBeenCalled();
 	});
 
+	it('gives a curated row no way out of the Library', async () => {
+		render(<ModelsSection initial="search" />);
+		const name = getLocalModel(BGE_SMALL_EN_ID)!.displayName;
+		await screen.findByText(name);
+		const row = rowOf(name);
+		expect(
+			within(row).queryByRole('button', { name: 'Remove from Library' })
+		).not.toBeInTheDocument();
+	});
+
+	it('says so under Custom when no model has been added', async () => {
+		render(<ModelsSection initial="custom" />);
+		expect(await screen.findByText(/No models added yet/)).toBeInTheDocument();
+		expect(screen.getByTestId('local-models-add-hf')).toBeInTheDocument();
+	});
+
 	it('warns before taking an assigned user model out of the Library, and shows a refusal', async () => {
 		api().list.mockResolvedValue([listing(USER_ENTRY.id, false, USER_ENTRY)]);
 		useSettingsStore.setState({
 			localModelAssignments: { 'tab-naming': { type: 'local', modelId: USER_ENTRY.id } },
 		});
 		hfApi().remove.mockResolvedValue({ ok: false, message: 'No model you added has that id.' });
-		render(<ModelsSection />);
+		render(<ModelsSection initial="custom" />);
 		await screen.findByTestId('local-models-group-user');
 		fireEvent.click(
 			within(rowOf(USER_ENTRY.displayName)).getByRole('button', { name: 'Remove from Library' })
@@ -328,7 +391,7 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('reads the listing on mount and downloads nothing until a click', async () => {
-		render(<ModelsSection />);
+		render(<ModelsSection initial="search" />);
 		await screen.findByTestId('local-models-group-embedding');
 		expect(api().list).toHaveBeenCalled();
 		expect(api().download).not.toHaveBeenCalled();
@@ -340,17 +403,18 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('offers the text model for download and states the engine it fetches with it', async () => {
-		render(<ModelsSection />);
-		await screen.findByTestId('local-models-group-judge');
+		render(<ModelsSection initial="housekeeping" />);
+		await screen.findByTestId('local-models-group-housekeeping');
 		const qwen = getLocalModel(QWEN3_1_7B_ID)!;
 		const row = screen.getByText(qwen.displayName).closest('.rounded.border') as HTMLElement;
 		// llama.cpp is not installed, so the button names both downloads.
 		const button = within(row).getByRole('button', { name: /^Download/ });
-		expect(button).toHaveTextContent('engine');
+		await waitFor(() => expect(button).toHaveTextContent('engine'));
 		fireEvent.click(button);
 		await waitFor(() => expect(api().download).toHaveBeenCalledWith(QWEN3_1_7B_ID));
 
 		// An ONNX model's engine is already on disk, so its button names only itself.
+		openSection('Search & Safety');
 		const prompt = getLocalModel('prompt-guard-2-22m')!;
 		const promptRow = screen
 			.getByText(prompt.displayName)
@@ -361,7 +425,7 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('lists the engines and installs one on its own', async () => {
-		render(<ModelsSection />);
+		render(<ModelsSection initial="engines" />);
 		const onnx = await screen.findByTestId('local-models-engine-onnx');
 		expect(onnx).toHaveTextContent('Installed');
 		expect(within(onnx).queryByRole('button')).not.toBeInTheDocument();
@@ -371,6 +435,8 @@ describe('LocalModelsModelsSection', () => {
 		expect(runtimesApi().install).not.toHaveBeenCalled();
 		fireEvent.click(within(llama).getByRole('button', { name: /^Install/ }));
 		await waitFor(() => expect(runtimesApi().install).toHaveBeenCalledWith('llama'));
+		// The Hugging Face mirror is not an engine setting: it lives in Sources.
+		expect(screen.queryByTestId('local-models-download-source')).toBeNull();
 	});
 
 	it('says so when an engine has no build for this platform', async () => {
@@ -378,14 +444,14 @@ describe('LocalModelsModelsSection', () => {
 			runtimeListing('onnx', true, 100_000_000),
 			{ ...runtimeListing('llama', false, 0), downloadable: false },
 		]);
-		render(<ModelsSection />);
+		render(<ModelsSection initial="engines" />);
 		const llama = await screen.findByTestId('local-models-engine-llama');
 		expect(llama).toHaveTextContent('No build is published for this platform');
 		expect(within(llama).queryByRole('button')).not.toBeInTheDocument();
 	});
 
 	it('names the voice slot a voice model serves', async () => {
-		render(<ModelsSection />);
+		render(<ModelsSection initial="speech" />);
 		expect(
 			await screen.findByTestId(`local-model-used-by-${PARAKEET_TDT_V2_ID}`)
 		).toHaveTextContent('Voice (speech-to-text)');
@@ -393,7 +459,7 @@ describe('LocalModelsModelsSection', () => {
 
 	it('removes an unassigned model without a warning', async () => {
 		useSettingsStore.setState({ localModelAssignments: {} });
-		render(<ModelsSection />);
+		render(<ModelsSection initial="search" />);
 		const name = getLocalModel(BGE_SMALL_EN_ID)!.displayName;
 		const row = (await screen.findByText(name)).closest('.rounded.border') as HTMLElement;
 		fireEvent.click(within(row).getByRole('button', { name: /^Remove/ }));
@@ -405,7 +471,7 @@ describe('LocalModelsModelsSection', () => {
 		useSettingsStore.setState({
 			localModelAssignments: { 'semantic-search': { type: 'local', modelId: BGE_SMALL_EN_ID } },
 		});
-		render(<ModelsSection />);
+		render(<ModelsSection initial="search" />);
 		expect(await screen.findByTestId(`local-model-used-by-${BGE_SMALL_EN_ID}`)).toHaveTextContent(
 			'Semantic search'
 		);

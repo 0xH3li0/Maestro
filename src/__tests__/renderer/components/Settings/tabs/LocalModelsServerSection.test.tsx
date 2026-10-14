@@ -1,5 +1,5 @@
 /**
- * Tests for the Model server card in Models > Library: it shows the state, the
+ * Tests for the Model server card in Models > Sources: it shows the state, the
  * engine build with its accelerator, the address, the bind mode and the loaded
  * models from the report, each control calls its action, the key is read only
  * when Copy is pressed, Rotate asks first, and the section reads the report on

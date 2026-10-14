@@ -165,8 +165,8 @@ describe('buildRunOnOptionGroups', () => {
 			{
 				label: MODEL_SERVER_NAME,
 				options: [
-					'gpt-oss 20B (MXFP4) (Fits, Runs agents)',
-					`${getLocalModel(GEMMA_4_E4B_ID)?.displayName} (Fits, Runs agents)`,
+					'gpt-oss 20B (MXFP4) (Fits, Agent-ready)',
+					`${getLocalModel(GEMMA_4_E4B_ID)?.displayName} (Fits, Agent-ready)`,
 					`${getLocalModel(QWEN3_1_7B_ID)?.displayName} (Fits)`,
 				],
 			},
@@ -185,7 +185,7 @@ describe('buildRunOnOptionGroups', () => {
 		});
 
 		expect(groups[1].options.map((option) => option.label)).toEqual([
-			'gpt-oss 20B (MXFP4) (Runs agents)',
+			'gpt-oss 20B (MXFP4) (Agent-ready)',
 			getLocalModel(GEMMA_4_E4B_ID)?.displayName,
 			getLocalModel(QWEN3_1_7B_ID)?.displayName,
 		]);

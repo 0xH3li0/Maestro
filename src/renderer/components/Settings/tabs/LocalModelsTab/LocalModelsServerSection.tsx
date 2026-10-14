@@ -1,5 +1,5 @@
 /**
- * LocalModelsServerSection - the Model server card in Models > Library.
+ * LocalModelsServerSection - the Model server card in Models > Sources.
  *
  * The Maestro model server is llama.cpp's own `llama-server`, run and watched by
  * Maestro, serving the Library's text models to agent harnesses (Claude Code,

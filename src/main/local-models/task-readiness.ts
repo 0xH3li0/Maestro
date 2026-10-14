@@ -387,7 +387,7 @@ async function resolveModelServer(
 		return unavailable(
 			'endpoint-unreachable',
 			`The ${MODEL_SERVER_NAME} engine (llama-server) is not downloaded.`,
-			`Install it in ${modelsSettingsLocation('library')}.`
+			`Install it in ${modelsSettingsLocation('sources')}.`
 		);
 	}
 	const entry = getLocalModel(model);

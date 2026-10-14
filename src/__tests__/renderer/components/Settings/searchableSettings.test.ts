@@ -13,9 +13,8 @@ import {
 	ALL_SEARCHABLE_SETTINGS,
 } from '../../../../renderer/components/Settings/searchableSettings';
 import {
-	MODELS_SETTINGS_PANELS,
-	MODELS_SETTINGS_PANEL_LABELS,
-	type ModelsSettingsPanel,
+	modelsSettingsPlaceLabel,
+	parseModelsSettingsSubTab,
 } from '../../../../shared/local-models/settings-location';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -317,8 +316,21 @@ describe('searchableSettings', () => {
 
 			// Local Models tab
 			['local models', 'local-models-models'],
+			['models overview', 'local-models-overview'],
+			['active tasks', 'local-models-overview'],
 			['download model', 'local-models-models'],
 			['hugging face', 'local-models-add-hf'],
+			['agent models', 'local-models-agents'],
+			['run on', 'local-models-agents'],
+			['runs agents', 'local-models-agents'],
+			['housekeeping', 'local-models-housekeeping'],
+			['whisper', 'local-models-speech'],
+			['wake word', 'local-models-speech'],
+			['embeddings', 'local-models-search'],
+			['prompt guard', 'local-models-search'],
+			['llama.cpp', 'local-models-engines'],
+			['onnx runtime', 'local-models-engines'],
+			['deepseek', 'local-models-endpoints'],
 			['mirror', 'local-models-download-source'],
 			['download source', 'local-models-download-source'],
 			['blocked', 'local-models-download-source'],
@@ -358,23 +370,30 @@ describe('searchableSettings', () => {
 	describe('Models inner tabs', () => {
 		const modelsEntries = ALL_SEARCHABLE_SETTINGS.filter((s) => s.tab === 'models');
 
-		it('points every Models entry at a real inner tab, named in its tab label', () => {
+		it('points every Models entry at a real place, named in its tab label', () => {
 			expect(modelsEntries.length).toBeGreaterThan(0);
 			for (const entry of modelsEntries) {
-				expect(MODELS_SETTINGS_PANELS, entry.id).toContain(entry.subTab);
+				const place = parseModelsSettingsSubTab(entry.subTab ?? '');
+				expect(place, entry.id).not.toBeNull();
 				expect(entry.tabLabel, entry.id).toBe(
-					`Models > ${MODELS_SETTINGS_PANEL_LABELS[entry.subTab as ModelsSettingsPanel]}`
+					`Models > ${modelsSettingsPlaceLabel(place!.panel, place!.librarySection)}`
 				);
 			}
 		});
 
-		it('files each Models entry under the inner tab that renders it', () => {
+		it('files each Models entry under the place that renders it', () => {
 			const panelOf = Object.fromEntries(modelsEntries.map((s) => [s.id, s.subTab]));
 			expect(panelOf).toEqual({
+				'local-models-overview': 'overview',
 				'local-models-models': 'library',
-				'local-models-add-hf': 'library',
-				'local-models-download-source': 'library',
-				'local-models-model-server': 'library',
+				'local-models-agents': 'library/agents',
+				'local-models-housekeeping': 'library/housekeeping',
+				'local-models-speech': 'library/speech',
+				'local-models-search': 'library/search',
+				'local-models-engines': 'library/engines',
+				'local-models-add-hf': 'library/custom',
+				'local-models-download-source': 'sources',
+				'local-models-model-server': 'sources',
 				'local-models-endpoints': 'sources',
 				'local-models-system-one-engine': 'system-one',
 				'local-models-system-one-fail-policy': 'system-one',
@@ -391,6 +410,7 @@ describe('searchableSettings', () => {
 
 		it('reads an inner tab back by setting id, and none for a plain tab', () => {
 			expect(settingSubTab('local-models-utility-agent')).toBe('system-two');
+			expect(settingSubTab('local-models-download-source')).toBe('sources');
 			expect(settingSubTab('general-tab-behavior')).toBeUndefined();
 			expect(settingSubTab('no-such-setting')).toBeUndefined();
 		});

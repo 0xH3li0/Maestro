@@ -6,7 +6,7 @@
  * - Every model each source lists: the Maestro model server first, then each
  *   enabled source in the order the user saved them. A model on the Maestro
  *   server is a catalog model, so it carries what the Library says about it:
- *   its fit on this computer, and the "Runs agents" badge when it passed the
+ *   its fit on this computer, and the "Agent-ready" badge when it passed the
  *   agent qualification with THIS harness. Another source does not report what
  *   a model is, so its models carry neither.
  * - The agent's CURRENT target, even when no source lists it (a source that

@@ -25,7 +25,7 @@
  */
 
 import { memo } from 'react';
-import { Mic, Volume2, Waves } from 'lucide-react';
+import { Volume2, Waves } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import { usePrefersReducedMotion } from '../../hooks/utils/usePrefersReducedMotion';
@@ -34,6 +34,7 @@ import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { selectWakePhraseFor, useVoiceUiStore } from '../../stores/voiceUiStore';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
+import { VoiceFloorMark } from '../ACappella/VoiceFloorMark';
 
 export interface AgentVoiceIndicatorProps {
 	/** The agent this row is for. */
@@ -70,14 +71,11 @@ export const AgentVoiceIndicator = memo(function AgentVoiceIndicator({
 	return (
 		<>
 			{hasFloor && (
-				<span
-					data-testid="agent-voice-floor"
-					className="shrink-0 flex items-center"
-					title="Holding the voice floor: what you say next goes here"
-					aria-label="Holding the voice floor"
-				>
-					<Mic className="w-3 h-3" style={{ color: accent }} fill={accent} />
-				</span>
+				<VoiceFloorMark
+					theme={theme}
+					testId="agent-voice-floor"
+					label="Holding the voice floor: what you say next goes here"
+				/>
 			)}
 			{speaking && (
 				<span

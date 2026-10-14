@@ -6,7 +6,7 @@ icon: hard-drive
 
 Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
 
-Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `library`, `sources`, `system-two`, `gateway`) lands on one of its inner tabs. The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty.
+Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty.
 
 <Note>
 	**Nothing downloads on its own.** Opening the tab, or enabling anything else in Maestro, fetches
@@ -15,15 +15,17 @@ Open it from **Settings -> Models**, or run **Open Models Settings** from the co
 	there, and every new task starts **Off**.
 </Note>
 
-The tab has five inner tabs. Maestro remembers the one you used last.
+Clicking **Models** in the Settings sidebar opens the **Overview**. A row of tiles across the top shows where this computer stands: disk in use, models installed, engines installed and current, **active tasks**, endpoints, and the memory every model's fit is judged against. A **task** is one of Maestro's background jobs (naming a tab, screening text, routing a voice request); it is active once you give it a source, and the rest are off. A model that failed verification shows a warning under the tiles, and clicking it opens the Library section that lists it. Below the tiles, a card for each panel says what it is for; click one to open it.
 
-| Inner tab      | What lives there                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Library**    | The [models](#models) Maestro downloads, the [engines](#engines) that run them, and the disk they use.                                              |
-| **Sources**    | Where models come from besides the Library: the [endpoints](#endpoints) (Ollama, LM Studio, any OpenAI-compatible server) you have added.           |
-| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
-| **System Two** | The tasks that write text for someone to read or run, plus the Utility Agent settings.                                                              |
-| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
+The five panels are listed under **Models** in the sidebar; click one to open it. The list stays expanded while the sidebar has room for every row, and collapses to show only under an open **Models** when it would make the sidebar scroll. **Cmd+Shift+[** and **]** walk the Overview and the panels too. Maestro remembers the panel you used last.
+
+| Panel          | What lives there                                                                                                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                                                                                      |
+| **Sources**    | Where models come from besides the Library: the [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), the [cloud-only](#cloud-only) models, and the [download source](#download-source). |
+| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two).                                                                   |
+| **System Two** | The tasks that write text for someone to read or run, plus the Utility Agent settings.                                                                                                                                |
+| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                                                                                     |
 
 ### System One and System Two
 
@@ -33,42 +35,53 @@ One rule sorts every task. If its output is a **judgment** (a decision, label, s
 | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Cue gate, Prompt-injection screen, Secret screen, Voice routing, Model routing, Tab cleanup suggestions, Semantic search, Dictation | Tab naming, Summaries, AI command mode, Git drafts, Spoken notices, Token proxy, Computer History digests |
 
-A task's assignment row sits on the inner tab of its system. Every message in Maestro that says where to pick a model for a task names that inner tab, for example "Settings > Models > System One".
+A task's assignment row sits on the panel of its system. Every message in Maestro that says where to pick a model for a task names that panel, for example "Settings > Models > System One".
 
 ## Models
 
-Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. The top of the tab shows how much disk the installed models use, how many are installed, and how many need attention. It also names what this computer has to run a model on, for example "32.0 GB of unified memory (Apple Silicon)" or "32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB)".
+Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. One line at the top says how much disk the installed models use, how many are installed, and what this computer has to run a model on, for example "32.0 GB of unified memory (Apple Silicon)" or "32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB)". A model whose files failed verification is called out under it, and the section it sits in carries a red dot.
 
-Below that is the Library, grouped by what each model is for. A text model is listed once, under its most specific role, and its other roles are badges on its row:
+Below that line is a strip of sections, one shown at a time. Maestro remembers the one you used last.
 
-| Group          | Model                             | Size     | Good at                                                                   |
-| -------------- | --------------------------------- | -------- | ------------------------------------------------------------------------- |
-| Runs agents    | Gemma 4 E4B (Q4_0)                | 5.2 GB   | Screenshots and images, many languages, fast replies on laptops           |
-| Runs agents    | gpt-oss 20B (MXFP4)               | 11.3 GB  | Reasoning with tool calls; the smallest that drives Claude Code and Codex |
-| Runs agents    | Qwen3-Coder 30B-A3B (Q4_K_M)      | 17.3 GB  | A fast coding agent with tool use                                         |
-| Runs agents    | Gemma 4 31B (Q4_K_M)              | 18.2 GB  | The strongest Gemma: tool calling and images                              |
-| Runs agents    | Qwen3-Coder-Next 80B-A3B (Q4_K_M) | 45.2 GB  | The strongest local coding agent                                          |
-| Runs agents    | gpt-oss 120B (MXFP4)              | 59.0 GB  | The strongest local reasoning and tool use                                |
-| Housekeeping   | Qwen3.5 9B (Q4_K_M)               | 5.3 GB   | Commit and PR drafts, shell commands and summaries                        |
-| Housekeeping   | Devstral Small 2 24B (Q4_K_M)     | 13.3 GB  | Multi-file edits in large repositories                                    |
-| Housekeeping   | Qwen3.6 35B-A3B (Q4_K_M)          | 19.0 GB  | General agent work: fast, with a long context                             |
-| Housekeeping   | Qwen3.8 27B (Q4_K_M)              | 17.7 GB  | Hard reasoning and coding                                                 |
-| Judge          | Qwen3 1.7B Instruct (Q4_K_M)      | 1.0 GB   | The fastest small judgments: tab names, gate answers, short summaries     |
-| Judge          | Qwen3.5 4B (Q4_K_M)               | 2.6 GB   | Every housekeeping task, shell commands and voice routing included        |
-| Vision         | Gemma 4 12B (Q4_K_M)              | 6.8 GB   | Writing and multilingual work, with images                                |
-| Embeddings     | BGE Small (English)               | 33.1 MB  | Quick search by meaning in English                                        |
-| Embeddings     | EmbeddingGemma 300M               | 208.6 MB | Higher-quality search by meaning, in many languages                       |
-| Classifiers    | Llama Prompt Guard 2 22M          | 77.4 MB  | Catching prompt injection in untrusted text                               |
-| Classifiers    | DeBERTa v3 Prompt Injection v2    | 712.6 MB | The same, under a permissive license, at a larger size                    |
-| Speech-to-text | Parakeet TDT 0.6B (English)       | 630.7 MB | Dictated English: names, casing and punctuation                           |
-| Speech-to-text | Whisper Base (English)            | 198.8 MB | Plain English dictation on modest hardware                                |
-| Text-to-speech | Kokoro 82M                        | 311.0 MB | Reading replies and notices aloud                                         |
-| Wake word      | openWakeWord Base                 | 2.3 MB   | Hearing the wake and stop words with little CPU                           |
-| Wake word      | Wake phrase: "Hey Jarvis"         | 1.2 MB   | Hearing "hey jarvis" to start a hands-free session                        |
+| Section             | What it lists                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Engines**         | The [engines](#engines) that run the models. First, because no model runs without one.                                 |
+| **Agent Models**    | Text models strong enough to be the model behind an agent. Pick one as an agent's [Run on](#run-on) target.            |
+| **Housekeeping**    | Smaller text models for Maestro's own tasks: tab names, summaries, shell commands, fast yes or no answers, and images. |
+| **Speech**          | Speech-to-text, text-to-speech, and the wake word, for voice and dictation. One card per kind.                         |
+| **Search & Safety** | Embeddings for search by meaning, and the classifiers that screen text for prompt injection. One card per kind.        |
+| **Custom**          | The models you [added from Hugging Face](#add-from-hugging-face), and the form that adds one.                          |
+
+A text model is listed once. Its other roles are badges on its row: **Judge** for the fastest small judgments, **Vision** for a model that reads images.
+
+| Section         | Model                             | Size     | Good at                                                                   |
+| --------------- | --------------------------------- | -------- | ------------------------------------------------------------------------- |
+| Agent Models    | Gemma 4 E4B (Q4_0)                | 5.2 GB   | Screenshots and images, many languages, fast replies on laptops           |
+| Agent Models    | gpt-oss 20B (MXFP4)               | 11.3 GB  | Reasoning with tool calls; the smallest that drives Claude Code and Codex |
+| Agent Models    | Qwen3-Coder 30B-A3B (Q4_K_M)      | 17.3 GB  | A fast coding agent with tool use                                         |
+| Agent Models    | Gemma 4 31B (Q4_K_M)              | 18.2 GB  | The strongest Gemma: tool calling and images                              |
+| Agent Models    | Qwen3-Coder-Next 80B-A3B (Q4_K_M) | 45.2 GB  | The strongest local coding agent                                          |
+| Agent Models    | gpt-oss 120B (MXFP4)              | 59.0 GB  | The strongest local reasoning and tool use                                |
+| Housekeeping    | Qwen3 1.7B Instruct (Q4_K_M)      | 1.0 GB   | The fastest small judgments: tab names, gate answers, short summaries     |
+| Housekeeping    | Qwen3.5 4B (Q4_K_M)               | 2.6 GB   | Every housekeeping task, shell commands and voice routing included        |
+| Housekeeping    | Qwen3.5 9B (Q4_K_M)               | 5.3 GB   | Commit and PR drafts, shell commands and summaries                        |
+| Housekeeping    | Gemma 4 12B (Q4_K_M)              | 6.8 GB   | Writing and multilingual work, with images                                |
+| Housekeeping    | Devstral Small 2 24B (Q4_K_M)     | 13.3 GB  | Multi-file edits in large repositories                                    |
+| Housekeeping    | Qwen3.6 35B-A3B (Q4_K_M)          | 19.0 GB  | General agent work: fast, with a long context                             |
+| Housekeeping    | Qwen3.8 27B (Q4_K_M)              | 17.7 GB  | Hard reasoning and coding                                                 |
+| Speech          | Parakeet TDT 0.6B (English)       | 630.7 MB | Dictated English: names, casing and punctuation                           |
+| Speech          | Whisper Base (English)            | 198.8 MB | Plain English dictation on modest hardware                                |
+| Speech          | Kokoro 82M                        | 311.0 MB | Reading replies and notices aloud                                         |
+| Speech          | openWakeWord Base                 | 2.3 MB   | Hearing the wake and stop words with little CPU                           |
+| Speech          | Wake phrase: "Hey Jarvis"         | 1.2 MB   | Hearing "hey jarvis" to start a hands-free session                        |
+| Search & Safety | BGE Small (English)               | 33.1 MB  | Quick search by meaning in English                                        |
+| Search & Safety | EmbeddingGemma 300M               | 208.6 MB | Higher-quality search by meaning, in many languages                       |
+| Search & Safety | Llama Prompt Guard 2 22M          | 77.4 MB  | Catching prompt injection in untrusted text                               |
+| Search & Safety | DeBERTa v3 Prompt Injection v2    | 712.6 MB | The same, under a permissive license, at a larger size                    |
 
 The text models are all Apache-2.0. The licenses of the others are under [Licenses](#licenses).
 
-**Runs agents** is not a claim from a model card. A model is in that group only after it fixed a bug in a scratch repository through a real harness, and its badge names the harnesses it passed with ("Runs agents: Claude Code, Codex").
+**Agent Models** is not a claim from a model card. A model is in that section only after it fixed a bug in a scratch repository through a real harness (Claude Code, Codex, or OpenCode driving the model), and its **Agent-ready** badge names the harnesses it passed with ("Agent-ready: Claude Code, Codex"). That is what makes it a safe [Run on](#run-on) target: the agent keeps its harness and its tools, and the model behind it is the local one.
 
 Each row shows what the model is good at, its size, its license, and what uses it right now: the tasks assigned to it, and the A Cappella voice slot when voice can use it. Each row has **Download**, **Pause**, **Cancel**, **Re-verify**, and **Remove**.
 
@@ -100,14 +113,14 @@ On a PC, Maestro reads the graphics card's memory from the model server's engine
 
 ### Cloud only
 
-DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a desktop (the smallest is 155 GB), so the Library does not offer them. Use them through their provider's API, with your own key, from **Sources**.
+DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a desktop (the smallest is 155 GB), so the Library does not offer them. Use them through their provider's API, with your own key, from an endpoint. The note sits at the bottom of **Models -> Sources**.
 
 ### Add from Hugging Face
 
-**Add from Hugging Face**, below the list, adds a GGUF text model the Library does not offer. Enter the repo id (`unsloth/Qwen3.5-2B-GGUF`) and the file name (`Qwen3.5-2B-Q4_K_M.gguf`), then:
+**Add from Hugging Face**, on **Models -> Library -> Custom**, adds a GGUF text model the Library does not offer. Enter the repo id (`unsloth/Qwen3.5-2B-GGUF`) and the file name (`Qwen3.5-2B-Q4_K_M.gguf`), then:
 
 1. **Look up** asks Hugging Face about the repo and shows the model's license (from its model card), its size, and its fit. Nothing is saved or downloaded yet.
-2. **Add to Library** saves the model. It appears in the **Added from Hugging Face** group with its own **Download** button.
+2. **Add to Library** saves the model. It appears in **Custom** with its own **Download** button.
 
 A model you add is labeled **Not verified by Maestro**. Maestro pins the revision the repo was at when you added it, and checks the download against the hash Hugging Face reports for that revision, so a damaged download still fails to install. Nobody at Maestro has tested the model, so it has no role and no "good at" line, and its fit is an estimate from its size.
 
@@ -117,9 +130,9 @@ A model you add is labeled **Not verified by Maestro**. Maestro pins the revisio
 
 ### Download source
 
-Models download from Hugging Face. If your network blocks it, set a mirror under **Models > Library > Advanced > Download source**: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. **Use Hugging Face** puts the default back.
+Models download from Hugging Face. If your network blocks it, set a mirror under **Models > Sources > Advanced > Download source**: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. **Use Hugging Face** puts the default back.
 
-The mirror changes the host and nothing else. Every file is still checked against the hash Maestro pins (or, for a model you added, the hash Hugging Face reported), so a mirror that serves different bytes fails the download. Only `http` and `https` URLs with a host are accepted, and credentials in the URL are refused. A change applies to the next request, so a download already running keeps its host; pause and resume it to move it to the new one.
+The mirror covers model files and **Add from Hugging Face**; engines download from npm and do not use it. It changes the host and nothing else. Every file is still checked against the hash Maestro pins (or, for a model you added, the hash Hugging Face reported), so a mirror that serves different bytes fails the download. Only `http` and `https` URLs with a host are accepted, and credentials in the URL are refused. A change applies to the next request, so a download already running keeps its host; pause and resume it to move it to the new one.
 
 ### The small text models
 
@@ -155,7 +168,7 @@ Kokoro reads text through espeak-ng, which turns words into the sounds the model
 
 A model is a file of weights. An **engine** is the library that reads it: ONNX Runtime for the speech, embedding, classifier, and wake word models, and llama.cpp for the text model. Engines are not bundled in the installer. A model's **Download** button fetches its engine with it when that is missing, and says so on the button ("Download (1.1 GB + 41 MB engine)").
 
-The **Engines** card above the catalog shows each engine on its own: installed, not installed, needs update (a newer build expects a newer engine), or not available on this platform. Press **Install** or **Update** there if an engine did not arrive with its model.
+**Models -> Library -> Engines** shows each engine on its own: installed, not installed, needs update (a newer build expects a newer engine), or not available on this platform. Press **Install** or **Update** there if an engine did not arrive with its model.
 
 The speech and wake word models are the same files A Cappella uses. Installing them here or from [Voice Setup](./voice-mode#downloading-the-models) is the same install, and either page shows it.
 
@@ -557,7 +570,7 @@ The verbs an agent asks with (`yes`, `pick`, `rate`, `ask`, `rank`, `batch`, `co
 
 The Maestro model server shares the models in your Library over HTTP, so an agent harness such as Claude Code, Codex, or OpenCode can use them. It is llama.cpp's own `llama-server`, which Maestro downloads as an [engine](#engines), starts, and watches. It speaks the three protocols a harness uses: OpenAI Chat Completions (`/v1/chat/completions`), OpenAI Responses (`/v1/responses`), and Anthropic Messages (`/v1/messages`). It serves text generation models only.
 
-The card is on **Models -> Library**, below the models. It shows the state, the build in use and its accelerator (**Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take.
+The card is on **Models -> Sources**, below the endpoints. It shows the state, the build in use and its accelerator (**Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take.
 
 - **It never starts on its own.** Press **Start**. It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** and when Maestro quits.
 - **Install the engine first.** The card has an **Install** button and a build choice. The default build is Metal on a Mac and Vulkan on Windows and Linux, which runs on any GPU vendor. **Advanced** offers the CPU build, and on Windows and Linux x64 the CUDA and ROCm builds. Those are large downloads and need a matching driver. If the accelerator check finds no GPU, or finds the Vulkan loader missing, the card says so and offers the CPU build. Maestro never swaps a build without telling you.
@@ -622,11 +635,11 @@ Set it in the agent's **Models** tab, in **New Agent** or **Edit Agent**. The pi
 
 | Control     | What it does                                                                                                                                                                       |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Run on**  | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Runs agents** when it passed with this agent's provider. |
+| **Run on**  | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Agent-ready** when it passed with this agent's provider. |
 | **Context** | The window the harness is told it has. It starts at the model's context on the server (40,960 for any other source) and cannot be lower than 40,960.                               |
 | **Test**    | Sends one short, read-only turn through the agent's real launch and shows the reply or the reason it failed.                                                                       |
 
-Under the picker, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Runs agents** badge shows "Not tested as an agent. Turns may fail or loop."
+Under the picker, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Agent-ready** badge shows "Not tested as an agent. Turns may fail or loop."
 
 A turn's pill names where it ran, in place of the model: `gpt-oss 20B (MXFP4) · Maestro`, `qwen3:latest · Ollama`.
 
@@ -697,7 +710,7 @@ Run on and the [gateway](#gateway) do not combine. A gateway routes requests to 
 
 ### Which model should I pick?
 
-- **Start with the Library's Runs agents group.** A model is in it only after it fixed a bug in a scratch repository through a real harness, and its badge names the harnesses it passed with. The picker shows the badge for this agent's provider, so a model that passed with Claude Code only carries no badge on a Codex agent.
+- **Start with the Library's Agent Models section.** A model is in it only after it fixed a bug in a scratch repository through a real harness, and its badge names the harnesses it passed with. The picker shows the badge for this agent's provider, so a model that passed with Claude Code only carries no badge on a Codex agent.
 - **Pick by what fits.** `gpt-oss 20B (MXFP4)` is the smallest that drives Claude Code and Codex (11.3 GB). `Gemma 4 E4B` (5.2 GB) is the one that fits a 16 GB computer, where `gpt-oss 20B` needs 32 GB. `Qwen3-Coder 30B-A3B` and `Qwen3-Coder-Next 80B-A3B` are the coding agents, and `gpt-oss 120B` is the strongest reasoner. The fit label is judged for the context you set.
 - **A model outside that group is a bet.** Some of the Housekeeping models cannot start a turn through the server today: their chat templates reject a system message that arrives after the first, and Claude Code and Codex send one. The picker's warning is the signal.
 - **Raise the context for a project with large instruction files.** At 40,960 tokens, OpenCode compacted before its first turn and Copilot CLI refused ("Static system messages and tool definitions exceed the model's usable context budget") in a repository whose instruction files and skills made a system prompt of about 290,000 characters. Both completed at a larger window. A larger context needs more memory.
@@ -1096,7 +1109,7 @@ The "Hey Jarvis" wake phrase is CC-BY-NC-SA-4.0, which does not allow commercial
 Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `update` / `remove` work with it closed. The System One engine, its key, and its ledger have their own `maestro-cli s1` verbs: see [System One from the command line](#system-one-from-the-command-line).
 
 ```bash
-maestro-cli models list [--kind <kind>] [--fit]  # the Library in its groups, with status, what each model is good at, and what uses it; --fit adds Fits / Tight / Too large
+maestro-cli models list [--kind <kind>] [--fit]  # the Library in its sections and groups, with status, what each model is good at, and what uses it; --fit adds Fits / Tight / Too large
 maestro-cli models install <model-id>            # download and verify, with its engine; waits until done; resumes a paused download
 maestro-cli models pause <model-id>              # stop a running download, keep what arrived
 maestro-cli models cancel <model-id>             # stop a download and delete its partial files

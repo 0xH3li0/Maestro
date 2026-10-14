@@ -26,17 +26,11 @@
  * selection follows focus, the WAI-ARIA "automatic activation" pattern.
  */
 
-import {
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-	type ComponentType,
-	type KeyboardEvent,
-} from 'react';
+import { useCallback, useEffect, useState, type ComponentType, type KeyboardEvent } from 'react';
 import type { Theme } from '../../types';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 
 export interface ModalTab<Id extends string = string> {
 	id: Id;
@@ -92,7 +86,15 @@ export function ModalTabStrip<Id extends string>({
 	idPrefix,
 	className = '',
 }: ModalTabStripProps<Id>) {
-	const buttonRefs = useRef(new Map<Id, HTMLButtonElement>());
+	// The strip scrolls sideways and draws no scrollbar, so a selected tab past
+	// its edge would be invisible: nothing on screen would say which panel is
+	// showing. 'auto' because Left / Right can be held.
+	const buttonRefs = useScrollIntoView<HTMLButtonElement>(
+		true,
+		tabs.findIndex((tab) => tab.id === activeTab),
+		tabs.length,
+		'auto'
+	);
 
 	const handleKeyDown = useCallback(
 		(event: KeyboardEvent<HTMLDivElement>) => {
@@ -119,11 +121,10 @@ export function ModalTabStrip<Id extends string>({
 					return;
 			}
 			event.preventDefault();
-			const target = tabs[next].id;
-			onChange(target);
-			buttonRefs.current.get(target)?.focus();
+			onChange(tabs[next].id);
+			buttonRefs.current[next]?.focus();
 		},
-		[tabs, activeTab, onChange]
+		[tabs, activeTab, onChange, buttonRefs]
 	);
 
 	return (
@@ -137,15 +138,14 @@ export function ModalTabStrip<Id extends string>({
 			onKeyDown={handleKeyDown}
 			data-testid={`${idPrefix}-tabs`}
 		>
-			{tabs.map((tab) => {
+			{tabs.map((tab, index) => {
 				const selected = tab.id === activeTab;
 				const Icon = tab.icon;
 				return (
 					<button
 						key={tab.id}
 						ref={(el) => {
-							if (el) buttonRefs.current.set(tab.id, el);
-							else buttonRefs.current.delete(tab.id);
+							buttonRefs.current[index] = el;
 						}}
 						type="button"
 						role="tab"

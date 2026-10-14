@@ -78,7 +78,7 @@ describe('buildTierTargetOptionGroups', () => {
 
 		expect(server.options[0].value).toBe(`${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}`);
 		expect(server.options[0].label).toContain(entry?.displayName);
-		expect(server.options[0].label).toContain('Runs agents');
+		expect(server.options[0].label).toContain('Agent-ready');
 	});
 
 	it('offers no source to a harness with no Run on recipe', () => {

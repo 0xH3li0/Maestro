@@ -1,11 +1,16 @@
 /**
- * ModelsSettingsTab - the Models settings tab: everything model-related, behind
- * one strip of five inner tabs.
+ * ModelsSettingsTab - the Models settings tab: everything model-related. The
+ * Models row in the Settings sidebar opens the Overview, and five panels are
+ * drawn as a subtree under it.
  *
- * - Library: models installed on this machine, the engines they run on, their
- *   disk use, and the Maestro model server that serves them over HTTP.
- * - Sources: where models come from besides the Library (model servers and
- *   user endpoints).
+ * - Overview: what Local Models is for, where this computer stands, and a card
+ *   per panel that jumps to it (`ModelsOverview`).
+ * - Library: models on this machine, in sections behind its own tab strip
+ *   (Engines, Agent Models, Housekeeping, Speech, Search & Safety, Custom).
+ * - Sources: where models come from besides the Library: model servers and
+ *   user endpoints, Maestro's own model server that serves the Library's text
+ *   models over HTTP, the models that are cloud only, and the Hugging Face
+ *   mirror model files download from.
  * - System One: the engine that answers typed questions (Jev, OpenJev, or a
  *   local judge) with its key and Test, then the tasks whose output is a
  *   judgment (a decision, label, score, vector or transcript), with their
@@ -17,9 +22,11 @@
  * - Gateway: the proxy each agent's own provider traffic goes through, and
  *   what the Maestro token proxy carried.
  *
- * Which system a task belongs to is `LocalModelTaskDefinition.system`, read
- * through `tasksForSystem`; nothing here sorts tasks by hand. The panel ids and
- * labels are `MODELS_SETTINGS_PANELS` in `shared/local-models/settings-location`,
+ * Which panel and Library section are open is `useModelsSettingsNav`, owned by
+ * `SettingsModal` because its sidebar draws the panels; this tab draws what the
+ * nav says. Which system a task belongs to is `LocalModelTaskDefinition.system`,
+ * read through `tasksForSystem`; nothing here sorts tasks by hand. The panel ids
+ * and labels are `MODELS_SETTINGS_PANELS` in `shared/local-models/settings-location`,
  * the same words every "assign it in ..." message uses.
  *
  * It is a CORE tab, not an Encore Feature, and it starts empty: opening it
@@ -32,10 +39,9 @@
  * pickers offer, and the engine card and the fail policy column read one report.
  */
 
-import { useEffect } from 'react';
 import {
 	Brain,
-	HardDrive,
+	Cloud,
 	Layers,
 	Router,
 	Server,
@@ -43,8 +49,9 @@ import {
 	Sparkles,
 	type LucideIcon,
 } from 'lucide-react';
+import { CLOUD_ONLY_NOTE } from '../../../../../shared/local-models/library';
 import {
-	MODELS_SETTINGS_PANELS,
+	MODELS_SETTINGS_DETAIL_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
 	type ModelsSettingsPanel,
 } from '../../../../../shared/local-models/settings-location';
@@ -54,210 +61,192 @@ import {
 	useLocalRuntimes,
 	useSystemOne,
 } from '../../../../hooks/localModels';
-import { usePersistedChoice } from '../../../../hooks/ui/usePersistedChoice';
 import type { Theme } from '../../../../types';
-import { ModalTabStrip, tabPanelProps, type ModalTab } from '../../../ui/ModalTabStrip';
-import type { SubTabRequest } from '../../searchableSettings';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
+import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
 import { LocalModelsDownloadSourceCard } from './LocalModelsDownloadSourceCard';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
+import { MODELS_SETTINGS_PANEL_ICONS, ModelsOverview } from './ModelsOverview';
 import { SystemOneAgentsSection } from './SystemOneAgentsSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
 import { SystemOneLedgerSection } from './SystemOneLedgerSection';
 import { TierDefaultsSection } from './TierDefaultsSection';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
+import type { ModelsSettingsNav } from './useModelsSettingsNav';
 
-/** localStorage key for the last inner tab the user opened. */
-export const MODELS_SETTINGS_PANEL_STORAGE_KEY = 'settings.models.panel';
-
-const PANEL_ICONS: Record<ModelsSettingsPanel, LucideIcon> = {
-	library: HardDrive,
-	sources: Server,
-	'system-one': Brain,
-	'system-two': Sparkles,
-	gateway: Router,
-};
-
-const PANEL_TABS: ModalTab<ModelsSettingsPanel>[] = MODELS_SETTINGS_PANELS.map((id) => ({
-	id,
-	label: MODELS_SETTINGS_PANEL_LABELS[id],
-	icon: PANEL_ICONS[id],
-}));
-
-const ID_PREFIX = 'settings-models';
+/**
+ * The panels as the Settings sidebar draws them under Models, in order. The
+ * Overview is not among them: it is what the Models row itself opens.
+ */
+export const MODELS_SETTINGS_NAV_ITEMS: readonly {
+	id: ModelsSettingsPanel;
+	label: string;
+	icon: LucideIcon;
+}[] = Object.freeze(
+	MODELS_SETTINGS_DETAIL_PANELS.map((id) => ({
+		id,
+		label: MODELS_SETTINGS_PANEL_LABELS[id],
+		icon: MODELS_SETTINGS_PANEL_ICONS[id],
+	}))
+);
 
 export interface ModelsSettingsTabProps {
 	theme: Theme;
-	/** A jump to an inner tab (a deep link or a search result). Ids that name no panel are ignored. */
-	panelRequest?: SubTabRequest;
-	/** Called once `panelRequest` has been applied, so the owner can drop it. */
-	onPanelRequestHandled?: () => void;
+	/** Which panel and Library section are open. `SettingsModal` owns it; its sidebar moves it. */
+	nav: ModelsSettingsNav;
 }
 
-export function ModelsSettingsTab({
-	theme,
-	panelRequest,
-	onPanelRequestHandled,
-}: ModelsSettingsTabProps) {
+export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 	const models = useLocalModels();
 	const endpoints = useLocalModelEndpoints();
 	const runtimes = useLocalRuntimes();
 	const systemOne = useSystemOne();
-	const { value: panel, setValue: setPanel } = usePersistedChoice<ModelsSettingsPanel>(
-		MODELS_SETTINGS_PANEL_STORAGE_KEY,
-		MODELS_SETTINGS_PANELS,
-		'library'
-	);
-
-	useEffect(() => {
-		if (!panelRequest) return;
-		const requested = MODELS_SETTINGS_PANELS.find((id) => id === panelRequest.subTab);
-		if (requested) setPanel(requested);
-		onPanelRequestHandled?.();
-	}, [panelRequest, setPanel, onPanelRequestHandled]);
+	const { panel } = nav;
 
 	return (
-		<div className="space-y-5" data-testid="models-settings-tab">
-			<ModalTabStrip
-				theme={theme}
-				tabs={PANEL_TABS}
-				activeTab={panel}
-				onChange={setPanel}
-				label="Models settings"
-				idPrefix={ID_PREFIX}
-			/>
+		<div className="space-y-5" data-testid="models-settings-tab" data-panel={panel}>
+			{panel === 'overview' && (
+				<ModelsOverview
+					theme={theme}
+					models={models}
+					runtimes={runtimes}
+					endpointCount={endpoints.endpoints.length}
+					onOpen={nav.open}
+				/>
+			)}
 
-			<div {...tabPanelProps(ID_PREFIX, panel)} className="space-y-5">
-				{panel === 'library' && (
-					<div data-setting-id="local-models-models">
+			{panel === 'library' && (
+				<div data-setting-id="local-models-models">
+					<LocalModelsModelsSection
+						theme={theme}
+						models={models}
+						runtimes={runtimes}
+						section={nav.librarySection}
+						onSectionChange={nav.setLibrarySection}
+					/>
+				</div>
+			)}
+
+			{panel === 'sources' && (
+				<div data-setting-id="local-models-endpoints">
+					<SettingsSectionHeading
+						icon={Server}
+						description="Where models come from besides the Library: model servers Maestro can call, such as Ollama, LM Studio, or any OpenAI-compatible URL."
+					>
+						Endpoints
+					</SettingsSectionHeading>
+					<LocalModelsEndpointsSection theme={theme} state={endpoints} />
+				</div>
+			)}
+
+			{panel === 'sources' && <LocalModelsServerSection theme={theme} />}
+
+			{panel === 'sources' && (
+				<div data-testid="local-models-cloud-only">
+					<SettingsSectionHeading icon={Cloud}>Cloud only</SettingsSectionHeading>
+					<SectionCard theme={theme}>
+						<p className="text-xs opacity-70 select-text">{CLOUD_ONLY_NOTE}</p>
+					</SectionCard>
+				</div>
+			)}
+
+			{panel === 'sources' && (
+				<div data-setting-id="local-models-download-source">
+					<SettingsSectionHeading
+						icon={SlidersHorizontal}
+						description="Where model files are downloaded from, for networks that block Hugging Face. It covers every model download and Add from Hugging Face; engines come from npm and are not affected."
+					>
+						Advanced
+					</SettingsSectionHeading>
+					<LocalModelsDownloadSourceCard theme={theme} />
+				</div>
+			)}
+
+			{panel === 'system-one' && <SystemOneEngineSection theme={theme} systemOne={systemOne} />}
+
+			{panel === 'system-one' && (
+				<div data-setting-id="local-models-system-one">
+					<SettingsSectionHeading
+						icon={Brain}
+						description="Fast judgments. A task here returns a decision, label, score, vector, or transcript, never text for someone to read. A task left Off keeps its existing behavior."
+					>
+						{MODELS_SETTINGS_PANEL_LABELS['system-one']}
+					</SettingsSectionHeading>
+					<LocalModelsAssignmentsSection
+						theme={theme}
+						system="one"
+						models={models}
+						endpoints={endpoints}
+						// The column is there from the first paint (a settings search can
+						// land on it); its values wait for the report, so a row never shows
+						// a default in place of the user's choice.
+						failPolicies={{
+							rows: systemOne.report?.failPolicies ?? [],
+							disabled: systemOne.busy !== null,
+							onChange: (taskId, policy) => void systemOne.set({ failPolicy: { taskId, policy } }),
+						}}
+						// Until the report arrives no engine is known, so System One is
+						// not offered as a source; a task already on it still shows it.
+						systemOneEngine={
+							systemOne.report
+								? {
+										engine: systemOne.report.settings.engine,
+										problem: systemOne.report.problem,
+									}
+								: undefined
+						}
+					/>
+				</div>
+			)}
+
+			{panel === 'system-one' && <SystemOneAgentsSection theme={theme} systemOne={systemOne} />}
+
+			{panel === 'system-one' && <SystemOneLedgerSection theme={theme} systemOne={systemOne} />}
+
+			{panel === 'system-two' && (
+				<>
+					<div data-setting-id="local-models-system-two">
 						<SettingsSectionHeading
-							icon={HardDrive}
-							description="Models downloaded to this machine, the engines they run on, and the disk they use. Nothing downloads until you ask for it."
+							icon={Sparkles}
+							description="Generation. A task here writes text for someone to read or run. A task left Off keeps its existing behavior."
 						>
-							{MODELS_SETTINGS_PANEL_LABELS.library}
-						</SettingsSectionHeading>
-						<LocalModelsModelsSection
-							theme={theme}
-							models={models}
-							runtimes={runtimes}
-							onOpenSources={() => setPanel('sources')}
-						/>
-					</div>
-				)}
-
-				{panel === 'library' && <LocalModelsServerSection theme={theme} />}
-
-				{panel === 'library' && (
-					<div data-setting-id="local-models-download-source">
-						<SettingsSectionHeading
-							icon={SlidersHorizontal}
-							description="Where model files are downloaded from, for networks that block Hugging Face."
-						>
-							Advanced
-						</SettingsSectionHeading>
-						<LocalModelsDownloadSourceCard theme={theme} />
-					</div>
-				)}
-
-				{panel === 'sources' && (
-					<div data-setting-id="local-models-endpoints">
-						<SettingsSectionHeading
-							icon={Server}
-							description="Where models come from besides the Library: model servers Maestro can call, such as Ollama, LM Studio, or any OpenAI-compatible URL."
-						>
-							{MODELS_SETTINGS_PANEL_LABELS.sources}
-						</SettingsSectionHeading>
-						<LocalModelsEndpointsSection theme={theme} state={endpoints} />
-					</div>
-				)}
-
-				{panel === 'system-one' && <SystemOneEngineSection theme={theme} systemOne={systemOne} />}
-
-				{panel === 'system-one' && (
-					<div data-setting-id="local-models-system-one">
-						<SettingsSectionHeading
-							icon={Brain}
-							description="Fast judgments. A task here returns a decision, label, score, vector, or transcript, never text for someone to read. A task left Off keeps its existing behavior."
-						>
-							{MODELS_SETTINGS_PANEL_LABELS['system-one']}
+							{MODELS_SETTINGS_PANEL_LABELS['system-two']}
 						</SettingsSectionHeading>
 						<LocalModelsAssignmentsSection
 							theme={theme}
-							system="one"
+							system="two"
 							models={models}
 							endpoints={endpoints}
-							// The column is there from the first paint (a settings search can
-							// land on it); its values wait for the report, so a row never shows
-							// a default in place of the user's choice.
-							failPolicies={{
-								rows: systemOne.report?.failPolicies ?? [],
-								disabled: systemOne.busy !== null,
-								onChange: (taskId, policy) =>
-									void systemOne.set({ failPolicy: { taskId, policy } }),
-							}}
-							// Until the report arrives no engine is known, so System One is
-							// not offered as a source; a task already on it still shows it.
-							systemOneEngine={
-								systemOne.report
-									? {
-											engine: systemOne.report.settings.engine,
-											problem: systemOne.report.problem,
-										}
-									: undefined
-							}
 						/>
 					</div>
-				)}
-
-				{panel === 'system-one' && <SystemOneAgentsSection theme={theme} systemOne={systemOne} />}
-
-				{panel === 'system-one' && <SystemOneLedgerSection theme={theme} systemOne={systemOne} />}
-
-				{panel === 'system-two' && (
-					<>
-						<div data-setting-id="local-models-system-two">
-							<SettingsSectionHeading
-								icon={Sparkles}
-								description="Generation. A task here writes text for someone to read or run. A task left Off keeps its existing behavior."
-							>
-								{MODELS_SETTINGS_PANEL_LABELS['system-two']}
-							</SettingsSectionHeading>
-							<LocalModelsAssignmentsSection
-								theme={theme}
-								system="two"
-								models={models}
-								endpoints={endpoints}
-							/>
-						</div>
-						<UtilityAgentSettings theme={theme} />
-						<div data-setting-id="models-tier-defaults">
-							<SettingsSectionHeading
-								icon={Layers}
-								description="Which model a low, medium or high task launches on, per harness. Auto Run and Cue tasks ask for a tier; an agent can override a tier in its own settings."
-							>
-								Tier defaults
-							</SettingsSectionHeading>
-							<TierDefaultsSection theme={theme} endpoints={endpoints.endpoints} />
-						</div>
-					</>
-				)}
-
-				{panel === 'gateway' && (
-					<div data-setting-id="local-models-gateway">
+					<UtilityAgentSettings theme={theme} />
+					<div data-setting-id="models-tier-defaults">
 						<SettingsSectionHeading
-							icon={Router}
-							description="Send an agent's provider traffic through a proxy: Headroom, LiteLLM, or Maestro's own token proxy, and see what it carried."
+							icon={Layers}
+							description="Which model a low, medium or high task launches on, per harness. Auto Run and Cue tasks ask for a tier; an agent can override a tier in its own settings."
 						>
-							{MODELS_SETTINGS_PANEL_LABELS.gateway}
+							Tier defaults
 						</SettingsSectionHeading>
-						<LocalModelsGatewaySection theme={theme} />
+						<TierDefaultsSection theme={theme} endpoints={endpoints.endpoints} />
 					</div>
-				)}
-			</div>
+				</>
+			)}
+
+			{panel === 'gateway' && (
+				<div data-setting-id="local-models-gateway">
+					<SettingsSectionHeading
+						icon={Router}
+						description="Send an agent's provider traffic through a proxy: Headroom, LiteLLM, or Maestro's own token proxy, and see what it carried."
+					>
+						{MODELS_SETTINGS_PANEL_LABELS.gateway}
+					</SettingsSectionHeading>
+					<LocalModelsGatewaySection theme={theme} />
+				</div>
+			)}
 		</div>
 	);
 }

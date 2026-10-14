@@ -1,7 +1,8 @@
 /**
  * @file local-models-library.test.ts
  *
- * How the Library lists models: one group per model, by what it is for, with
+ * How the Library lists models: in sections (the tabs of Settings > Models >
+ * Library), and inside a section one group per model, by what it is for, with
  * its other roles as badges. Settings and `maestro-cli models list` both group
  * through this module.
  */
@@ -24,12 +25,14 @@ import {
 	CLOUD_ONLY_MODELS,
 	CLOUD_ONLY_NOTE,
 	LOCAL_MODEL_LIBRARY_GROUPS,
+	LOCAL_MODEL_LIBRARY_SECTIONS,
+	LOCAL_MODEL_LIBRARY_SECTION_IDS,
 	LOCAL_MODEL_ROLE_LABELS,
 	groupLocalModelsForLibrary,
 	localModelLibraryGroup,
+	localModelLibrarySection,
 	localModelRoleBadges,
 } from '../../shared/local-models/library';
-import { LOCAL_MODEL_ROLES } from '../../shared/local-models/types';
 import { userLocalModelEntry } from '../../shared/local-models/user-models';
 
 const USER_ENTRY = userLocalModelEntry({
@@ -44,10 +47,64 @@ const USER_ENTRY = userLocalModelEntry({
 	addedAt: 0,
 });
 
+describe('Library sections', () => {
+	it('lists six sections, engines first because nothing runs without one', () => {
+		expect(LOCAL_MODEL_LIBRARY_SECTION_IDS).toEqual([
+			'engines',
+			'agents',
+			'housekeeping',
+			'speech',
+			'search',
+			'custom',
+		]);
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.agents.label).toBe('Agent Models');
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.search.label).toBe('Search & Safety');
+		for (const id of LOCAL_MODEL_LIBRARY_SECTION_IDS) {
+			const section = LOCAL_MODEL_LIBRARY_SECTIONS[id];
+			expect(section.id).toBe(id);
+			expect(section.label.length).toBeGreaterThan(0);
+			expect(section.description).toMatch(/\.$/);
+		}
+		// Engines lists no model; every other section lists at least one group.
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.engines.groups).toEqual([]);
+	});
+
+	it('files every group in exactly one section', () => {
+		for (const group of LOCAL_MODEL_LIBRARY_GROUPS) {
+			const holders = LOCAL_MODEL_LIBRARY_SECTION_IDS.filter((id) =>
+				(LOCAL_MODEL_LIBRARY_SECTIONS[id].groups as readonly string[]).includes(group.id)
+			);
+			expect(holders, group.id).toEqual([group.section]);
+		}
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.speech.groups).toEqual(['stt', 'tts', 'wake-word']);
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.search.groups).toEqual(['embedding', 'classifier']);
+	});
+
+	it('names the section a model is listed on', () => {
+		const sectionOf = (id: string) => localModelLibrarySection(getLocalModel(id)!);
+		expect(sectionOf(GPT_OSS_20B_ID)).toBe('agents');
+		expect(sectionOf(QWEN3_1_7B_ID)).toBe('housekeeping');
+		expect(sectionOf(GEMMA_4_12B_ID)).toBe('housekeeping');
+		expect(sectionOf(BGE_SMALL_EN_ID)).toBe('search');
+		expect(localModelLibrarySection(USER_ENTRY)).toBe('custom');
+	});
+
+	it('groups only the named section when one is asked for', () => {
+		const groups = groupLocalModelsForLibrary(
+			[...LOCAL_MODEL_CATALOG, USER_ENTRY],
+			(e) => e,
+			'speech'
+		);
+		expect(groups.map((group) => group.group.id)).toEqual(['stt', 'tts', 'wake-word']);
+		expect(groupLocalModelsForLibrary(LOCAL_MODEL_CATALOG, (e) => e, 'engines')).toEqual([]);
+	});
+});
+
 describe('Library groups', () => {
-	it('lists the roles first, then the user group, then every non-text kind', () => {
+	it('lists the two text groups first, then the user group, then every non-text kind', () => {
 		expect(LOCAL_MODEL_LIBRARY_GROUPS.map((group) => group.id)).toEqual([
-			...LOCAL_MODEL_ROLES,
+			'agent',
+			'housekeeping',
 			'user',
 			'embedding',
 			'classifier',
@@ -63,13 +120,14 @@ describe('Library groups', () => {
 		}
 	});
 
-	it('lists a text model once, under its first role that is not housekeeping', () => {
+	it('lists a text model once: with the agents if it qualified, else under housekeeping', () => {
 		const groupOf = (id: string) => localModelLibraryGroup(getLocalModel(id)!);
 		expect(groupOf(GPT_OSS_20B_ID)).toBe('agent');
 		// An agent that also reads images is still listed with the agents.
 		expect(groupOf(GEMMA_4_E4B_ID)).toBe('agent');
-		expect(groupOf(GEMMA_4_12B_ID)).toBe('vision');
-		expect(groupOf(QWEN3_1_7B_ID)).toBe('judge');
+		// A judge or a vision model is a housekeeping model; the role is a badge.
+		expect(groupOf(GEMMA_4_12B_ID)).toBe('housekeeping');
+		expect(groupOf(QWEN3_1_7B_ID)).toBe('housekeeping');
 		expect(groupOf(QWEN3_5_9B_ID)).toBe('housekeeping');
 		expect(groupOf(BGE_SMALL_EN_ID)).toBe('embedding');
 		expect(localModelLibraryGroup(USER_ENTRY)).toBe('user');
@@ -83,8 +141,9 @@ describe('Library groups', () => {
 		const order = LOCAL_MODEL_LIBRARY_GROUPS.map((group) => group.id);
 		const seen = groups.map((group) => group.group.id);
 		expect(seen).toEqual(order.filter((id) => seen.includes(id)));
-		// Every role has a model today, so all four headings are drawn.
-		for (const role of LOCAL_MODEL_ROLES) expect(seen).toContain(role);
+		// Both text groups have a model today, so both are drawn.
+		expect(seen).toContain('agent');
+		expect(seen).toContain('housekeeping');
 		expect(groupLocalModelsForLibrary([], (e: typeof USER_ENTRY) => e)).toEqual([]);
 		// Within a group the catalog order is kept.
 		const agents = groups.find((group) => group.group.id === 'agent')!.items;
@@ -94,11 +153,15 @@ describe('Library groups', () => {
 
 	it('badges every role, and names the harnesses an agent model passed', () => {
 		expect(localModelRoleBadges(getLocalModel(GPT_OSS_20B_ID)!)).toEqual([
-			'Runs agents: Claude Code, Codex',
+			'Agent-ready: Claude Code, Codex',
 			LOCAL_MODEL_ROLE_LABELS.housekeeping,
 		]);
 		expect(localModelRoleBadges(getLocalModel(QWEN3_CODER_30B_A3B_ID)!)[0]).toBe(
-			'Runs agents: Claude Code'
+			'Agent-ready: Claude Code'
+		);
+		// The judge role survives as a badge on a housekeeping row.
+		expect(localModelRoleBadges(getLocalModel(QWEN3_1_7B_ID)!)).toContain(
+			LOCAL_MODEL_ROLE_LABELS.judge
 		);
 		expect(localModelRoleBadges(getLocalModel(GEMMA_4_12B_ID)!)).toEqual([
 			LOCAL_MODEL_ROLE_LABELS.housekeeping,

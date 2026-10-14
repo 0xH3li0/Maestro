@@ -370,7 +370,8 @@ describe('starting and stopping', () => {
 		configure({ resolveBinary: async () => null });
 		const noEngine = await caught(startModelServer());
 		expect(noEngine.code).toBe('engine-not-installed');
-		expect(noEngine.message).toContain('Settings > Models > Library');
+		// The engine is installed from the model server card, in Sources.
+		expect(noEngine.message).toContain('Settings > Models > Sources');
 
 		configure({ collectModels: async () => [] });
 		expect((await caught(startModelServer())).code).toBe('no-models');

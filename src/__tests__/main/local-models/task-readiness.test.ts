@@ -509,7 +509,7 @@ describe('an assignment to the built-in Maestro model server', () => {
 		);
 		expect(noEngine).toMatchObject({ state: 'unavailable', reason: 'endpoint-unreachable' });
 		expect(noEngine.detail).toMatch(/llama-server\) is not downloaded/);
-		expect(noEngine.suggestedAction).toMatch(/Library/);
+		expect(noEngine.suggestedAction).toMatch(/Sources/);
 
 		const notServed = await resolveTaskReadiness(
 			'tab-naming',

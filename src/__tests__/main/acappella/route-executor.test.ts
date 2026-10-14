@@ -972,7 +972,7 @@ describe('createRendererVoiceBridge', () => {
 		expect(options.args).toEqual(['agent-1', 'do the thing']);
 	});
 
-	it('sends a prompt with the full positional argument list', async () => {
+	it('keeps the absent consult chain slot before the prompt delivery receipt', async () => {
 		vi.mocked(requestFromRenderer).mockResolvedValue({ accepted: true });
 		const bridge = createRendererVoiceBridge(() => win);
 
@@ -988,6 +988,7 @@ describe('createRendererVoiceBridge', () => {
 			false,
 			undefined,
 			false,
+			undefined,
 		]);
 	});
 

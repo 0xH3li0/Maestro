@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { LayerStackProvider, useLayerStack } from '../../../../renderer/contexts/LayerStackContext';
 import type { LayerStackAPI } from '../../../../renderer/hooks';
+import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -83,6 +84,7 @@ function renderHud(
 		 * Off by default so the HUD's own tests render only the HUD.
 		 */
 		withStatusIndicator?: boolean;
+		children?: React.ReactNode;
 	} = {}
 ) {
 	// The transcript is off by default and lives behind the toggle, so a test
@@ -103,6 +105,7 @@ function renderHud(
 				showDevHarness={props.showDevHarness ?? false}
 			/>
 			{props.withStatusIndicator && <VoiceStatusIndicator theme={mockTheme} />}
+			{props.children}
 		</LayerStackProvider>
 	);
 }
@@ -1569,6 +1572,72 @@ describe('VoiceDevHarness', () => {
 		expect(window.maestro.voice.submitAgentReply).toHaveBeenCalledWith(
 			expect.objectContaining({ agentSessionId: 'agent-1', tabId: 'tab-7' })
 		);
+	});
+});
+
+describe('VoiceHud yields to modals', () => {
+	let stack: LayerStackAPI;
+	function Probe() {
+		stack = useLayerStack();
+		return null;
+	}
+
+	it('hides for nested blocking dialogs and restores the live session after the last closes', () => {
+		renderHud({ children: <Probe /> });
+		startSession();
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+		const subscriptionCount = vi.mocked(window.maestro.voice.onEvent).mock.calls.length;
+		let settingsId: string;
+		let confirmId: string;
+		act(() => {
+			settingsId = stack.registerLayer({
+				type: 'modal',
+				priority: MODAL_PRIORITIES.SETTINGS,
+				ariaLabel: 'Settings',
+				blocksLowerLayers: true,
+				capturesFocus: true,
+				focusTrap: 'strict',
+				onEscape: vi.fn(),
+			});
+			confirmId = stack.registerLayer({
+				type: 'modal',
+				priority: MODAL_PRIORITIES.CONFIRM,
+				blocksLowerLayers: true,
+				capturesFocus: true,
+				focusTrap: 'strict',
+				onEscape: () => stack.unregisterLayer(confirmId),
+			});
+		});
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		expect(stack!.getLayers().some((layer) => layer.ariaLabel === 'Voice HUD')).toBe(false);
+		expect(useVoiceUiStore.getState().tabCyclesMode).toBe(false);
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		expect(stack!.layerCount).toBe(1);
+		act(() => stack.unregisterLayer(settingsId));
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+		expect(screen.getByTestId('voice-indicator-listening')).toBeTruthy();
+		expect(useVoiceSessionStore.getState().dismissed).toBe(false);
+		expect(useVoiceUiStore.getState().minimized).toBe(false);
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		expect(window.maestro.voice.onEvent).toHaveBeenCalledTimes(subscriptionCount);
+	});
+
+	it('keeps the HUD visible alongside passive floating panels', () => {
+		renderHud({ children: <Probe /> });
+		startSession();
+		act(() => {
+			stack.registerLayer({
+				type: 'modal',
+				priority: MODAL_PRIORITIES.THOUGHT_STREAM,
+				blocksLowerLayers: false,
+				capturesFocus: false,
+				blocksAppShortcuts: false,
+				focusTrap: 'none',
+				onEscape: vi.fn(),
+			});
+		});
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
 	});
 });
 

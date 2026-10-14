@@ -256,6 +256,10 @@ A document conversation is an ordinary AI tab, tagged with the file it is about,
 
 A small draggable HUD appears. It remembers where you put it.
 
+Opening a blocking dialog temporarily hides the HUD without ending the session or closing the microphone. The HUD returns when the last blocking dialog closes.
+
+A filled microphone marks where your next sentence goes: the pinned tab and its agent in **Tab** mode, the agent in **Agent** mode, or the Maestro wordmark in **Conductor** mode. A separate marker shows the tab where the last voice prompt landed.
+
 The indicator has six states, told apart by shape and motion as well as colour: **idle**, **paused** (the session is open and the microphone is closed), **listening** (with a live input level), **thinking**, **speaking**, and **error**. Under `prefers-reduced-motion` all of it goes static.
 
 ### The control row

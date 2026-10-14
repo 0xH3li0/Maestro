@@ -233,10 +233,11 @@ export function createRendererVoiceBridge(
 					timeoutMs: COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseCommandReceipt,
 					// Positional: (sessionId, command, inputMode, tabId, force, images,
-					// background) before the receipt channel. `force: false` keeps the
-					// renderer's busy guard - talking over a working agent must not
+					// background, consultChain) before the receipt channel. The absent
+					// consult chain must keep its slot or the receipt becomes the chain.
+					// `force: false` keeps the renderer's busy guard: a working agent must not
 					// interleave two prompts in one tab.
-					args: [agentSessionId, prompt, 'ai', tabId, false, undefined, false],
+					args: [agentSessionId, prompt, 'ai', tabId, false, undefined, false, undefined],
 				}
 			);
 		},

@@ -18,7 +18,7 @@ import {
 	surfaceSubTabIds,
 	surfaceTabIds,
 } from '../../shared/uiSurfaces';
-import { MODELS_SETTINGS_PANELS } from '../../shared/local-models/settings-location';
+import { MODELS_SETTINGS_SUB_TAB_PATHS } from '../../shared/local-models/settings-location';
 import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from '../../shared/agentSettingsTabs';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
@@ -159,10 +159,17 @@ describe('sub-tabs', () => {
 	const settings = resolveUiSurface('settings')!;
 	const models = resolveUiSurfaceTab(settings, 'models')!;
 
-	it('lists every inner tab of Models, in strip order, from the one panel list', () => {
-		expect(surfaceSubTabIds(models)).toEqual([...MODELS_SETTINGS_PANELS]);
+	it('lists every Models panel and Library section in navigation order', () => {
+		expect(surfaceSubTabIds(models)).toEqual([...MODELS_SETTINGS_SUB_TAB_PATHS]);
 		expect(surfaceSubTabIds(models)).toEqual([
+			'overview',
 			'library',
+			'library/engines',
+			'library/agents',
+			'library/housekeeping',
+			'library/speech',
+			'library/search',
+			'library/custom',
 			'sources',
 			'system-one',
 			'system-two',
@@ -256,9 +263,21 @@ describe('resolveUiSurfaceTarget', () => {
 		});
 	});
 
+	it('resolves a Library section by its sub-tab path or its label', () => {
+		expect(
+			resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'library/speech' })
+		).toMatchObject({ subTab: { id: 'library/speech', label: 'Library > Speech' } });
+		expect(
+			resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'Library > Engines' })
+		).toMatchObject({ subTab: { id: 'library/engines' } });
+	});
+
 	it('names the valid sub-tabs when the sub-tab is unknown', () => {
 		expect(resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'nope' })).toEqual({
-			error: expect.stringContaining('Valid sub-tabs: library, sources, system-one'),
+			error: expect.stringContaining('Valid sub-tabs: overview, library, library/engines,'),
+		});
+		expect(resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'nope' })).toEqual({
+			error: expect.stringContaining('library/custom, sources, system-one'),
 		});
 	});
 
@@ -285,6 +304,11 @@ describe('describeSurfaceAccess', () => {
 		if ('error' in target) throw new Error(target.error);
 		const hint = describeSurfaceAccess(settings, undefined, target);
 		expect(hint).toContain('then pick Models > System One.');
+		const section = resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'library/engines' });
+		if ('error' in section) throw new Error(section.error);
+		expect(describeSurfaceAccess(settings, undefined, section)).toContain(
+			'then pick Models > Library > Engines.'
+		);
 		expect(describeSurfaceAccess(settings, undefined, { tab: target.tab })).toContain(
 			'then pick Models.'
 		);

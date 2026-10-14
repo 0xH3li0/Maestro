@@ -51,9 +51,10 @@ export interface SearchableSetting {
 	 */
 	jumpToId?: string;
 	/**
-	 * Inner tab of `tab` that holds this setting (Models > System One), for a
-	 * tab that splits itself into inner tabs. A jump to the setting switches to
-	 * it first, because only the open inner tab renders its `data-setting-id`.
+	 * Place inside `tab` that holds this setting, for a tab that splits itself
+	 * (Models: a sub-tab path such as `system-one` or `library/engines`). A jump
+	 * to the setting moves there first, because only the open place renders its
+	 * `data-setting-id`.
 	 */
 	subTab?: string;
 	/**
@@ -83,12 +84,7 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...LOCAL_MODELS_SETTINGS,
 ];
 
-/** A jump to an inner tab of a Settings tab, handed to the tab that has one. */
-export interface SubTabRequest {
-	subTab: string;
-}
-
-/** The inner tab that holds a setting, or `undefined` for a setting on a plain tab. */
+/** The place inside its tab that holds a setting, or `undefined` for a setting on a plain tab. */
 export function settingSubTab(settingId: string): string | undefined {
 	return ALL_SEARCHABLE_SETTINGS.find((setting) => setting.id === settingId)?.subTab;
 }

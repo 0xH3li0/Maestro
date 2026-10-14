@@ -17,7 +17,7 @@
  * - every model in the harness's own catalogue;
  * - for a harness with a Run on recipe, every model each source lists, from the
  *   Run on picker's own builder, so a model carries the same fit label and
- *   "Runs agents" badge in both pickers;
+ *   "Agent-ready" badge in both pickers;
  * - the CURRENT target when nothing lists it, labeled with the reason, because
  *   a `<select>` whose value matches no option shows its first option.
  *

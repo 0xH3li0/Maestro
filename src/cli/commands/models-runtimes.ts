@@ -97,7 +97,7 @@ export async function modelsRuntimesInstall(runtimeId: string, options: JsonOpti
 
 	if (!options.json) {
 		console.log(
-			`Installing ${descriptor.label}. Progress shows in ${modelsSettingsLocation('library')}.`
+			`Installing ${descriptor.label}. Progress shows in ${modelsSettingsLocation('library', 'engines')}.`
 		);
 	}
 	const reply = await send<{

@@ -11,7 +11,8 @@
 // that a pending model is never offered for download, and that removing a model
 // a task runs on is named first.
 //
-// `list` groups the way the Library does (`groupLocalModelsForLibrary`), and
+// `list` groups the way the Library does (`groupLocalModelsForLibrary`), names
+// each model's Library section in `--json` (the tab it is listed on), and
 // `list --fit` judges each model with the same `modelFit()` the rows use,
 // against the hardware profile the desktop read.
 
@@ -30,6 +31,7 @@ import {
 	CLOUD_ONLY_NOTE,
 	groupLocalModelsForLibrary,
 	localModelLibraryGroup,
+	localModelLibrarySection,
 	localModelRoleBadges,
 } from '../../shared/local-models/library';
 import {
@@ -185,6 +187,7 @@ export async function modelsList(options: ListOptions): Promise<void> {
 						displayName: listing.entry.displayName,
 						kind: listing.entry.kind,
 						group: localModelLibraryGroup(listing.entry),
+						section: localModelLibrarySection(listing.entry),
 						status: displayStatus(listing),
 						bytes: listing.entry.bytes,
 						bytesOnDisk: listing.status.bytesOnDisk,

@@ -37,6 +37,10 @@ import {
 } from '../../utils/sidebarReveal';
 import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import { VoiceStatusIndicator } from '../ACappella/VoiceStatusIndicator';
+import {
+	ConductorVoiceIndicator,
+	useConductorHoldsFloor,
+} from '../ACappella/ConductorVoiceIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -151,6 +155,11 @@ const LIVE_PILL_RESERVE = 48;
  */
 const NOW_PLAYING_COMPACT_RESERVE = 59;
 const NOW_PLAYING_LABEL_RESERVE = 181;
+/**
+ * The Conductor's voice-floor glyph beside the wordmark: a 12px icon plus the
+ * identity zone's 8px gap. Reserved only while it is drawn.
+ */
+const CONDUCTOR_FLOOR_RESERVE = 20;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -332,13 +341,17 @@ function SessionListInner(props: SessionListProps) {
 	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
 	// The label's own delta rides with it, since the reserve exists to hold it.
 	const livePillReserve = LIVE_PILL_RESERVE + headerTextDelta.liveLabel;
+	const conductorFloorReserve = useConductorHoldsFloor()
+		? CONDUCTOR_FLOOR_RESERVE * headerTextDelta.remScale
+		: 0;
 	const showWordmark =
 		leftSidebarWidthState >=
 		WORDMARK_MIN_WIDTH +
 			headerTextDelta.wordmark +
 			livePillReserve +
 			headerBadgeWidth +
-			nowPlayingReserve;
+			nowPlayingReserve +
+			conductorFloorReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -1450,6 +1463,10 @@ function SessionListInner(props: SessionListProps) {
 									style={{ color: theme.colors.textMain }}
 								/>
 							)}
+							{/* The one status glyph in the identity zone, by design: in
+							    Conductor mode the voice floor belongs to Maestro itself,
+							    so it sits on Maestro's name rather than in the band. */}
+							<ConductorVoiceIndicator theme={theme} />
 						</div>
 
 						{/* Indicator band. `flex-1` is what centers it: it takes the space
@@ -1618,6 +1635,7 @@ function SessionListInner(props: SessionListProps) {
 								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
+						<ConductorVoiceIndicator theme={theme} />
 						{/* Renders nothing unless the player is actually minimized, so
 						    the rail is unchanged for anyone not playing anything. */}
 						<NowPlayingIndicator theme={theme} compact />

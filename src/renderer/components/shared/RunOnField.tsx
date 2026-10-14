@@ -5,7 +5,7 @@
  * Maestro model server and each enabled source serves, from the same option
  * builder the tests read (`buildRunOnOptionGroups`). A model on the Maestro
  * server carries what the Library says about it: its fit on this computer and
- * the "Runs agents" badge when it qualified with this agent's harness.
+ * the "Agent-ready" badge when it qualified with this agent's harness.
  *
  * Under the picker it says what the launch will do with the choice, from the
  * same `resolveRunOnLaunch` the launch plan runs:

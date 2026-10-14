@@ -175,7 +175,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 
 	if (options.build !== undefined && !options.json) {
 		console.log(
-			`Installing the ${options.build} build of the engine. Progress shows in ${modelsSettingsLocation('library')}.`
+			`Installing the ${options.build} build of the engine. Progress shows in ${modelsSettingsLocation('sources')}.`
 		);
 	}
 	const report = requireReport(

@@ -78,10 +78,10 @@ flowchart TD
 | `llama-dependencies.ts`                                           | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload                                                                                                                                                                                                                                                                     |
 | `tasks.ts`                                                        | `LOCAL_MODEL_TASKS` (the housekeeping jobs, each with a `system`), `tasksForSystem()`, `LocalModelAssignment`, and the `localModelAssignments` reader and validator                                                                                                                                                                                                                       |
 | `system-one.ts`, `system-one-settings.ts`, `system-one-ledger.ts` | The System One vocabulary, what the user configures, and the decision record: see [System One](#system-one-engines-the-router-entry-and-the-ledger)                                                                                                                                                                                                                                       |
-| `settings-location.ts`                                            | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`: the one source for the Models inner tabs and every sentence that names one                                                                                                                                                                                                                              |
+| `settings-location.ts`                                            | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`, `parseModelsSettingsSubTab()`: the one source for the Models panels, the sub-tab paths, and every sentence that names one                                                                                                                                                                               |
 | `embedding-index.ts`                                              | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)                                                                                                                                                                                                                                                                 |
 | `model-fit.ts`                                                    | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
-| `library.ts`                                                      | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
+| `library.ts`                                                      | `LOCAL_MODEL_LIBRARY_SECTIONS`, `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` section, group and badge models                                                                                                                                                                                                            |
 | `user-models.ts`                                                  | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
 | `model-routing-task.ts`                                           | The `model-routing` task: what a router is handed, the two `score` questions (`modelRoutingSystemOneRequest()`), reading a route back (`modelRouteFromSystemOne()`), which router an assignment names (`modelRouterKind()`), and the skip reasons: see [Model routing](#model-routing)                                                                                                    |
 | `model-routing.ts`, `model-routing-examples.ts`                   | Model routing by example: `MODEL_ROUTING_EXAMPLES` (the shipped labeled prompts), the corrections file shape, `normalizeModelRoutingText()`, and `voteModelRoute()`: see [Model routing](#model-routing)                                                                                                                                                                                  |
@@ -153,11 +153,17 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 Settings > Models > Library and `maestro-cli models list` show the same list through the same
 three shared modules. Neither surface sorts, labels or judges a model by itself.
 
-**Groups** (`library.ts`). A text model is listed once. Housekeeping is what every text model can
-do, so a model with a more specific role is listed under the first of those in
-`LOCAL_MODEL_ROLES` order (agent, judge, vision), and every role it has is a badge
-(`localModelRoleBadges()`; the agent badge names the harnesses from `agentHarnesses`). A model
-the user added goes in its own group. Every other kind is a group by kind. Listing a model under
+**Sections and groups** (`library.ts`). The Library is split into sections, one tab each of its
+strip (`LOCAL_MODEL_LIBRARY_SECTIONS`: Engines, Agent Models, Housekeeping, Speech, Search &
+Safety, Custom; Engines first because no model runs without one), and a section holds groups, one card each. A text model is listed once: in
+the `agent` group if it passed the agent qualification, else in `housekeeping`. Judge and vision
+are badges, not groups; they were groups of one or two models each, and folding them into
+Housekeeping cut the Library from ten headings to six tabs. Every role a model has is a badge
+(`localModelRoleBadges()`; the agent badge, "Agent-ready", names the harnesses from
+`agentHarnesses`). A model the user added goes in its own group, in Custom. Every other kind is
+a group by kind: speech-to-text, text-to-speech and wake word in Speech, embeddings and
+classifiers in Search & Safety. `localModelLibrarySection()` names the section a model is on,
+and `models list --json` carries it as `section`. Listing a model under
 each of its roles was rejected: a row carries live state (a download, a removal warning), and two
 copies of it would disagree.
 
@@ -858,11 +864,19 @@ no `system` or if the System One and System Two lists drift from the exact sets.
 `tasksForSystem(system)` returns one system's definitions in registry order. The Settings Models tab
 uses it to draw each assignment table (`LocalModelsAssignmentsSection` takes a `system` prop), and
 `taskAssignmentPanel(taskId)` / `taskAssignmentLocation(taskId)` in `settings-location.ts` use the same
-field to say which inner tab holds a task, so a task that changes system moves its row and every
-"assign it in Settings > Models > System One" sentence together. The Models tab's five inner tabs
-(`library`, `sources`, `system-one`, `system-two`, `gateway`) are `MODELS_SETTINGS_PANELS`; the Settings
-tab id is `models` with `local-models` kept as an alias, and `maestro-cli open settings --tab models
---sub-tab <panel>` reaches a panel through `resolveUiSurfaceTarget()` in `src/shared/uiSurfaces.ts`.
+field to say which panel holds a task, so a task that changes system moves its row and every
+"assign it in Settings > Models > System One" sentence together. The Models tab's panels
+(`overview`, `library`, `sources`, `system-one`, `system-two`, `gateway`) are `MODELS_SETTINGS_PANELS`.
+The Overview (`ModelsOverview.tsx`: six stat tiles including the memory from `hardwareProfileStat()`,
+a verification warning only when a model is corrupt, and a jump card per panel) is what the Models row in the Settings sidebar opens; the other five
+(`MODELS_SETTINGS_DETAIL_PANELS`, summed up in `MODELS_SETTINGS_PANEL_SUMMARIES`) are drawn as a subtree
+under it. The Hugging Face mirror setting lives in Sources, not under Engines: it rebases model and
+Add from Hugging Face requests only, and engines come from the npm registry. The Settings tab id is `models` with `local-models`
+kept as an alias. A place inside the tab is one string, the sub-tab path: a panel (`gateway`) or a
+panel and a Library section (`library/speech`), written by `modelsSettingsSubTab()` and read by
+`parseModelsSettingsSubTab()`. `maestro-cli open settings --tab models --sub-tab <path>` reaches it
+through `resolveUiSurfaceTarget()` in `src/shared/uiSurfaces.ts`, a Settings search result carries it
+as `subTab`, and `useModelsSettingsNav().open()` in the renderer applies it.
 
 ## The task router
 
@@ -3906,7 +3920,7 @@ Qwen3.5 in-process and will show it.
 
 ## Agent qualification
 
-The `agent` role (the Library's "Runs agents" badge) is granted by a measurement, never by a model
+The `agent` role (the Library's "Agent-ready" badge, and its Agent Models section) is granted by a measurement, never by a model
 card. `src/__tests__/main/local-models/model-agent-qualification-e2e.test.ts` (opt-in:
 `MAESTRO_LOCAL_MODEL_E2E=1`; `MAESTRO_LOCAL_MODEL_E2E_MODELS` = `installed`, `all` or ids) starts
 the model server on each model and runs Claude Code and Codex through it on one scripted task in a

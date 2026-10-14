@@ -442,7 +442,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 	const binary = await (deps.resolveBinary ?? installedServerBinary)();
 	if (!binary) {
 		throw new ModelServerError(
-			`The ${MODEL_SERVER_NAME} engine is not installed. Install it in ${modelsSettingsLocation('library')}.`,
+			`The ${MODEL_SERVER_NAME} engine is not installed. Install it in ${modelsSettingsLocation('sources')}.`,
 			'engine-not-installed'
 		);
 	}

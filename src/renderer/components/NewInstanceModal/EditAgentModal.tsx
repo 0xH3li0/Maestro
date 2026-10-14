@@ -954,7 +954,8 @@ export function EditAgentModal({
 			onClose={onClose}
 			resizable
 			resizeKey="edit-agent"
-			defaultSize={{ width: 720, height: 640 }}
+			// Wider than New Agent's 720: the strip here can hold a seventh tab.
+			defaultSize={{ width: 820, height: 640 }}
 			minSize={{ width: 560, height: 420 }}
 			contentClassName="flex flex-col flex-1 min-h-0"
 			initialFocusRef={nameInputRef}

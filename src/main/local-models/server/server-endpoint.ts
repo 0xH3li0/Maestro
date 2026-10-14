@@ -150,7 +150,7 @@ export async function listModelServerModels(): Promise<EndpointModelsResult> {
 			ok: false,
 			error: {
 				kind: 'invalid',
-				message: `The ${MODEL_SERVER_NAME} engine (llama-server) is not downloaded. Install it in ${modelsSettingsLocation('library')}.`,
+				message: `The ${MODEL_SERVER_NAME} engine (llama-server) is not downloaded. Install it in ${modelsSettingsLocation('sources')}.`,
 			},
 		};
 	}

@@ -10,8 +10,8 @@
  * a magic number in each component.
  *
  * Order, lowest to highest:
- *   VOICE_HUD     - the floating voice HUD; over modals so a live session is
- *                   never hidden, under everything below
+ *   VOICE_HUD     - the floating voice HUD; hidden while a blocking modal is
+ *                   open, under everything below
  *   VOICE_HUD_TOOLTIP - hover help for the HUD's own controls, which a plain
  *                   tooltip (z 10000) would draw behind the HUD
  *   DICTATION_INDICATOR - the "Dictating" pill; over modals because a text box

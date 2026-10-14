@@ -52,14 +52,14 @@ describe('openUiSurface - settings deep links', () => {
 		useModalStore.getState().closeModal('settings');
 	});
 
-	it('opens Settings on the Models tab and the inner tab asked for', () => {
-		expect(openUiSurface({ surface: 'settings', tab: 'models', subTab: 'system-one' })).toEqual({
+	it.each(['system-one', 'library/speech'])('opens Settings on Models at %s', (subTab) => {
+		expect(openUiSurface({ surface: 'settings', tab: 'models', subTab })).toEqual({
 			ok: true,
 		});
 		expect(selectModalOpen('settings')(useModalStore.getState())).toBe(true);
 		expect(selectModalData('settings')(useModalStore.getState())).toMatchObject({
 			tab: 'models',
-			subTab: 'system-one',
+			subTab,
 		});
 	});
 
@@ -73,7 +73,7 @@ describe('openUiSurface - settings deep links', () => {
 	it('refuses an unknown inner tab and opens nothing', () => {
 		const result = openUiSurface({ surface: 'settings', tab: 'models', subTab: 'nope' });
 		expect(result.ok).toBe(false);
-		expect(result.error).toContain('Valid sub-tabs: library');
+		expect(result.error).toContain('Valid sub-tabs: overview, library, library/engines');
 		expect(selectModalOpen('settings')(useModalStore.getState())).toBe(false);
 	});
 
