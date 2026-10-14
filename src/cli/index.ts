@@ -1970,14 +1970,18 @@ const agent = settings.command('agent').description('View and manage per-agent c
 
 agent
 	.command('list [agent-id]')
-	.description('List agent configurations (all agents or a specific one)')
+	.description(
+		'List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('-v, --verbose', 'Show descriptions for each config key')
 	.action(settingsAgentList);
 
 agent
 	.command('get <agent-id> <key>')
-	.description('Get a single agent config value')
+	.description(
+		'Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description')
 	.action(settingsAgentGet);

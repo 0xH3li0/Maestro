@@ -668,6 +668,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
+							// Forward the agent's Claude token source (TUI / Dynamic / API). The
+							// spawn handler reads the persisted record first; this is the
+							// fallback, same as the synopsis spawn below.
+							...getClaudeTokenSourceFields(session),
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							// Origin of the turn. Auto Run is the one dispatcher that reaches

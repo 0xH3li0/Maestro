@@ -1250,6 +1250,8 @@ Each agent (Claude Code, Codex, OpenCode, Factory Droid) can have its own config
 
 <Info>
 `settings agent set` writes the per-agent-type configuration store (defaults applied to newly created agents and headless CLI spawns). To change the settings of a specific existing agent shown in the Left Bar - its nudge message, model, env vars, Claude token source, and so on - use [`update-agent`](#creating-updating-and-removing-agents) instead, which writes that agent's live desktop Session.
+
+`settings agent list` and `settings agent get` also accept an agent ID (or a unique prefix) in place of a provider type. They then read that agent's own settings, the same fields `update-agent` writes and `show-agent` reports: `codexTransport`, `tokenSource`, `customModel`, `nudgeMessage`, and so on. `set` and `reset` refuse an agent ID and point you at `update-agent`.
 </Info>
 
 ```bash
@@ -1262,6 +1264,9 @@ maestro-cli settings agent list claude-code
 # Get a specific agent config value
 maestro-cli settings agent get codex model
 maestro-cli settings agent get claude-code customPath
+
+# Read one setting of a specific agent (by agent ID)
+maestro-cli settings agent get <agent-id> codexTransport
 
 # Set agent config values
 maestro-cli settings agent set codex contextWindow 128000
