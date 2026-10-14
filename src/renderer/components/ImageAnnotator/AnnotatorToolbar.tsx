@@ -37,8 +37,10 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { readableTextOn } from '../../../shared/colorContrast';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
-import { ANNOTATOR_PALETTE } from './annotatorConstants';
+import { ANNOTATOR_PALETTE, paletteHotkeyIndex } from './annotatorConstants';
 import { isAnnotatorTextEntry } from './annotatorKeyboard';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
@@ -109,6 +111,27 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 		currentColor = defPenColor;
 		setCurrentColor = setDefPenColor;
 	}
+
+	// Bare `1`..`8` pick the matching swatch, the same number drawn inside it in
+	// the popover. Bound here because this is where the color target (selected
+	// label, selected shape, or the tool's default) is resolved, so the hotkey
+	// and a click on the swatch cannot disagree about what they recolor.
+	const setCurrentColorRef = useRef(setCurrentColor);
+	setCurrentColorRef.current = setCurrentColor;
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isAnnotatorTextEntry(e.target)) return;
+			const index = paletteHotkeyIndex(e.key);
+			if (index === null) return;
+			e.preventDefault();
+			setCurrentColorRef.current(ANNOTATOR_PALETTE[index]);
+			setColorPickerOpen(false);
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
 
 	// Cmd/Ctrl+Z (undo) and Cmd/Ctrl+S (save+exit) for the annotator.
 	//
@@ -386,7 +409,13 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			{divider}
 
 			<div ref={colorWrapRef} style={{ position: 'relative' }}>
-				<HoverTooltip label="Color" theme={theme} placement="left" disabled={colorPickerOpen}>
+				<HoverTooltip
+					label="Color"
+					shortcut="1-8"
+					theme={theme}
+					placement="left"
+					disabled={colorPickerOpen}
+				>
 					<button
 						type="button"
 						onClick={() => setColorPickerOpen((v) => !v)}
@@ -422,8 +451,9 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 							zIndex: 1,
 						}}
 					>
-						{ANNOTATOR_PALETTE.map((color) => {
+						{ANNOTATOR_PALETTE.map((color, index) => {
 							const selected = currentColor.toLowerCase() === color.toLowerCase();
+							const hotkey = String(index + 1);
 							return (
 								<button
 									key={color}
@@ -434,18 +464,21 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 										setCurrentColor(color);
 										setColorPickerOpen(false);
 									}}
-									className="rounded-full transition-transform hover:scale-110"
+									className="rounded-full transition-transform hover:scale-110 flex items-center justify-center text-xs-plus font-bold leading-none"
 									style={{
 										width: 22,
 										height: 22,
 										backgroundColor: color,
+										color: readableTextOn('#ffffff', [color]),
 										border: selected
 											? `2px solid ${theme.colors.accent}`
 											: `2px solid ${theme.colors.border}`,
 										boxShadow: selected ? `0 0 0 2px ${theme.colors.accent}55` : undefined,
 									}}
-									aria-label={`Set color to ${color}`}
-								/>
+									aria-label={`Set color to ${color} (${hotkey})`}
+								>
+									{hotkey}
+								</button>
 							);
 						})}
 					</div>
