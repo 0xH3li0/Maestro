@@ -8,10 +8,26 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Stop's remote half is observed here, never sent: a real one runs ssh.
+const remoteSignals = vi.hoisted(() => [] as Array<{ pidFile: string; mode: string }>);
+vi.mock('../../control/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../control/ssh-remote-signal')>()),
+	signalRemoteAgent: (target: { pidFile: string }, mode: string) => {
+		remoteSignals.push({ pidFile: target.pidFile, mode });
+		return true;
+	},
+}));
+
 import {
 	createFakeGroupChatProvider,
+	promptOf,
 	type FakeScript,
 } from '../../../../__tests__/shared/maestro-lib/run/fakeGroupChatProvider';
+import {
+	claudeTranscriptPath,
+	clearRememberedClaudeSessionCosts,
+} from '../../../claudeCostTracker';
+import { embedSystemPromptInPrompt } from '../../../embeddedSystemPrompt';
 import { getAgentCapabilities } from '../../providers/capabilities';
 import { getAgentDefinition, type AgentConfig } from '../../providers/definitions';
 import { resolveMaestroPaths } from '../../paths/resolve';
@@ -68,6 +84,7 @@ describe('background turns', () => {
 	}
 
 	beforeEach(() => {
+		remoteSignals.length = 0;
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-background-turns-'));
 		registry = createProcessRegistry({ waitMs: 2_000 });
 		beginTurn = vi.fn<(processId: string) => void>();
@@ -184,6 +201,116 @@ describe('background turns', () => {
 			await runner.start(spawnOf());
 			await vi.waitFor(() => expect(background.activeCount()).toBe(0));
 			expect(registry.size()).toBe(0);
+		});
+	});
+
+	describe('the system prompt a turn carries', () => {
+		it('rides the native flag for an agent that has one', async () => {
+			const { background, provider } = turns(() => ({ text: 'ok' }));
+			await background.groupChatRunner(handlers).start(spawnOf({ appendSystemPrompt: 'BE BRIEF' }));
+
+			const args = provider!.calls[0].spec.args;
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('BE BRIEF');
+			await vi.waitFor(() => expect(background.activeCount()).toBe(0));
+		});
+
+		it('is embedded in the prompt for an agent without the flag, and not again on a resume', async () => {
+			const codex: AgentConfig = {
+				...getAgentDefinition('codex')!,
+				available: true,
+				path: '/fake/bin/codex',
+				capabilities: getAgentCapabilities('codex'),
+			} as AgentConfig;
+			const codexSpawn = (overrides: Partial<GroupChatSpawn>) =>
+				spawnOf({
+					providerId: 'codex',
+					agent: codex,
+					args: ['exec', '--json'],
+					appendSystemPrompt: 'BE BRIEF',
+					...overrides,
+				});
+			const { background, provider } = turns(() => ({ text: 'ok' }));
+			const runner = background.groupChatRunner(handlers);
+
+			await runner.start(codexSpawn({}));
+			await runner.start(codexSpawn({ processId: MODERATOR, isResume: true }));
+
+			const [first, resumed] = provider!.calls.map((call) => promptOf(call.spec));
+			expect(first).toContain(embedSystemPromptInPrompt('BE BRIEF', 'hello'));
+			expect(resumed).not.toContain('BE BRIEF');
+			expect(resumed).toContain('hello');
+			await vi.waitFor(() => expect(background.activeCount()).toBe(0));
+		});
+	});
+
+	describe('a resumed Claude session', () => {
+		it('records the turn’s own cost, not the session’s running total', async () => {
+			const configDir = path.join(dir, 'claude-config');
+			const transcript = claudeTranscriptPath(configDir, os.tmpdir(), 'sess-r');
+			fs.mkdirSync(path.dirname(transcript), { recursive: true });
+			fs.writeFileSync(
+				transcript,
+				`${JSON.stringify({ type: 'cost-state', totalCostUSD: 0.004, modelUsage: {} })}\n`
+			);
+			const { background } = turns(() => ({ text: 'Done.', sessionId: 'sess-r' }));
+			// The fake provider is built first: it forgets every total remembered so far.
+			clearRememberedClaudeSessionCosts();
+			const costs: number[] = [];
+			await background
+				.groupChatRunner({
+					...handlers,
+					onUsage: (_id, usage) => void costs.push(usage.totalCostUsd),
+				})
+				.start(
+					spawnOf({
+						args: ['--print', '--output-format', 'stream-json', '--resume', 'sess-r'],
+						customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
+					})
+				);
+
+			// The stream reports the session's total, 0.01; this turn spent the rest.
+			await vi.waitFor(() => expect(costs).toHaveLength(1));
+			expect(costs[0]).toBeCloseTo(0.006, 6);
+		});
+	});
+
+	describe('a turn on an SSH remote', () => {
+		beforeEach(() => {
+			const settings = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: dir } }).settingsFile;
+			fs.mkdirSync(path.dirname(settings), { recursive: true });
+			fs.writeFileSync(
+				settings,
+				JSON.stringify({
+					sshRemotes: [
+						{
+							id: 'r1',
+							name: 'Build box',
+							host: 'build.example.com',
+							port: 22,
+							username: 'dev',
+							privateKeyPath: '',
+							enabled: true,
+						},
+					],
+				})
+			);
+		});
+
+		it('records the agent’s pid in its script, and Stop reaches it on its host', async () => {
+			const { background, provider } = turns(() => ({ text: 'working', hold: true }));
+			const runner = background.groupChatRunner(handlers);
+			// A large prompt rides a stdin script, the launch that records the agent's pid.
+			await runner.start(
+				spawnOf({ sshRemoteConfig: { enabled: true, remoteId: 'r1' }, prompt: 'x'.repeat(5000) })
+			);
+
+			const script = provider!.calls[0].spec.stdin ?? '';
+			const pidFile = /\/tmp\/maestro-agent-[0-9a-f-]+\.pid/.exec(script)?.[0];
+			expect(pidFile).toBeDefined();
+
+			runner.stop(PARTICIPANT);
+			await vi.waitFor(() => expect(background.activeCount()).toBe(0));
+			expect(remoteSignals).toEqual([{ pidFile, mode: 'terminate' }]);
 		});
 	});
 

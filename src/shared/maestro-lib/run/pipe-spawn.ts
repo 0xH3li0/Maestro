@@ -9,13 +9,20 @@
  * raw stdin, an SSH script), which arguments the images add, how the Windows shell escapes them,
  * and whether the process is a one-shot batch or an interactive one that keeps stdin open.
  *
- * The desktop's `ChildProcessSpawner` and the headless runtime's background turns (group chat and
- * consults) both call it, so a turn starts the same way on either host. It carries no desktop
- * framework: the one host-owned step, writing an image to a temp file, is passed in.
+ * The headless runtime's background turns (group chat and consults) call it. The desktop's
+ * `ChildProcessSpawner` does not: it keeps its own spawner, whose steps this mirrors, so a rule the
+ * desktop gains there has to be ported here. The two share what can be shared (`argsResumeSession`
+ * below, and the prompt, image, environment and SSH helpers). The Windows shell step stays a copy
+ * of the desktop's `planSpawnShell`: the desktop's suite stubs the shell escaper at its main-process
+ * path, which a shared copy would bypass. It carries no desktop framework: the one host-owned step,
+ * writing an image to a temp file, is passed in.
  *
  * Design: `Plans/maestro-tui-group-chat.md` GD7.
  */
 
+import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import { isWindows } from '../../platformDetection';
@@ -31,6 +38,7 @@ import {
 	type WindowsShellReason,
 } from '../launch/windows-command';
 import { escapeArgsForShell, isPowerShellShell } from '../launch/windows-shell-escape';
+import { recordRemoteAgent, type RemoteAgentTarget } from '../control/turn-guard';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition } from '../providers/definitions';
 import type { TurnProcessSpec } from './start-turn';
@@ -90,8 +98,11 @@ export interface PipeSpawnPlan {
 	spec: TurnProcessSpec;
 	/** The arguments before shell escaping and with the prompt in place: what a process record keeps. */
 	args: string[];
-	/** Temp files the images were written to; the caller removes them when the turn ends. */
-	tempImageFiles: string[];
+	/**
+	 * Temp files the turn reads: its images, and its prompt when a Windows host moved it into a
+	 * file. The caller removes them when the turn ends (`removeTempFiles`).
+	 */
+	tempFiles: string[];
 	/** A prompt was given: one answer, then the process ends. */
 	isBatchMode: boolean;
 	/** The provider's stdout is JSONL (or a JSON document) rather than text. */
@@ -100,6 +111,22 @@ export interface PipeSpawnPlan {
 	isResuming: boolean;
 	/** Leave stdin open after the first write: an interactive process the caller keeps talking to. */
 	keepStdinOpen: boolean;
+	/** The agent an SSH script starts on its remote host, recorded so Stop can reach it there. */
+	remoteAgent?: RemoteAgentTarget;
+}
+
+/** Remove a turn's temp files, ignoring one that is already gone. Never throws. */
+export function removeTempFiles(files: readonly string[]): void {
+	for (const file of files) {
+		fs.promises.unlink(file).catch((error: NodeJS.ErrnoException) => {
+			if (error.code !== 'ENOENT') {
+				logger.warn('[ProcessManager] Could not remove a temp file', LOG_CONTEXT, {
+					file,
+					error: error.message,
+				});
+			}
+		});
+	}
 }
 
 /** Decide what a piped turn starts. Throws only when an input cannot be honored (see `PipeSpawnImages`). */
@@ -147,7 +174,7 @@ export function planPipeSpawn(
 	// Build final args based on batch mode and images
 	// Track whether the prompt was added to CLI args (used later to decide stdin behavior)
 	let finalArgs: string[];
-	let tempImageFiles: string[] = [];
+	let tempFiles: string[] = [];
 	// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
 	let effectivePrompt = prompt;
 	// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
@@ -172,11 +199,11 @@ export function planPipeSpawn(
 			throw new Error('This provider takes images as files, and no image writer was supplied.');
 		}
 		finalArgs = [...args];
-		tempImageFiles = [];
+		tempFiles = [];
 		for (let i = 0; i < images.length; i++) {
 			const tempPath = saveImageToTempFile(images[i], i);
 			if (tempPath) {
-				tempImageFiles.push(tempPath);
+				tempFiles.push(tempPath);
 			}
 		}
 
@@ -188,8 +215,8 @@ export function planPipeSpawn(
 			// Some agents consume images by mentioning temp file paths inside the prompt
 			// instead of accepting a dedicated CLI image flag.
 			const imagePrefix = imagePromptBuilder
-				? imagePromptBuilder(tempImageFiles)
-				: buildImagePromptPrefix(tempImageFiles);
+				? imagePromptBuilder(tempFiles)
+				: buildImagePromptPrefix(tempFiles);
 			effectivePrompt = imagePrefix + prompt;
 			if (!promptViaStdin) {
 				finalArgs = [
@@ -201,13 +228,13 @@ export function planPipeSpawn(
 			logger.debug('[ProcessManager] Embedded image paths in prompt', LOG_CONTEXT, {
 				sessionId,
 				imageCount: images.length,
-				tempFiles: tempImageFiles,
+				tempFiles: tempFiles,
 				embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
 				promptViaStdin,
 			});
 		} else {
 			// Initial spawn: use -i flag as before
-			for (const tempPath of tempImageFiles) {
+			for (const tempPath of tempFiles) {
 				if (!imageArgs) {
 					continue;
 				}
@@ -220,7 +247,7 @@ export function planPipeSpawn(
 			logger.debug('[ProcessManager] Using file-based image args', LOG_CONTEXT, {
 				sessionId,
 				imageCount: images.length,
-				tempFiles: tempImageFiles,
+				tempFiles: tempFiles,
 				promptViaStdin,
 			});
 		}
@@ -256,17 +283,44 @@ export function planPipeSpawn(
 		promptLength: prompt?.length,
 		hasImages,
 		hasImageArgs: !!imageArgs,
-		tempImageFilesCount: tempImageFiles.length,
+		tempFilesCount: tempFiles.length,
 		command,
 		commandHasExtension: path.extname(command).length > 0,
 		baseArgsCount: args.length,
 		finalArgsCount: finalArgs.length,
 	});
 
+	// OMP expands @file attachments, including on resume. Keep its full prompt
+	// out of the Windows command line without assuming stdin support.
+	const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
+	if (
+		isWindows() &&
+		effectivePrompt &&
+		promptAddedToArgs &&
+		promptFileArgs &&
+		!config.sshStdinScript &&
+		!config.promptAlreadyInArgs
+	) {
+		const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
+		tempFiles.push(promptFile);
+		try {
+			fs.writeFileSync(promptFile, effectivePrompt, {
+				encoding: 'utf8',
+				mode: 0o600,
+				flag: 'wx',
+			});
+		} catch (error) {
+			// Nothing will start to read them, so nothing else would remove them.
+			removeTempFiles(tempFiles);
+			throw error;
+		}
+		// `--` makes OMP treat @file as a literal message, not an attachment.
+		const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
+		finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
+	}
+
 	// Build environment
-	const isResuming =
-		args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
-		args.includes('--session');
+	const isResuming = argsResumeSession(args);
 	const env = buildChildProcessEnv(
 		customEnvVars,
 		isResuming,
@@ -409,9 +463,18 @@ export function planPipeSpawn(
 	//   agent it starts both wait for the end of input.
 	// - Batch mode with nothing to write closes stdin at once; interactive
 	//   mode with nothing to write leaves it open for `ProcessManager.write()`.
+	// A stdin-script SSH spawn records the remote agent's pid so Stop can
+	// reach it: signalling only the local ssh client leaves it running.
+	const sshLaunch = recordRemoteAgent({
+		command,
+		args: finalArgs,
+		sshStdinScript: config.sshStdinScript,
+		sessionId,
+	});
+
 	let stdinText: string | undefined;
 	if (config.sshStdinScript) {
-		stdinText = config.sshStdinScript;
+		stdinText = sshLaunch.sshStdinScript;
 		logger.debug('[ProcessManager] Sending SSH stdin script', LOG_CONTEXT, {
 			sessionId,
 			scriptLength: config.sshStdinScript.length,
@@ -445,10 +508,34 @@ export function planPipeSpawn(
 			shell: spawnShell,
 		},
 		args: finalArgs,
-		tempImageFiles,
+		tempFiles,
 		isBatchMode,
 		isStreamJsonMode,
 		isResuming,
 		keepStdinOpen: stdinText === undefined && !isBatchMode,
+		...(sshLaunch.remote ? { remoteAgent: sshLaunch.remote } : {}),
 	};
+}
+
+/**
+ * Whether an agent's CLI args resume an earlier provider session, which sets
+ * `MAESTRO_SESSION_RESUMED` in the child's environment. Shared by every
+ * pipe-backed spawner so the same args produce the same environment whichever
+ * transport carries the turn.
+ */
+export function argsResumeSession(args: string[]): boolean {
+	return (
+		args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
+		args.includes('--session')
+	);
+}
+
+/** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */
+export function resumeIdFromArgs(args: readonly string[]): string | undefined {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--resume') return args[i + 1] || undefined;
+		if (arg.startsWith('--resume=')) return arg.slice('--resume='.length) || undefined;
+	}
+	return undefined;
 }

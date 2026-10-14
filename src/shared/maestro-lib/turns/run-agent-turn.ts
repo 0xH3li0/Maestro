@@ -7,8 +7,8 @@
  * process through the library run layer (`runTurn` over `startTurn`), and hands back the turn
  * as an event stream plus a promise of how it ended.
  *
- * Refusals come BEFORE anything is started or written, and none of them falls back to
- * something else:
+ * Refusals come BEFORE anything is started (a Windows system prompt file written by then is
+ * removed with the refusal), and none of them falls back to something else:
  *
  * - An SSH remote that cannot be resolved (decision D1c). The turn never runs on this machine
  *   in its place.
@@ -19,14 +19,25 @@
  *
  * Completion is the caller's policy (decision D2): the exit facts go through
  * `resolveTurnOutcome`, and the session id is the first one the provider announced (D4).
+ *
+ * What the desktop's spawner and `ProcessManager` do around a running turn is done here too: a
+ * resumed Claude session's cost is primed so the turn records its own share, the stdio close
+ * watchdog makes sure the turn settles, Stop reaches an SSH agent on its remote host
+ * (`guardTurn`), and an effort the provider refused is noted for the process.
  */
 
-import * as fsp from 'fs/promises';
 import * as os from 'os';
-import * as path from 'path';
+import { readClaudeTurnBaseline, type ClaudeCostState } from '../../claudeCostTracker';
 import { getClaudeTokenMode, type ClaudeTokenSourceFields } from '../../claudeTokenMode';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+	type EffortRejection,
+} from '../../effortRejection';
 import { logger } from '../host';
 import { INTERACTIVE_STOP_GRACE_MS } from '../control/termination';
+import { guardTurn, recordRemoteAgent, type RemoteAgentTarget } from '../control/turn-guard';
 import {
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
@@ -42,8 +53,9 @@ import {
 	type SshSpawnWrapConfig,
 	type SshSpawnWrapResult,
 } from '../launch/ssh-spawn-wrapper';
-import type { ParsedEvent } from '../parsers/agent-output-parser';
+import type { AgentOutputParser, ParsedEvent } from '../parsers/agent-output-parser';
 import { createOutputParser } from '../parsers/parser-factory';
+import { removeTempFiles } from '../run/pipe-spawn';
 import {
 	runTurn,
 	UnknownProviderError,
@@ -52,10 +64,10 @@ import {
 } from '../run/run-to-completion';
 import { turnProcessSpecFromPlan, type TurnProcessSpec } from '../run/start-turn';
 import type { ResolveTurnOutcomeOptions } from '../streaming/turn-outcome';
+import { writeSystemPromptFile } from './args';
 import type { AssembledTurn } from './assemble';
 
-/** How long a Windows system prompt file is left for the agent to read. */
-const SYSTEM_PROMPT_FILE_LIFETIME_MS = 30_000;
+const LOG_CONTEXT = '[RunAgentTurn]';
 
 const CLAUDE_CODE_ID = 'claude-code';
 
@@ -68,7 +80,7 @@ export type RunAgentTurnRefusal =
 	| 'standard-mode-unsupported'
 	/** The provider has no output parser, so its answer could not be read. */
 	| 'no-parser'
-	/** The system prompt file or the process could not be created. */
+	/** The process could not be created. */
 	| 'launch';
 
 export type RunAgentTurnStart =
@@ -181,16 +193,86 @@ function refuse(reason: RunAgentTurnRefusal, message: string): RunAgentTurnStart
 	return { ok: false, reason, message };
 }
 
-/** Remove a system prompt file, ignoring one that is already gone. */
-function removeQuietly(file: string): void {
-	fsp.unlink(file).catch((error: NodeJS.ErrnoException) => {
-		if (error.code !== 'ENOENT') {
-			logger.warn('Could not remove the system prompt file', 'RunAgentTurn', {
-				file,
-				error: error.message,
-			});
-		}
-	});
+/** A resumed Claude Code session's cost tracker as a turn starts, for its parser. */
+export interface ClaudeResumeBaseline {
+	resumeSessionId: string;
+	/** `null`: the session has no tracker yet. `undefined`: unknown (a remote transcript). */
+	baseline: ClaudeCostState | null | undefined;
+}
+
+/**
+ * Claude reports its cost and per-model usage as running SESSION totals. The session's total as a
+ * resumed turn starts, read from the transcript it resumes, is what turns them into this turn's
+ * (see src/shared/claudeCostTracker.ts). Undefined for any other turn. Read it before the process
+ * starts, and hand it to the turn's parser with `primeClaudeResume`.
+ */
+export function readClaudeResumeBaseline(input: {
+	providerId: string;
+	resumeSessionId: string | undefined;
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	/** The agent runs on another host, whose transcript cannot be read here. */
+	remote: boolean;
+}): ClaudeResumeBaseline | undefined {
+	const { resumeSessionId } = input;
+	if (input.providerId !== CLAUDE_CODE_ID || !resumeSessionId) return undefined;
+	return {
+		resumeSessionId,
+		baseline: readClaudeTurnBaseline({
+			resumeSessionId,
+			cwd: input.cwd,
+			env: input.env,
+			homeDir: os.homedir(),
+			remote: input.remote,
+		}),
+	};
+}
+
+/** Prime a turn's parser with the baseline `readClaudeResumeBaseline` read. */
+export function primeClaudeResume(
+	parser: AgentOutputParser | null | undefined,
+	resume: ClaudeResumeBaseline | undefined
+): void {
+	if (resume) parser?.primeResumedSession?.(resume.resumeSessionId, resume.baseline);
+}
+
+/**
+ * The reasoning effort a failed turn was refused, if that is how it failed. The provider's own
+ * words can be in the classified error, the answer, or only in the raw stream, so all of them are
+ * read. Null for a turn that did not crash: one that finished, or one somebody stopped.
+ */
+export function effortRefusalOf(completed: CompletedTurn): EffortRejection | null {
+	if (completed.outcome !== 'crashed') return null;
+	return parseEffortRejection(
+		[
+			completed.error?.message,
+			completed.answerText,
+			completed.exit.stderrText,
+			completed.exit.stdoutText,
+		]
+			.filter(Boolean)
+			.join('\n')
+	);
+}
+
+/**
+ * Note an effort refusal for the process, as the desktop's error listener does for every agent
+ * error, so `resolveEffortLevel` stops offering the value (see `shared/effortRejection.ts`).
+ * Answers the refusal, for a caller that retries without the effort.
+ */
+export function noteEffortRefusal(
+	providerId: string,
+	completed: CompletedTurn
+): EffortRejection | null {
+	const rejection = effortRefusalOf(completed);
+	if (rejection && noteEffortRejection(providerId, rejection)) {
+		logger.warn(
+			`${describeEffortRejection(providerId, rejection)} Turns that map to it now use the agent's own effort.`,
+			LOG_CONTEXT,
+			{ providerId, ...rejection }
+		);
+	}
+	return rejection;
 }
 
 /**
@@ -220,23 +302,6 @@ export async function runAgentTurn(
 			`${provider.name ?? providerId} has no output parser, so its answer could not be read`
 		);
 	}
-
-	// Windows hands a large system prompt to the agent in a file. Its path is chosen now so the
-	// plan carries the argument; the file itself is written only once nothing can refuse the turn.
-	const systemPromptFile =
-		turn.systemPromptDelivery.via === 'file' && turn.systemPrompt
-			? path.join(
-					deps.tempDir ?? os.tmpdir(),
-					`maestro-sysprompt-${options.sessionId}-${Date.now()}.txt`
-				)
-			: undefined;
-	const args = systemPromptFile
-		? [...launch.args, '--append-system-prompt-file', systemPromptFile]
-		: launch.args;
-
-	const planned = buildAgentLaunchPlan({ ...launch, args, sshStore: options.sshStore });
-	if (!planned.ok) return refuse('ssh-unresolved', planned.error);
-	const plan = planned.plan;
 
 	// The Claude token source: `claude --print` (API) or the maestro-p TUI. Unconfigured is API;
 	// an SSH agent has no remote probe here, so it is API too (PA15).
@@ -278,8 +343,37 @@ export async function runAgentTurn(
 		);
 	}
 
+	// Windows hands a large system prompt to the agent in a file, through the realization every
+	// spawn shares: owner-only, removed after its lifetime, and the inline flag when the write
+	// fails. The flag goes into the arguments before the plan places the prompt after them.
+	let args = launch.args;
+	let systemPromptFile: string | undefined;
+	if (turn.systemPromptDelivery.via === 'file' && turn.systemPrompt) {
+		const delivered = await writeSystemPromptFile({
+			args,
+			prompt: launch.prompt,
+			systemPrompt: turn.systemPrompt,
+			sessionId: options.sessionId,
+			agentId: providerId,
+			logContext: LOG_CONTEXT,
+			tempDir: deps.tempDir,
+		});
+		args = delivered.args;
+		systemPromptFile = delivered.tempFile;
+	}
+	// A turn refused from here on leaves no file behind for its lifetime.
+	const abandon = (reason: RunAgentTurnRefusal, message: string): RunAgentTurnStart => {
+		if (systemPromptFile) removeTempFiles([systemPromptFile]);
+		return refuse(reason, message);
+	};
+
+	const planned = buildAgentLaunchPlan({ ...launch, args, sshStore: options.sshStore });
+	if (!planned.ok) return abandon('ssh-unresolved', planned.error);
+	const plan = planned.plan;
+
 	// The process to start.
 	let spec: TurnProcessSpec;
+	let remote: RemoteAgentTarget | undefined;
 	if (plan.target.kind === 'remote' && sshConfig) {
 		// A remote TUI turn runs maestro-p on the remote host instead of `claude`.
 		const remoteInteractive = claudeDecision
@@ -310,16 +404,24 @@ export async function runAgentTurn(
 		// The wrapper degrades to a local spawn when it cannot resolve the remote. Taking that
 		// would run the agent here against the remote's path.
 		if (!wrapped.sshRemoteUsed)
-			return refuse('ssh-unresolved', sshUnresolvedRemoteMessage(sshConfig));
+			return abandon('ssh-unresolved', sshUnresolvedRemoteMessage(sshConfig));
+		// The script records the remote agent's pid, so Stop reaches it and not only the ssh client.
+		const recorded = recordRemoteAgent({
+			command: wrapped.command,
+			args: wrapped.args,
+			sshStdinScript: wrapped.sshStdinScript,
+			sessionId: options.sessionId,
+		});
+		remote = recorded.remote;
 		spec = {
 			command: wrapped.command,
 			args: wrapped.args,
 			cwd: wrapped.cwd,
 			env: { ...(deps.env ?? process.env) },
-			stdin: wrapped.sshStdinScript,
+			stdin: recorded.sshStdinScript,
 		};
 	} else if (plan.env === undefined) {
-		return refuse('launch', 'The launch plan has no local environment');
+		return abandon('launch', 'The launch plan has no local environment');
 	} else {
 		spec = turnProcessSpecFromPlan({ ...plan, env: plan.env });
 		if (claudeDecision?.mode === 'interactive' && claudeDecision.maestroPBinPath) {
@@ -341,17 +443,15 @@ export async function runAgentTurn(
 		}
 	}
 
-	if (systemPromptFile) {
-		try {
-			await fsp.writeFile(systemPromptFile, turn.systemPrompt as string, 'utf-8');
-		} catch (error) {
-			return refuse(
-				'launch',
-				`Could not write the system prompt file: ${error instanceof Error ? error.message : String(error)}`
-			);
-		}
-	}
+	const claudeResume = readClaudeResumeBaseline({
+		providerId,
+		resumeSessionId: turn.resumeSessionId,
+		cwd: launch.cwd,
+		env: spec.env,
+		remote: plan.target.kind === 'remote',
+	});
 
+	const stopGraceMs = options.stopGraceMs ?? INTERACTIVE_STOP_GRACE_MS;
 	const stream = new EventStream<ParsedEvent>();
 	let running: RunningTurn;
 	try {
@@ -360,34 +460,34 @@ export async function runAgentTurn(
 			{
 				agentId: providerId,
 				sessionId: options.sessionId,
-				stopGraceMs: options.stopGraceMs ?? INTERACTIVE_STOP_GRACE_MS,
+				stopGraceMs,
 				signal: options.signal,
 				outcome: options.outcome,
 			},
 			{ onEvent: (event) => stream.push(event) }
 		);
 	} catch (error) {
-		if (systemPromptFile) removeQuietly(systemPromptFile);
-		if (error instanceof UnknownProviderError) return refuse('no-parser', error.message);
-		return refuse(
+		if (error instanceof UnknownProviderError) return abandon('no-parser', error.message);
+		return abandon(
 			'launch',
 			`Could not start ${provider.name ?? providerId}: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
+	// Before the first line is read, which is on a later tick.
+	primeClaudeResume(running.handle.parser, claudeResume);
+	const stops = guardTurn(running.handle, {
+		sessionId: options.sessionId,
+		graceMs: stopGraceMs,
+		remote,
+		signal: options.signal,
+	});
 
-	// The file is only for the agent's first read. It goes when the turn does, or at the desktop's
-	// 30 seconds, whichever is first.
-	let fileTimer: NodeJS.Timeout | undefined;
-	if (systemPromptFile) {
-		fileTimer = setTimeout(() => removeQuietly(systemPromptFile), SYSTEM_PROMPT_FILE_LIFETIME_MS);
-		fileTimer.unref();
-	}
 	const result = running.completed.then((completed) => {
 		stream.close();
-		if (systemPromptFile) {
-			if (fileTimer) clearTimeout(fileTimer);
-			removeQuietly(systemPromptFile);
-		}
+		// The file is only for the agent's first read. It goes when the turn does, or at the end of
+		// its lifetime, whichever is first.
+		if (systemPromptFile) removeTempFiles([systemPromptFile]);
+		noteEffortRefusal(providerId, completed);
 		return completed;
 	});
 
@@ -397,9 +497,9 @@ export async function runAgentTurn(
 			pid: running.handle.pid,
 			events: stream,
 			result,
-			interrupt: () => running.handle.interrupt(),
-			terminate: () => running.handle.terminate(),
-			terminateNow: () => running.handle.terminateNow(),
+			interrupt: stops.interrupt,
+			terminate: stops.terminate,
+			terminateNow: stops.terminateNow,
 			stopRequested: () => running.handle.stopRequested(),
 		},
 	};

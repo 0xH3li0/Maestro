@@ -20,6 +20,12 @@
  * running past `autoRunMaxTaskDurationMin`, is killed and comes back `crashed` with an
  * `errorKind`, so the stall guard trips at once instead of after three more dispatches. A
  * watchdog kill is not an operator stop, which is why it never reads as `interrupted`.
+ *
+ * A turn sent with an effort the provider refuses is run once more without it, as the CLI's
+ * `spawnAgent` and the desktop's `spawnAgentForSession` do. The effort an Auto Run sends usually
+ * came off Maestro's static ladder (a document hint, the synopsis pin), and a provider can retire
+ * a rung without notice: failing every task on a value nobody typed is the wrong outcome. The
+ * refusal is noted (by `runAgentTurn`), so later turns stop asking for the value.
  */
 
 import { getClaudeTokenSourceFields, type ClaudeTokenSourceFields } from '../../claudeTokenMode';
@@ -37,7 +43,7 @@ import { assembleAutoRunTurn } from '../turns/assemble';
 import { loadTurnContext } from '../turns/context';
 import { describeCrash } from '../turns/record-turn';
 import { toTurnAgent } from '../turns/records';
-import { runAgentTurn } from '../turns/run-agent-turn';
+import { effortRefusalOf, runAgentTurn } from '../turns/run-agent-turn';
 import type { StatsRecorder } from '../turns/stats';
 import { createTurnEventMapper } from '../turns/turn-events';
 import type { ProcessRegistry } from './processes';
@@ -95,16 +101,38 @@ function watchdogLimits(paths: Pick<MaestroPaths, 'settingsFile'>): {
 
 const failure = (error: string): AutoRunTurnResult => ({ success: false, error });
 
+/** One attempt's result, and whether it failed on a refused effort. */
+interface AutoRunAttempt {
+	result: AutoRunTurnResult;
+	effortRefused: boolean;
+}
+
+const attempt = (result: AutoRunTurnResult): AutoRunAttempt => ({ result, effortRefused: false });
+
 export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): AutoRunTurnRunner {
 	const { agentId, paths, repository, registry, statsRecorder, host, deps } = options;
 	const sshStore = createSshRemoteStore(paths);
 	const startTurn = deps.runAgentTurn ?? runAgentTurn;
 
 	async function run(request: AutoRunTurnRequest): Promise<AutoRunTurnResult> {
+		const first = await runOnce(request);
+		// Only a turn that sent an effort retries, so a refusal of the agent's own configured
+		// effort cannot loop. A run stopped meanwhile is not started again.
+		if (first.result.success || !request.effort || !first.effortRefused) return first.result;
+		if (request.signal?.aborted) return first.result;
+		logger.warn(
+			`The provider refused effort "${request.effort}"; running the turn again at the agent's own effort`,
+			LOG_CONTEXT,
+			{ agentId }
+		);
+		return (await runOnce({ ...request, effort: undefined })).result;
+	}
+
+	async function runOnce(request: AutoRunTurnRequest): Promise<AutoRunAttempt> {
 		const record = repository.getAgent(agentId);
 		const agent = record ? toTurnAgent(record) : undefined;
 		if (!record || !agent)
-			return failure('The agent is gone or has no working directory to run in.');
+			return attempt(failure('The agent is gone or has no working directory to run in.'));
 
 		const loaded = await loadTurnContext(agent, {
 			paths,
@@ -115,7 +143,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 			...(deps.readGitBranch ? { readGitBranch: deps.readGitBranch } : {}),
 			now: () => new Date(deps.now()),
 		});
-		if (!loaded.ok) return failure(loaded.message);
+		if (!loaded.ok) return attempt(failure(loaded.message));
 
 		const assembled = assembleAutoRunTurn(
 			agent,
@@ -127,7 +155,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 			},
 			loaded.context
 		);
-		if (!assembled.ok) return failure(assembled.message);
+		if (!assembled.ok) return attempt(failure(assembled.message));
 		const turn = assembled.turn;
 		const provider = turn.settings.provider;
 
@@ -139,7 +167,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 			maestroPBinPath: host.maestroPBinPath ?? null,
 			...(request.signal ? { signal: request.signal } : {}),
 		});
-		if (!started.ok) return failure(started.message);
+		if (!started.ok) return attempt(failure(started.message));
 		const process = started.run;
 		const startedAt = deps.now();
 
@@ -226,7 +254,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		if (watchdogKind) {
 			// Killed by the watchdog, which is a stuck agent and not a stop: `crashed`, never
 			// `interrupted`, so the engine does not end the run as if the operator had.
-			return {
+			return attempt({
 				success: false,
 				outcome: 'crashed',
 				errorKind: watchdogKind,
@@ -235,21 +263,24 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 						? 'The agent task exceeded the maximum duration'
 						: 'The agent task stalled: no output within the inactivity timeout',
 				...common,
-			};
+			});
 		}
 		return {
-			success: finishedWell,
-			outcome: completed.outcome,
-			...(finishedWell
-				? {}
-				: {
-						error: completed.error?.message ?? describeCrash(completed.exit),
-						// A classified failure is what pauses a run that has somebody to answer it.
-						...(completed.error && completed.outcome !== 'interrupted'
-							? { agentError: completed.error }
-							: {}),
-					}),
-			...common,
+			effortRefused: effortRefusalOf(completed) !== null,
+			result: {
+				success: finishedWell,
+				outcome: completed.outcome,
+				...(finishedWell
+					? {}
+					: {
+							error: completed.error?.message ?? describeCrash(completed.exit),
+							// A classified failure is what pauses a run that has somebody to answer it.
+							...(completed.error && completed.outcome !== 'interrupted'
+								? { agentError: completed.error }
+								: {}),
+						}),
+				...common,
+			},
 		};
 	}
 

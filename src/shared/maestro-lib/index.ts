@@ -184,7 +184,12 @@ export {
 	isPowerShellShell,
 } from './launch/windows-shell-escape';
 export type { WindowsShellConfig, WindowsShellResult } from './launch/windows-shell-escape';
-export { planPipeSpawn } from './run/pipe-spawn';
+export {
+	argsResumeSession,
+	planPipeSpawn,
+	removeTempFiles,
+	resumeIdFromArgs,
+} from './run/pipe-spawn';
 export type { PipeSpawnConfig, PipeSpawnImages, PipeSpawnPlan } from './run/pipe-spawn';
 export { locateProviderBinary } from './turns/provider-binary';
 export type { BinaryProbe } from './turns/provider-binary';
@@ -315,6 +320,9 @@ export * from './control/process-tree';
 export * from './control/pty-kill';
 export * from './control/idle-watchdog';
 export * from './control/agent-liveness';
+export * from './control/stdio-close-watchdog';
+export * from './control/ssh-remote-signal';
+export * from './control/turn-guard';
 
 // Host services
 export * from './host';

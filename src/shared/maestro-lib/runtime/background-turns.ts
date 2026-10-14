@@ -11,9 +11,11 @@
  *
  * | Step | Piece |
  * | --- | --- |
+ * | Deliver the system prompt | `deliverSystemPrompt`: the native flag, a Windows temp file, or embedded |
  * | Decide the launch | `prepareGroupChatSpawn`: SSH wrap, Claude token source, Windows shell, turn clock |
  * | Decide the process | `planPipeSpawn`: where the prompt travels, the environment, stdin |
  * | Start, stream, stop | `runTurn`: the library run layer's buffered turn |
+ * | Settle, and stop remotely | `guardTurn`: the stdio close watchdog, Stop on an SSH agent's host |
  * | Own its lifetime | `ProcessRegistry`, under an owner that is not an agent id |
  *
  * Both hosts' runners are built here and differ only in what they report to: a group chat runner
@@ -25,6 +27,7 @@
 
 import type { UsageStats } from '../../types';
 import { BACKGROUND_STOP_GRACE_MS } from '../control/termination';
+import { guardTurn, type GuardedTurnStops } from '../control/turn-guard';
 import type { ConsultObserver, ConsultRunner } from '../agents/consult';
 import { logger } from '../host';
 import {
@@ -34,7 +37,7 @@ import {
 import type { SshRemoteSettingsStore } from '../launch/ssh-remote-resolver';
 import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
-import { planPipeSpawn } from '../run/pipe-spawn';
+import { planPipeSpawn, removeTempFiles, resumeIdFromArgs } from '../run/pipe-spawn';
 import {
 	runTurn,
 	type CompletedTurn,
@@ -51,8 +54,14 @@ import { getWindowsSpawnConfig } from '../groupchat/windows-spawn';
 import type { GroupChatSpawn, GroupChatTurnRunner } from '../groupchat/types';
 import { readSettingsStore } from '../store/read-stores';
 import type { AgentConfig } from '../providers/definitions';
+import { deliverSystemPrompt } from '../turns/args';
 import type { BinaryProbe } from '../turns/provider-binary';
 import { resolveProviderAgent } from '../turns/provider-agent';
+import {
+	noteEffortRefusal,
+	primeClaudeResume,
+	readClaudeResumeBaseline,
+} from '../turns/run-agent-turn';
 import type { ProcessRegistry } from './processes';
 import type { RuntimeTurnOptions } from './turns';
 import { createSshRemoteStore } from './ssh-store';
@@ -122,6 +131,12 @@ export interface BackgroundTurns {
 	 * reporting their end. The count to subtract from the registry's size.
 	 */
 	registeredCount(): number;
+	/**
+	 * Resolves once every registered turn `match` selects has ended and reported its end. A turn
+	 * that is stopped still reports (a log line, a participant card), so a caller about to delete
+	 * what those reports write to waits here first.
+	 */
+	whenSettled(match: (processId: string) => boolean): Promise<void>;
 }
 
 const errorText = (error: unknown): string =>
@@ -132,11 +147,11 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 	const deps: BackgroundTurnDeps = { runTurn, ...options.deps };
 	const sshStore = createSshRemoteStore(paths);
 
-	/** Turns running, by their full process id: what Stop reaches. */
-	const running = new Map<string, RunningTurn>();
+	/** Turns running, by their full process id: what Stop reaches, through the guarded stops. */
+	const running = new Map<string, { turn: RunningTurn; stops: GuardedTurnStops }>();
 	// A turn stays in the process registry until `done` settles, which is after its end has been
 	// reported (and the moderator's report starts the participants). `running` drops it earlier.
-	const registered = new Set<string>();
+	const registered = new Map<string, Promise<void>>();
 
 	function readCustomShellPath(): string | undefined {
 		const settings = readSettingsStore(paths.settingsFile);
@@ -171,7 +186,23 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 		owner: string,
 		hooks: TurnHooks
 	): Promise<{ success: boolean; pid?: number; error?: string }> {
-		const prepared = await prepareGroupChatSpawn(spawn, spawnDeps());
+		// System prompt first, so every later step (maestro-p rewrite, SSH wrap, Windows stdin)
+		// sees the final args and prompt, as on the desktop (`spawnGroupChatAgent`).
+		const delivered = await deliverSystemPrompt({
+			args: spawn.args,
+			prompt: spawn.prompt,
+			systemPrompt: spawn.appendSystemPrompt,
+			supportsAppendSystemPrompt: !!spawn.agent.capabilities?.supportsAppendSystemPrompt,
+			isResume: !!spawn.isResume,
+			isSshSession: !!spawn.sshRemoteConfig?.enabled,
+			sessionId: spawn.processId,
+			agentId: spawn.providerId,
+			logContext: LOG_CONTEXT,
+		});
+		const prepared = await prepareGroupChatSpawn(
+			{ ...spawn, args: delivered.args, prompt: delivered.prompt },
+			spawnDeps()
+		);
 		const plan = planPipeSpawn({
 			sessionId: prepared.processId,
 			toolType: prepared.providerId,
@@ -190,6 +221,15 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 			sendPromptViaStdinRaw: prepared.sendPromptViaStdinRaw,
 			sshStdinScript: prepared.sshStdinScript,
 			hasOutputParser: createOutputParser(prepared.providerId) !== null,
+		});
+		const claudeResume = readClaudeResumeBaseline({
+			providerId: prepared.providerId,
+			// An SSH spawn's arguments hold no resume flag of their own (the remote command does), so
+			// it is not primed here: its parser falls back on the total it saw the session report.
+			resumeSessionId: resumeIdFromArgs(prepared.args),
+			cwd: prepared.cwd,
+			env: plan.spec.env,
+			remote: !!spawn.sshRemoteConfig?.enabled,
 		});
 
 		let turn: RunningTurn;
@@ -215,12 +255,25 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 			);
 		} catch (error) {
 			// An unknown provider, or an option the process could not be created with.
+			removeTempFiles(plan.tempFiles);
 			return { success: false, error: errorText(error) };
 		}
+		// Before the first line is read, which is on a later tick.
+		primeClaudeResume(turn.handle.parser, claudeResume);
+		const stops = guardTurn(turn.handle, {
+			sessionId: prepared.processId,
+			graceMs: BACKGROUND_STOP_GRACE_MS,
+			remote: plan.remoteAgent,
+		});
+		const ended = turn.completed.then((completed) => {
+			removeTempFiles(plan.tempFiles);
+			noteEffortRefusal(prepared.providerId, completed);
+			return completed;
+		});
 
 		// A process that never existed has no pid; its error settles the turn a moment later.
 		if (turn.handle.pid === undefined) {
-			const failed = await turn.completed;
+			const failed = await ended;
 			return {
 				success: false,
 				error: failed.exit.spawnError?.message ?? 'The process could not be started.',
@@ -228,8 +281,8 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 		}
 
 		const processId = prepared.processId;
-		running.set(processId, turn);
-		const done = turn.completed.then(async (completed) => {
+		running.set(processId, { turn, stops });
+		const done = ended.then(async (completed) => {
 			running.delete(processId);
 			try {
 				if (completed.sessionId) await hooks.onSessionId?.(completed.sessionId);
@@ -247,11 +300,11 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 				registered.delete(processId);
 			}
 		});
-		registered.add(processId);
+		registered.set(processId, done);
 		registry.register(owner, processId, {
-			interrupt: () => turn.handle.interrupt(),
-			terminate: () => turn.handle.terminate(),
-			terminateNow: () => turn.handle.terminateNow(),
+			interrupt: stops.interrupt,
+			terminate: stops.terminate,
+			terminateNow: stops.terminateNow,
 			done,
 		});
 		return { success: true, pid: turn.handle.pid };
@@ -275,7 +328,7 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 				});
 			},
 			stop: (processId) => {
-				running.get(processId)?.handle.terminate();
+				running.get(processId)?.stops.terminate();
 			},
 		}),
 
@@ -307,9 +360,9 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 				},
 				stop: (processId) => {
 					detached.add(processId);
-					const turn = running.get(processId);
-					const partial = turn?.answerSoFar() ?? '';
-					turn?.handle.terminate();
+					const entry = running.get(processId);
+					const partial = entry?.turn.answerSoFar() ?? '';
+					entry?.stops.terminate();
 					return partial;
 				},
 			};
@@ -317,5 +370,8 @@ export function createBackgroundTurns(options: BackgroundTurnsOptions): Backgrou
 
 		activeCount: () => running.size,
 		registeredCount: () => registered.size,
+		whenSettled: async (match) => {
+			await Promise.all([...registered].filter(([id]) => match(id)).map(([, done]) => done));
+		},
 	};
 }

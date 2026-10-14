@@ -6,12 +6,22 @@
  * config options and custom arguments, and the system prompt delivery. The desktop calls
  * it; so does `assembleTurn`, which is how a TUI turn gets the argument list a desktop
  * turn gets. What stays in the desktop is everything with a side effect or a dependency
- * on the app: the MCP plugin bridge, the permission relay, the Windows temp file, the
- * maestro-p swap, and SSH wrapping.
+ * on the app: the MCP plugin bridge, the permission relay, the maestro-p swap, and SSH
+ * wrapping.
+ *
+ * The one side effect kept here is the system prompt's realization (`deliverSystemPrompt`):
+ * the Windows temp file, its cleanup, and the logging. Every spawn that carries a system
+ * prompt, on the desktop and in the headless runtime, delivers it through that one function.
  */
 
+import { randomUUID } from 'crypto';
+import * as fsp from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { embedSystemPromptInPrompt } from '../../embeddedSystemPrompt';
+import { isWindows } from '../../platformDetection';
 import type { AdditionalDirectory } from '../../types';
+import { captureException, logger } from '../host';
 import {
 	applyAgentConfigOverrides,
 	buildAgentArgs,
@@ -149,6 +159,246 @@ export function applySystemPromptDelivery(
 		case 'none':
 			return { args: input.args, prompt: input.prompt, delivery };
 	}
+}
+
+/** How long a Windows temp prompt file lives; the agent reads it at startup. */
+export const SYSTEM_PROMPT_TEMP_FILE_TTL_MS = 30_000;
+
+/**
+ * What happened to the system prompt.
+ * - `file`: `--append-system-prompt-file <tmp>` (Windows local)
+ * - `cli-arg`: `--append-system-prompt <text>`
+ * - `embedded`: wrapped into the user prompt
+ * - `skipped-resume`: not re-sent; already in the resumed transcript
+ * - `sole-prompt`: no user prompt, so the system prompt was sent as the prompt
+ */
+export type DeliveredSystemPrompt =
+	| 'file'
+	| 'cli-arg'
+	| 'embedded'
+	| 'skipped-resume'
+	| 'sole-prompt';
+
+export interface SystemPromptDeliveryInput {
+	/** Agent args so far; the flag (when used) is appended. */
+	args: string[];
+	/** The user prompt, if any. */
+	prompt: string | undefined;
+	/** The assembled Maestro system prompt. Nothing happens when empty. */
+	systemPrompt: string | undefined;
+	/** `capabilities.supportsAppendSystemPrompt` for this agent. */
+	supportsAppendSystemPrompt: boolean;
+	/** True when this spawn resumes an existing provider session. */
+	isResume: boolean;
+	/** True when the spawn is wrapped for an SSH remote (never uses a temp file). */
+	isSshSession: boolean;
+	/** Used in the temp file name so concurrent spawns never collide. */
+	sessionId: string;
+	/** For debug logs only. */
+	agentId?: string;
+	/** Logger context of the caller. */
+	logContext?: string;
+	/** Where a failed temp file cleanup is reported. Default: the library host's reporter. */
+	captureException?: SystemPromptCleanupReporter;
+}
+
+/** Reports a temp file cleanup that failed for a reason other than the file being gone. */
+export type SystemPromptCleanupReporter = (
+	error: unknown,
+	extra?: Record<string, unknown>
+) => Promise<void> | void;
+
+export interface SystemPromptDeliveryResult {
+	args: string[];
+	prompt: string | undefined;
+	/** Set when the prompt went to a Windows temp file (cleaned up after the TTL). */
+	tempFile?: string;
+	/** Undefined when there was no system prompt to deliver. */
+	delivery?: DeliveredSystemPrompt;
+}
+
+/**
+ * Temp file name for a Windows system prompt. The session id can carry a
+ * user-typed agent name (Group Chat participant ids do: `feature/auth`, `a|b`,
+ * `what?`), which Windows rejects in a file name, so it is reduced to a safe,
+ * capped slug. The random suffix keeps two spawns in the same millisecond apart.
+ */
+export function systemPromptTempFileName(sessionId: string): string {
+	const slug = sessionId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+	const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
+	return `maestro-sysprompt-${slug}-${Date.now()}-${suffix}.txt`;
+}
+
+export interface SystemPromptFileInput {
+	/** Agent args so far; the file flag is appended. */
+	args: string[];
+	prompt: string | undefined;
+	systemPrompt: string;
+	/** Used in the temp file name so concurrent spawns never collide. */
+	sessionId: string;
+	/** For debug logs only. */
+	agentId?: string;
+	/** Logger context of the caller. */
+	logContext: string;
+	/** Where the file goes. Default: the OS temp directory. */
+	tempDir?: string;
+	/** Where a failed cleanup is reported. Default: the library host's reporter. */
+	captureException?: SystemPromptCleanupReporter;
+}
+
+/**
+ * The `file` delivery: write the system prompt to an owner-only temp file and append
+ * `--append-system-prompt-file <path>`, because a Windows host's command line cannot hold a
+ * large inline prompt. A caller whose placement already chose the file (`assembleTurn`) calls
+ * this directly; `deliverSystemPrompt` calls it for everyone else.
+ */
+export async function writeSystemPromptFile(
+	input: SystemPromptFileInput
+): Promise<SystemPromptDeliveryResult> {
+	const { args, prompt, systemPrompt, agentId, logContext } = input;
+	const reportCleanupError = input.captureException ?? captureException;
+	// Windows local: write to temp file to avoid CLI length limits
+	const tempFile = path.join(
+		input.tempDir ?? os.tmpdir(),
+		systemPromptTempFileName(input.sessionId)
+	);
+	try {
+		// Owner-only: the prompt carries the user's own context.
+		await fsp.writeFile(tempFile, systemPrompt, { encoding: 'utf-8', mode: 0o600 });
+	} catch (writeErr) {
+		// A failed write must not cost the agent its spawn. Inline is what every
+		// non-Windows spawn does; only a very long prompt risks the CLI limit.
+		logger.warn(
+			'System prompt temp file write failed; falling back to inline --append-system-prompt',
+			logContext,
+			{
+				agentId,
+				tempFile,
+				error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+			}
+		);
+		return {
+			args: [...args, '--append-system-prompt', systemPrompt],
+			prompt,
+			delivery: 'cli-arg',
+		};
+	}
+	// Schedule cleanup early so the file is removed even if spawn fails.
+	// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
+	// silence ENOENT (file already gone), capture other codes via Sentry.
+	setTimeout(() => {
+		fsp.unlink(tempFile).catch((cleanupErr: unknown) => {
+			if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+				void reportCleanupError(
+					cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)),
+					{
+						context: 'systemPromptTempFile cleanup (safety)',
+						file: tempFile,
+					}
+				);
+			}
+		});
+	}, SYSTEM_PROMPT_TEMP_FILE_TTL_MS);
+	logger.debug(
+		'Using --append-system-prompt-file for system prompt delivery (Windows)',
+		logContext,
+		{ agentId, systemPromptLength: systemPrompt.length, tempFile }
+	);
+	return {
+		args: [...args, '--append-system-prompt-file', tempFile],
+		prompt,
+		tempFile,
+		delivery: 'file',
+	};
+}
+
+/**
+ * Deliver a system prompt to one spawn: place it (`applySystemPromptDelivery`, on this host's
+ * platform), realize the Windows temp file when that is the placement, and log what happened.
+ * Returns new values; the inputs are not mutated. Shared by the desktop `process:spawn` handler,
+ * Cue, Group Chat and consults, and the headless runtime's background turns.
+ */
+export async function deliverSystemPrompt(
+	input: SystemPromptDeliveryInput
+): Promise<SystemPromptDeliveryResult> {
+	const { args, prompt, systemPrompt, sessionId, agentId } = input;
+	const logContext = input.logContext ?? '[SystemPromptDelivery]';
+	const placed = applySystemPromptDelivery({
+		systemPrompt,
+		args,
+		prompt,
+		supportsAppendSystemPrompt: input.supportsAppendSystemPrompt,
+		isResume: input.isResume,
+		isWindowsHost: isWindows(),
+		sshRemote: input.isSshSession,
+	});
+	if (!systemPrompt || placed.delivery.via === 'none') return { args, prompt };
+	const placedValues = { args: placed.args, prompt: placed.prompt };
+
+	switch (placed.delivery.via) {
+		case 'file':
+			return writeSystemPromptFile({
+				args,
+				prompt,
+				systemPrompt,
+				sessionId,
+				agentId,
+				logContext,
+				captureException: input.captureException,
+			});
+		case 'flag':
+			// Non-Windows or SSH: pass inline (no command-line length concern)
+			logger.debug('Using --append-system-prompt for system prompt delivery', logContext, {
+				agentId,
+				systemPromptLength: systemPrompt.length,
+			});
+			return { ...placedValues, delivery: 'cli-arg' };
+		case 'skip-on-resume':
+			// The system prompt was embedded in the first user turn at initial spawn
+			// and is preserved in the agent's session transcript.
+			logger.debug(
+				'Skipping system prompt re-injection on resume (already in transcript)',
+				logContext,
+				{
+					agentId,
+					systemPromptLength: systemPrompt.length,
+				}
+			);
+			return { ...placedValues, delivery: 'skipped-resume' };
+		case 'embed':
+			// The envelope is built by the shared helper because the transcript
+			// renderer has to take it back apart again when a tab is hydrated from
+			// disk (see src/shared/embeddedSystemPrompt.ts).
+			logger.debug('Embedding system prompt in user message (fallback)', logContext, {
+				agentId,
+				systemPromptLength: systemPrompt.length,
+			});
+			return { ...placedValues, delivery: 'embedded' };
+		case 'as-prompt':
+			logger.warn(
+				'appendSystemPrompt provided without a user prompt; using as sole prompt',
+				logContext,
+				{
+					agentId,
+					systemPromptLength: systemPrompt.length,
+				}
+			);
+			return { ...placedValues, delivery: 'sole-prompt' };
+	}
+}
+
+/**
+ * Copy of `args` with the inline system prompt replaced by its length, for
+ * logging. The prompt can be large and carries user-specific context.
+ */
+export function redactSystemPromptArg(args: string[]): string[] {
+	const idx = args.indexOf('--append-system-prompt');
+	if (idx === -1) return args;
+	return [
+		...args.slice(0, idx + 1),
+		`<${args[idx + 1]?.length ?? 0} chars>`,
+		...args.slice(idx + 2),
+	];
 }
 
 /**

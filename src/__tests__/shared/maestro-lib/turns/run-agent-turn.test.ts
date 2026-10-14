@@ -9,7 +9,26 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+
+// Stop's remote half is observed here, never sent: a real one runs ssh.
+const remoteSignals = vi.hoisted(() => [] as Array<{ pidFile: string; mode: string }>);
+vi.mock('../../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../shared/maestro-lib/control/ssh-remote-signal')
+	>()),
+	signalRemoteAgent: (target: { pidFile: string }, mode: string) => {
+		remoteSignals.push({ pidFile: target.pidFile, mode });
+		return true;
+	},
+}));
+
+import {
+	claudeTranscriptPath,
+	clearRememberedClaudeSessionCosts,
+} from '../../../../shared/claudeCostTracker';
+import { getEffortRejection, resetEffortRejections } from '../../../../shared/effortRejection';
+import { SSH_STDIN_REMOTE_SHELL } from '../../../../shared/maestro-lib/control/ssh-remote-signal';
 
 import {
 	assembleTurn,
@@ -46,6 +65,10 @@ beforeAll(() => {
 
 afterAll(() => {
 	scratch.cleanup();
+});
+
+beforeEach(() => {
+	remoteSignals.length = 0;
 });
 
 type RunAgentTurnDeps = NonNullable<RunAgentTurnOptions['deps']>;
@@ -519,13 +542,202 @@ describe('runAgentTurn: the system prompt file (Windows host)', () => {
 		expect(flag).toBeGreaterThan(-1);
 		const file = argv[flag + 1];
 		expect(path.dirname(file)).toBe(scratch.dir);
+		// The name every spawn uses: a safe slug of the session id, and a suffix that keeps two
+		// spawns in the same millisecond apart.
+		expect(path.basename(file)).toMatch(
+			/^maestro-sysprompt-agent-1-ai-tab-1-\d+-[0-9a-f]{8}\.txt$/
+		);
 		expect(fs.readFileSync(file, 'utf8')).toBe(turn.systemPrompt);
+		if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
 		expect(argv).not.toContain('--append-system-prompt');
 
 		run.terminate();
 		await run.result;
 		await waitUntil(() => !fs.existsSync(file));
 		expect(fs.existsSync(file)).toBe(false);
+	});
+});
+
+describe('runAgentTurn: the system prompt file cannot be written', () => {
+	it('runs the turn with the prompt inline instead of refusing it', async () => {
+		const argvOut = outFile('argv');
+		const turn = assembleWithFakeAgent('claude-code', {
+			recording: 'captured-claude-code-normal',
+			context: { isWindowsHost: true },
+			env: { FAKE_AGENT_ARGV_OUT: argvOut },
+		});
+
+		const run = await start(turn, { deps: { tempDir: path.join(scratch.dir, 'no-such-dir') } });
+		await run.result;
+
+		const argv = JSON.parse(fs.readFileSync(argvOut, 'utf8')) as string[];
+		expect(argv).not.toContain('--append-system-prompt-file');
+		expect(argv[argv.indexOf('--append-system-prompt') + 1]).toBe(turn.systemPrompt);
+	});
+});
+
+describe('runAgentTurn: a resumed Claude session', () => {
+	it('records the turn’s own cost, not the session’s running total', async () => {
+		clearRememberedClaudeSessionCosts();
+		const configDir = path.join(scratch.dir, `claude-config-${++sequence}`);
+		// What the session had cost before this turn: the last `cost-state` row claude wrote.
+		const transcript = claudeTranscriptPath(
+			configDir,
+			scratch.dir,
+			CAPTURED_CLAUDE_CODE_SESSION_ID
+		);
+		fs.mkdirSync(path.dirname(transcript), { recursive: true });
+		fs.writeFileSync(
+			transcript,
+			`${JSON.stringify({ type: 'cost-state', totalCostUSD: 0.0840728, modelUsage: {} })}\n`
+		);
+		const turn = assembleWithFakeAgent('claude-code', {
+			recording: 'captured-claude-code-resumed',
+			tab: { agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID },
+			env: { CLAUDE_CONFIG_DIR: configDir },
+		});
+		expect(turn.resumeSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+
+		const result = await (await start(turn)).result;
+
+		// The recording reports the session's total, 0.1948228; this turn spent the rest.
+		expect(result.usage?.totalCostUsd).toBeCloseTo(0.1948228 - 0.0840728, 6);
+	});
+});
+
+describe('runAgentTurn: an SSH turn’s remote agent', () => {
+	const remote: SshRemoteConfig = {
+		id: 'remote-1',
+		name: 'Build box',
+		host: 'build.example.com',
+		port: 22,
+		username: 'dev',
+		privateKeyPath: '~/.ssh/id_ed25519',
+		enabled: true,
+	};
+
+	/** An SSH turn whose ssh client is the fake agent, holding until stopped. */
+	async function startRemote(stdinOut: string) {
+		const turn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			agent: { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+		});
+		return start(turn, {
+			sshStore: { getSshRemotes: () => [remote] },
+			deps: {
+				env: {
+					...process.env,
+					FAKE_AGENT_RECORDING: writeFakeTurn(
+						scratch.dir,
+						fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal'])
+					),
+					FAKE_AGENT_STDIN_OUT: stdinOut,
+					FAKE_AGENT_HOLD: '1',
+				},
+				wrapSpawnWithSsh: async () => ({
+					command: process.execPath,
+					// The stdin-script shape: the connection, then the remote shell that reads the script.
+					args: [FAKE_AGENT_PATH, 'dev@build.example.com', ...SSH_STDIN_REMOTE_SHELL],
+					cwd: scratch.dir,
+					sshStdinScript: 'cd /work && exec opencode',
+					sshRemoteUsed: remote,
+				}),
+			},
+		});
+	}
+
+	it('records the agent’s pid in the script, and Stop signals it on its host', async () => {
+		const stdinOut = outFile('stdin');
+		const run = await startRemote(stdinOut);
+		await waitUntil(() => fs.existsSync(stdinOut));
+
+		const script = fs.readFileSync(stdinOut, 'utf8');
+		const pidFile = /maestro-agent-[0-9a-f-]+\.pid/.exec(script)?.[0];
+		expect(pidFile).toBeDefined();
+		expect(script.endsWith('\ncd /work && exec opencode')).toBe(true);
+
+		run.interrupt();
+		await run.result;
+
+		expect(remoteSignals[0]).toEqual({ pidFile: `/tmp/${pidFile}`, mode: 'interrupt' });
+	});
+
+	it('terminates the remote agent with the turn, and signals nothing once it has ended', async () => {
+		const stdinOut = outFile('stdin');
+		const run = await startRemote(stdinOut);
+		await waitUntil(() => fs.existsSync(stdinOut));
+
+		run.terminate();
+		await run.result;
+		expect(remoteSignals.map((signal) => signal.mode)).toEqual(['terminate']);
+
+		run.terminate();
+		expect(remoteSignals).toHaveLength(1);
+	});
+});
+
+describe('runAgentTurn: a process whose stdio outlives it', () => {
+	it.skipIf(process.platform === 'win32')(
+		'settles once the grace after its exit has passed, though a grandchild holds the pipes',
+		async () => {
+			const pidOut = outFile('pid');
+			const turn = assembleWithFakeAgent('opencode', { recording: 'captured-opencode-normal' });
+			// The process exits at once and leaves a grandchild holding stdout and stderr open, as
+			// an SSH ControlMaster does: `close` would not come for 30 seconds.
+			const run = await start({
+				...turn,
+				launch: {
+					...turn.launch,
+					command: '/bin/sh',
+					args: ['-c', 'sleep 30 & echo $! > "$0"; exit 0', pidOut],
+				},
+			});
+			try {
+				const result = await run.result;
+				expect(result.exit.exitCode).toBe(0);
+			} finally {
+				const pid = Number(fs.readFileSync(pidOut, 'utf8'));
+				if (pid > 0) process.kill(pid, 'SIGKILL');
+			}
+		},
+		15_000
+	);
+});
+
+describe('runAgentTurn: a refused effort', () => {
+	beforeEach(() => {
+		resetEffortRejections();
+	});
+
+	it('notes the refusal for the process, so the value stops being offered', async () => {
+		const refusal = JSON.stringify({
+			type: 'error',
+			status: 400,
+			error: {
+				message:
+					"Unsupported value: 'minimal' is not supported with the 'gpt-6-astra' model. " +
+					"Supported values are: 'low', 'medium', 'high'.",
+				param: 'reasoning.effort',
+			},
+		});
+		const turn = assembleWithFakeAgent('opencode', {
+			recording: 'captured-opencode-normal',
+			env: {
+				FAKE_AGENT_RECORDING: writeFakeTurn(scratch.dir, {
+					chunks: [],
+					stderr: `${refusal}\n`,
+					close: { code: 1, signal: null },
+				}),
+			},
+		});
+
+		const result = await (await start(turn)).result;
+
+		expect(result.outcome).toBe('crashed');
+		expect(getEffortRejection('opencode', 'minimal')).toMatchObject({
+			value: 'minimal',
+			supported: ['low', 'medium', 'high'],
+		});
 	});
 });
 

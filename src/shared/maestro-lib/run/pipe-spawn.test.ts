@@ -1,13 +1,23 @@
 /**
  * The process a piped turn starts, decided before it exists (`planPipeSpawn`).
  *
- * The desktop's `ChildProcessSpawner` has its own suite over the same function (its 46 cases run
- * through it); these pin the plan itself, with real provider definitions and no process.
+ * The desktop's `ChildProcessSpawner` does not call it; its own suite pins the desktop's copy of
+ * these rules. These pin the plan itself, with real provider definitions and no process.
  */
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SSH_STDIN_REMOTE_SHELL } from '../control/ssh-remote-signal';
 import { getAgentDefinition } from '../providers/definitions';
-import { planPipeSpawn, type PipeSpawnConfig } from './pipe-spawn';
+import {
+	argsResumeSession,
+	planPipeSpawn,
+	removeTempFiles,
+	resumeIdFromArgs,
+	type PipeSpawnConfig,
+} from './pipe-spawn';
 
 const platform = vi.hoisted(() => ({ windows: false }));
 vi.mock('../../platformDetection', () => ({
@@ -112,6 +122,45 @@ describe('planPipeSpawn', () => {
 			expect(plan.isStreamJsonMode).toBe(true);
 		});
 
+		it('records the remote agent’s pid in an SSH stdin script, so Stop can reach it there', () => {
+			const sshArgs = ['-o', 'BatchMode=yes', 'dev@build', ...SSH_STDIN_REMOTE_SHELL];
+			const plan = planPipeSpawn(
+				base({
+					sessionId: 'gc-1',
+					toolType: 'claude-code',
+					command: 'ssh',
+					args: sshArgs,
+					sshStdinScript: 'cd /work && exec claude --print',
+					promptAlreadyInArgs: true,
+				})
+			);
+
+			const pidFile = plan.remoteAgent?.pidFile;
+			expect(pidFile).toMatch(/^\/tmp\/maestro-agent-[0-9a-f-]+\.pid$/);
+			expect(plan.remoteAgent).toEqual({
+				sshCommand: 'ssh',
+				sshArgs,
+				pidFile,
+				sessionId: 'gc-1',
+			});
+			expect(plan.spec.stdin).toContain(pidFile);
+			expect(plan.spec.stdin?.endsWith('\ncd /work && exec claude --print')).toBe(true);
+		});
+
+		it('records nothing for an SSH command that does not end in the stdin shell', () => {
+			const plan = planPipeSpawn(
+				base({
+					command: 'ssh',
+					args: ['host', '/bin/bash'],
+					sshStdinScript: 'cd /work && exec opencode',
+					promptAlreadyInArgs: true,
+				})
+			);
+
+			expect(plan.remoteAgent).toBeUndefined();
+			expect(plan.spec.stdin).toBe('cd /work && exec opencode');
+		});
+
 		it('leaves stdin open for an interactive process with nothing to say', () => {
 			const plan = planPipeSpawn(base());
 
@@ -197,7 +246,7 @@ describe('planPipeSpawn', () => {
 				[png, 0],
 				[png, 1],
 			]);
-			expect(plan.tempImageFiles).toEqual(['/tmp/img-0.png', '/tmp/img-1.png']);
+			expect(plan.tempFiles).toEqual(['/tmp/img-0.png', '/tmp/img-1.png']);
 			expect(plan.spec.args).toEqual(
 				expect.arrayContaining(['-i', '/tmp/img-0.png', '/tmp/img-1.png'])
 			);
@@ -214,6 +263,78 @@ describe('planPipeSpawn', () => {
 					})
 				)
 			).toThrow(/no image writer/);
+		});
+	});
+
+	describe('a prompt file (OMP on a Windows host)', () => {
+		const omp = (overrides: Partial<PipeSpawnConfig> = {}) =>
+			base({
+				toolType: 'omp',
+				command: 'C:\\tools\\omp.exe',
+				args: ['-p', '--mode', 'json', '--resume', 'saved-session'],
+				prompt: 'Private playbook "quoted" & %PATH% 日本語\n'.repeat(500),
+				...overrides,
+			});
+		let made: string[] = [];
+		afterEach(() => {
+			for (const file of made) fs.rmSync(file, { force: true });
+			made = [];
+		});
+
+		it('moves the prompt off the command line into an owner-only attachment the caller removes', () => {
+			platform.windows = true;
+			const config = omp();
+
+			const plan = planPipeSpawn(config);
+			made = plan.tempFiles;
+
+			const attachment = plan.args.at(-1)!;
+			expect(attachment.startsWith('@')).toBe(true);
+			const file = attachment.slice(1);
+			// The `--` before the prompt goes with it: OMP would read `@file` after it as text.
+			expect(plan.args).toEqual(['-p', '--mode', 'json', '--resume', 'saved-session', attachment]);
+			expect(path.dirname(file)).toBe(os.tmpdir());
+			expect(plan.tempFiles).toEqual([file]);
+			expect(fs.readFileSync(file, 'utf8')).toBe(config.prompt);
+			if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+			expect(plan.spec.stdin).toBeUndefined();
+		});
+
+		it('keeps the prompt on the command line off Windows, and over SSH', () => {
+			const local = planPipeSpawn(omp());
+			expect(local.tempFiles).toEqual([]);
+			expect(local.args.at(-1)).toBe(omp().prompt);
+
+			platform.windows = true;
+			const remote = planPipeSpawn(
+				omp({ sshStdinScript: 'exec omp', promptAlreadyInArgs: true, args: ['host'] })
+			);
+			expect(remote.tempFiles).toEqual([]);
+		});
+	});
+
+	describe('resume arguments', () => {
+		it('tells a resuming turn, and names the session it resumes', () => {
+			expect(argsResumeSession(['--print', '--resume', 'abc'])).toBe(true);
+			expect(argsResumeSession(['run', '--session', 'abc'])).toBe(true);
+			expect(argsResumeSession(['--print'])).toBe(false);
+			expect(resumeIdFromArgs(['--print', '--resume', 'abc'])).toBe('abc');
+			expect(resumeIdFromArgs(['--resume=def'])).toBe('def');
+			expect(resumeIdFromArgs(['--resume'])).toBeUndefined();
+			expect(resumeIdFromArgs(['run', '--session', 'abc'])).toBeUndefined();
+		});
+	});
+
+	describe('removeTempFiles', () => {
+		it('removes each file and passes over one that is already gone', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-pipe-spawn-'));
+			const file = path.join(dir, 'prompt.txt');
+			fs.writeFileSync(file, 'x');
+
+			removeTempFiles([path.join(dir, 'gone.txt'), file]);
+
+			await vi.waitFor(() => expect(fs.existsSync(file)).toBe(false));
+			fs.rmSync(dir, { recursive: true, force: true });
 		});
 	});
 
