@@ -50,6 +50,7 @@ import {
 	getCueHistoryGroups,
 	getCueHistoryGroupRuns,
 } from '../../../main/cue/stats/cue-stats-query';
+import { buildCuePersistedOutput } from '../../../main/cue/cue-text-utils';
 import type { HistoryEntry } from '../../../shared/types';
 
 const AGENT_ID = 'agent-rc';
@@ -907,3 +908,69 @@ describe.skipIf(!canLoadNodeSqlite())('getCueHistoryGroupRuns (real SQLite)', ()
 		expect(getCueHistoryGroupRuns({ sessionId: AGENT_ID, groupKey: 'Nothing' })).toEqual([]);
 	});
 });
+
+/**
+ * The excerpt is derived by `buildCuePersistedOutput()` and then filtered on by
+ * `CUE_EVENT_WORTH_SHOWING_SQL`, so a run is only visible if the two agree that
+ * it said something. These seed the row through the real derivation rather
+ * than a hand-written excerpt, because the failure lives in the hand-off: an
+ * answer the derivation could not summarize was stored as if the run had been
+ * silent, and History dropped it.
+ */
+describe.skipIf(!canLoadNodeSqlite())(
+	'Cue runs whose output is hard to excerpt (real SQLite)',
+	() => {
+		beforeEach(() => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(BASE_MS);
+			closeCueDb();
+			initCueDb(undefined, ':memory:');
+		});
+
+		afterEach(() => {
+			closeCueDb();
+			vi.useRealTimers();
+		});
+
+		function seedFromStdout(id: string, stdout: string): void {
+			const { excerpt, fullOutput } = buildCuePersistedOutput({ stdout, stderr: '' });
+			seedRun({
+				id,
+				type: 'webhook.received',
+				subscriptionName: 'Release Lookup',
+				status: 'completed',
+				outputExcerpt: excerpt,
+				fullOutput,
+			});
+		}
+
+		it('shows a run that answered with only a fenced table', () => {
+			// The run seen live on 2026-10-14: a webhook answered with one table
+			// row inside a code fence, and its row landed with a NULL excerpt.
+			seedFromStdout('fenced-table', '```\n| billing-api | 2.7.0 | raza |\n```');
+
+			const [entry] = getCueHistoryEntries({ sessionId: AGENT_ID, sessionName: 'rc' });
+			expect(entry?.id).toBe('fenced-table');
+			expect(entry.summary).toBe('billing-api · 2.7.0 · raza');
+			expect(entry.fullResponse).toBe('```\n| billing-api | 2.7.0 | raza |\n```');
+
+			const groups = getCueHistoryGroups({ sessionId: AGENT_ID, sessionName: 'rc' });
+			expect(groups.map((group) => group.runCount)).toEqual([1]);
+			expect(getCueHistoryBuckets({ sessionId: AGENT_ID })).toEqual([
+				{ timestamp: minuteStart(BASE_MS), count: 1 },
+			]);
+		});
+
+		it('shows a run whose only sentence runs past the excerpt cap', () => {
+			seedFromStdout('run-on', `Checked ${'every service '.repeat(30)}and found no drift`);
+
+			expect(idsOf(getCueHistoryEntries({ sessionId: AGENT_ID }))).toEqual(['run-on']);
+		});
+
+		it('still hides a run that printed only whitespace', () => {
+			seedFromStdout('blank', '\n  \n');
+
+			expect(getCueHistoryEntries({ sessionId: AGENT_ID })).toEqual([]);
+		});
+	}
+);

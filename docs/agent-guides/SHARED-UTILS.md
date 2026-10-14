@@ -174,6 +174,13 @@ Playbook import and Cue backup inspect/restore only need entry names and bytes. 
 | `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
 | `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
+### Markdown to Plain Text (`src/shared/markdown.ts` - Both)
+
+| Function                      | Signature            | Purpose                                                                                                                                                                                                                                                                                                         |
+| ----------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stripMarkdown(text)`         | `(string) => string` | Markdown to plain text for list rows and previews. Drops table grids outright, because raw `\| col \|` pipes render as garbage there.                                                                                                                                                                           |
+| `flattenMarkdownTables(text)` | `(string) => string` | Table rows to their cell text joined by a `·` with a space on each side, separator rows dropped, and an escaped pipe inside a cell kept as a literal pipe. For a preview where the table IS the whole answer, so `stripMarkdown` would leave nothing (`extractCueOutputExcerpt`). Run `stripMarkdown` after it. |
+
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
 | Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
