@@ -76,6 +76,7 @@ import type {
 	AgentPatch,
 	AgentPatchField,
 	AgentUpdateReceipt,
+	AutoRunOutcome,
 	ClientError,
 	ClientErrorCode,
 	ClientMethod,
@@ -136,6 +137,25 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * A headless host's `autorun_ended` outcome, or `undefined` for anything else: a status this
+ * client does not know is dropped rather than passed on as one it does.
+ */
+function parseAutoRunOutcome(value: unknown): AutoRunOutcome | undefined {
+	if (!isObject(value)) return undefined;
+	const reason = asString(value.reason) ?? '';
+	switch (value.status) {
+		case 'completed':
+		case 'stopped':
+			return { status: value.status };
+		case 'failed':
+		case 'error':
+			return { status: value.status, reason };
+		default:
+			return undefined;
+	}
 }
 
 /** A timer that does not keep the process alive. */
@@ -849,6 +869,14 @@ class WsMaestroClient implements MaestroClient {
 					agentId,
 					event: { kind: 'state', at: this.now(), state: parseAutoRunProgress(frame.state) },
 				});
+				break;
+			}
+			case 'autorun_ended': {
+				// A headless host's own frame: the desktop sends none (see `AutoRunOutcome`).
+				const agentId = asString(frame.sessionId);
+				const outcome = parseAutoRunOutcome(frame.outcome);
+				if (!agentId || !outcome) break;
+				this.emit({ type: 'autorun.ended', agentId, at: this.now(), outcome });
 				break;
 			}
 			case 'settings_changed': {
@@ -1759,7 +1787,7 @@ class WsMaestroClient implements MaestroClient {
 		if (refused) return refused;
 		const checked = validateAutoRunLaunch(input);
 		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
-		const { documents, loop, maxLoops, model, effort } = checked.value;
+		const { documents, loop, maxLoops, model, effort, prompt, ignoreModelHints } = checked.value;
 		const sent = await this.send(
 			method,
 			{
@@ -1775,6 +1803,9 @@ class WsMaestroClient implements MaestroClient {
 				...(loop && typeof maxLoops === 'number' ? { maxLoops } : {}),
 				...(model ? { model } : {}),
 				...(effort ? { effort } : {}),
+				// Under the names `maestro-cli auto-run` sends them and both hosts read them.
+				...(prompt ? { prompt } : {}),
+				...(ignoreModelHints ? { ignoreModelHints: true } : {}),
 			},
 			'configure_auto_run_result'
 		);
@@ -1977,6 +2008,7 @@ class WsMaestroClient implements MaestroClient {
 				...(input.fromTabId ? { fromTabId: input.fromTabId } : {}),
 				withContext: input.withContext === true,
 				timeoutMs,
+				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
 			},
 			'cross_agent_ask_result',
 			{ timeoutMs: timeoutMs + CONSULT_WAIT_GRACE_MS }

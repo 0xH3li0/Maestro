@@ -18,7 +18,10 @@
  */
 
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
-import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
+import {
+	createStandaloneCueEngine,
+	waitForStandaloneCueProcesses,
+} from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
@@ -40,6 +43,13 @@ export interface CueEngineStatusOptions {
 }
 
 /**
+ * How long a stopping runner waits for the processes of the runs it stopped.
+ * A stopped child gets SIGTERM and then SIGKILL after the stop ladder's grace
+ * period; this outlasts both.
+ */
+const CUE_SHUTDOWN_WAIT_MS = 10_000;
+
+/**
  * Start the standalone engine in THIS process and block until interrupted.
  * `CueEngine.start()` acquires the cross-process lock itself
  * (`cue-engine-lock.ts`) and simply no-ops (with a logged error) if another
@@ -54,15 +64,42 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	let shuttingDown = false;
 	let stopTriggerInbox: (() => void) | null = null;
 	const shutdown = (signal: string) => {
-		if (shuttingDown) return;
+		if (shuttingDown) {
+			// A second signal means now. The wait below is what it interrupts, so
+			// a run whose process is still on its way out may be left behind, and
+			// the exit code says the stop was not a clean one.
+			console.log(`\n[Cue] Received ${signal} again, exiting without waiting for runs to end.`);
+			engine.stop();
+			process.exit(1);
+			return;
+		}
 		shuttingDown = true;
 		stopTriggerInbox?.();
 		console.log(`\n[Cue] Received ${signal}, stopping engine...`);
-		engine.stop();
-		// Give in-flight log lines a tick to flush before exiting - stop()
-		// itself is synchronous, but downstream process kills (shell/cli
-		// executors) it triggers are not guaranteed to have settled yet.
-		setTimeout(() => process.exit(0), 250);
+		// `stop()` alone clears the engine's books and ends no run: a run in
+		// flight would keep its agent running under pid 1 once this process is
+		// gone, with a row that says `running` for good. So the runs are stopped
+		// first, their processes are waited for, and only then does the engine
+		// stop (the order `host-cue.ts` keeps). The wait is bounded, so a child
+		// that will not die cannot keep this process alive.
+		const finish = (stillAlive: number): void => {
+			if (stillAlive > 0) {
+				console.warn(
+					`[Cue] ${stillAlive} run process(es) had not exited after ${CUE_SHUTDOWN_WAIT_MS / 1000}s.`
+				);
+			}
+			engine.stop();
+			// Give in-flight log lines a tick to flush before exiting.
+			setTimeout(() => process.exit(0), 250);
+		};
+		try {
+			engine.stopAll();
+		} catch (error) {
+			console.error(
+				`[Cue] Could not stop the runs in flight: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+		waitForStandaloneCueProcesses(CUE_SHUTDOWN_WAIT_MS).then(finish, () => finish(0));
 	};
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));

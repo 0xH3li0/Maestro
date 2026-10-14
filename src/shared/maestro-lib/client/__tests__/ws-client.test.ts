@@ -1317,6 +1317,25 @@ describe('createWsMaestroClient', () => {
 			expect(message).not.toHaveProperty('maxLoops');
 			expect(message).not.toHaveProperty('model');
 			expect(message).not.toHaveProperty('effort');
+			expect(message).not.toHaveProperty('prompt');
+			expect(message).not.toHaveProperty('ignoreModelHints');
+		});
+
+		it("sends the run's own prompt and the skip-model-hints choice", async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			await client.autoRun.launch(A1, {
+				documents: [{ file: '/p/a.md' }],
+				prompt: 'Do one task.\n  Then stop.',
+				ignoreModelHints: true,
+			});
+			expect(bridge.sent('configure_auto_run')).toEqual([
+				expect.objectContaining({
+					// As written: a prompt's line breaks and indentation are part of it.
+					prompt: 'Do one task.\n  Then stop.',
+					ignoreModelHints: true,
+				}),
+			]);
 		});
 
 		it('refuses a bad launch before sending, and an unknown agent', async () => {
@@ -1428,6 +1447,35 @@ describe('createWsMaestroClient', () => {
 			});
 			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null });
 			expect(events.every((event) => event.type !== 'turn')).toBe(true);
+		});
+
+		it("reads a headless host's autorun_ended into how the run ended, and drops one it cannot read", async () => {
+			await connect();
+			bridge.push({
+				type: 'autorun_ended',
+				sessionId: A1,
+				outcome: { status: 'failed', reason: 'the run halted: tests are red' },
+			});
+			bridge.push({ type: 'autorun_ended', sessionId: A1, outcome: { status: 'exploded' } });
+			bridge.push({ type: 'autorun_ended', outcome: { status: 'completed' } });
+			bridge.push({ type: 'autorun_ended', sessionId: A1, outcome: { status: 'stopped' } });
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'autorun.ended')).toHaveLength(2)
+			);
+			expect(events.filter((event) => event.type === 'autorun.ended')).toEqual([
+				{
+					type: 'autorun.ended',
+					agentId: A1,
+					at: expect.any(Number),
+					outcome: { status: 'failed', reason: 'the run halted: tests are red' },
+				},
+				{
+					type: 'autorun.ended',
+					agentId: A1,
+					at: expect.any(Number),
+					outcome: { status: 'stopped' },
+				},
+			]);
 		});
 
 		it('turns the run process stream into output and usage, and none of it into a turn', async () => {

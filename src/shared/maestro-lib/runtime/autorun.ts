@@ -27,6 +27,9 @@
  * - **Controls answer on delivery**, as the desktop's do. `resume` also answers a gate: there is
  *   no separate verb for one.
  * - **The last frame of a run is `state: null`**, after the counts it ended on.
+ * - **How a run ended is said once**, as `autorun.ended` just before that last frame: completed,
+ *   stopped by a person, failed with the engine's reason, or an engine error. The progress frames
+ *   cannot say it, since a run that died and one that finished both end in `null`.
  *
  * Deferred, with the reason in `Plans/maestro-tui-autorun-engine.md`: worktree runs (AE13),
  * steering notes (AE14), a working copy per loop (AE21), Agent Resilience retry (W4), and Auto Run
@@ -66,6 +69,7 @@ import { buildTaskSelectionBlock } from '../autorun/task-selection';
 import type { EventBus } from '../client/event-bus';
 import type {
 	AutoRunApi,
+	AutoRunOutcome,
 	ClientError,
 	ClientErrorCode,
 	ClientMethod,
@@ -164,6 +168,41 @@ function documentNameUnder(folder: string, file: string): string | undefined {
 	const relative = path.relative(folder, absolute);
 	if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
 	return relative.replace(/\\/g, '/').replace(/\.md$/i, '');
+}
+
+/**
+ * How the engine says a run ended, read from the event it ends on: `complete` or `error` for a
+ * playbook, `goal_complete` for a goal. Any other event is progress, and answers `undefined`.
+ */
+export function outcomeOfEngineEvent(event: AutoRunEvent): AutoRunOutcome | undefined {
+	const text = (value: unknown): string | undefined =>
+		typeof value === 'string' && value.trim() !== '' ? value : undefined;
+	switch (event.type) {
+		case 'complete':
+			if (event.success === true) return { status: 'completed' };
+			if (event.stopped === true) return { status: 'stopped' };
+			if (event.halted === true) {
+				const reason = text(event.haltReason);
+				return {
+					status: 'failed',
+					reason: reason ? `the run halted: ${reason}` : 'the run halted',
+				};
+			}
+			return { status: 'failed', reason: 'the run ended before its tasks were done' };
+		case 'error':
+			return { status: 'failed', reason: text(event.message) ?? 'the run could not start' };
+		case 'goal_complete': {
+			if (event.success === true) return { status: 'completed' };
+			if (event.exitReason === 'stopped-by-user') return { status: 'stopped' };
+			const why = text(event.exitDetail) ?? text(event.exitReason);
+			return {
+				status: 'failed',
+				reason: why ? `the goal was not met: ${why}` : 'the goal was not met',
+			};
+		}
+		default:
+			return undefined;
+	}
 }
 
 export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAutoRun {
@@ -443,17 +482,39 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	// Driving a run
 	// -----------------------------------------------------------------------
 
+	/**
+	 * A run whose engine returned without its closing event. Nothing does that today; were one to,
+	 * a run that was being stopped is taken as stopped, and any other is not passed off as done.
+	 */
+	function silentEnd(run: RunHandle): AutoRunOutcome {
+		return run.abort.signal.aborted || run.wire.isStopping === true
+			? { status: 'stopped' }
+			: { status: 'error', reason: 'the engine ended the run without saying how it went' };
+	}
+
 	function startRun(handle: Omit<RunHandle, 'done'>, events: AsyncGenerator<AutoRunEvent>): void {
 		const run: RunHandle = { ...handle, done: Promise.resolve() };
 		runs.set(run.agentId, run);
 		run.done = (async () => {
 			publish(run);
+			let outcome: AutoRunOutcome | undefined;
 			try {
-				for await (const event of events) project(run, event);
+				for await (const event of events) {
+					outcome = outcomeOfEngineEvent(event) ?? outcome;
+					project(run, event);
+				}
 			} catch (error) {
 				logger.error(`An Auto Run failed: ${errorText(error)}`, LOG_CONTEXT);
+				// Whatever the engine said before it threw, the run did not end that way.
+				outcome = { status: 'error', reason: errorText(error) };
 			} finally {
 				runs.delete(run.agentId);
+				bus.emit({
+					type: 'autorun.ended',
+					agentId: run.agentId,
+					at: now(),
+					outcome: outcome ?? silentEnd(run),
+				});
 				// The last frame: no run. A client keeps the counts it already folded.
 				emitRun(run.agentId, { kind: 'state', at: now(), state: null });
 				options.onRunEnded?.(run.agentId);

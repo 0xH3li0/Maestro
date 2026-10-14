@@ -1,18 +1,42 @@
-// Status command - check if Maestro desktop app is running and reachable
+// Status command - check if a Maestro host (the desktop app, or the headless
+// `maestro-cli host`) is running and reachable
 
-import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
+import {
+	readCliServerInfo,
+	isCliServerRunning,
+	type CliServerInfo,
+} from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
+
+/**
+ * Said when no discovery file exists. `session`, `dispatch`, and `queue` match
+ * on the first sentence, so it stays as it was; the second says what to do on a
+ * machine that has no desktop app at all.
+ */
+export const NOT_RUNNING_MESSAGE =
+	'Maestro desktop app is not running. Start it, or run `maestro-cli host start` for a headless host.';
+
+/** The peer the discovery file names, as a person reads it. */
+export function describeHost(info: Pick<CliServerInfo, 'hostKind' | 'pid'>): string {
+	return info.hostKind === 'headless'
+		? `The headless Maestro host (\`maestro-cli host\`, pid ${info.pid})`
+		: 'Maestro';
+}
 
 export async function status(): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
-		console.log('Maestro desktop app is not running');
+		console.log(NOT_RUNNING_MESSAGE);
 		process.exit(ExitCode.NotRunning);
 	}
 
 	if (!isCliServerRunning()) {
-		console.log('Maestro discovery file is stale (app may have crashed)');
+		console.log(
+			info.hostKind === 'headless'
+				? 'Maestro discovery file is stale (the headless host may have crashed; `maestro-cli host start` starts a new one)'
+				: 'Maestro discovery file is stale (app may have crashed)'
+		);
 		process.exit(ExitCode.NotRunning);
 	}
 
@@ -29,7 +53,7 @@ export async function status(): Promise<void> {
 
 			const sessionCount = sessionsResult.sessions?.length ?? 0;
 			console.log(
-				`Maestro is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
+				`${describeHost(info)} is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
 			);
 		});
 	} catch (error) {

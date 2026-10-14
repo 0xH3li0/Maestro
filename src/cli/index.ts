@@ -1417,6 +1417,10 @@ host
 		'--foreground',
 		'Serve in this process instead of detaching (what the detached child runs)'
 	)
+	.option(
+		'--stop-grace <seconds>',
+		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStart(options, cliVersion));
 
@@ -1430,9 +1434,15 @@ host
 
 host
 	.command('stop')
-	.description('Stop the host (refuses while a turn or Auto Run is in flight, unless --force)')
+	.description(
+		'Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)'
+	)
 	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
 	.option('--dev', 'Use the development data directory')
+	.option(
+		'--wait [seconds]',
+		'Wait for work in flight to finish (default 300s), then stop; never forces'
+	)
 	.option('--force', 'Stop even with work in flight; a run records how it ended first')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStop(options));

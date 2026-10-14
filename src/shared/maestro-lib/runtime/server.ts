@@ -64,6 +64,8 @@ export interface RuntimeServer {
 	readonly epoch: string;
 	/** Clients attached right now. */
 	clients(): number;
+	/** The work a stop would cut off now, as `host status` reports it. What a draining host waits on. */
+	work(): HostWork;
 	/** Drop every client and stop listening. Does not touch the runtime. */
 	close(): Promise<void>;
 }
@@ -236,6 +238,7 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 		port: address.port,
 		epoch,
 		clients: () => sockets.size,
+		work: () => work(),
 		close: async () => {
 			unsubscribe();
 			for (const ws of sockets) ws.terminate();

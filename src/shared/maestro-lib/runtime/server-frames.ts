@@ -11,7 +11,7 @@
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
-import type { MaestroEvent, TurnEvent } from '../client/types';
+import type { AutoRunOutcome, MaestroEvent, TurnEvent } from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 
 export type Frame = Record<string, unknown>;
@@ -70,6 +70,15 @@ export function progressToWire(progress: AutoRunProgress): AutoRunBroadcastState
 /** The `autorun_state` frame for a run's wire state, or the `null` that clears it. */
 export function autoRunStateFrame(agentId: string, state: AutoRunBroadcastState | null): Frame {
 	return { type: 'autorun_state', sessionId: agentId, state };
+}
+
+/**
+ * How a run ended. The desktop's bridge has no frame for this, so it is a headless host's own:
+ * `createWsMaestroClient` reads it back into `autorun.ended`, and a client that does not know the
+ * type ignores it as it ignores any other.
+ */
+export function autoRunEndedFrame(agentId: string, outcome: AutoRunOutcome): Frame {
+	return { type: 'autorun_ended', sessionId: agentId, outcome };
 }
 
 /**
@@ -256,6 +265,8 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 			return turnFrames(event.agentId, event.tabId, event.event, state);
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
+		case 'autorun.ended':
+			return [autoRunEndedFrame(event.agentId, event.outcome)];
 		case 'groupChat':
 			return groupChatFrames(event.chatId, event.event);
 		default:

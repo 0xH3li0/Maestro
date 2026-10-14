@@ -5,7 +5,9 @@
 // it attaches to a desktop and an Auto Run keeps going after the TUI quits or an SSH session drops.
 // `status` and `stop` reach that process over the same socket (two messages the desktop does not
 // have; see `src/shared/maestro-lib/client/host-control.ts`), not through signals, so `stop` can
-// refuse while work is in flight. The process itself is `services/runtime-host.ts`.
+// refuse while work is in flight, or wait for it with `--wait`. The process itself is
+// `services/runtime-host.ts`. A signal (`systemctl stop`, Ctrl+C) drains: the host waits up to
+// `--stop-grace` seconds for the work in flight, and a second signal stops it at once.
 
 import { spawn } from 'child_process';
 import * as fs from 'fs';
@@ -32,7 +34,7 @@ import {
 	type RuntimeLockMode,
 } from '../../shared/maestro-lib';
 import { ExitCode } from '../exit-codes';
-import { startRuntimeHost } from '../services/runtime-host';
+import { startRuntimeHost, type RunningHost } from '../services/runtime-host';
 
 export interface HostCommandOptions {
 	dataDir?: string;
@@ -44,6 +46,16 @@ export interface HostCommandOptions {
 	port?: string | number;
 	/** `stop` only: stop even with a turn, an Auto Run, or a Cue run in flight. */
 	force?: boolean;
+	/**
+	 * `start` only: on SIGTERM or SIGINT, wait up to this many seconds for the work in flight before
+	 * stopping. Default 30; 0 stops at once.
+	 */
+	stopGrace?: string | number;
+	/**
+	 * `stop` only: instead of refusing while work is in flight, wait for it to finish, up to this many
+	 * seconds (`true`, the flag with no value: 300), and then stop.
+	 */
+	wait?: boolean | string | number;
 }
 
 /** How long `start` waits for the child to publish, and `stop` for it to exit. */
@@ -51,6 +63,13 @@ const START_WAIT_MS = 20_000;
 const STOP_WAIT_MS = 30_000;
 const POLL_MS = 100;
 const LOG_TAIL_LINES = 15;
+
+/** `--stop-grace` when not given: inside systemd's default 90 s before it sends SIGKILL. */
+export const DEFAULT_STOP_GRACE_SECONDS = 30;
+/** `host stop --wait` with no value. */
+export const DEFAULT_STOP_WAIT_SECONDS = 300;
+/** How often a draining host, or `host stop --wait`, looks at the work again. */
+const DRAIN_POLL_MS = 1_000;
 
 export const HOST_LOG_FILE_NAME = 'maestro-host.log';
 
@@ -78,6 +97,7 @@ export interface HostCommandDeps {
 	requestStop: typeof requestHostStop;
 	isPidAlive(pid: number): boolean;
 	sleep(ms: number): Promise<void>;
+	now(): number;
 	/** The bundle to re-run as the detached child. */
 	cliScript: string;
 }
@@ -121,6 +141,7 @@ const defaultDeps: HostCommandDeps = {
 	requestStop: requestHostStop,
 	isPidAlive,
 	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+	now: () => Date.now(),
 	cliScript: process.argv[1] ?? '',
 };
 
@@ -136,6 +157,12 @@ function fail(options: HostCommandOptions, message: string, code = ExitCode.Gene
 
 function plural(count: number, noun: string): string {
 	return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** A flag's seconds: a finite number of 0 or more, or undefined for anything else. */
+function seconds(value: string | number): number | undefined {
+	const parsed = typeof value === 'number' ? value : Number(value.trim() === '' ? NaN : value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 /** The last lines of the host's log, for a start that failed before it could say why. */
@@ -163,9 +190,15 @@ export async function hostStart(
 	overrides: Partial<HostCommandDeps> = {}
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
+	const graceSeconds =
+		options.stopGrace === undefined ? DEFAULT_STOP_GRACE_SECONDS : seconds(options.stopGrace);
+	if (graceSeconds === undefined) {
+		fail(options, '--stop-grace takes a number of seconds, 0 or more.', ExitCode.InvalidUsage);
+		return;
+	}
 	const paths = resolveHostPaths(options);
 	return options.foreground
-		? runForeground(options, paths, cliVersion)
+		? runForeground(options, paths, graceSeconds, cliVersion)
 		: startDetached(options, paths, deps);
 }
 
@@ -215,6 +248,7 @@ async function startDetached(
 		paths.userDataDir,
 		...(options.dev ? ['--dev'] : []),
 		...(options.port !== undefined ? ['--port', String(options.port)] : []),
+		...(options.stopGrace !== undefined ? ['--stop-grace', String(options.stopGrace)] : []),
 	];
 	const child = deps.spawnDetached(
 		args,
@@ -258,9 +292,77 @@ async function startDetached(
 	fail(options, `The host did not publish within ${START_WAIT_MS / 1000}s. See ${logFile}.`);
 }
 
+/** What a signal drain needs from the running host. */
+export type DrainableHost = Pick<RunningHost, 'work' | 'stop' | 'stopped'>;
+
+export interface SignalDrainDeps {
+	sleep(ms: number): Promise<void>;
+	now(): number;
+	log(line: string): void;
+}
+
+/**
+ * The SIGTERM / SIGINT handler of a foreground host. The first signal drains: it waits up to
+ * `graceMs` for the work in flight (chat turns, Auto Runs, group chat rounds, consults, Cue runs)
+ * and then stops, so `systemctl stop` or `restart` does not cut a turn off part way. A second
+ * signal stops at once. Nothing new is turned away while it waits: the runtime has no switch that
+ * refuses new work, so a turn that starts during the grace period is waited for too, up to the
+ * same deadline.
+ */
+export function createSignalDrain(
+	host: DrainableHost,
+	graceMs: number,
+	deps: SignalDrainDeps
+): (signal: string) => void {
+	let draining = false;
+	let stopped = false;
+	void host.stopped.then(() => {
+		stopped = true;
+	});
+	const stopNow = (): void => void host.stop();
+
+	const drain = async (signal: string): Promise<void> => {
+		const deadline = deps.now() + graceMs;
+		let current = host.work();
+		if (hostHasWork(current) && graceMs > 0) {
+			deps.log(
+				`Received ${signal}: waiting up to ${formatDurationHuman(graceMs)} for the work in flight (${describeWork(current)}) before stopping. Send it again to stop now.`
+			);
+		}
+		while (!stopped && hostHasWork(current)) {
+			const left = deadline - deps.now();
+			if (left <= 0) {
+				deps.log(
+					`The grace period ran out with work still in flight (${describeWork(current)}); stopping it.`
+				);
+				break;
+			}
+			await Promise.race([deps.sleep(Math.min(DRAIN_POLL_MS, left)), host.stopped]);
+			current = host.work();
+		}
+		if (!stopped) stopNow();
+	};
+
+	return (signal) => {
+		if (draining) {
+			deps.log(`Received ${signal} again: stopping now.`);
+			stopNow();
+			return;
+		}
+		draining = true;
+		drain(signal).catch((error: unknown) => {
+			deps.log(
+				`Waiting for the work in flight failed (${error instanceof Error ? error.message : String(error)}); stopping now.`
+			);
+			stopNow();
+		});
+	};
+}
+
 async function runForeground(
 	options: HostCommandOptions,
 	paths: HostPaths,
+	graceSeconds: number,
 	cliVersion?: string
 ): Promise<void> {
 	// Everything the runtime and the Cue engine read by environment lands on this directory too.
@@ -282,9 +384,13 @@ async function runForeground(
 		return;
 	}
 
-	const shutdown = (): void => void host.stop();
-	process.on('SIGINT', shutdown);
-	process.on('SIGTERM', shutdown);
+	const shutdown = createSignalDrain(host, graceSeconds * 1000, {
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		now: () => Date.now(),
+		log: (line) => console.log(line),
+	});
+	process.on('SIGINT', () => shutdown('SIGINT'));
+	process.on('SIGTERM', () => shutdown('SIGTERM'));
 	const cue = host.cue.state();
 	say(
 		options,
@@ -382,7 +488,7 @@ export async function hostStatus(
 // ---------------------------------------------------------------------------
 
 function describeRefusal(reply: Extract<HostStopReply, { stopping: false }>): string {
-	return `The host has work in flight (${describeWork(reply.work)}). Stop it anyway with --force.`;
+	return `The host has work in flight (${describeWork(reply.work)}). Wait for it with --wait, or stop it anyway with --force.`;
 }
 
 export async function hostStop(
@@ -390,6 +496,14 @@ export async function hostStop(
 	overrides: Partial<HostCommandDeps> = {}
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
+	let waitSeconds: number | undefined;
+	if (options.wait !== undefined && options.wait !== false) {
+		waitSeconds = options.wait === true ? DEFAULT_STOP_WAIT_SECONDS : seconds(options.wait);
+		if (waitSeconds === undefined) {
+			fail(options, '--wait takes a number of seconds, 0 or more.', ExitCode.InvalidUsage);
+			return;
+		}
+	}
 	const { userDataDir } = resolveHostPaths(options);
 	const info = liveHost(userDataDir, deps);
 	if (!info) {
@@ -397,12 +511,41 @@ export async function hostStop(
 		return;
 	}
 
+	// With `--wait` a refusal is asked again until the work is gone or the time is up. The host
+	// decides each time, so work that starts while this waits is waited for too.
+	const deadline = deps.now() + (waitSeconds ?? 0) * 1000;
+	let said = false;
 	let reply: HostStopReply;
-	try {
-		reply = await deps.requestStop(userDataDir, { force: options.force });
-	} catch (error) {
-		fail(options, error instanceof Error ? error.message : String(error));
-		return;
+	for (;;) {
+		try {
+			reply = await deps.requestStop(userDataDir, { force: options.force });
+		} catch (error) {
+			fail(options, error instanceof Error ? error.message : String(error));
+			return;
+		}
+		if (reply.stopping || waitSeconds === undefined) break;
+		const left = deadline - deps.now();
+		if (left <= 0) {
+			const message =
+				`Work was still in flight after ${formatDurationHuman(waitSeconds * 1000)} (${describeWork(reply.work)}). ` +
+				'The host is still running: wait longer, or stop it anyway with --force.';
+			if (options.json) {
+				console.log(
+					JSON.stringify({ stopped: false, timedOut: true, ...reply, error: message }, null, 2)
+				);
+			} else {
+				console.error(`Error: ${message}`);
+			}
+			process.exitCode = ExitCode.Timeout;
+			return;
+		}
+		if (!said && !options.json) {
+			console.log(
+				`Waiting up to ${formatDurationHuman(left)} for the work in flight (${describeWork(reply.work)})...`
+			);
+			said = true;
+		}
+		await deps.sleep(Math.min(DRAIN_POLL_MS, left));
 	}
 	if (!reply.stopping) {
 		if (options.json) console.log(JSON.stringify({ stopped: false, ...reply }, null, 2));

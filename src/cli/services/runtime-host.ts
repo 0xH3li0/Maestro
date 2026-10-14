@@ -18,6 +18,7 @@ import {
 	resolveRuntimeTurnOptions,
 	startRuntimeServer,
 	writeCliServerInfoTo,
+	type HostWork,
 	type MaestroPaths,
 	type MaestroRuntime,
 	type RuntimeRefusal,
@@ -76,6 +77,8 @@ export interface RunningHost {
 	readonly server: RuntimeServer;
 	readonly cue: HostCue;
 	readonly token: string;
+	/** The work a stop would cut off now: what `host status` reports and a draining host waits on. */
+	work(): HostWork;
 	/** Settles once the host has fully stopped. */
 	readonly stopped: Promise<void>;
 	/** Stop everything in order and release the data directory. Idempotent. */
@@ -193,7 +196,8 @@ export async function startRuntimeHost(
 			...(options.version ? { version: options.version } : {}),
 		});
 		log(`Host serving ${paths.userDataDir} on 127.0.0.1:${server.port} (pid ${deps.pid}).`);
-		return { runtime, server, cue, token, stopped, stop };
+		const serving = server;
+		return { runtime, server, cue, token, work: () => serving.work(), stopped, stop };
 	} catch (error) {
 		await stop();
 		throw error;

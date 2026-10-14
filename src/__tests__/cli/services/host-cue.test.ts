@@ -11,7 +11,7 @@ import {
 } from '../../../cli/services/host-cue';
 import type { AutoRunProgress } from '../../../shared/maestro-lib/autorun/progress';
 import { createEventBus } from '../../../shared/maestro-lib/client/event-bus';
-import type { ClientResult } from '../../../shared/maestro-lib/client/types';
+import type { AutoRunOutcome, ClientResult } from '../../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 
 const PATHS = { userDataDir: '/data', settingsFile: '/data/maestro-settings.json' };
@@ -347,6 +347,13 @@ describe('runAutoRunInRuntime', () => {
 	});
 	const state = (value: AutoRunProgress | null, agentId = 'a1') =>
 		({ type: 'autorun', agentId, event: { kind: 'state', at: 1, state: value } }) as const;
+	const endedWith = (outcome: AutoRunOutcome, agentId = 'a1') =>
+		({ type: 'autorun.ended', agentId, at: 2, outcome }) as const;
+	/** A run's frames, then its end and the `null` that follows it, as the runtime sends them. */
+	const runEnds = (bus: ReturnType<typeof fakeRuntime>['bus'], outcome: AutoRunOutcome): void => {
+		bus.emit(endedWith(outcome));
+		bus.emit(state(null));
+	};
 
 	async function launched(overrides: Partial<CueAutoRunLaunchParams> = {}) {
 		const fake = fakeRuntime();
@@ -362,6 +369,8 @@ describe('runAutoRunInRuntime', () => {
 			maxLoops: 3,
 			model: 'm',
 			effort: 'low',
+			prompt: 'Only the first task.',
+			ignoreModelHints: true,
 		});
 		expect(launch).toHaveBeenCalledWith('a1', {
 			documents: [{ file: '/p/.maestro/playbooks/a.md', resetOnCompletion: true }],
@@ -369,6 +378,8 @@ describe('runAutoRunInRuntime', () => {
 			maxLoops: 3,
 			model: 'm',
 			effort: 'low',
+			prompt: 'Only the first task.',
+			ignoreModelHints: true,
 		});
 	});
 
@@ -389,21 +400,50 @@ describe('runAutoRunInRuntime', () => {
 			end = value;
 		});
 		// Another agent's run ending, and a stale end from before this run, are not this run's end.
-		bus.emit(state(null));
+		bus.emit(endedWith({ status: 'failed', reason: 'an earlier run' }));
 		bus.emit(state(progress(), 'other'));
-		bus.emit(state(null, 'other'));
+		bus.emit(endedWith({ status: 'completed' }, 'other'));
 		await Promise.resolve();
 		expect(end).toBeUndefined();
 
 		bus.emit(state(progress()));
 		bus.emit(state(progress({ tasksDone: 2 })));
+		// The `null` that closes the frames says nothing about how it went; the end does.
 		bus.emit(state(null));
+		await Promise.resolve();
+		expect(end).toBeUndefined();
+		bus.emit(endedWith({ status: 'completed' }));
 		expect(await ended).toEqual({ ok: true });
 	});
 
-	it('reports a run that ended parked on an error as failed, with the error', async () => {
+	it("reports a failed run with the engine's reason", async () => {
 		const { bus, ended } = await launched();
 		bus.emit(state(progress()));
+		runEnds(bus, { status: 'failed', reason: 'the run halted: tests are red' });
+		expect(await ended).toEqual({ ok: false, reason: 'the run halted: tests are red' });
+	});
+
+	it('reports a run a person stopped as not done', async () => {
+		const { bus, ended } = await launched();
+		bus.emit(state(progress()));
+		runEnds(bus, { status: 'stopped' });
+		expect(await ended).toEqual({ ok: false, reason: 'the run was stopped before it finished' });
+	});
+
+	it('reports an engine crash as a failure, not a completed run', async () => {
+		// The last frame of a run the engine threw out of looks like any finished run's.
+		const { bus, ended } = await launched();
+		bus.emit(state(progress({ tasksDone: 1 })));
+		runEnds(bus, { status: 'error', reason: 'ENOSPC: no space left on device' });
+		expect(await ended).toEqual({
+			ok: false,
+			reason: 'the Auto Run engine failed: ENOSPC: no space left on device',
+		});
+	});
+
+	it('does not read a pause in the last frame as the end', async () => {
+		// A run aborted from a pause is a stop, and the engine says so.
+		const { bus, ended } = await launched();
 		bus.emit(
 			state(
 				progress({
@@ -411,18 +451,7 @@ describe('runAutoRunInRuntime', () => {
 				})
 			)
 		);
-		bus.emit(state(null));
-		expect(await ended).toEqual({
-			ok: false,
-			reason: 'the run ended while paused: Rate limit reached',
-		});
-	});
-
-	it('reports a run that was stopped part way as failed', async () => {
-		const { bus, ended } = await launched();
-		bus.emit(state(progress()));
-		bus.emit(state(progress({ isStopping: true })));
-		bus.emit(state(null));
+		runEnds(bus, { status: 'stopped' });
 		expect(await ended).toEqual({ ok: false, reason: 'the run was stopped before it finished' });
 	});
 

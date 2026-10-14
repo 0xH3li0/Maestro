@@ -4,6 +4,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+	createSignalDrain,
 	formatHostStatus,
 	hostLogFilePath,
 	hostStart,
@@ -17,6 +18,7 @@ import {
 	writeCliServerInfoTo,
 	type HostStatusReport,
 	type HostStopReply,
+	type HostWork,
 } from '../../../shared/maestro-lib';
 
 const report = (overrides: Partial<HostStatusReport> = {}): HostStatusReport => ({
@@ -61,18 +63,28 @@ describe('maestro-cli host', () => {
 			hostKind: 'headless',
 		});
 
-	/** Deps where the child is a pid this process owns, and time does not pass. */
+	/** Deps where the child is a pid this process owns, and time passes only by sleeping. */
 	function deps(overrides: Partial<HostCommandDeps> = {}): HostCommandDeps {
+		let clock = 0;
 		return {
 			spawnDetached: vi.fn(() => ({ pid: process.pid, exited: () => undefined })),
 			requestStatus: vi.fn(async () => report()),
 			requestStop: vi.fn(async () => ({ stopping: true }) as HostStopReply),
 			isPidAlive: (pid) => pid === process.pid,
-			sleep: async () => undefined,
+			sleep: async (ms) => {
+				clock += ms;
+			},
+			now: () => clock,
 			cliScript: '/bundle/maestro-cli.js',
 			...overrides,
 		};
 	}
+
+	const busy = (work: Partial<HostWork> = {}): HostStopReply => ({
+		stopping: false,
+		reason: 'work-in-flight',
+		work: { turns: 1, runs: [], ...work },
+	});
 
 	describe('start', () => {
 		it('re-runs the bundle detached with the directory resolved, and reports what the child published', async () => {
@@ -303,6 +315,174 @@ describe('maestro-cli host', () => {
 			);
 			expect(out.join('\n')).toContain(`Pid ${process.pid} is alive but did not answer`);
 			expect(process.exitCode).toBe(3);
+		});
+	});
+
+	describe('start --stop-grace', () => {
+		it('hands the grace period to the detached child', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir, stopGrace: '45' }, undefined, deps({ spawnDetached }));
+			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
+			expect(args.slice(-2)).toEqual(['--stop-grace', '45']);
+		});
+
+		it('refuses a grace that is not a number of seconds, before starting anything', async () => {
+			const spawnDetached = vi.fn();
+			await hostStart({ dataDir: dir, stopGrace: 'soon' }, undefined, deps({ spawnDetached }));
+			expect(err.join('\n')).toContain('--stop-grace');
+			expect(process.exitCode).toBe(2);
+			expect(spawnDetached).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('a signal to a foreground host', () => {
+		/** A host whose work is whatever `work` says, and whose stop is recorded. */
+		function drainable(work: () => HostWork) {
+			let finish!: () => void;
+			const stopped = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			const stop = vi.fn(async () => finish());
+			return { host: { work, stop, stopped }, stop };
+		}
+		/** A clock that moves only when the drain sleeps. */
+		function clock() {
+			let now = 0;
+			const lines: string[] = [];
+			return {
+				lines,
+				elapsed: () => now,
+				deps: {
+					now: () => now,
+					sleep: async (ms: number) => {
+						now += ms;
+					},
+					log: (line: string) => void lines.push(line),
+				},
+			};
+		}
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+		it('stops at once when nothing is running', async () => {
+			const { host, stop } = drainable(() => ({ turns: 0, runs: [] }));
+			const time = clock();
+			createSignalDrain(host, 30_000, time.deps)('SIGTERM');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.elapsed()).toBe(0);
+		});
+
+		it('waits for the work in flight to finish, and only then stops', async () => {
+			let checks = 0;
+			// Busy for the first three looks: a turn, then an Auto Run, then a Cue run.
+			const { host, stop } = drainable(() => {
+				checks += 1;
+				if (checks === 1) return { turns: 1, runs: [] };
+				if (checks === 2)
+					return {
+						turns: 0,
+						runs: [{ agentId: 'a1', kind: 'playbook', startedAt: 1, paused: false }],
+					};
+				if (checks === 3) return { turns: 0, runs: [], cueRuns: 1 };
+				return { turns: 0, runs: [] };
+			});
+			const time = clock();
+			createSignalDrain(host, 30_000, time.deps)('SIGTERM');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(checks).toBe(4);
+			expect(time.elapsed()).toBeLessThan(30_000);
+			expect(time.lines[0]).toContain('waiting up to 30s');
+			expect(time.lines[0]).toContain('1 turn');
+		});
+
+		it('stops with the work still running once the grace period is over, and says so', async () => {
+			const { host, stop } = drainable(() => ({ turns: 0, runs: [], consults: 1 }));
+			const time = clock();
+			createSignalDrain(host, 5_000, time.deps)('SIGINT');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.elapsed()).toBe(5_000);
+			expect(time.lines.join('\n')).toContain('grace period ran out');
+			expect(time.lines.join('\n')).toContain('1 consult');
+		});
+
+		it('stops at once on a second signal', async () => {
+			const { host, stop } = drainable(() => ({ turns: 1, runs: [] }));
+			// A sleep that never ends: only the second signal can stop the host.
+			const time = clock();
+			const handler = createSignalDrain(host, 30_000, {
+				...time.deps,
+				sleep: () => new Promise<void>(() => undefined),
+			});
+			handler('SIGTERM');
+			await settle();
+			expect(stop).not.toHaveBeenCalled();
+			handler('SIGTERM');
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.lines.join('\n')).toContain('again: stopping now');
+		});
+
+		it('with a grace of 0 stops at once, as before', async () => {
+			const { host, stop } = drainable(() => ({ turns: 2, runs: [] }));
+			const time = clock();
+			createSignalDrain(host, 0, time.deps)('SIGTERM');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.elapsed()).toBe(0);
+		});
+	});
+
+	describe('stop --wait', () => {
+		it('waits for the work to finish, then stops', async () => {
+			publish(process.pid);
+			let alive = true;
+			const replies = [busy(), busy({ turns: 0, cueRuns: 1 })];
+			const requestStop = vi.fn(async (): Promise<HostStopReply> => {
+				const next = replies.shift();
+				if (next) return next;
+				alive = false;
+				return { stopping: true };
+			});
+			await hostStop({ dataDir: dir, wait: '60' }, deps({ requestStop, isPidAlive: () => alive }));
+			expect(requestStop).toHaveBeenCalledTimes(3);
+			expect(requestStop).toHaveBeenLastCalledWith(dir, { force: undefined });
+			expect(out.join('\n')).toContain('Waiting up to 1m');
+			expect(out.join('\n')).toContain('Host stopped');
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('fails with the work named, and does not force, when the time runs out', async () => {
+			publish(process.pid);
+			const d = deps({ requestStop: vi.fn(async () => busy({ turns: 2 })) });
+			await hostStop({ dataDir: dir, wait: '5' }, d);
+			expect(err.join('\n')).toContain('still in flight after 5s');
+			expect(err.join('\n')).toContain('2 turns');
+			expect(err.join('\n')).toContain('--force');
+			expect(d.requestStop).not.toHaveBeenCalledWith(dir, { force: true });
+			expect(d.now()).toBe(5_000);
+			expect(process.exitCode).toBe(5);
+		});
+
+		it('waits 300 seconds when given no number', async () => {
+			publish(process.pid);
+			const d = deps({ requestStop: vi.fn(async () => busy()) });
+			await hostStop({ dataDir: dir, wait: true, json: true }, d);
+			expect(d.now()).toBe(300_000);
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ stopped: false, timedOut: true });
+			expect(process.exitCode).toBe(5);
+		});
+
+		it('refuses a wait that is not a number of seconds', async () => {
+			publish(process.pid);
+			const d = deps();
+			await hostStop({ dataDir: dir, wait: '-3' }, d);
+			expect(err.join('\n')).toContain('--wait');
+			expect(d.requestStop).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(2);
 		});
 	});
 

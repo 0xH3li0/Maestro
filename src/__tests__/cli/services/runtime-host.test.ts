@@ -204,6 +204,8 @@ describe('startRuntimeHost', () => {
 			running.push(host);
 
 			expect((await requestHostStatus(dir)).work).toMatchObject({ turns: 0, cueRuns: 1 });
+			// The same work in process, which is what a signal drain waits on.
+			expect(host.work()).toEqual({ turns: 0, runs: [], rounds: 0, consults: 0, cueRuns: 1 });
 			expect(await requestHostStop(dir, {})).toMatchObject({
 				stopping: false,
 				reason: 'work-in-flight',

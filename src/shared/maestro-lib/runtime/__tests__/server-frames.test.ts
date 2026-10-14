@@ -200,6 +200,13 @@ describe('framesForEvent', () => {
 			)[0]
 		).toEqual({ type: 'bridge.event', channel: 'process:data', args: ['a1-batch-5', 'ticking'] });
 	});
+
+	it('pushes how a run ended as autorun_ended, so a remote client is told too', () => {
+		const outcome = { status: 'error', reason: 'ENOSPC' } as const;
+		expect(
+			framesForEvent({ type: 'autorun.ended', agentId: 'a1', at: 4, outcome }, createFrameState())
+		).toEqual([{ type: 'autorun_ended', sessionId: 'a1', outcome }]);
+	});
 });
 
 describe('group chats', () => {

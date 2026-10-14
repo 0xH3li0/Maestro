@@ -428,6 +428,21 @@ export interface AutoRunApi {
 	abort(agentId: string): Promise<ClientResult<void>>;
 }
 
+/**
+ * How an Auto Run ended, as the engine itself said it. A run's progress frames
+ * stop at `null` whatever happened, so this is the only place a completed run,
+ * a stopped one, and one that died can be told apart.
+ */
+export type AutoRunOutcome =
+	/** Every task was worked, or the goal was met. */
+	| { status: 'completed' }
+	/** A person ended it: a stop, an `abort` answered to a pause, or the host shutting down. */
+	| { status: 'stopped' }
+	/** The run ended short of its work and the engine said why: a halt marker, a goal that stalled. */
+	| { status: 'failed'; reason: string }
+	/** The engine itself threw. `reason` is what it threw. */
+	| { status: 'error'; reason: string };
+
 // ---------------------------------------------------------------------------
 // Group chats
 // ---------------------------------------------------------------------------
@@ -487,6 +502,11 @@ export interface ConsultAskInput {
 	withContext?: boolean;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
+	/**
+	 * Makes it a HAND-OFF: the asking agent's final answer, which the target acts on instead of
+	 * answering a question. `question` is then the person's instruction.
+	 */
+	handoffAnswer?: string;
 }
 
 export interface ConsultAnswer {
@@ -588,6 +608,13 @@ export type MaestroEvent =
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.
 	 */
 	| { type: 'autorun'; agentId: string; event: AutoRunRunEvent }
+	/**
+	 * How a run ended. Raised once per run, just before the `null` state that is
+	 * its last `autorun` event. Only a host that drives the run itself says this:
+	 * the in-process runtime and a headless host do, the desktop's bridge does
+	 * not, so a client attached to a desktop still sees only the `null`.
+	 */
+	| { type: 'autorun.ended'; agentId: string; at: number; outcome: AutoRunOutcome }
 	/**
 	 * Something happened in a group chat. Fold it with `reduceGroupChat`. A `gap`
 	 * follows a connection that could not resume: re-read the chats you hold.

@@ -40,6 +40,7 @@ export function matchesFilter(event: MaestroEvent, filter: EventFilter | undefin
 		case 'tab.removed':
 		case 'turn':
 		case 'autorun':
+		case 'autorun.ended':
 			return event.agentId === filter.agentId;
 		default:
 			return true;

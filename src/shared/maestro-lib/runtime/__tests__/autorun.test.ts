@@ -27,11 +27,12 @@ import {
 import type { HistoryEntry } from '../../../types';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { AutoRunRunEvent } from '../../autorun/run-tracker';
-import type { ClientResult, MaestroEvent } from '../../client/types';
+import type { AutoRunOutcome, ClientResult, MaestroEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
 import { AUTO_RUN_SESSION_COLUMNS, AUTO_RUN_TASK_COLUMNS } from '../../stats/auto-run-insert';
 import { QUERY_EVENT_COLUMNS } from '../../stats/query-event-insert';
 import { runAgentTurn } from '../../turns/run-agent-turn';
+import { outcomeOfEngineEvent } from '../autorun';
 import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
 import type { WatchDirectory } from '../settings-watch';
 
@@ -220,18 +221,28 @@ describe('runtime Auto Run', () => {
 		);
 	const read = (file: string): string => fs.readFileSync(file, 'utf-8');
 
-	/** Watch a run: every `autorun` event, and a way to wait for a frame or for the end. */
+	/**
+	 * Watch a run: every `autorun` event, how each run ended (`outcomes`, with the number of
+	 * `autorun` events seen when it was said), and a way to wait for a frame or for the end.
+	 */
 	function watchRun(runtime: MaestroRuntime, agentId = 'a1') {
 		const events: AutoRunRunEvent[] = [];
+		const outcomes: Array<{ outcome: AutoRunOutcome; afterEvents: number }> = [];
 		const waiting: Array<{ test: (events: AutoRunRunEvent[]) => boolean; resolve: () => void }> =
 			[];
 		runtime.events.subscribe(
 			(event: MaestroEvent) => {
+				if (event.type === 'autorun.ended') {
+					if (event.agentId === agentId) {
+						outcomes.push({ outcome: event.outcome, afterEvents: events.length });
+					}
+					return;
+				}
 				if (event.type !== 'autorun') return;
 				events.push(event.event);
 				for (const waiter of waiting.filter((w) => w.test(events))) waiter.resolve();
 			},
-			{ types: ['autorun'], agentId }
+			{ types: ['autorun', 'autorun.ended'], agentId }
 		);
 		const until = (test: (events: AutoRunRunEvent[]) => boolean, label: string) =>
 			new Promise<void>((resolve, reject) => {
@@ -250,6 +261,12 @@ describe('runtime Auto Run', () => {
 			});
 		return {
 			events,
+			outcomes,
+			/** The one outcome the run ended with. */
+			outcome: () => {
+				expect(outcomes).toHaveLength(1);
+				return outcomes[0].outcome;
+			},
 			frames: () =>
 				events.flatMap((event) => (event.kind === 'state' && event.state ? [event.state] : [])),
 			ended: () =>
@@ -319,6 +336,9 @@ describe('runtime Auto Run', () => {
 			expect(frames[0]).toMatchObject({ isRunning: true, tasksTotal: 3, tasksDone: 0 });
 			expect(frames[frames.length - 1]).toMatchObject({ tasksTotal: 3, tasksDone: 3 });
 			expect(run.events[run.events.length - 1]).toMatchObject({ kind: 'state', state: null });
+			// How it ended is said once, just before that last frame.
+			expect(run.outcome()).toEqual({ status: 'completed' });
+			expect(run.outcomes[0].afterEvents).toBe(run.events.length - 1);
 			// The agent's words and usage reach the output stream.
 			expect(run.events.some((e) => e.kind === 'output' && e.text.includes('Finished task'))).toBe(
 				true
@@ -593,6 +613,8 @@ describe('runtime Auto Run', () => {
 			expect(read(file)).toContain('- [ ] after the gate');
 			const rows = auto(runtime);
 			expect(rows[rows.length - 1].summary).toBe('Auto Run stopped: aborted by operator');
+			// A person ended it: a stop, not a failure, and not a run that completed.
+			expect(run.outcome()).toEqual({ status: 'stopped' });
 		});
 
 		it('answers a stop with an abort while parked, and refuses a control when no run exists', async () => {
@@ -611,6 +633,7 @@ describe('runtime Auto Run', () => {
 
 			const rows = auto(runtime);
 			expect(rows[rows.length - 1].summary).toMatch(/^Auto Run stopped:/);
+			expect(run.outcome()).toEqual({ status: 'stopped' });
 		});
 	});
 
@@ -718,6 +741,7 @@ describe('runtime Auto Run', () => {
 				'Goal completed (100%)',
 			]);
 			expect(rows[3].success).toBe(true);
+			expect(run.outcome()).toEqual({ status: 'completed' });
 			expect(envFiles).toHaveLength(3);
 			expect(JSON.parse(read(activityFile())).activities).toEqual([]);
 			// The run shows in the Usage Dashboard as a goal run on the 0 to 100 scale.
@@ -732,6 +756,72 @@ describe('runtime Auto Run', () => {
 		it('refuses an empty goal', async () => {
 			const runtime = await start();
 			expect(errorOf(await runtime.autoRun.launchGoal('a1', { goal: '   ' })).code).toBe('invalid');
+		});
+	});
+
+	describe('how a run ended', () => {
+		it('says the engine failed, with what it threw, instead of passing the run off as done', async () => {
+			const file = doc('tasks', tasks(2));
+			// No step for the first task: the provider throws out of the engine.
+			script = [];
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			value(await runtime.autoRun.launch('a1', { documents: [{ file }] }));
+			await run.ended();
+
+			expect(run.outcome()).toEqual({
+				status: 'error',
+				reason: expect.stringContaining('no step left'),
+			});
+			// The progress frames alone could not tell: they end in `null` as a finished run's do.
+			expect(run.events[run.events.length - 1]).toMatchObject({ kind: 'state', state: null });
+			expect(runtime.runs.activeRuns()).toEqual([]);
+		});
+
+		it("reads each of the engine's closing events", () => {
+			const at = { timestamp: 1 };
+			expect(outcomeOfEngineEvent({ ...at, type: 'complete', success: true })).toEqual({
+				status: 'completed',
+			});
+			expect(
+				outcomeOfEngineEvent({ ...at, type: 'complete', success: false, stopped: true })
+			).toEqual({ status: 'stopped' });
+			expect(
+				outcomeOfEngineEvent({
+					...at,
+					type: 'complete',
+					success: false,
+					halted: true,
+					haltReason: 'the build is red',
+				})
+			).toEqual({ status: 'failed', reason: 'the run halted: the build is red' });
+			expect(
+				outcomeOfEngineEvent({
+					...at,
+					type: 'error',
+					message: 'No unchecked tasks found in any documents',
+					code: 'NO_TASKS',
+				})
+			).toEqual({ status: 'failed', reason: 'No unchecked tasks found in any documents' });
+			expect(
+				outcomeOfEngineEvent({
+					...at,
+					type: 'goal_complete',
+					success: false,
+					exitReason: 'stopped-by-user',
+				})
+			).toEqual({ status: 'stopped' });
+			expect(
+				outcomeOfEngineEvent({
+					...at,
+					type: 'goal_complete',
+					success: false,
+					exitReason: 'stalled',
+					exitDetail: 'No progress in 3 iterations.',
+				})
+			).toEqual({ status: 'failed', reason: 'the goal was not met: No progress in 3 iterations.' });
+			expect(outcomeOfEngineEvent({ ...at, type: 'task_complete' })).toBeUndefined();
 		});
 	});
 });

@@ -18,9 +18,12 @@
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
 import { readCueEngineLock, type CueEngineLockInfo } from '../../main/cue/cue-engine-lock';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
-import type { AutoRunProgress } from '../../shared/maestro-lib/autorun/progress';
 import type { HostCueState } from '../../shared/maestro-lib/client/host-control';
-import type { MaestroClient, Unsubscribe } from '../../shared/maestro-lib/client/types';
+import type {
+	AutoRunOutcome,
+	MaestroClient,
+	Unsubscribe,
+} from '../../shared/maestro-lib/client/types';
 import { readStoreDocument } from '../../shared/maestro-lib/store/io';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import {
@@ -108,22 +111,28 @@ function errorText(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 /**
- * How a run that has ended went, read from its last progress frame. The runtime's events carry a
- * run's progress and then `null`; they do not carry the engine's own verdict. A run that ends
- * parked on an error or a gate was abandoned there, and one that ends while stopping was cut short.
+ * A run's end as Cue records it, from the engine's own verdict (`autorun.ended`). Only a run that
+ * completed is a success: one a person stopped did not do what the subscription asked for.
  */
-function autoRunEnd(last: AutoRunProgress | null): StandaloneCueAutoRunEnd {
-	if (last?.pause)
-		return { ok: false, reason: `the run ended while paused: ${last.pause.message}` };
-	if (last?.isStopping) return { ok: false, reason: 'the run was stopped before it finished' };
-	return { ok: true };
+function autoRunEnd(outcome: AutoRunOutcome): StandaloneCueAutoRunEnd {
+	switch (outcome.status) {
+		case 'completed':
+			return { ok: true };
+		case 'stopped':
+			return { ok: false, reason: 'the run was stopped before it finished' };
+		case 'failed':
+			return { ok: false, reason: outcome.reason };
+		case 'error':
+			return { ok: false, reason: `the Auto Run engine failed: ${outcome.reason}` };
+	}
 }
 
 /**
  * Run a Cue subscription's Auto Run in the host's own runtime, on the subscription's agent.
  *
- * The runtime answers a launch once the run is registered and reports the rest as `autorun`
- * events, so the end is watched for there: the `null` frame that follows the run's own frames.
+ * The runtime answers a launch once the run is registered and reports the rest as events, so the
+ * end is watched for there: the `autorun.ended` that follows the run's own frames, which says how
+ * it went.
  */
 export function runAutoRunInRuntime(runtime: HostCueRuntime): StandaloneCueAutoRun {
 	return async (params: CueAutoRunLaunchParams, signal: AbortSignal) => {
@@ -138,7 +147,6 @@ export function runAutoRunInRuntime(runtime: HostCueRuntime): StandaloneCueAutoR
 		}
 
 		const agentId = params.sessionId;
-		let last: AutoRunProgress | null = null;
 		let sawRun = false;
 		let settle!: (end: StandaloneCueAutoRunEnd) => void;
 		const ended = new Promise<StandaloneCueAutoRunEnd>((resolve) => {
@@ -151,16 +159,14 @@ export function runAutoRunInRuntime(runtime: HostCueRuntime): StandaloneCueAutoR
 					settle({ ok: false, reason: `the host lost the data directory: ${event.reason}` });
 					return;
 				}
-				if (event.type !== 'autorun' || event.agentId !== agentId) return;
-				if (event.event.kind !== 'state') return;
-				if (event.event.state !== null) {
-					sawRun = true;
-					last = event.event.state;
-				} else if (sawRun) {
-					settle(autoRunEnd(last));
+				if (event.type === 'autorun' && event.agentId === agentId) {
+					// This run's first frame. An end seen before it belongs to an earlier run.
+					if (event.event.kind === 'state' && event.event.state !== null) sawRun = true;
+				} else if (event.type === 'autorun.ended' && event.agentId === agentId && sawRun) {
+					settle(autoRunEnd(event.outcome));
 				}
 			},
-			{ types: ['autorun', 'host.lost'] }
+			{ types: ['autorun', 'autorun.ended', 'host.lost'] }
 		);
 		const stop = (): void => void runtime.autoRun.stop(agentId);
 
@@ -173,6 +179,8 @@ export function runAutoRunInRuntime(runtime: HostCueRuntime): StandaloneCueAutoR
 				...(params.loopEnabled ? { loop: true, maxLoops: params.maxLoops ?? null } : {}),
 				...(params.model ? { model: params.model } : {}),
 				...(params.effort ? { effort: params.effort } : {}),
+				...(params.prompt ? { prompt: params.prompt } : {}),
+				...(params.ignoreModelHints ? { ignoreModelHints: true } : {}),
 			})
 			.catch((error: unknown) => ({ ok: false as const, error: { message: errorText(error) } }));
 		if (!launched.ok) {
