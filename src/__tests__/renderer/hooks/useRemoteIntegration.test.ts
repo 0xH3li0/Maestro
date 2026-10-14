@@ -118,6 +118,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAutoRunSteeringCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -235,6 +238,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteAutoRunSteeringCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -2408,6 +2416,50 @@ describe('useRemoteIntegration', () => {
 			>;
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
+				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote Auto Run steering command', () => {
+		// The CLI process on the far end blocks on this reply, so the listener has
+		// to answer on the response channel for every outcome.
+		const sent = () =>
+			window.maestro.process.sendRemoteAutoRunSteeringCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a steering verb on its response channel', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
+				expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+			);
+		});
+
+		it('reports a refusal rather than leaving the caller waiting', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// No Auto Run is active, so there is no next task to hand a note to.
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'send', sessionId: 'session-1', text: 'steer left' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
 				expect.objectContaining({ success: false })
 			);
 		});

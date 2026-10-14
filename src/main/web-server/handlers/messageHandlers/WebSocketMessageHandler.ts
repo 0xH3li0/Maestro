@@ -106,6 +106,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -324,6 +325,10 @@ export class WebSocketMessageHandler {
 
 			case 'maestro_run_command':
 				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':
