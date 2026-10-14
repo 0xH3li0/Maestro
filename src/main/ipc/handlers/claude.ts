@@ -29,6 +29,7 @@ import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing'
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
+	rescaleArchivedEntries,
 	saveStatsCache,
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
@@ -74,7 +75,8 @@ interface LegacyGlobalStatsCache {
 	version: number;
 }
 
-const LEGACY_GLOBAL_STATS_CACHE_VERSION = 1;
+// v2: Claude usage counted once per API response, not once per JSONL line.
+const LEGACY_GLOBAL_STATS_CACHE_VERSION = 2;
 
 function getLegacyGlobalStatsCachePath(): string {
 	return path.join(app.getPath('userData'), 'stats-cache', 'legacy-global-stats.json');
@@ -593,8 +595,11 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				};
 			}
 
-			// Load existing cache
+			// Load existing cache. An older-but-compatible cache was derived by an
+			// earlier parser, so every live session is re-parsed and the archived
+			// ones are rescaled once the re-parse is done.
 			const cache = await loadStatsCache(projectPath);
+			const derivationStale = !!cache && cache.version < STATS_CACHE_VERSION;
 
 			// List all .jsonl files
 			const files = await fs.readdir(projectDir);
@@ -616,7 +621,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					currentSessionIds.add(sessionId);
 					const cachedSession = cache?.sessions[sessionId];
 
-					if (!cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
+					if (derivationStale || !cachedSession || cachedSession.fileMtimeMs < fileStat.mtimeMs) {
 						sessionsToProcess.push({ filename, filePath, mtimeMs: fileStat.mtimeMs });
 					}
 				} catch {
@@ -719,6 +724,10 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
 					}
 				}
+			}
+
+			if (derivationStale && cache) {
+				rescaleArchivedEntries(newCache.sessions, cache.sessions, ['costUsd', 'tokens']);
 			}
 
 			// Calculate final totals

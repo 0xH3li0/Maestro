@@ -12,6 +12,12 @@ import {
 	isExpectedSessionReadError,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import {
+	GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+	GLOBAL_STATS_CACHE_VERSION,
+	loadGlobalStatsCache,
+	saveGlobalStatsCache,
+} from '../../../../main/utils/statsCache';
 import os from 'os';
 import path from 'path';
 import { promises as realFs } from 'fs';
@@ -587,6 +593,57 @@ describe('agentSessions:getGlobalStats discovery', () => {
 			40 * claudeTranscript.length +
 				'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'.length
 		);
+	});
+
+	it('upgrades a cache from an older Claude parser: re-parses live sessions, rescales archived ones', async () => {
+		const projects = path.join(home, '.claude', 'projects', '-Users-a');
+		await realFs.mkdir(projects, { recursive: true });
+		// One API response written as two lines (one per content block), each
+		// repeating the usage: 1M Sonnet input = $3 once deduplicated.
+		const line = JSON.stringify({
+			type: 'assistant',
+			requestId: 'req_1',
+			message: { id: 'msg_1', model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+		});
+		await realFs.writeFile(path.join(projects, 'live.jsonl'), `${line}\n${line}\n`);
+
+		const cachedEntry = (inputTokens: number, costUsd: number, archived = false) => ({
+			messages: 2,
+			inputTokens,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			cachedInputTokens: 0,
+			sizeBytes: 1,
+			costUsd,
+			// Newer than the file, so only the version can force the re-parse.
+			fileMtimeMs: Date.now() + 60_000,
+			archived,
+		});
+		vi.mocked(loadGlobalStatsCache).mockResolvedValueOnce({
+			version: GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+			lastUpdated: 0,
+			providers: {
+				'claude-code': {
+					sessions: {
+						'-Users-a/live': cachedEntry(2_000_000, 6),
+						'-Users-a/gone': cachedEntry(4_000_000, 12, true),
+					},
+				},
+				codex: { sessions: {} },
+			},
+		});
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalCostUsd: number;
+			totalInputTokens: number;
+		};
+
+		// Live re-parsed to $3; the fix halved it, so the archived $12 becomes $6.
+		expect(stats.totalCostUsd).toBeCloseTo(9, 10);
+		expect(stats.totalInputTokens).toBe(3_000_000);
+		const saved = vi.mocked(saveGlobalStatsCache).mock.calls.at(-1)![0];
+		expect(saved.version).toBe(GLOBAL_STATS_CACHE_VERSION);
 	});
 
 	it('reports zero when neither provider has a transcript directory', async () => {

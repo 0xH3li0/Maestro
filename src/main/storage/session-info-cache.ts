@@ -43,9 +43,11 @@ const LOG_CONTEXT = '[SessionInfoCache]';
 
 /**
  * Bump to discard every persisted entry (e.g. when `AgentSessionInfo` gains a
- * field that existing cached entries would be missing).
+ * field that existing cached entries would be missing), or when the DERIVATION
+ * of an existing field changes - the fingerprint cannot see that.
+ * v2: Claude usage counted once per API response, not once per JSONL line.
  */
-export const SESSION_INFO_CACHE_VERSION = 1;
+export const SESSION_INFO_CACHE_VERSION = 2;
 
 /** One source file to resolve: its identity within the scope plus its fingerprint. */
 export interface SessionFileRef {

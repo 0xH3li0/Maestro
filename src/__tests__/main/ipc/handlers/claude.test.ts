@@ -92,6 +92,7 @@ vi.mock('../../../../main/utils/sentry', () => ({
 vi.mock('../../../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 	loadStatsCache: vi.fn(),
+	rescaleArchivedEntries: vi.fn(),
 	saveStatsCache: vi.fn(),
 	STATS_CACHE_VERSION: 1,
 }));

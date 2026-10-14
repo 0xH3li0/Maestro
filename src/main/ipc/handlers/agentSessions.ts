@@ -32,6 +32,7 @@ import {
 	GlobalStatsCache,
 	CachedSessionStats,
 	GLOBAL_STATS_CACHE_VERSION,
+	rescaleArchivedEntries,
 } from '../../utils/statsCache';
 import type {
 	AgentSessionInfo,
@@ -981,8 +982,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				safeSend('agentSessions:globalStatsUpdate', stats);
 			};
 
-			// Load existing cache or create new one
+			// Load existing cache or create new one. An older-but-compatible cache
+			// holds Claude entries from an earlier parser: every live Claude session
+			// is re-parsed and the archived ones rescaled once that is done.
 			let cache = await loadGlobalStatsCache();
+			const claudeDerivationStale = !!cache && cache.version < GLOBAL_STATS_CACHE_VERSION;
 			if (!cache) {
 				cache = {
 					version: GLOBAL_STATS_CACHE_VERSION,
@@ -1032,10 +1036,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			}
 
+			// Snapshot taken before re-parsing replaces any entry, so the upgrade
+			// below can measure how far the fix moved the live sessions.
+			const claudeSessionsBefore = claudeDerivationStale
+				? { ...cache.providers['claude-code'].sessions }
+				: null;
+
 			// Find sessions that need processing (new or modified)
 			const claudeToProcess = claudeFiles.filter((f) => {
 				const cached = cache!.providers['claude-code'].sessions[f.sessionKey];
-				return !cached || cached.fileMtimeMs < f.mtimeMs;
+				return claudeDerivationStale || !cached || cached.fileMtimeMs < f.mtimeMs;
 			});
 			const codexToProcess = codexFiles.filter((f) => {
 				const cached = cache!.providers['codex'].sessions[f.sessionKey];
@@ -1112,7 +1122,18 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			);
 
+			if (claudeSessionsBefore) {
+				rescaleArchivedEntries(cache.providers['claude-code'].sessions, claudeSessionsBefore, [
+					'inputTokens',
+					'outputTokens',
+					'cacheReadTokens',
+					'cacheCreationTokens',
+					'costUsd',
+				]);
+			}
+
 			// Update cache timestamp and save
+			cache.version = GLOBAL_STATS_CACHE_VERSION;
 			cache.lastUpdated = Date.now();
 			await saveGlobalStatsCache(cache);
 
