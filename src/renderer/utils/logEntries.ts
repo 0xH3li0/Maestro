@@ -92,3 +92,15 @@ export function canAppendToLogEntry(
 	if (entry.source !== source) return false;
 	return !isSelfContainedCard(entry);
 }
+
+/**
+ * True when `entry` is a steered user message that belongs to the turn it was
+ * steered into, and so is drawn stitched to it (see SteeredMessageHeader).
+ *
+ * A `queued` steer does not: the agent could not fold it in and took it as a
+ * turn of its own, so it is drawn as an ordinary message that says so. A steer
+ * still waiting for its verdict counts, because the text is already in the turn.
+ */
+export function steerJoinsRunningTurn(entry: LogEntry | undefined): boolean {
+	return Boolean(entry?.source === 'user' && entry.steered && entry.steerState !== 'queued');
+}

@@ -146,6 +146,24 @@ describe('SendMenuPopover', () => {
 		expect(screen.queryByText('Open a feature request')).not.toBeInTheDocument();
 	});
 
+	it('orders the rows Queue, Force Send, Steer, Queue Held', () => {
+		seed();
+		renderMenu();
+		const order = Array.from(document.querySelectorAll('[data-send-menu-row]')).map((el) =>
+			el.getAttribute('data-send-menu-row')
+		);
+		expect(order).toEqual(['queue', 'force', 'steer', 'hold']);
+	});
+
+	it('puts the Steer help button left of the Steer hotkey', () => {
+		seed();
+		renderMenu();
+		const rowEl = row('steer').parentElement!;
+		const help = screen.getByLabelText('How steering works on this agent');
+		const hint = rowEl.querySelector('[data-shortcut-hint]')!;
+		expect(help.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
 	it('turns the menu off from its own toggle', () => {
 		seed();
 		renderMenu();

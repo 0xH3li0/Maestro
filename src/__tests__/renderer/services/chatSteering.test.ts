@@ -158,8 +158,10 @@ describe('steerQueuedItem', () => {
 			source: 'user',
 			text: 'go left instead',
 			queuedItemId: 'item-a',
-			// Badged like a force-sent message, so the transcript shows how it went.
+			// Marked as a steer, and not yet answered: the header says so until the
+			// transcript verdict lands.
 			steered: true,
+			steerState: 'pending',
 		});
 		// The record lives on the session so it is persisted with it.
 		expect(useSessionStore.getState().sessions[0].pendingSteers).toEqual([
@@ -227,7 +229,25 @@ describe('steerQueuedItem', () => {
 		expect(pendingSteerCount()).toBe(0);
 		expect(queue()).toEqual([]);
 		expect(tabLogs()).toHaveLength(1);
+		expect(tabLogs()[0].steerState).toBe('absorbed');
 	});
+
+	it.each(['absorbed', 'queued'] as const)(
+		'stamps the bubble when the socket itself answers %s',
+		async (verdict) => {
+			// A socket reply that already carries the outcome is never followed by a
+			// transcript verdict, so this is the only chance to record it.
+			useSessionStore.setState({ sessions: [steerableSession([item()])] });
+			steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict });
+
+			const result = await steerQueuedItem('sess-1', 'item-a');
+
+			expect(result).toEqual({ outcome: 'settled', verdict });
+			expect(pendingSteerCount()).toBe(0);
+			expect(tabLogs()).toHaveLength(1);
+			expect(tabLogs()[0]).toMatchObject({ steered: true, steerState: verdict });
+		}
+	);
 
 	it('pauses the item when the steer bridge itself fails', async () => {
 		useSessionStore.setState({ sessions: [steerableSession([item()])] });
@@ -409,6 +429,8 @@ describe('applySteeringVerdict', () => {
 
 		expect(queue()).toEqual([]);
 		expect(pendingSteerCount()).toBe(0);
+		// The bubble keeps saying it after the toast is gone.
+		expect(tabLogs()[0]).toMatchObject({ steered: true, steerState: 'absorbed' });
 	});
 
 	it('settles a queued steer and says it runs as a follow-up', async () => {
@@ -422,6 +444,29 @@ describe('applySteeringVerdict', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'Steer runs after this turn' })
 		);
+		expect(tabLogs()[0]).toMatchObject({ steered: true, steerState: 'queued' });
+	});
+
+	it('stamps only the bubble of the steer the verdict names', async () => {
+		await deliver();
+		const steeredId = tabLogs()[0].id;
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({
+					...t,
+					logs: [
+						...t.logs,
+						{ id: 'other', timestamp: 1, source: 'user' as const, text: 'earlier', steered: true },
+					],
+				})),
+			})),
+		}));
+
+		applySteeringVerdict(PROCESS_KEY, { type: 'steering', id: 'steer-1', verdict: 'absorbed' });
+
+		expect(tabLogs().find((l) => l.id === steeredId)?.steerState).toBe('absorbed');
+		expect(tabLogs().find((l) => l.id === 'other')?.steerState).toBeUndefined();
 	});
 
 	it('puts a dropped steer back at the head of the queue, live', async () => {

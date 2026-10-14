@@ -53,7 +53,7 @@ interface SendMenuPopoverProps {
 
 /**
  * What a click on Send offers while the agent is working: Queue, Force Send,
- * Queue Held, or Steer. Each row runs the path its chord already runs (the
+ * Steer, or Queue Held. Each row runs the path its chord already runs (the
  * composer listens for the events), so the menu adds no second send path.
  *
  * Dead rows stay visible and say why in one line. Steer carries a `?` that
@@ -200,7 +200,14 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 				const live = row.enabled || row.opensSetting;
 				return (
 					<div key={row.action}>
-						<div className="flex items-start gap-1">
+						<div
+							className={`flex items-start gap-1.5 pr-2 rounded-md transition-colors ${
+								live ? 'hover:bg-white/5 focus-within:bg-white/5' : ''
+							}`}
+							style={{
+								backgroundColor: isDefault ? `${theme.colors.accent}26` : undefined,
+							}}
+						>
 							<button
 								ref={index === 0 ? firstRowRef : undefined}
 								type="button"
@@ -208,14 +215,9 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 								data-send-menu-row={row.action}
 								aria-disabled={!row.enabled}
 								onClick={() => run(row)}
-								className={`flex-1 min-w-0 flex items-start gap-2.5 px-2 py-1.5 rounded-md text-left outline-none transition-colors ${
-									live
-										? 'hover:bg-white/5 focus-visible:bg-white/5 cursor-pointer'
-										: 'cursor-default'
+								className={`flex-1 min-w-0 flex items-start gap-2.5 pl-2 py-1.5 text-left outline-none ${
+									live ? 'cursor-pointer' : 'cursor-default'
 								}`}
-								style={{
-									backgroundColor: isDefault ? `${theme.colors.accent}26` : undefined,
-								}}
 								title={row.reason}
 							>
 								<Icon
@@ -241,14 +243,9 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 										</span>
 									)}
 								</span>
-								{keys && keys.length > 0 && (
-									<span data-shortcut-hint className="flex-shrink-0">
-										<Keycap theme={theme} style={{ opacity: row.enabled ? 1 : 0.45 }}>
-											{formatShortcutKeys(keys)}
-										</Keycap>
-									</span>
-								)}
 							</button>
+							{/* The ? sits left of the hotkey, outside the row button so it
+							    never runs the row. */}
 							{row.action === 'steer' && (
 								<button
 									type="button"
@@ -261,6 +258,18 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 								>
 									<HelpCircle className="w-3.5 h-3.5" />
 								</button>
+							)}
+							{keys && keys.length > 0 && (
+								<span
+									data-shortcut-hint
+									aria-hidden
+									className={`flex-shrink-0 mt-1 ${live ? 'cursor-pointer' : 'cursor-default'}`}
+									onClick={() => run(row)}
+								>
+									<Keycap theme={theme} style={{ opacity: row.enabled ? 1 : 0.45 }}>
+										{formatShortcutKeys(keys)}
+									</Keycap>
+								</span>
 							)}
 						</div>
 						{row.action === 'steer' && helpOpen && (

@@ -423,6 +423,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                            | -       |
 | `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                      | -       |
 | `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                        | -       |
+| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                          | -       |
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                              | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                                                                                      | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                           | -       |
@@ -460,6 +461,22 @@ List queued execution items as JSON (all agents, or one with --agent)
 ## `maestro-cli queue remove <item-id>`
 
 Remove a queued item by its id (from dispatch --queue output or queue list)
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue hold <item-id>`
+
+Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue resume <item-id>`
+
+Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |
@@ -876,6 +893,43 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 | ------------------ | ------------------------------ | ------- |
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
+
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
 
 ## `maestro-cli marketplace`
 
@@ -2374,6 +2428,22 @@ Float the window above other windows ("off" lets it fall behind them)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat tab [target]`
+
+Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat thinking [mode]`
+
+Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat font [size]`
 
 Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
@@ -2474,7 +2544,7 @@ Compose the agent-driven movement (free-placed data views) in the Maestro main w
 
 ## `maestro-cli movement begin <id>`
 
-Immediately show a host-rendered Concerto shell before its HTML is ready
+Reserve a host-rendered Concerto shell without opening the stage
 
 | Option           | Description                                  | Default |
 | ---------------- | -------------------------------------------- | ------- |
@@ -2487,7 +2557,7 @@ Immediately show a host-rendered Concerto shell before its HTML is ready
 
 ## `maestro-cli movement add <id>`
 
-Add (or replace by id) a native data view or interactive HTML mockup
+Add or replace a native data view or HTML mockup without opening the stage
 
 | Option               | Description                                                             | Default |
 | -------------------- | ----------------------------------------------------------------------- | ------- |
@@ -2568,7 +2638,7 @@ Read the current movement layout (items + size) to compose around it
 
 ## `maestro-cli movement inspect <id>`
 
-Capture a live HTML Movement preview and report its runtime diagnostics
+Capture a visible HTML Movement preview (requires an open stage) and diagnostics
 
 | Option           | Description                                       | Default |
 | ---------------- | ------------------------------------------------- | ------- |

@@ -182,6 +182,28 @@ export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 	return removed;
 }
 
+/**
+ * Hold or resume one queued item: the queued card's Hold / Resume, and
+ * `maestro-cli queue hold|resume`. A held item keeps its place but nothing
+ * dispatches it until it is resumed.
+ *
+ * @returns Whether the item was in the queue to change.
+ */
+export function setQueuedItemPaused(sessionId: string, itemId: string, paused: boolean): boolean {
+	let found = false;
+	updateSessionWith(sessionId, (s) => {
+		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
+		found = true;
+		return {
+			...s,
+			executionQueue: s.executionQueue.map((i) =>
+				i.id === itemId ? { ...i, paused: paused || undefined } : i
+			),
+		};
+	});
+	return found;
+}
+
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */
 export type QueuedItemDispatcher = (sessionId: string, item: QueuedItem) => Promise<unknown>;
 

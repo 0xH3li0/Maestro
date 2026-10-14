@@ -223,6 +223,10 @@ import type { QuickChatApi } from '../main/preload/quickChat';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
@@ -854,7 +858,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -885,6 +890,18 @@ interface MaestroAPI {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		) => void;
+		onRemoteSetQueueItemPaused: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteSetQueueItemPausedResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
@@ -977,6 +994,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
+		onRemoteAutoRunSteeringCommand: (
+			callback: (request: SteeringCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteAutoRunSteeringCommandResponse: (
+			responseChannel: string,
+			result: SteeringCommandResult
+		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
@@ -1938,7 +1962,8 @@ interface MaestroAPI {
 			agentId: string,
 			cwd: string,
 			customPath?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			customEnvVars?: Record<string, string>
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
 		// Capability snapshots - persisted per-agent readiness + version info.

@@ -249,6 +249,10 @@ export interface LogEntry {
 	// For user messages - tracks if message was steered into a turn that was
 	// already running, rather than starting a turn of its own (see chatSteering.ts)
 	steered?: boolean;
+	// For steered user messages - what the agent did with the steer, stamped as
+	// each answer lands. Absent on a bubble steered before the state was recorded,
+	// which is drawn as steered with no outcome claimed.
+	steerState?: import('../../shared/chatSteering').SteerBubbleState;
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details

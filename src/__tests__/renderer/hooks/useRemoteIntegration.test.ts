@@ -10,6 +10,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
+import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
 import type { MovementPayload } from '../../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
@@ -118,6 +119,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAutoRunSteeringCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -145,8 +149,12 @@ describe('useRemoteIntegration', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 		  ) => void)
+		| undefined;
+	let onRemoteSetQueueItemPausedHandler:
+		| ((sessionId: string, itemId: string, paused: boolean, responseChannel: string) => void)
 		| undefined;
 	let onRemoteListQueueHandler:
 		| ((sessionId: string | undefined, responseChannel: string) => void)
@@ -231,6 +239,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteAutoRunSteeringCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -269,6 +282,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSteerQueueItemResponse: vi.fn(),
+		onRemoteSetQueueItemPaused: vi.fn().mockImplementation((handler) => {
+			onRemoteSetQueueItemPausedHandler = handler;
+			return () => {};
+		}),
+		sendRemoteSetQueueItemPausedResponse: vi.fn(),
 		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -514,6 +532,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
 		onRemoteSteerQueueItemHandler = undefined;
+		onRemoteSetQueueItemPausedHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
 		onRequestMovementDesignerInspectionHandler = undefined;
@@ -524,6 +543,7 @@ describe('useRemoteIntegration', () => {
 		useSessionStore.setState({ sessions: [], initialLoadComplete: false, sessionsReadOk: false });
 		useNotificationStore.setState({ toasts: [] });
 		useMovementStore.setState({ items: [], dismissedItems: [] });
+		getModalActions().setConcertoStageOpen(false);
 		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 		clearDesktopAiTabSelections();
@@ -1859,6 +1879,42 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
+		it('queues a held send paused even when the agent is idle (dispatch --held)', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'Later',
+					'chan-held',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					true
+				);
+			});
+
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue[0]).toMatchObject({ text: 'Later', paused: true });
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-held',
+				expect.objectContaining({ success: true, queued: true, queuePosition: 1 })
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('stamps cross-agent mention intent on the queued item so the dequeue consults', () => {
 			// Without the flags the mention is inert: processQueuedItem only fires a
 			// consult for items marked crossAgentMention, and a CLI-queued item
@@ -2117,6 +2173,45 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		it('holds and resumes a queued item by id (queue hold / resume)', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const item = { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message' as const, text: 'x' };
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [item],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', true, 'chan-hold');
+			});
+			const held = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(held?.executionQueue[0].paused).toBe(true);
+			expect(mockProcess.sendRemoteSetQueueItemPausedResponse).toHaveBeenCalledWith('chan-hold', {
+				success: true,
+				found: true,
+				paused: true,
+			});
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', false, 'chan-resume');
+			});
+			const resumed = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(resumed?.executionQueue[0].paused).toBeUndefined();
+
+			act(() => {
+				onRemoteSetQueueItemPausedHandler?.('session-1', 'ghost', true, 'chan-ghost');
+			});
+			expect(mockProcess.sendRemoteSetQueueItemPausedResponse).toHaveBeenCalledWith('chan-ghost', {
+				success: true,
+				found: false,
+			});
+		});
+
 		it('acks removed:false when the item id is not in the queue', () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -2323,6 +2418,50 @@ describe('useRemoteIntegration', () => {
 			>;
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
+				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote Auto Run steering command', () => {
+		// The CLI process on the far end blocks on this reply, so the listener has
+		// to answer on the response channel for every outcome.
+		const sent = () =>
+			window.maestro.process.sendRemoteAutoRunSteeringCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a steering verb on its response channel', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
+				expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+			);
+		});
+
+		it('reports a refusal rather than leaving the caller waiting', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// No Auto Run is active, so there is no next task to hand a note to.
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'send', sessionId: 'session-1', text: 'steer left' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
 				expect.objectContaining({ success: false })
 			);
 		});
@@ -3392,22 +3531,11 @@ describe('useRemoteIntegration', () => {
 			expect(mockProcess.sendMovementAppliedResponse).not.toHaveBeenCalled();
 		});
 
-		it('waits for the routed HTML revision to register and become ready', async () => {
+		it('acknowledges the ready HTML revision even while its stage is hidden', async () => {
 			const deps = createDeps();
 			renderHook(() => useRemoteIntegration(deps));
 			const frame = document.createElement('iframe');
 			document.body.appendChild(frame);
-			vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
-				x: 0,
-				y: 0,
-				width: 640,
-				height: 480,
-				top: 0,
-				right: 640,
-				bottom: 480,
-				left: 0,
-				toJSON: () => ({}),
-			});
 			registerConcertoDesignerFrame('movement', 'mockup', 21, frame);
 
 			act(() => {
@@ -3437,7 +3565,64 @@ describe('useRemoteIntegration', () => {
 				'movement-response',
 				true
 			);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
 			frame.remove();
+		});
+
+		it('leaves the stage closed when an agent requests a designer inspection', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'begin', id: 'mockup', title: 'Mockup' });
+			});
+			getModalActions().setConcertoStageOpen(false);
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+			});
+
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(false);
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+		});
+
+		it('leaves a minimized panel minimized when an agent requests a designer inspection', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'begin', id: 'mockup', title: 'Mockup' });
+				useMovementStore.getState().setItemMinimized('mockup', true);
+				getModalActions().setConcertoStageOpen(true);
+			});
+			const items = useMovementStore.getState().items;
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+			});
+
+			expect(useMovementStore.getState().items[0].minimized).toBe(true);
+			expect(useMovementStore.getState().items).toBe(items);
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
+		});
+
+		it('returns unavailable when the requested inspection panel does not exist', () => {
+			renderHook(() => useRemoteIntegration(createDeps()));
+			getModalActions().setConcertoStageOpen(true);
+
+			act(() => {
+				onRequestMovementDesignerInspectionHandler?.('missing', 21, 'inspection-response');
+			});
+
+			expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+				'inspection-response',
+				null
+			);
+			expect(useMovementStore.getState().items).toEqual([]);
+			expect(useModalStore.getState().isOpen('concertoStage')).toBe(true);
 		});
 
 		it('waits for the surfaced movement to cross a paint boundary before inspection', async () => {
@@ -3466,11 +3651,24 @@ describe('useRemoteIntegration', () => {
 			} as MessageEvent);
 
 			try {
+				getModalActions().setConcertoStageOpen(true);
 				renderHook(() => useRemoteIntegration(createDeps()));
 				act(() => {
+					onRemoteMovementHandler?.({
+						op: 'add',
+						id: 'mockup',
+						viewType: 'html',
+						body: '<button>Continue</button>',
+						revision: 21,
+					});
+					onRemoteMovementHandler?.({ op: 'begin', id: 'overlapping-panel' });
 					onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
 				});
 
+				expect(useMovementStore.getState().items.map((item) => item.id)).toEqual([
+					'overlapping-panel',
+					'mockup',
+				]);
 				expect(animationFrames).toHaveLength(1);
 				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
 
@@ -3492,6 +3690,7 @@ describe('useRemoteIntegration', () => {
 					expect.objectContaining({ id: 'mockup', ready: true, revision: 21 })
 				);
 			} finally {
+				getModalActions().setConcertoStageOpen(false);
 				rafSpy.mockRestore();
 				frame.remove();
 			}

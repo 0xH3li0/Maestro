@@ -12,7 +12,6 @@ import {
 	Save,
 	Share2,
 	Hammer,
-	Navigation,
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
@@ -38,6 +37,8 @@ import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
+import { SteeredMessageHeader, SteerTurnConnector } from '../../SteeredMessageHeader';
+import { steerJoinsRunningTurn } from '../../../utils/logEntries';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
 import { ToolBadge } from './ToolBadge';
@@ -107,6 +108,7 @@ export const LogItem = memo(
 		bionifyAlgorithm,
 		userMessageAlignment,
 		responseDurationMs,
+		steerRunContinues,
 		codexDirectives,
 		codexFollowupTabId,
 		isClaudeCode,
@@ -254,6 +256,11 @@ export const LogItem = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+		// A message steered into a turn that was already running wears a header
+		// saying so. One the turn took (or may yet take) is also stitched to the
+		// entry above it; one taken as a follow-up stands alone.
+		const isSteered = isUserMessage && isAIMode && Boolean(log.steered);
+		const isStitchedSteer = isSteered && steerJoinsRunningTurn(log);
 
 		// An AI-command entry is a header pill plus an ordinary prompt body. The
 		// body is authored markdown like any other chat message, so it goes through
@@ -459,7 +466,9 @@ export const LogItem = memo(
 				// for the timestamp costs ~96px of bubble width, so the row stacks -
 				// timestamp above, bubble full-width. From `sm` up it's the classic
 				// side-by-side layout with the w-20 timestamp column.
-				className={`flex flex-col gap-1 sm:gap-4 group ${isReversed ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
+				// A stitched steer pulls itself up over the previous row's bottom padding
+				// so its connector starts at the bubble above (see SteerTurnConnector).
+				className={`flex flex-col gap-1 sm:gap-4 group ${isReversed ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2 ${isStitchedSteer ? 'sm:-mt-2' : ''}`}
 				data-log-index={index}
 				// Jump anchor for cross-tab message search. For a collapsed response
 				// group this is the FIRST entry's id (see buildRenderedIdMap).
@@ -514,6 +523,13 @@ export const LogItem = memo(
 						</div>
 					)}
 				</div>
+				{isStitchedSteer && (
+					<SteerTurnConnector
+						theme={theme}
+						mirrored={isReversed}
+						continues={Boolean(steerRunContinues)}
+					/>
+				)}
 				<div
 					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
 					style={{
@@ -530,11 +546,13 @@ export const LogItem = memo(
 										: 'transparent',
 						borderColor: crossAgent
 							? crossAgentBubbleBorder
-							: isUserMessage && isAIMode
-								? theme.colors.accent + '40'
-								: log.source === 'stderr' || log.source === 'error'
-									? theme.colors.error
-									: theme.colors.border,
+							: isStitchedSteer
+								? theme.colors.accent + 'AA'
+								: isUserMessage && isAIMode
+									? theme.colors.accent + '40'
+									: log.source === 'stderr' || log.source === 'error'
+										? theme.colors.error
+										: theme.colors.border,
 						// Drives the accent hue of the streaming pulse (.animate-status-glow).
 						...(isCrossAgentStreaming
 							? ({ '--status-glow-color': theme.colors.accent } as React.CSSProperties)
@@ -548,6 +566,7 @@ export const LogItem = memo(
 					    consult tints it red. In a group fan-out it's what tells each
 					    response apart. */}
 					{crossAgent && <CrossAgentResponseHeader crossAgent={crossAgent} theme={theme} />}
+					{isSteered && <SteeredMessageHeader state={log.steerState} theme={theme} />}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -1190,19 +1209,6 @@ export const LogItem = memo(
 								/>
 							</span>
 						)}
-						{/* Steer indicator for messages handed to a turn that was already
-						    running. Same icon and color as the Steer button on a queued card. */}
-						{isUserMessage && isAIMode && log.steered && (
-							<span
-								title="Sent as a steer into the turn that was already running"
-								className="flex items-center"
-							>
-								<Navigation
-									className="w-3.5 h-3.5"
-									style={{ color: theme.colors.accent, opacity: 0.7 }}
-								/>
-							</span>
-						)}
 						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
 						{isUserMessage && isAIMode && log.delivered && (
 							<span title="Message delivered" className="flex items-center">
@@ -1227,6 +1233,10 @@ export const LogItem = memo(
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
 			prevProps.log.steered === nextProps.log.steered &&
+			// A steer's verdict lands on the bubble long after its text, and a
+			// neighbor's verdict changes whether this row's connector runs on.
+			prevProps.log.steerState === nextProps.log.steerState &&
+			prevProps.steerRunContinues === nextProps.steerRunContinues &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&

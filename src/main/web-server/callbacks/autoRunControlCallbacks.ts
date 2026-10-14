@@ -4,6 +4,11 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { createRemoteRequest, requestFromRenderer } from './remoteRequest';
 import type { AutoRunRemoteResult } from '../../../shared/autoRunRemote';
+import {
+	normalizeSteeringCommandResult,
+	type SteeringCommandRequest,
+	type SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 
 export function registerAutoRunControlCallbacks(
 	server: WebServer,
@@ -106,4 +111,29 @@ export function registerAutoRunControlCallbacks(
 				mainWindow.webContents.send('remote:abortAutoRunError', sessionId, responseChannel)
 		)
 	);
+
+	// Steering verbs are a ROUND TRIP: the caller is waiting to be told which
+	// note was parked, or what the run said back. The request goes to the window
+	// that owns the agent, because the notes are that renderer's state and its
+	// run loop is the one that reads them - a note parked in any other window
+	// would sit there and never reach a task.
+	server.setAutoRunSteeringCommandCallback(async (request: SteeringCommandRequest) => {
+		const targetWindow = resolveSessionWindow(request.sessionId);
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No window is available for autoRunSteeringCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<SteeringCommandResult>(
+			targetWindow,
+			'remote:autoRunSteeringCommand',
+			{
+				// A miss RESOLVES rather than rejecting: the caller is a CLI process,
+				// and a thrown error there reads as a broken command rather than as
+				// the renderer never answering.
+				fallback: { success: false, error: 'Maestro did not answer the steering request' },
+				parse: normalizeSteeringCommandResult,
+				args: [request],
+			}
+		);
+	});
 }

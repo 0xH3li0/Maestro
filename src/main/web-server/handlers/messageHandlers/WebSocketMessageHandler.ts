@@ -106,6 +106,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -172,6 +173,7 @@ import {
 	handleListQueue,
 	handleRemoveQueueItem,
 	handleSteerQueueItem,
+	handleSetQueueItemPaused,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -327,6 +329,10 @@ export class WebSocketMessageHandler {
 				void handleMaestroRunCommand(this.ctx, client, message);
 				break;
 
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -393,6 +399,10 @@ export class WebSocketMessageHandler {
 
 			case 'steer_queue_item':
 				handleSteerQueueItem(this.ctx, client, message);
+				break;
+
+			case 'set_queue_item_paused':
+				handleSetQueueItemPaused(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':

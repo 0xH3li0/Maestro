@@ -292,6 +292,51 @@ describe('Quick Chat window bounds', () => {
 		expect(win.minimumSize[1]).toBeGreaterThan(148);
 	});
 
+	it('grows the composer-only shape with the draft and shrinks it back', async () => {
+		const { deps: d, store } = makeDeps({ x: 100, y: 120, width: 600, expandedHeight: 520 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatCompactHeight(300);
+		// The top edge stays; the height is pinned at the composer's.
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 600, height: 300 });
+		expect(win.minimumSize[1]).toBe(300);
+		expect(win.maximumSize[1]).toBe(300);
+
+		mod.setQuickChatCompactHeight(90);
+		expect(win.getBounds().height).toBe(148);
+
+		mod.setQuickChatCompactHeight(5000);
+		expect(win.getBounds().height).toBe(480);
+
+		vi.advanceTimersByTime(1000);
+		// A draft's height is never the conversation's.
+		expect(store.value?.expandedHeight).toBe(520);
+	});
+
+	it('stops a growing draft at the bottom of the display', async () => {
+		const mod = await freshModule();
+		mod.showQuickChatWindow(makeDeps({ x: 100, y: 800, width: 600 }).deps);
+		const win = lastWindow();
+
+		mod.setQuickChatCompactHeight(400);
+		expect(win.getBounds()).toMatchObject({ y: 800, height: 200 });
+	});
+
+	it('keeps the draft height for the composer-only shape while the conversation shows', async () => {
+		const mod = await freshModule();
+		mod.showQuickChatWindow(makeDeps({ expandedHeight: 520 }).deps);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+
+		mod.setQuickChatCompactHeight(260);
+		expect(win.getBounds().height).toBe(520);
+
+		mod.setQuickChatLayout('compact');
+		expect(win.getBounds().height).toBe(260);
+	});
+
 	it('saves a resize still settling when the shape changes', async () => {
 		const { deps: d, store } = makeDeps();
 		const mod = await freshModule();

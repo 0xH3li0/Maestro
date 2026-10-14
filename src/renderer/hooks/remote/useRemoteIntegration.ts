@@ -18,10 +18,16 @@ import {
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
+import {
+	buildQueuedMessageItem,
+	enqueuePromptForTab,
+	setQueuedItemPaused,
+} from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
@@ -34,6 +40,7 @@ import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore'
 import {
 	applyMovementPayload,
 	getMovementSnapshot,
+	isConcertoStageOpen,
 	useMovementStore,
 } from '../../stores/movementStore';
 import { openUiSurface } from '../../utils/openUiSurface';
@@ -47,6 +54,7 @@ import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../share
 import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
+	waitForConcertoDesignerFrameReady,
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import {
@@ -1130,7 +1138,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				_inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1170,8 +1179,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					// Idle target: no line to wait in, dispatch now through the shared
 					// remote-command path (identical to a plain `dispatch`). Respect the
-					// dispatch --focus opt-in via `background`.
-					if (session.state !== 'busy') {
+					// dispatch --focus opt-in via `background`. A held send (Queue Held,
+					// `dispatch --queue --held`) never dispatches now: it waits paused.
+					if (session.state !== 'busy' && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}
@@ -1189,12 +1199,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// including the `@mention` intent flags (fired at drain time, not
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
-					const queuedItem: QueuedItem = buildQueuedMessageItem({
-						session,
-						tab: targetTab,
-						text: command,
-						images,
-					});
+					const queuedItem: QueuedItem = {
+						...buildQueuedMessageItem({
+							session,
+							tab: targetTab,
+							text: command,
+							images,
+						}),
+						...(held && { paused: true }),
+					};
 
 					// Position is deterministic from the snapshot we already read: the item
 					// is appended to the tail, so it lands at length+1 (1-based). Computing
@@ -1297,6 +1310,32 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "hold / resume queue item" from the CLI (`queue hold`,
+		// `queue resume`). Same flag the queued card's Hold / Resume button flips.
+		const unsubscribeSetQueueItemPaused = window.maestro.process.onRemoteSetQueueItemPaused?.(
+			(sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
+				try {
+					const found = setQueuedItemPaused(sessionId, itemId, paused);
+					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
+						success: true,
+						found,
+						...(found ? { paused } : {}),
+					});
+				} catch (error) {
+					logger.error(
+						'[useRemoteIntegration] onRemoteSetQueueItemPaused failed:',
+						undefined,
+						error
+					);
+					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
+						success: false,
+						found: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1337,6 +1376,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeListQueue();
 			unsubscribeRemoveQueueItem();
 			unsubscribeSteerQueueItem?.();
+			unsubscribeSetQueueItemPaused?.();
 		};
 	}, [
 		sessionsRef,
@@ -1577,8 +1617,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				recordConcertoCreationActivity(params.id, phase, params.revision);
 			}
 			if (params.id && params.revision !== undefined) {
-				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
-					.then((snapshot) => reply(snapshot !== null))
+				void waitForConcertoDesignerFrameReady('movement', params.id, 3500, params.revision)
+					.then(reply)
 					.catch(() => reply(false));
 				return;
 			}
@@ -1607,6 +1647,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
+				// Screenshot inspection preserves the user's stage and minimization choices.
+				const item = useMovementStore.getState().items.find((candidate) => candidate.id === id);
+				if (!isConcertoStageOpen() || !item || item.minimized) {
+					proc.sendMovementDesignerInspectionResponse?.(responseChannel, null);
+					return;
+				}
 				// Inspection is read-only for the iframe, but the requested panel must be
 				// visible above overlapping peers for Chromium's compositor crop to show it.
 				flushSync(() => useMovementStore.getState().surfaceItem(id));
@@ -1902,6 +1948,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				})
 			);
 		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
+	// notes are this renderer's state and its run loop is what reads them, so
+	// every verb is answered here, through the same service the Thought Stream
+	// panel's Steer bar calls.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteAutoRunSteeringCommand(
+			(request, responseChannel) => {
+				const reply = (result: SteeringCommandResult) =>
+					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
+				try {
+					reply(runRemoteSteeringCommand(request));
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
 		return () => {
 			unsubscribe();
 		};

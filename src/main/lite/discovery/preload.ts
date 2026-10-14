@@ -45,6 +45,8 @@ const errorCopy: Record<string, string> = {
 		'This host accepts pairing only over its private connection. Search again and choose its Tailscale or local network entry.',
 	'tailnet-connection-failed':
 		"Couldn't reach the host over Tailscale. Check that Tailscale is connected on both computers.",
+	'lan-connection-failed':
+		"Couldn't reach the host on the local network. Check that both computers are on the same network and LAN access is on in Maestro.",
 	'tls-or-connection-failed': unreachable,
 	'connection-timeout': unreachable,
 	'connection-lost': unreachable,
@@ -52,6 +54,7 @@ const errorCopy: Record<string, string> = {
 	'pairing-disabled':
 		'Access for other devices is off on the host. Turn it on in Connect another device.',
 	'direct-tailnet-policy-required': "The host isn't accepting pairing requests right now.",
+	'direct-access-policy-required': "The host isn't accepting pairing requests right now.",
 	'host-busy': 'The host is handling another pairing request. Try again in a minute.',
 	'request-throttled': 'Too many requests in a short time. Wait a minute, then try again.',
 	'attempt-throttled': 'Too many code attempts. Wait a minute, then try again.',
@@ -86,6 +89,7 @@ interface PairingView {
 	status: string;
 }
 
+/** Wire the native discovery/pairing UI with page-local state; host requests go through Lite's IPC controller. */
 export function installDiscoveryControls(report: (error: unknown) => void): {
 	escape(): boolean;
 	showHosts(focus?: boolean): void;
@@ -113,6 +117,7 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 	let starting = false;
 	let importing = false;
 	let offline = !navigator.onLine;
+	let network: 'tailscale' | 'lan' | undefined;
 	for (const step of ['check', 'download', 'install']) {
 		button('connection-update-' + step).onclick = async () => {
 			try {
@@ -247,6 +252,7 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 			).focus();
 	}
 
+	/** Reconcile pairing and discovery state while preserving code entry and focus across status updates. */
 	function render(): void {
 		const discovery = state?.discovery;
 		const pairing = state?.pairing;
@@ -332,15 +338,29 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 
 		button('discovery-start').disabled = starting;
 		button('discovery-tailnet').disabled = starting || offline || busy;
-		button('discovery-tailnet').hidden = input('discovery-peers').checked;
+		button('discovery-lan').disabled = starting || offline || busy;
+		button('discovery-tailnet').setAttribute('aria-pressed', String(network === 'tailscale'));
+		button('discovery-lan').setAttribute('aria-pressed', String(network === 'lan'));
+		button('discovery-tailnet').classList.toggle('primary', network !== 'lan');
+		button('discovery-lan').classList.toggle('primary', network === 'lan');
+		el('discovery-lan-help').hidden = network !== 'lan';
+		setText(
+			el('help-network'),
+			network === 'lan'
+				? 'Connect both computers to the same trusted local network. If no computer appears, check that the network allows devices to communicate and multicast discovery.'
+				: network === 'tailscale'
+					? 'Connect both computers to the same Tailscale network.'
+					: 'Connect both computers to the same Tailscale network or trusted local network, then choose the matching search option.'
+		);
 		input('discovery-peers').disabled = starting || offline || busy || requesting || pending;
 		button('discovery-stop').disabled = starting || !discovery?.running;
 		button('discovery-import').disabled = importing;
 		const readyCount =
 			discovery?.candidates.filter((row) => row.availability === 'ready').length ?? 0;
-		button('discovery-start').hidden = !input('discovery-peers').checked && !readyCount;
-		el('discovery-intro').hidden = !!readyCount || input('discovery-peers').checked;
-		el('discovery-status').hidden = !offline && !input('discovery-peers').checked && !readyCount;
+		button('discovery-start').hidden = !network && !input('discovery-peers').checked && !readyCount;
+		el('discovery-intro').hidden = !!readyCount;
+		el('discovery-status').hidden =
+			!offline && !network && !input('discovery-peers').checked && !readyCount;
 		const blocked = Object.entries(discovery?.sources ?? {})
 			.filter(([source]) => source !== 'cloudflare')
 			.every(([, result]) =>
@@ -429,7 +449,10 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 					?.focus();
 		}
 		el('discovery-empty').hidden =
-			!!discovery?.candidates.length || offline || starting || !input('discovery-peers').checked;
+			!!discovery?.candidates.length ||
+			offline ||
+			starting ||
+			(!network && !input('discovery-peers').checked);
 		setText(
 			el('discovery-empty'),
 			'No computers found yet. Keep Maestro open on your other computer.'
@@ -481,12 +504,20 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 		if (view.phase === 'network-changed') void start();
 	}
 
+	/** Apply the selected network's discovery options in main, ignoring overlapping start requests. */
 	async function start(peers = input('discovery-peers').checked): Promise<void> {
 		if (starting) return;
 		starting = true;
 		render();
 		try {
-			await action('discovery-start', peers ? { tailscalePeers: true } : {});
+			await action(
+				'discovery-start',
+				network === 'lan'
+					? { lan: true, tailscale: false, tailscalePeers: false }
+					: network === 'tailscale'
+						? { lan: false, tailscale: true, tailscalePeers: peers }
+						: { lan: false, tailscale: false, tailscalePeers: false }
+			);
 		} finally {
 			starting = false;
 			render();
@@ -511,13 +542,28 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 	};
 	button('open-invitation').onclick = () => showPage('invitation');
 	button('open-diagnostics').onclick = () => showPage('diagnostics');
-	button('discovery-tailnet').onclick = () => {
+	/** Select existing Tailscale peers and keep the diagnostic peer-scanning toggle synchronized. */
+	function findOverTailscale(): void {
+		network = 'tailscale';
 		input('discovery-peers').checked = true;
 		void start();
-	};
+	}
+	button('discovery-tailnet').onclick = findOverTailscale;
+	/** Switch to LAN discovery with Tailscale peer scanning explicitly disabled. */
+	function findOnLan(): void {
+		network = 'lan';
+		input('discovery-peers').checked = false;
+		void start();
+	}
+	button('discovery-lan').onclick = findOnLan;
 	button('pair-return').onclick = () => void action('dismiss');
 	button('discovery-start').onclick = () => void start();
-	input('discovery-peers').onchange = () => void start();
+	/** Keep Tailscale discovery selected while toggling its optional active peer probes. */
+	function applyTailscalePeerProbing(): void {
+		network = 'tailscale';
+		void start();
+	}
+	input('discovery-peers').onchange = applyTailscalePeerProbing;
 	button('discovery-stop').onclick = () => {
 		input('discovery-peers').checked = false;
 		void action('discovery-stop');

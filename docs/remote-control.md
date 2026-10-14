@@ -1,6 +1,6 @@
 ---
 title: Remote Control
-description: Attach Maestro Lite or a browser to an existing Maestro host over SSH or authenticated HTTPS.
+description: Attach Maestro Lite or a browser to an existing Maestro host over Tailscale, LAN, SSH or authenticated HTTPS.
 icon: tower-broadcast
 ---
 
@@ -190,32 +190,35 @@ connection.
 Lite is a runtime mode in the existing Electron distribution. It is not a separate
 small installer and has no offline execution fallback.
 
-### Discovery-first Lite and persistent Tailscale access
+### Discovery-first Lite over Tailscale or LAN
 
 The primary flow is **enable direct access once → discover → select → pair once by
 code and host approval → connected**. There is no Maestro account, username or
-password, and no Tailscale Serve route, certificate provisioning, advertisement or
-administrator step. Tailscale supplies the encrypted network; Maestro's paired-device
-credential supplies application authorization.
+password, and no Tailscale Serve route, certificate provisioning or administrator
+step. Choose **Tailscale** for its encrypted private network, or **Local network
+(LAN)** when both computers share a trusted private network. Maestro's paired-device
+credential supplies application authorization in both modes.
 
 The normal control server stays loopback-only unless LAN access is enabled separately.
-Lite opens its consented private listener on the assigned Tailscale interface; sharing
+Lite opens its consented private listener on the selected LAN or assigned Tailscale interface; sharing
 TCP port 56036 with a loopback-only backend does not require broadening that backend's
 bind address.
 
 #### Enable the host once
 
-1. Keep full Maestro running on a machine connected to Tailscale. Open
+1. Keep full Maestro running on the other computer. Open
    **Remote Control → Connect another device...**.
-2. If access is off, read and select the access consent box, then choose
-   **Turn on access**. The app checks the existing local Tailscale daemon and assigned
+2. Choose **Tailscale** or **Local network (LAN)**. For LAN, select the local network
+   interface. Read and select the access consent box, then choose **Turn on access**.
+   LAN does not require Tailscale. For Tailscale, the app checks the existing local daemon and assigned
    interface; it does not run `tailscale up`, configure Serve, change firewall/ACL
    rules or request a certificate.
 3. If Tailscale is unavailable, **Open Tailscale** opens the installed provider app
    or official download page. Complete provider/OS steps yourself, then use
    **Check again**. An unavailable provider leaves access closed.
 4. On the laptop, [launch the installed Maestro in Lite mode](#launch-lite) with
-   `Maestro --lite`. Choose **Find my computer**, then select the host.
+   `Maestro --lite`. Choose **Find over Tailscale** or **Find on local network** to
+   match the host's connection type, then select the host.
    Lite opens directly to this step; saved connections and diagnostics are not shown alongside it.
 5. The desktop shows **“LAPTOP-NAME wants to connect to this computer”** with
    **Decline** and **Show code**, even when setup is closed. **Show code** opens the
@@ -234,6 +237,15 @@ HTTPS options and updates. In Lite, **Can't find your computer?** opens help wit
 separate saved/manual connections, invitation and diagnostic screens. **Back** or
 Escape leaves a secondary screen; **Cancel** ends the current pairing attempt.
 Status refreshes preserve code entry and keyboard focus.
+
+LAN uses private IPv4 addresses (`10.x.x.x`, `172.16.x.x`-`172.31.x.x`, or
+`192.168.x.x`) on the same subnet. The host advertises through multicast DNS on
+UDP 5353 and accepts connections on TCP 56036. Both computers must be allowed to
+communicate on that network; guest Wi-Fi isolation or blocked multicast can prevent
+discovery. LAN traffic is plain HTTP and is not encrypted. Use it only on a network
+you trust; choose Tailscale, HTTPS or SSH when you need transport encryption.
+Only one direct connection type can be enabled at a time. To switch, turn off
+the current access mode in **Manage access**, then choose the other type.
 
 **Requested access is full operator access:** chats, agents, terminals and
 read/write files. Approve only devices trusted with that access. A discovery result
@@ -255,7 +267,8 @@ configuration are not rewritten.
 
 The application prefix is **/.well-known/maestro/**; its **connect/** subtree carries
 desktop/assets, API, files/media, Concerto and WebSockets. Direct requests require
-both the actual Tailscale destination socket and a current eligible source peer.
+both the selected destination socket and an eligible source: a current Tailscale
+peer for Tailscale, or a private address on the selected interface's subnet for LAN.
 Forwarded headers or a forged Host header cannot substitute for those checks.
 Application access additionally requires a valid, non-revoked device credential.
 
@@ -265,11 +278,12 @@ port and manifest path. The local daemon's node identity—not remote manifest t
 bound to the remembered device credential. A changed node or host identity refuses
 credential reuse and requires explicit verification/new pairing.
 
-Direct HTTP is an explicit tailnet-only transport, **not a general HTTP fallback**.
-It accepts only canonical Tailscale IP/port endpoints, verifies the current local
-daemon/interface/peer and binds outgoing sockets to that interface. A bounded,
+Direct HTTP accepts only the fixed Maestro port at an eligible Tailscale or private
+LAN IPv4 address. Tailscale verifies the current local daemon/interface/peer; LAN
+requires an existing local interface on the destination's subnet. Both bind outgoing
+sockets to that interface. A bounded,
 authenticated loopback adapter gives the native browser a secure localhost context
-and forwards only this host's application subtree over the verified tailnet socket.
+and forwards only this host's application subtree over the selected private socket.
 It is not a general proxy; foreign origins, sibling paths and redirects outside the
 selected host are rejected. Credentials stay in the main process and scoped request
 headers, never page JavaScript, discovery metadata, URLs, clipboard or logs.
@@ -289,7 +303,9 @@ matched update; prior grants are not silently moved to a different transport/ori
 The host stores only credential verifiers and public device metadata in
 `lite-paired-devices.json`. Lite stores its secret in `lite-device-credentials.json`
 using Electron's OS-backed `safeStorage`; unavailable or plaintext OS protection
-fails closed. Direct credentials also bind the authenticated Tailscale node identity.
+fails closed. Tailscale credentials also bind the authenticated Tailscale node identity.
+LAN credentials bind the host identity and exact LAN origin; changing the host address
+requires pairing at the new origin.
 The existing optional Web Login plugin/account policy is unchanged and is not used
 for device pairing.
 
@@ -304,7 +320,13 @@ shutdown waits for the prior consent to be restored before completing. A cancell
 enable cannot turn access on at the next launch; previously completed consent
 still survives normal host shutdown.
 
-On the host, open **Manage access**. **Turn off access** closes the application
+LAN consent is stored separately in `lite-lan-access.json`, bound to the Maestro
+instance and selected interface's name, address and netmask. Closing setup or
+restarting the host preserves consent. Access closes if that interface changes
+and resumes only when the original binding is available. Disable LAN access and
+review the new interface before switching networks.
+
+On the host, open **Manage access**. **Turn off Tailscale access** or **Turn off LAN access** closes the application
 path/private listener without changing Tailscale or erasing paired devices. Choose
 **Remove**, then **Remove device** under **Paired devices** to remove authorization
 persistently and close HTTP/WebSocket access. Client

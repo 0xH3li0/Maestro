@@ -6,7 +6,7 @@ icon: comment-dots
 
 Quick Chat is a small floating window for a fast conversation with one agent. Press the hotkey from any app, type, read the answer, and press the hotkey again to put it away. You never switch to the main Maestro window.
 
-Each message finds its own tab. A message about something an open tab is already discussing goes to that tab, a message that picks up a conversation you closed last week reopens it, and a new subject starts a new tab. See [How a message finds its tab](#how-a-message-finds-its-tab).
+The first message of a chat finds its tab. A message about something an open tab is already discussing goes to that tab, a message that picks up a conversation you closed last week reopens it, and a new subject starts a new tab. Every message after that stays in the same tab, so a follow-up always continues the conversation it follows. To change the subject, start a new chat. See [How a chat finds its tab](#how-a-chat-finds-its-tab).
 
 ![Quick Chat](./screenshots/quick-chat.png)
 
@@ -14,22 +14,24 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 
 ## Opening and closing it
 
-| Action                                       | How                                                                                                                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open, focus, or close the window             | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                                                                                            |
-| Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                                                                 |
-| Close it                                     | `Esc`, or the **X** in the window                                                                                                                                                           |
-| Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                                                             |
-| Switch agent                                 | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                                                                                   |
-| Send                                         | `Enter` (`Shift+Enter` for a new line). You do not have to wait for a reply: the next message can go out while the last is still being answered                                             |
-| Stop                                         | The square button, shown beside Send while anything is in motion. It stops the replies in progress and withdraws messages still waiting                                                     |
-| Open the tab a message went to               | Click the pill under the message                                                                                                                                                            |
-| Stop waiting on a busy tab                   | **Send to a new tab**, shown under a message that is queued                                                                                                                                 |
-| Open the chat in Maestro                     | `Cmd+T` / `Ctrl+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                                                                    |
-| View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                                                                  |
-| Make the conversation text bigger or smaller | `Cmd+=` / `Cmd+-` (`Ctrl` on Windows and Linux), or the A buttons at the bottom left. `Cmd+0` resets. Maestro remembers the size across restarts, and `maestro-cli quick-chat font` sets it |
-| Keep the chat as a tab                       | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                                                                                         |
-| Pin the window on top                        | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                                                                                          |
+| Action                                       | How                                                                                                                                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open, focus, or close the window             | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                                                                                                        |
+| Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                                                                             |
+| Close it                                     | `Esc`, `Cmd+W` / `Ctrl+W`, or the **X** in the window                                                                                                                                                   |
+| Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                                                                         |
+| Switch agent                                 | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                                                                                               |
+| Choose the tab                               | Click the tab name beside the agent, or `Cmd+J` / `Ctrl+J`. Pick a tab, **New tab**, or **Any tab** (Maestro finds one). The chat continues where you send it                                           |
+| Send                                         | `Enter` (`Shift+Enter` for a new line). You do not have to wait for a reply: the next message can go out while the last is still being answered                                                         |
+| Stop                                         | The square button, shown beside Send while anything is in motion. It stops the replies in progress and withdraws messages still waiting                                                                 |
+| Open the tab a message went to               | Click the pill under the message                                                                                                                                                                        |
+| Stop waiting on a busy tab                   | **Send to a new tab**, shown under a message that is queued                                                                                                                                             |
+| Open the chat in Maestro                     | `Cmd+T` / `Ctrl+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                                                                                |
+| View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                                                                              |
+| Make the conversation text bigger or smaller | `Cmd+=` / `Cmd+-` (`Ctrl` on Windows and Linux), or the A buttons at the bottom left. `Cmd+0` resets. Maestro remembers the size across restarts, and `maestro-cli quick-chat font` sets it             |
+| Keep the chat as a tab                       | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                                                                                                     |
+| Pin the window on top                        | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                                                                                                      |
+| Show the agent's thinking                    | `Cmd+Shift+K` / `Ctrl+Shift+K`, or the brain in the window. It steps through hidden, shown while the agent works (gone once the answer arrives), and kept above each answer. Remembered across restarts |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
@@ -37,11 +39,13 @@ The window shows on every desktop, including over full-screen apps. While the pi
 
 Drag the grip at the top of the window (or the header, once a conversation is showing) to move it, and drag an edge or corner to resize it. Maestro remembers the size and the spot across restarts. Until you move the window yourself, it opens centered on the screen under your pointer.
 
-Before your first message the window is just the composer, so only its width changes. Once a conversation is showing, you can make it taller or shorter too, and that height is kept for the next conversation. If the screen the window was on is no longer connected, it opens on your main screen instead.
+Before your first message the window is just the composer: it grows taller as your draft gets longer (up to a limit, then the draft scrolls), and you can drag only its width. Once a conversation is showing, you can make it taller or shorter too, and that height is kept for the next conversation. If the screen the window was on is no longer connected, it opens on your main screen instead.
 
-## How a message finds its tab
+## How a chat finds its tab
 
-Every message you send from Quick Chat runs in a real AI tab on the agent you chose. It uses that agent's provider, model, working directory, SSH remote, and permissions, exactly like a tab you type into yourself. Which tab is decided per message, so one chat can move between tabs, and two messages sent back to back can run in two tabs at the same time.
+Every message you send from Quick Chat runs in a real AI tab on the agent you chose. It uses that agent's provider, model, working directory, SSH remote, and permissions, exactly like a tab you type into yourself. Which tab is decided once, for the chat's first message. Every later message goes to that same tab, even one whose words would fit another tab better, because a follow-up belongs to the conversation it follows. A new chat (`Cmd+N` / `Ctrl+N`, or the pencil) is how you start a new subject; its first message finds a tab again. If you close the chat's tab, the next message finds one again too.
+
+The tab name beside the agent at the top of the window shows where your next message goes. To move the chat, click it (or press `Cmd+J` / `Ctrl+J`) and pick another of the agent's tabs, **New tab** to start fresh in a new one, or **Any tab** to let Maestro find the one that fits the next message. The chat continues in whatever tab that message lands in. `Cmd+J` then `Enter` is the fast way to a new tab: **New tab** is the first row. From the command line, `maestro-cli quick-chat tab` does the same (`status` lists the tab ids).
 
 While a tab is being chosen, the message shows **Searching tabs**. Then a pill under it names the tab it went to:
 
@@ -53,15 +57,15 @@ While a tab is being chosen, the message shows **Searching tabs**. Then a pill u
 
 Click a pill to open that tab in the main Maestro window.
 
-Maestro chooses in two steps. First it compares the words of your message with each candidate: the agent's open tabs, and the conversations in its [History](/history) from the last two weeks. A tab that clearly matches wins at once. A message that resembles nothing starts a new tab at once, as long as the chat has no conversation in progress. Everything else is a close call, and goes to a small, fast model that reads a short list of candidates and picks one: a follow-up that names no subject ("and when does it arrive?"), two tabs about the same thing, or any message after the chat's first that does not clearly match a tab. Only a reader can tell a new subject from a follow-up, so once a chat is under way, expect **Searching tabs** to show for a few seconds on those messages. When that model is unavailable or too slow, the message stays in the conversation you were just in, or starts a new tab when there is none.
+For that first message, Maestro chooses in two steps. First it compares the words of your message with each candidate: the agent's open tabs, and the conversations in its [History](/history) from the last two weeks. A tab that clearly matches wins at once. A message that resembles nothing starts a new tab at once, as long as the chat has no conversation in progress. Everything else is a close call, and goes to a small, fast model that reads a short list of candidates and picks one, for example when two tabs are about the same thing. Expect **Searching tabs** to show for a few seconds then. When that model is unavailable or too slow, the message starts a new tab.
 
 The choice leans toward a new tab. A message sent into the wrong conversation becomes part of that conversation, and that cannot be undone. To start over with no conversation in progress, start a new chat (`Cmd+N` / `Ctrl+N`).
 
 ### When the tab is busy
 
-A tab answers one message at a time. When a message belongs in a tab that is in the middle of a reply, it waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
+A tab answers one message at a time. When a message goes to a tab that is in the middle of a reply (a follow-up sent before the last answer finished, or a first message routed to a busy tab), it waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
 
-If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now. The same thing from the command line is `maestro-cli quick-chat new-tab`.
+If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now, and the chat moves with it: your next message goes to that new tab. The same thing from the command line is `maestro-cli quick-chat new-tab`.
 
 A message waits only for its own tab, never for the agent's other tabs. This is true whatever **Forced Parallel Execution** is set to: that setting governs **Force Send** in the main window, and Quick Chat has always run beside whatever else the agent is doing.
 
@@ -109,6 +113,8 @@ maestro-cli quick-chat new
 maestro-cli quick-chat keep                # keep the current chat as a tab ("keep off" makes it ephemeral)
 maestro-cli quick-chat pin                 # float the window above other windows ("pin off" lets it fall behind)
 maestro-cli quick-chat font in             # bigger conversation text: in, out, reset, or a size such as 120%
+maestro-cli quick-chat thinking sticky     # show the agent's reasoning and keep it: off, on, sticky, or cycle
+maestro-cli quick-chat tab new             # send the next message to a new tab (or a tab id, or auto); the chat stays there
 maestro-cli quick-chat agent <agent-id>    # switch agents and start a new chat
 maestro-cli quick-chat reveal              # open the latest message's tab in Maestro
 maestro-cli quick-chat reveal <message-id> # open the tab that message went to

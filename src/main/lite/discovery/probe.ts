@@ -2,6 +2,7 @@ import { LITE_SETUP_REVISION, type Candidate } from '../../../shared/lite-discov
 import { request } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { tailnetDestination } from '../tailnet';
+import { lanDestination } from '../lan';
 import { candidate, DISCOVERY_PATH, DISCOVERY_PROTOCOL, DISCOVERY_VERSION } from './types';
 import { PROTOCOL, SCOPE, CONNECT_PATH, CONNECTION_CAPABILITIES } from '../pairing/protocol';
 const CLIENT_VERSION: string = require('../../../../package.json').version;
@@ -98,7 +99,7 @@ export function validateManifest(row: Candidate, value: unknown): Candidate {
 		detail: 'Select to connect. New devices pair once using a temporary code and host approval.',
 	};
 }
-/** Fixed manifest path. Direct mode uses only daemon-verified peers and binds the Tailscale interface. */
+/** Fixed manifest path. Direct connections bind their explicitly selected LAN or Tailscale interface. */
 export async function probeService(
 	row: Candidate,
 	signal: AbortSignal,
@@ -107,17 +108,24 @@ export async function probeService(
 	const direct = row.endpoint.startsWith('http:');
 	let bound = {};
 	try {
-		if (direct && row.source !== 'tailscale') throw new Error('Not a Tailscale peer');
+		if (direct && row.source !== 'tailscale' && row.source !== 'lan')
+			throw new Error('Not a private network host');
 		if (direct) {
-			const route = await tailnetDestination(row.endpoint, signal);
-			if (route.peerId !== row.peerId) throw new Error('Tailscale node changed');
-			bound = route;
+			if (row.source === 'lan') bound = await lanDestination(row.endpoint, signal);
+			else {
+				const route = await tailnetDestination(row.endpoint, signal);
+				if (route.peerId !== row.peerId) throw new Error('Tailscale node changed');
+				bound = route;
+			}
 		}
 	} catch {
 		return {
 			...row,
 			availability: 'unreachable',
-			detail: 'This host is not reachable through the current Tailscale interface.',
+			detail:
+				row.source === 'lan'
+					? 'This host is not on an active private local network. Connect both computers to the same LAN.'
+					: 'This host is not reachable through the current Tailscale interface.',
 		};
 	}
 	const { promise, resolve } = Promise.withResolvers<Candidate>();

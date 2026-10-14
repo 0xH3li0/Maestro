@@ -9,7 +9,12 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({ resolveAgentId: vi.fn((id: string) => id) }));
 
-import { parseQuickChatFontArg, quickChat } from '../../../cli/commands/quick-chat';
+import {
+	describeQuickChatNextTarget,
+	parseQuickChatFontArg,
+	parseQuickChatThinkingArg,
+	quickChat,
+} from '../../../cli/commands/quick-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { EMPTY_QUICK_CHAT_SNAPSHOT } from '../../../shared/quickChat';
 
@@ -36,6 +41,96 @@ describe('parseQuickChatFontArg', () => {
 	it('rejects a size outside 70%-200%', () => {
 		expect(() => parseQuickChatFontArg('500%')).toThrow(/between 70% and 200%/);
 		expect(() => parseQuickChatFontArg('0.5')).toThrow(/between 70% and 200%/);
+	});
+});
+
+describe('parseQuickChatThinkingArg', () => {
+	it.each([
+		['off', 'off'],
+		['on', 'on'],
+		[' Sticky ', 'sticky'],
+		['cycle', 'cycle'],
+	])('%s', (arg, expected) => {
+		expect(parseQuickChatThinkingArg(arg)).toBe(expected);
+	});
+
+	it.each(['', 'yes', 'pinned'])('rejects %j', (arg) => {
+		expect(() => parseQuickChatThinkingArg(arg)).toThrow(/Unknown thinking mode/);
+	});
+});
+
+describe('quickChat thinking', () => {
+	let sendCommand: ReturnType<typeof vi.fn>;
+	let log: MockInstance;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sendCommand = vi.fn().mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			status: { fontScale: 1, snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT, thinking: 'sticky' } },
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) => fn({ sendCommand } as never));
+		log = vi.spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	it('sends the mode and prints the one now in effect', async () => {
+		await quickChat('thinking', { state: 'sticky' }, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'thinking', mode: 'sticky' },
+			'quick_chat_result'
+		);
+		expect(log).toHaveBeenCalledWith('Thinking: sticky, kept above each answer');
+	});
+
+	it('with no mode, only reads it', async () => {
+		await quickChat('thinking', {}, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'thinking' },
+			'quick_chat_result'
+		);
+	});
+});
+
+describe('quickChat tab', () => {
+	let sendCommand: ReturnType<typeof vi.fn>;
+	let log: MockInstance;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sendCommand = vi.fn().mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			status: { fontScale: 1, snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT, next: { kind: 'new' } } },
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) => fn({ sendCommand } as never));
+		log = vi.spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	it('sends the target and prints where the next message goes', async () => {
+		await quickChat('tab', { state: 'new' }, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'tab', tab: 'new' },
+			'quick_chat_result'
+		);
+		expect(log).toHaveBeenCalledWith('Next message goes to: a new tab');
+	});
+
+	it('with no target, only reads it', async () => {
+		await quickChat('tab', {}, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'tab' },
+			'quick_chat_result'
+		);
+	});
+});
+
+describe('describeQuickChatNextTarget', () => {
+	it('names a tab with its id, and says when it was chosen', () => {
+		expect(
+			describeQuickChatNextTarget({ kind: 'tab', tabId: 't1', name: 'Build', chosen: true })
+		).toBe('tab "Build" (t1), chosen');
+		expect(describeQuickChatNextTarget({ kind: 'auto' })).toMatch(/^any tab/);
 	});
 });
 

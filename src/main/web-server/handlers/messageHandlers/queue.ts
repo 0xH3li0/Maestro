@@ -2,7 +2,7 @@
  * Queue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
- * list_queue, remove_queue_item, steer_queue_item.
+ * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused.
  */
 
 import { logger } from '../../../utils/logger';
@@ -31,6 +31,8 @@ export function handleEnqueueCommand(
 	const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
 	const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 	const background = message.background === true;
+	// Queue Held (`dispatch --queue --held`): queue it paused, even on an idle agent.
+	const held = message.held === true;
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
@@ -92,7 +94,15 @@ export function handleEnqueueCommand(
 	};
 
 	ctx.callbacks
-		.enqueueCommand(sessionId, command ?? '', clientInputMode, requestedTabId, images, background)
+		.enqueueCommand(
+			sessionId,
+			command ?? '',
+			clientInputMode,
+			requestedTabId,
+			images,
+			background,
+			held
+		)
 		.then((result) => {
 			if (!result.success) cancelArmedCallback();
 			ctx.send(client, {
@@ -278,6 +288,55 @@ export function handleSteerQueueItem(
 				success: false,
 				error: `Failed to steer queue item: ${error.message}`,
 				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_queue_item_paused message - hold or resume a queued item, the same
+ * flag the queued card's Hold / Resume button flips. Used by
+ * `maestro-cli queue hold` and `queue resume`.
+ */
+export function handleSetQueueItemPaused(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; found: boolean; paused?: boolean; error?: string }) =>
+		ctx.send(client, {
+			type: 'set_queue_item_paused_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId || typeof message.paused !== 'boolean') {
+		reply({ success: false, found: false, error: 'Missing sessionId, itemId, or paused' });
+		return;
+	}
+	if (!ctx.callbacks.setQueueItemPaused) {
+		reply({ success: false, found: false, error: 'Set queue item paused not configured' });
+		return;
+	}
+	const paused = message.paused;
+	ctx.callbacks
+		.setQueueItemPaused(sessionId, itemId, paused)
+		.then((result) =>
+			reply({
+				success: result.success,
+				found: result.found,
+				...(result.paused !== undefined ? { paused: result.paused } : {}),
+				...(result.error ? { error: result.error } : {}),
+			})
+		)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'set_queue_item_paused', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				found: false,
+				error: `Failed to set queue item paused: ${error.message}`,
 			});
 		});
 }

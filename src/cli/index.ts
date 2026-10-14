@@ -14,7 +14,7 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove, queueSteer } from './commands/queue';
+import { queueHold, queueList, queueRemove, queueResume, queueSteer } from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -146,6 +146,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -536,6 +537,10 @@ program
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
+		'--held',
+		"Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id."
+	)
+	.option(
 		'--notify-on-complete <agent-id>',
 		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
 	)
@@ -577,7 +582,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), and `steer`
+// (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -597,6 +603,22 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+queue
+	.command('hold <item-id>')
+	.description(
+		'Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueHold);
+
+queue
+	.command('resume <item-id>')
+	.description(
+		'Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueResume);
 
 queue
 	.command('steer <item-id>')
@@ -1046,6 +1068,41 @@ program
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -2674,6 +2731,22 @@ quickChatCmd
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
+	.command('tab [target]')
+	.description(
+		'Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((target: string | undefined, options) => quickChat('tab', { state: target }, options));
+
+quickChatCmd
+	.command('thinking [mode]')
+	.description(
+		"Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode: string | undefined, options) => quickChat('thinking', { state: mode }, options));
+
+quickChatCmd
 	.command('font [size]')
 	.description(
 		'Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)'
@@ -2792,7 +2865,7 @@ const movement = program
 
 movement
 	.command('begin <id>')
-	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.description('Reserve a host-rendered Concerto shell without opening the stage')
 	.requiredOption('--title <text>', 'Concerto title shown in its frame')
 	.option('--x <px>', 'X position (px from the Concerto stage left)')
 	.option('--y <px>', 'Y position (px from the Concerto stage top)')
@@ -2803,7 +2876,7 @@ movement
 
 movement
 	.command('add <id>')
-	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.description('Add or replace a native data view or HTML mockup without opening the stage')
 	.option('--type <type>', 'view | html (default: view)')
 	.option('--x <px>', 'X position (px from movement left)')
 	.option('--y <px>', 'Y position (px from movement top)')
@@ -2876,7 +2949,7 @@ movement
 
 movement
 	.command('inspect <id>')
-	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.description('Capture a visible HTML Movement preview (requires an open stage) and diagnostics')
 	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInspect);

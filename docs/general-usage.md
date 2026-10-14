@@ -491,7 +491,7 @@ While a turn is running, a queued message for that tab can carry a **Steer** but
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
 
-A steered message carries the Steer button's arrow icon in the transcript, the same way a force-sent one carries the hammer. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the mark.
+A steered message is headed with the Steer button's arrow in the transcript, and the header says what the agent did with it. **Steering the running turn** shows while the agent has the text and has not yet acted on it. **Steered into the running turn**, with a check, means the turn took the message and changed course; the bubble is indented and joined by a line to the turn it steered. **Sent as a follow-up** means the agent could not fold the message in and runs it as a follow-up after the turn ends, so that bubble stands on its own. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the header.
 
 Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
 
@@ -511,12 +511,14 @@ While the agent is working, clicking **Send** opens a small menu instead of send
 | ---------- | ----------------------------------------------------------------- | -------------------------------------- |
 | Queue      | Queues the message behind the running turn, the same as Enter     | `Enter`                                |
 | Force Send | Sends now, beside a working tab (needs Forced Parallel Execution) | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` |
-| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
 | Steer      | Hands the message to the turn in progress (see [Steer](#steer))   | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`     |
+| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
 
 A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
 
 When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
+
+Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
 
 ### Execution Queue view
 

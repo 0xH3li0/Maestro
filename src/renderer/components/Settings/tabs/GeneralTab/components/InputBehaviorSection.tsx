@@ -128,7 +128,7 @@ export function InputBehaviorSection({
 				</div>
 				<p className="text-xs opacity-70">
 					{sendButtonMenu
-						? 'Clicking Send while the agent is working opens a menu: Queue, Force Send, Queue Held, or Steer. An idle click sends at once.'
+						? 'Clicking Send while the agent is working opens a menu: Queue, Force Send, Steer, or Queue Held. An idle click sends at once.'
 						: 'Clicking Send always sends at once, the same as the keyboard.'}
 				</p>
 				<p className="text-xs-plus opacity-55 mt-1">

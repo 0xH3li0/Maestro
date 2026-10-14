@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { canAppendToLogEntry, isSelfContainedCard } from '../../../renderer/utils/logEntries';
+import {
+	canAppendToLogEntry,
+	isSelfContainedCard,
+	steerJoinsRunningTurn,
+} from '../../../renderer/utils/logEntries';
 import type { LogEntry } from '../../../renderer/types';
 
 function entry(overrides: Partial<LogEntry> = {}): LogEntry {
@@ -158,5 +162,29 @@ describe('canAppendToLogEntry', () => {
 		for (const card of cards) {
 			expect(canAppendToLogEntry(card, card.source)).toBe(false);
 		}
+	});
+});
+
+describe('steerJoinsRunningTurn', () => {
+	it.each([
+		['still waiting for its verdict', 'pending'],
+		['absorbed by the running turn', 'absorbed'],
+		['steered before the state was recorded', undefined],
+	] as const)('is true for a steer %s', (_name, steerState) => {
+		expect(steerJoinsRunningTurn(entry({ source: 'user', steered: true, steerState }))).toBe(true);
+	});
+
+	it('is false for a steer the agent took as a follow-up', () => {
+		// It ran as a turn of its own, so stitching it to the running turn would say
+		// the opposite of what happened.
+		expect(
+			steerJoinsRunningTurn(entry({ source: 'user', steered: true, steerState: 'queued' }))
+		).toBe(false);
+	});
+
+	it('is false for a message that started its own turn, and for no entry at all', () => {
+		expect(steerJoinsRunningTurn(entry({ source: 'user' }))).toBe(false);
+		expect(steerJoinsRunningTurn(entry({ source: 'stdout', steered: true }))).toBe(false);
+		expect(steerJoinsRunningTurn(undefined)).toBe(false);
 	});
 });

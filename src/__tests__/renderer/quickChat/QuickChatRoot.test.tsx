@@ -15,6 +15,7 @@ import {
 	type QuickChatSnapshot,
 } from '../../../shared/quickChat';
 import { openZoomViewer, useZoomViewerStore } from '../../../renderer/components/ZoomViewer';
+import { tabChoiceFromPickerId } from '../../../renderer/quickChat/QuickChatTabPicker';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { FONT_SCALE_RANGE, stepScale } from '../../../shared/scaleRange';
 
@@ -72,6 +73,125 @@ describe('Pin button', () => {
 		const button = screen.getByRole('button', { name: /^Pinned on top\./ });
 		fireEvent.mouseEnter(button.parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent('Floats above other windows.');
+	});
+});
+
+describe('tab picker', () => {
+	const tabs = [
+		{ id: 't1', name: 'Blog: Waste No Tokens', busy: false, inChat: true },
+		{ id: 't2', name: 'Build', busy: true, inChat: false },
+	];
+
+	it('names where the next message goes beside the agent', async () => {
+		await renderWith(
+			snapshot({ tabs, next: { kind: 'tab', tabId: 't1', name: tabs[0].name, chosen: false } })
+		);
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Blog: Waste No Tokens');
+	});
+
+	it('says "Any tab" before the chat has one', async () => {
+		await renderWith(snapshot());
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Any tab');
+	});
+
+	it('Cmd+J opens it with New tab first, and Enter on it forces a new tab', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ tabs, next: { kind: 'new' } }),
+		});
+		await renderWith(snapshot({ tabs }));
+		await act(async () => fireEvent.keyDown(window, { key: 'j', metaKey: true }));
+		const rows = screen.getAllByTestId('quick-chat-tab-row');
+		expect(rows.map((r) => r.textContent)).toEqual([
+			expect.stringContaining('New tab'),
+			expect.stringContaining('Any tab'),
+			expect.stringContaining('Blog: Waste No Tokens'),
+			expect.stringContaining('Build'),
+		]);
+		await act(async () => fireEvent.click(rows[0]));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'setTab',
+			choice: { kind: 'new' },
+		});
+		expect(screen.queryByTestId('quick-chat-tab-picker')).toBeNull();
+	});
+
+	it('picking a tab sends the next message there', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ tabs, next: { kind: 'tab', tabId: 't2', name: 'Build', chosen: true } }),
+		});
+		await renderWith(snapshot({ tabs }));
+		await act(async () => fireEvent.click(screen.getByTestId('quick-chat-tab-button')));
+		await act(async () => fireEvent.click(screen.getAllByTestId('quick-chat-tab-row')[3]));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'setTab',
+			choice: { kind: 'tab', tabId: 't2' },
+		});
+	});
+});
+
+describe('tabChoiceFromPickerId', () => {
+	it('maps the fixed rows and tab rows to choices', () => {
+		expect(tabChoiceFromPickerId('new')).toEqual({ kind: 'new' });
+		expect(tabChoiceFromPickerId('auto')).toEqual({ kind: 'auto' });
+		expect(tabChoiceFromPickerId('tab:abc')).toEqual({ kind: 'tab', tabId: 'abc' });
+	});
+});
+
+describe('Thinking button', () => {
+	it.each([
+		['off', /^Thinking hidden\./, "Click to show the agent's reasoning"],
+		['on', /^Showing thinking\./, 'goes away once the answer arrives'],
+		['sticky', /^Keeping thinking\./, 'stays above each answer'],
+	] as const)('explains the %s mode', async (mode, name, hint) => {
+		await renderWith(snapshot({ thinking: mode }));
+		const button = screen.getByRole('button', { name });
+		fireEvent.mouseEnter(button.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(hint);
+	});
+
+	it('asks the engine to step to the next mode', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ thinking: 'on' }),
+		});
+		await renderWith(snapshot());
+		await act(async () =>
+			fireEvent.click(screen.getByRole('button', { name: /^Thinking hidden\./ }))
+		);
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'setThinking',
+			mode: 'cycle',
+		});
+		expect(screen.getByRole('button', { name: /^Showing thinking\./ })).toBeInTheDocument();
+	});
+
+	it('Cmd+Shift+K cycles it, like the main composer', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ thinking: 'on' }),
+		});
+		await renderWith(snapshot());
+		await act(async () => fireEvent.keyDown(window, { key: 'K', metaKey: true, shiftKey: true }));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'setThinking',
+			mode: 'cycle',
+		});
+	});
+
+	it('renders reasoning apart from the answer', async () => {
+		await renderWith(
+			snapshot({
+				thinking: 'sticky',
+				messages: [
+					{ id: 'u', role: 'user', text: 'hi', timestamp: 1 },
+					{ id: 't', role: 'thinking', text: 'Looking it up.', timestamp: 2 },
+					{ id: 'a', role: 'assistant', text: 'Done.', timestamp: 3 },
+				],
+			})
+		);
+		expect(screen.getByTestId('quick-chat-thinking')).toHaveTextContent('Looking it up.');
 	});
 });
 
@@ -154,6 +274,25 @@ describe('Open in Maestro', () => {
 		await renderWith(snapshot({ tabId: null }));
 		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
 		expect(window.maestro.quickChat.command).not.toHaveBeenCalledWith({ type: 'reveal' });
+	});
+});
+
+describe('Close', () => {
+	it('Cmd+W hides the window, even with the agent picker open, and the overlay names it', async () => {
+		// The header (and its Close button) only renders once there is a conversation.
+		await renderWith(
+			snapshot({
+				agents: [{ id: 'a', name: 'Pedsidian' }],
+				messages: [{ id: 'm', role: 'user', text: 'hi' }],
+			})
+		);
+		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Close\./ }).parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/Esc \/ .*W$/);
+
+		await act(async () => fireEvent.keyDown(window, { key: 'k', metaKey: true }));
+		const filter = screen.getByTestId('quick-chat-agent-filter');
+		await act(async () => fireEvent.keyDown(filter, { key: 'w', metaKey: true }));
+		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('hide');
 	});
 });
 
@@ -474,5 +613,26 @@ describe('text zoom', () => {
 	it('hides the control until there is a conversation to zoom', async () => {
 		await renderWith(snapshot());
 		expect(screen.queryByTestId('quick-chat-font-scale')).toBeNull();
+	});
+});
+
+describe('composer-only window height', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('reports the composer height so the window grows with the draft', async () => {
+		// jsdom has no layout: stand in for the composer's rendered height.
+		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.dataset.testid === 'quick-chat-composer' ? 260 : 0;
+		});
+		vi.mocked(window.maestro.quickChat.setCompactHeight).mockClear();
+		await renderWith(snapshot());
+
+		expect(window.maestro.quickChat.setCompactHeight).toHaveBeenLastCalledWith(260);
+		// Its height is its content's, never stretched to the window it sizes.
+		expect(screen.getByTestId('quick-chat-composer').className).not.toContain('h-full');
 	});
 });
