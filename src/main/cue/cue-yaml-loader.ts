@@ -8,7 +8,12 @@
 import * as yaml from 'js-yaml';
 import type { CueConfig } from './cue-types';
 import { readCueConfigFile, watchCueConfigFile } from './config/cue-config-repository';
-import { materializeCueConfig, parseCueConfigDocument } from './config/cue-config-normalizer';
+import {
+	materializeCueConfig,
+	normalizeSettings,
+	parseCueConfigDocument,
+	type CueHealthWarning,
+} from './config/cue-config-normalizer';
 import {
 	partitionValidSubscriptions,
 	validateCueConfigDocument,
@@ -27,13 +32,17 @@ export type LoadCueConfigDetailedResult = (
 			ok: true;
 			config: CueConfig;
 			warnings: string[];
-			/** Subset eligible for health notices; paused subscriptions remain log-only. */
-			healthWarnings?: string[];
+			/** Warning positions and execution targets; paused subscriptions remain log-only. */
+			healthWarnings?: CueHealthWarning[];
 	  }
 	| { ok: false; reason: 'missing' }
 	| { ok: false; reason: 'parse-error'; message: string }
 	| { ok: false; reason: 'invalid'; errors: string[] }
-) & { file?: ReturnType<typeof readCueConfigFile> };
+) & {
+	file?: ReturnType<typeof readCueConfigFile>;
+	/** Readable settings survive schema-invalid subscriptions for error ownership. */
+	settings?: CueConfig['settings'];
+};
 
 /**
  * Loads, validates, and materializes the Cue config for a project root.
@@ -78,7 +87,15 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// pipelines belonging to other agents that share the same project root.
 	const partitioned = partitionValidSubscriptions(parsed);
 	if (partitioned.configErrors.length > 0) {
-		return { ok: false, reason: 'invalid', errors: partitioned.configErrors, file };
+		return {
+			ok: false,
+			reason: 'invalid',
+			errors: partitioned.configErrors,
+			file,
+			settings: normalizeSettings(
+				(parsed as Record<string, unknown>).settings as Record<string, unknown> | undefined
+			),
+		};
 	}
 
 	const document = parseCueConfigDocument(file.raw, projectRoot);
@@ -136,7 +153,14 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 		const message = `Skipped invalid subscription at index ${entry.index} - ${detail}`;
 		warnings.push(message);
 		if ((rawSubs[entry.index] as Record<string, unknown> | null)?.enabled !== false) {
-			healthWarnings.push(message);
+			const normalizedIndex = rawToNormalized.get(entry.index);
+			healthWarnings.push({
+				warningIndex: warnings.length - 1,
+				agentId:
+					normalizedIndex === undefined
+						? undefined
+						: document.subscriptions[normalizedIndex].agent_id,
+			});
 		}
 	}
 

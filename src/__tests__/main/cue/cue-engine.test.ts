@@ -16,15 +16,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 
 // Mock the yaml loader
 const mockLoadCueConfig = vi.fn<(projectRoot: string) => CueConfig | null>();
-type DetailedResult =
-	| { ok: true; config: CueConfig; warnings: string[] }
-	| { ok: false; reason: 'missing' }
-	| { ok: false; reason: 'parse-error'; message: string }
-	| { ok: false; reason: 'invalid'; errors: string[] };
-const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => DetailedResult>();
+const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => LoadCueConfigDetailedResult>();
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: (...args: unknown[]) => mockLoadCueConfig(args[0] as string),
@@ -3273,6 +3269,7 @@ describe('CueEngine', () => {
 				ok: true,
 				config,
 				warnings: [warning],
+				healthWarnings: [{ warningIndex: 0 }],
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);

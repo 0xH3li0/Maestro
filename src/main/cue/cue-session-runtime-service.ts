@@ -1,8 +1,14 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
 import { loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
-import { resolveCueConfigPath, type readCueConfigFile } from './config/cue-config-repository';
-import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
+import type { readCueConfigFile } from './config/cue-config-repository';
+import {
+	createCueEvent,
+	DEFAULT_CUE_SETTINGS,
+	type CueConfig,
+	type CueEvent,
+	type CueSubscription,
+} from './cue-types';
 import { clearGitHubSeenForSubscription } from './cue-db';
 import {
 	computeOwnershipWarning,
@@ -113,6 +119,15 @@ export function createCueSessionRuntimeService(
 	const { registry } = deps;
 	const yamlWatchers = new Map<string, { projectRoot: string; cleanup: () => void }>();
 	const loadedYamlFiles = new Map<string, ReturnType<typeof readCueConfigFile>>();
+	// Keep ownership through malformed saves, independently of registry teardown.
+	const lastConfigSettings = new Map<string, CueConfig['settings']>();
+
+	/** Drops remembered ownership once no session watches this root anymore. */
+	function forgetUnusedRoot(projectRoot: string): void {
+		if (![...yamlWatchers.values()].some((watcher) => watcher.projectRoot === projectRoot)) {
+			lastConfigSettings.delete(projectRoot);
+		}
+	}
 
 	function getSession(sessionId: string): SessionInfo | undefined {
 		return deps.getSessions().find((session) => session.id === sessionId);
@@ -154,6 +169,7 @@ export function createCueSessionRuntimeService(
 			existingWatcher.cleanup();
 			yamlWatchers.delete(session.id);
 			loadedYamlFiles.delete(session.id);
+			forgetUnusedRoot(existingWatcher.projectRoot);
 		}
 		if (!yamlWatchers.has(session.id)) {
 			const cleanup = watchCueYaml(
@@ -173,23 +189,67 @@ export function createCueSessionRuntimeService(
 		}
 		const loadResult = loadCueConfigDetailed(session.projectRoot);
 		if (loadResult.file !== undefined) loadedYamlFiles.set(session.id, loadResult.file);
+		const settings = loadResult.ok ? loadResult.config.settings : loadResult.settings;
+		if (settings) lastConfigSettings.set(session.projectRoot, settings);
+		if (!loadResult.ok && loadResult.reason === 'missing') {
+			lastConfigSettings.delete(session.projectRoot);
+		}
+
+		// Use the execution ownership rules even when this save cannot be loaded.
+		// A malformed save retains the last readable settings; a cold malformed
+		// file falls back to the usual first eligible session. An unresolvable
+		// explicit owner must not silence the whole-file error on every agent.
+		// This load already identifies the shared config. Do not recheck its
+		// path per candidate: a concurrent replacement must not erase the owner.
+		const candidates = deps
+			.getSessions()
+			.filter((s) => s.toolType !== 'terminal' && s.projectRoot === session.projectRoot);
+		const ownershipConfig = {
+			settings: lastConfigSettings.get(session.projectRoot) ?? DEFAULT_CUE_SETTINGS,
+		};
+		const ownershipWarning = computeOwnershipWarning({
+			session,
+			candidates,
+			config: ownershipConfig,
+			configFromAncestor: false,
+		});
+		const isConfigOwner = !ownershipWarning;
+		const sameRoot = candidates.filter((s) => s.projectRoot === session.projectRoot);
+		const errorOwner =
+			sameRoot.find(
+				(candidate) =>
+					!computeOwnershipWarning({
+						session: candidate,
+						candidates,
+						config: ownershipConfig,
+						configFromAncestor: false,
+					})
+			) ?? sameRoot[0];
 
 		if (!loadResult.ok) {
 			// Distinguish missing (silent) from parse / validation failures (loud).
 			if (loadResult.reason === 'parse-error') {
 				const message = `[CUE] Failed to parse cue.yaml for "${session.name}": ${loadResult.message}`;
-				deps.onLog('error', message, {
-					type: 'triggerHealthWarning',
-					sessionId: session.id,
-					message,
-				});
+				if (errorOwner?.id === session.id) {
+					deps.onLog('error', message, {
+						type: 'triggerHealthWarning',
+						sessionId: session.id,
+						message,
+					});
+				} else {
+					deps.onLog('error', message);
+				}
 			} else if (loadResult.reason === 'invalid') {
 				const message = `[CUE] cue.yaml for "${session.name}" is invalid:\n  - ${loadResult.errors.join('\n  - ')}`;
-				deps.onLog('error', message, {
-					type: 'triggerHealthWarning',
-					sessionId: session.id,
-					message,
-				});
+				if (errorOwner?.id === session.id) {
+					deps.onLog('error', message, {
+						type: 'triggerHealthWarning',
+						sessionId: session.id,
+						message,
+					});
+				} else {
+					deps.onLog('error', message);
+				}
 			}
 
 			return { kind: loadResult.reason };
@@ -198,10 +258,16 @@ export function createCueSessionRuntimeService(
 		const config = loadResult.config;
 
 		// Surface non-fatal materialization warnings (e.g. unresolved prompt_file)
-		const healthWarnings = new Set(loadResult.healthWarnings ?? loadResult.warnings);
-		for (const warning of loadResult.warnings) {
+		const healthWarnings = new Map(
+			(loadResult.healthWarnings ?? []).map((warning) => [warning.warningIndex, warning])
+		);
+		for (const [index, warning] of loadResult.warnings.entries()) {
 			const message = `[CUE] ${warning}`;
-			if (!healthWarnings.has(warning)) {
+			const healthWarning = healthWarnings.get(index);
+			if (
+				!healthWarning ||
+				(healthWarning.agentId ? healthWarning.agentId !== session.id : !isConfigOwner)
+			) {
 				deps.onLog('warn', message);
 				continue;
 			}
@@ -219,23 +285,11 @@ export function createCueSessionRuntimeService(
 		// of truth: this session is NOT the config owner and the dashboard
 		// will surface the string as a red-triangle tooltip. Subscriptions
 		// with an explicit `agent_id` continue to fan out regardless.
-		// Filter candidates to sessions that could actually own a Cue config -
-		// a cue.yaml at their projectRoot AND a tool type that participates
-		// in Cue. A terminal (or any non-AI-agent) session could otherwise
+		// Candidates share this config's root and participate in Cue. A terminal
+		// (or any non-AI-agent) session could otherwise
 		// win the implicit first-in-list race at a shared projectRoot,
 		// become the "owner", have nothing to dispatch, and silently suppress
 		// automation on the real Cue-configured agent.
-		const candidates = deps
-			.getSessions()
-			.filter((s) => s.toolType !== 'terminal' && resolveCueConfigPath(s.projectRoot) !== null);
-		const ownershipWarning = computeOwnershipWarning({
-			session,
-			candidates,
-			config,
-			// Per-agent-cwd model: configs never come from an ancestor anymore.
-			configFromAncestor: false,
-		});
-		const isConfigOwner = !ownershipWarning;
 		if (ownershipWarning && config.subscriptions.some((s) => !s.agent_id)) {
 			deps.onLog(
 				'cue',
@@ -377,8 +431,10 @@ export function createCueSessionRuntimeService(
 
 	function teardownSession(sessionId: string, preserveYamlWatcher = false): void {
 		if (!preserveYamlWatcher) {
+			const projectRoot = yamlWatchers.get(sessionId)?.projectRoot;
 			yamlWatchers.get(sessionId)?.cleanup();
 			yamlWatchers.delete(sessionId);
+			if (projectRoot) forgetUnusedRoot(projectRoot);
 		}
 		// Stopped triggers no longer represent a loaded runtime, even if bytes are unchanged.
 		loadedYamlFiles.delete(sessionId);
@@ -535,6 +591,7 @@ export function createCueSessionRuntimeService(
 			for (const { cleanup } of yamlWatchers.values()) cleanup();
 			yamlWatchers.clear();
 			loadedYamlFiles.clear();
+			lastConfigSettings.clear();
 		},
 
 		clearAllStartupKeys(): void {
