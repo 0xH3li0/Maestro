@@ -965,6 +965,22 @@ describe('useGroupChatHandlers', () => {
 			expect(mockGroupChat.queueSteer).toHaveBeenCalledWith('gc-1', 'q-1');
 		});
 
+		it('says the message stays queued when the steer request itself fails', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			mockGroupChat.queueSteer.mockRejectedValueOnce(new Error('bridge closed'));
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await expect(result.current.handleSteerGroupChatQueueItem('q-1')).resolves.toBeUndefined();
+			});
+
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Could not steer this round',
+				message: 'The request did not reach the app. The message stays queued.',
+			});
+		});
+
 		it('steers nothing when no chat is open', async () => {
 			useGroupChatStore.setState({ activeGroupChatId: null });
 			const { result } = renderHook(() => useGroupChatHandlers());

@@ -169,24 +169,27 @@ want. The message currently being handed to the moderator is marked
 ### Steering a running round
 
 While a round runs, a queued message carries a **Steer** button. Steering types
-the message into the turn that is already running, so the room can change course
-without waiting for the round to end. Which turn gets it:
+the message into a turn that is already running, so the room can change course
+without waiting for the round to end. A steer goes to exactly one turn:
 
 - **The moderator**, when its turn is running. It is the router, so a steer can
   still change who it @mentions.
-- **The working participants**, otherwise. A message that @mentions anyone goes
-  only to the participants it names, and only when every name is one that is
-  working right now. A mention of an idle agent is a routing request only the
-  moderator can act on, so that message stays queued for it.
+- **One working participant**, otherwise: the one the message @mentions, or the
+  only one working when it mentions nobody. With several agents working, a
+  message must @mention the one to steer. A mention of an idle agent is a
+  routing request only the moderator can act on, so that message stays queued
+  for it.
 
 A steered message is recorded in the chat as yours, headed **Steered to** with
-the turns that took it, so the moderator's summary and every later turn see it.
-If no turn ends up taking it, it goes back to the front of the queue. Steering
-needs the same thing it needs in a direct chat: a turn on the Claude Code TUI
-token source or the Codex app-server transport, on the local machine. A message
-with images is not steerable, and a read-only message steers only into a
-read-only round. When a steer is refused, the message stays queued and a notice
-says why.
+the turn that took it, so the moderator's summary and every later turn see it.
+If the turn ends before it takes the message, the message goes back to the
+front of the queue. Steering needs the same thing it needs in a direct chat: a
+turn on the Claude Code TUI token source or the Codex app-server transport, on
+the local machine. A message with images, or one that starts with `/` or `!`
+(including `!autorun` and `!commit`), is not steerable, and a read-only message
+steers only into a read-only round. A message held after a send that may not
+have arrived stays held until you press **Resume**. When a steer is refused, the
+message stays queued and a notice says why.
 
 From the CLI, `maestro-cli group-chat steer <chat> "<message>"` steers new text,
 and `--item <id>` steers a queued message (the ids are in `group-chat status`).

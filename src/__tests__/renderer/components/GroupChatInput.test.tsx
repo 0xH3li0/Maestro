@@ -959,6 +959,30 @@ describe('GroupChatInput', () => {
 
 				expect(steerButton()).not.toBeInTheDocument();
 			});
+
+			it('does not offer Steer for a held (failed) message or a command', () => {
+				render(
+					<GroupChatInput
+						{...createDefaultProps({
+							state: 'agent-working',
+							queueState: {
+								items: [
+									{
+										...queuedItem('q-1', 'maybe sent'),
+										failed: true,
+										failureReason: 'unconfirmed',
+									},
+									queuedItem('q-2', '!commit'),
+								],
+								paused: true,
+							},
+							onSteerQueuedItem: vi.fn(),
+						})}
+					/>
+				);
+
+				expect(steerButton()).not.toBeInTheDocument();
+			});
 		});
 	});
 });

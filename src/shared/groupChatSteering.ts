@@ -7,19 +7,25 @@
  * steering socket, and `ProcessManager.steer()` types into it. What is
  * group-chat-specific is WHICH turn a message goes to, and that rule lives here
  * so the Steer button, the main process and `maestro-cli group-chat steer` all
- * apply the same one:
+ * apply the same one. A steer goes to exactly ONE turn:
  *
- *   1. The moderator's turn, when one is running. It is the router: a steer it
+ *   1. The moderator's, when it is running. It is the router: a steer it
  *      absorbs can still change who it @mentions.
- *   2. Otherwise the participants that are working. A message that @mentions
- *      anyone goes only to the participants it names, and only when EVERY name
- *      is one of them. A mention of an idle or absent agent is a routing request
- *      only the moderator can act on, so that message stays queued for it.
+ *   2. Otherwise one working participant: the one the message @mentions, or
+ *      the only one working when it mentions nobody. A mention of an idle or
+ *      absent agent is a routing request only the moderator can act on, so
+ *      that message stays queued for it.
+ *
+ * One turn, never a broadcast: participants run different jobs, so one message
+ * typed into all of them would steer each off its own task. It also keeps the
+ * answer exact: the message either reached that turn or it did not, with no
+ * partial delivery to reconcile.
  *
  * Pure and renderer-safe: no Node imports.
  */
 
 import {
+	startsWithTuiCommandPrefix,
 	steeringTextTooLong,
 	STEERING_TOO_LONG_DETAIL,
 	type QueueSteerResult,
@@ -36,11 +42,14 @@ export type GroupChatSteerBlockedReason =
 	| 'nothing-to-type'
 	| 'has-images'
 	| 'too-long'
+	| 'command-prefix'
 	| 'sending'
+	| 'held'
 	| 'steer-in-flight'
 	| 'read-only'
 	| 'no-running-turn'
-	| 'mention-not-working';
+	| 'mention-not-working'
+	| 'ambiguous-target';
 
 /** Each blocked reason as a sentence for the user. A Record so a new reason must be worded. */
 export const GROUP_CHAT_STEER_BLOCKED_DETAILS: Record<GroupChatSteerBlockedReason, string> = {
@@ -49,13 +58,18 @@ export const GROUP_CHAT_STEER_BLOCKED_DETAILS: Record<GroupChatSteerBlockedReaso
 	'has-images':
 		'Images cannot be typed into a running turn. The message sends when the round ends.',
 	'too-long': `${STEERING_TOO_LONG_DETAIL}. It sends when the round ends.`,
+	'command-prefix':
+		'A message that starts with / or ! would run as a command in the running turn. It sends when the round ends.',
 	sending: 'This message is already on its way to the moderator.',
+	held: 'This message is held after a send or steer that may not have arrived. Resume the queue to send it.',
 	'steer-in-flight': 'A message is being handed to this room already. Try again in a moment.',
 	'read-only':
 		'This message asks for read-only mode and the running round is not read-only. It sends when the round ends.',
 	'no-running-turn': 'No turn in this room is running right now, so there is nothing to steer.',
 	'mention-not-working':
 		'The message @mentions an agent that is not working right now. The moderator routes it when the round ends.',
+	'ambiguous-target':
+		'More than one agent is working. @mention the one agent to steer, or the message sends when the round ends.',
 };
 
 /**
@@ -69,13 +83,20 @@ export function groupChatSteerBlockedReason(input: {
 	text: string | undefined;
 	images?: readonly string[];
 	sending?: boolean;
+	/** Held after a send or steer that may have arrived; only Resume releases it. */
+	failed?: boolean;
 }): GroupChatSteerBlockedReason | null {
 	if (input.sending) return 'sending';
+	// Steering a held item again could type it a second time. Resume is the way out.
+	if (input.failed) return 'held';
 	if (!input.busy) return 'room-idle';
 	const text = input.text?.trim();
 	if (!text) return 'nothing-to-type';
 	if (input.images && input.images.length > 0) return 'has-images';
 	if (steeringTextTooLong(text)) return 'too-long';
+	// Also catches the room's own `!autorun` / `!commit` directives, which are for
+	// the moderator to read, not for a TUI to run.
+	if (startsWithTuiCommandPrefix(text)) return 'command-prefix';
 	return null;
 }
 
@@ -93,89 +114,73 @@ export interface GroupChatRunningTurns {
 	participants: GroupChatSteerTarget[];
 }
 
-/** Which turns `text` goes to, by the rule in this file's header. */
-export function pickGroupChatSteerTargets(
+/** Which turn `text` goes to, by the rule in this file's header. */
+export function pickGroupChatSteerTarget(
 	text: string,
 	running: GroupChatRunningTurns
 ):
-	| { targets: GroupChatSteerTarget[] }
-	| { blocked: Extract<GroupChatSteerBlockedReason, 'no-running-turn' | 'mention-not-working'> } {
+	| { target: GroupChatSteerTarget }
+	| {
+			blocked: Extract<
+				GroupChatSteerBlockedReason,
+				'no-running-turn' | 'mention-not-working' | 'ambiguous-target'
+			>;
+	  } {
 	if (running.moderator) {
-		return {
-			targets: [{ name: GROUP_CHAT_MODERATOR_STEER_TARGET, processId: running.moderator }],
-		};
+		return { target: { name: GROUP_CHAT_MODERATOR_STEER_TARGET, processId: running.moderator } };
 	}
 	if (running.participants.length === 0) return { blocked: 'no-running-turn' };
 
 	const mentions = extractAllMentions(text);
-	if (mentions.length === 0) return { targets: running.participants };
+	if (mentions.length === 0) {
+		return running.participants.length === 1
+			? { target: running.participants[0] }
+			: { blocked: 'ambiguous-target' };
+	}
 
-	const targets: GroupChatSteerTarget[] = [];
+	const named = new Set<GroupChatSteerTarget>();
 	for (const mention of mentions) {
 		const matched = running.participants.filter((p) => mentionMatches(mention, p.name));
 		if (matched.length === 0) return { blocked: 'mention-not-working' };
-		for (const target of matched) {
-			if (!targets.includes(target)) targets.push(target);
-		}
+		for (const target of matched) named.add(target);
 	}
-	return { targets };
+	const [only, ...rest] = named;
+	return rest.length === 0 ? { target: only } : { blocked: 'ambiguous-target' };
 }
 
-/** What a group chat steer did. The tab result, plus who took it. */
+/** What a group chat steer did: the tab result, plus the turn that took it. */
 export interface GroupChatSteerResult extends QueueSteerResult {
-	/** The turns that took the message (delivered, absorbed or queued). */
+	/** The turn that took the message (delivered, absorbed or queued). */
 	targets?: string[];
-	/** The turns that refused it, when others took it. */
-	refusedBy?: string[];
 }
-
-/** One target's socket answer. */
-export interface GroupChatSteerAttempt {
-	target: GroupChatSteerTarget;
-	result: SteeringResultFrame;
-}
-
-const TAKEN = new Set(['delivered', 'absorbed', 'queued']);
 
 /**
- * Fold the per-target socket answers into one result.
- *
- * Any target that took the message means it was delivered: the user's words
- * reached the round and must not be sent again. Only when nobody took it does
- * the outcome depend on whether a target MIGHT have (`unknown` / a socket-level
- * `dropped`): then it is `unconfirmed`, never `refused`, so the caller holds the
- * message rather than inviting a re-send that could double it.
+ * One socket answer as a steer result. `delivered`, `absorbed` and `queued` all
+ * mean the turn has the text. Anything else that is not a clean refusal means it
+ * MIGHT (`unknown`, a socket-level `dropped`), so it is `unconfirmed`, never
+ * `refused`: the caller holds the message rather than inviting a re-send that
+ * could double it.
  */
-export function summarizeGroupChatSteer(attempts: GroupChatSteerAttempt[]): GroupChatSteerResult {
-	const taken = attempts.filter((a) => TAKEN.has(a.result.verdict));
-	const refused = attempts.filter((a) => a.result.verdict === 'refused');
-
-	if (taken.length > 0) {
-		const settled = taken.every((a) => a.result.verdict !== 'delivered');
-		return {
-			outcome: settled ? 'settled' : 'delivered',
-			verdict: settled ? taken[0].result.verdict : 'delivered',
-			targets: taken.map((a) => a.target.name),
-			...(refused.length > 0 && { refusedBy: refused.map((a) => a.target.name) }),
-		};
+export function groupChatSteerResult(
+	target: GroupChatSteerTarget,
+	frame: SteeringResultFrame
+): GroupChatSteerResult {
+	switch (frame.verdict) {
+		case 'delivered':
+			return { outcome: 'delivered', verdict: 'delivered', targets: [target.name] };
+		case 'absorbed':
+		case 'queued':
+			return { outcome: 'settled', verdict: frame.verdict, targets: [target.name] };
+		case 'refused':
+			return {
+				outcome: 'refused',
+				verdict: 'refused',
+				refusal: frame.refusal,
+				detail: frame.detail,
+			};
+		default:
+			return { outcome: 'unconfirmed', verdict: frame.verdict, detail: frame.detail };
 	}
-
-	const uncertain = attempts.find((a) => a.result.verdict !== 'refused');
-	if (uncertain) {
-		return {
-			outcome: 'unconfirmed',
-			verdict: uncertain.result.verdict,
-			detail: uncertain.result.detail,
-		};
-	}
-
-	const first = refused[0]?.result;
-	return {
-		outcome: 'refused',
-		verdict: 'refused',
-		refusal: first?.refusal,
-		detail: first?.detail,
-	};
 }
 
 /** The `|steered:` field a steered user line carries in the chat log. */

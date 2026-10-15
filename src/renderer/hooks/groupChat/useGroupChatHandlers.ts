@@ -838,7 +838,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	const handleSteerGroupChatQueueItem = useCallback(async (itemId: string) => {
 		const { activeGroupChatId } = useGroupChatStore.getState();
 		if (!activeGroupChatId) return;
-		await steerGroupChatQueuedItem(activeGroupChatId, itemId);
+		try {
+			await steerGroupChatQueuedItem(activeGroupChatId, itemId);
+		} catch (error) {
+			// The request itself failed (IPC, a dropped web bridge). Main never ran
+			// the steer, so the message is still queued; say so instead of nothing.
+			logger.error('[GroupChat] Steer failed:', undefined, error);
+			notifyToast({
+				color: 'red',
+				title: 'Could not steer this round',
+				message: 'The request did not reach the app. The message stays queued.',
+			});
+		}
 	}, []);
 
 	// =======================================================================

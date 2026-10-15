@@ -658,7 +658,7 @@ Type a message into the round running in a group chat instead of waiting for it 
 | ----------------------- | ------------------------------------------------------------- | ------- |
 | `--message-file <path>` | Read the message from a file                                  | -       |
 | `--item <queued-id>`    | Steer a message already in the chat queue (ids are in status) | -       |
-| `--read-only`           | Only steer when the running round is read-only                | -       |
+| `--read-only`           | Only steer new text when the running round is read-only       | -       |
 | `--json`                | Output as JSON (for scripting)                                | -       |
 
 ## `maestro-cli group-chat status <chat>`

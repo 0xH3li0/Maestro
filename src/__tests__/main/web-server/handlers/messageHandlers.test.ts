@@ -2336,6 +2336,23 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.steerGroupChat).not.toHaveBeenCalled();
 			});
 
+			it('rejects readOnly together with a queued item id', () => {
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					itemId: 'item-1',
+					readOnly: true,
+					requestId: 'req-s7',
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'error',
+					message: 'readOnly applies to new text; a queued item keeps its own',
+					requestId: 'req-s7',
+				});
+				expect(callbacks.steerGroupChat).not.toHaveBeenCalled();
+			});
+
 			it('reports a callback that throws, tagged with the requestId', async () => {
 				(callbacks.steerGroupChat as any).mockRejectedValue(new Error('queue gone'));
 				handler.handleMessage(client, {

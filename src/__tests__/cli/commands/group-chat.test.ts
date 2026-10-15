@@ -214,7 +214,7 @@ describe('group-chat commands', () => {
 			type: 'steer_group_chat_result',
 			success: true,
 			chatId: 'abc123',
-			result: { outcome: 'delivered', verdict: 'delivered', targets: ['Alice', 'Bob'] },
+			result: { outcome: 'delivered', verdict: 'delivered', targets: ['Alice'] },
 		};
 
 		it('steers new text into the resolved chat with the steer round-trip timeout', async () => {
@@ -231,35 +231,39 @@ describe('group-chat commands', () => {
 				message: 'also check the docs',
 			});
 			expect(timeouts[1]).toBe(QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS);
-			expect(logSpy).toHaveBeenCalledWith('Steered into abc123: Alice, Bob');
+			expect(logSpy).toHaveBeenCalledWith('Steered into abc123: Alice');
 			expect(exitSpy).not.toHaveBeenCalled();
 		});
 
-		it('steers a queued item by id, read-only when asked', async () => {
+		it('steers a queued item by id', async () => {
 			const { sent } = mockBridge({ get_group_chats: chats, steer_group_chat: taken });
 
-			await groupChatSteer('abc123', undefined, { item: 'item-1', readOnly: true });
+			await groupChatSteer('abc123', undefined, { item: 'item-1' });
+
+			expect(sent[1]).toEqual({ type: 'steer_group_chat', chatId: 'abc123', itemId: 'item-1' });
+		});
+
+		it('passes --read-only with new text', async () => {
+			const { sent } = mockBridge({ get_group_chats: chats, steer_group_chat: taken });
+
+			await groupChatSteer('abc123', 'look only', { readOnly: true });
 
 			expect(sent[1]).toEqual({
 				type: 'steer_group_chat',
 				chatId: 'abc123',
-				itemId: 'item-1',
+				message: 'look only',
 				readOnly: true,
 			});
 		});
 
-		it('names the turns that refused when others took it', async () => {
-			mockBridge({
-				get_group_chats: chats,
-				steer_group_chat: {
-					...taken,
-					result: { ...taken.result, targets: ['Alice'], refusedBy: ['Bob'] },
-				},
-			});
-
-			await groupChatSteer('abc123', 'go', {});
-
-			expect(logSpy).toHaveBeenCalledWith('  Could not take it: Bob');
+		it('refuses --read-only with --item, before contacting the app', async () => {
+			await expect(
+				groupChatSteer('abc123', undefined, { item: 'item-1', readOnly: true })
+			).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: --read-only applies to new text; a queued item keeps its own setting'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
 		it('prints the result as JSON', async () => {
@@ -272,7 +276,7 @@ describe('group-chat commands', () => {
 				chatId: 'abc123',
 				outcome: 'delivered',
 				verdict: 'delivered',
-				targets: ['Alice', 'Bob'],
+				targets: ['Alice'],
 			});
 		});
 

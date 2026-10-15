@@ -1001,6 +1001,33 @@ describe('steering into the running round', () => {
 			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
 		});
 
+		it('answers held for an item a failed send or steer left marked, typing nothing', async () => {
+			const h = installSteer();
+			// A turn that exited without answering puts its steer back exactly like this.
+			await returnSteeredMessage(CHAT_ID, { text: 'maybe sent' }, true);
+			await settle();
+			const heldId = (await getQueue(CHAT_ID)).items[0].id;
+
+			const result = await steerQueuedItem(CHAT_ID, heldId);
+
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'held' });
+			expect(h.steer).not.toHaveBeenCalled();
+			const state = await getQueue(CHAT_ID);
+			expect(state.items[0]).toMatchObject({ id: heldId, failed: true });
+			expect(state.items[0].sending).toBeUndefined();
+			expect(state.paused).toBe(true);
+		});
+
+		it('answers command-prefix for a queued slash or bang command', async () => {
+			const h = installSteer();
+			await enqueue(item('1', '!commit'));
+
+			expect(await steerQueuedItem(CHAT_ID, '1')).toMatchObject({
+				blockedReason: 'command-prefix',
+			});
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
 		it('answers steer-in-flight while another steer holds the send latch', async () => {
 			let release!: () => void;
 			const gate = new Promise<void>((r) => {

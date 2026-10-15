@@ -807,7 +807,7 @@ groupChat
 	)
 	.option('--message-file <path>', 'Read the message from a file')
 	.option('--item <queued-id>', 'Steer a message already in the chat queue (ids are in status)')
-	.option('--read-only', 'Only steer when the running round is read-only')
+	.option('--read-only', 'Only steer new text when the running round is read-only')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatSteer);
 

@@ -24,28 +24,20 @@ describe('notifyGroupChatSteerResult', () => {
 		vi.mocked(notifyToast).mockClear();
 	});
 
-	it('names the turns that took a delivered steer', () => {
-		notifyGroupChatSteerResult({ outcome: 'delivered', targets: ['Alice', 'Bob'] });
+	it('names the turn that took a delivered steer', () => {
+		notifyGroupChatSteerResult({ outcome: 'delivered', targets: ['Alice'] });
 
 		expect(lastToast()).toEqual({
 			color: 'green',
 			title: 'Sent to the running round',
-			message: 'Steered to Alice, Bob.',
+			message: 'Steered to Alice.',
 		});
 	});
 
-	it('adds the turns that refused to a settled steer', () => {
-		notifyGroupChatSteerResult({
-			outcome: 'settled',
-			verdict: 'absorbed',
-			targets: ['Alice'],
-			refusedBy: ['Bob'],
-		});
+	it('names the turn for a settled steer too', () => {
+		notifyGroupChatSteerResult({ outcome: 'settled', verdict: 'absorbed', targets: ['Moderator'] });
 
-		expect(lastToast()).toMatchObject({
-			color: 'green',
-			message: 'Steered to Alice. Could not take it: Bob.',
-		});
+		expect(lastToast()).toMatchObject({ color: 'green', message: 'Steered to Moderator.' });
 	});
 
 	it('warns, dismissibly, that an unconfirmed steer paused the queue', () => {

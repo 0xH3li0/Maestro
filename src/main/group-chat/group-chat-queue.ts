@@ -591,6 +591,7 @@ export async function steerQueuedItem(
 			text: item.text,
 			images: item.images,
 			sending: item.sending,
+			failed: item.failed,
 		});
 		if (blocked) return notSteerable(blocked);
 

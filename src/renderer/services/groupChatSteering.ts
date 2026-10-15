@@ -16,17 +16,13 @@ import { notifyToast } from '../stores/notificationStore';
 export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 	switch (result.outcome) {
 		case 'delivered':
-		case 'settled': {
-			const refused = result.refusedBy?.length
-				? ` Could not take it: ${result.refusedBy.join(', ')}.`
-				: '';
+		case 'settled':
 			notifyToast({
 				color: 'green',
 				title: 'Sent to the running round',
-				message: `Steered to ${(result.targets ?? []).join(', ')}.${refused}`,
+				message: `Steered to ${(result.targets ?? []).join(', ')}.`,
 			});
 			return;
-		}
 		case 'unconfirmed':
 			notifyToast({
 				color: 'orange',

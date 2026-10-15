@@ -206,6 +206,9 @@ export async function groupChatSteer(
 	if (hasText === !!options.item) {
 		fail('Pass a message or --item <queued-id>, not both', options.json);
 	}
+	if (options.item && options.readOnly) {
+		fail('--read-only applies to new text; a queued item keeps its own setting', options.json);
+	}
 
 	try {
 		const { chatId, reply } = await withMaestroClient(async (client) => {
@@ -231,8 +234,6 @@ export async function groupChatSteer(
 			console.log(JSON.stringify({ success: taken, chatId, ...result }));
 		} else if (taken) {
 			console.log(`Steered into ${chatId}: ${(result.targets ?? []).join(', ')}`);
-			if (result.refusedBy?.length)
-				console.log(`  Could not take it: ${result.refusedBy.join(', ')}`);
 		} else {
 			console.error(`Error: ${result.outcome}${result.detail ? `: ${result.detail}` : ''}`);
 		}

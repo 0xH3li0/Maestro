@@ -39,8 +39,8 @@ import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
 import type { SteeringResultFrame } from '../../chatSteering';
 import {
 	GROUP_CHAT_STEER_BLOCKED_DETAILS,
-	pickGroupChatSteerTargets,
-	summarizeGroupChatSteer,
+	groupChatSteerResult,
+	pickGroupChatSteerTarget,
 	type GroupChatRunningTurns,
 	type GroupChatSteerBlockedReason,
 	type GroupChatSteerResult,
@@ -893,15 +893,11 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	// Steering: a message into a round that is already running
 	// ==========================================================================
 
-	/** One steered message, shared by every turn it was typed into. */
+	/** A steered message the turn has, until the turn says what it did with it. */
 	interface SteeredMessage {
 		groupChatId: string;
 		text: string;
 		readOnly: boolean;
-		/** Turns that have not said what they did with it yet. */
-		unsettled: number;
-		/** Whether any turn took it (absorbed or queued). */
-		taken: boolean;
 	}
 
 	/**
@@ -910,6 +906,17 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	 * the message back, so the caller can queue it again instead of losing it.
 	 */
 	const pendingSteers = new Map<string, SteeredMessage>();
+
+	/**
+	 * Turns a steer is being typed into right now, with what they reported before
+	 * the socket answered. The transcript verdict and the exit travel on other
+	 * channels than the socket reply and can beat it; dropped on the floor, a turn
+	 * that ended mid-typing would leave a message nobody ever returns.
+	 */
+	const steersAwaitingSocket = new Map<
+		string,
+		{ verdicts: SteeringResultFrame[]; exited: boolean }
+	>();
 
 	/** The turns running in a room right now, by full process id. */
 	function runningTurns(groupChatId: string): GroupChatRunningTurns {
@@ -924,7 +931,7 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 
 	/**
 	 * Type a user message into the round that is running, rather than waiting for
-	 * it to end. The targets follow `pickGroupChatSteerTargets`. A message any turn
+	 * it to end. The turn follows `pickGroupChatSteerTarget`. A message the turn
 	 * took is recorded in the room as the user's, marked with who took it, so the
 	 * moderator's synthesis and every later turn see it in the history.
 	 *
@@ -949,82 +956,94 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		// access than the user gave it.
 		if (readOnly && !getGroupChatReadOnlyState(groupChatId)) return notSteerable('read-only');
 
-		const picked = pickGroupChatSteerTargets(text, runningTurns(groupChatId));
+		const picked = pickGroupChatSteerTarget(text, runningTurns(groupChatId));
 		if ('blocked' in picked) return notSteerable(picked.blocked);
+		const { target } = picked;
+		if (steersAwaitingSocket.has(target.processId)) return notSteerable('steer-in-flight');
 
-		const attempts = await Promise.all(
-			picked.targets.map(async (target) => {
-				let result: SteeringResultFrame;
-				try {
-					result = await steer(target.processId, text);
-				} catch (error) {
-					result = {
-						type: 'steering',
-						id: '',
-						verdict: 'unknown',
-						detail: error instanceof Error ? error.message : String(error),
-					};
-				}
-				return { target, result };
-			})
-		);
-		const summary = summarizeGroupChatSteer(attempts);
-		if (summary.outcome !== 'delivered' && summary.outcome !== 'settled') return summary;
-
-		const delivered = attempts.filter((a) => a.result.verdict === 'delivered' && a.result.id);
-		if (delivered.length > 0) {
-			const steered: SteeredMessage = {
-				groupChatId,
-				text,
-				readOnly,
-				unsettled: delivered.length,
-				taken: summary.outcome === 'settled' || delivered.length < (summary.targets?.length ?? 0),
+		const early: { verdicts: SteeringResultFrame[]; exited: boolean } = {
+			verdicts: [],
+			exited: false,
+		};
+		steersAwaitingSocket.set(target.processId, early);
+		let frame: SteeringResultFrame;
+		try {
+			frame = await steer(target.processId, text);
+		} catch (error) {
+			frame = {
+				type: 'steering',
+				id: '',
+				verdict: 'unknown',
+				detail: error instanceof Error ? error.message : String(error),
 			};
-			for (const { target, result } of delivered) {
-				pendingSteers.set(`${target.processId}:${result.id}`, steered);
+		} finally {
+			steersAwaitingSocket.delete(target.processId);
+		}
+
+		// Fold in what the turn reported while the socket was still answering.
+		if (frame.verdict === 'delivered') {
+			const later = early.verdicts.find(
+				(v) => v.id === frame.id && v.verdict !== 'delivered' && v.verdict !== 'refused'
+			);
+			if (later?.verdict === 'dropped') {
+				// The turn ended before it took the text. Nothing reached the room, so
+				// the message is still the caller's to send normally.
+				return {
+					outcome: 'refused',
+					verdict: 'dropped',
+					refusal: 'not-running',
+					detail: 'the turn ended before it took the message',
+				};
+			}
+			if (later) frame = later;
+			else if (early.exited) {
+				// Gone without a verdict: nobody knows whether it saw the text.
+				return {
+					outcome: 'unconfirmed',
+					verdict: 'unknown',
+					detail: 'the turn ended without saying whether it took the message',
+				};
 			}
 		}
 
+		const result = groupChatSteerResult(target, frame);
+		if (result.outcome !== 'delivered' && result.outcome !== 'settled') return result;
+
+		if (result.outcome === 'delivered' && frame.id) {
+			pendingSteers.set(`${target.processId}:${frame.id}`, { groupChatId, text, readOnly });
+		}
 		const chat = await loadGroupChat(groupChatId);
 		if (chat) {
 			await recordUserMessage(groupChatId, chat.logPath, text, {
 				readOnly,
-				steeredTo: summary.targets,
+				steeredTo: result.targets,
 			});
 		}
-		return summary;
-	}
-
-	/** A steered message no turn ended up taking. */
-	interface ReturnedSteer {
-		groupChatId: string;
-		text: string;
-		readOnly: boolean;
-	}
-
-	function settleSteer(key: string, taken: boolean): ReturnedSteer | null {
-		const steered = pendingSteers.get(key);
-		if (!steered) return null;
-		pendingSteers.delete(key);
-		steered.unsettled -= 1;
-		steered.taken ||= taken;
-		if (steered.unsettled > 0 || steered.taken) return null;
-		return { groupChatId: steered.groupChatId, text: steered.text, readOnly: steered.readOnly };
+		return result;
 	}
 
 	/**
 	 * A steered turn said what it did with the message (maestro-p's transcript
-	 * verdict). Returns the message when no turn it went to took it: the run ended
+	 * verdict). Returns the message when the turn never took it: the run ended
 	 * first, the text is gone, and re-sending it is the caller's job.
 	 */
-	function steeringVerdict(processId: string, verdict: SteeringResultFrame): ReturnedSteer | null {
+	function steeringVerdict(processId: string, verdict: SteeringResultFrame): SteeredMessage | null {
 		const key = `${processId}:${verdict.id}`;
+		const steered = pendingSteers.get(key);
+		if (!steered) {
+			// Possibly the steer being typed right now, ahead of its own socket reply.
+			// Only an unknown id is held: an earlier steer's verdict settles below.
+			steersAwaitingSocket.get(processId)?.verdicts.push(verdict);
+			return null;
+		}
 		switch (verdict.verdict) {
 			case 'absorbed':
 			case 'queued':
-				return settleSteer(key, true);
+				pendingSteers.delete(key);
+				return null;
 			case 'dropped':
-				return settleSteer(key, false);
+				pendingSteers.delete(key);
+				return steered;
 			default:
 				// `delivered` repeated on stdout says nothing new.
 				return null;
@@ -1037,12 +1056,14 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	 * came (a crash, a kill), and nobody knows whether the agent saw the text.
 	 * Returned so the caller can hold it, never send it twice without asking.
 	 */
-	function unsettledSteersOnExit(processId: string): ReturnedSteer[] {
-		const returned: ReturnedSteer[] = [];
-		for (const key of [...pendingSteers.keys()]) {
+	function unsettledSteersOnExit(processId: string): SteeredMessage[] {
+		const awaiting = steersAwaitingSocket.get(processId);
+		if (awaiting) awaiting.exited = true;
+		const returned: SteeredMessage[] = [];
+		for (const [key, steered] of [...pendingSteers]) {
 			if (!key.startsWith(`${processId}:`)) continue;
-			const steer = settleSteer(key, false);
-			if (steer) returned.push(steer);
+			pendingSteers.delete(key);
+			returned.push(steered);
 		}
 		return returned;
 	}

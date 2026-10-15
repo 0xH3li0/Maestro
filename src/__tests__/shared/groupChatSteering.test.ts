@@ -1,8 +1,8 @@
 /**
  * @file groupChatSteering.test.ts
- * @description Tests for src/shared/groupChatSteering.ts - which turns of a
- * running group chat round a steered message goes to, how the per-turn socket
- * answers fold into one result, and the `|steered:` chat log field.
+ * @description Tests for src/shared/groupChatSteering.ts - which ONE turn of a
+ * running group chat round a steered message goes to, how that turn's socket
+ * answer becomes a result, and the `|steered:` chat log field.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -13,11 +13,10 @@ import {
 	GROUP_CHAT_MODERATOR_STEER_TARGET,
 	GROUP_CHAT_STEER_BLOCKED_DETAILS,
 	groupChatSteerBlockedReason,
+	groupChatSteerResult,
 	parseSteeredLogField,
-	pickGroupChatSteerTargets,
+	pickGroupChatSteerTarget,
 	STEERED_LOG_FIELD_PREFIX,
-	summarizeGroupChatSteer,
-	type GroupChatSteerAttempt,
 	type GroupChatSteerTarget,
 } from '../../shared/groupChatSteering';
 
@@ -27,13 +26,10 @@ const alice: GroupChatSteerTarget = {
 };
 const bob: GroupChatSteerTarget = { name: 'Bob', processId: 'group-chat-1-participant-Bob-1' };
 
-function attempt(
-	target: GroupChatSteerTarget,
+const frame = (
 	verdict: SteeringResultFrame['verdict'],
 	extra: Partial<SteeringResultFrame> = {}
-): GroupChatSteerAttempt {
-	return { target, result: { type: 'steering', id: `id-${target.name}`, verdict, ...extra } };
-}
+): SteeringResultFrame => ({ type: 'steering', id: 's1', verdict, ...extra });
 
 describe('groupChatSteerBlockedReason', () => {
 	it('allows a plain message into a busy room', () => {
@@ -41,7 +37,14 @@ describe('groupChatSteerBlockedReason', () => {
 	});
 
 	it('reports a message already on its way first, even in an idle room', () => {
-		expect(groupChatSteerBlockedReason({ busy: false, text: 'hi', sending: true })).toBe('sending');
+		expect(
+			groupChatSteerBlockedReason({ busy: false, text: 'hi', sending: true, failed: true })
+		).toBe('sending');
+	});
+
+	it('reports a held item before anything about the room or the text', () => {
+		expect(groupChatSteerBlockedReason({ busy: true, text: 'hi', failed: true })).toBe('held');
+		expect(groupChatSteerBlockedReason({ busy: false, text: '', failed: true })).toBe('held');
 	});
 
 	it('blocks an idle room', () => {
@@ -60,10 +63,21 @@ describe('groupChatSteerBlockedReason', () => {
 		expect(groupChatSteerBlockedReason({ busy: true, text: 'see', images: [] })).toBeNull();
 	});
 
-	it('blocks text over the steering limit', () => {
+	it('blocks text over the steering limit, before looking at its prefix', () => {
 		expect(
-			groupChatSteerBlockedReason({ busy: true, text: 'x'.repeat(STEERING_MAX_TEXT_BYTES + 1) })
+			groupChatSteerBlockedReason({ busy: true, text: '/' + 'x'.repeat(STEERING_MAX_TEXT_BYTES) })
 		).toBe('too-long');
+	});
+
+	it.each(['/compact', '!commit', '  /clear now', '\n!autorun doc.md'])(
+		'blocks %j, which a TUI would run as a command',
+		(text) => {
+			expect(groupChatSteerBlockedReason({ busy: true, text })).toBe('command-prefix');
+		}
+	);
+
+	it('allows a slash or bang that is not the first character', () => {
+		expect(groupChatSteerBlockedReason({ busy: true, text: 'see a/b and c!' })).toBeNull();
 	});
 
 	it('words every blocked reason', () => {
@@ -73,107 +87,87 @@ describe('groupChatSteerBlockedReason', () => {
 	});
 });
 
-describe('pickGroupChatSteerTargets', () => {
+describe('pickGroupChatSteerTarget', () => {
 	it('picks the moderator when its turn is running, whatever the message mentions', () => {
 		expect(
-			pickGroupChatSteerTargets('@Alice stop', {
+			pickGroupChatSteerTarget('@Alice @Bob stop', {
 				moderator: 'group-chat-1-moderator-1',
-				participants: [alice],
+				participants: [alice, bob],
 			})
 		).toEqual({
-			targets: [{ name: GROUP_CHAT_MODERATOR_STEER_TARGET, processId: 'group-chat-1-moderator-1' }],
+			target: { name: GROUP_CHAT_MODERATOR_STEER_TARGET, processId: 'group-chat-1-moderator-1' },
 		});
 	});
 
 	it('blocks when nothing is running', () => {
-		expect(pickGroupChatSteerTargets('hello', { participants: [] })).toEqual({
+		expect(pickGroupChatSteerTarget('hello', { participants: [] })).toEqual({
 			blocked: 'no-running-turn',
 		});
 	});
 
-	it('picks every working participant when the message mentions nobody', () => {
-		expect(pickGroupChatSteerTargets('also check docs', { participants: [alice, bob] })).toEqual({
-			targets: [alice, bob],
+	it('picks the one working participant when the message mentions nobody', () => {
+		expect(pickGroupChatSteerTarget('also check docs', { participants: [alice] })).toEqual({
+			target: alice,
 		});
 	});
 
-	it('narrows to the working participants the message mentions', () => {
-		expect(
-			pickGroupChatSteerTargets('@Bob use the new API', { participants: [alice, bob] })
-		).toEqual({ targets: [bob] });
+	it('blocks as ambiguous when two participants work and the message mentions nobody', () => {
+		expect(pickGroupChatSteerTarget('also check docs', { participants: [alice, bob] })).toEqual({
+			blocked: 'ambiguous-target',
+		});
 	});
 
-	it('lists a participant mentioned twice once', () => {
+	it('picks the working participant the message mentions', () => {
 		expect(
-			pickGroupChatSteerTargets('@Alice and @Bob, @Alice again', { participants: [alice, bob] })
-		).toEqual({ targets: [alice, bob] });
+			pickGroupChatSteerTarget('@Bob use the new API', { participants: [alice, bob] })
+		).toEqual({ target: bob });
+	});
+
+	it('picks a participant mentioned twice', () => {
+		expect(pickGroupChatSteerTarget('@Bob and again @Bob', { participants: [alice, bob] })).toEqual(
+			{ target: bob }
+		);
+	});
+
+	it('blocks as ambiguous when the mentions name two working participants', () => {
+		expect(
+			pickGroupChatSteerTarget('@Alice and @Bob, both of you', { participants: [alice, bob] })
+		).toEqual({ blocked: 'ambiguous-target' });
 	});
 
 	it('blocks when any mention names an agent that is not working', () => {
 		expect(
-			pickGroupChatSteerTargets('@Alice and @Carol please', { participants: [alice, bob] })
+			pickGroupChatSteerTarget('@Alice and @Carol please', { participants: [alice, bob] })
 		).toEqual({ blocked: 'mention-not-working' });
+		expect(pickGroupChatSteerTarget('@Carol please', { participants: [alice] })).toEqual({
+			blocked: 'mention-not-working',
+		});
 	});
 });
 
-describe('summarizeGroupChatSteer', () => {
-	it('reports delivered with every target that took it and the ones that refused', () => {
-		expect(
-			summarizeGroupChatSteer([
-				attempt(alice, 'delivered'),
-				attempt(bob, 'refused', { refusal: 'blocking-dialog' }),
-			])
-		).toEqual({
+describe('groupChatSteerResult', () => {
+	it('reports delivered with the turn that took it', () => {
+		expect(groupChatSteerResult(alice, frame('delivered'))).toEqual({
 			outcome: 'delivered',
 			verdict: 'delivered',
 			targets: ['Alice'],
-			refusedBy: ['Bob'],
 		});
 	});
 
-	it('leaves refusedBy out when nobody refused', () => {
-		const result = summarizeGroupChatSteer([attempt(alice, 'delivered'), attempt(bob, 'queued')]);
-		expect(result).toEqual({
-			outcome: 'delivered',
-			verdict: 'delivered',
-			targets: ['Alice', 'Bob'],
-		});
-		expect(result).not.toHaveProperty('refusedBy');
-	});
-
-	it('reports settled with the first verdict when every taker already settled', () => {
-		expect(summarizeGroupChatSteer([attempt(alice, 'queued'), attempt(bob, 'absorbed')])).toEqual({
+	it.each(['absorbed', 'queued'] as const)('reports %s as settled with the turn', (verdict) => {
+		expect(groupChatSteerResult(bob, frame(verdict))).toEqual({
 			outcome: 'settled',
-			verdict: 'queued',
-			targets: ['Alice', 'Bob'],
+			verdict,
+			targets: ['Bob'],
 		});
 	});
 
-	it('counts a taken message as delivered even when another target is unknown', () => {
-		const result = summarizeGroupChatSteer([attempt(alice, 'unknown'), attempt(bob, 'delivered')]);
-		expect(result.outcome).toBe('delivered');
-		expect(result.targets).toEqual(['Bob']);
-	});
-
-	it('reports unconfirmed, never refused, when nobody took it and one might have', () => {
+	it('reports a refusal with its reason and detail', () => {
 		expect(
-			summarizeGroupChatSteer([
-				attempt(alice, 'refused', { detail: 'busy' }),
-				attempt(bob, 'unknown', { detail: 'socket timed out' }),
-			])
-		).toEqual({ outcome: 'unconfirmed', verdict: 'unknown', detail: 'socket timed out' });
-	});
-
-	it('treats a socket-level dropped as unconfirmed', () => {
-		expect(summarizeGroupChatSteer([attempt(alice, 'dropped')]).outcome).toBe('unconfirmed');
-	});
-
-	it('reports refused with the first refusal when every target refused', () => {
-		expect(
-			summarizeGroupChatSteer([
-				attempt(alice, 'refused', { refusal: 'blocking-dialog', detail: 'a permission prompt' }),
-				attempt(bob, 'refused', { refusal: 'not-running', detail: 'turn ended' }),
-			])
+			groupChatSteerResult(
+				alice,
+				frame('refused', { refusal: 'blocking-dialog', detail: 'a permission prompt' })
+			)
 		).toEqual({
 			outcome: 'refused',
 			verdict: 'refused',
@@ -181,6 +175,17 @@ describe('summarizeGroupChatSteer', () => {
 			detail: 'a permission prompt',
 		});
 	});
+
+	it.each(['unknown', 'dropped'] as const)(
+		'reports %s as unconfirmed, never refused',
+		(verdict) => {
+			expect(groupChatSteerResult(alice, frame(verdict, { detail: 'socket timed out' }))).toEqual({
+				outcome: 'unconfirmed',
+				verdict,
+				detail: 'socket timed out',
+			});
+		}
+	);
 });
 
 describe('steered log field', () => {

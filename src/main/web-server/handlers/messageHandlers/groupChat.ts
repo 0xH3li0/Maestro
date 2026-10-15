@@ -203,6 +203,12 @@ export function handleSteerGroupChat(
 		ctx.sendError(client, 'Pass a queued item id or a message, not both', reply);
 		return;
 	}
+	// A queued item keeps the read-only setting it was queued with. Accepting the
+	// flag here and ignoring it would read as a constraint that was never applied.
+	if (hasItem && message.readOnly === true) {
+		ctx.sendError(client, 'readOnly applies to new text; a queued item keeps its own', reply);
+		return;
+	}
 	if (!ctx.callbacks.steerGroupChat) {
 		ctx.sendError(client, 'Group chat steering not configured', reply);
 		return;

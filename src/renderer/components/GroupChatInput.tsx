@@ -576,6 +576,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				text: entry?.text,
 				images: entry?.images,
 				sending: entry?.sending,
+				failed: entry?.failed,
 			});
 			return { canSteer: !!entry && blocked === null };
 		},
