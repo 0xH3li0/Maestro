@@ -1,7 +1,7 @@
 /**
  * QuickChatTabPicker - choose the tab the next Quick Chat message goes to.
  *
- * The fixed rows (New tab, Any tab) come first so the chord then Enter starts a
+ * The fixed rows (New tab, Any tab) come first so Cmd+T, Up, Enter starts a
  * new tab, and the row for where the next message goes now is selected.
  */
 

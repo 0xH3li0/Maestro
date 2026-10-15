@@ -94,13 +94,13 @@ describe('tab picker', () => {
 		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
 	});
 
-	it('Cmd+J opens it with New tab first, and Enter on it forces a new tab', async () => {
+	it('Cmd+T opens it with New tab first, and clicking it forces a new tab', async () => {
 		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
 			ok: true,
 			snapshot: snapshot({ tabs, next: { kind: 'new' } }),
 		});
 		await renderWith(snapshot({ tabs }));
-		await act(async () => fireEvent.keyDown(window, { key: 'j', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
 		const rows = screen.getAllByTestId('quick-chat-tab-row');
 		expect(rows.map((r) => r.textContent)).toEqual([
 			expect.stringContaining('New tab'),
@@ -114,6 +114,45 @@ describe('tab picker', () => {
 			choice: { kind: 'new' },
 		});
 		expect(screen.queryByTestId('quick-chat-tab-picker')).toBeNull();
+	});
+
+	// The keyboard path: Cmd+T, the row in effect (Any tab) is selected with New
+	// tab in view right above it, Up then Enter starts a new tab.
+	it('Cmd+T selects the row in effect, and Up then Enter picks New tab', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ tabs, next: { kind: 'new' } }),
+		});
+		await renderWith(snapshot({ tabs }));
+		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		const rows = screen.getAllByTestId('quick-chat-tab-row');
+		expect(rows[0]).toHaveTextContent('New tab');
+		expect(rows[1]).toHaveAttribute('aria-selected', 'true');
+
+		const filter = screen.getByTestId('quick-chat-tab-filter');
+		expect(filter).toHaveFocus();
+		await act(async () => fireEvent.keyDown(filter, { key: 'ArrowUp' }));
+		expect(screen.getAllByTestId('quick-chat-tab-row')[0]).toHaveAttribute('aria-selected', 'true');
+		await act(async () => fireEvent.keyDown(filter, { key: 'Enter' }));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'setTab',
+			choice: { kind: 'new' },
+		});
+	});
+
+	// Opening the list slides rows under a pointer that is not moving, and
+	// Chromium reports that as a mousemove: it must not take the selection.
+	it('keeps the selection when a row slides under a still pointer', async () => {
+		await renderWith(snapshot({ tabs }));
+		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		const rows = screen.getAllByTestId('quick-chat-tab-row');
+		fireEvent.mouseMove(rows[0], { screenX: 50, screenY: 50 });
+		fireEvent.mouseMove(rows[0], { screenX: 50, screenY: 50 });
+		expect(rows[1]).toHaveAttribute('aria-selected', 'true');
+
+		// A real move does select.
+		fireEvent.mouseMove(rows[0], { screenX: 52, screenY: 50 });
+		expect(screen.getAllByTestId('quick-chat-tab-row')[0]).toHaveAttribute('aria-selected', 'true');
 	});
 
 	it('picking a tab sends the next message there', async () => {
@@ -259,20 +298,20 @@ describe('keyboard chords', () => {
 });
 
 describe('Open in Maestro', () => {
-	it('Cmd+T opens the chat as a tab once there is one, and the overlay names the chord', async () => {
+	it('Cmd+Shift+T opens the chat as a tab once there is one, and the overlay names the chord', async () => {
 		const open = snapshot({ tabId: 't1', messages: [{ id: 'm', role: 'user', text: 'hi' }] });
 		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({ ok: true, snapshot: open });
 		await renderWith(open);
-		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 'T', metaKey: true, shiftKey: true }));
 		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({ type: 'reveal' });
 
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Open in Maestro\./ }).parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent(/T$/);
 	});
 
-	it('Cmd+T does nothing before the first message', async () => {
+	it('Cmd+Shift+T does nothing before the first message', async () => {
 		await renderWith(snapshot({ tabId: null }));
-		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		await act(async () => fireEvent.keyDown(window, { key: 'T', metaKey: true, shiftKey: true }));
 		expect(window.maestro.quickChat.command).not.toHaveBeenCalledWith({ type: 'reveal' });
 	});
 });

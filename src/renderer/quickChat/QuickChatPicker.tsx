@@ -161,6 +161,19 @@ export function QuickChatPicker({
 		itemRefs.current[selectedIndexRef.current]?.scrollIntoView({ block: 'nearest' });
 	}, [listHeight, itemRefs]);
 
+	// Hover moves the selection only when the pointer really moves. The list
+	// opens, and the window grows, under a pointer that is standing still, and
+	// Chromium answers that with a mousemove at the same spot: taken at face
+	// value it moved the selection off the row in effect (the checked one) to
+	// whatever row happened to slide under the cursor.
+	const lastPointer = useRef<{ x: number; y: number } | null>(null);
+	const onRowMouseMove = (index: number, e: React.MouseEvent) => {
+		const prev = lastPointer.current;
+		lastPointer.current = { x: e.screenX, y: e.screenY };
+		if (!prev || (prev.x === e.screenX && prev.y === e.screenY)) return;
+		setSelectedIndex(index);
+	};
+
 	const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		// Every plain key typed here is the picker's. Escape especially: the
 		// window's own Escape hides Quick Chat, and backing out of a picker must
@@ -238,7 +251,7 @@ export function QuickChatPicker({
 								role="option"
 								aria-selected={isSelected}
 								data-testid={`${testIdPrefix}-row`}
-								onMouseMove={() => setSelectedIndex(index)}
+								onMouseMove={(e) => onRowMouseMove(index, e)}
 								onClick={() => pick(index)}
 								className="w-full px-3 py-1.5 text-left flex items-center gap-2 focus:outline-none"
 								style={{

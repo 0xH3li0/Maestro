@@ -69,19 +69,21 @@ const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 const QUICK_CHAT_KEYS = {
 	newChat: 'n',
 	picker: 'o',
-	tabPicker: 'j',
+	tabPicker: 't',
 	keep: 's',
 	pin: 'p',
-	openTab: 't',
 	close: 'w',
 } as const;
 
 /**
- * Chords that take Shift too. Only the thinking toggle, on the same chord the
- * main window's composer uses for its thinking chip.
+ * Chords that take Shift too: the thinking toggle, on the same chord the main
+ * window's composer uses for its thinking chip, and opening the chat's tab in
+ * Maestro, on the tab picker's letter.
  */
 const QUICK_CHAT_SHIFT_KEYS = {
 	thinking: 'k',
+	/** Shift on the tab picker's letter: open the chat's tab in Maestro itself. */
+	openTab: 't',
 } as const;
 
 /** What the thinking button says in each mode, and what a click does next. */
@@ -320,7 +322,7 @@ function QuickChatWindow() {
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	/** Which picker is open: the agent's (Cmd+O) or the next message's tab (Cmd+J). */
+	/** Which picker is open: the agent's (Cmd+O) or the next message's tab (Cmd+T). */
 	const [picker, setPicker] = useState<'agent' | 'tab' | null>(null);
 	const pickerOpen = picker !== null;
 	const [pinned, setPinned] = useState(true);
@@ -509,19 +511,19 @@ function QuickChatWindow() {
 
 	useEffect(() => {
 		// Cmd (Ctrl off macOS) + letter. Shift is left free for the composer,
-		// except for the thinking chord, which matches the main window's.
+		// except for the few chords in QUICK_CHAT_SHIFT_KEYS.
 		const chords: Record<string, () => void> = {
 			[QUICK_CHAT_KEYS.newChat]: newChat,
 			[QUICK_CHAT_KEYS.picker]: togglePicker,
 			[QUICK_CHAT_KEYS.tabPicker]: toggleTabPicker,
 			[QUICK_CHAT_KEYS.keep]: togglePersistent,
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
-			[QUICK_CHAT_KEYS.openTab]: openInMaestro,
 			// Closes the window whatever is open in it, unlike Escape.
 			[QUICK_CHAT_KEYS.close]: hide,
 		};
 		const shiftChords: Record<string, () => void> = {
 			[QUICK_CHAT_SHIFT_KEYS.thinking]: cycleThinking,
+			[QUICK_CHAT_SHIFT_KEYS.openTab]: openInMaestro,
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			// The diagram viewer owns the keyboard while it is open: its layer
@@ -840,7 +842,7 @@ function QuickChatWindow() {
 						theme={theme}
 						label="Open in Maestro"
 						hint="Shows this chat as a tab in the main window."
-						shortcut={['Meta', QUICK_CHAT_KEYS.openTab]}
+						shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.openTab]}
 						onClick={openInMaestro}
 						disabled={!snapshot.tabId}
 					>
