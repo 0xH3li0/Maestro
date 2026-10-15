@@ -327,14 +327,6 @@ export function useAgentSessionManagement(
 			const existingTab = targetSession.aiTabs?.find(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
-			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
-				// Reveal and focus the existing tab instead of creating a duplicate.
-				setSessions((prev) =>
-					prev.map((s) => (s.id === targetSession.id ? focusAiTabInSession(s, existingTab.id) : s))
-				);
-				setActiveAgentSessionId(agentSessionId);
-				return true;
-			}
 
 			try {
 				// The transcript read, the synopsis stripping, and the name / starred /
@@ -345,7 +337,7 @@ export function useAgentSessionManagement(
 					projectRoot: resolvedProjectRoot,
 					sshRemoteId,
 					agentSessionId,
-					providedMessages,
+					providedMessages: providedMessages ?? existingTab?.logs,
 					sessionName,
 					starred,
 					usageStats,
@@ -359,7 +351,13 @@ export function useAgentSessionManagement(
 					}
 					return false;
 				}
-				const { messages, name, starred: isStarred, usageStats: finalUsageStats } = resumable;
+				const {
+					messages,
+					name,
+					starred: isStarred,
+					usageStats: finalUsageStats,
+					origin,
+				} = resumable;
 
 				// Update the session and switch to AI mode
 				// IMPORTANT: Use functional update to get fresh session state and avoid race conditions
@@ -387,6 +385,7 @@ export function useAgentSessionManagement(
 											name: name ?? tab.name,
 											starred: isStarred || tab.starred,
 											usageStats: finalUsageStats ?? tab.usageStats,
+											origin: origin ?? tab.origin,
 										}
 									: tab
 							);
@@ -398,6 +397,7 @@ export function useAgentSessionManagement(
 							agentSessionId,
 							logs: messages,
 							name,
+							origin,
 							starred: isStarred,
 							usageStats: finalUsageStats,
 							saveToHistory: defaultSaveToHistory,

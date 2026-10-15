@@ -60,7 +60,7 @@ const METHODS: Record<string, string> = {
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
-		'broadcast-user-input cancelCommand getActiveProcesses interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
+		'broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
 	prompts: 'get getAll getAllIds getBundledDefault getPath listFiles reset save',
 	sessions:
 		'getActiveSessionId getAll getBootstrap getDeferredContent setActiveSessionId setAll setMany',
@@ -102,7 +102,7 @@ const EVENTS: Record<string, string> = {
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
-		'claude-mode-resolved command-exit data exit permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
+		'claude-mode-resolved command-exit data exit headlessActivity permission-request session-id slash-commands ssh-remote stderr thinking-chunk tool-execution usage user-input',
 	// Display-only remote pushes, not owner command/reply listeners. Movement
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:

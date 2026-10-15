@@ -1,3 +1,4 @@
+import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivity';
 import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
@@ -228,6 +229,16 @@ export function createProcessCoreApi() {
 		/**
 		 * Get all active processes from ProcessManager
 		 */
+		getHeadlessActivity: (): Promise<HeadlessAgentActivity> =>
+			ipcRenderer.invoke('process:getHeadlessActivity'),
+		onHeadlessActivity: (handler: (activity: HeadlessAgentActivity) => void): (() => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, activity: HeadlessAgentActivity) =>
+				handler(activity);
+			ipcRenderer.on('process:headlessActivity', listener);
+			return () => {
+				ipcRenderer.removeListener('process:headlessActivity', listener);
+			};
+		},
 		getActiveProcesses: (options?: {
 			includeChildProcesses?: boolean;
 		}): Promise<ActiveProcess[]> =>

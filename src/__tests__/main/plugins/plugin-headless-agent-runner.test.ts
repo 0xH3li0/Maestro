@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
+import { isAgentBusy } from '../../../main/utils/agent-busy';
+import type { SpawnAgentOptions } from '../../../cli/services/agent-spawner';
 import type { SessionInfo } from '../../../shared/types';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
 
@@ -533,4 +535,109 @@ describe('plugin headless agent runner', () => {
 		expect(issueRunToken).not.toHaveBeenCalled();
 		expect(spawn).toHaveBeenCalledOnce();
 	});
+});
+
+describe('headless activity is live process evidence', () => {
+	it('counts parallel Relay turns independently without touching desktop tabs', async () => {
+		const liveDesktop = new Set<string>();
+		const probe = { get: (id: string) => (liveDesktop.has(id) ? {} : undefined) };
+		const target = { ...agent, activeTabId: 'desktop', aiTabs: [{ id: 'desktop' }] };
+		const runs: Array<{
+			options: SpawnAgentOptions & { onProcessStarted?: (pid: number | undefined) => void };
+			finish: (value: { success: boolean; response: string }) => void;
+		}> = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => target as SessionInfo,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn: async (_type, _cwd, _prompt, _session, options) =>
+				new Promise((finish) => runs.push({ options: options!, finish })),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(isAgentBusy(target, probe)).toBe(false);
+		const first = run(agent.id, 'one', undefined, undefined, 'relay');
+		const second = run(agent.id, 'two', undefined, undefined, 'relay');
+		await vi.waitFor(() => expect(runs).toHaveLength(2));
+		// Dispatch/preparation/queue presence alone is not evidence of a process.
+		expect(isAgentBusy(target, probe)).toBe(false);
+		try {
+			runs[0].options.onProcessStarted?.(101);
+			runs[0].options.onProcessStarted?.(101); // duplicate start
+			runs[1].options.onProcessStarted?.(102);
+			expect(isAgentBusy(target, probe)).toBe(true);
+			expect(isAgentBusy({ id: 'other-agent' }, probe)).toBe(false);
+			runs[0].finish({ success: true, response: 'done' });
+			await first;
+			expect(isAgentBusy(target, probe)).toBe(true);
+			liveDesktop.add(`${agent.id}-ai-desktop`);
+			runs[1].finish({ success: true, response: 'done' });
+			await second;
+			expect(isAgentBusy(target, probe)).toBe(true);
+			liveDesktop.clear();
+			expect(isAgentBusy(target, probe)).toBe(false);
+			runs[0].options.onProcessStarted?.(101); // late start cannot revive it
+			expect(isAgentBusy(target, probe)).toBe(false);
+		} finally {
+			for (const r of runs) r.finish({ success: true, response: 'cleanup' });
+			await Promise.all([first, second]);
+		}
+	});
+});
+
+describe('headless lifecycle terminal paths', () => {
+	it.each(['success', 'error', 'timeout', 'cancel', 'plugin-stop', 'throw'] as const)(
+		'releases only its own process on %s and ignores late starts',
+		async (outcome) => {
+			const controller = new AbortController();
+			const recordRelayOrigin = vi.fn();
+			let started!: (pid: number | undefined) => void;
+			let end!: () => void;
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				recordRelayOrigin,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => false,
+				spawn: async (_type, _cwd, _prompt, _session, options) => {
+					started = (
+						options as SpawnAgentOptions & { onProcessStarted: (pid: number | undefined) => void }
+					).onProcessStarted;
+					started?.(301);
+					await new Promise<void>((resolve) => {
+						end = resolve;
+					});
+					if (outcome === 'throw') throw new Error('spawn failure');
+					return outcome === 'success'
+						? { success: true, response: 'done', agentSessionId: 'relay-conversation' }
+						: { success: false, error: outcome, agentSessionId: 'relay-conversation' };
+				},
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const pending = run(agent.id, 'hello', undefined, controller.signal, 'relay');
+			await vi.waitFor(() => expect(end).toBeTypeOf('function'));
+			try {
+				expect(isAgentBusy(agent, undefined)).toBe(true);
+				if (outcome === 'cancel' || outcome === 'plugin-stop') controller.abort();
+				end();
+				if (outcome === 'throw') await expect(pending).rejects.toThrow('spawn failure');
+				else {
+					await pending;
+					expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'relay-conversation');
+				}
+				expect(isAgentBusy(agent, undefined)).toBe(false);
+				started?.(301);
+				expect(isAgentBusy(agent, undefined)).toBe(false);
+			} finally {
+				end();
+				await pending.catch(() => {});
+			}
+		}
+	);
 });

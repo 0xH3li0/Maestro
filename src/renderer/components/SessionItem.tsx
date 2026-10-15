@@ -1,3 +1,4 @@
+import { useHasHeadlessActivity } from '../stores/headlessActivityStore';
 import React, { memo } from 'react';
 import {
 	Activity,
@@ -67,7 +68,8 @@ export function getEnhancedStatusColor(
 	isInBatch: boolean,
 	colorBlindMode: boolean = false,
 	hasActiveOutage: boolean = false,
-	isBeingConsulted: boolean = false
+	isBeingConsulted: boolean = false,
+	hasHeadlessActivity: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
@@ -95,6 +97,10 @@ export function getEnhancedStatusColor(
 	// specific "Thinking" / "Running command" label; both draw the same dot.
 	if (isBeingConsulted && session.state !== 'busy') {
 		return { color: warning, animate: true, label: 'Answering a consult' };
+	}
+
+	if (hasHeadlessActivity) {
+		return { color: warning, animate: true, label: 'Running headless turn' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
@@ -305,15 +311,18 @@ export const SessionItem = memo(function SessionItem({
 	// A cross-agent consult is invisible to `session.state` by design, so the dot
 	// asks the in-flight store directly.
 	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
+	const hasHeadlessActivity = useHasHeadlessActivity(session.id);
 	const statusInfo = getEnhancedStatusColor(
 		session,
 		theme,
 		isInBatch,
 		colorBlindMode,
 		hasActiveOutage,
-		isBeingConsulted
+		isBeingConsulted,
+		hasHeadlessActivity
 	);
-	const isDisconnected = !isInBatch && !isBeingConsulted && hasNoClaudeProviderSession(session);
+	const isDisconnected =
+		!isInBatch && !isBeingConsulted && !hasHeadlessActivity && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {

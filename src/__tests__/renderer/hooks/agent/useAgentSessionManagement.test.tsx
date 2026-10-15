@@ -7,6 +7,7 @@ import {
 import type { UseAgentSessionManagementDeps } from '../../../../renderer/hooks/agent/useAgentSessionManagement';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../helpers/mockSession';
+import { prepareSessionForPersistence } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
 import type { Session } from '../../../../renderer/types';
 
 const historyAdd = vi.fn().mockResolvedValue(true);
@@ -233,6 +234,19 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 		expect(typeof updater).toBe('function');
 		return (updater as (prev: Session[]) => Session[])([activeSession])[0].aiTabs;
 	}
+
+	it('keeps Relay provenance on the tab through a persisted reload', async () => {
+		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({
+			[AGENT_SESSION_ID]: { origin: 'relay' },
+		});
+		const tabs = await resumeWith('Relay conversation');
+		expect(tabs[0].origin).toBe('relay');
+		const persisted = prepareSessionForPersistence(createMockSession({ aiTabs: tabs }));
+		expect(JSON.parse(JSON.stringify(persisted)).aiTabs[0]).toMatchObject({
+			origin: 'relay',
+			state: 'idle',
+		});
+	});
 
 	it('names the restored tab from the caller-supplied session name', async () => {
 		const tabs = await resumeWith('PP Farm Meta Data');

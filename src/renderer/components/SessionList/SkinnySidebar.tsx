@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import { memo, useMemo } from 'react';
 import type { Session, Group, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
@@ -57,6 +58,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	showInitials,
 }: SkinnySidebarProps) {
 	const consultedSessionIds = useConsultedSessionIds();
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const attentionCtx: AttentionContext = {
 		batchSessionIds: new Set(activeBatchSessionIds),
 		stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
@@ -88,7 +90,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 				const isConsulted = consultedSessionIds.has(session.id);
 				// One flag for "working, but not via `session.state`", so the color and
 				// the hollow-dot branch below cannot disagree about which wins.
-				const isBusyOffState = isInBatch || isConsulted;
+				const isBusyOffState = isInBatch || isConsulted || (headlessCounts[session.id] ?? 0) > 0;
 				const effectiveStatusColor = isBusyOffState
 					? theme.colors.warning
 					: isUnboundClaude
@@ -98,11 +100,14 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 				const isActive = activeSessionId === session.id;
 				// Hollow means "no provider session yet": an outline, never a fill.
 				const isHollow = isUnboundClaude && !isBusyOffState;
-				const statusTitle = isConsulted
-					? 'Answering a consult'
-					: isUnboundClaude
-						? 'No active Claude session'
-						: undefined;
+				const statusTitle =
+					(headlessCounts[session.id] ?? 0) > 0
+						? 'Running headless turn'
+						: isConsulted
+							? 'Answering a consult'
+							: isUnboundClaude
+								? 'No active Claude session'
+								: undefined;
 				const initials = initialsById?.get(session.id);
 				const unreadDot = !isActive && hasUnreadTabs && (
 					<CornerDot color={theme.colors.error} title="Unread messages" />
