@@ -81,6 +81,7 @@ describe('dispatchToastClickAction', () => {
 	});
 
 	it('open-file dispatches the shared file-open event', () => {
+		seedSessions([createMockSession({ id: 's1' })]);
 		dispatchToastClickAction({ kind: 'open-file', sessionId: 's1', path: '/tmp/a.ts' });
 		expect(dispatchedEvent('maestro:openFileTab')?.detail).toEqual({
 			sessionId: 's1',

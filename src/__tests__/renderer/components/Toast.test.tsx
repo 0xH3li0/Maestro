@@ -373,6 +373,7 @@ describe('Toast', () => {
 
 		it('open-file: dispatches the maestro:openFileTab CustomEvent', () => {
 			const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'sess-9' })] });
 			setStoreToasts([
 				createMockToast({
 					clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },

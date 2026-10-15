@@ -83,6 +83,10 @@ export function dispatchToastClickAction(
 		}
 
 		case 'open-file':
+			if (!useSessionStore.getState().sessions.some((s) => s.id === action.sessionId)) {
+				reportMiss('Agent not found', 'The agent this notification points at is gone.');
+				return false;
+			}
 			// Reuse the existing CLI/remote file-open path. The listener
 			// (useAppRemoteEventListeners) switches to the target agent, reads the
 			// file, and opens it in a preview tab.

@@ -198,6 +198,29 @@ describe('notification inbox operations', () => {
 		}
 	);
 
+	it('reports file activation failure after its source agent was deleted', async () => {
+		const id = notifyToast({
+			title: 'Deleted file source',
+			message: '',
+			clickAction: { kind: 'open-file', sessionId: 'deleted', path: '/project/file.ts' },
+		});
+		useNotificationStore.getState().setNotificationCenterOpen(true);
+		const dispatch = vi.spyOn(window, 'dispatchEvent');
+		try {
+			expect(await performNotificationInboxAction({ action: 'activate', id })).toMatchObject({
+				success: false,
+				error: 'Notification activation failed',
+				open: true,
+			});
+			expect(dispatch.mock.calls.some(([event]) => event.type === 'maestro:openFileTab')).toBe(
+				false
+			);
+			expect(useNotificationStore.getState().history[0].title).toBe('Agent not found');
+		} finally {
+			dispatch.mockRestore();
+		}
+	});
+
 	it('reports stale IDs and entries without a link', async () => {
 		expect(await performNotificationInboxAction({ action: 'read', id: 'gone' })).toMatchObject({
 			success: false,
