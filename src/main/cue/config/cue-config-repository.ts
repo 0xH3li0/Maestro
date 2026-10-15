@@ -419,8 +419,12 @@ export function watchCueConfigFile(
 			)
 				return;
 			if (debounceTimer) return; // Native notification already queued the reload.
-			warn(
-				`[CUE] Missed config change for ${projectRoot}; reconciling YAML and timer registrations`
+			// Reconciliation is the normal fallback on synced/network directories.
+			// A pending reload is not a failure: reserve sticky health warnings for
+			// read, watcher, and reload errors (including the retry path below).
+			logger.info(
+				`[CUE] Missed config change for ${projectRoot}; reconciling YAML and timer registrations`,
+				'CueConfig'
 			);
 			debouncedOnChange();
 		} catch (error) {

@@ -167,15 +167,19 @@ export function createCueSessionRuntimeService(
 		if (!loadResult.ok) {
 			// Distinguish missing (silent) from parse / validation failures (loud).
 			if (loadResult.reason === 'parse-error') {
-				deps.onLog(
-					'error',
-					`[CUE] Failed to parse cue.yaml for "${session.name}": ${loadResult.message}`
-				);
+				const message = `[CUE] Failed to parse cue.yaml for "${session.name}": ${loadResult.message}`;
+				deps.onLog('error', message, {
+					type: 'triggerHealthWarning',
+					sessionId: session.id,
+					message,
+				});
 			} else if (loadResult.reason === 'invalid') {
-				deps.onLog(
-					'error',
-					`[CUE] cue.yaml for "${session.name}" is invalid:\n  - ${loadResult.errors.join('\n  - ')}`
-				);
+				const message = `[CUE] cue.yaml for "${session.name}" is invalid:\n  - ${loadResult.errors.join('\n  - ')}`;
+				deps.onLog('error', message, {
+					type: 'triggerHealthWarning',
+					sessionId: session.id,
+					message,
+				});
 			}
 
 			return { kind: loadResult.reason };
