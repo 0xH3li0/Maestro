@@ -295,7 +295,7 @@ The standalone engine catches up on time triggers it missed while the host slept
 - **Before the write:** the hook runs before that tick writes `last_seen`, so `detectSleepAndReconcile()` still measures the window from the last heartbeat written before the sleep. Detecting after the write (or from a separate timer that the heartbeat can beat) would see a gap of about zero and lose the window. `reconcileAfterWake()` restarts the heartbeat, which writes the new time and ends the stale tick.
 - **What it catches up on:** the same as the desktop's resume, through the same recovery service: one catch-up run per `time.heartbeat` and `time.scheduled` subscription that had an interval or a slot inside the gap (the payload carries the count, so a long sleep does not flood), and an immediate poll of every `github.*` source. File, agent-completion and task triggers need no catch-up.
 - **Not fired:** a gap below the threshold, a clock moved backward, during a drain, or on the desktop (powerMonitor already calls `reconcileAfterWake()` there, so a second trigger would only re-poll).
-- **Logged** once as `Sleep detected (gap: Nm). Reconciling missed events.` (`level: info`, `category: cue` under `--log-format json`).
+- **Logged** once as `Sleep detected (gap: Nm). Reconciling missed events.` (`level: info`, `category: cue` under `--log-format json`). The gap found at engine start (`detectSleepAndReconcile({ atEngineStart: true })`) is the engine's own downtime, not a sleep, so it logs `Engine was not running for Nm. Reconciling missed events.` instead; what it reconciles is unchanged.
 
 ## Running under systemd
 
