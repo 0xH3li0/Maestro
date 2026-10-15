@@ -71,7 +71,7 @@ Cue can run on a server with no desktop app. An operator exports agents and pipe
 
 ## Verification on this branch
 
-**CI** runs lint and format and the full test suite on ubuntu-latest and windows-latest for every push. On `1680acd97`, the last pushed commit, lint and format and both ubuntu-latest shards passed and one windows-latest test failed: a test of `cue activity --data-dir` expected a POSIX path. The fix (`908f252a5`) and the commits after `1680acd97` have not run in CI yet.
+**CI** runs lint and format and the full test suite on ubuntu-latest and windows-latest for every push. On `1680acd97`, the last pushed commit, lint and format and both ubuntu-latest shards passed and one windows-latest test failed: a test of `cue activity --data-dir` expected a POSIX path. The fix (`908f252a5`) and the commits after `1680acd97` get their first CI run with this push.
 
 **Local gates** on Linux at `3b47bb1a1`: `npm run lint`, `npm run lint:eslint`, `npm run docs:verify` (0 findings), `npm run build:server` from a clean archive, and the tests changed since the rc merge plus the lock, doctor, readiness and packaging tests (20 files, 639 passed, 4 skipped, 0 failed). The 4 skipped are real-SQLite tests that need `better-sqlite3` built for plain Node. On 2026-10-14 at `62902e3f0` the Cue, CLI, scripts and maestro-lib test directories ran (7,153 passed, 6 skipped; the 8 failures were rc's own and identical to rc). The whole suite was last run locally on 2026-10-12; it runs in CI.
 
