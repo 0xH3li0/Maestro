@@ -2450,7 +2450,7 @@ Open a tab of the chat in the main Maestro window: the tab a message went to, or
 
 ## `maestro-cli quick-chat new-tab [message-id]`
 
-Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
+Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

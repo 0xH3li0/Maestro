@@ -26,6 +26,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Stop                                         | The square button, shown beside Send while anything is in motion. It stops the replies in progress and withdraws messages still waiting                                                                 |
 | Open the tab a message went to               | Click the pill under the message                                                                                                                                                                        |
 | Stop waiting on a busy tab                   | **Send to a new tab**, shown under a message that is queued                                                                                                                                             |
+| Disagree with the tab Maestro chose          | The thumbs-down beside the pill. The message is sent to a new tab instead, and the chat continues there                                                                                                 |
 | Open the chat in Maestro                     | `Cmd+Shift+T` / `Ctrl+Shift+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                                                                    |
 | View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                                                                              |
 | Make the conversation text bigger or smaller | `Cmd+=` / `Cmd+-` (`Ctrl` on Windows and Linux), or the A buttons at the bottom left. `Cmd+0` resets. Maestro remembers the size across restarts, and `maestro-cli quick-chat font` sets it             |
@@ -60,6 +61,8 @@ Click a pill to open that tab in the main Maestro window.
 For that first message, Maestro chooses in two steps. First it compares the words of your message with each candidate: the agent's open tabs, and the conversations in its [History](/history) from the last two weeks. A tab that clearly matches wins at once. A message that resembles nothing starts a new tab at once, as long as the chat has no conversation in progress. Everything else is a close call, and goes to a small, fast model that reads a short list of candidates and picks one, for example when two tabs are about the same thing. Expect **Searching tabs** to show for a few seconds then. When that model is unavailable or too slow, the message starts a new tab.
 
 The choice leans toward a new tab. A message sent into the wrong conversation becomes part of that conversation, and that cannot be undone. To start over with no conversation in progress, start a new chat (`Cmd+N` / `Ctrl+N`).
+
+When Maestro picks the wrong tab, click the thumbs-down beside the pill. A reply still being written there stops, the message is sent again in a new tab, and the chat continues in that new tab. What already reached the old tab stays in it. From the command line, `maestro-cli quick-chat new-tab <message-id>` does the same.
 
 ### When the tab is busy
 
@@ -119,7 +122,7 @@ maestro-cli quick-chat agent <agent-id>    # switch agents and start a new chat
 maestro-cli quick-chat reveal              # open the latest message's tab in Maestro
 maestro-cli quick-chat reveal <message-id> # open the tab that message went to
 maestro-cli quick-chat new-tab             # send the latest queued message to a new tab instead of waiting
-maestro-cli quick-chat new-tab <message-id>
+maestro-cli quick-chat new-tab <message-id> # send that message to a new tab: queued, or routed to the wrong tab
 maestro-cli quick-chat stop                # stop replies in progress and withdraw queued messages
 maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move or resize, as dragging does
 ```

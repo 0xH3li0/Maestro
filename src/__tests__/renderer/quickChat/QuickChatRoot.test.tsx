@@ -521,6 +521,45 @@ describe('where a message went', () => {
 		expect(screen.queryByRole('button', { name: /Send to a new tab/ })).toBeNull();
 	});
 
+	it('has a thumbs-down beside a tab Maestro chose, which sends the message to a new tab', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot(),
+		});
+		await renderWith(snapshot({ messages: [sentMessage('m3', 'any update?')] }));
+		const reject = screen.getByTestId('quick-chat-route-reject');
+
+		fireEvent.mouseEnter(reject.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Wrong tab');
+
+		await act(async () => fireEvent.click(reject));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'moveToNewTab',
+			messageId: 'm3',
+		});
+	});
+
+	it('says the thumbs-down stops a reply still being written', async () => {
+		await renderWith(
+			snapshot({ busy: true, messages: [sentMessage('m', 'hi', { status: 'running' })] })
+		);
+		fireEvent.mouseEnter(screen.getByTestId('quick-chat-route-reject').parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Stop the reply in "Amazon Delivery"');
+	});
+
+	it('offers the thumbs-down on a reopened tab too', async () => {
+		await renderWith(snapshot({ messages: [sentMessage('m', 'hi', { origin: 'reopened' })] }));
+		expect(screen.getByTestId('quick-chat-route-reject')).toBeTruthy();
+	});
+
+	it.each([
+		['a new tab it started', { origin: 'new' as const }],
+		['a queued message, which has its own way out', { status: 'queued' as const }],
+	])('has no thumbs-down for %s', async (_, route) => {
+		await renderWith(snapshot({ messages: [sentMessage('m', 'hi', route)] }));
+		expect(screen.queryByTestId('quick-chat-route-reject')).toBeNull();
+	});
+
 	it('marks a withdrawn message cancelled', async () => {
 		await renderWith(snapshot({ messages: [sentMessage('m', 'hi', { status: 'cancelled' })] }));
 		expect(screen.getByText('Cancelled')).toBeTruthy();

@@ -2654,7 +2654,7 @@ quickChatCmd
 quickChatCmd
 	.command('new-tab [message-id]')
 	.description(
-		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+		'Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));

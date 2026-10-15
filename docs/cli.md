@@ -1204,7 +1204,7 @@ maestro-cli quick-chat pin                   # float the window on top ("pin off
 maestro-cli quick-chat thinking on           # show the agent's reasoning until the answer arrives (sticky keeps it, off hides it)
 maestro-cli quick-chat tab new               # next message to a new tab; or a tab id from status, or auto
 maestro-cli quick-chat reveal [message-id]   # open a message's tab in Maestro (default: the latest)
-maestro-cli quick-chat new-tab [message-id]  # send a queued message to a new tab instead of waiting
+maestro-cli quick-chat new-tab [message-id]  # send a message to a new tab instead (queued, or wrong tab)
 maestro-cli quick-chat font in               # bigger conversation text (out, reset, or a size such as 120%)
 maestro-cli quick-chat new                   # start over; hidden tabs an ephemeral chat created are deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)

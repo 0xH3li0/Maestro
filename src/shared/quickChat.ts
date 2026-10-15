@@ -18,7 +18,7 @@
  * closed in the last two weeks (reopened for it), or to a new tab. Every later
  * message goes to that same tab, queued behind the reply it follows. The chat
  * moves only when the user says so (picks another tab or a new one for the next
- * message, or moves a queued message to a new tab), or when its tab is closed
+ * message, or moves a message to a new tab), or when its tab is closed
  * (the next message is routed again). Each message carries a
  * {@link QuickChatRoute} saying where it went. See src/shared/quickChatRouting.ts
  * for how the first message's tab is chosen.
@@ -258,8 +258,9 @@ export type QuickChatCommand =
 	/** Stop every reply in progress and withdraw every message still queued. */
 	| { type: 'stop' }
 	/**
-	 * Take a QUEUED message out of the queue and send it to a new tab instead, so
-	 * it stops waiting on the tab it was routed to. `messageId` defaults to the
+	 * Send a message to a new tab instead of the tab it went to. A QUEUED message
+	 * leaves the queue; one that already ran (or is running) is stopped there and
+	 * sent again. The chat moves to the new tab. `messageId` defaults to the
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
