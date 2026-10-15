@@ -119,7 +119,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	delegationGraphLayouts: {
 		description:
-			"Where each agent sits on the Delegation Graph, per scope. Keyed by scope: 'all', or 'group:<groupId>'. Each value is { layout, positions }, where layout is hierarchical, force, radial, or manual, and positions maps an agent id to { x, y }. A scope with no entry opens on the hierarchical layout.",
+			"Where each agent sits on the Delegation Graph, per scope: 'all', 'group:<groupId>', or 'agent:<sessionId>' for a connected cluster. Each value is { layout, positions }, where layout is hierarchical, force, radial, mindmap, lobes, or manual, and positions maps an agent id to { x, y }. The global default is lobes; groups and agent clusters default to hierarchical.",
 		type: 'object',
 		default: {},
 		category: 'editor',

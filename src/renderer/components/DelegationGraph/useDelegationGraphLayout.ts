@@ -38,6 +38,7 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
+	DEFAULT_GLOBAL_DELEGATION_LAYOUT,
 	DEFAULT_DELEGATION_LAYOUT,
 	type DelegationAlgorithmLayout,
 	type DelegationLayoutType,
@@ -181,7 +182,9 @@ export function useDelegationGraphLayout(
 	});
 
 	return {
-		layout: saved?.layout ?? DEFAULT_DELEGATION_LAYOUT,
+		layout:
+			saved?.layout ??
+			(scope.kind === 'all' ? DEFAULT_GLOBAL_DELEGATION_LAYOUT : DEFAULT_DELEGATION_LAYOUT),
 		hasSavedLayout: saved !== undefined,
 		positions: saved?.positions ?? NO_SAVED_POSITIONS,
 		saveDraggedPositions,

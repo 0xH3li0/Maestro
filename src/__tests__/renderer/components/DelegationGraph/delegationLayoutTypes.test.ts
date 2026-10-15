@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
 	DEFAULT_DELEGATION_LAYOUT,
+	DEFAULT_GLOBAL_DELEGATION_LAYOUT,
 	DELEGATION_ALGORITHM_LAYOUTS,
 	DELEGATION_LAYOUT_LABELS,
 	DELEGATION_LAYOUT_TYPES,
@@ -14,8 +15,15 @@ import {
 
 describe('delegationLayoutTypes', () => {
 	describe('DELEGATION_LAYOUT_TYPES', () => {
-		it('lists the four layouts in toolbar order', () => {
-			expect(DELEGATION_LAYOUT_TYPES).toEqual(['hierarchical', 'force', 'radial', 'manual']);
+		it('lists the shared graph layouts and manual placement in toolbar order', () => {
+			expect(DELEGATION_LAYOUT_TYPES).toEqual([
+				'hierarchical',
+				'force',
+				'radial',
+				'mindmap',
+				'lobes',
+				'manual',
+			]);
 		});
 
 		// One list serves the picker and the settings validator, so a layout
@@ -47,6 +55,9 @@ describe('delegationLayoutTypes', () => {
 		it('defaults to hierarchical, the first algorithm', () => {
 			expect(DEFAULT_DELEGATION_LAYOUT).toBe('hierarchical');
 			expect(DELEGATION_ALGORITHM_LAYOUTS[0]).toBe(DEFAULT_DELEGATION_LAYOUT);
+		});
+		it('uses Lobes as the global default only', () => {
+			expect(DEFAULT_GLOBAL_DELEGATION_LAYOUT).toBe('lobes');
 		});
 	});
 
@@ -103,16 +114,7 @@ describe('delegationLayoutTypes', () => {
 		// The Document Graph's own layout names must not pass: a value copied from
 		// the wrong setting would reach a canvas that cannot draw it.
 		it('rejects a layout this graph does not draw, and anything that is not a string', () => {
-			for (const value of [
-				'mindmap',
-				'lobes',
-				'timeline',
-				'Hierarchical',
-				'',
-				null,
-				undefined,
-				0,
-			]) {
+			for (const value of ['timeline', 'Hierarchical', '', null, undefined, 0]) {
 				expect(isDelegationLayoutType(value)).toBe(false);
 			}
 		});
@@ -128,7 +130,7 @@ describe('delegationLayoutTypes', () => {
 
 	// The settings validator imports this module for the union. An import here
 	// would put the physics engine in every bundle that only needs the names.
-	it('is a leaf module with no imports', () => {
+	it('imports the shared layout vocabulary without importing the layout engine', () => {
 		const source = readFileSync(
 			resolve(
 				__dirname,
@@ -136,7 +138,8 @@ describe('delegationLayoutTypes', () => {
 			),
 			'utf8'
 		);
-		expect(source).not.toMatch(/^\s*import\s/m);
+		expect(source).toContain('../DocumentGraph/layoutTypes');
+		expect(source).not.toContain('mindMapLayouts');
 		expect(source).not.toMatch(/\brequire\(/);
 	});
 });

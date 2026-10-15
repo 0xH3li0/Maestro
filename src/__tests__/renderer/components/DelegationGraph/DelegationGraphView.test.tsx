@@ -33,6 +33,69 @@ import type { Connection, Edge, Node, NodeChange, NodeProps } from 'reactflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DelegationEdgeData } from '../../../../renderer/components/DelegationGraph/edges/DelegationEdge';
 import type { AgentDelegationNodeData } from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
+import type { MindMapProps } from '../../../../renderer/components/DocumentGraph/MindMap';
+
+const sharedCanvas = vi.hoisted(() => ({
+	props: null as MindMapProps | null,
+	positions: new Map<string, { x: number; y: number }>(),
+}));
+
+vi.mock('../../../../renderer/components/DocumentGraph/MindMap', async () => {
+	const { calculateLayout, buildAdjacencyMap } =
+		await import('../../../../renderer/components/DocumentGraph/mindMapLayouts');
+	return {
+		MindMap: (props: MindMapProps) => {
+			if (!Number.isFinite(props.maxDepth)) throw new Error('Graph depth must be finite');
+			sharedCanvas.props = props;
+			flow.props = null;
+			const result = calculateLayout(
+				props.layoutType ?? 'hierarchical',
+				props.nodes,
+				props.links,
+				buildAdjacencyMap(props.links),
+				props.centerFilePath,
+				props.maxDepth,
+				props.width,
+				props.height,
+				props.showExternalLinks,
+				props.previewCharLimit ?? 100,
+				1,
+				props.showOrphans,
+				props.clusterAllNodes
+			);
+			sharedCanvas.positions = new Map(
+				result.nodes.map((node) => [
+					node.id,
+					props.nodePositions?.get(node.id) ?? { x: node.x, y: node.y },
+				])
+			);
+			return (
+				<div data-testid="document-graph-canvas" data-layout={props.layoutType}>
+					{props.nodes.map((node) => (
+						<button
+							key={node.id}
+							data-testid="flow-node"
+							data-node-id={node.id}
+							onClick={() => props.onNodeSelect(node)}
+						>
+							{node.label}
+						</button>
+					))}
+					{props.links.map((link) => (
+						<div
+							key={`${link.source}->${link.target}`}
+							data-testid="flow-edge"
+							data-edge-id={`${link.source}->${link.target}`}
+							data-source={link.source}
+							data-target={link.target}
+							data-openable="false"
+						/>
+					))}
+				</div>
+			);
+		},
+	};
+});
 
 /** What the view handed `<ReactFlow>` on its last render. */
 interface FlowProps {
@@ -95,6 +158,7 @@ vi.mock('reactflow', async (importOriginal) => {
 
 	const ReactFlowStandIn = (props: FlowProps) => {
 		flow.props = props;
+		sharedCanvas.props = null;
 		return (
 			<div data-testid="react-flow">
 				{props.nodes.map((node) => {
@@ -272,12 +336,16 @@ const DROP = { x: 300, y: 200 };
 /** What the stand-in's `screenToFlowPosition` adds to a point of the window. */
 const FLOW_OFFSET = { x: 1000, y: 2000 };
 
+let initialMode: 'edit' | 'view' = 'edit';
+
 function renderView(initialScope?: DelegationGraphScope) {
-	return render(
+	const result = render(
 		<LayerStackProvider>
 			<DelegationGraphView theme={mockTheme} initialScope={initialScope} />
 		</LayerStackProvider>
 	);
+	if (initialMode === 'edit') switchMode('edit');
+	return result;
 }
 
 function layouts(): DelegationGraphLayouts {
@@ -343,6 +411,14 @@ function drawnEdgeIds(): string[] {
 function positionOf(id: string): DelegationNodePosition {
 	// Throws when the agent is not on screen, so a stale prop is never read.
 	nodeEl(id);
+	if (sharedCanvas.props) {
+		const node = sharedCanvas.props.nodes.find((node) => node.id === id)!;
+		const position = sharedCanvas.positions.get(id)!;
+		return {
+			x: position.x - estimateAgentDelegationNodeWidth(node.label) / 2,
+			y: position.y - AGENT_DELEGATION_NODE_HEIGHT / 2,
+		};
+	}
 	const node = flow.props?.nodes.find((candidate) => candidate.id === id);
 	if (!node) throw new Error(`the canvas was handed no node for agent ${id}`);
 	return { x: node.position.x, y: node.position.y };
@@ -357,6 +433,17 @@ function positionsOnCanvas(): DelegationSavedPositions {
 /** Move a node, with the change reactflow sends while one is dragged. */
 function drag(id: string, to: DelegationNodePosition): void {
 	act(() => {
+		if (sharedCanvas.props) {
+			const node = sharedCanvas.props.nodes.find((node) => node.id === id)!;
+			const position = {
+				x: to.x + estimateAgentDelegationNodeWidth(node.label) / 2,
+				y: to.y + AGENT_DELEGATION_NODE_HEIGHT / 2,
+			};
+			const positions = new Map(sharedCanvas.positions);
+			positions.set(id, position);
+			sharedCanvas.props.onNodePositionChange?.(id, position, positions);
+			return;
+		}
 		flow.props?.onNodesChange([{ type: 'position', id, position: to, dragging: true }]);
 	});
 }
@@ -364,6 +451,10 @@ function drag(id: string, to: DelegationNodePosition): void {
 /** Select a node, with the change reactflow sends for a click on one. */
 function select(id: string): void {
 	act(() => {
+		if (sharedCanvas.props) {
+			sharedCanvas.props.onNodeSelect(sharedCanvas.props.nodes.find((node) => node.id === id)!);
+			return;
+		}
 		flow.props?.onNodesChange([{ type: 'select', id, selected: true }]);
 	});
 }
@@ -389,7 +480,7 @@ function switchMode(mode: 'view' | 'edit'): void {
 
 /** Whether each handle drawn on the canvas was told an edge can start from it. */
 function handleConnectability(): string[] {
-	return screen.getAllByTestId('flow-handle').map((el) => el.dataset.connectable ?? '');
+	return screen.queryAllByTestId('flow-handle').map((el) => el.dataset.connectable ?? '');
 }
 
 /**
@@ -526,6 +617,8 @@ function distance(from: DelegationNodePosition, to: DelegationNodePosition): num
 
 describe('DelegationGraphView', () => {
 	beforeEach(() => {
+		initialMode = 'edit';
+		sharedCanvas.props = null;
 		vi.useFakeTimers();
 		// The legend's open state is kept in localStorage. Without a Storage the
 		// result differs between a local run and CI.
@@ -600,24 +693,75 @@ describe('DelegationGraphView', () => {
 		});
 	});
 
+	describe('shared Document Graph canvas', () => {
+		beforeEach(() => {
+			initialMode = 'view';
+		});
+
+		it('opens the global graph in Lobes with directed agent links and disconnected clusters', () => {
+			renderView();
+			expect(screen.getByTestId('document-graph-canvas')).toHaveAttribute('data-layout', 'lobes');
+			expect(screen.queryByTestId('react-flow')).toBeNull();
+			expect(sharedCanvas.props?.clusterAllNodes).toBe(true);
+			expect(sharedCanvas.props?.maxDepth).toBe(ALL_IDS.length - 1);
+			expect(sharedCanvas.props?.nodeLabel).toBe('agent');
+			expect(sharedCanvas.props?.links.every((link) => link.directed)).toBe(true);
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+		});
+
+		it('opens an agent cluster in Hierarchical and returns to the global Lobes view', () => {
+			renderView({ kind: 'agent', sessionId: 'a' });
+			expect(drawnNodeIds()).toEqual(['a', 'b']);
+			expect(sharedCanvas.props?.layoutType).toBe('hierarchical');
+			fireEvent.click(screen.getByRole('button', { name: 'Show all agents' }));
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+			expect(sharedCanvas.props?.layoutType).toBe('lobes');
+		});
+
+		it('can isolate the selected cluster from the global view', () => {
+			renderView();
+			select('d');
+			fireEvent.click(screen.getByRole('button', { name: 'Show cluster' }));
+			expect(drawnNodeIds()).toEqual(['d', 'e']);
+			expect(sharedCanvas.props?.layoutType).toBe('hierarchical');
+		});
+		it('returns to all agents if the cluster anchor is deleted', () => {
+			renderView({ kind: 'agent', sessionId: 'a' });
+			setSessions((sessions) => sessions.filter((session) => session.id !== 'a'));
+			expect(drawnNodeIds()).toEqual(ALL_IDS.filter((id) => id !== 'a'));
+			expect(sharedCanvas.props?.layoutType).toBe('lobes');
+		});
+
+		it('offers the shared layout choices and keeps the chosen layout per scope', () => {
+			renderView();
+			fireEvent.click(screen.getByTestId('delegation-graph-layout-mindmap'));
+			expect(sharedCanvas.props?.layoutType).toBe('mindmap');
+			changeScope(PLATFORM_KEY);
+			expect(sharedCanvas.props?.layoutType).toBe('hierarchical');
+			changeScope(ALL_KEY);
+			expect(sharedCanvas.props?.layoutType).toBe('mindmap');
+		});
+	});
+
 	// The guard between looking at the graph and rewriting an agent's permissions.
 	describe('mode', () => {
+		beforeEach(() => {
+			initialMode = 'view';
+		});
 		it('opens in View: no edge can be started and no key removes anything', () => {
 			renderView();
 
 			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
 			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'false');
 			expect(screen.getByTestId('delegation-graph-canvas')).toHaveAttribute('data-mode', 'view');
-			expect(flow.props?.nodesConnectable).toBe(false);
-			expect(flow.props?.deleteKeyCode).toBeNull();
+			expect(sharedCanvas.props).not.toBeNull();
+			expect(screen.queryByTestId('react-flow')).toBeNull();
 		});
 
 		it('gives no node a connectable handle in View', () => {
 			renderView();
 
-			// Two handles per agent, and an edge can start from none of them.
-			expect(handleConnectability()).toHaveLength(ALL_IDS.length * 2);
-			expect(new Set(handleConnectability())).toEqual(new Set(['false']));
+			expect(handleConnectability()).toEqual([]);
 		});
 
 		it('lets an edge be started in Edit, from every node', () => {
@@ -652,7 +796,7 @@ describe('DelegationGraphView', () => {
 				for (const prop of REMOVAL_PROPS) {
 					expect(flow.props?.[prop], `${prop} in ${mode}`).toBeUndefined();
 				}
-				expect(flow.props?.deleteKeyCode).toBeNull();
+				expect(flow.props?.deleteKeyCode ?? null).toBeNull();
 			}
 		});
 
@@ -665,6 +809,7 @@ describe('DelegationGraphView', () => {
 			rest();
 
 			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+			expect(sharedCanvas.props?.showClusters).toBe(false);
 			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
 			expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
 			expect(edgeEditor()).not.toBeInTheDocument();
@@ -677,8 +822,8 @@ describe('DelegationGraphView', () => {
 			switchMode('view');
 
 			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
-			expect(flow.props?.nodesConnectable).toBe(false);
-			expect(new Set(handleConnectability())).toEqual(new Set(['false']));
+			expect(sharedCanvas.props).not.toBeNull();
+			expect(handleConnectability()).toEqual([]);
 		});
 
 		it('frames the canvas only while Edit is on', () => {
@@ -737,7 +882,7 @@ describe('DelegationGraphView', () => {
 			renderView();
 
 			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
-			expect(flow.props?.nodesConnectable).toBe(false);
+			expect(sharedCanvas.props).not.toBeNull();
 		});
 
 		it('offers the switch on a scope with no agents, with nothing to frame', () => {
@@ -970,6 +1115,7 @@ describe('DelegationGraphView', () => {
 		it('opens nothing and writes nothing for a connection made in View', () => {
 			const sessionsBefore = useSessionStore.getState().sessions;
 			renderView();
+			switchMode('view');
 
 			connect('c', 'e');
 
@@ -1077,6 +1223,7 @@ describe('DelegationGraphView', () => {
 		it('gives no edge a way in while the graph is in View', () => {
 			const sessionsBefore = useSessionStore.getState().sessions;
 			renderView();
+			switchMode('view');
 
 			expect(flow.props?.onEdgeClick).toBeUndefined();
 			for (const el of screen.getAllByTestId('flow-edge')) {
@@ -1394,6 +1541,7 @@ describe('DelegationGraphView', () => {
 		describe('the Add agent control', () => {
 			it('is offered in Edit only', () => {
 				renderView(PLATFORM_SCOPE);
+				switchMode('view');
 				expect(addAgentSelect()).toBeNull();
 
 				switchMode('edit');
@@ -1619,8 +1767,10 @@ describe('DelegationGraphView', () => {
 
 				switchMode('view');
 
-				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
+				expect(sharedCanvas.props?.nodes.find((node) => node.id === 'c')).toBeDefined();
 				expect(placedNotice()).toBeInTheDocument();
+				switchMode('edit');
+				expect(nodeBody('c')).toHaveAttribute('data-node-state', 'placed');
 			});
 
 			it('belongs to the scope it was added on', () => {
@@ -1668,6 +1818,7 @@ describe('DelegationGraphView', () => {
 			it('is not taken in View', () => {
 				const sessionsBefore = useSessionStore.getState().sessions;
 				renderView(PLATFORM_SCOPE);
+				switchMode('view');
 				startAgentDrag('c');
 
 				expect(fireCanvasDrag('dragOver')).toBe(true);

@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	arrangeDelegationGraph,
 	computeDelegationLayout,
+	delegationMindMapData,
 } from '../../../../renderer/components/DelegationGraph/delegationLayouts';
 import {
 	DELEGATION_ALGORITHM_LAYOUTS,
@@ -101,6 +102,30 @@ function distanceFromOrigin(positions: DelegationSavedPositions, id: string): nu
 }
 
 describe('computeDelegationLayout', () => {
+	it('adapts agent identity and directed access styles to the shared canvas', () => {
+		const model: DelegationGraphModel = {
+			nodes: [
+				{ sessionId: 'a', name: 'Alpha.md', scope: 'in-scope' },
+				{ sessionId: 'b', name: 'Beta', scope: 'in-scope' },
+			],
+			edges: [
+				{ id: 'a->b', sourceId: 'a', targetId: 'b', read: true, write: false, source: 'explicit' },
+			],
+		};
+		const data = delegationMindMapData(model);
+		expect(data.nodes[0]).toMatchObject({ id: 'a', filePath: 'a', label: 'Alpha.md' });
+		expect(data.links).toEqual([
+			{
+				source: 'a',
+				target: 'b',
+				type: 'internal',
+				directed: true,
+				dashed: true,
+				strokeWidth: 1.5,
+				opacity: 1,
+			},
+		]);
+	});
 	describe.each(DELEGATION_ALGORITHM_LAYOUTS.map((layout) => [layout]))('%s', (layout) => {
 		const positions = computeDelegationLayout(layout as DelegationAlgorithmLayout, TEAM);
 

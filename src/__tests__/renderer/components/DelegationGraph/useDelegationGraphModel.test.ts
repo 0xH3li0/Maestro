@@ -60,6 +60,18 @@ describe('useDelegationGraphModel', () => {
 		expect(result.current.edges.map((edge) => edge.id)).toEqual(['a->b']);
 	});
 
+	it('switches between agent clusters and all agents without confusing their memo keys', () => {
+		const { result, rerender } = renderHook(
+			({ scope }: { scope: DelegationGraphScope }) => useDelegationGraphModel(scope),
+			{ initialProps: { scope: { kind: 'agent', sessionId: 'b' } } }
+		);
+		expect(result.current.nodes.map((node) => node.sessionId)).toEqual(['a', 'b']);
+		rerender({ scope: { kind: 'agent', sessionId: 'c' } });
+		expect(result.current.nodes.map((node) => node.sessionId)).toEqual(['c']);
+		rerender({ scope: ALL });
+		expect(result.current.nodes.map((node) => node.sessionId)).toEqual(['a', 'b', 'c']);
+	});
+
 	it('builds the graph of one group, with the agents its edges reach', () => {
 		const { result } = renderHook(() => useDelegationGraphModel({ kind: 'group', groupId: 'g-1' }));
 

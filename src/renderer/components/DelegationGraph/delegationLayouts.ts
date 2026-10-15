@@ -29,6 +29,13 @@
  */
 
 import type { Edge, Node } from 'reactflow';
+import type { MindMapNode, MindMapLink } from '../DocumentGraph/MindMap';
+import { buildAdjacencyMap, calculateLayout } from '../DocumentGraph/mindMapLayouts';
+import {
+	DELEGATION_EDGE_LINES,
+	delegationEdgeKind,
+	delegationEdgeOpacity,
+} from './edges/DelegationEdge';
 import {
 	connectedAgentIds,
 	type DelegationGraphEdge,
@@ -111,6 +118,36 @@ function toLayoutNodes(nodes: readonly DelegationGraphNode[]): LayoutNode[] {
 		position: { x: 0, y: 0 },
 		data: { width: estimateAgentDelegationNodeWidth(node.name) },
 	}));
+}
+
+/** Adapt relationships to the Document Graph canvas without copying its renderer or layouts. */
+export function delegationMindMapData(model: DelegationGraphModel): {
+	nodes: MindMapNode[];
+	links: MindMapLink[];
+} {
+	return {
+		nodes: model.nodes.map((node) => ({
+			id: node.sessionId,
+			filePath: node.sessionId,
+			label: node.name,
+			nodeType: 'document',
+			x: 0,
+			y: 0,
+			width: 0,
+			height: 0,
+			depth: 0,
+			side: 'center',
+		})),
+		links: model.edges.map((edge) => ({
+			source: edge.sourceId,
+			target: edge.targetId,
+			type: 'internal',
+			directed: true,
+			dashed: edge.read && !edge.write,
+			strokeWidth: DELEGATION_EDGE_LINES[delegationEdgeKind(edge)!].width,
+			opacity: delegationEdgeOpacity(edge.source),
+		})),
+	};
 }
 
 function toLayoutEdges(edges: readonly DelegationGraphEdge[]): Edge[] {
@@ -368,6 +405,43 @@ export function computeDelegationLayout(
 
 	let placed: LayoutNode[];
 	switch (layout) {
+		case 'mindmap':
+		case 'lobes': {
+			const data = delegationMindMapData({
+				...model,
+				nodes: model.nodes.filter((node) => connectedIds.has(node.sessionId)),
+			});
+			const result = calculateLayout(
+				layout,
+				data.nodes,
+				data.links,
+				buildAdjacencyMap(data.links),
+				options.centerId ?? data.nodes[0]?.id ?? '',
+				Math.max(1, data.nodes.length - 1),
+				960,
+				640,
+				false,
+				0,
+				1,
+				true,
+				true
+			);
+			placed = [];
+			for (const node of result.nodes) {
+				const width = estimateAgentDelegationNodeWidth(node.label);
+				placed.push(
+					moveClearOf(
+						{
+							id: node.id,
+							position: { x: node.x - width / 2, y: node.y - AGENT_DELEGATION_NODE_HEIGHT / 2 },
+							data: { width },
+						},
+						placed
+					)
+				);
+			}
+			break;
+		}
 		case 'hierarchical':
 			placed = applyHierarchicalLayout(connected, edges, {
 				measureNode,

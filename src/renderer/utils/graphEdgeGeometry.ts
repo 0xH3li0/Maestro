@@ -1,5 +1,5 @@
 /**
- * The line of one Delegation Graph edge.
+ * Edge routing shared by the graph canvas and the relationship editor.
  *
  * An edge runs between the two node BODIES and not between two handles. A
  * delegation graph is drawn as rows, as a physics cluster, as rings, or however
@@ -21,25 +21,27 @@
  */
 
 /** A node as the router sees it: its center and half its size. */
-export interface DelegationEdgeAnchor {
+export interface GraphEdgeAnchor {
 	centerX: number;
 	centerY: number;
 	halfWidth: number;
 	halfHeight: number;
 }
 
-export interface DelegationEdgePoint {
+export interface GraphEdgePoint {
 	x: number;
 	y: number;
 }
 
-export interface DelegationEdgeGeometry {
+export interface GraphEdgeGeometry {
 	/** The SVG path, from the source's border to the target's border. */
 	path: string;
 	/** Where the path leaves the source node. */
-	start: DelegationEdgePoint;
+	start: GraphEdgePoint;
 	/** Where the path meets the target node. The arrowhead points here. */
-	end: DelegationEdgePoint;
+	end: GraphEdgePoint;
+	/** Quadratic control point for a reciprocal pair's separate lane. */
+	control?: GraphEdgePoint;
 	/** The middle of the drawn line, where the badge sits. */
 	labelX: number;
 	labelY: number;
@@ -55,7 +57,7 @@ const MIN_ROUTABLE_DISTANCE = 0.5;
 
 /** The fields of a reactflow node the anchor reads. Unmeasured ones are absent or null. */
 interface MeasuredNodeLike {
-	positionAbsolute?: DelegationEdgePoint;
+	positionAbsolute?: GraphEdgePoint;
 	width?: number | null;
 	height?: number | null;
 }
@@ -69,7 +71,7 @@ export function anchorOfNode(
 	node: MeasuredNodeLike | undefined,
 	fallbackX: number,
 	fallbackY: number
-): DelegationEdgeAnchor {
+): GraphEdgeAnchor {
 	const position = node?.positionAbsolute;
 	if (!node || !position || !node.width || !node.height) {
 		return { centerX: fallbackX, centerY: fallbackY, halfWidth: 0, halfHeight: 0 };
@@ -95,12 +97,12 @@ function round(value: number): number {
  * stays where it is.
  */
 function borderPoint(
-	anchor: DelegationEdgeAnchor,
+	anchor: GraphEdgeAnchor,
 	offsetX: number,
 	offsetY: number,
 	directionX: number,
 	directionY: number
-): DelegationEdgePoint {
+): GraphEdgePoint {
 	let distance = Infinity;
 	if (directionX !== 0) {
 		distance = Math.min(
@@ -125,11 +127,11 @@ function borderPoint(
  * Route one edge. `hasReverse` says the edge from the target back to the source
  * exists too, and moves this one into its own lane.
  */
-export function delegationEdgeGeometry(
-	source: DelegationEdgeAnchor,
-	target: DelegationEdgeAnchor,
+export function graphEdgeGeometry(
+	source: GraphEdgeAnchor,
+	target: GraphEdgeAnchor,
 	hasReverse: boolean
-): DelegationEdgeGeometry {
+): GraphEdgeGeometry {
 	const deltaX = target.centerX - source.centerX;
 	const deltaY = target.centerY - source.centerY;
 	const length = Math.hypot(deltaX, deltaY);
@@ -182,6 +184,7 @@ export function delegationEdgeGeometry(
 	const controlY = round(middleY + asideY * REVERSE_PAIR_BOW * 2);
 	return {
 		path: `M ${rounded.start.x},${rounded.start.y} Q ${controlX},${controlY} ${rounded.end.x},${rounded.end.y}`,
+		control: { x: controlX, y: controlY },
 		...rounded,
 		labelX: round(middleX + asideX * REVERSE_PAIR_BOW),
 		labelY: round(middleY + asideY * REVERSE_PAIR_BOW),

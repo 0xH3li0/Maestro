@@ -38,6 +38,9 @@ describe('delegationGraphLayout', () => {
 		it('stores a group under group:<groupId>', () => {
 			expect(scopeStorageKey({ kind: 'group', groupId: 'g-1' })).toBe('group:g-1');
 		});
+		it('stores a cluster separately from a group with the same id', () => {
+			expect(scopeStorageKey({ kind: 'agent', sessionId: 'g-1' })).toBe('agent:g-1');
+		});
 
 		// The whole point of a per-scope key: one agent sits in two graphs at two
 		// places, so no two scopes may share a key.
@@ -59,6 +62,8 @@ describe('delegationGraphLayout', () => {
 				{ kind: 'group', groupId: 'g-1' },
 				{ kind: 'group', groupId: 'all' },
 				{ kind: 'group', groupId: 'has:a:colon' },
+				{ kind: 'agent', sessionId: 'a' },
+				{ kind: 'agent', sessionId: 'has:a:colon' },
 			];
 			for (const scope of scopes) {
 				expect(parseScopeStorageKey(scopeStorageKey(scope))).toEqual(scope);
@@ -68,6 +73,7 @@ describe('delegationGraphLayout', () => {
 		it('refuses a key scopeStorageKey could not have written', () => {
 			expect(parseScopeStorageKey('')).toBeNull();
 			expect(parseScopeStorageKey('group:')).toBeNull();
+			expect(parseScopeStorageKey('agent:')).toBeNull();
 			expect(parseScopeStorageKey('ALL')).toBeNull();
 			expect(parseScopeStorageKey('worktree:w-1')).toBeNull();
 			expect(parseScopeStorageKey('g-1')).toBeNull();

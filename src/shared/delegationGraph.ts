@@ -75,7 +75,10 @@ export interface DelegationGraphEdge extends PeerAccess {
  * the same way the group grant does: it reaches neither a parent group nor a
  * child group.
  */
-export type DelegationGraphScope = { kind: 'all' } | { kind: 'group'; groupId: string };
+export type DelegationGraphScope =
+	| { kind: 'all' }
+	| { kind: 'group'; groupId: string }
+	| { kind: 'agent'; sessionId: string };
 
 export interface DelegationGraphModel {
 	nodes: DelegationGraphNode[];
@@ -164,6 +167,28 @@ export function buildDelegationGraph(
 	sessions: readonly PeerRosterInput[],
 	options: DelegationGraphOptions = {}
 ): DelegationGraphModel {
+	if (scope.kind === 'agent') {
+		const fleet = buildDelegationGraph({ kind: 'all' }, sessions);
+		const neighbors = new Map<string, Set<string>>();
+		for (const edge of fleet.edges) {
+			if (!neighbors.has(edge.sourceId)) neighbors.set(edge.sourceId, new Set());
+			if (!neighbors.has(edge.targetId)) neighbors.set(edge.targetId, new Set());
+			neighbors.get(edge.sourceId)!.add(edge.targetId);
+			neighbors.get(edge.targetId)!.add(edge.sourceId);
+		}
+		// A cluster follows both incoming and outgoing edges, including transitive peers.
+		const members = new Set([scope.sessionId]);
+		for (const id of members) {
+			for (const neighbor of neighbors.get(id) ?? []) members.add(neighbor);
+		}
+		const placed = new Set(options.placedIds);
+		return {
+			nodes: fleet.nodes
+				.filter((node) => members.has(node.sessionId) || placed.has(node.sessionId))
+				.map((node) => ({ ...node, scope: members.has(node.sessionId) ? 'in-scope' : 'spill' })),
+			edges: fleet.edges.filter((edge) => members.has(edge.sourceId) || members.has(edge.targetId)),
+		};
+	}
 	const placedIds = new Set(options.placedIds);
 	const inScopeIds = new Set<string>();
 	for (const session of sessions) {

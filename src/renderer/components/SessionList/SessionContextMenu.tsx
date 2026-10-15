@@ -25,6 +25,7 @@ import {
 	Plus,
 	Pencil,
 	Check,
+	Waypoints,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -38,6 +39,8 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { useDelegationGraphModel } from '../DelegationGraph/useDelegationGraphModel';
+import { useModalStore } from '../../stores/modalStore';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -224,6 +227,7 @@ export function SessionContextMenu({
 	onRenameWindow,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	const delegationGraph = useDelegationGraphModel({ kind: 'agent', sessionId: session.id });
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -365,6 +369,22 @@ export function SessionContextMenu({
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
 			</button>
+			{delegationGraph.edges.length > 0 && (
+				<button
+					type="button"
+					onClick={() => {
+						useModalStore.getState().openModal('delegationGraph', {
+							scope: { kind: 'agent', sessionId: session.id },
+						});
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Waypoints className="w-3.5 h-3.5" />
+					View Delegation Graph
+				</button>
+			)}
 
 			{!session.isPianola && (
 				<button

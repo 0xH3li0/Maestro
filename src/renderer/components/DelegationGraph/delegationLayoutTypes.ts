@@ -6,12 +6,14 @@
  * union from here, so a key press, a click, and what reaches disk cannot
  * disagree about which layouts exist.
  *
- * It imports nothing. The layout engine pulls in d3-force, and the settings
- * store needs only the names.
+ * It shares the Document Graph's leaf vocabulary without importing its layout
+ * engine, so settings validation does not load d3-force.
  */
 
-/** Available layout types for the Delegation Graph */
-export type DelegationLayoutType = 'hierarchical' | 'force' | 'radial' | 'manual';
+import { LAYOUT_LABELS, type MindMapLayoutType } from '../DocumentGraph/layoutTypes';
+
+/** Timeline requires document timestamps, which agent relationships do not have. */
+export type DelegationLayoutType = Exclude<MindMapLayoutType, 'timeline'> | 'manual';
 
 /**
  * The layouts an algorithm computes. `manual` is not one of them: it is the
@@ -25,9 +27,11 @@ export const DELEGATION_LAYOUT_LABELS: Record<
 	DelegationLayoutType,
 	{ name: string; description: string }
 > = {
-	hierarchical: { name: 'Hierarchical', description: 'Top-down rows' },
-	force: { name: 'Force', description: 'Physics simulation' },
-	radial: { name: 'Radial', description: 'Concentric rings' },
+	hierarchical: LAYOUT_LABELS.hierarchical,
+	force: LAYOUT_LABELS.force,
+	radial: LAYOUT_LABELS.radial,
+	mindmap: LAYOUT_LABELS.mindmap,
+	lobes: LAYOUT_LABELS.lobes,
 	manual: { name: 'Manual', description: 'Where you placed them' },
 };
 
@@ -39,6 +43,8 @@ export const DELEGATION_LAYOUT_TYPES: readonly DelegationLayoutType[] = [
 	'hierarchical',
 	'force',
 	'radial',
+	'mindmap',
+	'lobes',
 	'manual',
 ];
 
@@ -47,10 +53,13 @@ export const DELEGATION_ALGORITHM_LAYOUTS: readonly DelegationAlgorithmLayout[] 
 	'hierarchical',
 	'force',
 	'radial',
+	'mindmap',
+	'lobes',
 ];
 
 /** The layout a scope gets before the user has picked or dragged anything. */
 export const DEFAULT_DELEGATION_LAYOUT: DelegationAlgorithmLayout = 'hierarchical';
+export const DEFAULT_GLOBAL_DELEGATION_LAYOUT: DelegationAlgorithmLayout = 'lobes';
 
 /**
  * The layout after `current`, wrapping at the end of the list.

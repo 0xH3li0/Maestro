@@ -21,6 +21,13 @@ const STATS: DelegationGraphStats = {
 };
 
 describe('DelegationGraphLegend', () => {
+	it('describes cluster navigation without showing editor-only node states in View', () => {
+		render(<DelegationGraphLegend theme={mockTheme} stats={STATS} onClose={vi.fn()} mode="view" />);
+		expect(screen.getByText(/Double-click an agent/)).toBeInTheDocument();
+		expect(
+			screen.getByTestId('delegation-graph-legend').querySelector('[data-node-state]')
+		).toBeNull();
+	});
 	const renderLegend = (onClose = vi.fn()) => {
 		render(<DelegationGraphLegend theme={mockTheme} stats={STATS} onClose={onClose} />);
 		return onClose;

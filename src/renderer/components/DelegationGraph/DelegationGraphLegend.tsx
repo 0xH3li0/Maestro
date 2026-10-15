@@ -36,6 +36,7 @@ export interface DelegationGraphLegendProps {
 	theme: Theme;
 	stats: DelegationGraphStats;
 	onClose: () => void;
+	mode?: 'view' | 'edit';
 }
 
 const EDGE_KINDS: readonly DelegationEdgeKind[] = ['consult', 'delegate', 'both'];
@@ -111,6 +112,7 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 	theme,
 	stats,
 	onClose,
+	mode = 'edit',
 }: DelegationGraphLegendProps) {
 	const { colors } = theme;
 	const heading = { color: colors.textDim };
@@ -157,7 +159,7 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 						{EDGE_KINDS.map((kind) => (
 							<li key={kind} className="flex items-center gap-2" data-edge-kind={kind}>
 								<EdgeSample kind={kind} theme={theme} />
-								<DelegationEdgeBadge kind={kind} theme={theme} />
+								{mode === 'edit' && <DelegationEdgeBadge kind={kind} theme={theme} />}
 								<span style={text}>{DELEGATION_EDGE_KIND_LABELS[kind]}</span>
 							</li>
 						))}
@@ -172,19 +174,27 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 					</p>
 				</section>
 
-				<section>
-					<h4 className="font-medium mb-1.5" style={heading}>
-						An agent
-					</h4>
-					<ul className="space-y-1.5">
-						{NODE_STATES.map(({ state, label }) => (
-							<li key={state} className="flex items-center gap-2" data-node-state={state}>
-								<NodeSample state={state} theme={theme} />
-								<span style={text}>{label}</span>
-							</li>
-						))}
-					</ul>
-				</section>
+				{mode === 'edit' ? (
+					<section>
+						<h4 className="font-medium mb-1.5" style={heading}>
+							An agent
+						</h4>
+						<ul className="space-y-1.5">
+							{NODE_STATES.map(({ state, label }) => (
+								<li key={state} className="flex items-center gap-2" data-node-state={state}>
+									<NodeSample state={state} theme={theme} />
+									<span style={text}>{label}</span>
+								</li>
+							))}
+						</ul>
+					</section>
+				) : (
+					<p style={heading}>
+						Lobes groups agents by their links. Select an agent to inspect its relationships.
+						Double-click an agent to show its connected cluster; Show all agents returns to the
+						fleet.
+					</p>
+				)}
 
 				<section data-testid="delegation-graph-stats" style={heading}>
 					{describeDelegationGraphStats(stats).map((line) => (

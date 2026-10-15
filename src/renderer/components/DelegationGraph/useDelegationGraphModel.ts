@@ -54,14 +54,19 @@ export function useDelegationGraphModel(
 	// The scope is keyed by its one varying field, so a caller that builds a new
 	// scope object on every render does not rebuild the model.
 	const groupId = scope.kind === 'group' ? scope.groupId : undefined;
+	const sessionId = scope.kind === 'agent' ? scope.sessionId : undefined;
 	return useMemo(
 		() =>
 			buildDelegationGraph(
-				groupId === undefined ? { kind: 'all' } : { kind: 'group', groupId },
+				sessionId !== undefined
+					? { kind: 'agent', sessionId }
+					: groupId === undefined
+						? { kind: 'all' }
+						: { kind: 'group', groupId },
 				sessions,
 				{ placedIds }
 			),
-		[groupId, sessions, placedIds]
+		[groupId, sessionId, sessions, placedIds]
 	);
 }
 

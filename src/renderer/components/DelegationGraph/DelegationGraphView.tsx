@@ -1,7 +1,8 @@
 /**
  * DelegationGraphView - the fleet's peer relationships, drawn.
  *
- * A reactflow canvas of agent nodes and directed delegation edges, under a
+ * The Document Graph canvas in View, and the existing reactflow editor in Edit,
+ * show agent nodes and directed delegation edges under a
  * toolbar (scope, mode, layout, fit, reset, legend), with a legend, a minimap
  * and a panel for the selected agent. The reactflow wiring follows
  * `CuePipelineEditor/PipelineCanvas.tsx`.
@@ -92,6 +93,8 @@ import {
 } from '../../../shared/delegationGraphLayout';
 import { hasAnyPeerAccess } from '../../../shared/peerAgents';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
+import { useElementWidth, useFreeHeightInFlexColumn } from '../../hooks/ui/useElementWidth';
+import { MindMap } from '../DocumentGraph/MindMap';
 import { openAgentSettings } from '../../services/agentNavigation';
 import {
 	DELEGATION_EDGE_NEEDS_ACCESS,
@@ -124,9 +127,14 @@ import {
 	delegationScopeGroups,
 	sectionAgentsForAdding,
 } from './DelegationGraphPlacement';
-import { arrangeDelegationGraph, computeDelegationLayout } from './delegationLayouts';
+import {
+	arrangeDelegationGraph,
+	computeDelegationLayout,
+	delegationMindMapData,
+} from './delegationLayouts';
 import {
 	DEFAULT_DELEGATION_LAYOUT,
+	DEFAULT_GLOBAL_DELEGATION_LAYOUT,
 	DELEGATION_ALGORITHM_LAYOUTS,
 	DELEGATION_LAYOUT_LABELS,
 	isDelegationAlgorithmLayout,
@@ -276,15 +284,23 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	const [requestedScope, setRequestedScope] = useState<DelegationGraphScope>(
 		initialScope ?? ALL_SCOPE
 	);
+	const scopeAgentExists = useSessionStore(
+		(store) =>
+			requestedScope.kind !== 'agent' ||
+			store.sessions.some((session) => session.id === requestedScope.sessionId)
+	);
 	const scope = useMemo(
 		() =>
-			requestedScope.kind === 'group' &&
-			!groups.some((group) => group.id === requestedScope.groupId)
+			!scopeAgentExists ||
+			(requestedScope.kind === 'group' &&
+				!groups.some((group) => group.id === requestedScope.groupId))
 				? ALL_SCOPE
 				: requestedScope,
-		[requestedScope, groups]
+		[requestedScope, groups, scopeAgentExists]
 	);
 	const scopeKey = scopeStorageKey(scope);
+	const defaultLayout =
+		scope.kind === 'all' ? DEFAULT_GLOBAL_DELEGATION_LAYOUT : DEFAULT_DELEGATION_LAYOUT;
 
 	// Plain state, never persisted: see the file comment. It survives a change
 	// of scope, because the user who switched it on is still the one editing.
@@ -296,6 +312,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	// never written to an agent: see `DelegationGraphPlacement`.
 	const [placedIds, setPlacedIds] = useState<readonly string[]>(NONE_PLACED);
 	const model = useDelegationGraphModel(scope, placedIds);
+	const mindMapData = useMemo(() => delegationMindMapData(model), [model]);
 	const addableAgents = useAgentsOffDelegationGraph(model);
 	const stats = useMemo(() => delegationGraphStats(model), [model]);
 	const connectedIds = useMemo(() => connectedAgentIds(model), [model]);
@@ -421,6 +438,21 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	// discards it.
 	const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
 	const canvasRef = useRef<HTMLDivElement>(null);
+	const canvasWidth = useElementWidth(canvasRef);
+	const canvasHeight = useFreeHeightInFlexColumn(canvasRef);
+	const canvasPositions = useMemo(() => {
+		if (layout !== 'manual') return undefined;
+		const names = new Map(model.nodes.map((node) => [node.sessionId, node.name]));
+		return new Map(
+			nodes.map((node) => [
+				node.id,
+				{
+					x: node.position.x + estimateAgentDelegationNodeWidth(names.get(node.id) ?? '') / 2,
+					y: node.position.y + AGENT_DELEGATION_NODE_HEIGHT / 2,
+				},
+			])
+		);
+	}, [layout, nodes, model]);
 	// reactflow reports a connection first (`onConnect`, which has no pointer)
 	// and the end of the gesture second (`onConnectEnd`, which has one). This
 	// says the end that is coming belongs to a connection, and not to an edge
@@ -730,12 +762,18 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		setMode(next);
 		setPendingEdge(null);
 	}, []);
-	const handleScopeChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
-		setRequestedScope(parseScopeStorageKey(event.target.value) ?? ALL_SCOPE);
+	const changeScope = useCallback((next: DelegationGraphScope) => {
+		setRequestedScope(next);
 		setPendingEdge(null);
 		// An agent was placed on ONE scope's canvas. Another scope starts without it.
 		setPlacedIds(NONE_PLACED);
 	}, []);
+	const handleScopeChange = useCallback(
+		(event: ChangeEvent<HTMLSelectElement>) => {
+			changeScope(parseScopeStorageKey(event.target.value) ?? ALL_SCOPE);
+		},
+		[changeScope]
+	);
 
 	const legend = usePersistedToggle('delegationGraph.legend.open', true);
 
@@ -795,6 +833,13 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					}}
 				>
 					<option value={scopeStorageKey(ALL_SCOPE)}>All agents</option>
+					{scope.kind === 'agent' && (
+						<option value={scopeKey}>
+							Cluster:{' '}
+							{model.nodes.find((node) => node.sessionId === scope.sessionId)?.name ??
+								'Removed agent'}
+						</option>
+					)}
 					{sortedGroups.map((group) => {
 						const value = scopeStorageKey({ kind: 'group', groupId: group.id });
 						return (
@@ -804,6 +849,25 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						);
 					})}
 				</select>
+				<HeaderActionButton
+					theme={theme}
+					variant="ghost"
+					onClick={() =>
+						scope.kind === 'all'
+							? selectedId && changeScope({ kind: 'agent', sessionId: selectedId })
+							: changeScope(ALL_SCOPE)
+					}
+					icon={<Users />}
+					disabled={scope.kind === 'all' && (!selectedId || !connectedIds.has(selectedId))}
+					title={
+						scope.kind === 'all'
+							? 'Show the selected agent and its connected cluster'
+							: 'Show every agent, clustered in Lobes by default'
+					}
+					testId="delegation-graph-toggle-cluster"
+				>
+					{scope.kind === 'all' ? 'Show cluster' : 'Show all agents'}
+				</HeaderActionButton>
 
 				<SegmentedControl
 					value={mode}
@@ -863,7 +927,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					variant="ghost"
 					onClick={handleReset}
 					icon={<RotateCcw />}
-					title={`Forget where the agents in this scope were placed and go back to the ${DELEGATION_LAYOUT_LABELS[DEFAULT_DELEGATION_LAYOUT].name} layout`}
+					title={`Forget where the agents in this scope were placed and go back to the ${DELEGATION_LAYOUT_LABELS[defaultLayout].name} layout`}
 					disabled={!hasSavedLayout}
 					testId="delegation-graph-reset"
 				>
@@ -904,6 +968,60 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 								? 'Pick another scope, or move an agent into this group. Who an agent can consult or delegate to is set on the Peers tab of its settings.'
 								: 'This graph draws which agent can consult or delegate to which. Create an agent, then give it peers on the Peers tab of its settings.'
 						}
+					/>
+				) : !isEditing ? (
+					<MindMap
+						key={scopeKey}
+						theme={theme}
+						nodes={mindMapData.nodes}
+						links={mindMapData.links}
+						centerFilePath={scope.kind === 'agent' ? scope.sessionId : model.nodes[0].sessionId}
+						width={canvasWidth || 960}
+						height={canvasHeight || 640}
+						maxDepth={Math.max(1, model.nodes.length - 1)}
+						showExternalLinks={false}
+						showOrphans
+						clusterAllNodes
+						showClusters={layout !== 'manual'}
+						nodeLabel="agent"
+						selectCenterOnOpen={false}
+						previewCharLimit={0}
+						layoutType={isDelegationAlgorithmLayout(layout) ? layout : defaultLayout}
+						nodePositions={canvasPositions}
+						selectedNodeId={selectedId}
+						onNodeSelect={(node) =>
+							node
+								? selectOnly(node.id)
+								: commitNodes(nodesRef.current.map((item) => ({ ...item, selected: false })))
+						}
+						onNodeDoubleClick={(node) => changeScope({ kind: 'agent', sessionId: node.id })}
+						onNodeContextMenu={(node, event) => {
+							event.preventDefault();
+							changeScope({ kind: 'agent', sessionId: node.id });
+						}}
+						onOpenFile={openPeersTab}
+						onNodePositionChange={(_id, _position, allPositions) =>
+							onNodesChange(
+								model.nodes.flatMap((node): NodeChange[] => {
+									const position = allPositions.get(node.sessionId);
+									return position
+										? [
+												{
+													id: node.sessionId,
+													type: 'position',
+													position: {
+														x: position.x - estimateAgentDelegationNodeWidth(node.name) / 2,
+														y: position.y - AGENT_DELEGATION_NODE_HEIGHT / 2,
+													},
+												},
+											]
+										: [];
+								})
+							)
+						}
+						searchQuery=""
+						fitToken={fitRequest}
+						legendExpanded={legend.value}
 					/>
 				) : (
 					<ReactFlow
@@ -963,7 +1081,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				)}
 
 				{!isEmpty && legend.value && (
-					<DelegationGraphLegend theme={theme} stats={stats} onClose={legend.toggle} />
+					<DelegationGraphLegend theme={theme} stats={stats} onClose={legend.toggle} mode={mode} />
 				)}
 
 				{placedNames.length > 0 && (
@@ -1059,7 +1177,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					message={
 						pendingChange.kind === 'layout'
 							? `Arrange this scope with the ${DELEGATION_LAYOUT_LABELS[pendingChange.layout].name} layout? Every agent moves, and the places you dragged them to are lost.`
-							: `Forget where you placed the agents in this scope? The graph goes back to the ${DELEGATION_LAYOUT_LABELS[DEFAULT_DELEGATION_LAYOUT].name} layout.`
+							: `Forget where you placed the agents in this scope? The graph goes back to the ${DELEGATION_LAYOUT_LABELS[defaultLayout].name} layout.`
 					}
 					headerIcon={<RotateCcw className="w-4 h-4" style={{ color: colors.warning }} />}
 					destructive={false}

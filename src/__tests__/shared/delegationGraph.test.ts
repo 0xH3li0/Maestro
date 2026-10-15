@@ -60,6 +60,45 @@ describe('delegationEdgeId', () => {
 });
 
 describe('buildDelegationGraph', () => {
+	it('scopes an agent to its full connected cluster across groups and edge directions', () => {
+		const sessions = [
+			agent('a', 'Alpha', { groupId: 'g1', peerAgents: [row('b', R)] }),
+			agent('b', 'Beta', { groupId: 'g2' }),
+			agent('c', 'Gamma', { peerAgents: [row('b', W)] }),
+			agent('d', 'Delta', { peerAgents: [row('e', RW)] }),
+			agent('e', 'Echo'),
+		];
+		const model = buildDelegationGraph({ kind: 'agent', sessionId: 'a' }, sessions);
+		expect(model.nodes.map((node) => node.sessionId)).toEqual(['a', 'b', 'c']);
+		expect(model.nodes.every((node) => node.scope === 'in-scope')).toBe(true);
+		expect(model.edges.map((edge) => edge.id)).toEqual(['a->b', 'c->b']);
+	});
+
+	it('handles an isolated or removed cluster anchor without importing other agents', () => {
+		const sessions = [agent('a', 'Alpha'), agent('b', 'Beta')];
+		expect(
+			buildDelegationGraph({ kind: 'agent', sessionId: 'a' }, sessions).nodes.map(
+				(node) => node.sessionId
+			)
+		).toEqual(['a']);
+		expect(buildDelegationGraph({ kind: 'agent', sessionId: 'gone' }, sessions)).toEqual({
+			nodes: [],
+			edges: [],
+		});
+	});
+
+	it('can place an unrelated agent in a cluster without granting access', () => {
+		const model = buildDelegationGraph(
+			{ kind: 'agent', sessionId: 'a' },
+			[agent('a', 'Alpha'), agent('b', 'Beta')],
+			{ placedIds: ['b'] }
+		);
+		expect(model.nodes.map((node) => [node.sessionId, node.scope])).toEqual([
+			['a', 'in-scope'],
+			['b', 'spill'],
+		]);
+		expect(model.edges).toEqual([]);
+	});
 	it('draws a manager and an employee as two edges, each with its own bits', () => {
 		const model = buildDelegationGraph(ALL, [
 			agent('m', 'Manager', { peerAgents: [row('e', RW)] }),

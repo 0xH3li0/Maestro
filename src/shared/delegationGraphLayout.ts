@@ -24,6 +24,7 @@ export const DELEGATION_GRAPH_LAYOUTS_SETTING = 'delegationGraphLayouts';
 
 const ALL_SCOPE_KEY = 'all';
 const GROUP_SCOPE_PREFIX = 'group:';
+const AGENT_SCOPE_PREFIX = 'agent:';
 
 /** Where one agent sits on the canvas, in reactflow's coordinate space. */
 export interface DelegationNodePosition {
@@ -53,7 +54,10 @@ export interface DelegationMergedPositions<T extends DelegationPositionedNode> {
  * `parseScopeStorageKey` is its inverse.
  */
 export function scopeStorageKey(scope: DelegationGraphScope): string {
-	return scope.kind === 'all' ? ALL_SCOPE_KEY : `${GROUP_SCOPE_PREFIX}${scope.groupId}`;
+	if (scope.kind === 'all') return ALL_SCOPE_KEY;
+	return scope.kind === 'group'
+		? `${GROUP_SCOPE_PREFIX}${scope.groupId}`
+		: `${AGENT_SCOPE_PREFIX}${scope.sessionId}`;
 }
 
 /**
@@ -66,6 +70,9 @@ export function parseScopeStorageKey(key: string): DelegationGraphScope | null {
 	if (key === ALL_SCOPE_KEY) return { kind: 'all' };
 	if (key.startsWith(GROUP_SCOPE_PREFIX) && key.length > GROUP_SCOPE_PREFIX.length) {
 		return { kind: 'group', groupId: key.slice(GROUP_SCOPE_PREFIX.length) };
+	}
+	if (key.startsWith(AGENT_SCOPE_PREFIX) && key.length > AGENT_SCOPE_PREFIX.length) {
+		return { kind: 'agent', sessionId: key.slice(AGENT_SCOPE_PREFIX.length) };
 	}
 	return null;
 }

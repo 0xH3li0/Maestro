@@ -57,9 +57,16 @@ describe('useDelegationGraphLayout', () => {
 		it('reads a scope with nothing saved as the default layout and no positions', () => {
 			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
 
-			expect(result.current.layout).toBe('hierarchical');
+			expect(result.current.layout).toBe('lobes');
 			expect(result.current.positions).toEqual({});
 		});
+		it.each([GROUP, { kind: 'agent', sessionId: 'a' } as const])(
+			'keeps a scoped graph hierarchical by default: %o',
+			(scope) => {
+				const { result } = renderHook(() => useDelegationGraphLayout(scope));
+				expect(result.current.layout).toBe('hierarchical');
+			}
+		);
 
 		it('reads what was saved for the scope', () => {
 			useSettingsStore.setState({
@@ -461,7 +468,7 @@ describe('useDelegationGraphLayout', () => {
 				result.current.resetLayout();
 			});
 
-			expect(result.current.layout).toBe('hierarchical');
+			expect(result.current.layout).toBe('lobes');
 			expect(result.current.positions).toEqual({});
 			expect(layouts()).toEqual({
 				'group:g-1': { layout: 'force', positions: { a: { x: 2, y: 2 } } },

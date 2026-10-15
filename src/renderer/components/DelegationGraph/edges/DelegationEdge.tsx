@@ -3,7 +3,7 @@
  *
  * The skeleton is `CuePipelineEditor/edges/PipelineEdge.tsx`: a `BaseEdge`, a
  * glow under it when it is raised, and a midpoint label. The routing is not: see
- * `./delegationEdgeGeometry` for why this edge runs between node bodies.
+ * `utils/graphEdgeGeometry` for why this edge runs between node bodies.
  *
  * One edge carries two independent bits, and a reader must not need color to
  * tell them apart, so each bit is written twice:
@@ -49,7 +49,7 @@ import { PEER_GRANT_LABELS } from '../../../../shared/peerAgents';
 import { selectSessionById, useSessionStore } from '../../../stores/sessionStore';
 import { HoverTooltip } from '../../ui/HoverTooltip';
 import { removedAgentLabel } from '../nodes/AgentDelegationNode';
-import { anchorOfNode, delegationEdgeGeometry } from './delegationEdgeGeometry';
+import { anchorOfNode, graphEdgeGeometry } from '../../../utils/graphEdgeGeometry';
 
 /** Which of the two bits an edge carries. An edge with neither is not an edge. */
 export type DelegationEdgeKind = 'consult' | 'delegate' | 'both';
@@ -277,7 +277,7 @@ export const DelegationEdge = memo(function DelegationEdge({
 	if (!data || !kind) return null;
 	const { edge, hasReverse, emphasis, onOpen, theme } = data;
 
-	const { path, labelX, labelY } = delegationEdgeGeometry(
+	const { path, labelX, labelY } = graphEdgeGeometry(
 		anchorOfNode(sourceNode, sourceX, sourceY),
 		anchorOfNode(targetNode, targetX, targetY),
 		hasReverse

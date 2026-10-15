@@ -10,12 +10,12 @@ An agent that another agent may reach is its **peer**. The list of an agent's pe
 
 The feature has four parts. Each has its own section below.
 
-| Part                                            | What it is                                                         | Where you set it                                            |
-| ----------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
-| [Roster](#where-peers-come-from)                | Who one agent may reach, and how                                   | The **Peers** tab of Edit Agent                             |
-| [Group defaults](#a-roster-for-new-agents)      | The roster a new agent in a group starts with                      | The **Peers** tab of Group Settings                         |
-| [Consultation budget](#the-consultation-budget) | The most agent turns one of your messages can set in motion        | **Settings > General**                                      |
-| [Delegation Graph](#the-delegation-graph)       | Every roster drawn as one picture, which you can also edit by hand | The hamburger menu, Quick Actions, or a group's right-click |
+| Part                                            | What it is                                                         | Where you set it                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| [Roster](#where-peers-come-from)                | Who one agent may reach, and how                                   | The **Peers** tab of Edit Agent                                       |
+| [Group defaults](#a-roster-for-new-agents)      | The roster a new agent in a group starts with                      | The **Peers** tab of Group Settings                                   |
+| [Consultation budget](#the-consultation-budget) | The most agent turns one of your messages can set in motion        | **Settings > General**                                                |
+| [Delegation Graph](#the-delegation-graph)       | Every roster drawn as one picture, which you can also edit by hand | The hamburger menu, Quick Actions, or an agent or group's right-click |
 
 ## Why It Exists
 
@@ -155,27 +155,30 @@ The agent is told how much is left as each turn starts, so it can ration its con
 
 ## The Delegation Graph
 
-A roster answers "who can this agent reach?" for one agent. The Delegation Graph answers it for all of them at once. It draws each agent as a box and each permission as an arrow, so you can see the shape of a team: who hands work to whom, who can only ask, and who is connected to nobody.
+A roster answers "who can this agent reach?" for one agent. The Delegation Graph answers it for all of them at once. It draws each agent as a node and each permission as an arrow, so you can see the shape of a team: who may hand work to whom, who can only ask, and who is connected to nobody. It shows configured permissions, not a history of completed delegations.
 
-The graph has no data of its own. It reads the same three sources the Peers tab writes, and in Edit it writes to them. A change made on the graph shows in the agent's Peers tab, and a change made in the Peers tab shows on the graph. The only thing the graph stores for itself is where you put each box.
+The graph reads the same three sources the Peers tab writes, and in Edit it writes to them. A change made on the graph shows in the agent's Peers tab, and a change made in the Peers tab shows on the graph. The graph stores its layout choice and node positions separately for each scope. View mode reuses the Document Graph canvas; Edit retains the relationship editor.
 
 ### Opening It
 
-| Where              | How                                                             | Opens on          |
-| ------------------ | --------------------------------------------------------------- | ----------------- |
-| **Hamburger menu** | **Delegation Graph**                                            | Every agent       |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                   | Every agent       |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name | That group        |
-| **Left Bar**       | Right-click a group header, then **Delegation Graph**           | That group        |
-| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`        | Either of the two |
+| Where              | How                                                             | Opens on              |
+| ------------------ | --------------------------------------------------------------- | --------------------- |
+| **Hamburger menu** | **Delegation Graph**                                            | Every agent           |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                   | Every agent           |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name | That group            |
+| **Left Bar**       | Right-click a group header, then **Delegation Graph**           | That group            |
+| **Left Bar**       | Right-click a linked agent, then **View Delegation Graph**      | Its connected cluster |
+| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`        | Either of the two     |
 
 The graph has no keyboard shortcut by default. You can give it one in **Settings > Shortcuts** (see [Keyboard Shortcuts](./keyboard-shortcuts)).
 
 ### Scope
 
-The first control in the toolbar picks the **scope**: **All agents**, or one group.
+The first control in the toolbar picks the **scope**: **All agents**, one group, or the agent cluster you opened. The agent context-menu action appears when the agent has an incoming or outgoing peer relationship.
 
 A group's graph draws the agents of that group, and also any agent outside the group that an arrow joins to one of them. It does not draw an arrow between two agents that are both outside the group. Switch to **All agents** to see those.
+
+An agent's cluster follows both incoming and outgoing arrows, including indirect connections and agents in other groups. From the global view, select a linked agent and choose **Show cluster**, or double-click a node in View. **Show all agents** returns to the fleet. If the cluster's anchor agent is deleted, the graph returns to all agents.
 
 ### Reading the Graph
 
@@ -188,9 +191,9 @@ An arrow from A to B means **A may reach B**. Two arrows between a pair mean eac
 | Thick and solid           | **C D** | Consult and delegate                                                |
 | Any of the three, fainter |         | The arrow comes from a group or worktree grant, and no row names it |
 
-**C** is consult, the **R** square of the Peers tab. **D** is delegate, the **W** square. The buttons of the graph and the CLI call an arrow an **edge**.
+**C** is consult, the **R** square of the Peers tab. **D** is delegate, the **W** square. Badges appear on the editor's arrows and in the selected-agent panel. The buttons of the graph and the CLI call an arrow an **edge**.
 
-The border of a box tells you the state of the agent:
+In Edit mode, the border of a box tells you the state of the agent:
 
 | Border                           | State                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------ |
@@ -201,21 +204,21 @@ The border of a box tells you the state of the agent:
 
 To learn more about one relationship or one agent:
 
-- **Hover an arrow** to read it as a sentence ("Backend may consult Frontend"), with the source that produced it and the note on the row.
-- **Click an agent** to bring its own arrows forward and dim the rest. A panel lists who it **can reach** and who it is **reachable by**, and has an **Open Peers tab** button that takes you to that agent's settings.
-- **Legend** in the toolbar shows every line and border with its meaning, and counts the agents, arrows, and mutual pairs on screen.
+- **Hover an arrow in Edit** to read it as a sentence ("Backend may consult Frontend"), with the source that produced it and the note on the row.
+- **Click an agent** to highlight its relationships. A panel lists who it **can reach** and who it is **reachable by**, and has an **Open Peers tab** button that takes you to that agent's settings.
+- **Legend** in the toolbar explains the lines and cluster navigation, and counts the agents, arrows, and mutual pairs on screen. In Edit it also explains node borders.
 
 ### Arranging the Graph
 
-The layout control offers three arrangements: **Hierarchical** (top-down rows, the default), **Force**, and **Radial**. **Fit** brings the whole graph into view, and the minimap and zoom controls sit in the corners of the canvas.
+The layout control offers **Hierarchical** (top-down rows), **Force**, **Radial**, **Mind Map**, and **Lobes**. The global view defaults to **Lobes**, which groups linked communities, including disconnected clusters. Group and agent-cluster views default to **Hierarchical**. The graph remembers a layout you choose for each scope. **Fit** brings the whole graph into view, and the minimap provides an overview.
 
-You can drag any agent to a new place, in either mode. The scope is then marked **Manual**, and Maestro leaves every agent where you put it. Positions are saved for each scope separately and are still there after you restart the app. **Reset layout** forgets them and goes back to Hierarchical.
+You can drag any agent to a new place, in either mode. The scope is then marked **Manual**, and Maestro leaves every agent where you put it. Positions are saved for each scope separately and are still there after you restart the app. Manual placement hides the algorithm's cluster outlines. **Reset layout** forgets the arrangement and returns to Lobes globally, or Hierarchical for a group or agent cluster.
 
 Moving a box changes where an agent is drawn. It never changes who the agent can reach.
 
 ### View Mode
 
-The graph opens in **View** every time. In View it is a picture and nothing more. You can pan, zoom, move boxes, hover arrows, select an agent, and change the scope and the layout. You cannot start an arrow, and a click on an arrow does nothing. The only way from View to a change is the **Open Peers tab** button, which leaves the graph for the agent's settings.
+The graph opens in **View** every time. You can pan, zoom, move nodes, select an agent, and change the scope and the layout. You cannot start an arrow, and a click on an arrow does nothing. **Open Peers tab** opens the selected agent's settings if you want to change a relationship without entering Edit.
 
 View is the default for a reason. The graph of a real fleet is a dense target, and a slipped drag on a surface that looks read-only would rewrite an agent's permissions with no sign that it had.
 

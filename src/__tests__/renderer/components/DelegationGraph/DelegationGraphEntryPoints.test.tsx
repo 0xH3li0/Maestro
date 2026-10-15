@@ -22,6 +22,17 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type { Node } from 'reactflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MindMapProps } from '../../../../renderer/components/DocumentGraph/MindMap';
+
+vi.mock('../../../../renderer/components/DocumentGraph/MindMap', () => ({
+	MindMap: ({ nodes }: MindMapProps) => (
+		<div data-testid="document-graph-canvas">
+			{nodes.map((node) => (
+				<div key={node.id} data-testid="flow-node" data-node-id={node.id} />
+			))}
+		</div>
+	),
+}));
 
 vi.mock('reactflow', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('reactflow')>();

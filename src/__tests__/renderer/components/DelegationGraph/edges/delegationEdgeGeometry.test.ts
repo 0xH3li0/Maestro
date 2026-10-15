@@ -10,9 +10,9 @@ import {
 	REVERSE_PAIR_BOW,
 	REVERSE_PAIR_SHIFT,
 	anchorOfNode,
-	delegationEdgeGeometry,
-	type DelegationEdgeAnchor,
-} from '../../../../../renderer/components/DelegationGraph/edges/delegationEdgeGeometry';
+	graphEdgeGeometry as delegationEdgeGeometry,
+	type GraphEdgeAnchor as DelegationEdgeAnchor,
+} from '../../../../../renderer/utils/graphEdgeGeometry';
 
 const NODE_WIDTH = 180;
 const NODE_HEIGHT = 80;
