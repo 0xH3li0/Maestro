@@ -36,9 +36,21 @@ const SHAPE_SELECTOR = 'rect, polygon, circle, ellipse, path';
 /** A label's own background box lives inside it and is never the node fill. */
 const LABEL_SELECTOR = '.label, .cluster-label, foreignObject, text';
 
-/** HTML-label text nodes (htmlLabels: true) and SVG-label text nodes. */
-const HTML_TEXT_SELECTOR = 'foreignObject *';
+/**
+ * HTML labels (htmlLabels: true) live under a foreignObject; SVG labels are
+ * text/tspan. The HTML side is collected in two steps rather than through a
+ * `foreignObject *` selector: jsdom's selector engine cannot match the
+ * camelCase SVG tag in a descendant or `closest()` selector, so the one-step
+ * form finds nothing there while working in Chromium.
+ */
+const HTML_LABEL_ROOT_SELECTOR = 'foreignObject';
 const SVG_TEXT_SELECTOR = 'text, tspan';
+
+function htmlLabelElements(container: Element): Element[] {
+	return Array.from(container.querySelectorAll(HTML_LABEL_ROOT_SELECTOR)).flatMap((root) =>
+		Array.from(root.querySelectorAll('*'))
+	);
+}
 
 function ownedBy(el: Element, container: Element): boolean {
 	return el.closest(CONTAINER_SELECTOR) === container;
@@ -87,7 +99,7 @@ export function repairDiagramLabelContrast(svg: SVGSVGElement): number {
 		const fill = resolveShapeFill(container, view);
 		if (!fill) continue;
 
-		for (const el of Array.from(container.querySelectorAll(HTML_TEXT_SELECTOR))) {
+		for (const el of htmlLabelElements(container)) {
 			if (ownedBy(el, container) && hasOwnText(el) && repairText(el, 'color', fill, view)) {
 				repaired++;
 			}
