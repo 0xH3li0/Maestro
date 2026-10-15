@@ -5,6 +5,7 @@ import {
 } from '../../../renderer/services/notificationInbox';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { notifyToast, useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -19,13 +20,21 @@ vi.mock('../../../renderer/utils/openUrl', () => ({
 describe('notification inbox operations', () => {
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		// The store persists history to localStorage when no main-process sync is
+		// wired; an inert Storage marks every write failed and fails activation.
+		installLocalStorageMock();
 		vi.mocked(isWebDesktop).mockReturnValue(false);
 		delete (window.maestro.notification as Partial<typeof window.maestro.notification>)
 			.navigateToSource;
 		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useSettingsStore.setState({ notificationCenterDetails: false });
 		useNotificationStore.setState({ notificationCenterExpandedId: null });
-		useNotificationStore.setState({ history: [], toasts: [], notificationCenterOpen: false });
+		useNotificationStore.setState({
+			history: [],
+			toasts: [],
+			notificationCenterOpen: false,
+			historyPersistenceFailed: false,
+		});
 		useNotificationStore.getState().setDefaultDuration(-1);
 		useNotificationStore.getState().setOsNotifications(false);
 	});
@@ -69,7 +78,7 @@ describe('notification inbox operations', () => {
 	});
 	it('reports a persistence failure to CLI callers while retaining the resulting snapshot', async () => {
 		notifyToast({ title: 'Stored', message: '' });
-		const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+		const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
 			throw new Error('Storage denied');
 		});
 		try {
@@ -92,7 +101,7 @@ describe('notification inbox operations', () => {
 				actionUrl: 'https://example.com',
 				onClick: vi.fn(),
 			});
-			const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			const write = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
 				throw new Error('Storage denied');
 			});
 			try {

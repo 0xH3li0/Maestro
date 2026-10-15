@@ -66,9 +66,13 @@ describe('repairDiagramLabelContrast', () => {
 	});
 
 	it('resolves a classDef fill that only arrives through the diagram <style> block', () => {
-		const svg =
-			mountSvg(`<style>.warn > rect { fill: #f9e79f; } .nodeLabel p { color: #eeeeee; }</style>
-			<g class="node warn">
+		// Mermaid nests this <style> inside the <svg>, which Chromium applies but
+		// jsdom never registers as a stylesheet. An HTML <style> carries the same
+		// rules through the same getComputedStyle path the repair reads.
+		const style = document.createElement('style');
+		style.textContent = '.warn > rect { fill: #f9e79f; } .nodeLabel p { color: #eeeeee; }';
+		document.body.appendChild(style);
+		const svg = mountSvg(`<g class="node warn">
 				<rect class="basic label-container"></rect>
 				<g class="label"><foreignObject><div><span class="nodeLabel"><p>deploy-target host</p></span></div></foreignObject></g>
 			</g>`);

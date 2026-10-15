@@ -17,6 +17,7 @@ import { mockTheme } from '../../helpers/mockTheme';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 const mockOpenUrl = vi.fn();
 vi.mock('../../../renderer/utils/openUrl', () => ({
@@ -58,6 +59,7 @@ const items = () => screen.queryAllByTestId('notification-center-item');
 describe('NotificationCenter', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		installLocalStorageMock();
 		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useSettingsStore.setState(useSettingsStore.getInitialState(), true);
 		useNotificationStore.setState({ notificationCenterExpandedId: null });
