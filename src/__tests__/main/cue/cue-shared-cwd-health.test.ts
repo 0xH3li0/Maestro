@@ -274,6 +274,42 @@ subscriptions:
 		).toEqual(['mira']);
 	});
 
+	it.each(['null', '[]', 'false', '{ owner_agent_id: 42 }', '{ owner_agent_id: "" }'])(
+		'keeps the last readable owner through invalid settings %s and later parse errors',
+		(settings) => {
+			writeCueYamlAtomicSync(
+				configPath,
+				'settings:\n  owner_agent_id: claude\nsubscriptions: []\n'
+			);
+			for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
+			for (const broken of [`settings: ${settings}\nsubscriptions: []\n`, 'subscriptions: [']) {
+				onLog.mockClear();
+				writeCueYamlAtomicSync(configPath, broken);
+				vi.advanceTimersByTime(31_000);
+				expect(onLog.mock.calls.filter(([level]) => level === 'error')).toHaveLength(4);
+				expect(
+					onLog.mock.calls
+						.filter(([, , data]) => data?.type === 'triggerHealthWarning')
+						.map(([, , data]) => data.sessionId)
+				).toEqual(['claude']);
+			}
+		}
+	);
+
+	it('honors a readable owner when another setting is invalid', () => {
+		writeCueYamlAtomicSync(
+			configPath,
+			'settings:\n  owner_agent_id: claude\n  timeout_minutes: 0\nsubscriptions: []\n'
+		);
+		for (const session of sessions) runtime.initSession(session, { reason: 'system-boot' });
+		expect(onLog.mock.calls.filter(([level]) => level === 'error')).toHaveLength(4);
+		expect(
+			onLog.mock.calls
+				.filter(([, , data]) => data?.type === 'triggerHealthWarning')
+				.map(([, , data]) => data.sessionId)
+		).toEqual(['claude']);
+	});
+
 	it.each([
 		['subscriptions: [', 'mira'],
 		['settings:\n  owner_agent_id: claude\nsubscriptions: false\n', 'claude'],

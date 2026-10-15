@@ -17,6 +17,7 @@ import {
 import {
 	partitionValidSubscriptions,
 	validateCueConfigDocument,
+	validateSettings,
 } from './config/cue-config-validator';
 
 export { resolveCueConfigPath } from './config/cue-config-repository';
@@ -87,14 +88,23 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// pipelines belonging to other agents that share the same project root.
 	const partitioned = partitionValidSubscriptions(parsed);
 	if (partitioned.configErrors.length > 0) {
+		const rawSettings = (parsed as Record<string, unknown>).settings;
+		// Only readable ownership may replace the last known owner. Validate
+		// the block shape and owner with the canonical settings validator;
+		// unrelated invalid settings must not hide an otherwise valid owner.
+		const ownershipSettings =
+			rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings)
+				? { owner_agent_id: (rawSettings as Record<string, unknown>).owner_agent_id }
+				: rawSettings;
 		return {
 			ok: false,
 			reason: 'invalid',
 			errors: partitioned.configErrors,
 			file,
-			settings: normalizeSettings(
-				(parsed as Record<string, unknown>).settings as Record<string, unknown> | undefined
-			),
+			settings:
+				validateSettings(ownershipSettings).length === 0
+					? normalizeSettings(rawSettings as Record<string, unknown> | undefined)
+					: undefined,
 		};
 	}
 
