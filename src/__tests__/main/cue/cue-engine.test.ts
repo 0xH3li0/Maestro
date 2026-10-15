@@ -3255,7 +3255,7 @@ describe('CueEngine', () => {
 		// loadCueConfigDetailed().warnings, which session-runtime-service forwards to
 		// the logger. These tests inject the warning directly via the detailed mock to
 		// verify the integration path: loader warnings → engine logger.
-		it('logs warning when prompt_file is set but prompt is empty', () => {
+		it('logs a structured health warning when prompt_file is set but prompt is empty', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3267,19 +3267,23 @@ describe('CueEngine', () => {
 					},
 				],
 			});
+			const warning =
+				'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger';
 			mockLoadCueConfigDetailed.mockReturnValue({
 				ok: true,
 				config,
-				warnings: [
-					'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger',
-				],
+				warnings: [warning],
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('prompt_file'));
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('missing.md'));
+			const message = `[CUE] ${warning}`;
+			expect(deps.onLog).toHaveBeenCalledWith('warn', message, {
+				type: 'triggerHealthWarning',
+				sessionId: 'session-1',
+				message,
+			});
 
 			engine.stop();
 		});
