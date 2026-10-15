@@ -11,8 +11,8 @@
  * mapping is the table in `docs/agent-guides/CODEX-APP-SERVER.md`.
  *
  * The parser is a whitelist. An arg it does not know how to carry (a write
- * grant, an image, a custom flag the user added) makes the whole turn
- * unsupported, so the spawner runs it on `codex exec` instead. Dropping the
+ * grant outside full access, an image, a custom flag the user added) makes the
+ * whole turn unsupported, so the spawner runs it on `codex exec` instead. Dropping the
  * arg silently would run a turn the user did not configure.
  */
 
@@ -114,6 +114,7 @@ export function parseCodexAppServerInvocation(
 	let sawExec = false;
 	let bypass = false;
 	let sandbox: CodexAppServerSandbox | undefined;
+	let writeGrants = 0;
 
 	for (let i = 0; i < args.length; ) {
 		const arg = args[i];
@@ -158,6 +159,15 @@ export function parseCodexAppServerInvocation(
 			continue;
 		}
 
+		// A write grant has no app-server field; whether the turn can still run
+		// here depends on the sandbox, which is only known after the loop.
+		const addDir = readFlagValue(args, i, ['--add-dir']);
+		if (addDir) {
+			writeGrants += 1;
+			i += addDir.consumed;
+			continue;
+		}
+
 		const model = readFlagValue(args, i, ['-m', '--model']);
 		if (model) {
 			out.model = model.value;
@@ -186,6 +196,13 @@ export function parseCodexAppServerInvocation(
 	// `--dangerously-bypass-approvals-and-sandbox` nullifies `--sandbox` in exec,
 	// so it wins here too.
 	out.sandbox = bypass ? 'danger-full-access' : sandbox;
+	// `--add-dir` widens a workspace-write sandbox, and app-server has no field to
+	// carry it. Under full access it grants nothing the turn does not already
+	// have, so dropping it changes nothing; under any other sandbox (or one left
+	// to config.toml) the grant matters and only exec can apply it.
+	if (writeGrants > 0 && out.sandbox !== 'danger-full-access') {
+		return { ok: false, reason: 'write grant (--add-dir) outside full access' };
+	}
 	// The resume id comes from the args alone, never `config.agentSessionId`:
 	// a turn exec would have started fresh must not resume here.
 	return { ok: true, invocation: out };
