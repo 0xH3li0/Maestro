@@ -102,7 +102,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 			errors: partitioned.configErrors,
 			file,
 			settings:
-				validateSettings(ownershipSettings).length === 0
+				rawSettings !== undefined && validateSettings(ownershipSettings).length === 0
 					? normalizeSettings(rawSettings as Record<string, unknown> | undefined)
 					: undefined,
 		};

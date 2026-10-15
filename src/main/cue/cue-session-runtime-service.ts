@@ -129,6 +129,7 @@ export function createCueSessionRuntimeService(
 		}
 	}
 
+	/** Looks up current session records so refresh observes removals and ownership changes. */
 	function getSession(sessionId: string): SessionInfo | undefined {
 		return deps.getSessions().find((session) => session.id === sessionId);
 	}
@@ -481,6 +482,10 @@ export function createCueSessionRuntimeService(
 		return ids;
 	}
 
+	/**
+	 * Replaces a session's runtime from YAML while retaining its config watcher.
+	 * Distinguishes removal from invalid saves and clears seen IDs only for removed work.
+	 */
 	function refreshSession(
 		sessionId: string,
 		projectRoot: string,
@@ -557,6 +562,7 @@ export function createCueSessionRuntimeService(
 		return { reloaded: false, configRemoved: false, sessionName: session.name };
 	}
 
+	/** Removes runtime resources, queued work, startup keys and persisted GitHub seen IDs. */
 	function removeSessionInternal(sessionId: string): void {
 		// Capture GitHub-seen IDs before teardown since teardown unregisters
 		// the session and we won't be able to read its subscriptions anymore.

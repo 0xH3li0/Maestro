@@ -296,6 +296,32 @@ subscriptions:
 		}
 	);
 
+	it('retains the owner for absent invalid settings until a valid save removes ownership', () => {
+		writeCueYamlAtomicSync(configPath, 'settings:\n  owner_agent_id: claude\nsubscriptions: []\n');
+		for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
+		for (const broken of ['subscriptions: false\n', 'subscriptions: [']) {
+			onLog.mockClear();
+			writeCueYamlAtomicSync(configPath, broken);
+			vi.advanceTimersByTime(31_000);
+			expect(onLog.mock.calls.filter(([level]) => level === 'error')).toHaveLength(4);
+			expect(
+				onLog.mock.calls
+					.filter(([, , data]) => data?.type === 'triggerHealthWarning')
+					.map(([, , data]) => data.sessionId)
+			).toEqual(['claude']);
+		}
+		writeCueYamlAtomicSync(configPath, 'subscriptions: []\n');
+		vi.advanceTimersByTime(31_000);
+		onLog.mockClear();
+		writeCueYamlAtomicSync(configPath, 'subscriptions: false\n');
+		vi.advanceTimersByTime(31_000);
+		expect(
+			onLog.mock.calls
+				.filter(([, , data]) => data?.type === 'triggerHealthWarning')
+				.map(([, , data]) => data.sessionId)
+		).toEqual(['mira']);
+	});
+
 	it('honors a readable owner when another setting is invalid', () => {
 		writeCueYamlAtomicSync(
 			configPath,
