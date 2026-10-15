@@ -168,11 +168,11 @@ describe('shortcutFormatter', () => {
 			});
 
 			it('formats complex shortcuts', () => {
-				expect(formatShortcutKeys(['Control', 'Alt', 'Delete'])).toBe('⌃ ⌥ ⌦');
+				expect(formatShortcutKeys(['Control', 'Alt', 'Delete'])).toBe('⌃\u00A0⌥\u00A0⌦');
 			});
 
 			it('formats function key shortcuts', () => {
-				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥ F4');
+				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥\u00A0F4');
 			});
 		});
 

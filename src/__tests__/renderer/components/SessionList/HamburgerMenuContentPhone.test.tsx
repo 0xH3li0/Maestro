@@ -69,7 +69,7 @@ describe('HamburgerMenuContent on a phone', () => {
 	it('tags every chord badge so the phone stylesheet can hide them', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		const { container } = renderMenu();
-		const badges = container.querySelectorAll('span.font-mono');
+		const badges = container.querySelectorAll('[data-shortcut-keys]');
 		expect(badges.length).toBeGreaterThan(0);
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');

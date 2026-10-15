@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { QuickActionRow } from '../../../../../renderer/components/QuickActionsModal/components/QuickActionRow';
 import { mockTheme } from '../../../../helpers/mockTheme';
+import { getShortcutKeys } from '../../../../helpers/shortcutKeys';
 
 describe('QuickActionRow', () => {
 	it('renders label, subtext, number badge, shortcut, and calls action click handler', () => {
@@ -30,7 +31,7 @@ describe('QuickActionRow', () => {
 		expect(screen.getByText('Settings')).toBeInTheDocument();
 		expect(screen.getByText('Open settings')).toBeInTheDocument();
 		expect(screen.getByText('1')).toBeInTheDocument();
-		expect(screen.getByText('Cmd+,')).toBeInTheDocument();
+		expect(getShortcutKeys(['Cmd', ','])).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole('button'));
 		expect(onClick).toHaveBeenCalledWith(action);
