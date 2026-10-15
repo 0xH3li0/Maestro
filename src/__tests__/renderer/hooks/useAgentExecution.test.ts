@@ -45,12 +45,14 @@ describe('useAgentExecution', () => {
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
 		onExit: vi.fn(),
+		onAgentError: vi.fn(),
 	};
 
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
 	let onSessionIdHandler: ((sid: string, sessionId: string) => void) | undefined;
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
 	let onExitHandler: ((sid: string) => void) | undefined;
+	let onAgentErrorHandler: ((sid: string, error: { message: string }) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -59,6 +61,7 @@ describe('useAgentExecution', () => {
 		onSessionIdHandler = undefined;
 		onUsageHandler = undefined;
 		onExitHandler = undefined;
+		onAgentErrorHandler = undefined;
 
 		mockProcess.spawn.mockResolvedValue(undefined);
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
@@ -79,6 +82,12 @@ describe('useAgentExecution', () => {
 			onExitHandler = handler;
 			return () => {};
 		});
+		mockProcess.onAgentError.mockImplementation(
+			(handler: (sid: string, error: { message: string }) => void) => {
+				onAgentErrorHandler = handler;
+				return () => {};
+			}
+		);
 
 		window.maestro = {
 			...window.maestro,
@@ -500,6 +509,50 @@ describe('useAgentExecution', () => {
 		const resultData = await spawnPromise;
 
 		expect(resultData.success).toBe(false);
+	});
+
+	// Codex refuses a resume while another process owns the thread: exit 1,
+	// nothing on stdout, the reason only on stderr. The toast read "exit code 1".
+	it("reports the agent error's reason when a failed synopsis printed nothing", async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'codex'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+		const reason =
+			'This Codex conversation is still running in another process. Wait for it to finish, then send again.';
+
+		act(() => {
+			onAgentErrorHandler?.('some-other-process', { message: 'not mine' });
+			onAgentErrorHandler?.(targetSessionId, { message: reason });
+			onExitHandler?.(targetSessionId, 1);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(resultData.error).toBe(reason);
 	});
 
 	it('includes appendSystemPrompt in batch spawns', async () => {

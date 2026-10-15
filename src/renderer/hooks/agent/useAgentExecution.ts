@@ -796,6 +796,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let responseText = '';
 					let synopsisUsageStats: UsageStats | undefined;
 					let lastSynopsisUsageEvent: UsageStats | undefined;
+					// The provider's own reason, when it failed on stderr. A CLI that
+					// refuses before it starts (Codex: "thread already has an active
+					// writer") prints nothing to stdout, and the agent error is the only
+					// place its words survive. The tab's error listener ignores synopsis
+					// ids, so this is the one consumer.
+					let synopsisAgentError: string | undefined;
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
@@ -827,6 +833,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
 								agentSessionId = capturedId;
+							}
+						})
+					);
+
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string, error) => {
+							if (sid === targetSessionId && error?.message) {
+								synopsisAgentError = error.message;
 							}
 						})
 					);
@@ -867,7 +881,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										resumeAgentSessionId,
 										prompt,
 										toolType,
-										sessionConfig
+										sessionConfig,
+										options
 									).then(resolve);
 									return;
 								}
@@ -896,7 +911,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									contextUsage: ctx,
 									...(failed
 										? {
-												error: stripAnsiCodes(responseText).trim() || `exit code ${code}`,
+												error:
+													stripAnsiCodes(responseText).trim() ||
+													synopsisAgentError ||
+													`exit code ${code}`,
 												errorKind: 'process-exit' as const,
 											}
 										: {}),

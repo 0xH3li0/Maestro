@@ -26,7 +26,7 @@
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { captureException } from '../host';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -1274,8 +1274,11 @@ export class CodexOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		// Check stderr and stdout for error patterns
-		const combined = `${stderr}\n${stdout}`;
+		// Check stderr and the plain-text part of stdout. Codex's JSONL events
+		// were each classified as they streamed (detectErrorFromLine), and
+		// matching them again here as one blob false-positives on ordinary turn
+		// content.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, combined);
 

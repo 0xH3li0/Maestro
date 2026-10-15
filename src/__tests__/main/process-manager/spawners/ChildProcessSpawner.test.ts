@@ -27,6 +27,7 @@ function createMockChildProcess() {
 		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
+		unref: vi.fn(),
 		killed: false,
 		exitCode: null,
 	};
@@ -413,6 +414,66 @@ describe('ChildProcessSpawner', () => {
 
 			expect(processes.get('test-session')?.sshRemotePidFile).toBeUndefined();
 			expect(mockChildProcess.stdin.write.mock.calls[0][0]).toBe('exec claude');
+		});
+
+		// 2026-10-15: the local ssh of a Codex turn exited non-zero while Codex
+		// kept working on the remote for two more minutes. The turn settled, the
+		// synopsis resumed the thread under it, and Codex refused ("already has an
+		// active writer"). An unrequested SSH failure now stops the remote agent.
+		describe('remote agent after the local ssh client fails', () => {
+			const sshConfig = () =>
+				createBaseConfig({
+					command: '/usr/bin/ssh',
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					sshStdinScript: 'exec codex exec --json\n',
+				});
+
+			function closeWith(code: number | null, signal: string | null = null) {
+				childHandlers(mockChildProcess).get('close')?.(code, signal);
+			}
+
+			it('terminates the remote agent when ssh exits non-zero on its own', async () => {
+				const { processes, spawner } = createTestContext();
+				spawner.spawn(sshConfig());
+				const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+				const sshChild = mockChildProcess;
+
+				closeWith(255);
+
+				await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+				const [command, args] = mockSpawn.mock.calls[1] as [string, string[]];
+				expect(command).toBe('/usr/bin/ssh');
+				expect(args).toContain('user@host');
+				const script = mockChildProcess.stdin.end.mock.calls[0][0] as string;
+				expect(script).toContain(pidFile);
+				expect(script).toContain('TERM');
+				expect(mockChildProcess).not.toBe(sshChild);
+			});
+
+			it('leaves the remote alone after a clean exit', async () => {
+				const { spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig());
+
+				closeWith(0);
+
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
+
+			it('leaves the remote to the Stop path when the user interrupted', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig());
+				processes.get('test-session')!.interrupted = true;
+
+				closeWith(130);
+
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
 		});
 	});
 

@@ -23,7 +23,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 import { stripAllAnsiCodes } from './terminal-filter';
 
 /**
@@ -480,7 +480,8 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 		}
 
 		// Check stderr and stdout for error patterns
-		const combined = `${stderr}\n${stdout}`;
+		// JSON event lines were classified as they streamed; see stripJsonEventLines.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, combined);
 

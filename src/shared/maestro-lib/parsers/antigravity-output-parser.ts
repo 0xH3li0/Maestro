@@ -23,7 +23,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 import { compactToolOutput } from '../../toolOutput';
 
 /** Token metrics reported on step_update and on the terminal result envelope. */
@@ -409,7 +409,8 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		const combined = `${stderr}\n${stdout}`;
+		// JSON event lines were classified as they streamed; see stripJsonEventLines.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
 		const match = matchErrorPattern(getErrorPatterns(this.agentId), combined);
 		if (match) {
 			return {
