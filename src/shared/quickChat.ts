@@ -337,7 +337,7 @@ export function parseQuickChatFontScaleRequest(raw: unknown): QuickChatFontScale
 export const QUICK_CHAT_MIN_WIDTH = 380;
 /** The shortest the conversation shape can be dragged. */
 export const QUICK_CHAT_MIN_EXPANDED_HEIGHT = 320;
-/** The composer-only shape at rest: an empty two-line draft. */
+/** The composer-only shape at rest: one draft line centered between header and buttons. */
 export const QUICK_CHAT_COMPACT_HEIGHT = 148;
 /**
  * The tallest the composer-only shape grows as the draft gets longer. Past it

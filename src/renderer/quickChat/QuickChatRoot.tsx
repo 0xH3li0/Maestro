@@ -688,7 +688,10 @@ function QuickChatWindow() {
 			<textarea
 				ref={textareaRef}
 				autoFocus
-				rows={expanded ? 1 : 2}
+				// One row in both shapes: the compact shape's min height leaves room
+				// to spare, and `justify-between` splits it evenly above and below
+				// the draft. A second row would sit empty under the first line.
+				rows={1}
 				value={draft}
 				onChange={(e) => setDraft(e.target.value)}
 				onKeyDown={(e) => {
