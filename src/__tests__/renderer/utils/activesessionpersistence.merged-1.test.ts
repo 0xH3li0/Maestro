@@ -53,7 +53,6 @@ import {
 	extractTitle,
 	formatFileSize,
 } from '../../../renderer/utils/documentStats';
-import type { DocumentStats } from '../../../renderer/utils/documentStats';
 import { buildFileTreeFromPaths } from '../../../renderer/utils/fileTree';
 import {
 	normalizeAutoRunTargetFilename,
@@ -693,7 +692,6 @@ describe('browserTabPersistence', () => {
 			});
 
 			it('rejects dangerous and non-http schemes', () => {
-				// eslint-disable-next-line no-script-url
 				expect(isHttpBrowserTabUrl('javascript:alert(1)')).toBe(false);
 				expect(isHttpBrowserTabUrl('data:text/html,<script>1</script>')).toBe(false);
 				expect(isHttpBrowserTabUrl('file:///etc/passwd')).toBe(false);

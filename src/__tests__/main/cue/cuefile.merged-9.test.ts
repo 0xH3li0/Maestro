@@ -308,7 +308,7 @@ describe('cue-file-watcher', () => {
 	describe('isActive gate', () => {
 		it('drops the debounced event when isActive returns false', () => {
 			const onEvent = vi.fn();
-			let active = false;
+			const active = false;
 
 			createCueFileWatcher({
 				watchGlob: '**/*.ts',
@@ -408,7 +408,7 @@ class MockChildProcess extends EventEmitter {
 	stderr = new EventEmitter();
 	killed = false;
 
-	kill(signal?: string) {
+	kill(_signal?: string) {
 		this.killed = true;
 		return true;
 	}

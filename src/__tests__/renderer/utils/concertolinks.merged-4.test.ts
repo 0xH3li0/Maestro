@@ -471,7 +471,7 @@ describe('a horizontal step lands on the nearest dot in that column', () => {
 
 	const nearestIn = (column: number, y: number) => {
 		let best = Infinity;
-		for (const [hash, position] of geometry.positionOfCommit) {
+		for (const [, position] of geometry.positionOfCommit) {
 			if (position.x !== column) continue;
 			best = Math.min(best, Math.abs(position.y - y));
 		}

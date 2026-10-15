@@ -19,7 +19,6 @@ import {
 	classifyGitStatus,
 } from '../../../renderer/utils/gitChangeMap';
 import {
-	ParsedFileDiff,
 	buildSyntheticGitDiff,
 	getDiffStats,
 	getFileName,

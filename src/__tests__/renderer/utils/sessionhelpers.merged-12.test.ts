@@ -3,7 +3,7 @@
 //   - src/__tests__/renderer/utils/sessionValidation.test.ts
 //   - src/__tests__/renderer/utils/shortcutMatch.test.ts
 
-import type { AgentCapabilities, AgentConfig, Session, ToolType } from '../../../renderer/types';
+import type { AgentCapabilities, AgentConfig, ToolType } from '../../../renderer/types';
 import {
 	agentSupportsContextTransfer,
 	buildSpawnConfigForAgent,

@@ -481,7 +481,7 @@ describe('PERFORMANCE_THRESHOLDS', () => {
 
 	it('should have numeric threshold values', () => {
 		// All thresholds should be positive numbers
-		for (const [key, value] of Object.entries(PERFORMANCE_THRESHOLDS)) {
+		for (const [, value] of Object.entries(PERFORMANCE_THRESHOLDS)) {
 			expect(typeof value).toBe('number');
 			expect(value).toBeGreaterThan(0);
 		}

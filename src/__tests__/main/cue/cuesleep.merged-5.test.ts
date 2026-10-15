@@ -9,13 +9,12 @@ import {
 } from '../../../main/cue/cue-cleanup-service';
 import type { CueCleanupServiceDeps } from '../../../main/cue/cue-cleanup-service';
 import { CueEngine } from '../../../main/cue/cue-engine';
-import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 import type { CueFanInTracker } from '../../../main/cue/cue-fan-in-tracker';
 import { buildFilteredOutputs, mergeUpstreamForwarded } from '../../../main/cue/cue-output-filter';
 import type { FanInSourceCompletion } from '../../../main/cue/cue-output-filter';
 import type { CueSessionRegistry } from '../../../main/cue/cue-session-registry';
 import type { CueConfig, CueRunResult, CueSubscription } from '../../../main/cue/cue-types';
-import { createMockConfig, createMockDeps, createMockSession } from './cue-test-helpers';
+import { createMockConfig, createMockDeps } from './cue-test-helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
@@ -606,14 +605,14 @@ describe('Cue Sleep Prevention', () => {
 		});
 
 		it('multiple concurrent runs each get their own block reason', async () => {
-			let callCount = 0;
+			let _callCount = 0;
 			const resolvers: Array<(result: CueRunResult) => void> = [];
 
 			const onPreventSleep = vi.fn();
 			const deps = createMockDeps({
 				onPreventSleep,
 				onCueRun: vi.fn(() => {
-					callCount++;
+					_callCount++;
 					return new Promise<CueRunResult>((resolve) => {
 						resolvers.push(resolve);
 					});

@@ -7,10 +7,7 @@
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalStore';
 import { extractDomain, parseMarkdownLinks } from '../../../renderer/utils/markdownLinkParser';
-import type {
-	ParseMarkdownLinksOptions,
-	ParsedMarkdownLinks,
-} from '../../../renderer/utils/markdownLinkParser';
+import type { ParseMarkdownLinksOptions } from '../../../renderer/utils/markdownLinkParser';
 import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,

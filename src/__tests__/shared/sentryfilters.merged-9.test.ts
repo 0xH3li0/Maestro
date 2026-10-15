@@ -477,7 +477,7 @@ describe('shared/symphony-constants', () => {
 		});
 
 		it('should have entries with label and emoji properties', () => {
-			for (const [key, value] of Object.entries(SYMPHONY_CATEGORIES)) {
+			for (const [, value] of Object.entries(SYMPHONY_CATEGORIES)) {
 				expect(value).toHaveProperty('label');
 				expect(value).toHaveProperty('emoji');
 				expect(typeof value.label).toBe('string');

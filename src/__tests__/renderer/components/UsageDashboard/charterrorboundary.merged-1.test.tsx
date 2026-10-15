@@ -17,7 +17,7 @@ import {
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session, Theme } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('lucide-react', () => ({

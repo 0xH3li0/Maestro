@@ -4,7 +4,7 @@
 //   - src/__tests__/renderer/utils/touch.test.ts
 
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type { Session, TerminalTab } from '../../../renderer/types';
+import type { TerminalTab } from '../../../renderer/types';
 import {
 	addTerminalTab,
 	closeTerminalTab,

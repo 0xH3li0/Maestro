@@ -4,7 +4,6 @@
 //   - src/__tests__/main/cue/cue-text-utils.test.ts
 
 import { CueEngine } from '../../../main/cue/cue-engine';
-import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 import { createCueSessionRegistry } from '../../../main/cue/cue-session-registry';
 import type { CueSessionRegistry } from '../../../main/cue/cue-session-registry';
 import type { SessionState } from '../../../main/cue/cue-session-state';
@@ -15,7 +14,7 @@ import {
 	sliceTailByChars,
 } from '../../../main/cue/cue-text-utils';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
-import { createMockConfig, createMockDeps, createMockSession } from './cue-test-helpers';
+import { createMockConfig, createMockDeps } from './cue-test-helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({

@@ -469,13 +469,13 @@ describe('cue schedule --cancel <name>', () => {
 
 describe('cueTrigger command', () => {
 	let consoleSpy: MockInstance;
-	let consoleErrorSpy: MockInstance;
+	let _consoleErrorSpy: MockInstance;
 	let processExitSpy: MockInstance;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		_consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 

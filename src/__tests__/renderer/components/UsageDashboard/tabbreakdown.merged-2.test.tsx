@@ -190,7 +190,6 @@ describe('applyTabFilter', () => {
 		{ tabId: 'c1', status: 'closed', lastActive: 500 },
 		{ tabId: 'c2', status: 'closed', lastActive: 400 },
 		{ tabId: 's1', status: 'snoozed', lastActive: 300 },
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	] as any[];
 
 	it('keeps only open tabs under the open filter', () => {
@@ -206,7 +205,6 @@ describe('applyTabFilter', () => {
 			tabId: `t${i}`,
 			status: 'closed',
 			lastActive: i,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		})) as any[];
 
 		const ten = applyTabFilter(many, 'recent10');
@@ -222,7 +220,6 @@ describe('sortTabStats', () => {
 		{ tabId: 'a', name: 'Zulu', queries: 1, totalDuration: 900, lastActive: 10, autoPercent: 50 },
 		{ tabId: 'b', name: 'Alpha', queries: 9, totalDuration: 100, lastActive: 30, autoPercent: 0 },
 		{ tabId: 'c', name: 'Mike', queries: 5, totalDuration: 500, lastActive: 20, autoPercent: 90 },
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	] as any[];
 
 	it('sorts by each column in its natural default direction', () => {
@@ -240,7 +237,6 @@ describe('sortTabStats', () => {
 	});
 
 	it('sinks tabs with no recorded auto share in both directions', () => {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const withNulls = [...stats, { tabId: 'none', name: 'None', autoPercent: null }] as any[];
 
 		expect(

@@ -419,7 +419,7 @@ describe('cue-task-scanner', () => {
 		describe('isActive gate', () => {
 			it('skips the directory walk when isActive returns false', async () => {
 				const onEvent = vi.fn();
-				let active = false;
+				const active = false;
 
 				const cleanup = createCueTaskScanner({
 					watchGlob: '**/*.md',

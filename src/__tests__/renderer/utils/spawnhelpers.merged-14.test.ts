@@ -21,7 +21,7 @@ import { buildThinkingItems } from '../../../renderer/utils/thinkingItems';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import { mockTheme } from '../../helpers/mockTheme';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {

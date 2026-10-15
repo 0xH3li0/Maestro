@@ -34,7 +34,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSessions: vi.fn(),
 }));
 vi.mock('../../../cli/output/formatter', () => ({
-	formatPlaybooks: vi.fn((playbooks, agentName, folderPath) => {
+	formatPlaybooks: vi.fn((playbooks, agentName, _folderPath) => {
 		if (playbooks.length === 0) {
 			return 'No playbooks found.';
 		}
