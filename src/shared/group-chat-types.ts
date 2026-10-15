@@ -362,6 +362,8 @@ export interface GroupChatMessage {
 	readOnly?: boolean;
 	/** Base64 data URLs of images attached to this message */
 	images?: string[];
+	/** Set on a user message that was steered into a running round: the turns that took it. */
+	steeredTo?: string[];
 }
 
 /**

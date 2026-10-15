@@ -650,6 +650,17 @@ Send a message to a group chat (ID, ID prefix, or name); refused while busy
 | `--message-file <path>` | Read the message from a file   | -       |
 | `--json`                | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat steer <chat> [message]`
+
+Type a message into the round running in a group chat instead of waiting for it to end
+
+| Option                  | Description                                                   | Default |
+| ----------------------- | ------------------------------------------------------------- | ------- |
+| `--message-file <path>` | Read the message from a file                                  | -       |
+| `--item <queued-id>`    | Steer a message already in the chat queue (ids are in status) | -       |
+| `--read-only`           | Only steer when the running round is read-only                | -       |
+| `--json`                | Output as JSON (for scripting)                                | -       |
+
 ## `maestro-cli group-chat status <chat>`
 
 Show a group chat's state, participants, and latest messages

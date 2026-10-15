@@ -149,6 +149,7 @@ import {
 	handleStartGroupChat,
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
+	handleSteerGroupChat,
 	handleStopGroupChat,
 } from './groupChat';
 import {
@@ -579,6 +580,10 @@ export class WebSocketMessageHandler {
 
 			case 'send_group_chat_message':
 				handleSendGroupChatMessage(this.ctx, client, message);
+				break;
+
+			case 'steer_group_chat':
+				handleSteerGroupChat(this.ctx, client, message);
 				break;
 
 			case 'stop_group_chat':

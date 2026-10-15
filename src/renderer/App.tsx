@@ -1262,6 +1262,7 @@ function MaestroConsoleInner() {
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
 		handleResumeGroupChatQueue,
+		handleSteerGroupChatQueueItem,
 		handleStopAll: handleGroupChatStopAll,
 		handleNewGroupChat,
 		handleEditGroupChat,
@@ -3382,6 +3383,7 @@ function MaestroConsoleInner() {
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 									onResumeQueue={handleResumeGroupChatQueue}
+									onSteerQueuedItem={handleSteerGroupChatQueueItem}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={chatRawTextMode}
 									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}

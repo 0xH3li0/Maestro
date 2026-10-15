@@ -329,6 +329,69 @@ describe('group-chat-log', () => {
 			expect(messages[0].from).toBe('user');
 			expect(messages[0].content).toBe(testContent);
 		});
+
+		describe('steered user lines', () => {
+			it('appends the steered field after the other trailing fields', async () => {
+				const logPath = path.join(testDir, 'steered-append.log');
+				await appendToLog(logPath, 'user', 'Also check docs', true, ['a.png'], ['Moderator']);
+				const content = await fs.readFile(logPath, 'utf-8');
+				expect(content).toContain('|Also check docs|readOnly|images:a.png|steered:Moderator\n');
+			});
+
+			it('writes no steered field for an empty target list', async () => {
+				const logPath = path.join(testDir, 'steered-empty.log');
+				await appendToLog(logPath, 'user', 'Plain', false, undefined, []);
+				const content = await fs.readFile(logPath, 'utf-8');
+				expect(content).not.toContain('steered:');
+				const messages = await readLog(logPath);
+				expect(messages[0]).not.toHaveProperty('steeredTo');
+			});
+
+			it('round-trips steeredTo, including names with commas and pipes', async () => {
+				const logPath = path.join(testDir, 'steered-round-trip.log');
+				const targets = ['Smith, Jane', 'a|b', 'Bob'];
+				await appendToLog(logPath, 'user', 'Use the new API', false, undefined, targets);
+				const messages = await readLog(logPath);
+				expect(messages).toHaveLength(1);
+				expect(messages[0].content).toBe('Use the new API');
+				expect(messages[0].steeredTo).toEqual(targets);
+				expect(messages[0].readOnly).toBeUndefined();
+				expect(messages[0].images).toBeUndefined();
+			});
+
+			it('parses a line whose only trailing field is steered:', async () => {
+				const logPath = path.join(testDir, 'steered-only.log');
+				await fs.writeFile(logPath, '2024-01-15T10:30:00.000Z|user|Hello|steered:Alice,Bob\n');
+				const messages = await readLog(logPath);
+				expect(messages).toEqual([
+					{
+						timestamp: '2024-01-15T10:30:00.000Z',
+						from: 'user',
+						content: 'Hello',
+						steeredTo: ['Alice', 'Bob'],
+					},
+				]);
+			});
+
+			it('round-trips steeredTo combined with readOnly and images', async () => {
+				const logPath = path.join(testDir, 'steered-combined.log');
+				await appendToLog(logPath, 'user', 'All of it', true, ['x.png', 'y.jpg'], ['Moderator']);
+				const messages = await readLog(logPath);
+				expect(messages).toHaveLength(1);
+				expect(messages[0].content).toBe('All of it');
+				expect(messages[0].readOnly).toBe(true);
+				expect(messages[0].images).toEqual(['x.png', 'y.jpg']);
+				expect(messages[0].steeredTo).toEqual(['Moderator']);
+			});
+
+			it('still reads an unknown lone trailing field as content', async () => {
+				const logPath = path.join(testDir, 'steered-unknown.log');
+				await fs.writeFile(logPath, '2024-01-15T10:30:00.000Z|user|Hello|world\n');
+				const messages = await readLog(logPath);
+				expect(messages[0].content).toBe('Hello|world');
+				expect(messages[0]).not.toHaveProperty('steeredTo');
+			});
+		});
 	});
 
 	// ===========================================================================

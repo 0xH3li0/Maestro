@@ -60,6 +60,25 @@ describe('SteeredMessageHeader', () => {
 		expect(header.querySelector(CHECK)).toBeNull();
 	});
 
+	it('names the turns that took a group chat steer', () => {
+		render(<SteeredMessageHeader state={undefined} theme={mockTheme} targets={['Alice', 'Bob']} />);
+
+		const header = screen.getByTestId('steered-message-header');
+		expect(header).toHaveTextContent('Steered to Alice, Bob');
+		expect(header).toHaveAttribute(
+			'title',
+			'Typed into the round that was already running. Taken by: Alice, Bob.'
+		);
+	});
+
+	it('falls back to the state copy for an empty target list', () => {
+		render(<SteeredMessageHeader state="absorbed" theme={mockTheme} targets={[]} />);
+
+		const header = screen.getByTestId('steered-message-header');
+		expect(header).toHaveTextContent('Steered into the running turn');
+		expect(header.textContent).not.toMatch(/Steered to/);
+	});
+
 	it('has distinct copy for every state', () => {
 		const labels = (['pending', 'absorbed', 'queued', undefined] as const).map(
 			(state) => steerBubbleCopy(state).label

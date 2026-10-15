@@ -181,6 +181,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
 	MergeContextCallback,
@@ -912,6 +914,10 @@ export class WebServer {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
 	}
 
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbackRegistry.setSteerGroupChatCallback(callback);
+	}
+
 	setMergeContextCallback(callback: MergeContextCallback): void {
 		this.callbackRegistry.setMergeContextCallback(callback);
 	}
@@ -1477,6 +1483,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
+			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
+				this.callbackRegistry.steerGroupChat(chatId, request),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
 				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
 			transferContext: async (sourceSessionId: string, targetSessionId: string) =>

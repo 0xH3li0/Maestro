@@ -47,6 +47,7 @@ import {
 	groupChatList,
 	groupChatSend,
 	groupChatStart,
+	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
 } from './commands/group-chat';
@@ -797,6 +798,17 @@ groupChat
 	.option('--message-file <path>', 'Read the message from a file')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatSend);
+
+groupChat
+	.command('steer <chat> [message]')
+	.description(
+		'Type a message into the round running in a group chat instead of waiting for it to end'
+	)
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--item <queued-id>', 'Steer a message already in the chat queue (ids are in status)')
+	.option('--read-only', 'Only steer when the running round is read-only')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSteer);
 
 groupChat
 	.command('status <chat>')

@@ -7,6 +7,7 @@ import type { TranslationReport } from '../../../shared/maestro-lib/translation/
  */
 
 import { logger } from '../../utils/logger';
+import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -122,6 +123,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatState,
 	MergeContextCallback,
 	TransferContextCallback,
@@ -267,6 +270,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
+	steerGroupChat: SteerGroupChatCallback | null;
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
@@ -379,6 +383,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		sendGroupChatMessage: null,
+		steerGroupChat: null,
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
@@ -1007,6 +1012,16 @@ export class CallbackRegistry {
 		return this.callbacks.sendGroupChatMessage(chatId, message);
 	}
 
+	async steerGroupChat(
+		chatId: string,
+		request: SteerGroupChatRequest
+	): Promise<GroupChatSteerResult> {
+		if (!this.callbacks.steerGroupChat) {
+			return { outcome: 'unavailable', detail: 'group chat steering is not configured' };
+		}
+		return this.callbacks.steerGroupChat(chatId, request);
+	}
+
 	async mergeContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
 		if (!this.callbacks.mergeContext) return false;
 		return this.callbacks.mergeContext(sourceSessionId, targetSessionId);
@@ -1518,6 +1533,10 @@ export class CallbackRegistry {
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbacks.sendGroupChatMessage = callback;
+	}
+
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbacks.steerGroupChat = callback;
 	}
 
 	setMergeContextCallback(callback: MergeContextCallback): void {

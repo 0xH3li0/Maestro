@@ -53,6 +53,62 @@ describe('toRemoteGroupChatState', () => {
 		expect(state.messages[1].timestamp).toBe(Date.parse('2026-09-26T10:00:05.000Z'));
 		expect(new Set(state.messages.map((m) => m.id)).size).toBe(2);
 	});
+
+	it('carries who took a steered user message, and nothing on a plain one', () => {
+		const state = toRemoteGroupChatState(baseChat, 'moderator-thinking', [
+			{ timestamp: '2026-09-26T10:00:00.000Z', from: 'user', content: 'go' },
+			{
+				timestamp: '2026-09-26T10:00:01.000Z',
+				from: 'user',
+				content: 'also docs',
+				steeredTo: ['Moderator'],
+			},
+			{ timestamp: '2026-09-26T10:00:02.000Z', from: 'user', content: 'x', steeredTo: [] },
+		]);
+		expect(state.messages[0]).not.toHaveProperty('steeredTo');
+		expect(state.messages[1].steeredTo).toEqual(['Moderator']);
+		expect(state.messages[2]).not.toHaveProperty('steeredTo');
+	});
+
+	it('leaves the queue out when none is passed', () => {
+		const state = toRemoteGroupChatState(baseChat, 'idle');
+		expect(state).not.toHaveProperty('queue');
+		expect(state).not.toHaveProperty('queuePaused');
+	});
+
+	it('reports the queue with only the flags that are set, and never the image data', () => {
+		const state = toRemoteGroupChatState(baseChat, 'agent-working', [], {
+			items: [
+				{ id: 'q1', text: 'plain', timestamp: 1 },
+				{
+					id: 'q2',
+					text: 'with everything',
+					timestamp: 2,
+					images: ['data:image/png;base64,AAAA'],
+					failed: true,
+					failureReason: 'boom',
+					sending: true,
+					readOnlyMode: true,
+				},
+				{ id: 'q3', text: 'empty images', timestamp: 3, images: [] },
+			],
+			paused: true,
+		});
+		expect(state.queue).toEqual([
+			{ id: 'q1', text: 'plain', timestamp: 1 },
+			{
+				id: 'q2',
+				text: 'with everything',
+				timestamp: 2,
+				hasImages: true,
+				failed: true,
+				failureReason: 'boom',
+				sending: true,
+			},
+			{ id: 'q3', text: 'empty images', timestamp: 3 },
+		]);
+		expect(state.queuePaused).toBe(true);
+	});
 });
 
 describe('withParticipantMentions', () => {

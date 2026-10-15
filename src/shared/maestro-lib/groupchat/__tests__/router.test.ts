@@ -18,6 +18,7 @@ import { createGroupChatStore, type GroupChatStore } from '../storage';
 import { createGroupChatTurnMetrics } from '../turn-metrics';
 import { readLog } from '../log';
 import { createSleepTracker } from '../../../sleepTracking';
+import type { SteeringResultFrame } from '../../../chatSteering';
 import type {
 	GroupChatEventSink,
 	GroupChatLauncher,
@@ -36,7 +37,7 @@ interface Harness {
 	spawns: GroupChatSpawn[];
 	/** Every id the engine asked the runner to stop. */
 	stops: string[];
-	messages: Array<{ chatId: string; from: string; content: string }>;
+	messages: Array<{ chatId: string; from: string; content: string; steeredTo?: string[] }>;
 	/** Every participant whose Auto Run badge the engine asked the host to clear. */
 	batchComplete: string[];
 	states: Array<{ chatId: string; state: string }>;
@@ -66,7 +67,13 @@ function createHarness(
 	const tracker = createSleepTracker();
 
 	const events: GroupChatEventSink = {
-		message: (chatId, m) => messages.push({ chatId, from: m.from, content: m.content }),
+		message: (chatId, m) =>
+			messages.push({
+				chatId,
+				from: m.from,
+				content: m.content,
+				...(m.steeredTo && { steeredTo: m.steeredTo }),
+			}),
 		stateChange: (chatId, state) => states.push({ chatId, state }),
 		participantsChanged: vi.fn(),
 		moderatorUsage: vi.fn(),
@@ -698,6 +705,365 @@ describe('group chat engine', () => {
 			expect(h.messages).toHaveLength(0);
 			expect(h.spawns).toHaveLength(0);
 			expect(await readLog(chat.logPath)).toHaveLength(0);
+		});
+	});
+
+	describe('steering a running round', () => {
+		/** A socket that answers every steer with `verdict`, numbering the ids. */
+		function steerAnswering(
+			verdicts: Record<string, SteeringResultFrame['verdict']> | SteeringResultFrame['verdict']
+		) {
+			let n = 0;
+			return vi.fn(async (processId: string): Promise<SteeringResultFrame> => {
+				const verdict =
+					typeof verdicts === 'string'
+						? verdicts
+						: (Object.entries(verdicts).find(([key]) => processId.includes(key))?.[1] ?? 'refused');
+				n += 1;
+				return { type: 'steering', id: `steer-${n}`, verdict };
+			});
+		}
+
+		async function startModeratorTurn(chatId: string, readOnly?: boolean) {
+			await h.engine.routeUserMessage(chatId, 'Start the round', h.launcher, readOnly);
+			return moderatorSpawns().at(-1)!.processId;
+		}
+
+		const userLines = async (logPath: string) =>
+			(await readLog(logPath)).filter((m) => m.from === 'user');
+
+		it('reports the running turns: the moderator, then the working participants', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			expect(h.engine.runningTurns(chat.id)).toEqual({ moderator: undefined, participants: [] });
+
+			const [alice, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+			expect(h.engine.runningTurns(chat.id).participants).toEqual(
+				expect.arrayContaining([
+					{ name: 'Alice', processId: alice },
+					{ name: 'Bob', processId: bob },
+				])
+			);
+		});
+
+		it('types into the moderator when its turn is running', async () => {
+			const chat = await chatWith('Alice');
+			const moderator = await startModeratorTurn(chat.id);
+			const steer = steerAnswering('delivered');
+
+			const result = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: '  also check the docs  ' },
+				steer
+			);
+
+			expect(steer).toHaveBeenCalledTimes(1);
+			expect(steer).toHaveBeenCalledWith(moderator, 'also check the docs');
+			expect(result).toMatchObject({ outcome: 'delivered', targets: ['Moderator'] });
+		});
+
+		it('types into the working participants when the moderator is not running', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			const [alice, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+			const steer = steerAnswering('delivered');
+
+			const result = await h.engine.steerRunningRound(chat.id, { text: 'use the v2 API' }, steer);
+
+			expect(steer.mock.calls.map((c) => c[0]).sort()).toEqual([alice, bob].sort());
+			expect(result.outcome).toBe('delivered');
+			expect([...(result.targets ?? [])].sort()).toEqual(['Alice', 'Bob']);
+		});
+
+		it('narrows to the working participant a message mentions', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			const [, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+			const steer = steerAnswering('delivered');
+
+			await h.engine.steerRunningRound(chat.id, { text: '@Bob only you' }, steer);
+
+			expect(steer.mock.calls.map((c) => c[0])).toEqual([bob]);
+		});
+
+		it('blocks a mention of an agent that is not working, typing nothing', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			await delegateTo(chat.id, 'Alice');
+			const steer = steerAnswering('delivered');
+
+			const result = await h.engine.steerRunningRound(chat.id, { text: '@Bob join in' }, steer);
+
+			expect(result).toMatchObject({
+				outcome: 'not-steerable',
+				blockedReason: 'mention-not-working',
+			});
+			expect(steer).not.toHaveBeenCalled();
+		});
+
+		it('blocks a room with nothing running', async () => {
+			const chat = await chatWith('Alice');
+			const steer = steerAnswering('delivered');
+			const result = await h.engine.steerRunningRound(chat.id, { text: 'hello' }, steer);
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'no-running-turn' });
+			expect(steer).not.toHaveBeenCalled();
+		});
+
+		it('blocks empty text', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+			const steer = steerAnswering('delivered');
+			const result = await h.engine.steerRunningRound(chat.id, { text: '   ' }, steer);
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'nothing-to-type' });
+			expect(steer).not.toHaveBeenCalled();
+		});
+
+		it('blocks a read-only message into a round that is not read-only', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+			const steer = steerAnswering('delivered');
+
+			const result = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'look only', readOnly: true },
+				steer
+			);
+
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'read-only' });
+			expect(steer).not.toHaveBeenCalled();
+		});
+
+		it('lets a read-only message into a read-only round', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id, true);
+			const steer = steerAnswering('delivered');
+
+			const result = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'look only', readOnly: true },
+				steer
+			);
+
+			expect(result.outcome).toBe('delivered');
+			const [line] = (await userLines(chat.logPath)).filter((m) => m.content === 'look only');
+			expect(line).toMatchObject({ readOnly: true, steeredTo: ['Moderator'] });
+		});
+
+		it('records a taken message as the user line, marked with who took it', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+			h.messages.length = 0;
+			h.historyTypes.length = 0;
+
+			await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'also check the docs' },
+				steerAnswering('delivered')
+			);
+
+			const lines = await userLines(chat.logPath);
+			expect(lines.at(-1)).toMatchObject({
+				content: 'also check the docs',
+				steeredTo: ['Moderator'],
+			});
+			expect(h.messages).toEqual([
+				{
+					chatId: chat.id,
+					from: 'user',
+					content: 'also check the docs',
+					steeredTo: ['Moderator'],
+				},
+			]);
+			expect(h.historyTypes).toEqual(['user']);
+		});
+
+		it('records a settled steer (absorbed at once) the same way', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+
+			const result = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'absorbed now' },
+				steerAnswering('absorbed')
+			);
+
+			expect(result).toMatchObject({ outcome: 'settled', verdict: 'absorbed' });
+			expect((await userLines(chat.logPath)).at(-1)).toMatchObject({
+				content: 'absorbed now',
+				steeredTo: ['Moderator'],
+			});
+		});
+
+		it('records nothing when no turn took the message', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+			const before = (await userLines(chat.logPath)).length;
+			h.messages.length = 0;
+			h.historyTypes.length = 0;
+
+			const refused = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'refused text' },
+				steerAnswering('refused')
+			);
+			const unknown = await h.engine.steerRunningRound(
+				chat.id,
+				{ text: 'unknown text' },
+				steerAnswering('unknown')
+			);
+
+			expect(refused.outcome).toBe('refused');
+			expect(unknown.outcome).toBe('unconfirmed');
+			expect(await userLines(chat.logPath)).toHaveLength(before);
+			expect(h.messages).toHaveLength(0);
+			expect(h.historyTypes).toHaveLength(0);
+		});
+
+		it('counts a steer that throws as unknown, so the result is unconfirmed', async () => {
+			const chat = await chatWith('Alice');
+			await startModeratorTurn(chat.id);
+			const steer = vi.fn(async (): Promise<SteeringResultFrame> => {
+				throw new Error('socket closed');
+			});
+
+			const result = await h.engine.steerRunningRound(chat.id, { text: 'maybe typed' }, steer);
+
+			expect(result).toEqual({
+				outcome: 'unconfirmed',
+				verdict: 'unknown',
+				detail: 'socket closed',
+			});
+		});
+
+		describe('settling a delivered steer', () => {
+			it('hands the message back when its only turn dropped it', async () => {
+				const chat = await chatWith('Alice');
+				const moderator = await startModeratorTurn(chat.id);
+				await h.engine.steerRunningRound(
+					chat.id,
+					{ text: 'too late' },
+					steerAnswering('delivered')
+				);
+
+				expect(
+					h.engine.steeringVerdict(moderator, {
+						type: 'steering',
+						id: 'steer-1',
+						verdict: 'dropped',
+					})
+				).toEqual({ groupChatId: chat.id, text: 'too late', readOnly: false });
+				// Settled once: a repeat says nothing.
+				expect(
+					h.engine.steeringVerdict(moderator, {
+						type: 'steering',
+						id: 'steer-1',
+						verdict: 'dropped',
+					})
+				).toBeNull();
+			});
+
+			it('keeps the message when its turn absorbed or queued it', async () => {
+				const chat = await chatWith('Alice');
+				const moderator = await startModeratorTurn(chat.id);
+				await h.engine.steerRunningRound(chat.id, { text: 'taken' }, steerAnswering('delivered'));
+
+				expect(
+					h.engine.steeringVerdict(moderator, {
+						type: 'steering',
+						id: 'steer-1',
+						verdict: 'queued',
+					})
+				).toBeNull();
+				expect(h.engine.unsettledSteersOnExit(moderator)).toEqual([]);
+			});
+
+			it('ignores a repeated delivered and any unknown id', async () => {
+				const chat = await chatWith('Alice');
+				const moderator = await startModeratorTurn(chat.id);
+				await h.engine.steerRunningRound(chat.id, { text: 'hm' }, steerAnswering('delivered'));
+
+				expect(
+					h.engine.steeringVerdict(moderator, {
+						type: 'steering',
+						id: 'steer-1',
+						verdict: 'delivered',
+					})
+				).toBeNull();
+				expect(
+					h.engine.steeringVerdict(moderator, { type: 'steering', id: 'other', verdict: 'dropped' })
+				).toBeNull();
+				// Still pending after both.
+				expect(h.engine.unsettledSteersOnExit(moderator)).toHaveLength(1);
+			});
+
+			it('returns the message only after EVERY turn it went to dropped it', async () => {
+				const chat = await chatWith('Alice', 'Bob');
+				const [alice, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+				const steer = vi.fn(
+					async (processId: string): Promise<SteeringResultFrame> => ({
+						type: 'steering',
+						id: processId === alice ? 'a-1' : 'b-1',
+						verdict: 'delivered',
+					})
+				);
+				await h.engine.steerRunningRound(chat.id, { text: 'both of you' }, steer);
+
+				expect(
+					h.engine.steeringVerdict(alice, { type: 'steering', id: 'a-1', verdict: 'dropped' })
+				).toBeNull();
+				expect(
+					h.engine.steeringVerdict(bob, { type: 'steering', id: 'b-1', verdict: 'dropped' })
+				).toEqual({ groupChatId: chat.id, text: 'both of you', readOnly: false });
+			});
+
+			it('keeps the message when one turn took it and the other dropped it', async () => {
+				const chat = await chatWith('Alice', 'Bob');
+				const [alice, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+				const steer = vi.fn(
+					async (processId: string): Promise<SteeringResultFrame> => ({
+						type: 'steering',
+						id: processId === alice ? 'a-1' : 'b-1',
+						verdict: 'delivered',
+					})
+				);
+				await h.engine.steerRunningRound(chat.id, { text: 'one of you' }, steer);
+
+				expect(
+					h.engine.steeringVerdict(alice, { type: 'steering', id: 'a-1', verdict: 'absorbed' })
+				).toBeNull();
+				expect(
+					h.engine.steeringVerdict(bob, { type: 'steering', id: 'b-1', verdict: 'dropped' })
+				).toBeNull();
+			});
+
+			it('keeps the message when a sibling turn settled it on the spot', async () => {
+				const chat = await chatWith('Alice', 'Bob');
+				const [alice, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+				const steer = vi.fn(
+					async (processId: string): Promise<SteeringResultFrame> => ({
+						type: 'steering',
+						id: processId === alice ? 'a-1' : 'b-1',
+						verdict: processId === alice ? 'queued' : 'delivered',
+					})
+				);
+				await h.engine.steerRunningRound(chat.id, { text: 'one settled' }, steer);
+
+				expect(
+					h.engine.steeringVerdict(bob, { type: 'steering', id: 'b-1', verdict: 'dropped' })
+				).toBeNull();
+			});
+
+			it("returns a turn's unsettled steers when it exits, once", async () => {
+				const chat = await chatWith('Alice');
+				const moderator = await startModeratorTurn(chat.id, true);
+				await h.engine.steerRunningRound(
+					chat.id,
+					{ text: 'never answered', readOnly: true },
+					steerAnswering('delivered')
+				);
+
+				expect(h.engine.unsettledSteersOnExit('some-other-process')).toEqual([]);
+				expect(h.engine.unsettledSteersOnExit(moderator)).toEqual([
+					{ groupChatId: chat.id, text: 'never answered', readOnly: true },
+				]);
+				expect(h.engine.unsettledSteersOnExit(moderator)).toEqual([]);
+			});
 		});
 	});
 });

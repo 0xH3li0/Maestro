@@ -36,6 +36,15 @@ import {
 	stripMarkdownFormatting,
 } from '../../group-chat-types';
 import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
+import type { SteeringResultFrame } from '../../chatSteering';
+import {
+	GROUP_CHAT_STEER_BLOCKED_DETAILS,
+	pickGroupChatSteerTargets,
+	summarizeGroupChatSteer,
+	type GroupChatRunningTurns,
+	type GroupChatSteerBlockedReason,
+	type GroupChatSteerResult,
+} from '../../groupChatSteering';
 import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { UsageStats } from '../../types';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../launch/agent-args';
@@ -838,6 +847,207 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	}
 
 	/**
+	 * Puts a user message in the room: the chat log, the live transcript (with the
+	 * original data URLs for display), and history. One path for a routed message
+	 * and a steered one, so the two read the same everywhere.
+	 */
+	async function recordUserMessage(
+		groupChatId: string,
+		logPath: string,
+		message: string,
+		opts: {
+			readOnly?: boolean;
+			images?: string[];
+			savedImageFilenames?: string[];
+			steeredTo?: string[];
+		}
+	): Promise<void> {
+		const { readOnly, images, savedImageFilenames, steeredTo } = opts;
+		await appendToLog(logPath, 'user', message, readOnly, savedImageFilenames, steeredTo);
+
+		const userMessage: GroupChatRoomMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'user',
+			content: message,
+			readOnly,
+			...(images && images.length > 0 && { images }),
+			...(steeredTo && steeredTo.length > 0 && { steeredTo }),
+		};
+		events.message(groupChatId, userMessage);
+
+		// Record the prompt itself in history. Every other entry is something an
+		// agent did in reaction to this line, so a history without it shows effects
+		// with no causes - and the timestamp is what makes a click here jump the
+		// transcript back to the message that started the round.
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: extractFirstSentence(message),
+			participantName: GROUP_CHAT_USER_NAME,
+			participantColor: '#808080',
+			type: 'user',
+			fullResponse: message,
+		});
+	}
+
+	// ==========================================================================
+	// Steering: a message into a round that is already running
+	// ==========================================================================
+
+	/** One steered message, shared by every turn it was typed into. */
+	interface SteeredMessage {
+		groupChatId: string;
+		text: string;
+		readOnly: boolean;
+		/** Turns that have not said what they did with it yet. */
+		unsettled: number;
+		/** Whether any turn took it (absorbed or queued). */
+		taken: boolean;
+	}
+
+	/**
+	 * Delivered steers whose turn has not yet said what it did with them, by
+	 * `${processId}:${steerId}`. A turn that drops one (its run ended first) hands
+	 * the message back, so the caller can queue it again instead of losing it.
+	 */
+	const pendingSteers = new Map<string, SteeredMessage>();
+
+	/** The turns running in a room right now, by full process id. */
+	function runningTurns(groupChatId: string): GroupChatRunningTurns {
+		return {
+			moderator: runningModeratorTurns.get(groupChatId)?.processId,
+			participants: participantRegistry.getActiveParticipants(groupChatId).flatMap((name) => {
+				const processId = getParticipantSessionId(groupChatId, name);
+				return processId ? [{ name, processId }] : [];
+			}),
+		};
+	}
+
+	/**
+	 * Type a user message into the round that is running, rather than waiting for
+	 * it to end. The targets follow `pickGroupChatSteerTargets`. A message any turn
+	 * took is recorded in the room as the user's, marked with who took it, so the
+	 * moderator's synthesis and every later turn see it in the history.
+	 *
+	 * `steer` is the host's channel into one process (`ProcessManager.steer` on the
+	 * desktop). It is expected to resolve with a verdict; a rejection counts as
+	 * `unknown`, because the text may have been typed before it failed.
+	 */
+	async function steerRunningRound(
+		groupChatId: string,
+		message: { text: string; readOnly?: boolean },
+		steer: (processId: string, text: string) => Promise<SteeringResultFrame>
+	): Promise<GroupChatSteerResult> {
+		const notSteerable = (reason: GroupChatSteerBlockedReason): GroupChatSteerResult => ({
+			outcome: 'not-steerable',
+			blockedReason: reason,
+			detail: GROUP_CHAT_STEER_BLOCKED_DETAILS[reason],
+		});
+		const text = message.text.trim();
+		const readOnly = message.readOnly === true;
+		if (!text) return notSteerable('nothing-to-type');
+		// A read-only message typed into a round that may write would run with more
+		// access than the user gave it.
+		if (readOnly && !getGroupChatReadOnlyState(groupChatId)) return notSteerable('read-only');
+
+		const picked = pickGroupChatSteerTargets(text, runningTurns(groupChatId));
+		if ('blocked' in picked) return notSteerable(picked.blocked);
+
+		const attempts = await Promise.all(
+			picked.targets.map(async (target) => {
+				let result: SteeringResultFrame;
+				try {
+					result = await steer(target.processId, text);
+				} catch (error) {
+					result = {
+						type: 'steering',
+						id: '',
+						verdict: 'unknown',
+						detail: error instanceof Error ? error.message : String(error),
+					};
+				}
+				return { target, result };
+			})
+		);
+		const summary = summarizeGroupChatSteer(attempts);
+		if (summary.outcome !== 'delivered' && summary.outcome !== 'settled') return summary;
+
+		const delivered = attempts.filter((a) => a.result.verdict === 'delivered' && a.result.id);
+		if (delivered.length > 0) {
+			const steered: SteeredMessage = {
+				groupChatId,
+				text,
+				readOnly,
+				unsettled: delivered.length,
+				taken: summary.outcome === 'settled' || delivered.length < (summary.targets?.length ?? 0),
+			};
+			for (const { target, result } of delivered) {
+				pendingSteers.set(`${target.processId}:${result.id}`, steered);
+			}
+		}
+
+		const chat = await loadGroupChat(groupChatId);
+		if (chat) {
+			await recordUserMessage(groupChatId, chat.logPath, text, {
+				readOnly,
+				steeredTo: summary.targets,
+			});
+		}
+		return summary;
+	}
+
+	/** A steered message no turn ended up taking. */
+	interface ReturnedSteer {
+		groupChatId: string;
+		text: string;
+		readOnly: boolean;
+	}
+
+	function settleSteer(key: string, taken: boolean): ReturnedSteer | null {
+		const steered = pendingSteers.get(key);
+		if (!steered) return null;
+		pendingSteers.delete(key);
+		steered.unsettled -= 1;
+		steered.taken ||= taken;
+		if (steered.unsettled > 0 || steered.taken) return null;
+		return { groupChatId: steered.groupChatId, text: steered.text, readOnly: steered.readOnly };
+	}
+
+	/**
+	 * A steered turn said what it did with the message (maestro-p's transcript
+	 * verdict). Returns the message when no turn it went to took it: the run ended
+	 * first, the text is gone, and re-sending it is the caller's job.
+	 */
+	function steeringVerdict(processId: string, verdict: SteeringResultFrame): ReturnedSteer | null {
+		const key = `${processId}:${verdict.id}`;
+		switch (verdict.verdict) {
+			case 'absorbed':
+			case 'queued':
+				return settleSteer(key, true);
+			case 'dropped':
+				return settleSteer(key, false);
+			default:
+				// `delivered` repeated on stdout says nothing new.
+				return null;
+		}
+	}
+
+	/**
+	 * A steered turn exited with steers it never settled. maestro-p reports every
+	 * one as `dropped` before it exits, so anything left means that report never
+	 * came (a crash, a kill), and nobody knows whether the agent saw the text.
+	 * Returned so the caller can hold it, never send it twice without asking.
+	 */
+	function unsettledSteersOnExit(processId: string): ReturnedSteer[] {
+		const returned: ReturnedSteer[] = [];
+		for (const key of [...pendingSteers.keys()]) {
+			if (!key.startsWith(`${processId}:`)) continue;
+			const steer = settleSteer(key, false);
+			if (steer) returned.push(steer);
+		}
+		return returned;
+	}
+
+	/**
 	 * Routes a user message to the moderator.
 	 *
 	 * Spawns a batch process for the moderator to handle this specific message.
@@ -972,30 +1182,10 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		setGroupChatReadOnlyState(groupChatId, readOnly ?? false);
 
 		if (!routingRetry) {
-			// Log the message as coming from user (with image filenames if any)
-			await appendToLog(chat.logPath, 'user', message, readOnly, savedImageFilenames);
-
-			// Emit message event to renderer so it shows immediately (with original data URLs for display)
-			const userMessage: GroupChatRoomMessage = {
-				timestamp: new Date().toISOString(),
-				from: 'user',
-				content: message,
+			await recordUserMessage(groupChatId, chat.logPath, message, {
 				readOnly,
-				...(images && images.length > 0 && { images }),
-			};
-			events.message(groupChatId, userMessage);
-
-			// Record the prompt itself in history. Every other entry is something an
-			// agent did in reaction to this line, so a history without it shows effects
-			// with no causes - and the timestamp is what makes a click here jump the
-			// transcript back to the message that started the round.
-			await recordGroupChatHistory(groupChatId, {
-				timestamp: Date.now(),
-				summary: extractFirstSentence(message),
-				participantName: GROUP_CHAT_USER_NAME,
-				participantColor: '#808080',
-				type: 'user',
-				fullResponse: message,
+				images,
+				savedImageFilenames,
 			});
 
 			const explicitParticipantNames = extractMentions(message, chat.participants);
@@ -3143,6 +3333,11 @@ Review the agent responses above. Either:
 		sessionAnnounced,
 		usageReported,
 		liveOutput,
+		// Steering
+		runningTurns,
+		steerRunningRound,
+		steeringVerdict,
+		unsettledSteersOnExit,
 		// Round state
 		settleGroupChatToIdle,
 		setModeratorResponseTimeout,
