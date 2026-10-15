@@ -201,8 +201,12 @@ export function QuickChatRouteLine({
 						type="button"
 						onClick={onMoveToNewTab}
 						aria-label="Wrong tab. Send this message to a new tab"
-						className="shrink-0 p-1 rounded-full transition-opacity opacity-60 hover:opacity-100"
-						style={{ ...NO_DRAG_REGION, color: c.textDim }}
+						className="shrink-0 w-[2em] h-[2em] inline-flex items-center justify-center rounded-full transition-opacity opacity-90 hover:opacity-100"
+						style={{
+							...NO_DRAG_REGION,
+							color: c.accentForeground,
+							backgroundColor: c.accent,
+						}}
 						data-testid="quick-chat-route-reject"
 					>
 						<ThumbsDown className="w-3.5 h-3.5" />
