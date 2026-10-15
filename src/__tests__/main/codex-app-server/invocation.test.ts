@@ -86,8 +86,40 @@ describe('parseCodexAppServerInvocation', () => {
 		expect(result.ok && result.invocation.resumeId).toBeUndefined();
 	});
 
+	it('carries --add-dir under full access, where it grants nothing more', () => {
+		const result = parseCodexAppServerInvocation(
+			config([
+				...EXEC,
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--add-dir',
+				'/other',
+				'--add-dir=/more',
+				'resume',
+				'thread-1',
+			])
+		);
+		expect(result).toEqual({
+			ok: true,
+			invocation: {
+				cwd: '/spawn/cwd',
+				sandbox: 'danger-full-access',
+				resumeId: 'thread-1',
+				configArgs: [],
+			},
+		});
+	});
+
 	it.each([
-		[['--add-dir', '/other'], 'unsupported argument: --add-dir'],
+		[['--add-dir', '/other'], 'write grant (--add-dir) outside full access'],
+		[
+			['--sandbox', 'workspace-write', '--add-dir', '/other'],
+			'write grant (--add-dir) outside full access',
+		],
+		[
+			['--sandbox', 'read-only', '--add-dir', '/other'],
+			'write grant (--add-dir) outside full access',
+		],
+		[['--add-dir'], 'unsupported argument: --add-dir'],
 		[['-i', '/tmp/a.png'], 'unsupported argument: -i'],
 		[['--', 'prompt'], 'unsupported argument: --'],
 		[['--sandbox', 'bogus'], 'unknown sandbox mode: bogus'],
