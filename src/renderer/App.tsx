@@ -167,7 +167,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
-import { mergeQueuedItemIntoAbove } from './services/queuedPrompt';
+import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -1809,12 +1809,7 @@ function MaestroConsoleInner() {
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.map((item) =>
-				item.id === itemId ? { ...item, paused: !item.paused } : item
-			),
-		}));
+		toggleQueuedItemPaused(activeSessionIdRef.current, itemId);
 	}, []);
 
 	// Fold a queued message into the one above it (the queued card's Merge button).

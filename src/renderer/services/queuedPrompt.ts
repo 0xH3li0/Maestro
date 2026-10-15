@@ -194,6 +194,24 @@ export function removeQueuedItem(sessionId: string, itemId: string): boolean {
  * @returns Whether the item was in the queue to change.
  */
 export function setQueuedItemPaused(sessionId: string, itemId: string, paused: boolean): boolean {
+	return writeQueuedItemPaused(sessionId, itemId, () => paused);
+}
+
+/**
+ * Flip one queued item between held and live: the queued card's Hold / Resume
+ * button. Reads the current state inside the same store update that writes it.
+ *
+ * @returns Whether the item was in the queue to change.
+ */
+export function toggleQueuedItemPaused(sessionId: string, itemId: string): boolean {
+	return writeQueuedItemPaused(sessionId, itemId, (current) => !current);
+}
+
+function writeQueuedItemPaused(
+	sessionId: string,
+	itemId: string,
+	next: (current: boolean) => boolean
+): boolean {
 	let found = false;
 	updateSessionWith(sessionId, (s) => {
 		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
@@ -201,7 +219,7 @@ export function setQueuedItemPaused(sessionId: string, itemId: string, paused: b
 		return {
 			...s,
 			executionQueue: s.executionQueue.map((i) =>
-				i.id === itemId ? { ...i, paused: paused || undefined } : i
+				i.id === itemId ? { ...i, paused: next(!!i.paused) || undefined } : i
 			),
 		};
 	});

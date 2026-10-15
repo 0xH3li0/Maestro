@@ -19,7 +19,11 @@ import type { QueueSteerResult } from '../../../shared/chatSteering';
 import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
-import { mergeQueuedItemIntoAbove, sendQueuedItemNow } from '../../services/queuedPrompt';
+import {
+	mergeQueuedItemIntoAbove,
+	sendQueuedItemNow,
+	toggleQueuedItemPaused,
+} from '../../services/queuedPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -118,17 +122,7 @@ export function useQueueHandlers({
 	);
 
 	const handleTogglePauseQueueItem = useCallback((sessionId: string, itemId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				return {
-					...s,
-					executionQueue: s.executionQueue.map((item) =>
-						item.id === itemId ? { ...item, paused: !item.paused } : item
-					),
-				};
-			})
-		);
+		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
 	const handleEditQueueItem = useCallback(
