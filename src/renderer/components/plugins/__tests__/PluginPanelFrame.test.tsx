@@ -20,7 +20,7 @@ const panel: PanelContribution = {
 beforeEach(() => {
 	window.maestro.plugins = {
 		onPanelData: vi.fn(() => () => {}),
-		invokeCommand: vi.fn().mockResolvedValue(undefined),
+		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 	} as unknown as typeof window.maestro.plugins;
 });
 afterEach(() => cleanup());
