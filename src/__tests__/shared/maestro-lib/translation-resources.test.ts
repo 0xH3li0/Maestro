@@ -201,11 +201,11 @@ describe('project resource translation', () => {
 	});
 
 	it('resolves account and actual memory directory overrides', () => {
-		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toContain(
-			'/selected/account/projects/'
+		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toBe(
+			path.join('/selected/account', 'projects', '-project-worktree', 'memory')
 		);
 		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account', 'knowledge')).toBe(
-			'/project/worktree/knowledge'
+			path.resolve('/project/worktree', 'knowledge')
 		);
 	});
 	it('translates Markdown definitions into TOML and retains incompatible settings', () => {
@@ -241,8 +241,8 @@ describe('project resource translation', () => {
 			),
 		];
 		const prompt = translationKnowledgePrompt('/project/.maestro/knowledge', artifacts);
-		expect(prompt).toContain('/project/.maestro/knowledge/memory/MEMORY.md');
-		expect(prompt).toContain('/project/.maestro/knowledge/memory/topic.md');
+		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'MEMORY.md'));
+		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'topic.md'));
 		expect(prompt).not.toContain('memory_summary.md');
 	});
 	it('refuses TOML definitions without portable instructions', () => {

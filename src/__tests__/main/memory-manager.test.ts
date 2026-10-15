@@ -41,10 +41,13 @@ describe('memory-manager', () => {
 	});
 
 	it('resolves repository memory identity separately from worktree session cwd', async () => {
+		const repositoryRoot = path.join(tempHome, 'repo');
+		const worktree = path.join(tempHome, 'repo-worktrees', 'branch');
 		expect(
-			await resolveMemoryRepositoryRoot('/repo-worktrees/branch', async () => '/repo/.git')
-		).toBe('/repo');
-		expect(await resolveMemoryRepositoryRoot('/plain', async () => undefined)).toBe('/plain');
+			await resolveMemoryRepositoryRoot(worktree, async () => path.join(repositoryRoot, '.git'))
+		).toBe(repositoryRoot);
+		const plain = path.join(tempHome, 'plain');
+		expect(await resolveMemoryRepositoryRoot(plain, async () => undefined)).toBe(plain);
 	});
 	it('reads and edits the explicitly resolved translated directory without touching a native home', async () => {
 		const managed = path.join(tempHome, 'managed/memory');
