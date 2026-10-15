@@ -624,7 +624,10 @@ describe('headless lifecycle terminal paths', () => {
 			await vi.waitFor(() => expect(end).toBeTypeOf('function'));
 			try {
 				expect(isAgentBusy(agent, undefined)).toBe(true);
-				if (outcome === 'cancel' || outcome === 'plugin-stop') controller.abort();
+				if (outcome === 'cancel' || outcome === 'plugin-stop') {
+					controller.abort();
+					expect(isAgentBusy(agent, undefined)).toBe(true);
+				}
 				end();
 				if (outcome === 'throw') await expect(pending).rejects.toThrow('spawn failure');
 				else {
@@ -640,4 +643,36 @@ describe('headless lifecycle terminal paths', () => {
 			}
 		}
 	);
+});
+
+describe('cancelled preparation', () => {
+	it('ignores its first delayed start after cancellation', async () => {
+		const controller = new AbortController();
+		const runs: Array<{
+			options: SpawnAgentOptions;
+			finish: (value: { success: boolean; response: string }) => void;
+		}> = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn: async (_type, _cwd, _prompt, _session, options) =>
+				new Promise((finish) => runs.push({ options: options!, finish })),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const pending = run(agent.id, 'cancelled', undefined, controller.signal, 'relay');
+		await vi.waitFor(() => expect(runs).toHaveLength(1));
+		controller.abort();
+		try {
+			runs[0].options.onProcessStarted?.(401);
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+		} finally {
+			runs[0].finish({ success: true, response: 'late' });
+			await pending;
+		}
+	});
 });

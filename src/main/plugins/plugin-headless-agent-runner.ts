@@ -130,7 +130,7 @@ export function createPluginHeadlessAgentRunner(
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
 				signal,
 				onProcessStarted: (pid) => {
-					if (pid && !settled && !releaseActivity) {
+					if (pid && !signal?.aborted && !settled && !releaseActivity) {
 						releaseActivity = trackHeadlessAgentActivity(agent.id);
 					}
 				},
