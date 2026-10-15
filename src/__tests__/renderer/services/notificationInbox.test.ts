@@ -132,8 +132,45 @@ describe('notification inbox operations', () => {
 			tabRef: 'terminal-1',
 		};
 		const id = notifyToast({ title: 'Terminal', message: '', clickAction, historyOnly: true });
-		await activateNotification(useNotificationStore.getState().history.find((n) => n.id === id)!);
+		expect(await performNotificationInboxAction({ action: 'activate', id })).toMatchObject({
+			success: true,
+			open: false,
+		});
 		expect(native).toHaveBeenCalledWith('source', undefined, clickAction);
+	});
+
+	it.each(['rejected', 'unsuccessful'] as const)(
+		'reports %s native source activation to CLI callers and keeps the inbox open',
+		async (failure) => {
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'source' })] });
+			window.maestro.notification.navigateToSource =
+				failure === 'rejected'
+					? vi.fn().mockRejectedValue(new Error('Window unavailable'))
+					: vi.fn().mockResolvedValue({ success: false });
+			const id = notifyToast({ title: 'Source', message: '', sessionId: 'source' });
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			expect(await performNotificationInboxAction({ action: 'activate', id })).toMatchObject({
+				success: false,
+				error: 'Notification activation failed',
+				open: true,
+			});
+			expect(useNotificationStore.getState().history.find((n) => n.id === id)?.read).toBe(true);
+			expect(useNotificationStore.getState().history[0].title).toBe(
+				'Notification source unavailable'
+			);
+		}
+	);
+
+	it('reports activation without an action or with a deleted source as unsuccessful', async () => {
+		for (const sessionId of [undefined, 'deleted-source']) {
+			const id = notifyToast({ title: 'Stale', message: '', sessionId });
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			expect(await performNotificationInboxAction({ action: 'activate', id })).toMatchObject({
+				success: false,
+				error: 'Notification activation failed',
+				open: true,
+			});
+		}
 	});
 
 	it('reports stale IDs and entries without a link', async () => {

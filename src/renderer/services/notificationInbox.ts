@@ -20,18 +20,22 @@ import { runToastClick } from './toastClickActions';
 import { openUrl } from '../utils/openUrl';
 
 /** Report a stale source even when the user has disabled floating toasts. */
-function jumpToNotificationSource(sessionId: string, tabId?: string): void {
-	if (jumpToAgent(sessionId, { tabId })) return;
+function jumpToNotificationSource(sessionId: string, tabId?: string): boolean {
+	if (jumpToAgent(sessionId, { tabId })) return true;
 	notifyToast({
 		color: 'yellow',
 		title: 'Agent Not Found',
 		message: 'The agent this notification came from no longer exists.',
 		skipHistory: useNotificationStore.getState().config.defaultDuration !== -1,
 	});
+	return false;
 }
 
-/** Mark the entry read and run the same body action as its floating toast. */
-export async function activateNotification(record: NotificationRecord): Promise<void> {
+/**
+ * Mark the entry read and run the same body action as its floating toast.
+ * @returns Whether activation succeeded; a failed source keeps the inbox open.
+ */
+export async function activateNotification(record: NotificationRecord): Promise<boolean> {
 	const store = useNotificationStore.getState();
 	store.markNotificationRead(record.id);
 	const action = record.clickAction;
@@ -52,6 +56,7 @@ export async function activateNotification(record: NotificationRecord): Promise<
 			);
 			if (!result.success) throw new Error('Notification source could not be focused');
 			store.setNotificationCenterOpen(false);
+			return true;
 		} catch (error) {
 			logger.error('Notification source could not be focused', 'NotificationInbox', error);
 			notifyToast({
@@ -59,12 +64,19 @@ export async function activateNotification(record: NotificationRecord): Promise<
 				title: 'Notification source unavailable',
 				message: 'The originating window or tab could not be opened.',
 			});
+			return false;
 		}
-		return;
 	}
 
-	if (runToastClick(record, { onSessionClick: jumpToNotificationSource }))
-		store.setNotificationCenterOpen(false);
+	let sourceAvailable = true;
+	const dispatched = runToastClick(record, {
+		onSessionClick: (sourceId, tabId) => {
+			sourceAvailable = jumpToNotificationSource(sourceId, tabId);
+		},
+	});
+	const activated = dispatched && sourceAvailable;
+	if (activated) store.setNotificationCenterOpen(false);
+	return activated;
 }
 
 /** Inline links are independent of the notification's body action. */
@@ -86,6 +98,7 @@ export async function performNotificationInboxAction(
 		!record
 	)
 		return { success: false, error: 'Notification not found' };
+	let activationSucceeded = true;
 	switch (request.action) {
 		case 'open':
 			store.setNotificationCenterOpen(true);
@@ -123,7 +136,7 @@ export async function performNotificationInboxAction(
 			store.setNotificationCenterExpandedId(null);
 			break;
 		case 'activate':
-			await activateNotification(record!);
+			activationSucceeded = await activateNotification(record!);
 			break;
 		case 'link':
 			if (!record!.actionUrl) return { success: false, error: 'Notification has no inline link' };
@@ -140,8 +153,12 @@ export async function performNotificationInboxAction(
 		current.historyPersistenceFailed &&
 		['read', 'read-all', 'clear', 'dismiss', 'activate', 'link'].includes(request.action);
 	return {
-		success: !persistenceFailed,
-		error: persistenceFailed ? NOTIFICATION_HISTORY_PERSISTENCE_ERROR : undefined,
+		success: !persistenceFailed && activationSucceeded,
+		error: persistenceFailed
+			? NOTIFICATION_HISTORY_PERSISTENCE_ERROR
+			: !activationSucceeded
+				? 'Notification activation failed'
+				: undefined,
 		historyPersistenceFailed: current.historyPersistenceFailed,
 		open: current.notificationCenterOpen,
 		expandedId: current.notificationCenterExpandedId,
