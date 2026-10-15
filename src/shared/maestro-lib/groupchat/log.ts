@@ -16,6 +16,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { formatSteeredLogField, parseSteeredLogField } from '../../groupChatSteering';
 
 /**
  * Message structure for parsed log entries.
@@ -27,6 +28,8 @@ export interface GroupChatMessage {
 	readOnly?: boolean;
 	/** Base64 data URLs of images attached to this message */
 	images?: string[];
+	/** Set on a user message that was steered into a running round: the turns that took it. */
+	steeredTo?: string[];
 }
 
 /**
@@ -81,23 +84,28 @@ export function unescapeContent(escaped: string): string {
  * @param content - Message content
  * @param readOnly - Optional flag indicating read-only mode
  * @param imageFilenames - Optional array of saved image filenames (not data URLs)
+ * @param steeredTo - Optional turns a steered user message was typed into
  */
 export async function appendToLog(
 	logPath: string,
 	from: string,
 	content: string,
 	readOnly?: boolean,
-	imageFilenames?: string[]
+	imageFilenames?: string[],
+	steeredTo?: string[]
 ): Promise<void> {
 	const timestamp = new Date().toISOString();
 	const escapedContent = escapeContent(content);
-	// Format: TIMESTAMP|FROM|CONTENT[|readOnly][|images:file1,file2,...]
+	// Format: TIMESTAMP|FROM|CONTENT[|readOnly][|images:file1,file2,...][|steered:name,...]
 	let line = `${timestamp}|${from}|${escapedContent}`;
 	if (readOnly) {
 		line += '|readOnly';
 	}
 	if (imageFilenames && imageFilenames.length > 0) {
 		line += `|images:${imageFilenames.join(',')}`;
+	}
+	if (steeredTo && steeredTo.length > 0) {
+		line += `|${formatSteeredLogField(steeredTo)}`;
 	}
 	line += '\n';
 
@@ -140,10 +148,11 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 				const timestamp = line.substring(0, pipeIndices[0]);
 				const from = line.substring(pipeIndices[0] + 1, pipeIndices[1]);
 
-				// Parse optional trailing fields (readOnly, images:...)
+				// Parse optional trailing fields (readOnly, images:..., steered:...)
 				let escapedContent: string;
 				let readOnly = false;
 				let imageFilenames: string[] | undefined;
+				let steeredTo: string[] | undefined;
 
 				if (pipeIndices.length >= 3) {
 					escapedContent = line.substring(pipeIndices[1] + 1, pipeIndices[2]);
@@ -155,17 +164,24 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 							readOnly = true;
 						} else if (field.startsWith('images:')) {
 							imageFilenames = field.substring(7).split(',').filter(Boolean);
+						} else {
+							steeredTo = parseSteeredLogField(field) ?? steeredTo;
 						}
 					}
-					// If there's only one trailing field and it's neither readOnly nor images:, it's part of content
+					// If there's only one trailing field and it's not a known flag, it's part of content
 					// This handles the edge case of the last field
 					if (pipeIndices.length === 3) {
 						const trailingField = line.substring(pipeIndices[2] + 1);
-						if (trailingField !== 'readOnly' && !trailingField.startsWith('images:')) {
+						if (
+							trailingField !== 'readOnly' &&
+							!trailingField.startsWith('images:') &&
+							!parseSteeredLogField(trailingField)
+						) {
 							// Not a known flag - re-parse as content extending to end
 							escapedContent = line.substring(pipeIndices[1] + 1);
 							readOnly = false;
 							imageFilenames = undefined;
+							steeredTo = undefined;
 						}
 					}
 				} else {
@@ -178,6 +194,7 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 					content: unescapeContent(escapedContent),
 					...(readOnly && { readOnly: true }),
 					...(imageFilenames && imageFilenames.length > 0 && { images: imageFilenames }),
+					...(steeredTo && { steeredTo }),
 				});
 			}
 		}

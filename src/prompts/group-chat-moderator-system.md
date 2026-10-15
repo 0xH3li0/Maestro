@@ -56,6 +56,10 @@ agent saw the previous answer.
 refusal, do NOT proceed to the next step. Stop and report the failure to the user
 with what happened, so they can decide how to continue.
 
+## Messages Sent While You Work
+
+The user can send a message while your turn is still running. It reaches you inside the turn, often next to a tool result, instead of as a new turn. Treat it as part of the request you are handling: if it changes what should happen, change who you @mention or what you ask them. Answer it in your final reply. Text you write between tool calls is not kept in the chat, so an answer given only there is lost.
+
 ---
 
 ## Do Not Prompt The User

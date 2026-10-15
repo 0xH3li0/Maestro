@@ -49,9 +49,11 @@ import {
 	removeFromQueue,
 	reorderQueue,
 	resumeQueueFor,
+	steerQueuedItem,
 	submitMessage,
 } from '../../group-chat/group-chat-queue';
 import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 // Group chat moderator imports
 import {
@@ -83,6 +85,7 @@ import {
 	markParticipantResponded,
 	settleGroupChatToIdle,
 	spawnModeratorSynthesis,
+	steerRunningRound,
 } from '../../group-chat/group-chat-router';
 
 // Agent detector import
@@ -232,6 +235,8 @@ interface GenericProcessManager {
 	}): { pid: number; success: boolean };
 	write(sessionId: string, data: string): boolean;
 	kill(sessionId: string): boolean;
+	/** Chat steering: type text into a running turn. See ProcessManager.steer. */
+	steer?(sessionId: string, text: string): Promise<SteeringResultFrame>;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
 }
@@ -703,6 +708,15 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:queueResume',
 		withIpcErrorLogging(handlerOpts('queueResume'), async (id: string) => resumeQueueFor(id))
+	);
+
+	// Steer a queued message into the round that is running instead of waiting
+	// for it to end. Never throws for an outcome: a refusal is an answer to show.
+	ipcMain.handle(
+		'groupChat:queueSteer',
+		withIpcErrorLogging(handlerOpts('queueSteer'), async (id: string, itemId: string) =>
+			steerQueuedItem(id, itemId)
+		)
 	);
 
 	// Stop the moderator for a group chat
@@ -1214,6 +1228,14 @@ Respond with ONLY the summary text, no additional commentary.`;
 		},
 		// Absent means nothing has run yet, which is idle.
 		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+		steer: async (groupChatId, text, readOnly) => {
+			const processManager = getProcessManager();
+			const steer = processManager?.steer?.bind(processManager);
+			if (!steer) {
+				return { outcome: 'unavailable', detail: 'the process manager cannot steer a turn' };
+			}
+			return steerRunningRound(groupChatId, { text, readOnly }, { steer });
+		},
 	});
 
 	/**

@@ -3430,6 +3430,10 @@ interface MaestroAPI {
 			refused: boolean;
 		}>;
 		queueResume: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		queueSteer: (
+			id: string,
+			itemId: string
+		) => Promise<import('../shared/groupChatSteering').GroupChatSteerResult>;
 		onQueueState: (
 			callback: (
 				groupChatId: string,

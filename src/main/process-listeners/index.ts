@@ -13,6 +13,7 @@ import type { ProcessListenerDependencies } from './types';
 import { setupForwardingListeners } from './forwarding-listeners';
 import { setupDataListener } from './data-listener';
 import { setupGroupChatLivenessListener } from './group-chat-liveness-listener';
+import { setupGroupChatSteeringListener } from './group-chat-steering-listener';
 import { setupUsageListener } from './usage-listener';
 import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
@@ -42,6 +43,9 @@ export function setupProcessListeners(
 
 	// Re-arms the Group Chat router's per-turn silence budgets on any proof of life.
 	setupGroupChatLivenessListener(processManager);
+
+	// Settles group chat steers: a steer no turn took goes back in the main-owned queue.
+	setupGroupChatSteeringListener(processManager);
 
 	// Usage statistics listener (with group chat participant/moderator updates)
 	setupUsageListener(processManager, deps);

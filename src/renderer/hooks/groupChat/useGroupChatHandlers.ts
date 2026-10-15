@@ -27,6 +27,7 @@ import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
 import { stopGroupChatWork } from '../../services/remoteGroupChat';
+import { steerGroupChatQueuedItem } from '../../services/groupChatSteering';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,7 @@ export interface GroupChatHandlersReturn {
 	handleRemoveGroupChatQueueItem: (itemId: string) => void;
 	handleReorderGroupChatQueueItems: (fromIndex: number, toIndex: number) => void;
 	handleResumeGroupChatQueue: () => void;
+	handleSteerGroupChatQueueItem: (itemId: string) => void;
 
 	// Modal openers
 	handleNewGroupChat: () => void;
@@ -832,6 +834,24 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		await window.maestro.groupChat.queueResume(activeGroupChatId);
 	}, []);
 
+	/** Steer a queued message into the round that is running instead of waiting for it to end. */
+	const handleSteerGroupChatQueueItem = useCallback(async (itemId: string) => {
+		const { activeGroupChatId } = useGroupChatStore.getState();
+		if (!activeGroupChatId) return;
+		try {
+			await steerGroupChatQueuedItem(activeGroupChatId, itemId);
+		} catch (error) {
+			// The request itself failed (IPC, a dropped web bridge). Main never ran
+			// the steer, so the message is still queued; say so instead of nothing.
+			logger.error('[GroupChat] Steer failed:', undefined, error);
+			notifyToast({
+				color: 'red',
+				title: 'Could not steer this round',
+				message: 'The request did not reach the app. The message stays queued.',
+			});
+		}
+	}, []);
+
 	// =======================================================================
 	// Modal openers
 	// =======================================================================
@@ -936,6 +956,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
 		handleResumeGroupChatQueue,
+		handleSteerGroupChatQueueItem,
 
 		// Modal openers
 		handleNewGroupChat,

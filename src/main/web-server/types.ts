@@ -6,6 +6,7 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type {
@@ -1414,6 +1415,16 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
+/** What to steer into a chat's running round: a queued message by id, or new text. */
+export interface SteerGroupChatRequest {
+	itemId?: string;
+	message?: string;
+	readOnly?: boolean;
+}
+export type SteerGroupChatCallback = (
+	chatId: string,
+	request: SteerGroupChatRequest
+) => Promise<GroupChatSteerResult>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 
 // =============================================================================
