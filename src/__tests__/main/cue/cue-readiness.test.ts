@@ -68,7 +68,6 @@ function inputs(overrides: Partial<CueReadinessInputs>): CueReadinessInputs {
 			planSessionTurn: (request) =>
 				planSessionTurn({ ...request, command: request.command ?? process.execPath }),
 			isGhInstalled: async () => true,
-			binaryExists: async () => true,
 			...overrides.probes,
 		},
 	};
@@ -158,7 +157,6 @@ describe('checkCueReadiness', () => {
 					planSessionTurn: (request) =>
 						planSessionTurn({ ...request, command: request.command ?? process.execPath }),
 					isGhInstalled: async () => false,
-					binaryExists: async () => false,
 				},
 			})
 		);
@@ -172,11 +170,10 @@ describe('checkCueReadiness', () => {
 				`binary-missing:Coder`,
 				`cue-config:${broken}`,
 				`cue-config:${promptless}`,
-				`not-a-git-checkout:pr-review`,
+				`github-repo-missing:pr-review`,
 				`secret-missing:Coder`,
 				`secret-missing:deploy-hook`,
 				`ssh-remote:Remote`,
-				`tool-missing:pr-review`,
 				`tool-missing:pr-review`,
 				`unknown-agent:fan`,
 				`unknown-agent:pinned`,
@@ -184,10 +181,7 @@ describe('checkCueReadiness', () => {
 				`workspace-missing:Ghost`,
 			].sort()
 		);
-		expect(report.gaps.filter((g) => g.kind === 'tool-missing').map((g) => g.tool)).toEqual([
-			'gh',
-			'git',
-		]);
+		expect(report.gaps.filter((g) => g.kind === 'tool-missing').map((g) => g.tool)).toEqual(['gh']);
 		const lines = formatCueReadiness(report);
 		expect(lines[0]).toBe(
 			`Not ready: ${report.gaps.length} gap(s) across 5 agent(s), 6 workspace(s), 8 subscription(s).`
@@ -198,32 +192,104 @@ describe('checkCueReadiness', () => {
 	it('checks a tool only when something needs it', async () => {
 		const root = workspace('plain', beat('plain-beat'));
 		let ghProbed = false;
-		let gitProbed = false;
 		await checkCueReadiness(
 			inputs({
 				sessions: [agent({ id: 'plain', projectRoot: root })],
-				probes: {
-					isGhInstalled: async () => ((ghProbed = true), false),
-					binaryExists: async () => ((gitProbed = true), false),
-				},
+				probes: { isGhInstalled: async () => ((ghProbed = true), false) },
 			})
 		);
 		expect(ghProbed).toBe(false);
-		expect(gitProbed).toBe(false);
 	});
 
-	it('needs no git when a GitHub trigger names its repo', async () => {
-		const root = workspace(
-			'named',
-			'subscriptions:\n  - name: prs\n    event: github.pull_request\n    repo: acme/web\n    prompt: review\n'
-		);
-		const report = await checkCueReadiness(
-			inputs({
-				sessions: [agent({ id: 'named', projectRoot: root })],
-				probes: { binaryExists: async () => false },
-			})
-		);
-		expect(report.gaps).toEqual([]);
+	describe('a GitHub trigger without repo:', () => {
+		// createCueGitHubPollerTriggerSource returns no source without a repo, so
+		// the trigger never polls or receives webhooks wherever its workspace is.
+		const prs = (extra = '') =>
+			`subscriptions:\n  - name: prs\n    event: github.pull_request\n    prompt: review\n${extra}`;
+
+		it('is not ready in a git checkout, the case that used to pass', async () => {
+			const root = workspace('checkout', prs());
+			fs.mkdirSync(path.join(root, '.git'));
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'checkout', projectRoot: root })] })
+			);
+			expect(report.ready).toBe(false);
+			expect(report.gaps).toEqual([
+				{
+					kind: 'github-repo-missing',
+					subscription: 'prs',
+					workspace: root,
+					message: `GitHub trigger "prs" in ${root} has no "repo:", so it never polls or receives webhooks (the engine does not detect the repository from the checkout). Set "repo: owner/name" on it.`,
+				},
+			]);
+		});
+
+		it('is not ready outside a checkout, with no inference gaps beside it', async () => {
+			const root = workspace('no-checkout', prs());
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'no-checkout', projectRoot: root })] })
+			);
+			expect(report.gaps.map((g) => g.kind)).toEqual(['github-repo-missing']);
+		});
+
+		it('reports one gap per trigger, for every github event', async () => {
+			const root = workspace(
+				'three',
+				[
+					'subscriptions:',
+					'  - name: pulls',
+					'    event: github.pull_request',
+					'    prompt: review',
+					'  - name: issues',
+					'    event: github.issue',
+					'    prompt: triage',
+					'  - name: labels',
+					'    event: github.label',
+					'    prompt: label',
+					'',
+				].join('\n')
+			);
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'three', projectRoot: root })] })
+			);
+			expect(report.gaps.map((g) => [g.kind, g.subscription])).toEqual([
+				['github-repo-missing', 'pulls'],
+				['github-repo-missing', 'issues'],
+				['github-repo-missing', 'labels'],
+			]);
+			expect(formatCueReadiness(report)[1]).toBe(
+				`  - [github-repo-missing] ${report.gaps[0].message}`
+			);
+		});
+
+		it('adds no gap when the trigger is disabled', async () => {
+			const root = workspace(
+				'off',
+				`${beat('live')}  - name: prs\n    event: github.pull_request\n    prompt: review\n    enabled: false\n`
+			);
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'off', projectRoot: root })] })
+			);
+			expect(report).toMatchObject({ ready: true, gaps: [] });
+		});
+
+		it('adds none of these gaps when repo: is set, checkout or not', async () => {
+			const root = workspace('named', prs('    repo: acme/web\n'));
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'named', projectRoot: root })] })
+			);
+			expect(report.gaps).toEqual([]);
+		});
+
+		it('never reports the removed inference gaps (git missing, not a checkout)', async () => {
+			const root = workspace('legacy', prs());
+			const report = await checkCueReadiness(
+				inputs({ sessions: [agent({ id: 'legacy', projectRoot: root })] })
+			);
+			const kinds: string[] = report.gaps.map((g) => g.kind);
+			expect(kinds).not.toContain('not-a-git-checkout');
+			expect(report.gaps.filter((g) => g.tool === 'git')).toEqual([]);
+		});
 	});
 
 	it('accepts a GH_TOKEN secret file, and reports one that cannot be used', async () => {
@@ -392,7 +458,6 @@ describe('checkCueReadiness', () => {
 					sessions: [agent({ id: 'gh-off', projectRoot: root })],
 					probes: {
 						isGhInstalled: async () => ((toolProbed = true), false),
-						binaryExists: async () => ((toolProbed = true), false),
 					},
 				})
 			);

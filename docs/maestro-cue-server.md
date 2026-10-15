@@ -321,7 +321,7 @@ docker run --rm -v maestro-home:/var/lib/maestro maestro-cue list agents
 
 ## Check
 
-`cue engine check` checks everything the engine needs to run the imported subscriptions, without starting it: each agent's binary, declared secrets and workspace, `cue.yaml`, webhook secrets, `gh` and `git` for GitHub triggers, and that there is something to run. It lists every gap and exits 0 when ready, 1 when not.
+`cue engine check` checks everything the engine needs to run the imported subscriptions, without starting it: each agent's binary, declared secrets and workspace, `cue.yaml`, webhook secrets, `gh` and a `repo:` on every GitHub trigger, and that there is something to run. It lists every gap and exits 0 when ready, 1 when not.
 
 ```bash
 # VM, with the service's env file loaded
@@ -650,5 +650,5 @@ What an operator can run into today. The full, current list, including what has 
 - **After a hard kill.** The next engine refuses to start for up to 3 minutes while the old lock goes stale (see [Start in a container](#start-in-a-container)). Its refusal message names the process id recorded in the old lock; in a container the dead engine usually had the same id as the new one, so the message reads as if the engine were blocking itself. Once it starts it logs one `Sleep detected` line for the gap, which runs nothing.
 - **GitHub triggers quiet for 30 days.** What a GitHub trigger has already seen is kept for 30 days, so after 30 days with no new items a subscription treats its next poll as its first: it records the items it finds and runs none of them.
 - **Stop over SSH for shell steps.** Stopping a Cue `action: command` step that runs on an SSH remote stops only the local `ssh` client, not the command on the remote host. Agent runs over SSH are stopped on the remote.
-- **GitHub triggers need `repo:`.** A `github.pull_request`, `github.issue` or `github.label` subscription without `repo: owner/name` never polls, even though `cue engine check` reports it ready when the workspace is a git checkout. Set `repo:` on every GitHub trigger.
+- **GitHub triggers need `repo:`.** A `github.pull_request`, `github.issue` or `github.label` subscription without `repo: owner/name` never polls or receives webhooks: the engine does not detect the repository from the checkout. `cue engine check` (and `--require-ready`) reports each such enabled subscription as a `github-repo-missing` gap. Set `repo:` on every GitHub trigger.
 - **One runner per data directory.** Do not run `maestro-cli host start` and the `maestro-cue` service (or `cue engine start`) on the same data directory. They do not keep each other out in every case, and `cue engine stop` there stops the whole host, not just Cue. Use the service for Cue on a server.

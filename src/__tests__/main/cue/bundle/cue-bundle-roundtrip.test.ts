@@ -356,7 +356,6 @@ describe('bundle round trip', () => {
 				planSessionTurn: (request) =>
 					planSessionTurn({ ...request, command: request.command ?? process.execPath }),
 				isGhInstalled: async () => true,
-				binaryExists: async () => true,
 			},
 		});
 		expect(report.gaps.filter((g) => g.kind === 'cue-config')).toEqual([]);

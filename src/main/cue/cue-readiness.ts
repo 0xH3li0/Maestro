@@ -22,7 +22,9 @@
  * - which agent runs an unpinned subscription: `resolveConfigOwner`, the
  *   session runtime's owner rule;
  * - gh: `isGhInstalled`, the detection the GitHub poller's `resolveGhPath`
- *   reads; git: `checkBinaryExists`, the launch path's binary probe.
+ *   reads;
+ * - a GitHub trigger's repo: the trigger source's own guard, which gives a
+ *   `github.*` subscription without `repo:` no source at all.
  *
  * Gaps carry names, paths and ids, never a secret value.
  *
@@ -30,14 +32,12 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import type { SessionInfo, SshRemoteConfig } from '../../shared/types';
 import type { CueConfig, CueSubscription } from './cue-types';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { resolveConfigOwner } from './cue-session-state';
 import { planSessionTurn } from '../../shared/maestro-lib/run/session';
 import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
-import { checkBinaryExists } from '../../shared/maestro-lib/launch/path-prober';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import {
@@ -70,10 +70,13 @@ export type CueReadinessGapKind =
 	| 'cue-config'
 	/** A subscription names an agent that does not exist in this data directory, or pins one from another workspace. */
 	| 'unknown-agent'
-	/** A host tool something needs (gh, git) is not installed. */
+	/** A host tool something needs (gh) is not installed. */
 	| 'tool-missing'
-	/** A GitHub trigger infers its repo from a project root that is not a git checkout. */
-	| 'not-a-git-checkout'
+	/**
+	 * A `github.*` trigger has no `repo:`. Its trigger source refuses it, so it
+	 * never polls or receives webhooks; the engine does not detect the repo.
+	 */
+	| 'github-repo-missing'
 	/**
 	 * The data directory has no agents, or no enabled subscription runs on any
 	 * of them: an engine started on it would sit idle while reporting healthy,
@@ -126,14 +129,12 @@ export interface CueReadinessInputs {
 export interface CueReadinessProbes {
 	planSessionTurn: typeof planSessionTurn;
 	isGhInstalled: () => Promise<boolean>;
-	binaryExists: (binaryName: string) => Promise<boolean>;
 	loadCueConfig: typeof loadCueConfigDetailed;
 }
 
 const DEFAULT_PROBES: CueReadinessProbes = {
 	planSessionTurn,
 	isGhInstalled,
-	binaryExists: async (binaryName) => (await checkBinaryExists(binaryName)).exists,
 	loadCueConfig: loadCueConfigDetailed,
 };
 
@@ -213,7 +214,6 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 	// listen on its own, so each gets its own gap.
 	const webhookSecrets = new Map<string, Array<{ subscription: string; workspace?: string }>>();
 	let needsGh: CueSubscription | undefined;
-	const repoInferredRoots = new Map<string, CueSubscription>();
 	let runsSomething = false;
 
 	// Who runs what is the runtime's own decision (`resolveConfigOwner`):
@@ -246,7 +246,16 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 			}
 			if (GITHUB_EVENTS.has(sub.event)) {
 				needsGh ??= sub;
-				if (!sub.repo && session.projectRoot) repoInferredRoots.set(session.projectRoot, sub);
+				// Same test as createCueGitHubPollerTriggerSource's guard: without a
+				// repo the trigger gets no source, in a git checkout or not.
+				if (!sub.repo) {
+					add({
+						kind: 'github-repo-missing',
+						subscription: sub.name,
+						workspace: session.projectRoot,
+						message: `GitHub trigger "${sub.name}" in ${session.projectRoot} has no "repo:", so it never polls or receives webhooks (the engine does not detect the repository from the checkout). Set "repo: owner/name" on it.`,
+					});
+				}
 			}
 			if (sub.webhook?.secret_env) {
 				const users = webhookSecrets.get(sub.webhook.secret_env) ?? [];
@@ -418,27 +427,6 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 				secret: name,
 				message: `GitHub trigger "${needsGh.name}" reads its token from ${describeSecretProblem({ name, ...lookup })}.`,
 			});
-		}
-	}
-	if (repoInferredRoots.size > 0) {
-		if (!(await probes.binaryExists('git'))) {
-			const [, sub] = [...repoInferredRoots][0];
-			add({
-				kind: 'tool-missing',
-				tool: 'git',
-				subscription: sub.name,
-				message: `GitHub trigger "${sub.name}" infers its repository from the checkout, which needs git, and git is not installed. Install git, or set "repo: owner/name" on the trigger.`,
-			});
-		}
-		for (const [root, sub] of repoInferredRoots) {
-			if (!fs.existsSync(path.join(root, '.git'))) {
-				add({
-					kind: 'not-a-git-checkout',
-					subscription: sub.name,
-					workspace: root,
-					message: `GitHub trigger "${sub.name}" infers its repository from ${root}, which is not a git checkout. Clone the repository there, or set "repo: owner/name" on the trigger.`,
-				});
-			}
 		}
 	}
 

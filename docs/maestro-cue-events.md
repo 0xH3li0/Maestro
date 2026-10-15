@@ -402,11 +402,16 @@ subscriptions:
 
 Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 
+**Required fields:**
+
+| Field  | Type   | Description                                                                                                                                                                        |
+| ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo` | string | GitHub repo in `owner/repo` format. Without it the trigger never polls or receives webhooks: the repository is not detected from the git remote, and `cue engine check` reports it |
+
 **Optional fields:**
 
 | Field          | Type   | Default | Description                                                                  |
 | -------------- | ------ | ------- | ---------------------------------------------------------------------------- |
-| `repo`         | string | auto    | GitHub repo in `owner/repo` format. Auto-detected from git remote if omitted |
 | `poll_minutes` | number | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
 | `webhook`      | object | none    | Also take GitHub webhook deliveries. See [GitHub webhooks](#github-webhooks) |
 
@@ -415,7 +420,7 @@ Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 - Requires the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated
 - On first run, seeds the "seen" list with existing PRs - only **new** PRs trigger events. A first poll that finds no matching PRs (a new repository, say) still counts, so the first PR opened after it fires
 - Tracks seen PRs in a local database with 30-day retention
-- Auto-detects the repository from the git remote if `repo` is not specified
+- Needs `repo`: the repository is not detected from the git remote, so a subscription without it never runs on its own
 
 **Example:**
 
@@ -423,6 +428,7 @@ Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 subscriptions:
   - name: pr-reviewer
     event: github.pull_request
+    repo: owner/name
     poll_minutes: 3
     filter:
       draft: false # Skip draft PRs
@@ -464,11 +470,16 @@ subscriptions:
 
 Polls GitHub for new issues using the GitHub CLI (`gh`). Behaves identically to `github.pull_request` but for issues.
 
+**Required fields:**
+
+| Field  | Type   | Description                                                                                                                                                                        |
+| ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo` | string | GitHub repo in `owner/repo` format. Without it the trigger never polls or receives webhooks: the repository is not detected from the git remote, and `cue engine check` reports it |
+
 **Optional fields:**
 
 | Field          | Type   | Default | Description                                                                  |
 | -------------- | ------ | ------- | ---------------------------------------------------------------------------- |
-| `repo`         | string | auto    | GitHub repo in `owner/repo` format                                           |
 | `poll_minutes` | number | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
 | `webhook`      | object | none    | Also take GitHub webhook deliveries. See [GitHub webhooks](#github-webhooks) |
 
@@ -482,6 +493,7 @@ Same as `github.pull_request` - requires GitHub CLI, seeds on first run, tracks 
 subscriptions:
   - name: issue-triage
     event: github.issue
+    repo: owner/name
     poll_minutes: 5
     filter:
       labels: '!wontfix' # Skip issues labeled wontfix
@@ -518,11 +530,16 @@ Fires the moment a label is added to a pull request or an issue. Applying a labe
 
 Unlike `github.pull_request` / `github.issue`, which poll item lists and fire on discovery, this event reads GitHub's repo-wide issue-event feed. That feed reports the label add itself, with the label name and who applied it, so a label removed and re-added fires twice, and a label buried in an old issue still fires.
 
+**Required fields:**
+
+| Field  | Type   | Description                                                                                                                                                                        |
+| ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo` | string | GitHub repo in `owner/repo` format. Without it the trigger never polls or receives webhooks: the repository is not detected from the git remote, and `cue engine check` reports it |
+
 **Optional fields:**
 
 | Field             | Type            | Default | Description                                                                  |
 | ----------------- | --------------- | ------- | ---------------------------------------------------------------------------- |
-| `repo`            | string          | auto    | GitHub repo in `owner/repo` format                                           |
 | `gh_label_target` | string          | `both`  | Which kind to watch: `pr`, `issue`, or `both`                                |
 | `gh_labels`       | string or array | any     | Labels that fire the trigger, matched case-insensitively. Omit for any       |
 | `poll_minutes`    | number          | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
@@ -543,6 +560,7 @@ Unlike `github.pull_request` / `github.issue`, which poll item lists and fire on
 subscriptions:
   - name: work-labeled-prs
     event: github.label
+    repo: owner/name
     gh_label_target: pr
     gh_labels:
       - ready-to-merge

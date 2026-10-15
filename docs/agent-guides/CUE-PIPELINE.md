@@ -182,7 +182,7 @@ Polls GitHub CLI for new PRs/issues (and for label adds), tracks "seen" state in
 Key design:
 
 - Resolves `gh` CLI path via `resolveGhPath()` / `getExpandedEnv()` from shared utils
-- Auto-detects repo via `gh repo view --json nameWithOwner` if not specified
+- Needs `repo:`: `createCueGitHubPollerTriggerSource` returns no source without one, so the poller never starts and no webhook is registered. The poller's own `resolveRepo` (`gh repo view --json nameWithOwner`) is unreachable behind that guard. `cue engine check` reports the missing repo as a `github-repo-missing` gap
 - First poll seeds existing items as "seen" (no flood of events on first run)
 - Supports `gh_state` filter: `"open"` (default), `"closed"`, `"merged"` (PRs only), `"all"`
 - 30-day retention on seen records; prunes every 24 hours
