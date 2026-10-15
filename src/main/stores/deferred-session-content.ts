@@ -15,6 +15,7 @@
  */
 
 import type { StoredSession } from './types';
+import type { SessionRuntimeSnapshot } from '../../shared/sessionTranscript';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	MAX_PERSISTED_SESSION_LOGS,
@@ -30,6 +31,7 @@ export interface DeferredContentPayload {
 	shellLogs?: unknown[];
 	agentCommands?: unknown[];
 	aiCommandHistory?: string[];
+	transcriptSnapshots?: SessionRuntimeSnapshot[];
 }
 
 /**

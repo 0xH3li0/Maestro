@@ -1510,6 +1510,72 @@ describe('Session & Group loading effect', () => {
 		});
 	});
 
+	it.each([false, true])(
+		'restores private host errors without overwriting a newer live turn (%s)',
+		async (newerTurn) => {
+			runtime.web = true;
+			mockGetBootstrap.mockResolvedValueOnce([
+				createMockSession({
+					id: 'web-agent',
+					deferredContent: { tabIds: ['tab-1'], commands: true },
+				}),
+			]);
+			let resolveContent!: (
+				content: Awaited<ReturnType<typeof window.maestro.sessions.getDeferredContent>>
+			) => void;
+			mockGetDeferredContent.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveContent = resolve;
+				})
+			);
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() =>
+				expect(mockGetDeferredContent).toHaveBeenCalledWith('web-agent', 'tab-1', true)
+			);
+			if (newerTurn)
+				act(() => {
+					updateAiTab('web-agent', 'tab-1', (tab) => ({
+						...tab,
+						state: 'busy',
+						thinkingStartTime: 123,
+						statusMessage: 'new turn',
+					}));
+					updateSessionWith('web-agent', (session) => ({
+						...session,
+						state: 'busy',
+						thinkingStartTime: 123,
+						statusMessage: 'new turn',
+					}));
+				});
+			const error = { message: 'provider exited', type: 'unknown' };
+			await act(async () =>
+				resolveContent({
+					logs: [],
+					shellLogs: [],
+					agentCommands: [],
+					aiCommandHistory: [],
+					transcriptSnapshots: ['tab-1', undefined].map((tabId) => ({
+						sessionId: 'web-agent',
+						tabId,
+						field: tabId ? 'logs' : 'shellLogs',
+						upserts: [],
+						removedIds: [],
+						orderIds: [],
+						snapshot: true,
+						runtime: { state: 'idle', agentError: error, agentErrorPaused: true },
+						clearRuntimeFields: ['thinkingStartTime', 'statusMessage'],
+					})),
+				})
+			);
+			const session = useSessionStore.getState().sessions[0];
+			for (const row of [session, session.aiTabs[0]]) {
+				expect(row.state).toBe(newerTurn ? 'busy' : 'idle');
+				expect(row.agentError).toEqual(newerTurn ? undefined : error);
+				expect(row.thinkingStartTime).toBe(newerTurn ? 123 : undefined);
+				expect(row.statusMessage).toBe(newerTurn ? 'new turn' : undefined);
+			}
+		}
+	);
 	it('retries a failed deferred read only after the bridge reconnects', async () => {
 		runtime.web = true;
 		mockGetBootstrap.mockResolvedValueOnce([

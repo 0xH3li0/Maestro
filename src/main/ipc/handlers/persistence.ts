@@ -635,6 +635,14 @@ export function registerPersistenceHandlers(
 					...content,
 					...(tab && { logs: tab.upserts }),
 					...(shell && { shellLogs: shell.upserts }),
+					transcriptSnapshots: [tab, shell]
+						.filter((patch) => patch !== undefined)
+						.map(({ sessionId, tabId, runtime, clearRuntimeFields }) => ({
+							sessionId,
+							tabId,
+							runtime,
+							clearRuntimeFields,
+						})),
 				};
 			}
 			return content;

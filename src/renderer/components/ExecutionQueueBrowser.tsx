@@ -234,23 +234,23 @@ export function ExecutionQueueBrowser({
 		}
 	};
 
+	const hasChildSurface =
+		actionMenuOpen ||
+		!!editing ||
+		!!forceSendConfirm ||
+		!!mergeConfirm ||
+		showForcedParallelRequired;
+
 	// Land on the card when the browser opens so the arrow keys work without a
 	// click first, and take focus back when a child surface (action menu, edit
 	// modal, force-send confirm) closes - otherwise focus falls to <body> and
 	// the next arrow key silently does nothing.
 	useEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || hasChildSurface) return;
 		const id = setTimeout(() => modalRef.current?.focus(), 0);
 		return () => clearTimeout(id);
-	}, [isOpen]);
-	useFocusOnClose(
-		modalRef,
-		actionMenuOpen ||
-			!!editing ||
-			!!forceSendConfirm ||
-			!!mergeConfirm ||
-			showForcedParallelRequired
-	);
+	}, [isOpen, hasChildSurface]);
+	useFocusOnClose(modalRef, hasChildSurface);
 
 	if (!isOpen) return null;
 

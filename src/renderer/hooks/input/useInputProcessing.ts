@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import type {
 	Session,
 	SessionState,
@@ -292,7 +292,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	} = deps;
 
 	const stagedImagesRef = useRef(stagedImages);
-	stagedImagesRef.current = stagedImages;
+	useLayoutEffect(() => {
+		stagedImagesRef.current = stagedImages;
+	}, [stagedImages]);
 
 	// Ref for the processInput function so external code can access the latest version
 	const processInputRef = useRef<
@@ -700,7 +702,32 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 			};
 			const clearComposerUnlessTaken = () => {
-				if (!composerTaken && canClearComposer()) clearComposer();
+				if (composerTaken) return;
+				if (canClearComposer()) {
+					clearComposer();
+					return;
+				}
+				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
+				// Switching owners flushes the original draft. Clear only the submitted
+				// fields there, without cancelling or stamping the new owner's composer.
+				updateSessionWith(activeSession.id, (session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((tab) => {
+						if (tab.id !== targetTabId) return tab;
+						const clearText = tab.inputValue === inputValueAtSubmit;
+						const images = tab.stagedImages ?? [];
+						const clearImages =
+							!usingOverrideImages &&
+							images.length === submitted.images.length &&
+							images.every((image, index) => image === submitted.images[index]);
+						if (!clearText && !clearImages) return tab;
+						return {
+							...tab,
+							...(clearText ? { inputValue: '' } : {}),
+							...(clearImages ? { stagedImages: [] } : {}),
+						};
+					}),
+				}));
 			};
 			const probeForSubmit = async (tabId: string | undefined) => {
 				if (isComposerSubmit) {
@@ -1454,18 +1481,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Desktop already took an AI draft; remote clients clear only the
 			// submitted draft, not input typed or selected while readiness was pending.
-			if (!composerTaken && canClearComposer()) {
+			if (currentMode === 'ai') {
+				clearComposerUnlessTaken();
+			} else {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
-
-				// Sync empty value to session state (prevents stale input restoration on blur)
-				if (isAiMode) {
-					syncAiInputToSession('', syncTarget);
-				} else {
-					syncTerminalInputToSession('');
-				}
-
-				// Reset height
+				syncTerminalInputToSession('');
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			}
 

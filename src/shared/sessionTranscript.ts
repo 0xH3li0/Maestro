@@ -11,6 +11,12 @@ export interface SessionTranscriptPatch<T extends { id: string } = { id: string 
 	clearRuntimeFields?: string[];
 }
 
+/** Private runtime hydration accompanies logs without duplicating their payload. */
+export type SessionRuntimeSnapshot = Pick<
+	SessionTranscriptPatch,
+	'sessionId' | 'tabId' | 'runtime' | 'clearRuntimeFields'
+>;
+
 /** Row identity comes from the owning renderer, never from text or timestamps. */
 export function applySessionTranscriptPatch<T extends { id: string }>(
 	logs: T[],

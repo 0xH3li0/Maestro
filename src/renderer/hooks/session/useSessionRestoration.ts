@@ -40,6 +40,7 @@ import {
 	restoreClientSessionView,
 } from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { applyRuntime } from './useSessionTranscriptSync';
 import { useEventListener } from '../utils/useEventListener';
 import { SESSION_PERSISTENCE_BASELINE_EVENT } from '../utils/useDebouncedPersistence';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
@@ -301,7 +302,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						content.shellLogs &&
 						content.agentCommands &&
 						content.aiCommandHistory;
-					return {
+					let updated: Session = {
 						...current,
 						aiTabs,
 						...(commandsLoaded
@@ -332,6 +333,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 									}
 								: undefined,
 					};
+					for (const patch of content.transcriptSnapshots ?? []) {
+						if (patch.sessionId !== session.id) continue;
+						if (patch.tabId) {
+							const baseline = session.aiTabs.find((tab) => tab.id === patch.tabId);
+							if (!baseline) continue;
+							updated = {
+								...updated,
+								aiTabs: updated.aiTabs.map((tab) =>
+									tab.id === patch.tabId ? applyRuntime(tab, patch, baseline) : tab
+								),
+							};
+						} else {
+							updated = applyRuntime(updated, patch, session);
+							updated.unifiedTabOrder = getRepairedUnifiedTabOrder(updated);
+						}
+					}
+					return updated;
 				});
 			})
 			.catch((error) => {

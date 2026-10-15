@@ -349,7 +349,18 @@ describe('background turns', () => {
 		});
 
 		it('stops with the partial answer, and reports nothing after it', async () => {
-			const { background } = turns(() => ({ text: 'Half an answer.', hold: true }));
+			const provider = createFakeGroupChatProvider(dir, () => ({
+				text: 'Half an answer.',
+				hold: true,
+			}));
+			const runTurn = vi.spyOn(provider, 'runTurn');
+			const background = createBackgroundTurns({
+				paths: paths(),
+				registry,
+				host: {},
+				beginTurn,
+				deps: { runTurn },
+			});
 			const runner = background.consultRunner();
 			const events: string[] = [];
 			await runner.start(consultSpawn(), {
@@ -358,8 +369,10 @@ describe('background turns', () => {
 				onEnd: () => void events.push('end'),
 			});
 			// Wait until the answer has streamed in.
-			await vi.waitFor(() => expect(events).toContain('activity'));
-			await vi.waitFor(() => expect(runner.stop('cross-agent-other')).toBe(''));
+			await vi.waitFor(() =>
+				expect(runTurn.mock.results[0]?.value.answerSoFar()).toBe('Half an answer.')
+			);
+			expect(runner.stop('cross-agent-other')).toBe('');
 
 			const partial = runner.stop('cross-agent-r1');
 			await vi.waitFor(() => expect(background.activeCount()).toBe(0));

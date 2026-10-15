@@ -1000,6 +1000,12 @@ describe('persistence IPC handlers', () => {
 								removedIds: [],
 								orderIds: logs.map((row) => row.id),
 								snapshot: true,
+								runtime: {
+									state: 'idle',
+									agentError: { message: 'provider exited' },
+									agentErrorPaused: true,
+								},
+								clearRuntimeFields: ['thinkingStartTime'],
 							},
 							payload.requestId
 						);
@@ -1019,6 +1025,16 @@ describe('persistence IPC handlers', () => {
 					false
 				);
 				expect(content.logs).toEqual(logs);
+				expect(content.transcriptSnapshots).toEqual([
+					expect.objectContaining({
+						runtime: {
+							state: 'idle',
+							agentError: { message: 'provider exited' },
+							agentErrorPaused: true,
+						},
+						clearRuntimeFields: ['thinkingStartTime'],
+					}),
+				]);
 				expect(
 					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
 				).toEqual([]);

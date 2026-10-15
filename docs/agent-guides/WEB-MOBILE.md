@@ -123,9 +123,10 @@ New AI composer submissions keep their draft and attachments while
 authoritative process readiness is pending. A failed remote readiness read
 returns before creating user rows or execution-queue entries and raises a
 client-visible refusal; bridge reconciliation does not submit that draft.
-Successful sends clear only the original draft on its original agent/tab,
-without deleting text or attachments changed during the read. The native host
-still owns its local queue and its existing process-reconciliation holds.
+Successful sends clear unchanged persisted text and attachments independently on
+the original agent/tab, even after the user switches away, without touching the
+new composer's draft or pending flush. Changed fields stay intact. The native
+host still owns its local queue and existing process-reconciliation holds.
 
 Settings hydration reads `settings:getAll` and `logger:getLogLevel` remotely but
 skips the native-only `logger:getMaxLogBuffer` call. That channel stays private:
@@ -146,11 +147,14 @@ These rules keep the clients in sync:
 - **Live content comes from the owning renderer.** Bootstrap requests set
   `metadataOnly` and return current incognito/browser/terminal inventory without
   traversing or copying transcript rows. Deferred reads return the selected
-  canonical transcript only to their requester: request replies, including late
-  replies, never fan out as `sessions:transcriptSync` events. Normal live deltas
-  still apply owner-created row IDs and runtime state on every mirror. Incognito
-  tabs stay out of persisted sessions while surviving client disconnects; only
-  trusted native renderers may publish or answer snapshot requests.
+  canonical transcript and its runtime snapshot (including errors and explicit
+  cleared fields) only to their requester: request replies, including late
+  replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime
+  applies only while the captured local turn is unchanged; newer live state
+  takes precedence. Normal live deltas still apply owner-created row IDs and
+  runtime state on every mirror. Incognito tabs stay out of persisted sessions
+  while surviving client disconnects; only trusted native renderers may publish
+  or answer snapshot requests.
 - **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the

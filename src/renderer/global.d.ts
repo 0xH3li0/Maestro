@@ -294,6 +294,7 @@ interface MaestroAPI {
 			shellLogs?: import('./types').LogEntry[];
 			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
 			aiCommandHistory?: string[];
+			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
 		}>;
 		setAll: (sessions: any[], baselines?: any[]) => Promise<boolean>;
 		/**

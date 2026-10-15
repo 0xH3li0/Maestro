@@ -7,6 +7,7 @@ import { logger } from '../../utils/logger';
 import {
 	applySessionTranscriptPatch,
 	type SessionTranscriptPatch,
+	type SessionRuntimeSnapshot,
 } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
@@ -44,10 +45,17 @@ function runtimeOf(row: Session | AITab): Record<string, unknown> {
 	);
 }
 
-function applyRuntime<T extends Session | AITab>(
+/** Apply live runtime, or a private snapshot only if its captured turn is still current. */
+export function applyRuntime<T extends Session | AITab>(
 	row: T,
-	patch: SessionTranscriptPatch<LogEntry>
+	patch: SessionRuntimeSnapshot,
+	baseline?: T
 ): T {
+	if (
+		baseline &&
+		runtimeFields.some((field) => !Object.is(Reflect.get(row, field), Reflect.get(baseline, field)))
+	)
+		return row;
 	const runtime = { ...patch.runtime };
 	for (const field of ['browserTabs', 'terminalTabs'] as const) {
 		if (!Array.isArray(runtime[field])) continue;

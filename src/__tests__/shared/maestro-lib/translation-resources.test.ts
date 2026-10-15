@@ -12,6 +12,40 @@ import {
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
 
 describe('project resource translation', () => {
+	it.each([false, true])(
+		'reads resources through a project-root alias (managed: %s)',
+		async (managed) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-root-alias-'));
+			try {
+				const project = path.join(root, 'project');
+				const alias = path.join(root, 'alias');
+				await fs.mkdir(path.join(project, '.agents/skills/example'), { recursive: true });
+				await fs.writeFile(
+					path.join(project, '.agents/skills/example/SKILL.md'),
+					'Project instructions'
+				);
+				await fs.symlink(project, alias, process.platform === 'win32' ? 'junction' : 'dir');
+				const resources = await collectTranslationResources(
+					{
+						provider: 'codex',
+						version: '0.162.1',
+						accountRoot: path.join(root, 'account'),
+						projectRoot: alias,
+					},
+					{ projectKnowledge: true, selectedUserResources: [] },
+					managed ? alias : undefined
+				);
+				expect(resources.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+					'.agents/skills/example/SKILL.md',
+				]);
+				expect(resources.limitations).not.toContainEqual(
+					expect.objectContaining({ code: 'linked-user-resource' })
+				);
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
 	it.each(['memory', 'selected-user/memories'])(
 		'archives a managed %s directory link without importing unselected account knowledge',
 		async (directory) => {

@@ -1619,6 +1619,82 @@ describe('useInputProcessing', () => {
 				}
 			);
 
+			it.each(['tab', 'agent', 'edited', 'text', 'images'] as const)(
+				'clears only the accepted original draft after switching (%s)',
+				async (switchTo) => {
+					const runtime = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+					try {
+						const resolveProbe = pendingProbe();
+						const images = ['data:image/png;base64,AAAA'];
+						const submittedTab = createMockTab({
+							id: 'submitted-tab',
+							inputValue: 'sent',
+							stagedImages: images,
+						});
+						const otherTab = createMockTab({ id: 'other-tab', inputValue: 'other draft' });
+						const session = createMockSession({
+							id: 'sending-agent',
+							state: 'idle',
+							aiTabs: [submittedTab, otherTab],
+							activeTabId: submittedTab.id,
+						});
+						const { composer, getInputValue, setInputValue } = liveComposer('sent');
+						const deps = createDeps({
+							activeSession: session,
+							activeSessionId: session.id,
+							sessionsRef: { current: [session] },
+							getInputValue,
+							setInputValue,
+							stagedImages: images,
+						});
+						const { result } = renderHook(() => useInputProcessing(deps));
+						let send!: Promise<void>;
+						act(() => {
+							send = result.current.processInput();
+						});
+						const editedText = switchTo === 'edited' || switchTo === 'text';
+						const editedImages = switchTo === 'edited' || switchTo === 'images';
+						const switched = {
+							...session,
+							activeTabId: otherTab.id,
+							aiTabs: [
+								{
+									...submittedTab,
+									inputValue: editedText ? 'new original draft' : submittedTab.inputValue,
+									stagedImages: editedImages ? ['data:image/png;base64,BBBB'] : [...images],
+								},
+								otherTab,
+							],
+						};
+						const otherAgent = createMockSession({
+							id: 'other-agent',
+							aiTabs: [otherTab],
+							activeTabId: otherTab.id,
+						});
+						act(() =>
+							useSessionStore.setState({
+								sessions: switchTo === 'agent' ? [session, otherAgent] : [switched],
+								activeSessionId: switchTo === 'agent' ? otherAgent.id : session.id,
+							})
+						);
+						composer.draft = 'other draft';
+						await act(async () => {
+							resolveProbe();
+							await send;
+						});
+						const original = useSessionStore.getState().sessions[0].aiTabs[0];
+						expect(original.inputValue).toBe(editedText ? 'new original draft' : '');
+						expect(original.stagedImages).toEqual(
+							editedImages ? ['data:image/png;base64,BBBB'] : []
+						);
+						expect(composer.draft).toBe('other draft');
+						expect(mockSetStagedImages).not.toHaveBeenCalled();
+						expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+					} finally {
+						runtime.mockRestore();
+					}
+				}
+			);
 			it('releases the tab once the probe settles, so the next press sends normally', async () => {
 				const session = createMockSession({ state: 'idle' });
 				const { composer, getInputValue, setInputValue } = liveComposer('one');
