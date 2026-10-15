@@ -94,7 +94,11 @@ On 2026-10-15, after the merge with rc at `9118f3ba5`, the VM was upgraded to a 
 - `cue engine check` reported a temporary GitHub trigger without `repo:` as `github-repo-missing`, then passed once it was removed.
 - `kill -9` of the engine: the unit's restart took the lock at once with no refusal and was healthy 6 s after the kill. With the unit held down for 2.5 minutes, the next start logged `Engine was not running for 3m` and no `Sleep detected`.
 
-The container image of this branch was not built: containers on the test host could not reach GitHub, where the image build fetches the prebuilt `better-sqlite3`. A stand-in container with the image's layout got the same PID namespace inode and the same child pid back on each of three restarts, which is the case the own-pid takeover covers. The engine itself has not been restarted in a container since the fix.
+In the container, on a clean image build of `a42f03f1e` under the Compose service settings (a first build attempt failed while the test host's containers could not reach GitHub):
+
+- `kill -9` of the engine: Docker restarted the container and the engine took the lock 0.6 s after the kill, with the same PID namespace inode and pid (7), and no refusal.
+- `kill -9` with the container held down 2.5 minutes, so the old lock's heartbeat was still inside the 3 minute window: the restart took the lock at once and logged `Engine was not running for 3m`. Before the fix this case waited out the heartbeat (2 min 48 s in the earlier container run).
+- A second engine in its own container on the same volume refused with exit 1, naming the holder as an engine in another PID namespace and the time until its lock would free if it were gone.
 
 Fixes made for Windows while preparing this PR:
 
@@ -125,7 +129,6 @@ Fixes made for Windows while preparing this PR:
 - Codex (a stub `codex` in the container only).
 - Stop, timeout and shutdown against a real SSH remote from Cue (unit and engine tests only).
 - rc's per-turn Claude cost on a resumed turn (tests only; Cue runs start fresh sessions).
-- The own-pid lock takeover with the engine in a restarted container (lock tests and a stand-in container only).
 - The real-SQLite tests of the read-only `cue.db` readers, which skip under plain Node (the readers ran live on the VM).
 
 ## Known limits
@@ -139,7 +142,7 @@ The current list, with evidence for each item and what has closed, is "Known lim
   - Runs in flight at a kill -9 are recorded failed, not re-run, and their child processes are orphaned.
   - Queue rows a crash leaves behind are dropped as stale after downtime longer than `timeout_minutes`.
   - A crash at the exact instant a delivery id is recorded can let one redelivery fire again.
-  - After a hard kill the next engine can still wait up to 3 minutes for the lock when it cannot tell the lock is its predecessor's (no PID namespace recorded, or another one). The refusal says which case applies and when the lock frees.
+  - After a hard kill the next engine takes the lock at once on a VM and in a container restarted by Docker. It can still wait up to 3 minutes when it cannot tell the lock is its predecessor's (no PID namespace recorded, or another one, as when another namespace took the old inode number in between). The refusal says which case applies and when the lock frees.
 - **Webhook timing.** The SusFactor check runs before the webhook answer, so a slow 0DIN call can make a sender like GitHub (10 s) record a failure although the delivery runs. A sender with no delivery id header gets no protection against repeats.
 - **Queue limits.** A full queue drops its oldest event, and `queue_size: 0` drops a delivery that arrives while the agent is busy.
 - **Lock limits.** The engine lock is unsupported on a network filesystem. A process suspended longer than 30 s inside a lock claim can lose the lock, which is caught at the next heartbeat. A refused start is not retried: the desktop app does not start Cue on its own once the lock frees, and a server relies on its unit or container restart. `maestro-cli doctor` calls a lock from another PID namespace stale by its pid, while the engine keeps it live on a fresh heartbeat (report only).
