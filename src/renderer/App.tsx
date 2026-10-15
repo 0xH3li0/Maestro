@@ -168,6 +168,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { mergeQueuedItemIntoAbove } from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -1819,6 +1820,12 @@ function MaestroConsoleInner() {
 		}));
 	}, []);
 
+	// Fold a queued message into the one above it (the queued card's Merge button).
+	// Same service `maestro-cli queue merge` reaches.
+	const handleMergeQueuedItem = useCallback((itemId: string) => {
+		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
+	}, []);
+
 	// Edit a queued message's prompt text and attached images in place.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
@@ -2616,6 +2623,7 @@ function MaestroConsoleInner() {
 		handleEditQueueItem,
 		handleForceSendQueueItem,
 		handleSteerQueueItem,
+		handleMergeQueueItem,
 	} = useQueueHandlers({ processQueuedItem });
 
 	// Force Send from the inline chat list: the item always belongs to the active
@@ -2985,6 +2993,7 @@ function MaestroConsoleInner() {
 		handleDeleteLog,
 		handleRemoveQueuedItem,
 		handleToggleQueuedItemPause,
+		handleMergeQueuedItem,
 		handleEditQueuedItem,
 		handleReorderQueuedItem,
 		handleForceSendQueuedItem,
@@ -3693,6 +3702,7 @@ function MaestroConsoleInner() {
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
 						onForceSendQueueItem={handleForceSendQueueItem}
+						onMergeQueueItem={handleMergeQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}

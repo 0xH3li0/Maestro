@@ -482,6 +482,14 @@ Resume a held queued item, like the Resume button on its queued card: it runs wh
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue merge <item-id>`
+
+Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli queue steer <item-id>`
 
 Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.
@@ -1827,7 +1835,7 @@ View and manage per-agent configuration
 
 ## `maestro-cli settings agent list [agent-id]`
 
-List agent configurations (all agents or a specific one)
+List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID
 
 | Option          | Description                           | Default |
 | --------------- | ------------------------------------- | ------- |
@@ -1836,7 +1844,7 @@ List agent configurations (all agents or a specific one)
 
 ## `maestro-cli settings agent get <agent-id> <key>`
 
-Get a single agent config value
+Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)
 
 | Option          | Description                             | Default |
 | --------------- | --------------------------------------- | ------- |

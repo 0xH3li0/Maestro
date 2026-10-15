@@ -22,6 +22,7 @@ import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
 	setQueuedItemPaused,
+	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
@@ -1336,6 +1337,28 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "merge queue item" from the CLI (`queue merge`). Same merge
+		// the queued card's Merge button runs.
+		const unsubscribeMergeQueueItem = window.maestro.process.onRemoteMergeQueueItem?.(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					const mergedIntoId = mergeQueuedItemIntoAbove(sessionId, itemId);
+					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
+						success: true,
+						merged: mergedIntoId !== null,
+						...(mergedIntoId ? { mergedIntoId } : {}),
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteMergeQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
+						success: false,
+						merged: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1377,6 +1400,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRemoveQueueItem();
 			unsubscribeSteerQueueItem?.();
 			unsubscribeSetQueueItemPaused?.();
+			unsubscribeMergeQueueItem?.();
 		};
 	}, [
 		sessionsRef,

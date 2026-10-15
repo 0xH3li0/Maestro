@@ -64,6 +64,8 @@ import type {
 	SteerQueueItemResult,
 	SetQueueItemPausedCallback,
 	SetQueueItemPausedResult,
+	MergeQueueItemCallback,
+	MergeQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -221,6 +223,7 @@ export interface WebServerCallbacks {
 	removeQueueItem: RemoveQueueItemCallback | null;
 	steerQueueItem: SteerQueueItemCallback | null;
 	setQueueItemPaused: SetQueueItemPausedCallback | null;
+	mergeQueueItem: MergeQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -332,6 +335,7 @@ export class CallbackRegistry {
 		removeQueueItem: null,
 		steerQueueItem: null,
 		setQueueItemPaused: null,
+		mergeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -671,6 +675,12 @@ export class CallbackRegistry {
 		if (!this.callbacks.setQueueItemPaused)
 			return { success: false, found: false, error: 'not configured' };
 		return this.callbacks.setQueueItemPaused(sessionId, itemId, paused);
+	}
+
+	async mergeQueueItem(sessionId: string, itemId: string): Promise<MergeQueueItemResult> {
+		if (!this.callbacks.mergeQueueItem)
+			return { success: false, merged: false, error: 'not configured' };
+		return this.callbacks.mergeQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1332,6 +1342,10 @@ export class CallbackRegistry {
 
 	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
 		this.callbacks.setQueueItemPaused = callback;
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbacks.mergeQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

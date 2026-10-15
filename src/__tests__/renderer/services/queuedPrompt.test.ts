@@ -18,6 +18,7 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
+	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
 	sendQueuedItemNow,
 } from '../../../renderer/services/queuedPrompt';
@@ -265,6 +266,30 @@ describe('removeQueuedItem', () => {
 		removeQueuedItem('session-1', item.id);
 		expect(removeQueuedItem('session-1', item.id)).toBe(false);
 		expect(removeQueuedItem('missing-session', item.id)).toBe(false);
+	});
+});
+
+describe('mergeQueuedItemIntoAbove', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	it('folds the item into the message above it and returns that id', () => {
+		seed();
+		const first = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'one' })!;
+		const second = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'two' })!;
+		expect(mergeQueuedItemIntoAbove('session-1', second.id)).toBe(first.id);
+		expect(currentQueue()).toHaveLength(1);
+		expect(currentQueue()[0]).toMatchObject({ id: first.id, text: 'one\n\ntwo' });
+	});
+
+	it('returns null and leaves the queue alone when nothing is above it', () => {
+		seed();
+		const only = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'one' })!;
+		expect(mergeQueuedItemIntoAbove('session-1', only.id)).toBeNull();
+		expect(currentQueue()).toHaveLength(1);
+		expect(mergeQueuedItemIntoAbove('missing-session', only.id)).toBeNull();
 	});
 });
 

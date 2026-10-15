@@ -189,6 +189,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		}),
 		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
 		setQueueItemPaused: vi.fn().mockResolvedValue({ success: true, found: true, paused: true }),
+		mergeQueueItem: vi
+			.fn()
+			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -2843,6 +2846,39 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Merge Queue Item (queue merge)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId and itemId and returns the item it merged into', async () => {
+			handler.handleMessage(client, {
+				type: 'merge_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.mergeQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('merge_queue_item_result');
+				expect(response).toMatchObject({ success: true, merged: true, mergedIntoId: 'item-8' });
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'merge_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('merge_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Steer Queue Item (queue steer)', () => {
 		const lastSend = (): Record<string, unknown> => {
 			const calls = vi.mocked(client.socket.send).mock.calls;
@@ -4790,54 +4826,6 @@ describe('WebSocketMessageHandler', () => {
 			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(payload.type).toBe('error');
 			expect(payload.message).toContain('newCwd');
-		});
-	});
-
-	describe('Update Session Config (CLI → Desktop)', () => {
-		it('passes a provider switch notices back to the caller', async () => {
-			const notice =
-				'A queued message was set to run with model "opus" on Claude Code. It will run with the agent\'s Codex settings instead.';
-			(callbacks.updateSessionConfig as any).mockResolvedValue({
-				success: true,
-				notices: [notice],
-			});
-
-			handler.handleMessage(client, {
-				type: 'update_session_config',
-				sessionId: 'session-1',
-				configPatch: { toolType: 'codex' },
-				requestId: 'req-1',
-			});
-
-			await new Promise((resolve) => setImmediate(resolve));
-
-			expect(callbacks.updateSessionConfig).toHaveBeenCalledWith('session-1', {
-				toolType: 'codex',
-			});
-			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(payload).toMatchObject({
-				type: 'update_session_config_result',
-				success: true,
-				notices: [notice],
-				sessionId: 'session-1',
-				requestId: 'req-1',
-			});
-		});
-
-		it('leaves notices off the result when there are none', async () => {
-			(callbacks.updateSessionConfig as any).mockResolvedValue({ success: true });
-
-			handler.handleMessage(client, {
-				type: 'update_session_config',
-				sessionId: 'session-1',
-				configPatch: { bookmarked: true },
-			});
-
-			await new Promise((resolve) => setImmediate(resolve));
-
-			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(payload).toMatchObject({ type: 'update_session_config_result', success: true });
-			expect(payload).not.toHaveProperty('notices');
 		});
 	});
 

@@ -199,6 +199,7 @@ export interface MainPanelContentProps {
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onMergeQueuedItem?: (itemId: string) => void;
 	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
@@ -399,6 +400,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
+		onMergeQueuedItem,
 		onEditQueuedItem,
 		onReorderQueuedItem,
 		onForceSendQueuedItem,
@@ -741,6 +743,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
@@ -777,6 +780,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
@@ -1015,6 +1019,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onDeleteLog={onDeleteLog}
 								onRemoveQueuedItem={onRemoveQueuedItem}
 								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onMergeQueuedItem={onMergeQueuedItem}
 								onEditQueuedItem={onEditQueuedItem}
 								onReorderQueuedItem={onReorderQueuedItem}
 								onForceSendQueuedItem={onForceSendQueuedItem}

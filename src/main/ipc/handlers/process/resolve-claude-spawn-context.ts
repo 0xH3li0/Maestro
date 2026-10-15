@@ -8,7 +8,7 @@ import {
 import { ensureRemoteMaestroPProbed } from '../../../agents/probeRemoteMaestroP';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
-import { REGEX_AI_SUFFIX } from '../../../constants';
+import { REGEX_AI_SUFFIX, REGEX_BATCH_SESSION } from '../../../constants';
 import {
 	getSshRemoteConfig,
 	createSshRemoteStoreAdapter,
@@ -73,8 +73,12 @@ export async function resolveClaudeSpawnContext(
 	// agent was set to TUI/Dynamic. Background surfaces (tab naming, synopsis, group
 	// chat, Cue) pass their token-mode fields inline, so they were unaffected. The
 	// renderer mirror (`process:claude-mode-resolved`) already strips this suffix on
-	// its side, so it still receives `config.sessionId` unchanged.
-	const baseSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
+	// its side, so it still receives `config.sessionId` unchanged. Desktop Auto Run
+	// spawns each task as `{agentId}-batch-{timestamp}` and had the same miss, so
+	// that suffix is stripped too.
+	const baseSessionId = config.sessionId
+		.replace(REGEX_AI_SUFFIX, '')
+		.replace(REGEX_BATCH_SESSION, '');
 
 	let claudeResolvedMode: 'interactive' | 'api' = 'api';
 	let claudeResolvedReason: 'auto' | 'limit' = 'auto';

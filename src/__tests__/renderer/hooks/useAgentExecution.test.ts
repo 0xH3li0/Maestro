@@ -227,6 +227,42 @@ describe('useAgentExecution', () => {
 		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomEffort).toBe('medium');
 	});
 
+	it('forwards the Claude token source on an Auto Run spawn', async () => {
+		// The Auto Run process id (`{agentId}-batch-{ts}`) does not match the
+		// persisted agent record, so the payload must carry the TUI / Dynamic
+		// selection or the run falls back to API.
+		const session = createMockSession({
+			toolType: 'claude-code',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			maestroPPath: '/opt/maestro-p',
+		});
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnAgentForSession(session.id, 'Task', undefined, { isAutoRun: true });
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionId).toMatch(/-batch-\d+$/);
+		expect(spawned.enableMaestroP).toBe(true);
+		expect(spawned.maestroPMode).toBe('dynamic');
+		expect(spawned.maestroPPath).toBe('/opt/maestro-p');
+	});
+
 	it('pins a background synopsis to the cheapest model rather than the tab model', async () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };

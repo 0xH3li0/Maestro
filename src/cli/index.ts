@@ -14,7 +14,14 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueHold, queueList, queueRemove, queueResume, queueSteer } from './commands/queue';
+import {
+	queueHold,
+	queueList,
+	queueMerge,
+	queueRemove,
+	queueResume,
+	queueSteer,
+} from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -582,8 +589,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), and `steer`
-// (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), `merge` (the
+// card's Merge button), and `steer` (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -619,6 +626,14 @@ queue
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueResume);
+
+queue
+	.command('merge <item-id>')
+	.description(
+		"Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place"
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueMerge);
 
 queue
 	.command('steer <item-id>')
@@ -2124,14 +2139,18 @@ const agent = settings.command('agent').description('View and manage per-agent c
 
 agent
 	.command('list [agent-id]')
-	.description('List agent configurations (all agents or a specific one)')
+	.description(
+		'List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('-v, --verbose', 'Show descriptions for each config key')
 	.action(settingsAgentList);
 
 agent
 	.command('get <agent-id> <key>')
-	.description('Get a single agent config value')
+	.description(
+		'Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description')
 	.action(settingsAgentGet);

@@ -108,6 +108,26 @@ not submitted mutations: uncertain submissions require inspecting host state
 before resubmitting. Disconnected diagnostics stay local rather than recursively
 reporting bridge failures through the broken bridge.
 
+Native OS notification click readiness (`notification:ready`) is acknowledged only
+by host Electron renderers. `useSessionSwitchCallbacks` skips that subscription in
+web-desktop and Lite; in-app toast click actions still navigate within the client.
+
+Native Lite's periodic handshake is a health read, not the WebSocket's connection
+state. Network failures and HTTP 502/503/504 retain the current view and drafts;
+the native status follows the live bridge. Authentication, host identity and
+compatibility failures still close access. An acknowledged session-save rejection
+does not itself block a later distinct save. A save whose acknowledgement is lost
+remains held until the host view is reloaded; reconnect never replays it.
+
+New AI composer submissions keep their draft and attachments while
+authoritative process readiness is pending. A failed remote readiness read
+returns before creating user rows or execution-queue entries and raises a
+client-visible refusal; bridge reconciliation does not submit that draft.
+Successful sends clear unchanged persisted text and attachments independently on
+the original agent/tab, even after the user switches away, without touching the
+new composer's draft or pending flush. Changed fields stay intact. The native
+host still owns its local queue and existing process-reconciliation holds.
+
 Settings hydration reads `settings:getAll` and `logger:getLogLevel` remotely but
 skips the native-only `logger:getMaxLogBuffer` call. That channel stays private:
 calling it from web-desktop aborts the settings patch, leaving `showToolCalls`
@@ -124,12 +144,18 @@ the desktop's stale copy was written again (issues #1398 / #1492).
 These rules keep the clients in sync:
 
 - **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
-- **Live content comes from the owning renderer.** Native snapshot requests
-  populate current incognito/browser/terminal inventory before remote restoration
-  and return the selected transcript for deferred reads. Incognito tabs stay out
-  of persisted sessions while surviving client disconnects.
-  `sessions:transcriptSync` applies owner-created row IDs and runtime state on
-  mirrors; only trusted native renderers may publish or answer snapshot requests.
+- **Live content comes from the owning renderer.** Bootstrap requests set
+  `metadataOnly` and return current incognito/browser/terminal inventory without
+  traversing or copying transcript rows. Deferred reads return the selected
+  canonical transcript and its runtime snapshot (including errors and explicit
+  cleared fields) only to their requester: request replies, including late
+  replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime
+  applies only while the captured local turn and browser/terminal inventories
+  are unchanged; newer local state takes precedence. Normal live deltas still
+  apply owner-created row IDs and
+  runtime state on every mirror. Incognito tabs stay out of persisted sessions
+  while surviving client disconnects; only trusted native renderers may publish
+  or answer snapshot requests.
 - **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the

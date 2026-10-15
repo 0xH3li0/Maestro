@@ -294,6 +294,7 @@ interface MaestroAPI {
 			shellLogs?: import('./types').LogEntry[];
 			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
 			aiCommandHistory?: string[];
+			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
 		}>;
 		setAll: (sessions: any[], baselines?: any[]) => Promise<boolean>;
 		/**
@@ -319,7 +320,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onTranscriptRequest: (
-			handler: (request: { sessionId: string; tabId: string; requestId: string }) => void
+			handler: (request: {
+				sessionId: string;
+				tabId: string;
+				requestId: string;
+				metadataOnly?: boolean;
+			}) => void
 		) => () => void;
 		/**
 		 * Listen for main-side focus requests emitted by the plugin `sessions.focus`
@@ -906,6 +912,13 @@ interface MaestroAPI {
 		sendRemoteSetQueueItemPausedResponse: (
 			responseChannel: string,
 			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
+		) => void;
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void

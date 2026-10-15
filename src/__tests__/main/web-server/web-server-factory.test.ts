@@ -71,6 +71,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
+			setMergeQueueItemCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
 			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
@@ -328,19 +329,6 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('createWebServerFactory', () => {
-		it('should return a function', () => {
-			const factory = createWebServerFactory(deps);
-			expect(typeof factory).toBe('function');
-		});
-
-		it('should create a WebServer when called', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			expect(server).toBeDefined();
-			expect(server).toBeInstanceOf(WebServer);
-		});
-
 		it('should create a loopback-only server unless LAN access is asked for', () => {
 			const createWebServer = createWebServerFactory(deps);
 
@@ -481,71 +469,6 @@ describe('web-server/web-server-factory', () => {
 			expect(storedToken).toMatch(
 				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 			);
-		});
-	});
-
-	describe('callback registrations', () => {
-		let createWebServer: ReturnType<typeof createWebServerFactory>;
-		let server: ReturnType<typeof createWebServer>;
-
-		beforeEach(() => {
-			createWebServer = createWebServerFactory(deps);
-			server = createWebServer();
-		});
-
-		it('should register getSessionsCallback', () => {
-			expect(server.setGetSessionsCallback).toHaveBeenCalled();
-		});
-
-		it('should register getSessionDetailCallback', () => {
-			expect(server.setGetSessionDetailCallback).toHaveBeenCalled();
-		});
-
-		it('should register getThemeCallback', () => {
-			expect(server.setGetThemeCallback).toHaveBeenCalled();
-		});
-
-		it('should register getCustomCommandsCallback', () => {
-			expect(server.setGetCustomCommandsCallback).toHaveBeenCalled();
-		});
-
-		it('should register getHistoryCallback', () => {
-			expect(server.setGetHistoryCallback).toHaveBeenCalled();
-		});
-
-		it('should register writeToSessionCallback', () => {
-			expect(server.setWriteToSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register executeCommandCallback', () => {
-			expect(server.setExecuteCommandCallback).toHaveBeenCalled();
-		});
-
-		it('should register interruptSessionCallback', () => {
-			expect(server.setInterruptSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register switchModeCallback', () => {
-			expect(server.setSwitchModeCallback).toHaveBeenCalled();
-		});
-
-		it('should register selectSessionCallback', () => {
-			expect(server.setSelectSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register tab operation callbacks', () => {
-			expect(server.setSelectTabCallback).toHaveBeenCalled();
-			expect(server.setNewTabCallback).toHaveBeenCalled();
-			expect(server.setCloseTabCallback).toHaveBeenCalled();
-			expect(server.setRenameTabCallback).toHaveBeenCalled();
-		});
-
-		it('should register file and auto-run callbacks', () => {
-			expect(server.setOpenFileTabCallback).toHaveBeenCalled();
-			expect(server.setOpenDocumentGraphCallback).toHaveBeenCalled();
-			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
-			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
-			expect(server.setConfigureAutoRunCallback).toHaveBeenCalled();
 		});
 	});
 

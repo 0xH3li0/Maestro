@@ -297,6 +297,7 @@ export interface AppUtilityModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -523,6 +524,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onTogglePauseQueueItem,
 	onEditQueueItem,
 	onForceSendQueueItem,
+	onMergeQueueItem,
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab,
 	onQuickActionsNewFileTab,
@@ -875,6 +877,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onToggleItemPause={onTogglePauseQueueItem}
 					onEditItem={onEditQueueItem}
 					onForceSendItem={onForceSendQueueItem}
+					onMergeItem={onMergeQueueItem}
 				/>
 			)}
 

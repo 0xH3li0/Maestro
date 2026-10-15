@@ -150,6 +150,7 @@ export interface UseMainPanelPropsDeps {
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
+	handleMergeQueuedItem: (itemId: string) => void;
 	handleEditQueuedItem: (itemId: string, patch: QueuedItemEditPatch) => void;
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
@@ -396,6 +397,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
 			onTogglePauseQueuedItem: deps.handleToggleQueuedItemPause,
+			onMergeQueuedItem: deps.handleMergeQueuedItem,
 			onEditQueuedItem: deps.handleEditQueuedItem,
 			onReorderQueuedItem: deps.handleReorderQueuedItem,
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
@@ -649,6 +651,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
 			deps.handleToggleQueuedItemPause,
+			deps.handleMergeQueuedItem,
 			deps.handleEditQueuedItem,
 			deps.handleReorderQueuedItem,
 			deps.handleForceSendQueuedItem,
