@@ -66,9 +66,14 @@ describe('repairDiagramLabelContrast', () => {
 	});
 
 	it('resolves a classDef fill that only arrives through the diagram <style> block', () => {
-		const svg =
-			mountSvg(`<style>.warn > rect { fill: #f9e79f; } .nodeLabel p { color: #eeeeee; }</style>
-			<g class="node warn">
+		// Mermaid puts this rule in a `<style>` inside the `<svg>`. jsdom never
+		// applies an SVG `<style>` (Chromium does), so the same rule goes in an
+		// HTML `<style>`: the fill and color still reach the repair only through
+		// getComputedStyle, never inline.
+		const style = document.createElement('style');
+		style.textContent = '.warn > rect { fill: #f9e79f; } .nodeLabel p { color: #eeeeee; }';
+		document.body.appendChild(style);
+		const svg = mountSvg(`<g class="node warn">
 				<rect class="basic label-container"></rect>
 				<g class="label"><foreignObject><div><span class="nodeLabel"><p>deploy-target host</p></span></div></foreignObject></g>
 			</g>`);
