@@ -32,6 +32,7 @@ import { MaestroNotRunningError } from '../../../cli/services/maestro-not-runnin
 import { SqliteUnavailableError } from '../../../cli/utils/native-sqlite';
 import { initCueDb, readRecentCueEventsReadOnly } from '../../../main/cue/cue-db';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
+import { resolveCliPath } from '../../../cli/utils/parse';
 
 const subs = [
 	{
@@ -253,7 +254,8 @@ describe('cue enable/disable/activity', () => {
 			appNotRunning();
 			vi.mocked(readRecentCueEventsReadOnly).mockImplementation(() => {
 				// The reader resolves cue.db from MAESTRO_USER_DATA when given no path.
-				expect(process.env.MAESTRO_USER_DATA).toBe('/var/lib/maestro/data');
+				// The flag is resolved like any CLI path, so Windows adds a drive letter.
+				expect(process.env.MAESTRO_USER_DATA).toBe(resolveCliPath('/var/lib/maestro/data'));
 				return { ok: true, records: [], source: 'snapshot' };
 			});
 			try {
