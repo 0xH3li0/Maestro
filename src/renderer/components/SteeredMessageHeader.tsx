@@ -69,10 +69,24 @@ const ELBOW_HEIGHT = ROW_PADDING + 1 + HEADER_HEIGHT / 2;
 export interface SteeredMessageHeaderProps {
 	state: SteerBubbleState | undefined;
 	theme: Theme;
+	/**
+	 * The turns that took the message, when there can be more than one (a group
+	 * chat round). Names them in the label instead of "the running turn".
+	 */
+	targets?: readonly string[];
 }
 
-export function SteeredMessageHeader({ state, theme }: SteeredMessageHeaderProps): JSX.Element {
-	const { label, title } = steerBubbleCopy(state);
+export function SteeredMessageHeader({
+	state,
+	theme,
+	targets,
+}: SteeredMessageHeaderProps): JSX.Element {
+	const copy = steerBubbleCopy(state);
+	const named = targets && targets.length > 0 ? targets.join(', ') : null;
+	const label = named ? `Steered to ${named}` : copy.label;
+	const title = named
+		? `Typed into the round that was already running. Taken by: ${named}.`
+		: copy.title;
 	// A follow-up did not steer anything, so it does not wear the Steer accent.
 	const tint = state === 'queued' ? theme.colors.textDim : theme.colors.accent;
 

@@ -36,6 +36,15 @@ import {
 	stripMarkdownFormatting,
 } from '../../group-chat-types';
 import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
+import type { SteeringResultFrame } from '../../chatSteering';
+import {
+	GROUP_CHAT_STEER_BLOCKED_DETAILS,
+	groupChatSteerResult,
+	pickGroupChatSteerTarget,
+	type GroupChatRunningTurns,
+	type GroupChatSteerBlockedReason,
+	type GroupChatSteerResult,
+} from '../../groupChatSteering';
 import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { UsageStats } from '../../types';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../launch/agent-args';
@@ -838,6 +847,228 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	}
 
 	/**
+	 * Puts a user message in the room: the chat log, the live transcript (with the
+	 * original data URLs for display), and history. One path for a routed message
+	 * and a steered one, so the two read the same everywhere.
+	 */
+	async function recordUserMessage(
+		groupChatId: string,
+		logPath: string,
+		message: string,
+		opts: {
+			readOnly?: boolean;
+			images?: string[];
+			savedImageFilenames?: string[];
+			steeredTo?: string[];
+		}
+	): Promise<void> {
+		const { readOnly, images, savedImageFilenames, steeredTo } = opts;
+		await appendToLog(logPath, 'user', message, readOnly, savedImageFilenames, steeredTo);
+
+		const userMessage: GroupChatRoomMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'user',
+			content: message,
+			readOnly,
+			...(images && images.length > 0 && { images }),
+			...(steeredTo && steeredTo.length > 0 && { steeredTo }),
+		};
+		events.message(groupChatId, userMessage);
+
+		// Record the prompt itself in history. Every other entry is something an
+		// agent did in reaction to this line, so a history without it shows effects
+		// with no causes - and the timestamp is what makes a click here jump the
+		// transcript back to the message that started the round.
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: extractFirstSentence(message),
+			participantName: GROUP_CHAT_USER_NAME,
+			participantColor: '#808080',
+			type: 'user',
+			fullResponse: message,
+		});
+	}
+
+	// ==========================================================================
+	// Steering: a message into a round that is already running
+	// ==========================================================================
+
+	/** A steered message the turn has, until the turn says what it did with it. */
+	interface SteeredMessage {
+		groupChatId: string;
+		text: string;
+		readOnly: boolean;
+	}
+
+	/**
+	 * Delivered steers whose turn has not yet said what it did with them, by
+	 * `${processId}:${steerId}`. A turn that drops one (its run ended first) hands
+	 * the message back, so the caller can queue it again instead of losing it.
+	 */
+	const pendingSteers = new Map<string, SteeredMessage>();
+
+	/**
+	 * Turns a steer is being typed into right now, with what they reported before
+	 * the socket answered. The transcript verdict and the exit travel on other
+	 * channels than the socket reply and can beat it; dropped on the floor, a turn
+	 * that ended mid-typing would leave a message nobody ever returns.
+	 */
+	const steersAwaitingSocket = new Map<
+		string,
+		{ verdicts: SteeringResultFrame[]; exited: boolean }
+	>();
+
+	/** The turns running in a room right now, by full process id. */
+	function runningTurns(groupChatId: string): GroupChatRunningTurns {
+		return {
+			moderator: runningModeratorTurns.get(groupChatId)?.processId,
+			participants: participantRegistry.getActiveParticipants(groupChatId).flatMap((name) => {
+				const processId = getParticipantSessionId(groupChatId, name);
+				return processId ? [{ name, processId }] : [];
+			}),
+		};
+	}
+
+	/**
+	 * Type a user message into the round that is running, rather than waiting for
+	 * it to end. The turn follows `pickGroupChatSteerTarget`. A message the turn
+	 * took is recorded in the room as the user's, marked with who took it, so the
+	 * moderator's synthesis and every later turn see it in the history.
+	 *
+	 * `steer` is the host's channel into one process (`ProcessManager.steer` on the
+	 * desktop). It is expected to resolve with a verdict; a rejection counts as
+	 * `unknown`, because the text may have been typed before it failed.
+	 */
+	async function steerRunningRound(
+		groupChatId: string,
+		message: { text: string; readOnly?: boolean },
+		steer: (processId: string, text: string) => Promise<SteeringResultFrame>
+	): Promise<GroupChatSteerResult> {
+		const notSteerable = (reason: GroupChatSteerBlockedReason): GroupChatSteerResult => ({
+			outcome: 'not-steerable',
+			blockedReason: reason,
+			detail: GROUP_CHAT_STEER_BLOCKED_DETAILS[reason],
+		});
+		const text = message.text.trim();
+		const readOnly = message.readOnly === true;
+		if (!text) return notSteerable('nothing-to-type');
+		// A read-only message typed into a round that may write would run with more
+		// access than the user gave it.
+		if (readOnly && !getGroupChatReadOnlyState(groupChatId)) return notSteerable('read-only');
+
+		const picked = pickGroupChatSteerTarget(text, runningTurns(groupChatId));
+		if ('blocked' in picked) return notSteerable(picked.blocked);
+		const { target } = picked;
+		if (steersAwaitingSocket.has(target.processId)) return notSteerable('steer-in-flight');
+
+		const early: { verdicts: SteeringResultFrame[]; exited: boolean } = {
+			verdicts: [],
+			exited: false,
+		};
+		steersAwaitingSocket.set(target.processId, early);
+		let frame: SteeringResultFrame;
+		try {
+			frame = await steer(target.processId, text);
+		} catch (error) {
+			frame = {
+				type: 'steering',
+				id: '',
+				verdict: 'unknown',
+				detail: error instanceof Error ? error.message : String(error),
+			};
+		} finally {
+			steersAwaitingSocket.delete(target.processId);
+		}
+
+		// Fold in what the turn reported while the socket was still answering.
+		if (frame.verdict === 'delivered') {
+			const later = early.verdicts.find(
+				(v) => v.id === frame.id && v.verdict !== 'delivered' && v.verdict !== 'refused'
+			);
+			if (later?.verdict === 'dropped') {
+				// The turn ended before it took the text. Nothing reached the room, so
+				// the message is still the caller's to send normally.
+				return {
+					outcome: 'refused',
+					verdict: 'dropped',
+					refusal: 'not-running',
+					detail: 'the turn ended before it took the message',
+				};
+			}
+			if (later) frame = later;
+			else if (early.exited) {
+				// Gone without a verdict: nobody knows whether it saw the text.
+				return {
+					outcome: 'unconfirmed',
+					verdict: 'unknown',
+					detail: 'the turn ended without saying whether it took the message',
+				};
+			}
+		}
+
+		const result = groupChatSteerResult(target, frame);
+		if (result.outcome !== 'delivered' && result.outcome !== 'settled') return result;
+
+		if (result.outcome === 'delivered' && frame.id) {
+			pendingSteers.set(`${target.processId}:${frame.id}`, { groupChatId, text, readOnly });
+		}
+		const chat = await loadGroupChat(groupChatId);
+		if (chat) {
+			await recordUserMessage(groupChatId, chat.logPath, text, {
+				readOnly,
+				steeredTo: result.targets,
+			});
+		}
+		return result;
+	}
+
+	/**
+	 * A steered turn said what it did with the message (maestro-p's transcript
+	 * verdict). Returns the message when the turn never took it: the run ended
+	 * first, the text is gone, and re-sending it is the caller's job.
+	 */
+	function steeringVerdict(processId: string, verdict: SteeringResultFrame): SteeredMessage | null {
+		const key = `${processId}:${verdict.id}`;
+		const steered = pendingSteers.get(key);
+		if (!steered) {
+			// Possibly the steer being typed right now, ahead of its own socket reply.
+			// Only an unknown id is held: an earlier steer's verdict settles below.
+			steersAwaitingSocket.get(processId)?.verdicts.push(verdict);
+			return null;
+		}
+		switch (verdict.verdict) {
+			case 'absorbed':
+			case 'queued':
+				pendingSteers.delete(key);
+				return null;
+			case 'dropped':
+				pendingSteers.delete(key);
+				return steered;
+			default:
+				// `delivered` repeated on stdout says nothing new.
+				return null;
+		}
+	}
+
+	/**
+	 * A steered turn exited with steers it never settled. maestro-p reports every
+	 * one as `dropped` before it exits, so anything left means that report never
+	 * came (a crash, a kill), and nobody knows whether the agent saw the text.
+	 * Returned so the caller can hold it, never send it twice without asking.
+	 */
+	function unsettledSteersOnExit(processId: string): SteeredMessage[] {
+		const awaiting = steersAwaitingSocket.get(processId);
+		if (awaiting) awaiting.exited = true;
+		const returned: SteeredMessage[] = [];
+		for (const [key, steered] of [...pendingSteers]) {
+			if (!key.startsWith(`${processId}:`)) continue;
+			pendingSteers.delete(key);
+			returned.push(steered);
+		}
+		return returned;
+	}
+
+	/**
 	 * Routes a user message to the moderator.
 	 *
 	 * Spawns a batch process for the moderator to handle this specific message.
@@ -972,30 +1203,10 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		setGroupChatReadOnlyState(groupChatId, readOnly ?? false);
 
 		if (!routingRetry) {
-			// Log the message as coming from user (with image filenames if any)
-			await appendToLog(chat.logPath, 'user', message, readOnly, savedImageFilenames);
-
-			// Emit message event to renderer so it shows immediately (with original data URLs for display)
-			const userMessage: GroupChatRoomMessage = {
-				timestamp: new Date().toISOString(),
-				from: 'user',
-				content: message,
+			await recordUserMessage(groupChatId, chat.logPath, message, {
 				readOnly,
-				...(images && images.length > 0 && { images }),
-			};
-			events.message(groupChatId, userMessage);
-
-			// Record the prompt itself in history. Every other entry is something an
-			// agent did in reaction to this line, so a history without it shows effects
-			// with no causes - and the timestamp is what makes a click here jump the
-			// transcript back to the message that started the round.
-			await recordGroupChatHistory(groupChatId, {
-				timestamp: Date.now(),
-				summary: extractFirstSentence(message),
-				participantName: GROUP_CHAT_USER_NAME,
-				participantColor: '#808080',
-				type: 'user',
-				fullResponse: message,
+				images,
+				savedImageFilenames,
 			});
 
 			const explicitParticipantNames = extractMentions(message, chat.participants);
@@ -3143,6 +3354,11 @@ Review the agent responses above. Either:
 		sessionAnnounced,
 		usageReported,
 		liveOutput,
+		// Steering
+		runningTurns,
+		steerRunningRound,
+		steeringVerdict,
+		unsettledSteersOnExit,
 		// Round state
 		settleGroupChatToIdle,
 		setModeratorResponseTimeout,

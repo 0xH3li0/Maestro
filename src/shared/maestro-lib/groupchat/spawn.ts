@@ -15,6 +15,7 @@
  * probe warm-up; and the turn clock.
  */
 
+import { STEERING_SOCKET_ENV_VAR } from '../../chatSteering';
 import type { ClaudeTokenMode } from '../../claudeTokenMode';
 import { logger } from '../host';
 import { getContextWindowValue } from '../launch/agent-args';
@@ -53,6 +54,12 @@ export interface GroupChatSpawnDeps {
 	windowsSpawnConfig(agentId: string, ssh: GroupChatSpawn['sshRemoteConfig']): WindowsSpawnConfig;
 	/** Starts the turn clock for a process id, at the one choke point every turn shape goes through. */
 	beginTurn(processId: string): void;
+	/**
+	 * Where a local maestro-p turn opens its steering socket, keyed by process id, so the host can
+	 * type a user message into the running turn (group chat steering). A host that cannot steer
+	 * leaves it out and the turn opens no channel.
+	 */
+	steeringSocketPath?(processId: string): string;
 }
 
 /** The process a turn starts, in the fields both hosts read. */
@@ -155,6 +162,13 @@ export async function prepareGroupChatSpawn(
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
 		spawnEnvVars = applied.customEnvVars;
+		// The socket is local, so a turn on an SSH remote never gets one.
+		if (deps.steeringSocketPath && !sshRemoteConfig?.enabled) {
+			spawnEnvVars = {
+				...(spawnEnvVars ?? {}),
+				[STEERING_SOCKET_ENV_VAR]: deps.steeringSocketPath(processId),
+			};
+		}
 		if (debugLabel) {
 			logger.debug(
 				`[GroupChat:Debug] ${debugLabel} resolved to maestro-p (tokenMode=${spawn.tokenMode})`,

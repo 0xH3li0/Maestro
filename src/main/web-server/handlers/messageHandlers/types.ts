@@ -10,6 +10,7 @@ import type {
  */
 
 import type { QueueSteerResult } from '../../../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../../../shared/groupChatSteering';
 import type {
 	WebClient,
 	AutoRunDocument,
@@ -25,6 +26,7 @@ import type {
 	GroupChatState,
 	StartGroupChatOptions,
 	StartGroupChatResult,
+	SteerGroupChatRequest,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -381,6 +383,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
+	steerGroupChat?: (
+		chatId: string,
+		request: SteerGroupChatRequest
+	) => Promise<GroupChatSteerResult>;
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;

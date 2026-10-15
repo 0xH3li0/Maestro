@@ -54,6 +54,8 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import type { SteerEligibility } from '../utils/executionQueue';
+import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -95,6 +97,8 @@ interface GroupChatInputProps {
 	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
 	queueState?: GroupChatQueueState;
 	onResumeQueue?: () => void;
+	/** Steer a queued message into the round that is running. */
+	onSteerQueuedItem?: (itemId: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Input send behavior (synced with global settings)
@@ -128,6 +132,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	onOpenLightbox,
 	queueState,
 	onResumeQueue,
+	onSteerQueuedItem,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	enterToSendAI: enterToSendAIProp,
@@ -560,6 +565,24 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const failedItem = queueState?.items.find((entry) => entry.failed);
 	const sendingItem = queueState?.items.find((entry) => entry.sending);
 
+	// Steer is offered while the round runs, on anything a turn can type. Which
+	// turn takes it (moderator, or the working participants it names) is main's
+	// call, and a refusal comes back as a toast with the reason.
+	const getSteerContext = useCallback(
+		(item: QueuedItem): SteerEligibility => {
+			const entry = queueState?.items.find((candidate) => candidate.id === item.id);
+			const blocked = groupChatSteerBlockedReason({
+				busy: isBusy,
+				text: entry?.text,
+				images: entry?.images,
+				sending: entry?.sending,
+				failed: entry?.failed,
+			});
+			return { canSteer: !!entry && blocked === null };
+		},
+		[queueState, isBusy]
+	);
+
 	return (
 		<div
 			ref={toastAvoidRef}
@@ -611,6 +634,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					onRemoveQueuedItem={onRemoveQueuedItem}
 					onReorderItems={onReorderQueuedItems}
 					onOpenLightbox={onOpenLightbox}
+					getSteerContext={onSteerQueuedItem ? getSteerContext : undefined}
+					onSteerQueuedItem={onSteerQueuedItem}
 				/>
 			)}
 
