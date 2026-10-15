@@ -1093,7 +1093,7 @@ export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		{
 			capability: 'background:service',
 			reason:
-				'Run the supervised accessibility observer (maestro-observer) and the segment writer while the feature is on.',
+				'Run the supervised accessibility observer (maestro-computer-history) and the segment writer while the feature is on.',
 		},
 	],
 	// NOTE: the recorder reads the OS accessibility tree (macOS AX, Windows UI

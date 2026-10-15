@@ -79,6 +79,20 @@ describe('ComputerHistorySection', () => {
 		await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ snapshots: false }));
 	});
 
+	it('the status banner leads the panel and explains a missing recorder', async () => {
+		const api = makeApi('macos', null, 'granted');
+		const base = await api.status();
+		api.status.mockResolvedValue({ ...base, state: 'binary-missing' });
+		install(api);
+		render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByText('Recorder not installed')).toBeTruthy();
+		const banner = screen.getByTestId('computer-history-status-banner');
+		expect(banner.getAttribute('data-state')).toBe('binary-missing');
+		expect(banner.textContent).toContain('maestro-computer-history');
+		const panel = banner.parentElement!;
+		expect(panel.firstElementChild).toBe(banner);
+	});
+
 	it('macOS: the permission button asks the service to show the prompt', async () => {
 		const api = makeApi('macos', {
 			version: '0.1.0',

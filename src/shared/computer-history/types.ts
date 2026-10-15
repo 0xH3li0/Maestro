@@ -1,7 +1,7 @@
 /**
  * Computer History - wire and storage types (pure, bundle-safe).
  *
- * One schema for three hops: the `maestro-observer` helper writes these as
+ * One schema for three hops: the `maestro-computer-history` helper writes these as
  * NDJSON on stdout, the main-process service stores them (after rules and
  * redaction, plus `seq`) in 15-minute segment files, and the CLI and agents
  * read them back. Keeping the stored line identical to the wire line means a
@@ -10,7 +10,7 @@
  * The contract is documented for humans in Plans/computer-history-plan.md and
  * for agents in the SCHEMA.md the service writes into the store directory.
  * Bump `COMPUTER_HISTORY_PROTOCOL_VERSION` on any breaking change; the Rust
- * helper (native/maestro-observer) declares the same number.
+ * helper (native/maestro-computer-history) declares the same number.
  */
 
 export const COMPUTER_HISTORY_PROTOCOL_VERSION = 1;

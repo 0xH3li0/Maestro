@@ -1,4 +1,4 @@
-//! maestro-observer: Maestro's Computer History accessibility helper.
+//! maestro-computer-history: Maestro's Computer History accessibility helper.
 //!
 //! A long-lived child of the Electron main process. Reads NDJSON commands on
 //! stdin, writes NDJSON `ObservedEvent`s on stdout, free-form diagnostics on
@@ -17,7 +17,7 @@ use std::time::Duration;
 use engine::{Engine, Input, Now};
 use protocol::{EventKind, ObservedEvent, HELPER_VERSION};
 
-const USAGE: &str = "usage: maestro-observer [--version | --probe]\n\
+const USAGE: &str = "usage: maestro-computer-history [--version | --probe]\n\
   (no arguments)  run: NDJSON commands on stdin, events on stdout\n\
   --version       print the helper version and exit\n\
   --probe         print one helper.status line and exit";
@@ -26,11 +26,11 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => run(),
-        Some("--version") | Some("-V") => println!("maestro-observer {HELPER_VERSION}"),
+        Some("--version") | Some("-V") => println!("maestro-computer-history {HELPER_VERSION}"),
         Some("--probe") => probe(),
         Some("--help") | Some("-h") => println!("{USAGE}"),
         Some(other) => {
-            eprintln!("maestro-observer: unknown argument {other:?}\n{USAGE}");
+            eprintln!("maestro-computer-history: unknown argument {other:?}\n{USAGE}");
             process::exit(2);
         }
     }
@@ -46,7 +46,7 @@ fn probe() {
     event.status = Some(Engine::probe_status(observer.platform(), &access));
     let stdout = io::stdout();
     if let Err(e) = engine::write_event(&mut stdout.lock(), &event) {
-        eprintln!("maestro-observer: cannot write probe result: {e}");
+        eprintln!("maestro-computer-history: cannot write probe result: {e}");
         process::exit(1);
     }
 }
@@ -77,7 +77,7 @@ fn run() {
         process::exit(0);
     });
     if let Err(e) = reader {
-        eprintln!("maestro-observer: cannot start stdin reader: {e}");
+        eprintln!("maestro-computer-history: cannot start stdin reader: {e}");
         process::exit(1);
     }
 
@@ -88,7 +88,7 @@ fn run() {
     let mut out = stdout.lock();
     if let Err(e) = engine::run(observer.as_mut(), &rx, &mut out, &Now::system) {
         if e.kind() != io::ErrorKind::BrokenPipe {
-            eprintln!("maestro-observer: stopped: {e}");
+            eprintln!("maestro-computer-history: stopped: {e}");
         }
     }
 }

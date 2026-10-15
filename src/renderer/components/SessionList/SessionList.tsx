@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
-import { ComputerHistoryRecordingDot } from './ComputerHistoryRecordingDot';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import {
 	subscribeSidebarReveal,
@@ -1558,7 +1557,6 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<Menu className="w-4 h-4" />
 								</GhostIconButton>
-								<ComputerHistoryRecordingDot theme={theme} />
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<HamburgerDropdown

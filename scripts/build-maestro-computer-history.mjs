@@ -1,31 +1,35 @@
 #!/usr/bin/env node
 /**
- * Build script for `maestro-observer`, the Rust accessibility helper behind
- * the Computer History plugin (native/maestro-observer).
+ * Build script for `maestro-computer-history`, the Rust accessibility helper behind
+ * the Computer History plugin (native/maestro-computer-history).
  *
  * Usage:
- *   node scripts/build-maestro-observer.mjs                 # host platform + arch
- *   node scripts/build-maestro-observer.mjs --arch arm64    # host platform, other arch
- *   node scripts/build-maestro-observer.mjs --target x86_64-unknown-linux-gnu
- *   node scripts/build-maestro-observer.mjs --universal     # macOS: lipo x64 + arm64
- *   node scripts/build-maestro-observer.mjs --debug         # unoptimized build
+ *   node scripts/build-maestro-computer-history.mjs                 # host platform + arch
+ *   node scripts/build-maestro-computer-history.mjs --arch arm64    # host platform, other arch
+ *   node scripts/build-maestro-computer-history.mjs --target x86_64-unknown-linux-gnu
+ *   node scripts/build-maestro-computer-history.mjs --universal     # macOS: lipo x64 + arm64
+ *   node scripts/build-maestro-computer-history.mjs --debug         # unoptimized build
  *
- * Output: dist/native/<platform>-<arch>/maestro-observer[.exe], where platform
+ * Output: dist/native/<platform>-<arch>/maestro-computer-history[.exe], where platform
  * is darwin | win32 | linux and arch is x64 | arm64 (Node naming, matching
  * electron-builder's ${arch}). `--universal` writes the fat binary to
  * darwin-universal, darwin-x64, and darwin-arm64 so any packaging mode finds
  * it. electron-builder copies dist/native/<platform>-${arch}/ to
  * <resources>/native/, so the packaged binary lives at
- * process.resourcesPath/native/maestro-observer[.exe].
+ * process.resourcesPath/native/maestro-computer-history[.exe].
  *
- * Not part of `npm run build`: contributors without Rust can still build and
- * package the app (it just ships without the helper). The release workflow
- * calls this script explicitly for every platform and arch.
+ * Not part of `npm run build`, so contributors without Rust can still build
+ * and run the app in dev. The `package*` npm scripts run it for the host
+ * platform and arch, and the release workflow calls it explicitly for every
+ * platform and arch. The electron-builder afterPack hook
+ * (scripts/verify-computer-history-helper.js) fails any package that lacks
+ * the helper, because electron-builder silently skips a missing
+ * extraResources folder.
  *
  * Toolchain: when rustup is installed, the rustup-managed cargo/rustc are used
  * (`rustup which`), because a Homebrew `rust` earlier on PATH has no
  * cross-compilation targets. Otherwise plain `cargo` from PATH. Cargo runs
- * from the crate directory so native/maestro-observer/.cargo/config.toml
+ * from the crate directory so native/maestro-computer-history/.cargo/config.toml
  * applies (static CRT on Windows, so no VC++ redistributable is needed).
  *
  * Signing (what happens downstream, not here):
@@ -51,9 +55,9 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
-const crateDir = path.join(rootDir, 'native/maestro-observer');
+const crateDir = path.join(rootDir, 'native/maestro-computer-history');
 const outRoot = path.join(rootDir, 'dist/native');
-const BIN = 'maestro-observer';
+const BIN = 'maestro-computer-history';
 
 /** Node platform + arch -> Rust target triple. */
 const TRIPLES = {
@@ -66,7 +70,7 @@ const TRIPLES = {
 };
 
 function fail(message) {
-	console.error(`build-maestro-observer: ${message}`);
+	console.error(`build-maestro-computer-history: ${message}`);
 	process.exit(1);
 }
 
@@ -80,7 +84,7 @@ function parseArgs(argv) {
 		else if (arg === '--debug') opts.debug = true;
 		else if (arg === '--help' || arg === '-h') {
 			console.log(
-				'usage: node scripts/build-maestro-observer.mjs [--target <triple> | --arch x64|arm64 | --universal] [--debug]'
+				'usage: node scripts/build-maestro-computer-history.mjs [--target <triple> | --arch x64|arm64 | --universal] [--debug]'
 			);
 			process.exit(0);
 		} else fail(`unknown argument: ${arg}`);
