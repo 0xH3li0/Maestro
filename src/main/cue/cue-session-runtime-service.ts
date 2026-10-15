@@ -429,6 +429,10 @@ export function createCueSessionRuntimeService(
 		return { kind: 'loaded' };
 	}
 
+	/**
+	 * Stops registered triggers, queued work, fan-in state and scheduled dedup keys.
+	 * Can retain the YAML watcher for refresh; startup dedup keys remain intact.
+	 */
 	function teardownSession(sessionId: string, preserveYamlWatcher = false): void {
 		if (!preserveYamlWatcher) {
 			const projectRoot = yamlWatchers.get(sessionId)?.projectRoot;
@@ -582,6 +586,7 @@ export function createCueSessionRuntimeService(
 
 		teardownSession,
 
+		/** Tears down sessions and clears remaining YAML watchers and cached config ownership. */
 		clearAll(): void {
 			for (const [sessionId] of registry.snapshot()) {
 				teardownSession(sessionId);

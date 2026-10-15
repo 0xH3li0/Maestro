@@ -402,6 +402,10 @@ export function watchCueConfigFile(
 			}
 		}, 1000);
 	};
+	/**
+	 * Compares disk YAML with loaded bytes and schedules missed reloads.
+	 * Leaves unchanged content quiet and reports read failures for retry.
+	 */
 	const reconcile = () => {
 		if (torn) return;
 		try {
