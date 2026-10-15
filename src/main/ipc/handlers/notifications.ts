@@ -1,4 +1,5 @@
 import { parseToastClickAction } from '../../../shared/toastClickAction';
+import { requestFromRenderer } from '../../web-server/callbacks/remoteRequest';
 /**
  * Notification IPC Handlers
  *
@@ -460,7 +461,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 
 	ipcMain.handle(
 		'notification:navigateToSource',
-		(_event, sessionId: string, tabId?: string, rawAction?: unknown) => {
+		async (_event, sessionId: string, tabId?: string, rawAction?: unknown) => {
 			if (typeof sessionId !== 'string' || (tabId !== undefined && typeof tabId !== 'string'))
 				return { success: false };
 			const { action, error } = parseToastClickAction(rawAction);
@@ -469,10 +470,13 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 			const parsed = parseDeepLink(buildSessionDeepLink(sessionId, tabId));
 			const win = resolveNotificationClickWindow(sessionId, deps);
 			if (!parsed || !isWebContentsAvailable(win)) return { success: false };
-			dispatchDeepLink(parsed, () => win);
-			if (action && action.kind !== 'jump-session')
-				win.webContents.send('notification:activateAction', action);
-			return { success: true };
+			dispatchDeepLink({ action: 'focus' }, () => win);
+			const success = await requestFromRenderer<boolean>(win, 'notification:activateAction', {
+				fallback: false,
+				parse: (raw) => raw === true,
+				args: [action ?? { kind: 'jump-session', sessionId, tabId }],
+			});
+			return { success };
 		}
 	);
 

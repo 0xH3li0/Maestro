@@ -2631,7 +2631,9 @@ interface MaestroAPI {
 			action?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean }>;
 		onActivateAction: (
-			callback: (action: import('../shared/toastClickAction').ToastClickAction) => void
+			callback: (
+				action: import('../shared/toastClickAction').ToastClickAction
+			) => boolean | Promise<boolean>
 		) => () => void;
 
 		show: (

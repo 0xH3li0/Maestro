@@ -1278,10 +1278,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(
 		() =>
 			window.maestro.notification.onActivateAction?.((action) => {
-				dispatchToastClickAction(action, {
-					onSessionClick: (sessionId, tabId) => {
-						jumpToAgent(sessionId, { tabId });
-					},
+				return dispatchToastClickAction(action, {
+					onSessionClick: (sessionId, tabId) => jumpToAgent(sessionId, { tabId }),
 				});
 			}),
 		[]

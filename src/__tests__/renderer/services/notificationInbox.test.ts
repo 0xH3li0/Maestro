@@ -173,6 +173,31 @@ describe('notification inbox operations', () => {
 		}
 	});
 
+	it.each(['open-terminal', 'open-browser', 'jump-session'] as const)(
+		'reports a missing %s destination in browser-local activation',
+		async (kind) => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'source', terminalTabs: [], browserTabs: [] })],
+			});
+			const id = notifyToast({
+				title: 'Closed tab',
+				message: '',
+				clickAction:
+					kind === 'open-terminal'
+						? { kind, sessionId: 'source', tabRef: 'closed' }
+						: { kind, sessionId: 'source', tabId: 'closed' },
+			});
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			expect(await performNotificationInboxAction({ action: 'activate', id })).toMatchObject({
+				success: false,
+				error: 'Notification activation failed',
+				open: true,
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('source');
+		}
+	);
+
 	it('reports stale IDs and entries without a link', async () => {
 		expect(await performNotificationInboxAction({ action: 'read', id: 'gone' })).toMatchObject({
 			success: false,

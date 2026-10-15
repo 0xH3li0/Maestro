@@ -127,7 +127,9 @@ describe('dispatchToastClickAction', () => {
 		it('falls back to the agent and warns when the tab is gone', () => {
 			seedSessions([createMockSession({ id: 's1', terminalTabs: [] })]);
 
-			dispatchToastClickAction({ kind: 'open-terminal', sessionId: 's1', tabRef: 'Dev server' });
+			expect(
+				dispatchToastClickAction({ kind: 'open-terminal', sessionId: 's1', tabRef: 'Dev server' })
+			).toBe(false);
 
 			expect(useSessionStore.getState().activeSessionId).toBe('s1');
 			expect(currentSession('s1')!.activeTerminalTabId).toBeNull();
@@ -199,7 +201,9 @@ describe('dispatchToastClickAction', () => {
 		it('falls back to the agent and warns when the tab is gone and no url was given', () => {
 			seedSessions([createMockSession({ id: 's1', browserTabs: [] })]);
 
-			dispatchToastClickAction({ kind: 'open-browser', sessionId: 's1', tabId: 'gone' });
+			expect(
+				dispatchToastClickAction({ kind: 'open-browser', sessionId: 's1', tabId: 'gone' })
+			).toBe(false);
 
 			expect(useSessionStore.getState().activeSessionId).toBe('s1');
 			expect(useNotificationStore.getState().toasts[0].title).toBe('Browser tab not found');

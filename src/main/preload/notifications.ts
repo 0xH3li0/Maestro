@@ -71,9 +71,22 @@ export function createNotificationApi() {
 			action?: ToastClickAction
 		): Promise<{ success: boolean }> =>
 			ipcRenderer.invoke('notification:navigateToSource', sessionId, tabId, action),
-		/** Run an agent-targeted action in the window that main selected for its source. */
-		onActivateAction: (callback: (action: ToastClickAction) => void): (() => void) => {
-			const handler = (_event: unknown, action: ToastClickAction) => callback(action);
+		/** Run in the owning window and acknowledge whether its destination was available. */
+		onActivateAction: (
+			callback: (action: ToastClickAction) => boolean | Promise<boolean>
+		): (() => void) => {
+			const handler = async (
+				_event: unknown,
+				action: ToastClickAction,
+				responseChannel: string
+			) => {
+				if (!responseChannel?.startsWith('notification:activateAction:response:')) return;
+				try {
+					ipcRenderer.send(responseChannel, (await callback(action)) === true);
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
 			ipcRenderer.on('notification:activateAction', handler);
 			return () => ipcRenderer.removeListener('notification:activateAction', handler);
 		},

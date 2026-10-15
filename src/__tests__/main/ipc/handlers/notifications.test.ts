@@ -120,6 +120,11 @@ import {
 	buildNotificationEnv,
 } from '../../../../main/ipc/handlers/notifications';
 import type { WindowRegistry } from '../../../../main/window-registry';
+import { requestFromRenderer } from '../../../../main/web-server/callbacks/remoteRequest';
+
+vi.mock('../../../../main/web-server/callbacks/remoteRequest', () => ({
+	requestFromRenderer: vi.fn().mockResolvedValue(true),
+}));
 
 /**
  * Build a minimal fake BrowserWindow whose only observable behaviour is
@@ -311,7 +316,24 @@ describe('Notification IPC Handlers', () => {
 		expect(
 			await handlers.get('notification:navigateToSource')!({}, 'agent-7', undefined, action)
 		).toEqual({ success: true });
-		expect(owner.webContents.send).toHaveBeenCalledWith('notification:activateAction', action);
+		expect(requestFromRenderer).toHaveBeenCalledWith(
+			owner,
+			'notification:activateAction',
+			expect.objectContaining({ args: [action], fallback: false })
+		);
+	});
+
+	it('reports a missing destination acknowledged by the owning renderer', async () => {
+		const owner = makeFakeWindow();
+		registerNotificationsHandlers({ getMainWindow: () => owner });
+		vi.mocked(requestFromRenderer).mockResolvedValueOnce(false);
+		expect(
+			await handlers.get('notification:navigateToSource')!({}, 'agent-7', undefined, {
+				kind: 'open-terminal',
+				sessionId: 'agent-7',
+				tabRef: 'closed-terminal',
+			})
+		).toEqual({ success: false });
 	});
 
 	it('rejects inbox navigation when the owner renderer has been disposed', async () => {

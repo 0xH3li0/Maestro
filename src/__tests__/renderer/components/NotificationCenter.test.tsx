@@ -14,6 +14,9 @@ import {
 } from '../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 const mockOpenUrl = vi.fn();
 vi.mock('../../../renderer/utils/openUrl', () => ({
@@ -55,6 +58,7 @@ const items = () => screen.queryAllByTestId('notification-center-item');
 describe('NotificationCenter', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useSettingsStore.setState(useSettingsStore.getInitialState(), true);
 		useNotificationStore.setState({ notificationCenterExpandedId: null });
 		mockJumpToAgent.mockReturnValue(true);
@@ -158,6 +162,9 @@ describe('NotificationCenter', () => {
 	});
 
 	it('marks an entry read, jumps to its agent, and closes', () => {
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'agent-1', aiTabs: [createMockAITab({ id: 'tab-1' })] })],
+		});
 		seed([record({ id: 'a', sessionId: 'agent-1', tabId: 'tab-1' })], true);
 		render(
 			<>
