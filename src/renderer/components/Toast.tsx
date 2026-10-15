@@ -182,9 +182,9 @@ const ToastItem = memo(function ToastItem({
 	// The precedence lives in runToastClick so the notification center's entry
 	// for this toast does the same thing.
 	const handleToastClick = () => {
-		if (runToastClick(toast, { onSessionClick })) {
-			handleClose();
-		}
+		runToastClick(toast, { onSessionClick });
+		// An explicit click acknowledges this toast even if its destination is gone.
+		handleClose();
 	};
 
 	// Check if toast is clickable (has session navigation or custom action)

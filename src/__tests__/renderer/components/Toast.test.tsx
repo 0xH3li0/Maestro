@@ -20,6 +20,8 @@ import { useToastAvoidZoneStore } from '../../../renderer/hooks/ui/useToastAvoid
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 
@@ -46,7 +48,9 @@ function setStoreToasts(toasts: Toast[]) {
 describe('Toast', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useNotificationStore.setState({
+			history: [],
 			toasts: [],
 			config: {
 				defaultDuration: 20,
@@ -302,6 +306,35 @@ describe('Toast', () => {
 			expect(document.body.querySelector('.cursor-pointer')).not.toBeInTheDocument();
 		});
 	});
+
+	it.each(['open-terminal', 'open-browser', 'jump-session'] as const)(
+		'acknowledges a clicked toast even when its %s target tab has closed',
+		(kind) => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'source', terminalTabs: [], browserTabs: [], aiTabs: [] }),
+				],
+			});
+			const clickAction =
+				kind === 'open-terminal'
+					? { kind, sessionId: 'source', tabRef: 'closed' }
+					: { kind, sessionId: 'source', tabId: 'closed' };
+			const toast = createMockToast({
+				title: 'Closed destination',
+				duration: 0,
+				dismissible: true,
+				clickAction,
+			});
+			useNotificationStore.setState({ toasts: [toast], history: [{ ...toast, read: false }] });
+			render(<ToastContainer theme={mockTheme} onSessionClick={vi.fn(() => true)} />);
+			fireEvent.click(screen.getByText('Closed destination'));
+			expect(useNotificationStore.getState().history.find((n) => n.id === toast.id)?.read).toBe(
+				true
+			);
+			act(() => vi.advanceTimersByTime(300));
+			expect(useNotificationStore.getState().toasts.some((n) => n.id === toast.id)).toBe(false);
+		}
+	);
 
 	describe('clickAction', () => {
 		it('jump-session: dispatches onSessionClick with the action sessionId/tabId', () => {
