@@ -34,6 +34,8 @@ const controller = {
 	setPinned: vi.fn(),
 	setFontScale: vi.fn(),
 	getStatus: vi.fn(),
+	getRecents: vi.fn(),
+	recall: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
 
@@ -75,6 +77,8 @@ describe('quick_chat handler', () => {
 		controller.setPinned.mockReturnValue(status);
 		controller.setFontScale.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
+		controller.getRecents.mockReturnValue([]);
+		controller.recall.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
 	});
@@ -344,6 +348,50 @@ describe('quick_chat handler', () => {
 		expect(lastResponse(client)).toMatchObject({
 			success: false,
 			error: 'That message is no longer waiting: it already started',
+		});
+	});
+
+	it('lists the recent chats with the status', () => {
+		const recents = [{ id: 'c1', title: 'hello', messageCount: 1 }];
+		controller.getRecents.mockReturnValue(recents);
+		handler.handleMessage(client, { type: 'quick_chat', action: 'history', requestId: 'r20' });
+		expect(lastResponse(client)).toMatchObject({
+			success: true,
+			requestId: 'r20',
+			recents,
+			status: { hotkey: ['Alt', 'Space'] },
+		});
+	});
+
+	it('recalls a chat by the reference the CLI gave', async () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'recall',
+			chatId: '2',
+			requestId: 'r21',
+		});
+		await flush();
+		expect(controller.recall).toHaveBeenCalledWith('2');
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r21' });
+	});
+
+	it('reports why a chat could not be recalled', async () => {
+		controller.recall.mockResolvedValue({
+			ok: false,
+			error: 'No recent chat zz',
+			snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
+		});
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'recall',
+			chatId: 'zz',
+			requestId: 'r22',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'No recent chat zz',
+			requestId: 'r22',
 		});
 	});
 });

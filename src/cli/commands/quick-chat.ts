@@ -14,9 +14,11 @@ import {
 	type QuickChatBoundsRequest,
 	type QuickChatFontScaleRequest,
 	type QuickChatNextTarget,
+	type QuickChatRecentSummary,
 	type QuickChatStatus,
 } from '../../shared/quickChat';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
+import { formatRelativeTime } from '../../shared/formatters';
 import { asThinkingMode, type ThinkingMode } from '../../shared/types';
 
 export interface QuickChatOptions {
@@ -35,6 +37,8 @@ interface QuickChatResponse {
 	success: boolean;
 	error?: string;
 	status?: QuickChatStatus;
+	/** `history` only. */
+	recents?: QuickChatRecentSummary[];
 }
 
 export type QuickChatAction =
@@ -53,6 +57,8 @@ export type QuickChatAction =
 	| 'reveal'
 	| 'stop'
 	| 'new-tab'
+	| 'history'
+	| 'recall'
 	| 'bounds';
 
 /** Largest image `send --image` takes: well past any screenshot, short of a video still dump. */
@@ -123,6 +129,25 @@ function fail(message: string, options: QuickChatOptions): void {
 	process.exit(1);
 }
 
+/** The recent chats, numbered as `quick-chat recall` takes them. */
+export function printRecents(
+	recents: QuickChatRecentSummary[],
+	currentChatId: string | null
+): void {
+	if (recents.length === 0) {
+		console.log('No recent chats yet');
+		return;
+	}
+	recents.forEach((recent, index) => {
+		const count = `${recent.messageCount} message${recent.messageCount === 1 ? '' : 's'}`;
+		const mark = recent.id === currentChatId ? ' (in the window now)' : '';
+		console.log(`${index + 1}. ${recent.title}${mark}`);
+		console.log(
+			`   ${recent.agentName || recent.agentId}, ${count}, ${formatRelativeTime(recent.updatedAt)}  [${recent.id}]`
+		);
+	});
+}
+
 /** Human-readable summary of the window and the chat in it. */
 function printStatus(status: QuickChatStatus): void {
 	const { snapshot } = status;
@@ -172,7 +197,7 @@ function printStatus(status: QuickChatStatus): void {
 
 export async function quickChat(
 	action: QuickChatAction,
-	args: { text?: string; state?: string; agent?: string; messageId?: string },
+	args: { text?: string; state?: string; agent?: string; messageId?: string; chatId?: string },
 	options: QuickChatOptions
 ): Promise<void> {
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
@@ -210,6 +235,13 @@ export async function quickChat(
 	}
 	if ((action === 'reveal' || action === 'new-tab') && args.messageId) {
 		message.messageId = args.messageId;
+	}
+	if (action === 'recall') {
+		if (!args.chatId?.trim()) {
+			fail('Give a chat number from `quick-chat history`, its id, or an id prefix', options);
+			return;
+		}
+		message.chatId = args.chatId.trim();
 	}
 	if (action === 'tab' && args.state !== undefined) {
 		const choice = parseQuickChatTabChoice(args.state);
@@ -262,9 +294,9 @@ export async function quickChat(
 			client.sendCommand<QuickChatResponse>(message, 'quick_chat_result')
 		);
 		if (options.json) {
-			console.log(
-				JSON.stringify({ success: result.success, error: result.error, ...result.status })
-			);
+			const payload =
+				action === 'history' ? { recents: result.recents ?? [] } : { ...result.status };
+			console.log(JSON.stringify({ success: result.success, error: result.error, ...payload }));
 			if (!result.success) process.exit(1);
 			return;
 		}
@@ -272,7 +304,9 @@ export async function quickChat(
 			fail(result.error || `quick-chat ${action} failed`, options);
 			return;
 		}
-		if (action === 'font' && result.status) {
+		if (action === 'history') {
+			printRecents(result.recents ?? [], result.status?.snapshot.chatId ?? null);
+		} else if (action === 'font' && result.status) {
 			console.log(`Text size: ${Math.round(result.status.fontScale * 100)}%`);
 		} else if (action === 'tab' && result.status) {
 			console.log(
@@ -286,7 +320,8 @@ export async function quickChat(
 				action === 'bounds' ||
 				action === 'pin' ||
 				action === 'send' ||
-				action === 'new-tab') &&
+				action === 'new-tab' ||
+				action === 'recall') &&
 			result.status
 		) {
 			printStatus(result.status);

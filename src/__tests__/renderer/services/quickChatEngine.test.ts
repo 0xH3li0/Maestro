@@ -28,7 +28,11 @@ import {
 	runQuickChatCommand,
 	startQuickChatEngine,
 } from '../../../renderer/services/quickChatEngine';
-import { DEFAULT_QUICK_CHAT_SETTINGS, type QuickChatMessage } from '../../../shared/quickChat';
+import {
+	DEFAULT_QUICK_CHAT_SETTINGS,
+	type QuickChatMessage,
+	type QuickChatRecent,
+} from '../../../shared/quickChat';
 import {
 	noteSpawnCollision,
 	resetSpawnCollisionsForTest,
@@ -1421,6 +1425,191 @@ describe('snapshot streaming', () => {
 		const pushed = vi.mocked(window.maestro.quickChat.pushSnapshot).mock.calls.at(-1)?.[0];
 		expect(sent(pushed?.messages)[0].route?.status).toBe('failed');
 		stop();
+	});
+});
+
+describe('recent chats', () => {
+	/** Put a tab on an agent, the way reopening a closed conversation does. */
+	function addTab(sessionId: string, added: AITab): void {
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) => (s.id === sessionId ? { ...s, aiTabs: [...s.aiTabs, added] } : s)),
+		});
+	}
+
+	const recentOn = (overrides: Partial<QuickChatRecent> = {}): QuickChatRecent => ({
+		id: 'chat-1',
+		agentId: 'a',
+		agentName: 'Agent a',
+		persistent: true,
+		createdAt: 1,
+		updatedAt: 3,
+		homeTabId: 'a-main',
+		homeAgentSessionId: 'conv-a',
+		homeTabName: 'Main',
+		ownedTabIds: [],
+		turns: [
+			{
+				id: 'turn-1',
+				text: 'how is the build',
+				timestamp: 1,
+				phase: 'delivered',
+				error: null,
+				tabId: 'a-main',
+				agentSessionId: 'conv-a',
+				tabName: 'Main',
+				origin: 'open',
+				queuedItemId: 'q-1',
+				reply: [{ id: 'old', role: 'assistant', text: 'old copy', timestamp: 2 }],
+			},
+		],
+		...overrides,
+	});
+
+	it('saves a chat to the list as it leaves the window, with its thread and tab', async () => {
+		const { message } = await send('plan the trip');
+		const tabId = message.route!.tabId!;
+		patchTab('b', tabId, () => ({ agentSessionId: 'conv-1' }));
+		reply('b', tabId, 'Here is the plan');
+		const chatId = buildQuickChatSnapshot().chatId;
+		expect(chatId).toBeTruthy();
+
+		vi.mocked(window.maestro.quickChat.saveRecent).mockClear();
+		await runQuickChatCommand({ type: 'new' });
+		const saved = vi.mocked(window.maestro.quickChat.saveRecent).mock.calls.at(-1)![0];
+		expect(saved).toMatchObject({
+			id: chatId,
+			agentId: 'b',
+			persistent: false,
+			homeTabId: tabId,
+			homeAgentSessionId: 'conv-1',
+			ownedTabIds: [tabId],
+		});
+		expect(saved.turns[0]).toMatchObject({ text: 'plan the trip', tabId, origin: 'new' });
+		expect(saved.turns[0].reply.map((m) => m.text)).toEqual(['Here is the plan']);
+		expect(buildQuickChatSnapshot().chatId).toBeNull();
+	});
+
+	it('keeps the list current while a chat runs', async () => {
+		vi.mocked(window.maestro.quickChat.saveRecent).mockClear();
+		await runQuickChatCommand({ type: 'send', text: 'hello' });
+		await vi.waitFor(() => expect(window.maestro.quickChat.saveRecent).toHaveBeenCalled(), {
+			timeout: 3000,
+		});
+		expect(vi.mocked(window.maestro.quickChat.saveRecent).mock.calls.at(-1)![0]).toMatchObject({
+			id: buildQuickChatSnapshot().chatId,
+			turns: [{ text: 'hello' }],
+		});
+	});
+
+	it("brings back an ephemeral chat, reopening its deleted tab as the chat's hidden own", async () => {
+		const { message } = await send('plan the trip');
+		const tabId = message.route!.tabId!;
+		patchTab('b', tabId, () => ({ agentSessionId: 'conv-1' }));
+		reply('b', tabId, 'Here is the plan');
+		const chatId = buildQuickChatSnapshot().chatId!;
+		await runQuickChatCommand({ type: 'new' });
+		const saved = vi.mocked(window.maestro.quickChat.saveRecent).mock.calls.at(-1)![0];
+		expect(session('b').aiTabs.some((t) => t.id === tabId)).toBe(false);
+
+		vi.mocked(window.maestro.quickChat.getRecent).mockResolvedValueOnce(saved);
+		vi.mocked(reopenClosedConversation).mockImplementation(async (sessionId) => {
+			addTab(
+				sessionId,
+				createMockAITab({
+					id: 'reopened',
+					agentSessionId: 'conv-1',
+					logs: [
+						{ id: 'u', timestamp: 1, source: 'user', text: 'plan the trip' },
+						{ id: 'o', timestamp: 2, source: 'stdout', text: 'Here is the plan' },
+					] as LogEntry[],
+				})
+			);
+			return 'reopened';
+		});
+		const result = await runQuickChatCommand({ type: 'recall', chatId });
+
+		expect(result.ok).toBe(true);
+		expect(reopenClosedConversation).toHaveBeenCalledWith('b', {
+			agentSessionId: 'conv-1',
+			name: saved.homeTabName,
+		});
+		expect(result.snapshot.chatId).toBe(chatId);
+		expect(result.snapshot.messages.map((m) => m.text)).toEqual([
+			'plan the trip',
+			'Here is the plan',
+		]);
+		expect(sent(result.snapshot.messages)[0].route).toMatchObject({
+			status: 'done',
+			tabId: 'reopened',
+			tabOpen: true,
+		});
+		expect(result.snapshot.next).toMatchObject({ kind: 'tab', tabId: 'reopened' });
+		expect(tab('b', 'reopened')).toMatchObject({ hidden: true, quickChat: true });
+
+		// The next message continues the conversation where it was, unrouted.
+		vi.mocked(routeQuickChatMessage).mockClear();
+		const next = await send('and the hotel?');
+		expect(next.message.route).toMatchObject({ tabId: 'reopened' });
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+	});
+
+	it("reuses a tab still open, reads its reply live, and moves Quick Chat to the chat's agent", async () => {
+		patchTab('a', 'a-main', () => ({
+			agentSessionId: 'conv-a',
+			logs: [
+				{ id: 'card', timestamp: 1, source: 'user', text: 'how is the build', queuedItemId: 'q-1' },
+				{ id: 'out', timestamp: 2, source: 'stdout', text: 'green' },
+			] as LogEntry[],
+		}));
+		vi.mocked(window.maestro.quickChat.getRecent).mockResolvedValueOnce(recentOn());
+
+		const result = await runQuickChatCommand({ type: 'recall', chatId: 'chat-1' });
+
+		expect(result.ok).toBe(true);
+		expect(reopenClosedConversation).not.toHaveBeenCalled();
+		expect(result.snapshot).toMatchObject({ chatId: 'chat-1', agentId: 'a', persistent: true });
+		expect(useSettingsStore.getState().quickChatSettings.agentId).toBe('a');
+		expect(result.snapshot.messages.map((m) => m.text)).toEqual(['how is the build', 'green']);
+		expect(result.snapshot.next).toMatchObject({ kind: 'tab', tabId: 'a-main' });
+	});
+
+	it('shows the remembered reply when the conversation cannot be reopened', async () => {
+		vi.mocked(window.maestro.quickChat.getRecent).mockResolvedValueOnce(
+			recentOn({ homeTabId: 'gone', turns: [{ ...recentOn().turns[0], tabId: 'gone' }] })
+		);
+		const result = await runQuickChatCommand({ type: 'recall', chatId: 'chat-1' });
+		expect(result.ok).toBe(true);
+		expect(reopenClosedConversation).toHaveBeenCalled();
+		expect(result.snapshot.messages.map((m) => m.text)).toEqual(['how is the build', 'old copy']);
+		expect(sent(result.snapshot.messages)[0].route).toMatchObject({
+			status: 'done',
+			tabOpen: false,
+		});
+	});
+
+	it('keeps the chat in progress when the recalled one cannot come back', async () => {
+		await send('still here');
+		vi.mocked(window.maestro.quickChat.getRecent).mockResolvedValueOnce(
+			recentOn({ agentId: 'deleted', agentName: 'Old agent' })
+		);
+		const gone = await runQuickChatCommand({ type: 'recall', chatId: 'chat-1' });
+		expect(gone).toMatchObject({ ok: false, error: expect.stringMatching(/Old agent.*no longer/) });
+
+		const missing = await runQuickChatCommand({ type: 'recall', chatId: 'nope' });
+		expect(missing).toMatchObject({ ok: false, error: expect.stringMatching(/no longer in/) });
+		expect(sent(missing.snapshot.messages).map((m) => m.text)).toEqual(['still here']);
+	});
+
+	it('recalling the chat already in the window changes nothing', async () => {
+		await send('hello');
+		const chatId = buildQuickChatSnapshot().chatId!;
+		vi.mocked(window.maestro.quickChat.getRecent).mockClear();
+		const result = await runQuickChatCommand({ type: 'recall', chatId });
+		expect(result.ok).toBe(true);
+		expect(window.maestro.quickChat.getRecent).not.toHaveBeenCalled();
+		expect(sent(result.snapshot.messages).map((m) => m.text)).toEqual(['hello']);
 	});
 });
 

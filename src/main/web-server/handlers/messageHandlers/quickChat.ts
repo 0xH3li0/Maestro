@@ -135,6 +135,29 @@ export function handleQuickChat(
 		return;
 	}
 
+	if (action === 'history') {
+		reply({ success: true, recents: controller.getRecents(), status: controller.getStatus() });
+		return;
+	}
+
+	if (action === 'recall') {
+		const ref = typeof message.chatId === 'string' ? message.chatId : '';
+		controller
+			.recall(ref)
+			.then((result) =>
+				reply({
+					success: result.ok,
+					...(result.error ? { error: result.error } : {}),
+					status: controller.getStatus(),
+				})
+			)
+			.catch((error) => {
+				const detail = error instanceof Error ? error.message : String(error);
+				reply({ success: false, error: `Quick Chat recall failed: ${detail}` });
+			});
+		return;
+	}
+
 	// No mode (or tab) reads the current one, like a bare `font`.
 	if (
 		(action === 'thinking' && message.mode === undefined) ||

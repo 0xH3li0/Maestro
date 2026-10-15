@@ -1210,6 +1210,8 @@ maestro-cli quick-chat font in               # bigger conversation text (out, re
 maestro-cli quick-chat new                   # start over; hidden tabs an ephemeral chat created are deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
 maestro-cli quick-chat stop                  # stop replies in progress and withdraw queued messages
+maestro-cli quick-chat history               # recent chats, numbered, newest first
+maestro-cli quick-chat recall 2              # bring one back: its agent, tab, and messages (number, id, or id prefix)
 maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
 ```
 

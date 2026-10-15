@@ -20,6 +20,7 @@ import {
 	Brain,
 	ChevronDown,
 	ExternalLink,
+	History,
 	ImagePlus,
 	PenSquare,
 	Pin,
@@ -53,6 +54,7 @@ import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
 import { QuickChatTabPicker, tabChoiceFromPickerId } from './QuickChatTabPicker';
+import { QuickChatHistoryPicker } from './QuickChatHistoryPicker';
 import { QuickChatRouteLine, QuickChatWorkingLine } from './QuickChatRouteLine';
 import { StagedImageTile } from '../components/InputArea/components/StagedImageTile';
 import {
@@ -84,6 +86,8 @@ const QUICK_CHAT_KEYS = {
 	newChat: 'n',
 	picker: 'o',
 	tabPicker: 't',
+	/** The recent chats, on the browsers' history letter. */
+	history: 'y',
 	keep: 's',
 	pin: 'p',
 	close: 'w',
@@ -367,8 +371,8 @@ function QuickChatWindow() {
 	/** Images staged for the next message (pasted, dropped, or picked), as data URLs. */
 	const [images, setImages] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	/** Which picker is open: the agent's (Cmd+O) or the next message's tab (Cmd+T). */
-	const [picker, setPicker] = useState<'agent' | 'tab' | null>(null);
+	/** Which picker is open: the agent's (Cmd+O), the next message's tab (Cmd+T), or the recent chats (Cmd+Y). */
+	const [picker, setPicker] = useState<'agent' | 'tab' | 'history' | null>(null);
 	const pickerOpen = picker !== null;
 	const [pinned, setPinned] = useState(true);
 	const [fontScaleValue, setFontScaleValue] = useState(FONT_SCALE_DEFAULT);
@@ -568,6 +572,16 @@ function QuickChatWindow() {
 		},
 		[run]
 	);
+	const pickRecent = useCallback(
+		(chatId: string) => {
+			setPicker(null);
+			// Picking the chat already in the window is not a reason to reload it.
+			const done =
+				chatId === snapshot.chatId ? Promise.resolve(true) : run({ type: 'recall', chatId });
+			void done.then(() => textareaRef.current?.focus());
+		},
+		[run, snapshot.chatId]
+	);
 	const pickerShortcut = ['Meta', QUICK_CHAT_KEYS.picker];
 	const tabPickerShortcut = ['Meta', QUICK_CHAT_KEYS.tabPicker];
 	const newChat = useCallback(() => {
@@ -588,6 +602,10 @@ function QuickChatWindow() {
 	const toggleTabPicker = useCallback(() => {
 		if (picker === 'tab') closePicker();
 		else setPicker('tab');
+	}, [picker, closePicker]);
+	const toggleHistory = useCallback(() => {
+		if (picker === 'history') closePicker();
+		else setPicker('history');
 	}, [picker, closePicker]);
 	// Nothing to open until the first message creates the tab.
 	const openInMaestro = useCallback(() => {
@@ -629,6 +647,7 @@ function QuickChatWindow() {
 			[QUICK_CHAT_KEYS.newChat]: newChat,
 			[QUICK_CHAT_KEYS.picker]: togglePicker,
 			[QUICK_CHAT_KEYS.tabPicker]: toggleTabPicker,
+			[QUICK_CHAT_KEYS.history]: toggleHistory,
 			[QUICK_CHAT_KEYS.keep]: togglePersistent,
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
 			// Closes the window whatever is open in it, unlike Escape.
@@ -674,6 +693,7 @@ function QuickChatWindow() {
 		closePicker,
 		togglePicker,
 		toggleTabPicker,
+		toggleHistory,
 		togglePersistent,
 		togglePinned,
 		cycleThinking,
@@ -886,6 +906,18 @@ function QuickChatWindow() {
 				/>
 				<IconButton
 					theme={theme}
+					label="Recent chats"
+					hint="Bring back an earlier chat, with its agent and tab."
+					shortcut={['Meta', QUICK_CHAT_KEYS.history]}
+					onClick={toggleHistory}
+				>
+					<History
+						className="w-4 h-4"
+						style={picker === 'history' ? { color: c.accent } : undefined}
+					/>
+				</IconButton>
+				<IconButton
+					theme={theme}
 					label={THINKING_LABELS[snapshot.thinking].label}
 					hint={THINKING_LABELS[snapshot.thinking].hint}
 					shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking]}
@@ -1041,6 +1073,13 @@ function QuickChatWindow() {
 							agents={snapshot.agents}
 							currentAgentId={snapshot.agentId}
 							onPick={pickAgent}
+							onClose={closePicker}
+						/>
+					) : picker === 'history' ? (
+						<QuickChatHistoryPicker
+							theme={theme}
+							currentChatId={snapshot.chatId}
+							onPick={pickRecent}
 							onClose={closePicker}
 						/>
 					) : (

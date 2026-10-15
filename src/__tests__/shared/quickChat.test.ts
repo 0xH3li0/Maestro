@@ -13,9 +13,17 @@ import {
 	logsToQuickChatMessages,
 	parseQuickChatFontScaleRequest,
 	parseQuickChatImages,
+	parseQuickChatRecent,
 	parseQuickChatTabChoice,
+	QUICK_CHAT_MAX_RECENTS,
+	QUICK_CHAT_RECENT_MAX_TEXT,
+	QUICK_CHAT_RECENT_MAX_TURNS,
+	resolveQuickChatRecentRef,
 	resolveQuickChatSettings,
+	summarizeQuickChatRecent,
+	upsertQuickChatRecent,
 	validateQuickChatBoundsRequest,
+	type QuickChatRecent,
 } from '../../shared/quickChat';
 
 const log = (id: string, source: string, text: string) => ({ id, timestamp: 1, source, text });
@@ -266,5 +274,146 @@ describe('parseQuickChatImages', () => {
 		['a lone string', 'data:image/png;base64,AAAA'],
 	])('rejects %s', (_label, raw) => {
 		expect(parseQuickChatImages(raw)).toBeNull();
+	});
+});
+
+const recentTurn = (id: string, text: string, timestamp = 1) => ({
+	id,
+	text,
+	timestamp,
+	phase: 'delivered' as const,
+	error: null,
+	tabId: 'tab-1',
+	agentSessionId: 'conv-1',
+	tabName: 'Calendar',
+	origin: 'new' as const,
+	queuedItemId: `q-${id}`,
+	reply: [{ id: `r-${id}`, role: 'assistant' as const, text: 'answer', timestamp: timestamp + 1 }],
+});
+
+const recentChat = (id: string, updatedAt: number, turns = [recentTurn('t1', 'hello')]) =>
+	({
+		id,
+		agentId: 'agent-1',
+		agentName: 'Pedsidian',
+		persistent: false,
+		createdAt: 0,
+		updatedAt,
+		homeTabId: 'tab-1',
+		homeAgentSessionId: 'conv-1',
+		homeTabName: 'Calendar',
+		ownedTabIds: ['tab-1'],
+		turns,
+	}) satisfies QuickChatRecent;
+
+describe('parseQuickChatRecent', () => {
+	it('reads a well-formed chat back unchanged', () => {
+		const chat = recentChat('c1', 5);
+		expect(parseQuickChatRecent(JSON.parse(JSON.stringify(chat)))).toEqual(chat);
+	});
+
+	it.each([null, 'x', {}, { id: 'c1', agentId: 'a', createdAt: 0, updatedAt: 0, turns: [] }])(
+		'rejects %j',
+		(raw) => {
+			expect(parseQuickChatRecent(raw)).toBeNull();
+		}
+	);
+
+	it('drops reasoning and malformed entries, keeping the rest', () => {
+		const chat = recentChat('c1', 5);
+		const raw = {
+			...chat,
+			ownedTabIds: ['tab-1', 7],
+			turns: [
+				{ bogus: true },
+				{
+					...chat.turns[0],
+					phase: 'searching',
+					origin: 'sideways',
+					reply: [
+						{ id: 'th', role: 'thinking', text: 'hmm', timestamp: 1 },
+						...chat.turns[0].reply,
+					],
+				},
+			],
+		};
+		const parsed = parseQuickChatRecent(raw)!;
+		expect(parsed.ownedTabIds).toEqual(['tab-1']);
+		expect(parsed.turns).toHaveLength(1);
+		expect(parsed.turns[0]).toMatchObject({ phase: 'delivered', origin: null });
+		expect(parsed.turns[0].reply.map((m) => m.role)).toEqual(['assistant']);
+	});
+
+	it('clips long texts and keeps only the latest messages', () => {
+		const turns = Array.from({ length: QUICK_CHAT_RECENT_MAX_TURNS + 5 }, (_, i) =>
+			recentTurn(`t${i}`, i === QUICK_CHAT_RECENT_MAX_TURNS + 4 ? 'x'.repeat(30_000) : 'm')
+		);
+		const parsed = parseQuickChatRecent(recentChat('c1', 5, turns))!;
+		expect(parsed.turns).toHaveLength(QUICK_CHAT_RECENT_MAX_TURNS);
+		expect(parsed.turns[0].id).toBe('t5');
+		expect(parsed.turns.at(-1)!.text.length).toBe(QUICK_CHAT_RECENT_MAX_TEXT + 1);
+	});
+});
+
+describe('upsertQuickChatRecent', () => {
+	it('replaces a chat in place of its old copy, newest activity first', () => {
+		const list = [recentChat('a', 30), recentChat('b', 20), recentChat('c', 10)];
+		const next = upsertQuickChatRecent(list, recentChat('c', 40));
+		expect(next.map((r) => r.id)).toEqual(['c', 'a', 'b']);
+	});
+
+	it('keeps at most the newest QUICK_CHAT_MAX_RECENTS', () => {
+		let list: QuickChatRecent[] = [];
+		for (let i = 0; i <= QUICK_CHAT_MAX_RECENTS; i++) {
+			list = upsertQuickChatRecent(list, recentChat(`c${i}`, i));
+		}
+		expect(list).toHaveLength(QUICK_CHAT_MAX_RECENTS);
+		expect(list.some((r) => r.id === 'c0')).toBe(false);
+	});
+});
+
+describe('summarizeQuickChatRecent', () => {
+	it("titles a chat with its first message's first line", () => {
+		const chat = recentChat('c1', 5, [
+			recentTurn('t1', '  plan the trip\nwith details  '),
+			recentTurn('t2', 'and the hotel'),
+		]);
+		expect(summarizeQuickChatRecent(chat)).toMatchObject({
+			id: 'c1',
+			title: 'plan the trip',
+			tabName: 'Calendar',
+			messageCount: 2,
+			searchText: '  plan the trip\nwith details  \nand the hotel',
+		});
+	});
+
+	it('titles an images-only chat', () => {
+		expect(summarizeQuickChatRecent(recentChat('c1', 5, [recentTurn('t1', '')])).title).toBe(
+			'Image'
+		);
+	});
+});
+
+describe('resolveQuickChatRecentRef', () => {
+	const list = [{ id: 'abc-1' }, { id: 'abd-2' }, { id: 'xyz-3' }];
+
+	it.each([
+		['abd-2', 'abd-2'],
+		['1', 'abc-1'],
+		[' 3 ', 'xyz-3'],
+		['xy', 'xyz-3'],
+	])('%j names %s', (ref, id) => {
+		expect(resolveQuickChatRecentRef(list, ref)).toEqual({ id });
+	});
+
+	it.each([
+		['', /Give a chat id/],
+		['4', /no chat 4/],
+		['0', /no chat 0/],
+		['ab', /more than one/],
+		['nope', /No recent chat nope/],
+	])('%j is an error', (ref, error) => {
+		const result = resolveQuickChatRecentRef(list, ref);
+		expect('error' in result && result.error).toMatch(error);
 	});
 });

@@ -2721,6 +2721,20 @@ quickChatCmd
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
+	.command('history')
+	.description("List the recent chats, newest first (what the window's History button shows)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('history', {}, options));
+
+quickChatCmd
+	.command('recall <chat>')
+	.description(
+		'Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options) => quickChat('recall', { chatId: chat }, options));
+
+quickChatCmd
 	.command('stop')
 	.description('Stop the replies in progress and withdraw the messages still queued')
 	.option('--json', 'Output as JSON (for scripting)')

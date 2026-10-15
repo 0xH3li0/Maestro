@@ -2561,6 +2561,22 @@ Send a message to a new tab instead of the tab it went to: out of the queue, or 
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat history`
+
+List the recent chats, newest first (what the window's History button shows)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat recall <chat>`
+
+Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat stop`
 
 Stop the replies in progress and withdraw the messages still queued

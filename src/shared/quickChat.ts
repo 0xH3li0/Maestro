@@ -227,6 +227,8 @@ export function parseQuickChatTabChoice(raw: unknown): QuickChatTabChoice | null
 
 /** What the quick window renders. Produced by the engine, relayed by main. */
 export interface QuickChatSnapshot {
+	/** The chat's id in the recent chats list; null before its first message. */
+	chatId: string | null;
 	/** Agent the chat runs on, or null when no agent could be resolved. */
 	agentId: string | null;
 	agentName: string | null;
@@ -251,6 +253,7 @@ export interface QuickChatSnapshot {
 }
 
 export const EMPTY_QUICK_CHAT_SNAPSHOT: Readonly<QuickChatSnapshot> = {
+	chatId: null,
 	agentId: null,
 	agentName: null,
 	tabId: null,
@@ -287,6 +290,11 @@ export type QuickChatCommand =
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
+	/**
+	 * Bring back a chat from the recent chats list: its agent, its tab (reopened
+	 * when it was closed), and its thread. The chat in progress ends as `new` ends it.
+	 */
+	| { type: 'recall'; chatId: string }
 	| { type: 'sync' };
 
 /** Longest edge, in pixels, of the image previews a snapshot carries. */
@@ -306,6 +314,213 @@ export function parseQuickChatImages(raw: unknown): string[] | null {
 		images.push(entry);
 	}
 	return images;
+}
+
+// --- Recent chats ------------------------------------------------------------
+
+/**
+ * One message of a remembered chat: what was sent, where it went, and the reply
+ * as last read. A reply is read live from its tab while the tab still holds it;
+ * this copy is what shows once the tab is gone.
+ */
+export interface QuickChatRecentTurn {
+	id: string;
+	text: string;
+	timestamp: number;
+	/** How it ended. A message still in motion when it was saved is `delivered`. */
+	phase: 'delivered' | 'cancelled' | 'failed';
+	error: string | null;
+	tabId: string | null;
+	/** That tab's provider conversation, so the tab can be reopened once closed. */
+	agentSessionId: string | null;
+	tabName: string | null;
+	origin: QuickChatRouteOrigin | null;
+	queuedItemId: string | null;
+	/** The reply (answer and error messages; never the reasoning). */
+	reply: QuickChatMessage[];
+}
+
+/**
+ * A chat in the recent chats list, enough to bring it back: the agent, the tab
+ * the conversation lives in, and the thread. Images are not kept; they went to
+ * the tab with their message.
+ */
+export interface QuickChatRecent {
+	id: string;
+	agentId: string;
+	agentName: string;
+	persistent: boolean;
+	createdAt: number;
+	/** The latest message or reply, which orders the list. */
+	updatedAt: number;
+	/** The tab the conversation lives in, and its provider conversation. */
+	homeTabId: string | null;
+	homeAgentSessionId: string | null;
+	homeTabName: string | null;
+	/** Tabs the chat created (see the file header on which tabs a chat owns). */
+	ownedTabIds: string[];
+	turns: QuickChatRecentTurn[];
+}
+
+/** A row of the recent chats list: a {@link QuickChatRecent} without its thread. */
+export interface QuickChatRecentSummary {
+	id: string;
+	agentId: string;
+	agentName: string;
+	/** The chat's first message (its first line). */
+	title: string;
+	tabName: string | null;
+	persistent: boolean;
+	createdAt: number;
+	updatedAt: number;
+	/** Messages the user sent. */
+	messageCount: number;
+	/** Everything the user sent, for the picker's filter. */
+	searchText: string;
+}
+
+/** Most chats the list keeps. The oldest goes first. */
+export const QUICK_CHAT_MAX_RECENTS = 30;
+/** Most messages a remembered chat keeps. Older ones stay in the tab. */
+export const QUICK_CHAT_RECENT_MAX_TURNS = 50;
+/** Longest text a remembered message keeps. */
+export const QUICK_CHAT_RECENT_MAX_TEXT = 20_000;
+/** Longest `searchText` and `title` in a summary. */
+const RECENT_SEARCH_TEXT_MAX = 2_000;
+const RECENT_TITLE_MAX = 120;
+
+function str(value: unknown): string | null {
+	return typeof value === 'string' ? value : null;
+}
+
+function num(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function parseRecentMessage(raw: unknown): QuickChatMessage | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const text = str(r.text);
+	const timestamp = num(r.timestamp);
+	if (!id || text === null || timestamp === null) return null;
+	if (r.role !== 'assistant' && r.role !== 'error') return null;
+	return { id, role: r.role, text: clip(text, QUICK_CHAT_RECENT_MAX_TEXT), timestamp };
+}
+
+function parseRecentTurn(raw: unknown): QuickChatRecentTurn | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const text = str(r.text);
+	const timestamp = num(r.timestamp);
+	if (!id || text === null || timestamp === null) return null;
+	const origin =
+		r.origin === 'open' || r.origin === 'reopened' || r.origin === 'new' ? r.origin : null;
+	return {
+		id,
+		text: clip(text, QUICK_CHAT_RECENT_MAX_TEXT),
+		timestamp,
+		phase: r.phase === 'cancelled' || r.phase === 'failed' ? r.phase : 'delivered',
+		error: str(r.error),
+		tabId: str(r.tabId),
+		agentSessionId: str(r.agentSessionId),
+		tabName: str(r.tabName),
+		origin,
+		queuedItemId: str(r.queuedItemId),
+		reply: Array.isArray(r.reply)
+			? r.reply.map(parseRecentMessage).filter((m): m is QuickChatMessage => m !== null)
+			: [],
+	};
+}
+
+/**
+ * Read a remembered chat off the wire or out of the store, or null when it is
+ * not one. Texts are clipped and the thread capped, so one huge reply cannot
+ * bloat the list; a chat with no message is not worth remembering.
+ */
+export function parseQuickChatRecent(raw: unknown): QuickChatRecent | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const agentId = str(r.agentId);
+	const createdAt = num(r.createdAt);
+	const updatedAt = num(r.updatedAt);
+	if (!id || !agentId || createdAt === null || updatedAt === null) return null;
+	const turns = (Array.isArray(r.turns) ? r.turns : [])
+		.map(parseRecentTurn)
+		.filter((t): t is QuickChatRecentTurn => t !== null)
+		.slice(-QUICK_CHAT_RECENT_MAX_TURNS);
+	if (turns.length === 0) return null;
+	return {
+		id,
+		agentId,
+		agentName: str(r.agentName) ?? '',
+		persistent: r.persistent === true,
+		createdAt,
+		updatedAt,
+		homeTabId: str(r.homeTabId),
+		homeAgentSessionId: str(r.homeAgentSessionId),
+		homeTabName: str(r.homeTabName),
+		ownedTabIds: Array.isArray(r.ownedTabIds)
+			? r.ownedTabIds.filter((t): t is string => typeof t === 'string')
+			: [],
+		turns,
+	};
+}
+
+/** Put a chat at its place in the list (newest activity first), replacing its old copy. */
+export function upsertQuickChatRecent(
+	list: readonly QuickChatRecent[],
+	recent: QuickChatRecent
+): QuickChatRecent[] {
+	return [recent, ...list.filter((r) => r.id !== recent.id)]
+		.sort((a, b) => b.updatedAt - a.updatedAt)
+		.slice(0, QUICK_CHAT_MAX_RECENTS);
+}
+
+/** The list row for a remembered chat. */
+export function summarizeQuickChatRecent(recent: QuickChatRecent): QuickChatRecentSummary {
+	const first = recent.turns[0]?.text.trim().split('\n')[0]?.trim() ?? '';
+	return {
+		id: recent.id,
+		agentId: recent.agentId,
+		agentName: recent.agentName,
+		title: clip(first || 'Image', RECENT_TITLE_MAX),
+		tabName: recent.homeTabName,
+		persistent: recent.persistent,
+		createdAt: recent.createdAt,
+		updatedAt: recent.updatedAt,
+		messageCount: recent.turns.length,
+		searchText: clip(recent.turns.map((t) => t.text).join('\n'), RECENT_SEARCH_TEXT_MAX),
+	};
+}
+
+/**
+ * The chat a `maestro-cli quick-chat recall` argument names: its id, a prefix
+ * of one id, or its 1-based place in the list (1 is the most recent).
+ */
+export function resolveQuickChatRecentRef(
+	list: readonly Pick<QuickChatRecent, 'id'>[],
+	ref: string
+): { id: string } | { error: string } {
+	const value = ref.trim();
+	if (!value) return { error: 'Give a chat id or its number in `quick-chat history`' };
+	const exact = list.find((r) => r.id === value);
+	if (exact) return { id: exact.id };
+	if (/^\d+$/.test(value)) {
+		const index = Number(value) - 1;
+		if (index >= 0 && index < list.length) return { id: list[index].id };
+		return { error: `There are ${list.length} recent chats; no chat ${value}` };
+	}
+	const prefixed = list.filter((r) => r.id.startsWith(value));
+	if (prefixed.length === 1) return { id: prefixed[0].id };
+	if (prefixed.length > 1) return { error: `"${value}" matches more than one chat` };
+	return { error: `No recent chat ${value}` };
 }
 
 /** The engine's answer to a command. `snapshot` is the state after it ran. */

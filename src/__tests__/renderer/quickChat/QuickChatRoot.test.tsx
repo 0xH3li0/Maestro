@@ -16,6 +16,7 @@ import {
 } from '../../../shared/quickChat';
 import { openZoomViewer, useZoomViewerStore } from '../../../renderer/components/ZoomViewer';
 import { tabChoiceFromPickerId } from '../../../renderer/quickChat/QuickChatTabPicker';
+import { recentChatItem } from '../../../renderer/quickChat/QuickChatHistoryPicker';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { FONT_SCALE_RANGE, stepScale } from '../../../shared/scaleRange';
 
@@ -167,6 +168,107 @@ describe('tab picker', () => {
 			type: 'setTab',
 			choice: { kind: 'tab', tabId: 't2' },
 		});
+	});
+});
+
+describe('recent chats', () => {
+	const recent = (id: string, title: string, patch = {}) => ({
+		id,
+		agentId: 'a',
+		agentName: 'Pedsidian',
+		title,
+		tabName: null,
+		persistent: false,
+		createdAt: 0,
+		updatedAt: Date.now(),
+		messageCount: 2,
+		searchText: `${title}\nfollow-up about invoices`,
+		...patch,
+	});
+
+	beforeEach(() => {
+		vi.mocked(window.maestro.quickChat.getRecents).mockResolvedValue([
+			recent('c1', 'plan the trip'),
+			recent('c2', 'what is on my calendar', { agentName: 'Codex' }),
+		]);
+	});
+
+	it('the History button sits just left of the thinking button and explains itself', async () => {
+		await renderWith(snapshot());
+		const history = screen.getByRole('button', { name: /^Recent chats\./ });
+		const thinking = screen.getByRole('button', { name: /^Thinking hidden\./ });
+		expect(
+			history.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		fireEvent.mouseEnter(history.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Bring back an earlier chat');
+	});
+
+	it('lists the recent chats, the one in the window checked first', async () => {
+		await renderWith(snapshot({ chatId: 'c1' }));
+		await act(async () => fireEvent.click(screen.getByRole('button', { name: /^Recent chats\./ })));
+		const rows = screen.getAllByTestId('quick-chat-history-row');
+		expect(rows.map((r) => r.textContent)).toEqual([
+			expect.stringContaining('plan the trip'),
+			expect.stringContaining('what is on my calendar'),
+		]);
+		expect(rows[0]).toHaveAttribute('aria-selected', 'true');
+		expect(rows[1]).toHaveTextContent('Codex - 2 messages');
+	});
+
+	it('a word from a later message finds the chat', async () => {
+		await renderWith(snapshot());
+		await act(async () => fireEvent.keyDown(window, { key: 'y', metaKey: true }));
+		fireEvent.change(screen.getByTestId('quick-chat-history-filter'), {
+			target: { value: 'invoices' },
+		});
+		expect(screen.getAllByTestId('quick-chat-history-row')).toHaveLength(2);
+		fireEvent.change(screen.getByTestId('quick-chat-history-filter'), {
+			target: { value: 'calendar' },
+		});
+		expect(screen.getAllByTestId('quick-chat-history-row')[0]).toHaveTextContent(
+			'what is on my calendar'
+		);
+	});
+
+	it('Cmd+Y opens it, and picking a chat recalls it', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot({ chatId: 'c2' }),
+		});
+		await renderWith(snapshot({ chatId: 'c1' }));
+		await act(async () => fireEvent.keyDown(window, { key: 'y', metaKey: true }));
+		await act(async () => fireEvent.click(screen.getAllByTestId('quick-chat-history-row')[1]));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'recall',
+			chatId: 'c2',
+		});
+		expect(screen.queryByTestId('quick-chat-history-picker')).toBeNull();
+	});
+
+	it('picking the chat already in the window only closes the list', async () => {
+		await renderWith(snapshot({ chatId: 'c1' }));
+		await act(async () => fireEvent.keyDown(window, { key: 'y', metaKey: true }));
+		await act(async () => fireEvent.click(screen.getAllByTestId('quick-chat-history-row')[0]));
+		expect(window.maestro.quickChat.command).not.toHaveBeenCalled();
+		expect(screen.queryByTestId('quick-chat-history-picker')).toBeNull();
+	});
+
+	it('says so when there are none', async () => {
+		vi.mocked(window.maestro.quickChat.getRecents).mockResolvedValue([]);
+		await renderWith(snapshot());
+		await act(async () => fireEvent.keyDown(window, { key: 'y', metaKey: true }));
+		expect(screen.getByTestId('quick-chat-history-picker')).toHaveTextContent(
+			'No recent chats yet'
+		);
+	});
+
+	it('a row matches on its agent and tab too', () => {
+		expect(recentChatItem(recent('c3', 'x', { tabName: 'Deploy' })).extras).toEqual([
+			'Pedsidian',
+			'Deploy',
+			'x\nfollow-up about invoices',
+		]);
 	});
 });
 

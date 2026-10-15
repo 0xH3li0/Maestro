@@ -326,3 +326,77 @@ describe('quickChat send', () => {
 		expect(sendCommand).not.toHaveBeenCalled();
 	});
 });
+
+describe('quickChat history and recall', () => {
+	let sendCommand: ReturnType<typeof vi.fn>;
+	let log: MockInstance;
+	let exit: MockInstance;
+
+	const recent = {
+		id: 'chat-abc',
+		agentId: 'agent-1',
+		agentName: 'Pedsidian',
+		title: 'what is on my calendar',
+		tabName: 'Calendar',
+		persistent: false,
+		createdAt: 0,
+		updatedAt: Date.now(),
+		messageCount: 3,
+		searchText: 'what is on my calendar',
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sendCommand = vi.fn().mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			recents: [recent],
+			status: {
+				enabled: true,
+				visible: true,
+				hotkey: [],
+				hotkeyRegistered: true,
+				bounds: null,
+				pinned: true,
+				fontScale: 1,
+				snapshot: { ...EMPTY_QUICK_CHAT_SNAPSHOT, chatId: 'chat-abc' },
+			},
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) => fn({ sendCommand } as never));
+		log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+	});
+
+	it('history numbers the chats as recall takes them, and marks the one in the window', async () => {
+		await quickChat('history', {}, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'history' },
+			'quick_chat_result'
+		);
+		const printed = log.mock.calls.map(([line]) => line).join('\n');
+		expect(printed).toContain('1. what is on my calendar (in the window now)');
+		expect(printed).toContain('Pedsidian, 3 messages');
+		expect(printed).toContain('[chat-abc]');
+	});
+
+	it('history --json prints the list', async () => {
+		await quickChat('history', {}, { json: true });
+		const printed = JSON.parse(log.mock.calls[0][0] as string);
+		expect(printed).toMatchObject({ success: true, recents: [{ id: 'chat-abc' }] });
+	});
+
+	it('recall sends the reference as given', async () => {
+		await quickChat('recall', { chatId: ' 1 ' }, {});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'quick_chat', action: 'recall', chatId: '1' },
+			'quick_chat_result'
+		);
+	});
+
+	it('recall refuses an empty reference before sending anything', async () => {
+		await quickChat('recall', { chatId: '  ' }, { json: true });
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+});

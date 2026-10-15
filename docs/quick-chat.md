@@ -20,6 +20,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                                                                                                                                                                                                   |
 | Close it                                     | `Esc`, `Cmd+W` / `Ctrl+W`, or the **X** in the window                                                                                                                                                                                                                                                                         |
 | Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                                                                                                                                                                                               |
+| Bring back an earlier chat                   | `Cmd+Y` / `Ctrl+Y`, or the clock beside the brain. Type to filter (any word you sent matches), then `Enter`. The window switches to that chat's agent, its tab, and its messages. See [Recent chats](#recent-chats)                                                                                                           |
 | Switch agent                                 | Click the agent name at the top left, or `Cmd+O` / `Ctrl+O`. Type to filter, then `Enter`                                                                                                                                                                                                                                     |
 | Choose the tab                               | Click the tab name beside the agent, or `Cmd+T` / `Ctrl+T`. Pick a tab, **New tab**, or **Any tab** (Maestro finds one). The chat continues where you send it                                                                                                                                                                 |
 | Send                                         | `Enter` (`Shift+Enter` for a new line). You do not have to wait for a reply: the next message can go out while the last is still being answered                                                                                                                                                                               |
@@ -88,6 +89,16 @@ A chat has one of two modes, and you can flip between them at any time with the 
 
 An ephemeral chat that wrote History entries is still a conversation from the last two weeks, so a later message about the same subject can reopen it.
 
+### Recent chats
+
+Maestro remembers your last 30 chats on this computer. Click the clock beside the brain (or press `Cmd+Y` / `Ctrl+Y`) to list them, newest first, with each chat's agent, its number of messages, and when it was last active. Type to filter: the agent's name, the tab's name, and every message you sent in a chat all match. Pick a chat to bring it back:
+
+- The window switches to the chat's agent, and that agent becomes Quick Chat's agent, as switching agents does.
+- The chat continues in its tab. When that tab is closed (an ephemeral chat's tab is deleted when you start the next chat), Maestro reopens the conversation. A tab the chat created comes back hidden again unless the chat was kept.
+- The messages come back with their replies. A reply shows what its tab holds now, or what it held when you last saw it if the tab is gone. Images are not kept in the list; they are in the tab with their message.
+
+The chat in the window is saved to the list before the other one comes back, so nothing is lost by switching. If a chat's conversation cannot be reopened (its transcript is gone), the chat still comes back and your next message finds a tab the usual way. From the command line, `maestro-cli quick-chat history` lists the chats and `maestro-cli quick-chat recall <n>` brings one back.
+
 A reply in a tab Quick Chat created never raises a completion toast in the main window: you are reading it in Quick Chat. The audio or spoken notification you configured still plays. A reply in one of your own tabs notifies the way that tab always does.
 
 ## Settings
@@ -127,6 +138,8 @@ maestro-cli quick-chat reveal <message-id> # open the tab that message went to
 maestro-cli quick-chat new-tab             # send the latest queued message to a new tab instead of waiting
 maestro-cli quick-chat new-tab <message-id> # send that message to a new tab: queued, or routed to the wrong tab
 maestro-cli quick-chat stop                # stop replies in progress and withdraw queued messages
+maestro-cli quick-chat history             # the recent chats, numbered, newest first (--json for scripts)
+maestro-cli quick-chat recall 2            # bring back a recent chat: its number in history, its id, or an id prefix
 maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move or resize, as dragging does
 ```
 
