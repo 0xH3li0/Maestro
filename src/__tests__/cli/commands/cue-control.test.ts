@@ -1,7 +1,8 @@
 /**
  * @file cue-control.test.ts
  * @description Tests for `cue enable|disable|activity`: name resolution
- * (refusing an ambiguous name), the toggle message, and error-frame handling.
+ * (refusing an ambiguous name), the toggle message, error-frame handling, and
+ * `activity`'s read of `cue.db` when the desktop app is not running.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -13,6 +14,11 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
 	readActiveAgentId: vi.fn(),
+	readSessions: vi.fn(() => [{ id: 'a1', name: 'One' }]),
+}));
+vi.mock('../../../main/cue/cue-db', () => ({
+	readRecentCueEventsReadOnly: vi.fn(),
+	initCueDb: vi.fn(),
 }));
 
 import {
@@ -21,7 +27,11 @@ import {
 	cueEnable,
 	resolveSubscription,
 } from '../../../cli/commands/cue-control';
-import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { CommandTimeoutError, withMaestroClient } from '../../../cli/services/maestro-client';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
+import { SqliteUnavailableError } from '../../../cli/utils/native-sqlite';
+import { initCueDb, readRecentCueEventsReadOnly } from '../../../main/cue/cue-db';
+import type { CueEventRecord } from '../../../main/cue/cue-db';
 
 const subs = [
 	{
@@ -123,5 +133,145 @@ describe('cue enable/disable/activity', () => {
 		const sent = mockBridge({});
 		await expect(cueActivity({ limit: 'lots' })).rejects.toThrow('__exit__');
 		expect(sent).toHaveLength(0);
+	});
+
+	describe('activity when the desktop app is not running', () => {
+		const at = (seconds: number) => Date.parse('2026-05-11T07:00:00.000Z') + seconds * 1000;
+		/** Rows as `getRecentCueEvents` returns them: newest first. */
+		const records = [
+			{ id: 'r4', sessionId: 'a2', status: 'completed', createdAt: at(4), completedAt: at(5) },
+			{ id: 'r3', sessionId: 'a1', status: 'stopped', createdAt: at(3), completedAt: at(4) },
+			{ id: 'r2', sessionId: 'a1', status: 'timeout', createdAt: at(2), completedAt: at(3) },
+			{ id: 'r1', sessionId: 'a1', status: 'running', createdAt: at(1), completedAt: null },
+		].map(
+			(r) =>
+				({
+					...r,
+					type: 'time.scheduled',
+					triggerName: 't',
+					subscriptionName: `sub-${r.id}`,
+					payload: null,
+				}) as CueEventRecord
+		);
+
+		function appNotRunning() {
+			vi.mocked(withMaestroClient).mockRejectedValue(
+				new MaestroNotRunningError('no-discovery-file')
+			);
+		}
+
+		function printed(): string {
+			return vi
+				.mocked(console.log)
+				.mock.calls.map((c) => String(c[0]))
+				.join('\n');
+		}
+
+		it('reads cue.db read-only, newest first, filtered before the limit', async () => {
+			appNotRunning();
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: true,
+				records,
+				source: 'snapshot',
+			});
+
+			await cueActivity({ agent: 'a1', limit: '2', json: true });
+
+			expect(readRecentCueEventsReadOnly).toHaveBeenCalledWith(1000);
+			expect(initCueDb).not.toHaveBeenCalled();
+			const entries = JSON.parse(printed());
+			expect(entries.map((e: { id: string }) => e.id)).toEqual(['r3', 'r2']);
+			expect(entries[0]).toEqual({
+				id: 'r3',
+				subscriptionId: 'a1::sub-r3::sub-r3',
+				subscriptionName: 'sub-r3',
+				eventType: 'time.scheduled',
+				sessionId: 'a1',
+				timestamp: at(3),
+				status: 'failed',
+				duration: 1000,
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('prints the same lines as the app, with a note on stderr', async () => {
+			appNotRunning();
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: true,
+				records,
+				source: 'live',
+			});
+
+			await cueActivity({});
+
+			const lines = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+			expect(lines).toHaveLength(4);
+			expect(lines[0]).toContain('completed  sub-r4  [time.scheduled]  1.0s');
+			// An orphaned running row is reported as failed, as the app does.
+			expect(lines[3]).toContain('failed     sub-r1  [time.scheduled]  0.0s');
+			expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Read from cue.db'));
+		});
+
+		it('fails non-zero with the reason when cue.db cannot be read', async () => {
+			appNotRunning();
+			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+				ok: false,
+				reason: '/data/cue.db does not exist',
+			});
+
+			await expect(cueActivity({ json: true })).rejects.toThrow('__exit__');
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(JSON.parse(printed())).toEqual({
+				success: false,
+				error:
+					'The desktop app is not running and Cue run history could not be read: /data/cue.db does not exist',
+			});
+		});
+
+		it('fails non-zero with the loader message when SQLite is unavailable', async () => {
+			appNotRunning();
+			vi.mocked(readRecentCueEventsReadOnly).mockImplementation(() => {
+				throw new SqliteUnavailableError('better-sqlite3 cannot load here', []);
+			});
+
+			await expect(cueActivity({})).rejects.toThrow('__exit__');
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(console.error).toHaveBeenCalledWith(
+				expect.stringContaining('better-sqlite3 cannot load here')
+			);
+		});
+
+		it('does not fall back on any other bridge failure', async () => {
+			vi.mocked(withMaestroClient).mockRejectedValue(new CommandTimeoutError('cue_activity'));
+
+			await expect(cueActivity({})).rejects.toThrow('__exit__');
+			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
+		});
+
+		it('points the read at --data-dir, as the cue engine verbs do', async () => {
+			const saved = process.env.MAESTRO_USER_DATA;
+			appNotRunning();
+			vi.mocked(readRecentCueEventsReadOnly).mockImplementation(() => {
+				// The reader resolves cue.db from MAESTRO_USER_DATA when given no path.
+				expect(process.env.MAESTRO_USER_DATA).toBe('/var/lib/maestro/data');
+				return { ok: true, records: [], source: 'snapshot' };
+			});
+			try {
+				await cueActivity({ dataDir: '/var/lib/maestro/data' });
+				expect(readRecentCueEventsReadOnly).toHaveBeenCalledTimes(1);
+			} finally {
+				if (saved === undefined) delete process.env.MAESTRO_USER_DATA;
+				else process.env.MAESTRO_USER_DATA = saved;
+			}
+		});
+
+		it('does not read cue.db when the app answers', async () => {
+			mockBridge({ get_cue_activity: { type: 'cue_activity', entries: [] } });
+
+			await cueActivity({});
+
+			expect(readRecentCueEventsReadOnly).not.toHaveBeenCalled();
+			expect(printed()).toBe('No Cue activity.');
+		});
 	});
 });

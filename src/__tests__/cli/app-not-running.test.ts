@@ -81,7 +81,7 @@ import { cadenzaClose } from '../../cli/commands/cadenza';
 import { createAgent } from '../../cli/commands/create-agent';
 import { createGroup } from '../../cli/commands/create-group';
 import { createWorktree } from '../../cli/commands/create-worktree';
-import { cueActivity, cueEnable } from '../../cli/commands/cue-control';
+import { cueEnable } from '../../cli/commands/cue-control';
 import { cueList } from '../../cli/commands/cue-list';
 import {
 	cuePipelineGet,
@@ -282,7 +282,7 @@ const rows: Row[] = [
 	{ name: 'gist create', run: () => gistCreate('agent-1', {}), jsonOnly: true },
 	// already mapped through exitCodeForError
 	{ name: 'cue enable', run: (json) => cueEnable('sub', { agent: 'agent-1', json }) },
-	{ name: 'cue activity', run: (json) => cueActivity(j(json)) },
+	// `cue activity` is not here: with no app it reads cue.db instead (cue-control.test.ts).
 	{ name: 'marketplace list', run: (json) => marketplaceList(j(json)) },
 	{ name: 'marketplace show', run: (json) => marketplaceShow('pb', j(json)) },
 	{

@@ -493,6 +493,96 @@ export function readCueDbStatusFigures(dbPathOverride?: string): CueDbStatusFigu
 	}
 }
 
+/** What `maestro-cli cue activity` reads from `cue.db` when the app is not running. */
+export type CueDbRecentEvents =
+	| {
+			ok: true;
+			/** Newest first, as {@link getRecentCueEvents} returns them. */
+			records: CueEventRecord[];
+			/**
+			 * `live`: another process (a Cue engine) had the database open and it was
+			 * read beside it. `snapshot`: nothing had it open, so the file's bytes
+			 * were read into memory and queried there.
+			 */
+			source: 'live' | 'snapshot';
+	  }
+	| { ok: false; reason: string };
+
+/**
+ * Read the newest `cue_events` rows without writing to `cue.db`, for a process
+ * that is not the engine. Same guarantees as {@link readCueDbStatusFigures}:
+ * never the singleton, never creates, chmods, migrates or re-journals.
+ *
+ * Unlike the status figures, history is wanted even when no process has the
+ * database open, and that is exactly the case a plain read-only open cannot
+ * serve: with the `-wal` / `-shm` sidecars absent SQLite would create them (or
+ * fail). URI filenames (`?immutable=1`) are not an option either, because
+ * better-sqlite3 opens without `SQLITE_OPEN_URI` and treats `file:...` as a
+ * literal file name to create. So when the sidecars are absent the file is read
+ * into memory and opened from that buffer: nothing on disk is opened by SQLite
+ * at all. With no `-wal` content, the main file holds every committed row.
+ *
+ * One state is refused rather than guessed at: a non-empty `-wal` without its
+ * `-shm`, left by a process that did not shut down cleanly. Rows in that log
+ * are not in the main file yet and only SQLite writing can recover them, so
+ * the caller is told to start an engine (or the app) once instead.
+ */
+export function readRecentCueEventsReadOnly(
+	limit: number,
+	dbPathOverride?: string
+): CueDbRecentEvents {
+	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	if (!fs.existsSync(dbPath)) {
+		return { ok: false, reason: `${dbPath} does not exist` };
+	}
+	const walPath = `${dbPath}-wal`;
+	const hasWal = fs.existsSync(walPath);
+	const hasShm = fs.existsSync(`${dbPath}-shm`);
+
+	let handle: Database.Database | null = null;
+	try {
+		let source: 'live' | 'snapshot';
+		if (hasWal && hasShm) {
+			handle = new Database(dbPath, { readonly: true, fileMustExist: true });
+			source = 'live';
+		} else {
+			if (hasWal && fs.statSync(walPath).size > 0) {
+				return {
+					ok: false,
+					reason:
+						`${walPath} holds changes but ${dbPath}-shm is missing, so the last process to ` +
+						`use the database did not shut down cleanly. Reading those changes needs SQLite ` +
+						`to recover the log, which writes. Start the Cue engine or the desktop app once, ` +
+						`then retry.`,
+				};
+			}
+			handle = new Database(walHeaderToRollback(fs.readFileSync(dbPath)), { readonly: true });
+			source = 'snapshot';
+		}
+		return { ok: true, records: recentCueEventsIn(handle, 0, limit), source };
+	} catch (err) {
+		if (isSqliteUnavailable(err)) throw err;
+		return { ok: false, reason: `could not read ${dbPath}: ${errorText(err)}` };
+	} finally {
+		handle?.close();
+	}
+}
+
+/**
+ * An in-memory database cannot be in WAL mode, and SQLite refuses to open a
+ * buffer whose header says it is (bytes 18 and 19, the file format read and
+ * write versions, are 2 for WAL). Setting them to 1 on the in-memory copy
+ * makes it a plain rollback-journal image of the same pages. The file on disk
+ * is never touched.
+ */
+function walHeaderToRollback(image: Buffer): Buffer {
+	if (image.length > 19 && image[18] === 2 && image[19] === 2) {
+		image[18] = 1;
+		image[19] = 1;
+	}
+	return image;
+}
+
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
@@ -1205,12 +1295,21 @@ export function getCueEventHistoryStamp(sessionId?: string): CueEventHistoryStam
  */
 export function getRecentCueEvents(since: number, limit?: number): CueEventRecord[] {
 	if (!db) return [];
+	return recentCueEventsIn(db, since, limit);
+}
+
+/** The one recent-events query, shared by the engine and the read-only reader. */
+function recentCueEventsIn(
+	database: Database.Database,
+	since: number,
+	limit?: number
+): CueEventRecord[] {
 	const sql = limit
 		? `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`
 		: `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC`;
 
 	const rows = (
-		limit ? db.prepare(sql).all(since, limit) : db.prepare(sql).all(since)
+		limit ? database.prepare(sql).all(since, limit) : database.prepare(sql).all(since)
 	) as CueEventRow[];
 
 	return rows.map(rowToCueEventRecord);

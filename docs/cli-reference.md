@@ -1040,11 +1040,12 @@ Turn a Cue subscription off without deleting it
 
 Show recent Cue runs, newest first
 
-| Option             | Description                        | Default |
-| ------------------ | ---------------------------------- | ------- |
-| `-a, --agent <id>` | Only runs for this agent           | -       |
-| `-n, --limit <n>`  | How many runs to show (default 20) | -       |
-| `--json`           | Output as JSON (for scripting)     | -       |
+| Option              | Description                                                                                                         | Default |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Only runs for this agent                                                                                            | -       |
+| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                  | -       |
+| `--json`            | Output as JSON (for scripting)                                                                                      | -       |
+| `--data-dir <path>` | Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default) | -       |
 
 ## `maestro-cli cue schedule`
 

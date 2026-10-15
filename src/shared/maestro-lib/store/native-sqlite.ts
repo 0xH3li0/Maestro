@@ -29,7 +29,7 @@ import * as path from 'path';
 
 export const SQLITE_PACKAGE = 'better-sqlite3';
 
-type SqliteConstructor = new (filename: string, options?: object) => { close(): unknown };
+type SqliteConstructor = new (filename: string | Buffer, options?: object) => { close(): unknown };
 
 /** What the loader needs to know about the process it runs in. Injectable for tests. */
 export interface SqliteRuntime {

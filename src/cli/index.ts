@@ -1217,6 +1217,10 @@ cue
 	.option('-a, --agent <id>', 'Only runs for this agent')
 	.option('-n, --limit <n>', 'How many runs to show (default 20)')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default)'
+	)
 	.action(cueActivity);
 
 // Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the

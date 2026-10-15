@@ -33,9 +33,7 @@ import {
 	type CueConfig,
 	type CueAutoRunConfig,
 	type CueNotifyConfig,
-	type CueEventType,
 	type CueRunResult,
-	type CueRunStatus,
 	type CueEvent,
 	type CueSubscription,
 } from './cue-types';
@@ -66,7 +64,8 @@ import { createCueRecoveryService, type CueRecoveryService } from './cue-recover
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
-import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
+import { countCueEvents, getRecentCueEvents } from './cue-db';
+import { CUE_ACTIVITY_LOG_MAX, cueEventRecordsToRunResults } from './cue-activity-entries';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { holdCueWebhookListener } from './cue-webhook-server';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
@@ -1883,16 +1882,11 @@ export class CueEngine {
 	 */
 	private hydrateActivityLogFromDb(): void {
 		try {
-			const records = getRecentCueEvents(0, 1000);
+			const records = getRecentCueEvents(0, CUE_ACTIVITY_LOG_MAX);
 			if (records.length === 0) return;
 			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
-			// getRecentCueEvents returns newest-first; reverse so the ring buffer
-			// ends up with oldest at the front and newest at the back, matching
-			// the order live push() produces.
-			const results = records
-				.slice()
-				.reverse()
-				.map((record) => recordToRunResult(record, sessionNamesById));
+			// Newest-first rows come back oldest-first, the order live push() produces.
+			const results = cueEventRecordsToRunResults(records, sessionNamesById);
 			this.activityLog.seed(results);
 			this.meteredOnLog('cue', `[CUE] Activity log rehydrated (${results.length} entries)`);
 		} catch (err) {
@@ -1903,48 +1897,4 @@ export class CueEngine {
 			captureException(err, { operation: 'cue:hydrateActivityLogFromDb' });
 		}
 	}
-}
-
-function recordToRunResult(
-	record: CueEventRecord,
-	sessionNamesById: Map<string, string>
-): CueRunResult {
-	let payload: Record<string, unknown> = {};
-	if (record.payload) {
-		try {
-			const parsed = JSON.parse(record.payload);
-			if (parsed && typeof parsed === 'object') {
-				payload = parsed as Record<string, unknown>;
-			}
-		} catch {
-			// Non-JSON or corrupt payload - leave empty rather than crash hydration.
-		}
-	}
-	const startedAt = new Date(record.createdAt).toISOString();
-	const endedAt = record.completedAt ? new Date(record.completedAt).toISOString() : '';
-	const durationMs = record.completedAt ? Math.max(0, record.completedAt - record.createdAt) : 0;
-	// Orphaned `running` rows survived an app crash - surface as failed so the
-	// activity log doesn't paint them as zero-duration successes.
-	const status: CueRunStatus =
-		record.status === 'running' ? 'failed' : (record.status as CueRunStatus);
-	return {
-		runId: record.id,
-		sessionId: record.sessionId,
-		sessionName: sessionNamesById.get(record.sessionId) ?? record.sessionId,
-		subscriptionName: record.subscriptionName,
-		event: {
-			id: record.id,
-			type: record.type as CueEventType,
-			timestamp: startedAt,
-			triggerName: record.triggerName,
-			payload,
-		},
-		status,
-		stdout: '',
-		stderr: '',
-		exitCode: null,
-		durationMs,
-		startedAt,
-		endedAt,
-	};
 }

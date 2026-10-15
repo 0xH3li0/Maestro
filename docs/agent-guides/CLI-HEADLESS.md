@@ -36,6 +36,7 @@ The whole contract a Dockerfile, systemd unit or install script builds against, 
 | `cue engine stop`              | `--data-dir`, `--wait-ms`   | wait 5000 ms | SIGTERM to a standalone engine, then waits for the lock to clear (see Known limits: shorter than a drain) |
 | `cue engine status`, `inspect` | `--data-dir`                | resolved dir | Read the lock (and `cue.db`, read-only); `status` reports `statusPort`                                    |
 | `cue trigger <sub>`            | `--data-dir`                | resolved dir | Reaches a standalone engine through its file inbox                                                        |
+| `cue activity`                 | `--data-dir`, `-a`, `-n`    | 20 runs      | With no app, reads `cue.db` read-only, newest first; no run output                                        |
 
 **Endpoints** (`--status-port 7433`, `GET`/`HEAD`, JSON, `Cache-Control: no-store`):
 

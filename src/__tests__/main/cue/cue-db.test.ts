@@ -146,6 +146,7 @@ import {
 	isWebhookDeliveryClaimed,
 	WEBHOOK_DELIVERY_RETENTION_MS,
 	readCueDbStatusFigures,
+	readRecentCueEventsReadOnly,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -359,6 +360,156 @@ describe('readCueDbStatusFigures (read-only, for status beside a live engine)', 
 		constructorError = unavailable;
 
 		expect(() => readCueDbStatusFigures(dbPath)).toThrow(unavailable);
+	});
+});
+
+describe('readRecentCueEventsReadOnly (activity history without the engine)', () => {
+	let dir: string;
+	let dbPath: string;
+
+	/** A WAL-mode header: bytes 18 and 19 (read / write format versions) are 2. */
+	function walImage(): Buffer {
+		const image = Buffer.alloc(100);
+		image.write('SQLite format 3\0', 0, 'latin1');
+		image[18] = 2;
+		image[19] = 2;
+		return image;
+	}
+
+	const row = {
+		id: 'run-1',
+		type: 'time.scheduled',
+		trigger_name: 't',
+		session_id: 'agent-1',
+		subscription_name: 'nightly',
+		status: 'completed',
+		created_at: 1000,
+		completed_at: 2000,
+		payload: null,
+		pipeline_id: null,
+		chain_root_id: null,
+		parent_event_id: null,
+		provider_session_id: null,
+		error_message: null,
+		exit_code: null,
+		output_excerpt: null,
+		full_output: null,
+		stream_usage_json: null,
+	};
+
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-history-'));
+		dbPath = path.join(dir, 'cue.db');
+		mockAllReturn = [row];
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('reads beside a live engine with a read-only, must-exist handle', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, '');
+		fs.writeFileSync(`${dbPath}-shm`, '');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toMatchObject({ ok: true, source: 'live' });
+		if (result.ok) expect(result.records.map((r) => r.id)).toEqual(['run-1']);
+		expect(constructorCalls).toEqual([[dbPath, { readonly: true, fileMustExist: true }]]);
+		expect(allCalls).toEqual([[0, 1000]]);
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses the same recent-events query as the engine', () => {
+		fs.writeFileSync(dbPath, walImage());
+
+		readRecentCueEventsReadOnly(5, dbPath);
+
+		expect(prepareCalls).toEqual([
+			'SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?',
+		]);
+		expect(mockDb.pragma).not.toHaveBeenCalled();
+		expect(mockStatement.run).not.toHaveBeenCalled();
+	});
+
+	it('with no sidecars, queries an in-memory copy and leaves the file and folder alone', () => {
+		fs.writeFileSync(dbPath, walImage());
+		const before = fs.readFileSync(dbPath);
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toMatchObject({ ok: true, source: 'snapshot' });
+		expect(constructorCalls).toHaveLength(1);
+		const [image, options] = constructorCalls[0] as [Buffer, unknown];
+		expect(Buffer.isBuffer(image)).toBe(true);
+		expect(options).toEqual({ readonly: true });
+		// The copy is rewritten to a rollback-journal header; the file is not.
+		expect([image[18], image[19]]).toEqual([1, 1]);
+		expect(fs.readFileSync(dbPath).equals(before)).toBe(true);
+		expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+	});
+
+	it('reads an in-memory copy when only an empty -wal is left', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, '');
+
+		expect(readRecentCueEventsReadOnly(1000, dbPath)).toMatchObject({
+			ok: true,
+			source: 'snapshot',
+		});
+	});
+
+	it('refuses a non-empty -wal without its -shm rather than miss or recover its rows', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, 'frames');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('did not shut down cleanly');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.readdirSync(dir).sort()).toEqual(['cue.db', 'cue.db-wal']);
+	});
+
+	it('reports a missing cue.db without creating it or its folder', () => {
+		const missing = path.join(dir, 'nested', 'cue.db');
+
+		const result = readRecentCueEventsReadOnly(1000, missing);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('does not exist');
+		expect(fs.existsSync(path.dirname(missing))).toBe(false);
+	});
+
+	it('reports an unreadable database as a reason and closes nothing it did not open', () => {
+		fs.writeFileSync(dbPath, walImage());
+		constructorError = new Error('file is not a database');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toEqual({
+			ok: false,
+			reason: `could not read ${dbPath}: file is not a database`,
+		});
+		expect(mockDb.close).not.toHaveBeenCalled();
+	});
+
+	it('rethrows SqliteUnavailableError', () => {
+		fs.writeFileSync(dbPath, walImage());
+		const unavailable = new Error('cannot load better-sqlite3');
+		unavailable.name = 'SqliteUnavailableError';
+		constructorError = unavailable;
+
+		expect(() => readRecentCueEventsReadOnly(1000, dbPath)).toThrow(unavailable);
+	});
+
+	it('never becomes the module singleton', () => {
+		fs.writeFileSync(dbPath, walImage());
+		readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(isCueDbReady()).toBe(false);
+		expect(getRecentCueEvents(0, 10)).toEqual([]);
 	});
 });
 
