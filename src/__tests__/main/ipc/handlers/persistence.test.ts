@@ -923,9 +923,10 @@ describe('persistence IPC handlers', () => {
 					isDestroyed: () => false,
 					send: (
 						channel: string,
-						payload: { sessionId: string; tabId: string; requestId: string }
+						payload: { sessionId: string; tabId: string; requestId: string; metadataOnly?: boolean }
 					) => {
 						if (channel !== 'sessions:transcriptRequest' || payload.sessionId !== stored.id) return;
+						expect(payload.metadataOnly).toBe(true);
 						handlers.get('sessions:publishTranscript')!(
 							{ sender: { id: 1 } },
 							{
@@ -972,6 +973,12 @@ describe('persistence IPC handlers', () => {
 			const logs = [
 				{ id: 'owner-live-row', timestamp: 1, source: 'stdout', text: 'not yet debounced to disk' },
 			];
+			let requestId = '';
+			const peerSend = vi.fn();
+			const peer = {
+				isDestroyed: () => false,
+				webContents: { id: 2, isDestroyed: () => false, send: peerSend },
+			};
 			const win = {
 				isDestroyed: () => false,
 				webContents: {
@@ -982,6 +989,7 @@ describe('persistence IPC handlers', () => {
 						payload: { sessionId: string; tabId: string; requestId: string }
 					) => {
 						if (channel !== 'sessions:transcriptRequest') return;
+						requestId = payload.requestId;
 						handlers.get('sessions:publishTranscript')!(
 							{ sender: { id: 1 } },
 							{
@@ -999,7 +1007,10 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 			// Partial window fixture models the trusted native publication endpoint.
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win] as unknown as BrowserWindow[]);
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				win,
+				peer,
+			] as unknown as BrowserWindow[]);
 			try {
 				const content = await handlers.get('sessions:getDeferredContent')!(
 					{ type: 'bridge' },
@@ -1008,6 +1019,36 @@ describe('persistence IPC handlers', () => {
 					false
 				);
 				expect(content.logs).toEqual(logs);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
+				// A late duplicate remains private after its waiter has been resolved.
+				expect(
+					handlers.get('sessions:publishTranscript')!(
+						{ sender: { id: 1 } },
+						{
+							sessionId: 's1',
+							tabId: 't1',
+							field: 'logs',
+							upserts: logs,
+							removedIds: [],
+							orderIds: logs.map((row) => row.id),
+							snapshot: true,
+						},
+						requestId
+					)
+				).toBe(false);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
 				expect(mockSessionsStore.set).not.toHaveBeenCalled();
 			} finally {
 				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);

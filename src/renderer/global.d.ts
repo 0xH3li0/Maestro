@@ -319,7 +319,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onTranscriptRequest: (
-			handler: (request: { sessionId: string; tabId: string; requestId: string }) => void
+			handler: (request: {
+				sessionId: string;
+				tabId: string;
+				requestId: string;
+				metadataOnly?: boolean;
+			}) => void
 		) => () => void;
 		/**
 		 * Listen for main-side focus requests emitted by the plugin `sessions.focus`

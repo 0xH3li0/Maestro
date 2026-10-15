@@ -536,7 +536,8 @@ export function registerPersistenceHandlers(
 	let nextTranscriptRequestId = 0;
 	const readOwningTranscript = (
 		sessionId: string,
-		tabId: string
+		tabId: string,
+		metadataOnly = false
 	): Promise<SessionTranscriptPatch> =>
 		new Promise((resolve, reject) => {
 			const requestId = `transcript-${++nextTranscriptRequestId}`;
@@ -555,7 +556,12 @@ export function registerPersistenceHandlers(
 			});
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win))
-					win.webContents.send('sessions:transcriptRequest', { sessionId, tabId, requestId });
+					win.webContents.send('sessions:transcriptRequest', {
+						sessionId,
+						tabId,
+						requestId,
+						metadataOnly,
+					});
 			}
 		});
 	ipcMain.handle(
@@ -574,8 +580,12 @@ export function registerPersistenceHandlers(
 					request.sessionId === patch.sessionId &&
 					request.tabId === (patch.tabId ?? '') &&
 					patch.snapshot
-				)
+				) {
 					request.resolve(patch);
+					return true;
+				}
+				// Request replies are private, including expired or mismatched replies.
+				return false;
 			}
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
@@ -591,7 +601,7 @@ export function registerPersistenceHandlers(
 		if ((event as { type?: string })?.type !== 'bridge') return sessions;
 		return Promise.all(
 			sessions.map(async (session) => {
-				const live = await readOwningTranscript(session.id, '').catch((error: unknown) => {
+				const live = await readOwningTranscript(session.id, '', true).catch((error: unknown) => {
 					logger.warn('Owning transcript unavailable for bootstrap', 'Sessions', {
 						sessionId: session.id,
 						error: error instanceof Error ? error.message : String(error),

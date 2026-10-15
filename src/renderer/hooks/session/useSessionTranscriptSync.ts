@@ -141,12 +141,16 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			previous: Session | AITab | undefined,
 			field: SessionTranscriptPatch['field'],
 			tabId?: string,
-			requestId?: string
+			requestId?: string,
+			metadataOnly = false
 		) => {
-			const logs = (row as unknown as Record<string, LogEntry[]>)[field] ?? [];
-			const previousLogs = previous
-				? ((previous as unknown as Record<string, LogEntry[]>)[field] ?? [])
-				: [];
+			const logs = metadataOnly
+				? []
+				: ((row as unknown as Record<string, LogEntry[]>)[field] ?? []);
+			const previousLogs =
+				!metadataOnly && previous
+					? ((previous as unknown as Record<string, LogEntry[]>)[field] ?? [])
+					: [];
 			const runtime = tabId || field === 'shellLogs' ? runtimeOf(row) : undefined;
 			const runtimeChanged =
 				runtime &&
@@ -156,16 +160,18 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 						(previous as unknown as Record<string, unknown> | undefined)?.[field]
 				);
 			if (!requestId && logs === previousLogs && !runtimeChanged) return;
-			const previousById = new Map(previousLogs.map((log) => [log.id, log]));
-			const ids = new Set(logs.map((log) => log.id));
+			const previousById = requestId
+				? undefined
+				: new Map(previousLogs.map((log) => [log.id, log]));
+			const ids = requestId ? undefined : new Set(logs.map((log) => log.id));
 			const patch: SessionTranscriptPatch<LogEntry> = {
 				sessionId: session.id,
 				tabId,
 				field,
-				upserts: requestId ? logs : logs.filter((log) => previousById.get(log.id) !== log),
+				upserts: requestId ? logs : logs.filter((log) => previousById!.get(log.id) !== log),
 				removedIds: requestId
 					? []
-					: previousLogs.filter((log) => !ids.has(log.id)).map((log) => log.id),
+					: previousLogs.filter((log) => !ids!.has(log.id)).map((log) => log.id),
 				orderIds: logs === previousLogs && !requestId ? [] : logs.map((log) => log.id),
 				...(requestId && { snapshot: true }),
 				...(runtime && {
@@ -179,14 +185,17 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 					logger.error('Failed to publish owning host transcript', 'Sessions', error)
 				);
 		};
-		const unsubscribeRequest = api.onTranscriptRequest?.(({ sessionId, tabId, requestId }) => {
-			if (!ownsTranscript.current?.(sessionId)) return;
-			const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
-			const tab = session?.aiTabs.find((item) => item.id === tabId);
-			if (session && tab) publish(session, tab, undefined, 'logs', tabId, requestId);
-			else if (session && !tabId)
-				publish(session, session, undefined, 'shellLogs', undefined, requestId);
-		});
+		const unsubscribeRequest = api.onTranscriptRequest?.(
+			({ sessionId, tabId, requestId, metadataOnly }) => {
+				if (!ownsTranscript.current?.(sessionId)) return;
+				const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
+				const tab = session?.aiTabs.find((item) => item.id === tabId);
+				if (session && tab)
+					publish(session, tab, undefined, 'logs', tabId, requestId, metadataOnly);
+				else if (session && !tabId)
+					publish(session, session, undefined, 'shellLogs', undefined, requestId, metadataOnly);
+			}
+		);
 		const unsubscribeStore = useSessionStore.subscribe((state, previousState) => {
 			if (state.sessions === previousState.sessions) return;
 			const previousById = new Map(previousState.sessions.map((session) => [session.id, session]));

@@ -50,6 +50,8 @@ import {
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { notifyToast } from '../../stores/notificationStore';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -289,6 +291,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onDispatchCrossAgentMentions,
 	} = deps;
 
+	const stagedImagesRef = useRef(stagedImages);
+	stagedImagesRef.current = stagedImages;
+
 	// Ref for the processInput function so external code can access the latest version
 	const processInputRef = useRef<
 		((overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>) | null
@@ -342,7 +347,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
-			let effectiveInputValue = overrideInputValue ?? getInputValue();
+			const inputValueAtSubmit = overrideInputValue ?? getInputValue();
+			let effectiveInputValue = inputValueAtSubmit;
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
@@ -673,14 +679,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// The AI path takes the draft out of the composer BEFORE its ownership
-			// probe rather than after, so a second Enter during the probe reads an
-			// empty box instead of the same text. `composerTaken` tells the exits
-			// past the probe the composer is already clear: clearing again there
-			// would wipe whatever the user typed while the probe was out. Nothing
-			// past the probe returns without sending or queuing the message (and
-			// the probe resolves on failure rather than rejecting), so the taken
-			// draft never needs putting back.
+			// Desktop owns its queue and takes the draft before probing. Remote
+			// clients keep it until readiness is known: a failed read cannot turn
+			// unsubmitted input into a local-only host queue item.
 			let composerTaken = false;
 			const clearComposer = () => {
 				setInputValue('');
@@ -688,26 +689,52 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				syncAiInputToSession('', syncTarget);
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			};
-			const clearComposerUnlessTaken = () => {
-				if (!composerTaken) clearComposer();
+			const canClearComposer = () => {
+				if (!isWebDesktop() || currentMode !== 'ai') return true;
+				const selected = selectActiveSession(useSessionStore.getState());
+				return (
+					selected?.id === activeSession.id &&
+					getActiveTab(selected)?.id === targetTabId &&
+					getInputValue() === inputValueAtSubmit &&
+					(usingOverrideImages || stagedImagesRef.current === submitted.images)
+				);
 			};
-			// The probe is the only await between Enter and the queue/send decision,
-			// and everything after it is synchronous, so the in-flight window is
-			// exactly the probe.
+			const clearComposerUnlessTaken = () => {
+				if (!composerTaken && canClearComposer()) clearComposer();
+			};
 			const probeForSubmit = async (tabId: string | undefined) => {
-				if (!isComposerSubmit) return probeSessionAiProcesses(activeSession.id, tabId);
-				const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
-				composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
+				if (isComposerSubmit) {
+					const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
+					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
+				}
 				try {
-					clearComposer();
-					composerTaken = true;
-					return await probeSessionAiProcesses(activeSession.id, tabId);
+					if (isComposerSubmit && !isWebDesktop()) {
+						clearComposer();
+						composerTaken = true;
+					}
+					const state = await probeSessionAiProcesses(activeSession.id, tabId);
+					if (state.probeFailed && isWebDesktop()) {
+						notifyToast({
+							color: 'yellow',
+							title: 'Message not submitted',
+							message:
+								'Could not verify the host connection. Your draft was kept; reconnect and review host state before sending again.',
+							dismissible: true,
+							skipCustomNotification: true,
+							skipOsNotification: true,
+						});
+						requestWebBridgeReconcile();
+						return null;
+					}
+					return state;
 				} finally {
-					const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
-						(entry) => entry !== submitted
-					);
-					if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
-					else composerSubmitsInFlight.delete(inFlightKey);
+					if (isComposerSubmit) {
+						const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
+							(entry) => entry !== submitted
+						);
+						if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
+						else composerSubmitsInFlight.delete(inFlightKey);
+					}
 				}
 			};
 
@@ -813,6 +840,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// consult fired in that window is exactly the premature ping this
 					// whole path exists to prevent.
 					const mentionProbe = await probeForSubmit(mentionSourceTabId);
+					if (!mentionProbe) return;
 					const liveMentionSession =
 						useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
 						activeSession;
@@ -949,6 +977,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// process and discard its eventual response. A failed probe holds the
 				// message until bridge recovery can answer authoritatively.
 				const processState = await probeForSubmit(activeTab?.id);
+				if (!processState) return;
 				if (processState.probeFailed) {
 					logger.warn(
 						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
@@ -1423,9 +1452,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
-			// An AI send already took the draft before its probe; clearing here again
-			// would wipe whatever the user typed while that probe was out.
-			if (!composerTaken) {
+			// Desktop already took an AI draft; remote clients clear only the
+			// submitted draft, not input typed or selected while readiness was pending.
+			if (!composerTaken && canClearComposer()) {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
 
