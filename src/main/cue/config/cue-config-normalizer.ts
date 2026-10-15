@@ -524,7 +524,8 @@ function normalizeSubscription(
 	};
 }
 
-function normalizeSettings(rawSettings: Record<string, unknown> | undefined): CueSettings {
+/** Normalizes settings independently of subscription validity, including config ownership. */
+export function normalizeSettings(rawSettings: Record<string, unknown> | undefined): CueSettings {
 	return {
 		// Reject non-positive / non-finite / non-integer values defensively. The
 		// validator rejects them too, but `loadCueConfig` (the legacy entry point)
@@ -599,6 +600,12 @@ export function parseCueConfigDocument(raw: string, projectRoot: string): CueCon
 	};
 }
 
+/** Identifies an enabled subscription's warning without matching warning text or names. */
+export interface CueHealthWarning {
+	warningIndex: number;
+	agentId?: string;
+}
+
 export interface MaterializedCueConfig {
 	config: CueConfig;
 	/**
@@ -606,12 +613,21 @@ export interface MaterializedCueConfig {
 	 * pointing at files that could not be read). Callers should log these to the user.
 	 */
 	warnings: string[];
+	/** Positions in warnings and execution targets eligible for health notices. */
+	healthWarnings: CueHealthWarning[];
 }
 
+/**
+ * Converts a normalized document into runtime subscriptions and warning lists.
+ * Retains all prompt-load warnings for logging, while only enabled subscriptions
+ * contribute warnings eligible for health notices.
+ */
 export function materializeCueConfig(document: CueConfigDocument): MaterializedCueConfig {
 	const warnings: string[] = [];
+	const healthWarnings: CueHealthWarning[] = [];
 
 	const subscriptions = document.subscriptions.map((sub) => {
+		const warningStart = warnings.length;
 		// Surface unresolved prompt_file references as warnings - the file existed
 		// in the YAML but readPromptFile() returned undefined / empty.
 		if (sub.promptSpec.file && !sub.promptSpec.inline && !sub.prompt) {
@@ -623,6 +639,11 @@ export function materializeCueConfig(document: CueConfigDocument): MaterializedC
 			warnings.push(
 				`"${sub.name}" has output_prompt_file "${sub.outputPromptSpec.file}" but the file was not found or resolved to empty/unreadable content`
 			);
+		}
+		if (sub.enabled !== false) {
+			for (let warningIndex = warningStart; warningIndex < warnings.length; warningIndex++) {
+				healthWarnings.push({ warningIndex, agentId: sub.agent_id });
+			}
 		}
 
 		const { promptSpec: _promptSpec, outputPromptSpec: _outputPromptSpec, ...subscription } = sub;
@@ -638,5 +659,6 @@ export function materializeCueConfig(document: CueConfigDocument): MaterializedC
 				: {}),
 		},
 		warnings,
+		healthWarnings,
 	};
 }

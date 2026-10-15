@@ -125,7 +125,7 @@ export interface OwnershipCandidate {
 export function computeOwnershipWarning(params: {
 	session: OwnershipCandidate;
 	candidates: OwnershipCandidate[];
-	config: CueConfig;
+	config: Pick<CueConfig, 'settings'>;
 	configFromAncestor: boolean;
 }): string | undefined {
 	if (params.configFromAncestor) return undefined;
