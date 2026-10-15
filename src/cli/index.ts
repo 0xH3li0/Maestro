@@ -840,7 +840,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(

@@ -1493,6 +1493,8 @@ maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queu
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
 | `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
 
+A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
+
 This is also the verb that plays media. A local audio or video file does not become a tab at all: it goes to the [floating media player](/media-player), so `open-file ~/Music/track.mp3 --agent <id>` is how you or an agent starts playback without handing the file to your system's default player. There is no separate `play` command. `--background` has nothing to suppress in that case, since playback is audible either way, and a file on an SSH remote has no stream to play, so it falls back to the ordinary binary-file path.
 
 `--no-switch` and `--background` are different asks, and this is the one command that offers both. `--no-switch` keeps the Left Bar selection where it is but still activates the new tab inside the target agent - so if you were already on that agent, your view still changes. `--background` changes nothing rendered anywhere. Passing both is fine; `--background` is strictly stronger and wins. If `--no-switch` is what you reached for, `--background` is probably what you meant.
