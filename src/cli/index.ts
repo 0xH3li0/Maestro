@@ -1902,6 +1902,10 @@ pianola
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Stop watching after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--dry-run', 'Classify and record decisions but never send a message')
 	.option('--once', 'Run a single iteration instead of looping')
 	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
@@ -2022,6 +2026,10 @@ pianolaSupervise
 	.description('Register a supervised tab watcher the desktop keeps alive')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Retire the watcher after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
 
