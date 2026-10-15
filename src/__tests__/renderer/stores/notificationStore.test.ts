@@ -476,6 +476,15 @@ describe('notificationStore', () => {
 				expect(triggerCustomNotification(undefined)).toBe(false);
 				expect(mockSpeak).not.toHaveBeenCalled();
 			});
+
+			it('never fires from a web-desktop client (the host owns the spoken cue)', () => {
+				// The bridge refuses notification:speak, so firing here raised a
+				// "Submission rejected" notice on every toast in the browser.
+				mockIsWebDesktop.mockReturnValue(true);
+				useNotificationStore.getState().setAudioFeedback(true, 'say');
+				expect(triggerCustomNotification('Task complete')).toBe(false);
+				expect(mockSpeak).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('OS notifications', () => {

@@ -433,6 +433,39 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	});
 
+	it('refuses windows:setPanelState (a browser has no window of its own to persist)', async () => {
+		const handler = vi.fn();
+		invokeHandlers.set('windows:setPanelState', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 11,
+				channel: 'windows:setPanelState',
+				args: [{ rightPanelCollapsed: true }],
+			},
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('answers maestroRun:readyPath, which a browser spawn needs for its system prompt', async () => {
+		invokeHandlers.set('maestroRun:readyPath', async () => '/opt/maestro-run');
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 12, channel: 'maestroRun:readyPath' },
+			send
+		);
+		expect(send.mock.calls[0][1]).toMatchObject({
+			requestId: 12,
+			ok: true,
+			result: '/opt/maestro-run',
+		});
+	});
+
 	it('refuses a denied send-style channel too', async () => {
 		const listener = vi.fn();
 		sendListeners.set('webLogin:notify', listener);
