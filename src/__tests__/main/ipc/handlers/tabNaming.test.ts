@@ -636,7 +636,7 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Side-Scroller Game');
 		});
 
-		it.each(['claude-code', 'codex'])(
+		it.each(['claude-code', 'codex', 'grok', 'factory-droid', 'copilot-cli'] as const)(
 			'shortens a 48-character final title from %s',
 			async (agentType) => {
 				const title = 'Donation Appeal Pages Japanese Translation Dates';
@@ -656,18 +656,32 @@ describe('Tab Naming IPC Handlers', () => {
 				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
 
 				const sessionId = 'tab-naming-mock-uuid-1234';
-				if (agentType === 'codex') {
+				const streams = {
+					'claude-code': [{ type: 'result', result: title }],
+					codex: [{ type: 'item.completed', item: { type: 'agent_message', text: title } }],
+					grok: [
+						{ type: 'thought', data: 'Generate a short title' },
+						{ type: 'text', data: title.slice(0, 20) },
+						{ type: 'text', data: title.slice(20) },
+						{ type: 'end', stopReason: 'end_turn' },
+					],
+					'factory-droid': [
+						{ type: 'message', role: 'assistant', text: title },
+						{ type: 'completion' },
+					],
+					'copilot-cli': [
+						{ type: 'assistant.message_delta', data: { deltaContent: title } },
+						{ type: 'result' },
+					],
+				};
+				const raw = streams[agentType].map((event) => JSON.stringify(event)).join('\n') + '\n';
+				if (agentType !== 'claude-code') {
 					// ProcessManager emits the parsed title on data; raw-stdout retains its provenance.
-					const raw =
-						JSON.stringify({
-							type: 'item.completed',
-							item: { type: 'agent_message', text: title },
-						}) + '\n';
 					listeners.get('raw-stdout')?.(sessionId, raw.slice(0, 20));
 					listeners.get('raw-stdout')?.(sessionId, raw.slice(20));
 					listeners.get('data')?.(sessionId, title);
 				} else {
-					listeners.get('data')?.(sessionId, JSON.stringify({ type: 'result', result: title }));
+					listeners.get('data')?.(sessionId, raw);
 				}
 				listeners.get('exit')?.(sessionId, 0);
 
@@ -677,6 +691,36 @@ describe('Tab Naming IPC Handlers', () => {
 					'raw-stdout',
 					listeners.get('raw-stdout')
 				);
+			}
+		);
+
+		it.each(['missing', 'cancelled'])(
+			'rejects a long Grok title with %s completion',
+			async (kind) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'grok' });
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType: 'grok',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const stream = [JSON.stringify({ type: 'text', data: title })];
+				if (kind === 'cancelled') {
+					stream.push(JSON.stringify({ type: 'end', stopReason: 'cancelled' }));
+				}
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				listeners.get('raw-stdout')?.(sessionId, stream.join('\n') + '\n');
+				listeners.get('data')?.(sessionId, title);
+				listeners.get('exit')?.(sessionId, 0);
+				expect(await resultPromise).toBeNull();
 			}
 		);
 

@@ -727,6 +727,7 @@ function extractAgentResponse(
 	if (!parser) return null;
 
 	let sawJson = false;
+	let isFinal = false;
 	let resultText = '';
 	let assistantText = '';
 	for (const line of output.split('\n')) {
@@ -742,11 +743,12 @@ function extractAgentResponse(
 		if (!parsed || typeof parsed !== 'object') continue;
 		sawJson = true;
 		const event = parser.parseJsonObject(parsed);
-		if (!event?.text) continue;
-		if (event.type === 'result') {
-			// The final result carries the complete response; last one wins.
-			resultText = event.text;
-		} else if (event.type === 'text' && !event.isReasoning) {
+		if (!event) continue;
+		if (parser.isResultMessage(event)) {
+			// Completion can be a textless marker after streamed answer chunks.
+			isFinal = true;
+			if (event.text) resultText = event.text;
+		} else if (event.type === 'text' && !event.isReasoning && event.text) {
 			// Streaming assistant chunks - accumulate so early extraction can
 			// resolve before the terminating result event arrives. Reasoning
 			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
@@ -759,7 +761,7 @@ function extractAgentResponse(
 
 	if (!sawJson) return null;
 	const text = (resultText || assistantText).trim();
-	return text.length > 0 ? { text, isFinal: !!resultText } : null;
+	return text.length > 0 ? { text, isFinal } : null;
 }
 
 /**
