@@ -189,7 +189,12 @@ export function createCueSessionRuntimeService(
 
 		// Surface non-fatal materialization warnings (e.g. unresolved prompt_file)
 		for (const warning of loadResult.warnings) {
-			deps.onLog('warn', `[CUE] ${warning}`);
+			const message = `[CUE] ${warning}`;
+			deps.onLog('warn', message, {
+				type: 'triggerHealthWarning',
+				sessionId: session.id,
+				message,
+			});
 		}
 
 		// Ownership gate for UNOWNED subscriptions (no agent_id). When multiple

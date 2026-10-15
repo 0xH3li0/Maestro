@@ -135,6 +135,21 @@ describe('shared cwd Cue health', () => {
 		);
 	});
 
+	it.each([
+		'  - name: invalid\n    event: nonexistent.event\n    prompt: inert test\n',
+		'  - name: missing-prompt\n    event: agent.completed\n    prompt_file: .maestro/prompts/missing.md\n',
+	])('alarms on failed subscriptions in an otherwise loadable config: %s', (subscription) => {
+		for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
+		writeCueYamlAtomicSync(configPath, `subscriptions:\n${subscription}`);
+		vi.advanceTimersByTime(31_000);
+		expect(registry.size()).toBe(4);
+		expect(
+			onLog.mock.calls.filter(
+				([level, , data]) => level === 'warn' && data?.type === 'triggerHealthWarning'
+			)
+		).toHaveLength(4);
+	});
+
 	it.each(['subscriptions: [', 'subscriptions: false\n'])(
 		'alarms on genuine YAML errors and recovers after correction: %s',
 		(invalidYaml) => {
