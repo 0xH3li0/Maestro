@@ -11,6 +11,7 @@ import { passesHiddenGroupFilter, resolveHiddenGroupIds } from '../../utils/side
  * sync host or tests without React.
  */
 export interface ComputeSortedSessionsInput {
+	headlessCounts?: AttentionContext['headlessCounts'];
 	sessions: Session[];
 	groups: Group[];
 	bookmarksCollapsed: boolean;
@@ -56,6 +57,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		showHiddenGroups,
 	} = input;
 	const attentionCtx: AttentionContext = {
+		headlessCounts: input.headlessCounts,
 		batchSessionIds: new Set(activeBatchSessionIds),
 		stuckOutageIds: new Set(stuckOutageSessionIds),
 	};

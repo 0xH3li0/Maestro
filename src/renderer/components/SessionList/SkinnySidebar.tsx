@@ -60,6 +60,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	const consultedSessionIds = useConsultedSessionIds();
 	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const attentionCtx: AttentionContext = {
+		headlessCounts,
 		batchSessionIds: new Set(activeBatchSessionIds),
 		stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
 	};

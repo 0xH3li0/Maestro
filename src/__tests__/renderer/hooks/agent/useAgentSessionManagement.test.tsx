@@ -6,6 +6,7 @@ import {
 } from '../../../../renderer/hooks/agent/useAgentSessionManagement';
 import type { UseAgentSessionManagementDeps } from '../../../../renderer/hooks/agent/useAgentSessionManagement';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { createMockAITab } from '../../../helpers/mockTab';
 import { createMockSession } from '../../../helpers/mockSession';
 import { prepareSessionForPersistence } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
 import type { Session } from '../../../../renderer/types';
@@ -234,6 +235,37 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 		expect(typeof updater).toBe('function');
 		return (updater as (prev: Session[]) => Session[])([activeSession])[0].aiTabs;
 	}
+
+	it('focuses an already-loaded Relay conversation when Quick Resume supplies an empty message array and the transcript host is offline', async () => {
+		const tab = createMockAITab({
+			id: 'loaded',
+			agentSessionId: AGENT_SESSION_ID,
+			logs: [{ id: 'log', timestamp: 1, source: 'user', text: 'hello' }],
+		});
+		const session = createMockSession({
+			id: 'target',
+			projectRoot: '/project',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'another',
+		});
+		seedActiveSession(session);
+		vi.mocked(window.maestro.agentSessions.read).mockRejectedValue(new Error('offline'));
+		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({
+			[AGENT_SESSION_ID]: { origin: 'relay' },
+		});
+		const deps = makeDeps(session);
+		deps.setSessions = useSessionStore.getState().setSessions;
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		await act(async () => {
+			expect(await result.current.handleResumeSession(AGENT_SESSION_ID, [])).toBe(true);
+		});
+		expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({
+			activeTabId: 'loaded',
+			aiTabs: [expect.objectContaining({ origin: 'relay' })],
+		});
+	});
 
 	it('keeps Relay provenance on the tab through a persisted reload', async () => {
 		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({

@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 /**
  * SidebarNavSync - always-mounted host that owns Left Bar sort/nav/starred
  * subscriptions and writes {@link useSidebarNavStore}.
@@ -40,6 +41,7 @@ function SidebarNavSyncInner() {
 	// jump-badge / nav projection, matching the rendered list.
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const stuckOutageSignature = useActiveOutageSessionSignature();
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	// Pianola persists in the session store while its Encore flag is off, so the
 	// nav projections must drop it or keyboard cycling lands on an agent the Left
 	// Bar does not render.
@@ -72,6 +74,7 @@ function SidebarNavSyncInner() {
 				activeSessionId,
 				activeBatchSessionIds,
 				stuckOutageSessionIds: stuckOutageSignature ? stuckOutageSignature.split(',') : [],
+				headlessCounts,
 				showHiddenGroups,
 			})
 		);
@@ -83,6 +86,7 @@ function SidebarNavSyncInner() {
 		activeSessionId,
 		activeBatchSessionIds,
 		stuckOutageSignature,
+		headlessCounts,
 		showHiddenGroups,
 		setSortedProjection,
 	]);

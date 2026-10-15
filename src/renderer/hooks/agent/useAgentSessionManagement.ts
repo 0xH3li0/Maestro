@@ -337,7 +337,7 @@ export function useAgentSessionManagement(
 					projectRoot: resolvedProjectRoot,
 					sshRemoteId,
 					agentSessionId,
-					providedMessages: providedMessages ?? existingTab?.logs,
+					providedMessages: providedMessages?.length ? providedMessages : existingTab?.logs,
 					sessionName,
 					starred,
 					usageStats,
