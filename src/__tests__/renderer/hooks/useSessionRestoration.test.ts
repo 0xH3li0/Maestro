@@ -1576,6 +1576,72 @@ describe('Session & Group loading effect', () => {
 			}
 		}
 	);
+	it.each(['browserTabs', 'terminalTabs'] as const)(
+		'preserves newer %s inventory when a private session snapshot arrives',
+		async (field) => {
+			runtime.web = true;
+			const oldRows =
+				field === 'browserTabs'
+					? [
+							{
+								id: 'closed-tab',
+								url: 'https://example.invalid',
+								title: 'Old page',
+								createdAt: 1,
+								canGoBack: false,
+								canGoForward: false,
+								isLoading: false,
+							},
+						]
+					: [
+							{
+								id: 'closed-tab',
+								name: 'Old terminal',
+								shellType: 'bash',
+								pid: 0,
+								cwd: '/project',
+								createdAt: 1,
+								state: 'idle' as const,
+							},
+						];
+			const localRows = oldRows.map((tab) => ({ ...tab, id: 'new-local-tab' }));
+			mockGetBootstrap.mockResolvedValueOnce([
+				createMockSession({
+					id: 'web-agent',
+					[field]: oldRows,
+					shellLogs: [],
+					deferredContent: { tabIds: ['tab-1'], commands: true },
+				}),
+			]);
+			let resolveContent!: (
+				content: Awaited<ReturnType<typeof window.maestro.sessions.getDeferredContent>>
+			) => void;
+			mockGetDeferredContent.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveContent = resolve;
+				})
+			);
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() =>
+				expect(mockGetDeferredContent).toHaveBeenCalledWith('web-agent', 'tab-1', true)
+			);
+			act(() => updateSessionWith('web-agent', (session) => ({ ...session, [field]: localRows })));
+			await act(async () =>
+				resolveContent({
+					logs: [],
+					shellLogs: [{ id: 'saved-shell', timestamp: 1, source: 'stdout', text: 'saved output' }],
+					agentCommands: [],
+					aiCommandHistory: [],
+					transcriptSnapshots: [{ sessionId: 'web-agent', runtime: { [field]: oldRows } }],
+				})
+			);
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.deferredContent).toBeUndefined();
+			expect(session.shellLogs.map((row) => row.id)).toEqual(['saved-shell']);
+			expect(session[field]).toEqual(localRows);
+		}
+	);
+
 	it('retries a failed deferred read only after the bridge reconnects', async () => {
 		runtime.web = true;
 		mockGetBootstrap.mockResolvedValueOnce([

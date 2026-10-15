@@ -53,7 +53,9 @@ export function applyRuntime<T extends Session | AITab>(
 ): T {
 	if (
 		baseline &&
-		runtimeFields.some((field) => !Object.is(Reflect.get(row, field), Reflect.get(baseline, field)))
+		fieldsFor(row).some(
+			(field) => !Object.is(Reflect.get(row, field), Reflect.get(baseline, field))
+		)
 	)
 		return row;
 	const runtime = { ...patch.runtime };

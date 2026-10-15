@@ -150,8 +150,9 @@ These rules keep the clients in sync:
   canonical transcript and its runtime snapshot (including errors and explicit
   cleared fields) only to their requester: request replies, including late
   replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime
-  applies only while the captured local turn is unchanged; newer live state
-  takes precedence. Normal live deltas still apply owner-created row IDs and
+  applies only while the captured local turn and browser/terminal inventories
+  are unchanged; newer local state takes precedence. Normal live deltas still
+  apply owner-created row IDs and
   runtime state on every mirror. Incognito tabs stay out of persisted sessions
   while surviving client disconnects; only trusted native renderers may publish
   or answer snapshot requests.
