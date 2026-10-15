@@ -509,7 +509,7 @@ describe('CodexAppServerSpawner', () => {
 	it('hands turns it cannot carry straight to exec', () => {
 		const h = createHarness(new FakeAppServer(() => {}));
 
-		h.spawner.spawn(h.config({ args: [...BYPASS_ARGS, '--add-dir', '/tmp/other'] }));
+		h.spawner.spawn(h.config({ args: [...READ_ONLY_ARGS, '--add-dir', '/tmp/other'] }));
 		h.spawner.spawn(h.config({ images: ['data:image/png;base64,AAAA'] }));
 
 		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
