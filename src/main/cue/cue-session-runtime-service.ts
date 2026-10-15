@@ -102,6 +102,11 @@ export interface CueSessionRuntimeService {
 	clearAllStartupKeys(): void;
 }
 
+/**
+ * Creates the per-session lifecycle service for Cue YAML and trigger sources.
+ * Preserves config watchers across refreshes and releases session resources on
+ * removal or shutdown.
+ */
 export function createCueSessionRuntimeService(
 	deps: CueSessionRuntimeServiceDeps
 ): CueSessionRuntimeService {
@@ -113,6 +118,11 @@ export function createCueSessionRuntimeService(
 		return deps.getSessions().find((session) => session.id === sessionId);
 	}
 
+	/**
+	 * Loads a session's config, logs warnings and surfaces eligible health notices.
+	 * Registers trigger sources according to enablement, ownership and agent targets;
+	 * startup events also honor the supplied initialization reason.
+	 */
 	function initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome {
 		if (!deps.enabled()) return { kind: 'disabled' };
 

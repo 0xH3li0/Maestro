@@ -610,6 +610,11 @@ export interface MaterializedCueConfig {
 	healthWarnings: string[];
 }
 
+/**
+ * Converts a normalized document into runtime subscriptions and warning lists.
+ * Retains all prompt-load warnings for logging, while only enabled subscriptions
+ * contribute warnings eligible for health notices.
+ */
 export function materializeCueConfig(document: CueConfigDocument): MaterializedCueConfig {
 	const warnings: string[] = [];
 	const healthWarnings: string[] = [];
