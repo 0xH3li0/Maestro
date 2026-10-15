@@ -676,3 +676,30 @@ describe('cancelled preparation', () => {
 		}
 	});
 });
+
+it('retains known Relay provenance when cancelled before provider spawn', async () => {
+	const controller = new AbortController();
+	const recordRelayOrigin = vi.fn();
+	const spawn = vi.fn();
+	const run = createPluginHeadlessAgentRunner({
+		getAgent: () => agent,
+		detectAgent: async () => {
+			controller.abort();
+			return { available: true };
+		},
+		hasPluginTools: () => false,
+		spawn,
+		recordRelayOrigin,
+		prepareSystemPrompt: async () => undefined,
+		issueRunToken: vi.fn(),
+		revokeRunToken: vi.fn(),
+		cliScriptPath: () => '/cli.js',
+		audit: vi.fn(),
+	});
+	expect(
+		await run(agent.id, 'resume', 'known-conversation', controller.signal, 'relay')
+	).toMatchObject({ success: false });
+	expect(spawn).not.toHaveBeenCalled();
+	expect(isAgentBusy(agent, undefined)).toBe(false);
+	expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'known-conversation');
+});

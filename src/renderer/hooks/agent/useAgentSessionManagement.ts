@@ -377,18 +377,19 @@ export function useAgentSessionManagement(
 						// If a tab already exists for this session, repopulate (if needed) and
 						// focus it instead of creating a duplicate.
 						if (freshExistingTab) {
-							const updatedTabs = s.aiTabs.map((tab) =>
-								tab.id === freshExistingTab.id
-									? {
-											...tab,
-											logs: tab.logs && tab.logs.length > 0 ? tab.logs : messages,
-											name: name ?? tab.name,
-											starred: isStarred || tab.starred,
-											usageStats: finalUsageStats ?? tab.usageStats,
-											origin: origin ?? tab.origin,
-										}
-									: tab
-							);
+							const updatedTabs = s.aiTabs.map((tab) => {
+								if (tab.id !== freshExistingTab.id) return tab;
+								// Already-loaded tabs own newer metadata than History's snapshot.
+								if (tab.logs?.length) return { ...tab, origin: origin ?? tab.origin };
+								return {
+									...tab,
+									logs: messages,
+									name: name ?? tab.name,
+									starred: isStarred || tab.starred,
+									usageStats: finalUsageStats ?? tab.usageStats,
+									origin: origin ?? tab.origin,
+								};
+							});
 							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
 						}
 

@@ -267,6 +267,48 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 		});
 	});
 
+	it('enriches a loaded tab with origin while preserving its current metadata over old History snapshots', async () => {
+		const currentUsage = {
+			inputTokens: 500,
+			outputTokens: 300,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 1,
+		};
+		const tab = createMockAITab({
+			id: 'loaded',
+			agentSessionId: AGENT_SESSION_ID,
+			name: 'Current name',
+			usageStats: currentUsage,
+			state: 'busy',
+			inputValue: 'draft',
+			logs: [{ id: 'log', timestamp: 1, source: 'user', text: 'hello' }],
+		});
+		const session = createMockSession({
+			id: 'target',
+			projectRoot: '/project',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'another',
+		});
+		seedActiveSession(session);
+		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({
+			[AGENT_SESSION_ID]: { origin: 'relay' },
+		});
+		const deps = makeDeps(session);
+		deps.setSessions = useSessionStore.getState().setSessions;
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		await act(async () => {
+			expect(
+				await result.current.handleResumeSession(AGENT_SESSION_ID, [], 'Old history name', false, {
+					...currentUsage,
+					inputTokens: 1,
+				})
+			).toBe(true);
+		});
+		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual({ ...tab, origin: 'relay' });
+	});
+
 	it('keeps Relay provenance on the tab through a persisted reload', async () => {
 		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({
 			[AGENT_SESSION_ID]: { origin: 'relay' },

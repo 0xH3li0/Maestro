@@ -97,6 +97,7 @@ export function createPluginHeadlessAgentRunner(
 		let pluginRunProofFile: string | undefined;
 		let releaseActivity: (() => void) | undefined;
 		let settled = false;
+		let conversationId = providerSessionId;
 		try {
 			pluginRunProofFile = runToken
 				? createPluginRunProofFile(runToken, HEADLESS_RUN_COMPLETION_TIMEOUT_MS)
@@ -136,19 +137,7 @@ export function createPluginHeadlessAgentRunner(
 				},
 				onProgress,
 			});
-			// Provenance belongs to the conversation even when delivery is cancelled.
-			// The broker deliberately refuses late results/bindings on plugin stop;
-			// recording here preserves origin without granting resume authority.
-			const conversationId = result.agentSessionId || providerSessionId;
-			if (origin === 'relay' && conversationId) {
-				try {
-					deps.recordRelayOrigin?.(agent, conversationId);
-				} catch (error) {
-					logger.warn('Could not record Relay session origin', '[PluginHeadless]', {
-						error: String(error),
-					});
-				}
-			}
+			conversationId = result.agentSessionId || providerSessionId;
 
 			const receiptsOverflowed =
 				!!receiptToolId && !!runToken && deps.hasRunReceiptOverflow!(runToken);
@@ -175,6 +164,18 @@ export function createPluginHeadlessAgentRunner(
 		} finally {
 			settled = true;
 			releaseActivity?.();
+			// Provenance belongs to the conversation even when delivery is cancelled.
+			// The broker deliberately refuses late results/bindings on plugin stop;
+			// recording here preserves origin without granting resume authority.
+			if (origin === 'relay' && conversationId) {
+				try {
+					deps.recordRelayOrigin?.(agent, conversationId);
+				} catch (error) {
+					logger.warn('Could not record Relay session origin', '[PluginHeadless]', {
+						error: String(error),
+					});
+				}
+			}
 			// Revoke authority even if removing the on-disk proof fails.
 			if (runToken) deps.revokeRunToken(runToken);
 			if (pluginRunProofFile) {
