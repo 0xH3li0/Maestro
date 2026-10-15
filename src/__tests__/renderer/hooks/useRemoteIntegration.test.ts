@@ -3154,6 +3154,31 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote notify toast', () => {
+		it('keeps CLI milliseconds unchanged and expires a five-second toast after five seconds', () => {
+			vi.useFakeTimers();
+			try {
+				renderHook(() => useRemoteIntegration(createDeps()));
+				act(() => {
+					onRemoteNotifyToastHandler?.({
+						title: 'Timeout test',
+						message: 'Hello',
+						color: 'theme',
+						duration: 5000,
+					});
+				});
+				const toast = useNotificationStore.getState().toasts[0];
+				expect(toast.duration).toBe(5000);
+				act(() => {
+					vi.advanceTimersByTime(5000);
+				});
+				expect(
+					useNotificationStore.getState().toasts.find((n) => n.id === toast.id)
+				).toBeUndefined();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		// Regression: the renderer used to fall back to `session.activeTabId` when
 		// the IPC payload omitted `tabId`. That caused every agent-scoped toast
 		// (e.g. cron-fired notifications) to be stamped with whatever AI tab was

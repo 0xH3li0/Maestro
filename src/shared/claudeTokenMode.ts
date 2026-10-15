@@ -21,6 +21,8 @@
  * (its historical behavior), toggle off reads as `api`.
  */
 
+import { AUTOMATION_SETTINGS_METADATA } from './settingsMetadataAutomation';
+
 export type ClaudeTokenMode = 'api' | 'interactive' | 'dynamic';
 
 /** The persisted pair that encodes a token mode on a session / moderator config. */
@@ -129,4 +131,34 @@ export function toClaudeTokenModeSource(mode: ClaudeTokenMode): Required<ClaudeT
 		case 'dynamic':
 			return { enableMaestroP: true, maestroPMode: 'dynamic' };
 	}
+}
+
+/** A day: the idle cap handed to maestro-p when Auto Run's own watchdog is off. */
+const AUTO_RUN_UNWATCHED_MAX_WAIT_SECONDS = 24 * 60 * 60;
+
+/**
+ * maestro-p's `--max-wait` for an Auto Run task that runs through the TUI.
+ *
+ * maestro-p kills a turn after 300s with no transcript output, which is right
+ * for a chat turn and wrong for Auto Run: a task that runs a ten-minute test
+ * suite writes nothing while it waits. Auto Run already supervises its tasks
+ * with an inactivity watchdog (default four hours), so maestro-p gets that
+ * budget, then the wall-clock cap, then a day when both are switched off.
+ */
+export function autoRunMaestroPMaxWaitSeconds(settings: {
+	// `unknown` so the CLI can hand over its raw settings file.
+	autoRunInactivityTimeoutMin?: unknown;
+	autoRunMaxTaskDurationMin?: unknown;
+}): number {
+	// An unset value means the documented default (the CLI reads the raw file,
+	// where a setting never changed is simply absent); 0 means switched off.
+	const minutes = (value: unknown, key: string): number => {
+		const raw = value === undefined ? AUTOMATION_SETTINGS_METADATA[key]?.default : value;
+		return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0;
+	};
+	const inactivity = minutes(settings.autoRunInactivityTimeoutMin, 'autoRunInactivityTimeoutMin');
+	if (inactivity > 0) return Math.ceil(inactivity * 60);
+	const maxDuration = minutes(settings.autoRunMaxTaskDurationMin, 'autoRunMaxTaskDurationMin');
+	if (maxDuration > 0) return Math.ceil(maxDuration * 60);
+	return AUTO_RUN_UNWATCHED_MAX_WAIT_SECONDS;
 }

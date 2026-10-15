@@ -76,6 +76,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Token pricing and Codex token totals:** `resolveModelPricing()` / `calculateModelCost()` in `src/shared/modelPricing.ts`, and `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
+- **Usage, cost and message count of a Claude transcript:** `computeClaudeSessionUsage()`, `computeClaudeUsageWithSubagents()`, `readClaudeSubagentTranscripts()` in `src/shared/claudeSessionUsage.ts`; `countClaudeTranscriptMessages()` in `src/shared/claudeTranscriptMessages.ts`
 
 #### Paths, files, and strings
 
@@ -149,6 +150,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
+- **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
 - **Naming the account a login acts on:** `<AccountPill>`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()`, `credentialKindBlocksLogin()`, `providerAuthKey()` in `src/shared/providerAuthIdentity.ts`
 - **Typing a login command into a shell:** `formatAgentLoginCommand()`, `loginShellSyntaxFor()` in `src/shared/agentMetadata.ts`
@@ -263,6 +265,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })` in `src/renderer/stores/notificationStore.ts` (async results, errors, sticky messages)
 - **What a toast click does:** `ToastClickAction` + `parseToastClickAction()` in `src/shared/toastClickAction.ts`, dispatched by `dispatchToastClickAction()` in `src/renderer/services/toastClickActions.ts`
+- **Toast history / unread state:** `history`, `markNotificationRead()`, `selectUnreadNotificationCount()` in `src/renderer/stores/notificationStore.ts`; `<NotificationCenter>`, `<NotificationCenterHost>` in `src/renderer/components/NotificationCenter.tsx`
 - **Center flash (rapid acks):** `notifyCenterFlash()` in `src/renderer/stores/centerFlashStore.ts`; `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts` (momentary acks; never a Toast for clipboard)
 - **Keeping toasts off a surface the user works in:** `useToastAvoidZone()`, `toastBottomInset()` in `src/renderer/hooks/ui/useToastAvoidZone.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`, dispatched by `openUiSurface()` in `src/renderer/utils/openUiSurface.ts`
@@ -313,6 +316,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`
+- **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
 - **Previewing a parquet file:** `<ParquetViewer>` in `src/renderer/components/ParquetViewer/`, over the main-process engine in `src/main/parquet/` and the shared filter language in `src/shared/parquet/`

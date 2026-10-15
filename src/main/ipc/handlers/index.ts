@@ -62,6 +62,7 @@ import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerMaestroRunHandlers } from './maestroRun';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
+import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
@@ -145,7 +146,7 @@ export { registerComputerHistoryHandlers };
 export { registerMaestroRunHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
-export { registerNotificationsHandlers };
+export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
@@ -356,6 +357,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+	registerNotificationHistoryHandlers();
 	// Register notification handlers (OS notifications and TTS). The window
 	// registry getter lets a notification click focus the window that owns the
 	// completing agent rather than always the primary window (multi-window).

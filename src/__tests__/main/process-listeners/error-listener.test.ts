@@ -46,7 +46,7 @@ beforeEach(() => {
 	processManager = new EventEmitter();
 	safeSend = vi.fn();
 	logger = { info: vi.fn(), warn: vi.fn() };
-	setupErrorListener(processManager as never, { safeSend, logger } as never);
+	setupErrorListener(processManager as never, { safeSend, logger } as never, vi.fn());
 });
 
 afterEach(() => {

@@ -431,6 +431,11 @@ export const DEFAULT_SHORTCUTS = {
 	// Palette-only actions that had no keyboard route at all. Same reasoning:
 	// registered so they can be bound, unbound so nothing is claimed by default.
 	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	openNotificationCenter: {
+		id: 'openNotificationCenter',
+		label: 'Open Notification Center',
+		keys: [],
+	},
 	clearAllNotifications: {
 		id: 'clearAllNotifications',
 		label: 'Clear All Notifications',

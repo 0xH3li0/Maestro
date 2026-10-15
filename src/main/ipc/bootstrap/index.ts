@@ -42,6 +42,7 @@ import {
 	registerMaestroRunHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
@@ -542,6 +543,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
+	registerNotificationHistoryHandlers();
 	registerNotificationsHandlers({
 		getMainWindow: deps.getMainWindow,
 		ensureMainWindow: deps.ensureMainWindow,

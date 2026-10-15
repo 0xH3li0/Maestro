@@ -826,7 +826,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
