@@ -335,10 +335,11 @@ describe('cue-engine-lock', () => {
 			expect(lock && isCueEngineLockOwnedByThisProcess(lock)).toBe(true);
 		});
 
-		// Two containers sharing a data directory, each running its engine as
-		// PID 1 under tini: the PID matches ours but the lock is not ours.
-		it('reports a conflict for a foreign token even when the PID matches ours', async () => {
-			writeFullLock({ pid: process.pid, token: 'someone-else', pidNsInode: currentPidNsInode() });
+		// A lock that records our pid but whose namespace cannot be proven to be
+		// ours (no inode recorded, as off Linux or without /proc) may belong to
+		// another container's PID 1, so it keeps the heartbeat wait.
+		it('reports a conflict for a foreign token naming our PID when no namespace is recorded', async () => {
+			writeFullLock({ pid: process.pid, token: 'someone-else' });
 			const { acquireCueEngineLock, touchCueEngineLock, releaseCueEngineLock } =
 				await freshModule();
 
@@ -349,6 +350,127 @@ describe('cue-engine-lock', () => {
 			expect(touchCueEngineLock('desktop')).toBe('lost');
 			releaseCueEngineLock();
 			expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).token).toBe('someone-else');
+		});
+
+		// Two containers sharing a data directory, each running its engine as
+		// PID 1 under tini: the PID matches ours but the lock is not ours.
+		it('reports a conflict for a foreign token naming our PID from another namespace', async () => {
+			writeFullLock({
+				pid: process.pid,
+				token: 'other-container',
+				pidNsInode: foreignPidNsInode(),
+			});
+			const { acquireCueEngineLock, readCueEngineLock } = await freshModule();
+
+			expect(acquireCueEngineLock('desktop').acquired).toBe(false);
+			expect(readCueEngineLock()?.token).toBe('other-container');
+		});
+
+		// A container restart after kill -9: the new engine gets the dead one's
+		// pid back in the same namespace. Its writer cannot be alive, so the
+		// lock is taken at once instead of after the heartbeat window.
+		it.runIf(currentPidNsInode() !== undefined)(
+			'takes over at once a foreign token naming our PID in our own namespace',
+			async () => {
+				writeFullLock({
+					pid: process.pid,
+					token: 'previous-engine',
+					pidNsInode: currentPidNsInode(),
+				});
+				const { acquireCueEngineLock, readCueEngineLock, isCueEngineLockOwnedByThisProcess } =
+					await freshModule();
+
+				expect(readCueEngineLock()).toBeNull();
+				expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+				const lock = readCueEngineLock();
+				expect(lock?.token).not.toBe('previous-engine');
+				expect(lock && isCueEngineLockOwnedByThisProcess(lock)).toBe(true);
+			}
+		);
+	});
+
+	describe('pid probe', () => {
+		function epermKill() {
+			return vi.spyOn(process, 'kill').mockImplementation(() => {
+				throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+			});
+		}
+
+		// An engine run as another user: kill(pid, 0) is refused with EPERM. It
+		// is alive, as the doctor's shared probe says, so it keeps the lock.
+		it('treats a pid it may not signal (EPERM) as alive', async () => {
+			writeFullLock({ pid: 4242, token: 'other-user' });
+			const killSpy = epermKill();
+			try {
+				const { acquireCueEngineLock, readCueEngineLock } = await freshModule();
+				expect(readCueEngineLock()?.token).toBe('other-user');
+				expect(acquireCueEngineLock('standalone').acquired).toBe(false);
+			} finally {
+				killSpy.mockRestore();
+			}
+		});
+
+		// EPERM cannot strand a lock: a quiet heartbeat still retires it.
+		it('still retires an EPERM lock once its heartbeat is stale', async () => {
+			const old = new Date(Date.now() - 10 * 60_000).toISOString();
+			writeFullLock({ pid: 4242, token: 'other-user', startedAt: old, heartbeatAt: old });
+			const killSpy = epermKill();
+			try {
+				const { acquireCueEngineLock } = await freshModule();
+				expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			} finally {
+				killSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('describeCueEngineLockHolder', () => {
+		it('names a different running process', async () => {
+			const { describeCueEngineLockHolder } = await freshModule();
+			const holder = describeCueEngineLockHolder({
+				pid: 4242,
+				mode: 'standalone',
+				token: 'other',
+				startedAt: new Date().toISOString(),
+				heartbeatAt: new Date().toISOString(),
+			});
+			expect(holder.relation).toBe('other-process');
+			expect(holder.staleInMs).toBeUndefined();
+			expect(holder.text).toContain('pid 4242 is a different process that is still running');
+		});
+
+		it('says when the recorded pid is our own and when the lock frees', async () => {
+			const { describeCueEngineLockHolder, CUE_ENGINE_LOCK_STALE_MS } = await freshModule();
+			const beat = new Date(Date.now() - 60_000).toISOString();
+			const holder = describeCueEngineLockHolder({
+				pid: process.pid,
+				mode: 'standalone',
+				token: 'previous-engine',
+				startedAt: beat,
+				heartbeatAt: beat,
+			});
+			expect(holder.relation).toBe('own-pid');
+			expect(holder.staleInMs).toBeGreaterThan(CUE_ENGINE_LOCK_STALE_MS - 61_000);
+			expect(holder.staleInMs).toBeLessThanOrEqual(CUE_ENGINE_LOCK_STALE_MS - 60_000);
+			expect(holder.text).toContain(`pid ${process.pid}, which is this process's own pid`);
+			expect(holder.text).toContain('no longer running');
+			expect(holder.text).toMatch(/in about 2m( \d+s)?\./);
+		});
+
+		it('says a lock from another PID namespace is judged by its heartbeat', async () => {
+			const { describeCueEngineLockHolder } = await freshModule();
+			const now = new Date().toISOString();
+			const holder = describeCueEngineLockHolder({
+				pid: 1,
+				mode: 'standalone',
+				token: 'other-container',
+				pidNsInode: foreignPidNsInode(),
+				startedAt: now,
+				heartbeatAt: now,
+			});
+			expect(holder.relation).toBe('foreign-pid-namespace');
+			expect(holder.staleInMs).toBeGreaterThan(0);
+			expect(holder.text).toContain('in another PID namespace');
 		});
 	});
 

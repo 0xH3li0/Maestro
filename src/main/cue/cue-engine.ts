@@ -82,6 +82,7 @@ import {
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 import {
 	acquireCueEngineLock,
+	describeCueEngineLockHolder,
 	releaseCueEngineLock,
 	touchCueEngineLock,
 	CUE_ENGINE_LOCK_HEARTBEAT_MS,
@@ -696,7 +697,7 @@ export class CueEngine {
 		if (!lock.acquired) {
 			this.meteredOnLog(
 				'error',
-				`[CUE] Refusing to start: another Cue engine (${lock.heldBy.mode}, pid ${lock.heldBy.pid}) already holds the lock for this data directory. Stop it first, or this instance will exit without starting.`
+				`[CUE] Refusing to start: ${describeCueEngineLockHolder(lock.heldBy).text} The lock is for this data directory; this instance will not start until it is free.`
 			);
 			return;
 		}

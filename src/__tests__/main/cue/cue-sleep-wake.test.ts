@@ -248,7 +248,9 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should log sleep detection with gap duration', () => {
+	// A gap found at start is the engine's downtime; "Sleep detected" is kept
+	// for a gap seen while running (below).
+	it('should log a gap found at start as downtime with its duration', () => {
 		const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(fiveMinutesAgo);
 
@@ -258,8 +260,9 @@ describe('CueEngine sleep/wake detection', () => {
 
 		expect(deps.onLog).toHaveBeenCalledWith(
 			'cue',
-			expect.stringContaining('Sleep detected (gap: 5m)')
+			expect.stringContaining('Engine was not running for 5m')
 		);
+		expect(deps.onLog).not.toHaveBeenCalledWith('cue', expect.stringContaining('Sleep detected'));
 
 		engine.stop();
 	});

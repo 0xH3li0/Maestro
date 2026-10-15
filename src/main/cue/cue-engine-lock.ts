@@ -47,6 +47,30 @@
  * `kill(pid, 0)` here, so such a lock is judged by its heartbeat alone. On
  * Linux the lock records the PID namespace inode to tell the two apart.
  *
+ * One case is decided without waiting for the heartbeat: a lock that records
+ * OUR pid and OUR PID namespace inode under a token that is not ours. Two live
+ * processes cannot share a pid inside one namespace, and two live namespaces
+ * cannot share an inode, so its writer is gone (the usual case: an engine was
+ * SIGKILLed in a container and the restart got the same pid back). Such a lock
+ * is stale at once rather than after {@link CUE_ENGINE_LOCK_STALE_MS}. The rule
+ * needs the inode on BOTH sides: a lock without one (written off Linux, or
+ * where `/proc` could not be read) may come from another container whose
+ * engine is also PID 1, so it keeps the heartbeat wait. A token-less lock
+ * naming our pid is already treated as ours (see
+ * {@link isCueEngineLockOwnedByThisProcess}). The rule only changes the
+ * judgement; the takeover still goes through the generation claim below, so
+ * two takers of one stale lock and the half-written-file case are unchanged.
+ *
+ * The pid probe is the shared one (`isPidAlive` in `maestro-lib/client/discovery`),
+ * the same one `maestro-cli doctor` uses: `kill(pid, 0)` failing with EPERM
+ * means the process exists and this caller may not signal it (an engine run as
+ * another user), so it counts as alive. That cannot strand a lock: a dead
+ * owner's pid reused by a process we may not signal still loses to the boot
+ * time and heartbeat checks, which retire it within
+ * {@link CUE_ENGINE_LOCK_STALE_MS}, exactly like a reused pid we can signal.
+ * Calling EPERM dead instead would let a second engine take a live engine's
+ * lock and double-fire until the first one's next beat reported it lost.
+ *
  * Taking over a stale lock must be atomic, not just creating one. The naive
  * "unlink the stale file, then create with `wx`" lets two engines that both
  * read the same stale lock each remove what the other just created, so both
@@ -109,6 +133,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { isWindows } from '../../shared/platformDetection';
+import { isPidAlive } from '../../shared/maestro-lib/client/discovery';
 import {
 	CUE_ENGINE_LOCK_SPEC,
 	classifyProcessLock,
@@ -180,21 +205,6 @@ function currentBootTime(): number {
 }
 
 /**
- * Whether the process named in a lock is still alive. `process.kill(pid, 0)`
- * sends no signal - it only tests for permission/existence - and Node
- * documents this as working the same way on Windows and POSIX.
- */
-function isProcessAlive(pid: number): boolean {
-	if (!Number.isFinite(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/**
  * Whether the lock was written from a different PID namespace than ours, so
  * its PID cannot be tested or signaled from here. A lock that does not record
  * a namespace (older files, non-Linux owners) is treated as same-namespace,
@@ -214,10 +224,80 @@ export function isCueEngineLockOwnedByThisProcess(info: CueEngineLockInfo): bool
 	return info.pid === process.pid && !isCueEngineLockInForeignPidNamespace(info);
 }
 
+/** Milliseconds until the lock's heartbeat goes stale; 0 when it already has or cannot be read. */
+function msUntilHeartbeatStale(info: CueEngineLockInfo): number {
+	const beat = Date.parse(info.heartbeatAt ?? info.startedAt);
+	if (!Number.isFinite(beat)) return 0;
+	return Math.max(0, beat + CUE_ENGINE_LOCK_STALE_MS - Date.now());
+}
+
 function isHeartbeatFresh(info: CueEngineLockInfo): boolean {
 	const beat = Date.parse(info.heartbeatAt ?? info.startedAt);
 	if (!Number.isFinite(beat)) return false;
 	return Date.now() - beat <= CUE_ENGINE_LOCK_STALE_MS;
+}
+
+/**
+ * How a lock that refused us relates to this process:
+ *
+ * - `other-process`: a different, running process in our PID namespace.
+ * - `own-pid`: it records this process's own pid under another token, so it
+ *   was left by an earlier engine that got the same pid and is gone. Only
+ *   reported when the namespace cannot be proven to be ours (otherwise the
+ *   lock is already stale, see the module doc); it frees when its heartbeat
+ *   goes stale.
+ * - `foreign-pid-namespace`: written from another PID namespace (another
+ *   container), so its pid means nothing here; live while its heartbeat is fresh.
+ */
+export type CueEngineLockHolderRelation = 'other-process' | 'own-pid' | 'foreign-pid-namespace';
+
+export interface CueEngineLockHolderDescription {
+	relation: CueEngineLockHolderRelation;
+	/**
+	 * Milliseconds until the lock goes stale if its writer is gone. Present for
+	 * `own-pid` and `foreign-pid-namespace`, where only the heartbeat decides.
+	 */
+	staleInMs?: number;
+	/** One sentence naming the holder, for refusal messages. */
+	text: string;
+}
+
+function formatWait(ms: number): string {
+	const seconds = Math.ceil(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
+}
+
+/**
+ * Say what is actually known about the holder of a lock that refused this
+ * process, so a refusal does not read as the engine blocking itself.
+ */
+export function describeCueEngineLockHolder(
+	info: CueEngineLockInfo
+): CueEngineLockHolderDescription {
+	const who = `A ${info.mode} Cue engine (pid ${info.pid}, started ${info.startedAt})`;
+	if (isCueEngineLockInForeignPidNamespace(info)) {
+		const staleInMs = msUntilHeartbeatStale(info);
+		return {
+			relation: 'foreign-pid-namespace',
+			staleInMs,
+			text: `${who} in another PID namespace (another container) holds the lock; pid ${info.pid} does not name a process here. Its heartbeat is recent, so it counts as running; if that engine is gone the lock frees in about ${formatWait(staleInMs)}.`,
+		};
+	}
+	if (info.pid === process.pid && !isCueEngineLockOwnedByThisProcess(info)) {
+		const staleInMs = msUntilHeartbeatStale(info);
+		return {
+			relation: 'own-pid',
+			staleInMs,
+			text: `The lock records pid ${info.pid}, which is this process's own pid: it was left by an earlier engine (started ${info.startedAt}) that is no longer running. It frees when its heartbeat goes stale, in about ${formatWait(staleInMs)}.`,
+		};
+	}
+	return {
+		relation: 'other-process',
+		text: `${who} holds the lock; pid ${info.pid} is a different process that is still running.`,
+	};
 }
 
 /**
@@ -230,15 +310,31 @@ function isHeartbeatFresh(info: CueEngineLockInfo): boolean {
  * owner may sit on another host whose boot time says nothing about this one.
  * Its heartbeat is the only evidence available, so it is live while fresh.
  */
+/**
+ * Whether the lock records our own pid in our own PID namespace under another
+ * token, so its writer can no longer exist (see the module doc). False when
+ * either side has no namespace inode: then the pid proves nothing.
+ */
+function isLeftByEarlierHolderOfOurPid(info: CueEngineLockInfo): boolean {
+	return (
+		info.token !== undefined &&
+		info.token !== processToken &&
+		info.pid === process.pid &&
+		currentPidNsInode !== undefined &&
+		info.pidNsInode === currentPidNsInode
+	);
+}
+
 function isLockLive(info: CueEngineLockInfo): boolean {
 	if (isCueEngineLockInForeignPidNamespace(info)) return isHeartbeatFresh(info);
+	if (isLeftByEarlierHolderOfOurPid(info)) return false;
 	// Same namespace: the primitive's judgement (pid, then boot, then heartbeat),
 	// so the engine and `doctor` cannot disagree about one of these.
 	return (
 		classifyProcessLock(info, CUE_ENGINE_LOCK_SPEC, {
 			now: () => Date.now(),
 			bootTime: currentBootTime,
-			isPidAlive: isProcessAlive,
+			isPidAlive,
 		}).state === 'live'
 	);
 }

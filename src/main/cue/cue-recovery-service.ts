@@ -139,7 +139,15 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 			if (gapMs < SLEEP_THRESHOLD_MS) return;
 
 			const gapMinutes = Math.round(gapMs / 60_000);
-			deps.onLog('cue', `[CUE] Sleep detected (gap: ${gapMinutes}m). Reconciling missed events.`);
+			// At engine start the gap is the engine's downtime (stopped, killed,
+			// or the app closed), not the machine sleeping; only a gap seen while
+			// running is a sleep. Reconciliation is the same either way.
+			deps.onLog(
+				'cue',
+				options.atEngineStart === true
+					? `[CUE] Engine was not running for ${gapMinutes}m. Reconciling missed events.`
+					: `[CUE] Sleep detected (gap: ${gapMinutes}m). Reconciling missed events.`
+			);
 
 			const reconcileSessions = new Map<string, ReconcileSessionInfo>();
 			const sessions = deps.getSessions();

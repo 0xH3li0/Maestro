@@ -17,6 +17,7 @@
  */
 
 import {
+	describeCueEngineLockHolder,
 	isCueEngineLockInForeignPidNamespace,
 	isCueEngineLockOwnedByThisProcess,
 	readCueEngineLock,
@@ -388,11 +389,33 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	const startedByUs = lock ? isCueEngineLockOwnedByThisProcess(lock) : false;
 
 	if (!startedByUs) {
-		const conflictMessage = lock
-			? `Another Cue engine (${lock.mode}, pid ${lock.pid}, started ${lock.startedAt}) already holds the lock. Stop it first ("maestro-cli cue engine stop" if it's a standalone runner, or disable Cue in the desktop app's Settings).`
-			: 'Engine failed to start (see the log line above for the reason).';
+		const holder = lock ? describeCueEngineLockHolder(lock) : null;
+		const advice =
+			holder?.relation === 'other-process'
+				? ' Stop it first ("maestro-cli cue engine stop" if it\'s a standalone runner, or disable Cue in the desktop app\'s Settings).'
+				: ' Start again after that, or stop that engine first if it is still running.';
+		const conflictMessage =
+			lock && holder
+				? `${holder.text}${advice}`
+				: 'Engine failed to start (see the log line above for the reason).';
 		if (options.json) {
-			logger.writeStdout(JSON.stringify({ started: false, error: conflictMessage }));
+			logger.writeStdout(
+				JSON.stringify({
+					started: false,
+					error: conflictMessage,
+					...(lock && holder
+						? {
+								holder: {
+									pid: lock.pid,
+									mode: lock.mode,
+									startedAt: lock.startedAt,
+									relation: holder.relation,
+									...(holder.staleInMs !== undefined ? { staleInMs: holder.staleInMs } : {}),
+								},
+							}
+						: {}),
+				})
+			);
 		} else {
 			log('error', conflictMessage);
 		}
