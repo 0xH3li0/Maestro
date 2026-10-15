@@ -7,6 +7,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const touch = vi.hoisted(() => vi.fn(() => 'held' as 'held' | 'lost'));
+const acquire = vi.hoisted(() =>
+	vi.fn((): { acquired: true } | { acquired: false; heldBy: { pid: number } } => ({
+		acquired: true,
+	}))
+);
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: () => null,
@@ -14,7 +19,11 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	watchCueYaml: () => () => {},
 }));
 vi.mock('../../../main/cue/cue-engine-lock', () => ({
-	acquireCueEngineLock: () => ({ acquired: true }),
+	acquireCueEngineLock: acquire,
+	describeCueEngineLockHolder: (info: { pid: number }) => ({
+		relation: 'other-process',
+		text: `Holder pid ${info.pid}.`,
+	}),
 	releaseCueEngineLock: () => {},
 	touchCueEngineLock: touch,
 	CUE_ENGINE_LOCK_HEARTBEAT_MS: 30_000,
@@ -46,6 +55,8 @@ describe('CueEngine lock heartbeat', () => {
 		vi.useFakeTimers();
 		touch.mockReset();
 		touch.mockReturnValue('held');
+		acquire.mockReset();
+		acquire.mockReturnValue({ acquired: true });
 	});
 
 	afterEach(() => {
@@ -78,5 +89,21 @@ describe('CueEngine lock heartbeat', () => {
 		touch.mockReturnValue('lost');
 		expect(() => vi.advanceTimersByTime(30_000)).not.toThrow();
 		expect(engine.getActiveRuns()).toEqual([]);
+	});
+
+	// start() makes one attempt and nothing retries it, so the line must not
+	// promise that the engine starts by itself once the lock frees.
+	it('says a refused start did not happen and must be started again', () => {
+		acquire.mockReturnValue({ acquired: false, heldBy: { pid: 4242 } });
+		const deps = createMockDeps();
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		expect(deps.onLog).toHaveBeenCalledWith(
+			'error',
+			'[CUE] Refusing to start: Holder pid 4242. The lock is for this data directory. This instance did not start; start it again once the lock is free.'
+		);
+		expect(engine.isEnabled()).toBe(false);
+		expect(touch).not.toHaveBeenCalled();
 	});
 });

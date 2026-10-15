@@ -697,7 +697,7 @@ export class CueEngine {
 		if (!lock.acquired) {
 			this.meteredOnLog(
 				'error',
-				`[CUE] Refusing to start: ${describeCueEngineLockHolder(lock.heldBy).text} The lock is for this data directory; this instance will not start until it is free.`
+				`[CUE] Refusing to start: ${describeCueEngineLockHolder(lock.heldBy).text} The lock is for this data directory. This instance did not start; start it again once the lock is free.`
 			);
 			return;
 		}
