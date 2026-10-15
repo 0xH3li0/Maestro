@@ -979,6 +979,6 @@ describe('myStore', () => {
 5. **Mock `window.maestro`** at the setup level; override specific methods per test.
 6. **Use `data-testid`** for elements that lack accessible roles.
 7. **Prefer `screen.getByRole`** and `screen.getByText` for queries (follows Testing Library best practices).
-8. **Use `waitFor`** for async assertions and `act` for state updates.
+8. **Use `waitFor`** for async assertions and `act` for state updates. Wait for the observable boundary being asserted: group-chat `idle` can precede its asynchronous history append, so poll the persisted history and all expected entry/usage assertions together rather than reading once after `idle`.
 9. **Mock external libraries** (react-markdown, lucide-react) to avoid rendering complexity.
 10. **Test file naming**: `ComponentName.test.tsx` for components, `useHookName.test.ts` for hooks, `storeName.test.ts` for stores.

@@ -317,20 +317,27 @@ describe('runtime group chats', () => {
 				// 1000 input + 200 cache read + 100 cache creation, of the agent's default window.
 				expect(participant).toMatchObject({ totalCost: 0.01, tokenCount: 1300, contextUsage: 1 });
 			}
-			// The turn's own measurement rides its History entry: the chat knows what it cost.
-			const history = fs
-				.readFileSync(path.join(dir, 'group-chats', chatId, 'history.jsonl'), 'utf-8')
-				.trim()
-				.split('\n')
-				.map((line) => JSON.parse(line));
-			const turns = history.filter((entry) => entry.type !== 'user');
-			expect(turns.map((entry) => entry.type).sort()).toEqual([
-				'delegation',
-				'response',
-				'response',
-				'synthesis',
-			]);
-			expect(turns.every((entry) => entry.cost === 0.01 && entry.tokenCount === 1350)).toBe(true);
+			// Idle precedes the synthesis history append; wait for the entry and its usage together.
+			await vi.waitFor(
+				() => {
+					const history = fs
+						.readFileSync(path.join(dir, 'group-chats', chatId, 'history.jsonl'), 'utf-8')
+						.trim()
+						.split('\n')
+						.map((line) => JSON.parse(line));
+					const turns = history.filter((entry) => entry.type !== 'user');
+					expect(turns.map((entry) => entry.type).sort()).toEqual([
+						'delegation',
+						'response',
+						'response',
+						'synthesis',
+					]);
+					expect(turns.every((entry) => entry.cost === 0.01 && entry.tokenCount === 1350)).toBe(
+						true
+					);
+				},
+				{ timeout: 10_000, interval: 20 }
+			);
 		});
 	});
 
