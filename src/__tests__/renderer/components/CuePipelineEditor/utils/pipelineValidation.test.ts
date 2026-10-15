@@ -304,7 +304,7 @@ describe('pipelineValidation', () => {
 				expect(errors.some((e) => /needs a "watch" glob pattern/.test(e))).toBe(true);
 			});
 
-			it('github.pull_request accepts missing repo (defaults to current)', () => {
+			it('github.pull_request leaves a missing repo to readiness (no error here)', () => {
 				const t = triggerNode('t1', 'github.pull_request', {});
 				const a = agentNode('a1', { inputPrompt: 'p' });
 				expect(validatePipelines([pipeline('PR', [t, a], [edge('e1', 't1', 'a1')])])).toEqual([]);
@@ -314,7 +314,9 @@ describe('pipelineValidation', () => {
 				const t = triggerNode('t1', 'github.pull_request', { repo: '  ' });
 				const a = agentNode('a1', { inputPrompt: 'p' });
 				const errors = validatePipelines([pipeline('PR', [t, a], [edge('e1', 't1', 'a1')])]);
-				expect(errors.some((e) => /empty "repo"/.test(e))).toBe(true);
+				const repoError = errors.find((e) => /empty "repo"/.test(e));
+				expect(repoError).toContain('set it to "owner/repo"');
+				expect(repoError).not.toMatch(/leave blank/);
 			});
 
 			it('github.issue same rule as pull_request', () => {

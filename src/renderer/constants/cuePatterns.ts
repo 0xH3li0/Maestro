@@ -175,7 +175,7 @@ subscriptions:
 		yaml: `subscriptions:
   - name: "Review New PRs"
     event: github.pull_request
-    # repo: "owner/repo"  # required - the trigger never runs without it
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     poll_minutes: 5
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, reviews)
     # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
@@ -195,7 +195,7 @@ subscriptions:
 		yaml: `subscriptions:
   - name: "Triage New Issues"
     event: github.issue
-    # repo: "owner/repo"  # required - the trigger never runs without it
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     poll_minutes: 10
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, labels)
     # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
@@ -212,7 +212,7 @@ subscriptions:
 		yaml: `subscriptions:
   - name: "Work Labeled PRs"
     event: github.label
-    # repo: "owner/repo"  # required - the trigger never runs without it
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     gh_label_target: pr   # pr | issue | both (default: both)
     gh_labels:
       - "ready-to-merge"

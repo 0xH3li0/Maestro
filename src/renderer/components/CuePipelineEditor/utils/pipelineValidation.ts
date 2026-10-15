@@ -85,14 +85,16 @@ function validateTriggerConfig(
 		case 'github.pull_request':
 		case 'github.issue':
 		case 'github.label':
-			// repo is optional in the YAML schema (defaults to current repo via gh CLI)
-			// but if provided it must be non-empty.
+			// The trigger needs repo to run at all: without it the engine gives the
+			// subscription no trigger source (the repo is never detected), and
+			// `cue engine check` reports it. Only a present-but-empty repo is an
+			// error here; a missing one is left to readiness.
 			if (
 				cfg.repo !== undefined &&
 				(typeof cfg.repo !== 'string' || cfg.repo.trim().length === 0)
 			) {
 				errors.push(
-					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
+					`"${pipelineName}": ${label} trigger has an empty "repo" - set it to "owner/repo", since the trigger never runs without one`
 				);
 			}
 			// Webhooks are optional here, but once any webhook setting is filled
