@@ -12,6 +12,7 @@ import {
 	QUICK_CHAT_MIN_WIDTH,
 	logsToQuickChatMessages,
 	parseQuickChatFontScaleRequest,
+	parseQuickChatImages,
 	parseQuickChatTabChoice,
 	resolveQuickChatSettings,
 	validateQuickChatBoundsRequest,
@@ -246,5 +247,24 @@ describe('parseQuickChatTabChoice', () => {
 		expect(parseQuickChatTabChoice('')).toBeNull();
 		expect(parseQuickChatTabChoice('  ')).toBeNull();
 		expect(parseQuickChatTabChoice(undefined)).toBeNull();
+	});
+});
+
+describe('parseQuickChatImages', () => {
+	it('takes data:image URLs, and treats a missing list as none', () => {
+		const png = 'data:image/png;base64,AAAA';
+		const svg = 'data:image/svg+xml;base64,PHN2Zz4=';
+		expect(parseQuickChatImages([png, svg])).toEqual([png, svg]);
+		expect(parseQuickChatImages(undefined)).toEqual([]);
+		expect(parseQuickChatImages(null)).toEqual([]);
+	});
+
+	it.each([
+		['a path', ['/tmp/shot.png']],
+		['a non-image data URL', ['data:text/plain;base64,AAAA']],
+		['a non-string entry', [42]],
+		['a lone string', 'data:image/png;base64,AAAA'],
+	])('rejects %s', (_label, raw) => {
+		expect(parseQuickChatImages(raw)).toBeNull();
 	});
 });

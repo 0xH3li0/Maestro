@@ -106,6 +106,14 @@ describe('quick_chat handler', () => {
 			{ action: 'send', text: 'hello' },
 			{ type: 'send', text: 'hello' },
 		],
+		[
+			{ action: 'send', text: 'look', images: ['data:image/png;base64,AAAA'] },
+			{ type: 'send', text: 'look', images: ['data:image/png;base64,AAAA'] },
+		],
+		[
+			{ action: 'send', images: ['data:image/webp;base64,BBBB'] },
+			{ type: 'send', text: '', images: ['data:image/webp;base64,BBBB'] },
+		],
 		[{ action: 'new' }, { type: 'new' }],
 		[{ action: 'keep' }, { type: 'setPersistent', persistent: true }],
 		[
@@ -179,6 +187,22 @@ describe('quick_chat handler', () => {
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r6' });
 		handler.handleMessage(client, { type: 'quick_chat', action: 'bogus', requestId: 'r7' });
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r7' });
+		expect(controller.runCommand).not.toHaveBeenCalled();
+	});
+
+	it('rejects images that are not data:image URLs without calling the engine', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'send',
+			text: 'look',
+			images: ['/tmp/shot.png'],
+			requestId: 'r8',
+		});
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'Images must be data:image URLs',
+			requestId: 'r8',
+		});
 		expect(controller.runCommand).not.toHaveBeenCalled();
 	});
 

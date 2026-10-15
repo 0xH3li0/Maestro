@@ -9,6 +9,7 @@
 import { getQuickChatController } from '../../../quick-chat';
 import {
 	parseQuickChatFontScaleRequest,
+	parseQuickChatImages,
 	parseQuickChatTabChoice,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
@@ -31,8 +32,10 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 	switch (message.action) {
 		case 'send': {
 			const text = typeof message.text === 'string' ? message.text : '';
-			if (!text.trim()) return { error: 'Message cannot be empty' };
-			return { type: 'send', text };
+			const images = parseQuickChatImages(message.images);
+			if (!images) return { error: 'Images must be data:image URLs' };
+			if (!text.trim() && images.length === 0) return { error: 'Message cannot be empty' };
+			return { type: 'send', text, ...(images.length > 0 && { images }) };
 		}
 		case 'new':
 			return { type: 'new' };

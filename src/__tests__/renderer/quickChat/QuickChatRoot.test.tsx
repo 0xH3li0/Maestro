@@ -714,3 +714,126 @@ describe('composer-only window height', () => {
 		expect(screen.getByTestId('quick-chat-composer').className).not.toContain('h-full');
 	});
 });
+
+describe('images', () => {
+	const PNG_BYTES = 'png-bytes';
+	const PNG_DATA_URL = `data:image/png;base64,${btoa(PNG_BYTES)}`;
+
+	function imageFile(name = 'shot.png', type = 'image/png'): File {
+		return new File([PNG_BYTES], name, { type });
+	}
+
+	/** What a paste or a drop hands the window: its files, listed as items too. */
+	function transfer(files: File[]) {
+		return {
+			items: files.map((file) => ({ kind: 'file', type: file.type, getAsFile: () => file })),
+			files,
+			types: ['Files'],
+		};
+	}
+
+	async function paste(files: File[]) {
+		const composer = screen.getByPlaceholderText(/Ask Pedsidian anything/);
+		fireEvent.paste(composer, { clipboardData: transfer(files) });
+		await vi.waitFor(() => expect(screen.getByTestId('quick-chat-staged-images')).toBeTruthy());
+		return composer;
+	}
+
+	afterEach(() => act(() => useZoomViewerStore.getState().close()));
+
+	it('stages a pasted image and sends it with the message', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot(),
+		});
+		await renderWith(snapshot());
+		const composer = await paste([imageFile()]);
+		expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy();
+
+		fireEvent.change(composer, { target: { value: 'what is this?' } });
+		await act(async () => fireEvent.keyDown(composer, { key: 'Enter' }));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'send',
+			text: 'what is this?',
+			images: [PNG_DATA_URL],
+		});
+		expect(screen.queryByTestId('quick-chat-staged-images')).toBeNull();
+	});
+
+	it('sends images with no text', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot(),
+		});
+		await renderWith(snapshot());
+		await paste([imageFile()]);
+		const send = screen.getByRole('button', { name: 'Send' });
+		expect(send).not.toBeDisabled();
+		await act(async () => fireEvent.click(send));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'send',
+			text: '',
+			images: [PNG_DATA_URL],
+		});
+	});
+
+	it('keeps the images when the send fails', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: false,
+			error: 'No agent to chat with.',
+			snapshot: snapshot(),
+		});
+		await renderWith(snapshot());
+		await paste([imageFile()]);
+		await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
+		expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy();
+	});
+
+	it('stages the same image once, and removes it from the strip', async () => {
+		await renderWith(snapshot());
+		await paste([imageFile(), imageFile('again.png')]);
+		expect(screen.getAllByRole('button', { name: /^Staged image/ })).toHaveLength(1);
+		fireEvent.click(screen.getByRole('button', { name: 'Remove image 1' }));
+		expect(screen.queryByTestId('quick-chat-staged-images')).toBeNull();
+	});
+
+	it('stages a dropped image and refuses a dropped file that is not one', async () => {
+		await renderWith(snapshot());
+		const composer = screen.getByPlaceholderText(/Ask Pedsidian anything/);
+		fireEvent.drop(composer, { dataTransfer: transfer([new File(['x'], 'notes.txt')]) });
+		expect(screen.getByText('Only images can be attached to a Quick Chat message')).toBeTruthy();
+		fireEvent.drop(composer, { dataTransfer: transfer([imageFile()]) });
+		await vi.waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy()
+		);
+	});
+
+	it('stages images picked with the attach button', async () => {
+		await renderWith(snapshot());
+		const input = screen.getByTestId('quick-chat-image-input') as HTMLInputElement;
+		const click = vi.spyOn(input, 'click');
+		fireEvent.click(screen.getByRole('button', { name: /^Attach images/ }));
+		expect(click).toHaveBeenCalled();
+		fireEvent.change(input, { target: { files: [imageFile()] } });
+		await vi.waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy()
+		);
+	});
+
+	it('shows a sent message with its image previews, and opens one large', async () => {
+		const preview = 'data:image/webp;base64,UFJFVklFVw==';
+		await renderWith(snapshot({ messages: [{ ...sentMessage('m', 'look'), images: [preview] }] }));
+		const images = screen.getByTestId('quick-chat-message-images');
+		expect(images.querySelector('img')).toHaveAttribute('src', preview);
+		act(() => fireEvent.click(screen.getByRole('button', { name: 'Open image 1' })));
+		expect(useZoomViewerStore.getState().request).not.toBeNull();
+	});
+
+	it('shows an image-only message without an empty bubble', async () => {
+		await renderWith(
+			snapshot({ messages: [{ ...sentMessage('m', ''), images: ['data:image/png;base64,AA=='] }] })
+		);
+		expect(screen.getByRole('button', { name: 'Open image 1' })).toBeTruthy();
+		expect(document.querySelector('.whitespace-pre-wrap.rounded-2xl')).toBeNull();
+	});
+});

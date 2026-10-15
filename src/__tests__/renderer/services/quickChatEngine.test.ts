@@ -56,6 +56,11 @@ import { requestTabAutoName } from '../../../renderer/services/tabAutoNaming';
 vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 import { captureException } from '../../../renderer/utils/sentry';
 
+// jsdom cannot draw: a preview is the image's name, so a test can tell them apart.
+vi.mock('../../../renderer/utils/imageData', () => ({
+	downscaleImageDataUrl: vi.fn(async (src: string) => `preview:${src}`),
+}));
+
 function agent(id: string, overrides: Partial<Session> = {}): Session {
 	const mainTab = createMockAITab({ id: `${id}-main` });
 	return createMockSession({
@@ -898,6 +903,83 @@ describe('choosing the tab (setTab)', () => {
 		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'new' } });
 		await runQuickChatCommand({ type: 'new' });
 		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+	});
+});
+
+describe('images', () => {
+	const shot = 'data:image/png;base64,AAAA';
+	const other = 'data:image/png;base64,BBBB';
+
+	async function sendWithImages(text: string, images: string[]) {
+		const result = await runQuickChatCommand({ type: 'send', text, images });
+		await vi.waitFor(() => {
+			expect(sent().at(-1)?.route?.status).not.toBe('searching');
+		});
+		return { result, message: sent().at(-1)! };
+	}
+
+	it('sends the images with the message to its tab', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const { result } = await sendWithImages('what is this error?', [shot, other]);
+		expect(result.ok).toBe(true);
+		expect(useAgentStore.getState().processQueuedItem).toHaveBeenCalledWith(
+			'b',
+			expect.objectContaining({
+				tabId: 'b-main',
+				text: 'what is this error?',
+				images: [shot, other],
+			}),
+			expect.anything()
+		);
+	});
+
+	it('shows previews of the images on the message, not the images', async () => {
+		await sendWithImages('look', [shot, other]);
+		await vi.waitFor(() => {
+			expect(sent().at(-1)?.images).toEqual([`preview:${shot}`, `preview:${other}`]);
+		});
+	});
+
+	it('leaves images off a message that has none', async () => {
+		const { message } = await send('plain');
+		expect(message.images).toBeUndefined();
+	});
+
+	it('starts a new tab for images with no text, without looking for one', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const { result, message } = await sendWithImages('  ', [shot]);
+		expect(result.ok).toBe(true);
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(message.route).toMatchObject({ origin: 'new' });
+		expect(message.route!.tabId).not.toBe('b-main');
+		expect(useAgentStore.getState().processQueuedItem).toHaveBeenCalledWith(
+			'b',
+			expect.objectContaining({ images: [shot] }),
+			expect.anything()
+		);
+	});
+
+	it('keeps a slash command sent with images a message, so the images reach the agent', async () => {
+		registerDispatchDepsProvider(() => ({
+			conductorProfile: '',
+			customAICommands: [
+				{ id: 'c', command: '/review', description: 'Review', prompt: 'Review it' },
+			],
+			speckitCommands: [],
+			openspecCommands: [],
+		}));
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		await sendWithImages('/review', [shot]);
+		expect(useAgentStore.getState().processQueuedItem).toHaveBeenCalledWith(
+			'b',
+			expect.objectContaining({ type: 'message', text: '/review', images: [shot] }),
+			expect.anything()
+		);
+	});
+
+	it('still refuses a message with neither text nor images', async () => {
+		const result = await runQuickChatCommand({ type: 'send', text: ' ', images: [] });
+		expect(result).toMatchObject({ ok: false, error: 'Message cannot be empty' });
 	});
 });
 

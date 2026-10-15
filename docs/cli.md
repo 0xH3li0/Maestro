@@ -1198,6 +1198,7 @@ Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a sys
 ```bash
 maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
 maestro-cli quick-chat send "summarize the last commit"
+maestro-cli quick-chat send "what broke?" --image shot.png   # attach images, like a paste in the window
 maestro-cli quick-chat status --json         # window state, agent, mode, and each message with the tab it went to
 maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
 maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)

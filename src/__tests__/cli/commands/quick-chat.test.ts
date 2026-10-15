@@ -4,7 +4,10 @@
  * and the message it hands the desktop.
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({ resolveAgentId: vi.fn((id: string) => id) }));
@@ -232,5 +235,94 @@ describe('quickChat routing verbs', () => {
 			{ type: 'quick_chat', action: 'reveal', messageId: 'm7' },
 			'quick_chat_result'
 		);
+	});
+});
+
+describe('quickChat send', () => {
+	let sendCommand: ReturnType<typeof vi.fn>;
+	let exit: MockInstance;
+	let dir: string;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sendCommand = vi.fn().mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			status: { fontScale: 1, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT },
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) => fn({ sendCommand } as never));
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quick-chat-send-'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('sends --image files as data URLs with the message', async () => {
+		const shot = path.join(dir, 'shot.png');
+		fs.writeFileSync(shot, Buffer.from('png-bytes'));
+		await quickChat('send', { text: 'what is this?' }, { image: [shot] });
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'quick_chat',
+				action: 'send',
+				text: 'what is this?',
+				images: [`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`],
+			},
+			'quick_chat_result'
+		);
+	});
+
+	it('sends images with no text', async () => {
+		const shot = path.join(dir, 'shot.webp');
+		fs.writeFileSync(shot, Buffer.from('webp'));
+		await quickChat('send', { text: '' }, { image: [shot] });
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ text: '', images: [expect.stringMatching(/^data:image\/webp;/)] }),
+			'quick_chat_result'
+		);
+	});
+
+	it('refuses a file that is not an image before sending anything', async () => {
+		const notes = path.join(dir, 'notes.txt');
+		fs.writeFileSync(notes, 'hi');
+		await quickChat('send', { text: 'look' }, { image: [notes], json: true });
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+
+	it('status says how many images a message carried', async () => {
+		const log = vi.mocked(console.log);
+		sendCommand.mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			status: {
+				enabled: true,
+				visible: true,
+				hotkey: [],
+				hotkeyRegistered: true,
+				bounds: null,
+				pinned: true,
+				fontScale: 1,
+				snapshot: {
+					...EMPTY_QUICK_CHAT_SNAPSHOT,
+					messages: [
+						{ id: 'm1', role: 'user', text: 'see these', timestamp: 0, images: ['a', 'b'] },
+					],
+				},
+			},
+		});
+		await quickChat('status', {}, {});
+		const printed = log.mock.calls.map(([line]) => line).join('\n');
+		expect(printed).toContain('You [2 images]: see these');
+	});
+
+	it('refuses a message with neither text nor images', async () => {
+		await quickChat('send', { text: '  ' }, { json: true });
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(sendCommand).not.toHaveBeenCalled();
 	});
 });

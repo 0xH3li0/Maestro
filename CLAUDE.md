@@ -84,6 +84,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
+- **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
@@ -278,6 +279,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Audio/video playback:** media NEVER becomes a tab: `handleOpenFileTab()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts` diverts it to `useMediaPlaybackStore` and the one `FloatingMediaPlayer`; `file://` links go through `openFileUrl()` in `src/renderer/utils/openFileUrl.ts`
 - **Right-click menu on an image:** already app-wide via `<ImageContextMenuHost>` in `src/renderer/components/ImageContextMenuHost.tsx`; opt a surface out with `data-no-image-menu`
 - **Saving generated image bytes to disk:** `saveImageDataUrlToDisk()`, `saveImageElementToDisk()`, `saveImageToProject()` in `src/renderer/utils/imageExport.ts`
+- **Reading a pasted or dropped image (or any Blob) as a data URL:** `readBlobAsDataUrl()`, `imageFilesIn()`, `downscaleImageDataUrl()` in `src/renderer/utils/imageData.ts`
 - **Screenshotting a surface exactly as it is painted:** `window.maestro.shell.capturePage(rect?)` (preload `src/main/preload/system.ts`, handler in `src/main/ipc/handlers/system.ts`)
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Pan and zoom a diagram or image:** `usePanZoom()` in `src/renderer/hooks/ui/usePanZoom.ts`; full-window viewer via `openZoomViewer(element)` in `src/renderer/components/ZoomViewer/zoomViewerStore.ts`

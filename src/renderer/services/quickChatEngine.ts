@@ -24,6 +24,7 @@
 
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
+	QUICK_CHAT_IMAGE_PREVIEW_EDGE,
 	QUICK_CHAT_MAX_MESSAGES,
 	logsToQuickChatMessages,
 	type QuickChatCommand,
@@ -53,6 +54,7 @@ import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
 import { nextRunnableQueueItem, spawnCollisionCooldownMs } from '../utils/executionQueue';
 import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { generateId } from '../utils/ids';
+import { downscaleImageDataUrl } from '../utils/imageData';
 import { captureException } from '../utils/sentry';
 import { jumpToAgent } from './agentNavigation';
 import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queuedPrompt';
@@ -71,6 +73,10 @@ export const QUICK_CHAT_TAB_NAME = 'Quick Chat';
 interface Turn {
 	id: string;
 	text: string;
+	/** Images sent with the text, as data URLs. They go to the tab with it. */
+	images: string[];
+	/** Small copies of `images` for the window, filled in once they are drawn. */
+	previews: string[];
 	timestamp: number;
 	/**
 	 * `searching` until a tab is chosen; `delivered` once the message is in the
@@ -414,7 +420,14 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 	let busySince: number | null = null;
 	for (const turn of chat.turns) {
 		const { route, reply } = turnView(chatSession, turn);
-		messages.push({ id: turn.id, role: 'user', text: turn.text, timestamp: turn.timestamp, route });
+		messages.push({
+			id: turn.id,
+			role: 'user',
+			text: turn.text,
+			timestamp: turn.timestamp,
+			route,
+			...(turn.previews.length > 0 && { images: turn.previews }),
+		});
 		messages.push(...reply);
 		if (turn.error) {
 			messages.push({
@@ -609,7 +622,15 @@ function deliverToTab(
 ): string | null {
 	// Before it runs, so its reasoning is recorded from the first chunk.
 	applyThinking(sessionId, tabId, thinkingMode());
-	const item = enqueuePromptForTab({ sessionId, tabId, text: turn.text, expandCommands: true });
+	const item = enqueuePromptForTab({
+		sessionId,
+		tabId,
+		text: turn.text,
+		images: turn.images,
+		// A message that is a slash command runs as that command, which takes no
+		// images: one sent with images stays a message, so they reach the agent.
+		expandCommands: turn.images.length === 0,
+	});
 	if (!item) return fail(turn, 'Could not reach the agent');
 	if (item.tabId !== tabId) {
 		// The tab closed under us and the queue fell back to the active tab.
@@ -726,7 +747,10 @@ async function routeAndDeliver(
 		let origin: QuickChatRouteOrigin = 'open';
 		// With no choice and no tab to follow, the Default Tab setting decides
 		// whether Maestro looks for a tab or starts a new one.
-		const fresh = choice ? choice.kind === 'new' : quickChatSettings().defaultTab === 'new';
+		// Images alone name no subject to find a tab by, so they start a new one.
+		const fresh =
+			(choice ? choice.kind === 'new' : quickChatSettings().defaultTab === 'new') ||
+			!turn.text.trim();
 		if (choice?.kind === 'tab') {
 			if (!isOpen(choice.tabId)) {
 				fail(turn, 'The tab you chose for this message is no longer open');
@@ -789,13 +813,15 @@ async function routeToTab(
 	return null;
 }
 
-function send(text: string): string | null {
+function send(text: string, images: string[]): string | null {
 	const session = resolveAgent();
 	if (!session) return 'No agent to chat with. Create an agent first.';
 	chat.sessionId = session.id;
 	const turn: Turn = {
 		id: generateId(),
 		text,
+		images: [...images],
+		previews: [],
 		timestamp: Date.now(),
 		phase: 'searching',
 		error: null,
@@ -807,6 +833,7 @@ function send(text: string): string | null {
 		reply: [],
 	};
 	chat.turns.push(turn);
+	if (images.length > 0) void drawPreviews(turn);
 	// Not awaited: the window shows the message as "searching" at once, and the
 	// route arrives in a later snapshot. The chat's tab is chained here, before
 	// anything awaits, so the next message waits for this one's answer. A tab the
@@ -821,6 +848,21 @@ function send(text: string): string | null {
 		notifyChanged();
 	});
 	return null;
+}
+
+/**
+ * Draw the window's previews of a turn's images. Snapshots carry these rather
+ * than the images, which can be megabytes each and would be resent with every
+ * update of the reply. An image that cannot be drawn smaller is shown as it is.
+ */
+async function drawPreviews(turn: Turn): Promise<void> {
+	const previews = await Promise.all(
+		turn.images.map((image) =>
+			downscaleImageDataUrl(image, QUICK_CHAT_IMAGE_PREVIEW_EDGE).catch(() => image)
+		)
+	);
+	turn.previews = previews;
+	notifyChanged();
 }
 
 /**
@@ -949,9 +991,14 @@ export async function runQuickChatCommand(
 ): Promise<QuickChatCommandResult> {
 	let error: string | null = null;
 	switch (command.type) {
-		case 'send':
-			error = command.text.trim() ? send(command.text) : 'Message cannot be empty';
+		case 'send': {
+			const images = command.images ?? [];
+			error =
+				command.text.trim() || images.length > 0
+					? send(command.text, images)
+					: 'Message cannot be empty';
 			break;
+		}
 		case 'new':
 			await detachChat()();
 			break;
@@ -1037,7 +1084,7 @@ function snapshotKey(snapshot: QuickChatSnapshot): string {
 			.map((m) => {
 				const r = m.route;
 				const route = r ? `${r.status}:${r.tabId}:${r.tabName}:${r.tabOpen}:${r.since}` : '';
-				return `${m.id}:${m.role}:${m.text.length}:${route}`;
+				return `${m.id}:${m.role}:${m.text.length}:${m.images?.length ?? 0}:${route}`;
 			})
 			.join(','),
 		snapshot.agents

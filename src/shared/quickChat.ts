@@ -168,6 +168,12 @@ export interface QuickChatMessage {
 	timestamp: number;
 	/** On a message the user sent from Quick Chat: where it went. */
 	route?: QuickChatRoute;
+	/**
+	 * On a message the user sent with images: small previews of them, in order.
+	 * The full images went to the tab; snapshots stream on every reply update,
+	 * so they carry previews (see QUICK_CHAT_IMAGE_PREVIEW_EDGE).
+	 */
+	images?: string[];
 }
 
 export interface QuickChatAgentOption {
@@ -261,7 +267,8 @@ export const EMPTY_QUICK_CHAT_SNAPSHOT: Readonly<QuickChatSnapshot> = {
 
 /** Actions the quick window (and `maestro-cli quick-chat`) can ask the engine for. */
 export type QuickChatCommand =
-	| { type: 'send'; text: string }
+	/** `images`: data URLs sent with the text, like images pasted in the main composer. */
+	| { type: 'send'; text: string; images?: string[] }
 	| { type: 'new' }
 	| { type: 'setPersistent'; persistent: boolean }
 	/** Send the next message to another tab, a new tab, or wherever Maestro finds. */
@@ -281,6 +288,25 @@ export type QuickChatCommand =
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
 	| { type: 'sync' };
+
+/** Longest edge, in pixels, of the image previews a snapshot carries. */
+export const QUICK_CHAT_IMAGE_PREVIEW_EDGE = 320;
+
+/**
+ * The images of a `send` from outside the window (the WebSocket, so the CLI):
+ * an array of `data:image/...` URLs. Null when any entry is not one, so a bad
+ * payload fails the send instead of dropping an image the user meant to send.
+ */
+export function parseQuickChatImages(raw: unknown): string[] | null {
+	if (raw === undefined || raw === null) return [];
+	if (!Array.isArray(raw)) return null;
+	const images: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== 'string' || !/^data:image\/[\w.+-]+;base64,/.test(entry)) return null;
+		images.push(entry);
+	}
+	return images;
+}
 
 /** The engine's answer to a command. `snapshot` is the state after it ran. */
 export interface QuickChatCommandResult {

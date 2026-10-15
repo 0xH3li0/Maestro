@@ -2648,8 +2648,11 @@ quickChatCmd
 	.action((options) => quickChat('status', {}, options));
 
 quickChatCmd
-	.command('send <message...>')
-	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.command('send [message...]')
+	.description(
+		'Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images'
+	)
+	.option('--image <path...>', 'Image file(s) to send with the message (PNG, JPG, GIF, WebP)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
 

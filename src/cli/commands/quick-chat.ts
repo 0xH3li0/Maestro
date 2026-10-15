@@ -6,6 +6,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { parseCliBool } from '../utils/parse';
+import { readCliImageFile } from '../utils/imageFiles';
 import {
 	describeQuickChatRoute,
 	parseQuickChatTabChoice,
@@ -20,6 +21,8 @@ import { asThinkingMode, type ThinkingMode } from '../../shared/types';
 
 export interface QuickChatOptions {
 	json?: boolean;
+	/** `send` only: image files sent with the message, like a paste in the window. */
+	image?: string[];
 	/** `bounds` only: raw flag values, parsed here. */
 	x?: string;
 	y?: string;
@@ -51,6 +54,9 @@ export type QuickChatAction =
 	| 'stop'
 	| 'new-tab'
 	| 'bounds';
+
+/** Largest image `send --image` takes: well past any screenshot, short of a video still dump. */
+const MAX_QUICK_CHAT_IMAGE_BYTES = 20 * 1024 * 1024;
 
 const FONT_STEP_UP = new Set(['in', 'up', 'bigger', 'larger', '+']);
 const FONT_STEP_DOWN = new Set(['out', 'down', 'smaller', '-']);
@@ -158,7 +164,9 @@ function printStatus(status: QuickChatStatus): void {
 		const route = message.route
 			? ` [${message.id}] (${describeQuickChatRoute(message.route)})`
 			: '';
-		console.log(`\n${who}${route}: ${message.text}`);
+		const count = message.images?.length ?? 0;
+		const images = count > 0 ? ` [${count} image${count === 1 ? '' : 's'}]` : '';
+		console.log(`\n${who}${route}${images}: ${message.text}`);
 	}
 }
 
@@ -169,11 +177,22 @@ export async function quickChat(
 ): Promise<void> {
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
 	if (action === 'send') {
-		if (!args.text?.trim()) {
+		const imagePaths = options.image ?? [];
+		if (!args.text?.trim() && imagePaths.length === 0) {
 			fail('message cannot be empty', options);
 			return;
 		}
-		message.text = args.text;
+		message.text = args.text ?? '';
+		if (imagePaths.length > 0) {
+			try {
+				message.images = imagePaths.map(
+					(input) => readCliImageFile(input, MAX_QUICK_CHAT_IMAGE_BYTES).dataUrl
+				);
+			} catch (error) {
+				fail(error instanceof Error ? error.message : String(error), options);
+				return;
+			}
+		}
 	}
 	if (action === 'keep' || action === 'pin') {
 		// A bare `pin` / `keep` means on. Anything else must be a real on/off

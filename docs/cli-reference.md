@@ -2480,13 +2480,14 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send <message>`
+## `maestro-cli quick-chat send [message...]`
 
-Send a message in the current Quick Chat (starts a chat if none is open)
+Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                  | Default |
+| ------------------- | ------------------------------------------------------------ | ------- |
+| `--image <path...>` | Image file(s) to send with the message (PNG, JPG, GIF, WebP) | -       |
+| `--json`            | Output as JSON (for scripting)                               | -       |
 
 ## `maestro-cli quick-chat new`
 
