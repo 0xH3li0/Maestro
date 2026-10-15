@@ -810,7 +810,8 @@ function validateWebhookConfig(
 	}
 }
 
-function validateSettings(rawSettings: unknown): string[] {
+/** Validates a settings block, including its shape and optional owner identifier. */
+export function validateSettings(rawSettings: unknown): string[] {
 	const errors: string[] = [];
 	if (rawSettings === undefined) return errors;
 	if (typeof rawSettings !== 'object' || rawSettings === null || Array.isArray(rawSettings)) {
