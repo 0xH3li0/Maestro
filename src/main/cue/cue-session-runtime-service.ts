@@ -188,8 +188,13 @@ export function createCueSessionRuntimeService(
 		const config = loadResult.config;
 
 		// Surface non-fatal materialization warnings (e.g. unresolved prompt_file)
+		const healthWarnings = new Set(loadResult.healthWarnings ?? loadResult.warnings);
 		for (const warning of loadResult.warnings) {
 			const message = `[CUE] ${warning}`;
+			if (!healthWarnings.has(warning)) {
+				deps.onLog('warn', message);
+				continue;
+			}
 			deps.onLog('warn', message, {
 				type: 'triggerHealthWarning',
 				sessionId: session.id,

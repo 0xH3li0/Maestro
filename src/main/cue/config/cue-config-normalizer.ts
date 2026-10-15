@@ -606,12 +606,16 @@ export interface MaterializedCueConfig {
 	 * pointing at files that could not be read). Callers should log these to the user.
 	 */
 	warnings: string[];
+	/** Warnings from enabled subscriptions that warrant a health notice. */
+	healthWarnings: string[];
 }
 
 export function materializeCueConfig(document: CueConfigDocument): MaterializedCueConfig {
 	const warnings: string[] = [];
+	const healthWarnings: string[] = [];
 
 	const subscriptions = document.subscriptions.map((sub) => {
+		const warningStart = warnings.length;
 		// Surface unresolved prompt_file references as warnings - the file existed
 		// in the YAML but readPromptFile() returned undefined / empty.
 		if (sub.promptSpec.file && !sub.promptSpec.inline && !sub.prompt) {
@@ -624,6 +628,7 @@ export function materializeCueConfig(document: CueConfigDocument): MaterializedC
 				`"${sub.name}" has output_prompt_file "${sub.outputPromptSpec.file}" but the file was not found or resolved to empty/unreadable content`
 			);
 		}
+		if (sub.enabled !== false) healthWarnings.push(...warnings.slice(warningStart));
 
 		const { promptSpec: _promptSpec, outputPromptSpec: _outputPromptSpec, ...subscription } = sub;
 		return subscription as CueSubscription;
@@ -638,5 +643,6 @@ export function materializeCueConfig(document: CueConfigDocument): MaterializedC
 				: {}),
 		},
 		warnings,
+		healthWarnings,
 	};
 }

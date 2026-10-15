@@ -150,6 +150,36 @@ describe('shared cwd Cue health', () => {
 		).toHaveLength(4);
 	});
 
+	it.each([
+		'event: agent.completed\n    prompt_file: .maestro/prompts/missing.md',
+		'event: agent.completed\n    prompt: inert test\n    output_prompt_file: .maestro/prompts/missing-output.md',
+		'event: nonexistent.event\n    prompt: inert test',
+	])('logs paused subscription problems without health notices until enabled: %s', (fields) => {
+		for (const session of sessions) runtime.initSession(session, { reason: 'discovery' });
+		const paused = `subscriptions:\n  - name: paused\n    enabled: false\n    ${fields}\n`;
+		writeCueYamlAtomicSync(configPath, paused);
+		vi.advanceTimersByTime(31_000);
+		expect(registry.size()).toBe(4);
+		const warnings = onLog.mock.calls.filter(([level]) => level === 'warn');
+		expect(warnings).toHaveLength(4);
+		expect(warnings.map(([, , data]) => data)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		]);
+		onLog.mockClear();
+		vi.advanceTimersByTime(12 * 30_000);
+		expect(onLog).not.toHaveBeenCalled();
+		writeCueYamlAtomicSync(configPath, paused.replace('enabled: false', 'enabled: true'));
+		vi.advanceTimersByTime(31_000);
+		expect(
+			onLog.mock.calls.filter(
+				([level, , data]) => level === 'warn' && data?.type === 'triggerHealthWarning'
+			)
+		).toHaveLength(4);
+	});
+
 	it.each(['subscriptions: [', 'subscriptions: false\n'])(
 		'alarms on genuine YAML errors and recovers after correction: %s',
 		(invalidYaml) => {
