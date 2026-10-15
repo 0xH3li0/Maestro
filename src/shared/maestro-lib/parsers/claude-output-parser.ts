@@ -21,7 +21,12 @@ import {
 	rememberedClaudeSessionCost,
 	type ClaudeCostState,
 } from '../../claudeCostTracker';
-import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
+import {
+	getErrorPatterns,
+	isClaudeLimitNotice,
+	matchErrorPattern,
+	stripJsonEventLines,
+} from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -1104,7 +1109,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		// Check stderr and stdout for error patterns (fallback to raw text matching)
-		const combined = `${stderr}\n${stdout}`;
+		// JSON event lines were classified as they streamed; see stripJsonEventLines.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, combined);
 

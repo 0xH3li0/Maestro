@@ -25,6 +25,11 @@
  *   it knows the URL
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -108,6 +113,7 @@ import type {
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -133,6 +139,8 @@ import type {
 	ListQueueCallback,
 	RemoveQueueItemCallback,
 	SteerQueueItemCallback,
+	SetQueueItemPausedCallback,
+	MergeQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -181,6 +189,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
 	MergeContextCallback,
@@ -214,6 +224,7 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ConsultChain } from '../../shared/consultBudget';
 
@@ -612,6 +623,10 @@ export class WebServer {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
 	}
 
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
@@ -630,6 +645,13 @@ export class WebServer {
 
 	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
 		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	/** Register the request-response bridge to the desktop history store. */
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbackRegistry.setNotificationInboxCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -713,6 +735,14 @@ export class WebServer {
 
 	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
 		this.callbackRegistry.setSteerQueueItemCallback(callback);
+	}
+
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbackRegistry.setSetQueueItemPausedCallback(callback);
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbackRegistry.setMergeQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -904,6 +934,10 @@ export class WebServer {
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
+	}
+
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
 	setMergeContextCallback(callback: MergeContextCallback): void {
@@ -1327,6 +1361,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
+				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
@@ -1336,6 +1372,7 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
+			notificationInbox: (request) => this.callbackRegistry.notificationInbox(request),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
@@ -1377,6 +1414,7 @@ export class WebServer {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
+				held?: boolean,
 				consultChain?: ConsultChain
 			) =>
 				this.callbackRegistry.enqueueCommand(
@@ -1386,6 +1424,7 @@ export class WebServer {
 					tabId,
 					images,
 					background,
+					held,
 					consultChain
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
@@ -1393,6 +1432,10 @@ export class WebServer {
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
 			steerQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.steerQueueItem(sessionId, itemId),
+			setQueueItemPaused: async (sessionId: string, itemId: string, paused: boolean) =>
+				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
+			mergeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
@@ -1492,6 +1535,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
+			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
+				this.callbackRegistry.steerGroupChat(chatId, request),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
 				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
 			transferContext: async (sourceSessionId: string, targetSessionId: string) =>

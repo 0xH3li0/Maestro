@@ -29,6 +29,7 @@ import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import { MAX_TASK_MAX_TOKENS, runLocalTask } from '../../local-models/task-router';
+import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -162,6 +163,8 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					readOnly?: boolean;
 					disableTools?: boolean;
 					timeoutMs?: number;
+					/** The session agent's Claude token source (see GroomContextOptions). */
+					claudeTokenSource?: ClaudeTokenSourceFields;
 				}
 			): Promise<string> => {
 				// A cheap turn that may use tools is a context SUMMARY, so the model
@@ -230,6 +233,9 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						// applies to a utility agent too.
 						sessionCustomModel: cheapTurn?.model,
 						sessionCustomEffort: cheapTurn?.effort,
+						// The token source belongs to the session's agent, like its path
+						// and env above, so a utility agent runs on its own default.
+						claudeTokenSource: usingUtilityAgent ? undefined : options?.claudeTokenSource,
 						agentConfigValues,
 						readOnlyMode: options?.readOnly,
 						disableTools: options?.disableTools,

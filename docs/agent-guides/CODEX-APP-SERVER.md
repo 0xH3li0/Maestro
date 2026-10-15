@@ -46,7 +46,7 @@ The spawner receives the same `ProcessConfig` the exec path would have used and 
 | other `-c key=value`                                 | `thread/start` / `thread/resume` `config` object                                             | schema                                                                                             |
 | `resume <id>` (from `resumeArgs`)                    | `thread/resume` `{ threadId: <id>, cwd, sandbox, approvalPolicy }` instead of `thread/start` | `resumed-turn:4`                                                                                   |
 | prompt after `--`                                    | `turn/start` `{ threadId, input: [{ type: 'text', text }] }`                                 | `plain-turn:7`                                                                                     |
-| `--add-dir` (write grants)                           | no field yet; fall back to exec when present                                                 | none                                                                                               |
+| `--add-dir` (write grants)                           | dropped under full access (grants nothing more); otherwise fall back to exec                 | none                                                                                               |
 | `-i <image>`                                         | not supported; fall back to exec                                                             | out of scope                                                                                       |
 
 Notes:
@@ -167,7 +167,7 @@ spawn codex app-server (one child per turn)
 - Image prompts (`-i`). `turn/start` input supports images in the schema, but phase 1 is text-only.
 - Auto Run, Cue, and CLI batch spawns (`maestro-cli` / `agent-spawner.ts`). None of them can be steered from the UI, so they gain nothing.
 - Group chat (moderator and participants).
-- Spawns that pass `--add-dir` write grants, until a mapping exists.
+- Spawns that pass `--add-dir` write grants under a sandbox other than full access, until a mapping exists (app-server 0.162.1 has no write-grant field).
 
 ## Implementation map
 

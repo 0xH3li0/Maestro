@@ -49,6 +49,7 @@ import type { AgentConfigsData } from '../../stores/types';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
+import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[AICommand]';
 
@@ -91,6 +92,8 @@ export interface AiCommandSuggestRequest {
 	/** The tab's current model and effort, resolved by the caller. */
 	customModel?: string;
 	customEffort?: string;
+	/** The agent's Claude token source, so a TUI agent suggests through maestro-p. */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 	/**
 	 * Commands already run in this tab, oldest first, so a follow-up like
 	 * "actually just the count" can refine the last one instead of guessing at a
@@ -219,6 +222,7 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							sessionCustomEnvVars: config.customEnvVars,
 							sessionCustomModel: config.customModel,
 							sessionCustomEffort: config.customEffort,
+							claudeTokenSource: config.claudeTokenSource,
 							agentConfigValues,
 						},
 						processManager,

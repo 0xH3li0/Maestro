@@ -383,6 +383,7 @@ export interface AppModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -853,6 +854,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onTogglePauseQueueItem,
 		onEditQueueItem,
 		onForceSendQueueItem,
+		onMergeQueueItem,
 		onQuickActionsNewTab,
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
@@ -1237,6 +1239,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onTogglePauseQueueItem={onTogglePauseQueueItem}
 				onEditQueueItem={onEditQueueItem}
 				onForceSendQueueItem={onForceSendQueueItem}
+				onMergeQueueItem={onMergeQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

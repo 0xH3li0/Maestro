@@ -1,3 +1,7 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * Covers the `update_session_config` allowlist in useAppRemoteEventListeners -
  * the single gate every CLI-driven per-agent edit passes through.
@@ -156,81 +160,6 @@ describe('maestro:remoteUpdateSessionConfig', () => {
 		await flush();
 
 		expect(ack).toHaveBeenCalledWith('ch', { success: false, error: 'Agent not found' });
-	});
-});
-
-describe('maestro:remoteUpdateSessionConfig provider switch and Run on', () => {
-	const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
-
-	it('keeps the target when the new harness has a recipe: it names a source, not a provider', async () => {
-		const sessions = [createMockSession({ id: 'session-1', toolType: 'claude-code', runOn: QWEN })];
-		const { setSessions } = setup(sessions);
-
-		dispatchPatch('session-1', { toolType: 'codex' });
-		await flush();
-
-		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.toolType).toBe('codex');
-		expect(updated.runOn).toEqual(QWEN);
-		expect(setMany).toHaveBeenCalledWith(
-			[expect.objectContaining({ id: 'session-1', toolType: 'codex', runOn: QWEN })],
-			[]
-		);
-	});
-
-	it('drops the target when the new harness has none: kept, it would refuse every launch', async () => {
-		const sessions = [createMockSession({ id: 'session-1', toolType: 'claude-code', runOn: QWEN })];
-		const { setSessions } = setup(sessions);
-
-		dispatchPatch('session-1', { toolType: 'gemini-cli' });
-		await flush();
-
-		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.toolType).toBe('gemini-cli');
-		expect(updated.runOn).toBeUndefined();
-		expect(setMany.mock.calls[0][0][0].runOn).toBeUndefined();
-	});
-});
-
-describe('maestro:remoteUpdateSessionConfig provider switch, tiers and the proxy', () => {
-	const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
-
-	it("starts the tiers over: a tier names a model, and a provider's models are its own", async () => {
-		const sessions = [
-			createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code',
-				tierTargets: { low: QWEN, high: { type: 'provider-model', model: 'opus' } },
-			}),
-		];
-		const { setSessions } = setup(sessions);
-
-		dispatchPatch('session-1', { toolType: 'codex' });
-		await flush();
-
-		expect(applyUpdate(setSessions, sessions)[0].tierTargets).toBeUndefined();
-		expect(setMany.mock.calls[0][0][0].tierTargets).toBeUndefined();
-	});
-
-	it('drops the background requests target with the gateway and the proxy mode', async () => {
-		const sessions = [
-			createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code',
-				gatewayUrl: 'http://127.0.0.1:48123/anthropic',
-				tokenProxyMode: 'passthrough',
-				backgroundRequests: { target: QWEN },
-			}),
-		];
-		const { setSessions } = setup(sessions);
-
-		dispatchPatch('session-1', { toolType: 'codex' });
-		await flush();
-
-		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.gatewayUrl).toBeUndefined();
-		expect(updated.tokenProxyMode).toBeUndefined();
-		expect(updated.backgroundRequests).toBeUndefined();
 	});
 });
 
@@ -421,5 +350,26 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 			success: false,
 			error: 'No editable tab fields in patch',
 		});
+	});
+});
+
+describe('provider migration parity', () => {
+	it('passes the library report through and never resets tabs or kills source work', async () => {
+		const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
+		const { setSessions } = setup([session]);
+		const report = {
+			success: false,
+			error: 'unverified native resume',
+			plan: { id: 'plan', status: 'ready' },
+		} as any;
+		vi.mocked(requestProviderTranslation).mockResolvedValue(report);
+		dispatchPatch(session.id, { toolType: 'codex', migrationAction: 'plan' });
+		await flush();
+		expect(requestProviderTranslation).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'plan', agentId: session.id, destination: 'codex' })
+		);
+		expect(ack).toHaveBeenCalledWith('ch', report);
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
 	});
 });

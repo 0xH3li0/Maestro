@@ -2137,54 +2137,70 @@ describe('agentStore', () => {
 			expect(tab2.logs).toHaveLength(0);
 		});
 
-		it('resolves and dispatches a command matched via session.agentCommands', async () => {
-			const session = createMockSession({
-				id: 'session-1',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'conv-1',
-						name: null,
-						starred: false,
-						logs: [],
-						inputValue: '',
-						stagedImages: [],
-						createdAt: Date.now(),
-						state: 'idle',
-					},
-				],
-				activeTabId: 'tab-1',
-				agentCommands: [
-					{
-						command: '/implement',
-						description: 'Implement the plan',
-						prompt: 'Implement the approved plan now.',
-					},
-				],
-			});
-			useSessionStore.getState().setSessions([session]);
-
-			const item = createQueuedItem({
-				tabId: 'tab-1',
-				type: 'command',
+		it.each([
+			{
+				toolType: 'claude-code' as const,
 				command: '/implement',
-				text: undefined,
-			});
+				prompt: 'Implement the approved plan now.',
+			},
+			{
+				toolType: 'codex' as const,
+				command: '/plugin:code-review',
+				prompt: '$plugin:code-review\n\nUse the skill at "/skills/code-review/SKILL.md".',
+			},
+		])(
+			'resolves and dispatches $command via session.agentCommands with trailing arguments',
+			async ({ toolType, command, prompt }) => {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType,
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'conv-1',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+					agentCommands: [
+						{
+							command,
+							description: 'Implement the plan',
+							prompt,
+						},
+					],
+				});
+				useSessionStore.getState().setSessions([session]);
 
-			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+				const item = createQueuedItem({
+					tabId: 'tab-1',
+					type: 'command',
+					command,
+					commandArgs: 'Focus on the current branch.',
+					text: undefined,
+				});
 
-			expect(mockSpawn).toHaveBeenCalledTimes(1);
-			expect(mockSpawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					prompt: expect.stringContaining('Implement the approved plan now.'),
-				})
-			);
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.aiTabs[0].logs).toHaveLength(1);
-			expect(updated.aiTabs[0].logs[0].source).toBe('user');
-			expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe('/implement');
-		});
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: expect.stringContaining(`${prompt}\n\nFocus on the current branch.`),
+					})
+				);
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.aiTabs[0].logs).toHaveLength(1);
+				expect(updated.aiTabs[0].logs[0].source).toBe('user');
+				expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe(command);
+			}
+		);
 
 		it('handles spawn error gracefully', async () => {
 			mockSpawn.mockRejectedValueOnce(new Error('Spawn failed'));

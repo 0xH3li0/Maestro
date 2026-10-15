@@ -114,6 +114,7 @@ function resetStore() {
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
 		showToolCalls: false,
+		showWorktreeProvider: false,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
@@ -132,6 +133,11 @@ function resetStore() {
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		notificationCenterLarge: false,
+		notificationCenterDetails: false,
+		notificationCenterKeyboardNavigation: false,
+		notificationHistoryQueuedReplies: false,
+		notificationHistoryAutoRunTasks: false,
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
@@ -183,6 +189,26 @@ function resetStore() {
 }
 
 describe('settingsStore', () => {
+	it.each([
+		['notificationCenterLarge', 'setNotificationCenterLarge'],
+		['notificationCenterDetails', 'setNotificationCenterDetails'],
+		['notificationCenterKeyboardNavigation', 'setNotificationCenterKeyboardNavigation'],
+		['notificationHistoryQueuedReplies', 'setNotificationHistoryQueuedReplies'],
+		['notificationHistoryAutoRunTasks', 'setNotificationHistoryAutoRunTasks'],
+	] as const)('keeps %s opt-in and persists and restores it', async (key, setter) => {
+		expect(SETTINGS_METADATA[key].default).toBe(false);
+		expect(useSettingsStore.getInitialState()[key]).toBe(false);
+		useSettingsStore.getState()[setter](true);
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(key, true);
+		useSettingsStore.setState({ [key]: false });
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: true });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(true);
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: false });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(false);
+	});
+
 	beforeEach(() => {
 		resetStore();
 
@@ -212,6 +238,10 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
+		it('defaults worktree provider labels to off in the store and metadata', () => {
+			expect(_INITIAL_STATE.showWorktreeProvider).toBe(false);
+			expect(SETTINGS_METADATA.showWorktreeProvider.default).toBe(false);
+		});
 		it('has correct default values for the initial settings fields', () => {
 			const state = useSettingsStore.getState();
 
@@ -319,6 +349,11 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('simple setters', () => {
+		it.each([true, false])('persists worktree provider visibility: %s', (enabled) => {
+			useSettingsStore.getState().setShowWorktreeProvider(enabled);
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(enabled);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('showWorktreeProvider', enabled);
+		});
 		describe('Shell', () => {
 			it('setDefaultShell updates state and persists', () => {
 				useSettingsStore.getState().setDefaultShell('bash');
@@ -2265,7 +2300,20 @@ describe('settingsStore', () => {
 				);
 			});
 		});
+		it.each([true, false])('restores worktree provider visibility: %s', async (enabled) => {
+			useSettingsStore.setState({ showWorktreeProvider: !enabled });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				showWorktreeProvider: enabled,
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(enabled);
+		});
 
+		it('keeps worktree provider labels off when older settings omit the key', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().showWorktreeProvider).toBe(false);
+		});
 		it('hydrates remote tool visibility and preferences without native log-buffer access', async () => {
 			vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
 			const nativeGetMaxLogBuffer = window.maestro.logger.getMaxLogBuffer;

@@ -42,6 +42,7 @@ import {
 	registerMaestroRunHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
@@ -207,6 +208,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
+		getProcessManager: deps.getProcessManager,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
@@ -337,7 +339,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerPromptsHandlers();
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers();
+	registerMemoryHandlers({
+		sessionsStore: deps.sessionsStore,
+		settingsStore: deps.settingsStore,
+		agentConfigsStore: deps.agentConfigsStore,
+		getAgentDetector: deps.getAgentDetector,
+	});
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
@@ -618,6 +625,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
+	registerNotificationHistoryHandlers();
 	registerNotificationsHandlers({
 		getMainWindow: deps.getMainWindow,
 		ensureMainWindow: deps.ensureMainWindow,

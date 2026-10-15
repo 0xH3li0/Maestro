@@ -116,6 +116,7 @@ export type PaneChatActions = Partial<
 		| 'onDeleteLog'
 		| 'onRemoveQueuedItem'
 		| 'onTogglePauseQueuedItem'
+		| 'onMergeQueuedItem'
 		| 'onEditQueuedItem'
 		| 'onReorderQueuedItem'
 		| 'onForceSendQueuedItem'

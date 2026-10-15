@@ -76,9 +76,7 @@ import {
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
 	findPackagedAppHost,
-	isMaestroPBinaryPath,
-	resolveConfigDirKeyFromEnv,
-	defaultSelectMode,
+	createStandaloneClaudeSpawnCoreDeps,
 	type ClaudeSpawnCoreDeps,
 	type PackagedAppHost,
 } from '../../shared/maestro-lib/launch/interactive-mode';
@@ -134,33 +132,14 @@ function getCliPackagedAppHost(): PackagedAppHost | null {
  * makes the per-agent Claude token source honored for CLI Auto Run / playbooks /
  * `send` exactly as it is for the desktop chat.
  */
-const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = {
+const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = createStandaloneClaudeSpawnCoreDeps({
 	getMaestroPBinPath: getCliMaestroPBinPath,
-	isMaestroPBinaryPath,
-	resolveConfigDirKey: resolveConfigDirKeyFromEnv,
-	// The standalone CLI has no SQLite usage store, so no dynamic usage snapshot
-	// exists. selectMode(null) resolves to interactive - i.e. Dynamic prefers the
-	// TUI (it can't observe quota exhaustion to fall back), which honors the
-	// user's "start on TUI" intent rather than silently downgrading to API.
-	getUsageSnapshot: () => null,
-	fileExists: (p) => {
-		try {
-			return fs.existsSync(p);
-		} catch {
-			return false;
-		}
-	},
-	// The CLI can't probe SSH remotes for maestro-p, so stay optimistic (undefined),
-	// matching the desktop cold-cache behavior. An absent remote maestro-p exits
-	// 127 on that turn; the user fixes it by installing maestro-p on the remote.
-	getRemoteMaestroPAvailable: () => undefined,
-	selectMode: defaultSelectMode,
 	logger: {
 		warn: (message, context, meta) =>
 			console.error(`[${context ?? 'ClaudeSpawn'}] ${message}`, meta ?? ''),
 		debug: () => {},
 	},
-};
+});
 
 async function maybeWrapSpawnWithSsh(
 	config: SshSpawnWrapConfig,
@@ -190,6 +169,7 @@ type SpawnOverrides = Pick<
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
 	| 'onProgress'
+	| 'maestroPMaxWaitSeconds'
 >;
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
@@ -881,6 +861,7 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -913,6 +894,7 @@ async function spawnClaudeAgent(
 			customEnvVars: {},
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1247,15 +1229,17 @@ async function spawnJsonLineAgent(
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
-	if (agentSessionId && def?.resumeArgs) {
-		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
 	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
 	// an interactive turn hand the provider identical flags. Providers with no
 	// native mechanism emit nothing here and rely on the prompt block instead.
+	// Emitted BEFORE the resume selector, same as the desktop: Codex resumes with
+	// a subcommand, and `codex exec resume` rejects `--add-dir` with exit 2.
 	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
+
+	if (agentSessionId && def?.resumeArgs) {
+		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
+	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
@@ -1645,6 +1629,12 @@ export interface SpawnAgentOptions {
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
 	/**
+	 * maestro-p idle cap (`--max-wait`) when the turn runs through the TUI.
+	 * Unset keeps maestro-p's 300s default; Auto Run passes its own inactivity
+	 * budget (see autoRunMaestroPMaxWaitSeconds) so a silent test run survives.
+	 */
+	maestroPMaxWaitSeconds?: number;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1733,6 +1723,7 @@ async function spawnAgentOnce(
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
 		consultChain: options?.consultChain,
+		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

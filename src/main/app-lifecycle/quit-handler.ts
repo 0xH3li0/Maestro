@@ -107,6 +107,8 @@ export interface QuitHandlerDependencies {
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
 	stopSettingsWatcher?: () => void;
+	/** Releases the data-dir lock the desktop took at startup (see data-dir-guard.ts). */
+	releaseDataDirLock?: () => void;
 	/** Power manager instance for clearing sleep prevention on shutdown */
 	powerManager: typeof powerManagerInstance;
 	/** Function to stop group chat moderator cleanup interval */
@@ -182,6 +184,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		stopModelServer,
 		stopCliWatcher,
 		stopSettingsWatcher,
+		releaseDataDirLock,
 		powerManager,
 		stopSessionCleanup,
 		getPersistedSessions,
@@ -479,6 +482,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 
 		// Close the embedding store (a no-op when semantic search never opened it)
 		closeEmbeddingStore();
+		// Last: the stores are flushed, so a TUI waiting to host may now take the directory.
+		releaseDataDirLock?.();
 
 		logger.info('Shutdown complete', 'Shutdown');
 	}

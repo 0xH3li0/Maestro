@@ -692,6 +692,73 @@ describe('clearing the error banner on recovery', () => {
 	});
 });
 
+describe("dropping the provider's limit banner on recovery", () => {
+	const BANNER = "You've hit your weekly limit · resets 10am (America/Chicago)";
+
+	/** Lay out the transcript the error listener leaves: prompt, card, banner. */
+	function seedOutageTranscript(id: string, tabId: string) {
+		const outageId = getRetryEntry(id, tabId)!.outageId;
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s: any) =>
+				s.id !== id
+					? s
+					: {
+							...s,
+							aiTabs: s.aiTabs.map((t: any) =>
+								t.id !== tabId
+									? t
+									: {
+											...t,
+											logs: [
+												{ id: 'u', timestamp: NOW, source: 'user', text: 'hi' },
+												{
+													id: 'card',
+													timestamp: NOW,
+													source: 'system',
+													text: quota().message,
+													retryOutageId: outageId,
+												},
+												{ id: 'banner', timestamp: NOW, source: 'stdout', text: BANNER },
+											],
+										}
+							),
+						}
+			),
+		} as any);
+	}
+
+	const logIds = (id: string, tabId: string) =>
+		useSessionStore
+			.getState()
+			.sessions.find((s: any) => s.id === id)
+			?.aiTabs.find((t: any) => t.id === tabId)
+			?.logs.map((l: any) => l.id);
+
+	it('removes the banner once the resend gets through', () => {
+		setupSession('s30', 't1');
+		seedSnapshot('s30', 't1');
+		scheduleRetryForError('s30', 't1', quota());
+		seedOutageTranscript('s30', 't1');
+		retryNow('s30', 't1');
+
+		clearRetryIfSettled('s30', 't1');
+
+		expect(logIds('s30', 't1')).toEqual(['u', 'card']);
+	});
+
+	it('keeps the banner when the user stops the retry', () => {
+		// Stopped means the limit still stands, so the banner is still true.
+		setupSession('s31', 't1');
+		seedSnapshot('s31', 't1');
+		scheduleRetryForError('s31', 't1', quota());
+		seedOutageTranscript('s31', 't1');
+
+		cancelRetry('s31', 't1');
+
+		expect(logIds('s31', 't1')).toEqual(['u', 'card', 'banner']);
+	});
+});
+
 // Every outage resolution - recovered, stopped, or superseded - must persist
 // exactly one resilience_events row for the Usage Dashboard. The funnel is
 // resolveOutage, so all three paths are asserted through the public API.

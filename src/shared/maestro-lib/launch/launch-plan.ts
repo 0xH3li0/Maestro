@@ -1,3 +1,8 @@
+import * as path from 'node:path';
+import {
+	bindTranslationKnowledge,
+	TRANSLATION_KNOWLEDGE_ENV_VAR,
+} from '../translation/knowledge-binding';
 /**
  * The launch plan: one answer to "what exactly do we start for this agent?",
  * shared by desktop chat, Cue and the CLI.
@@ -59,6 +64,7 @@ import {
 
 /** The parts of a provider definition a launch plan reads. */
 export interface LaunchPlanAgent extends PromptDeliveryAgent {
+	id?: string;
 	/** Bare binary name, run on an SSH remote where local paths mean nothing. */
 	binaryName?: string;
 	defaultEnvVars?: Record<string, string>;
@@ -341,9 +347,22 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? { ...(layered ?? {}), ...(input.maestroEnvVars ?? {}) }
 			: undefined;
 
+	const knowledgeDirectory = envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR];
+	launchArgs =
+		target.kind === 'local' && agent?.id === 'claude-code' && knowledgeDirectory
+			? [
+					...launchArgs,
+					'--settings',
+					JSON.stringify({ autoMemoryDirectory: path.join(knowledgeDirectory, 'memory') }),
+				]
+			: launchArgs;
+	const effectivePrompt =
+		target.kind === 'local'
+			? bindTranslationKnowledge(input.prompt, envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR])
+			: input.prompt;
 	const prompt = resolvePromptDelivery({
 		agent,
-		prompt: input.prompt,
+		prompt: effectivePrompt,
 		// Only desktop moves a Windows prompt to stdin. The CLI and Cue have
 		// always put it on the command line, on every host.
 		isWindowsHost: input.surface === 'desktop' && (input.isWindowsHost ?? isWindows()),
@@ -372,7 +391,9 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	}
 
 	const args =
-		prompt.via === 'argv' || prompt.via === 'stdin' ? [...launchArgs, ...prompt.args] : launchArgs;
+		prompt.via === 'argv' || prompt.via === 'stdin'
+			? [...launchArgs, ...prompt.args]
+			: [...launchArgs];
 	return {
 		ok: true,
 		plan: {
@@ -382,7 +403,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			launchArgs,
 			cwd: input.cwd,
 			prompt,
-			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? input.prompt : undefined,
+			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? effectivePrompt : undefined,
 			envVars,
 			gateway: planGateway,
 			runOn: planRunOn,

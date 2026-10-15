@@ -140,7 +140,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	quickChatSettings: {
 		description:
-			'Quick Chat settings: system-wide hotkey (key array, empty disables it), agent id (empty = the active agent), whether new chats are kept as visible tabs, and whether ephemeral chats write History entries.',
+			'Quick Chat settings: system-wide hotkey (key array, empty disables it), agent id (empty = the active agent), whether new chats are kept as visible tabs, whether ephemeral chats write History entries, and whether the window shows the agent thinking (off, on, sticky).',
 		type: 'object',
 		default: { ...DEFAULT_QUICK_CHAT_SETTINGS, hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey] },
 		category: 'advanced',

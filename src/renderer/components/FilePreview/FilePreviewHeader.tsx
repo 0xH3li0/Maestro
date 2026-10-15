@@ -183,11 +183,8 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		};
 	}, []);
 
-	const formatShortcut = (shortcutId: string): string => {
-		const shortcut = shortcuts[shortcutId];
-		if (!shortcut) return '';
-		return formatShortcutKeys(shortcut.keys);
-	};
+	/** A bound shortcut's keys, drawn as caps by the overlay; none when unbound. */
+	const shortcutKeysFor = (shortcutId: string): string[] | undefined => shortcuts[shortcutId]?.keys;
 
 	// Phone: the toolbar holds up to fourteen buttons, each on a 44px tap-target
 	// floor, so at 390px it wrapped onto a second row and - with the path line and
@@ -310,7 +307,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			label: markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file',
 			onClick: () => setMarkdownEditMode(!markdownEditMode),
 			active: markdownEditMode,
-			shortcut: formatShortcut('toggleMarkdownMode'),
+			shortcut: shortcutKeysFor('toggleMarkdownMode'),
 			testId: 'edit-text-toggle',
 		});
 	}
@@ -322,7 +319,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			icon: Edit,
 			label: 'Edit image',
 			onClick: onEditImage,
-			shortcut: formatShortcut('toggleMarkdownMode'),
+			shortcut: shortcutKeysFor('toggleMarkdownMode'),
 			testId: 'edit-image-button',
 		});
 	}
@@ -333,7 +330,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			icon: Clipboard,
 			label: isImage ? 'Copy image to clipboard' : 'Copy content to clipboard',
 			onClick: () => copyContentToClipboard().catch(captureException),
-			shortcut: isImage ? formatShortcutKeys(['Meta', 'c']) : undefined,
+			shortcut: isImage ? ['Meta', 'c'] : undefined,
 		});
 	}
 	// Publish as Gist - gh CLI available, not editing, and the file is plain
@@ -463,7 +460,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								<HoverTooltip
 									theme={theme}
 									label={hasChanges ? 'Save changes' : 'No changes to save'}
-									shortcut={hasChanges ? formatShortcutKeys(['Meta', 's']) : undefined}
+									shortcut={hasChanges ? ['Meta', 's'] : undefined}
 								>
 									<button
 										onClick={onSave}

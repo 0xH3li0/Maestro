@@ -1063,6 +1063,32 @@ describe('useQueueHandlers', () => {
 	// ========================================================================
 	// Return type completeness
 	// ========================================================================
+	describe('handleMergeQueueItem', () => {
+		it('folds a message into the earlier one for its tab, in any agent', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({ id: 'sess-1' }),
+					createSession({
+						id: 'sess-2',
+						executionQueue: [
+							createQueuedItem({ id: 'a', text: 'first' }),
+							createQueuedItem({ id: 'b', text: 'second' }),
+						],
+					}),
+				],
+			});
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleMergeQueueItem('sess-2', 'b');
+			});
+
+			const queue = useSessionStore.getState().sessions[1].executionQueue;
+			expect(queue).toHaveLength(1);
+			expect(queue[0]).toMatchObject({ id: 'a', text: 'first\n\nsecond' });
+		});
+	});
+
 	describe('return type', () => {
 		it('returns all three handler functions', () => {
 			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
@@ -1071,6 +1097,7 @@ describe('useQueueHandlers', () => {
 			expect(typeof result.current.handleSwitchQueueSession).toBe('function');
 			expect(typeof result.current.handleReorderQueueItems).toBe('function');
 			expect(typeof result.current.handleForceSendQueueItem).toBe('function');
+			expect(typeof result.current.handleMergeQueueItem).toBe('function');
 		});
 
 		it('returns stable handler references across renders', () => {

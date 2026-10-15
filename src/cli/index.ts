@@ -14,7 +14,14 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove, queueSteer } from './commands/queue';
+import {
+	queueHold,
+	queueList,
+	queueMerge,
+	queueRemove,
+	queueResume,
+	queueSteer,
+} from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -40,6 +47,7 @@ import {
 	groupChatList,
 	groupChatSend,
 	groupChatStart,
+	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
 } from './commands/group-chat';
@@ -109,6 +117,7 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { notifySpeak } from './commands/notify-speak';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import {
 	modelsEndpointsAdd,
@@ -263,6 +272,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { agentTestRunOn } from './commands/agent-test-run-on';
@@ -663,6 +673,10 @@ program
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
+		'--held',
+		"Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id."
+	)
+	.option(
 		'--notify-on-complete <agent-id>',
 		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
 	)
@@ -705,7 +719,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), `merge` (the
+// card's Merge button), and `steer` (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -727,6 +742,30 @@ queue
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueRemove);
+
+queue
+	.command('hold <item-id>')
+	.description(
+		'Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueHold);
+
+queue
+	.command('resume <item-id>')
+	.description(
+		'Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueResume);
+
+queue
+	.command('merge <item-id>')
+	.description(
+		"Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place"
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueMerge);
 
 queue
 	.command('steer <item-id>')
@@ -895,6 +934,17 @@ groupChat
 	.action(groupChatSend);
 
 groupChat
+	.command('steer <chat> [message]')
+	.description(
+		'Type a message into the round running in a group chat instead of waiting for it to end'
+	)
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--item <queued-id>', 'Steer a message already in the chat queue (ids are in status)')
+	.option('--read-only', 'Only steer new text when the running round is read-only')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSteer);
+
+groupChat
 	.command('status <chat>')
 	.description("Show a group chat's state, participants, and latest messages")
 	.option('--tail <n>', 'How many recent messages to print (default 5; 0 for none)')
@@ -923,7 +973,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -1184,6 +1234,41 @@ program
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -2024,9 +2109,25 @@ program
 	)
 	.option(
 		'--provider <type>',
-		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
+		'Translate owned conversations and selected project knowledge to another provider'
 	)
-	.option('--force', 'Confirm a destructive change (required for --provider)')
+	.option('--force', 'Alias for --accept-translation-limitations')
+	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
+	.option(
+		'--accept-translation-limitations',
+		'Accept the reported unverified or partial conversion limitations'
+	)
+	.option('--migration <action>', 'Migration operation: plan | apply | status | recover | rollback')
+	.option(
+		'--migration-plan <id>',
+		'Use the reviewed plan or inspect/recover a specific operation ID'
+	)
+	.option(
+		'--translation-resource <path>',
+		'Select one user-level resource (repeatable; no account-global import)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
 
@@ -2403,14 +2504,18 @@ const agent = settings.command('agent').description('View and manage per-agent c
 
 agent
 	.command('list [agent-id]')
-	.description('List agent configurations (all agents or a specific one)')
+	.description(
+		'List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('-v, --verbose', 'Show descriptions for each config key')
 	.action(settingsAgentList);
 
 agent
 	.command('get <agent-id> <key>')
-	.description('Get a single agent config value')
+	.description(
+		'Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description')
 	.action(settingsAgentGet);
@@ -2914,6 +3019,51 @@ notify
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
+
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				collapse: 'Collapse expanded notification details',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
 
 notify
 	.command('flash <message>')
@@ -3929,8 +4079,11 @@ quickChatCmd
 	.action((options) => quickChat('status', {}, options));
 
 quickChatCmd
-	.command('send <message...>')
-	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.command('send [message...]')
+	.description(
+		'Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images'
+	)
+	.option('--image <path...>', 'Image file(s) to send with the message (PNG, JPG, GIF, WebP)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
 
@@ -3951,6 +4104,22 @@ quickChatCmd
 	.description('Float the window above other windows ("off" lets it fall behind them)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
+
+quickChatCmd
+	.command('tab [target]')
+	.description(
+		'Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((target: string | undefined, options) => quickChat('tab', { state: target }, options));
+
+quickChatCmd
+	.command('thinking [mode]')
+	.description(
+		"Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode: string | undefined, options) => quickChat('thinking', { state: mode }, options));
 
 quickChatCmd
 	.command('font [size]')
@@ -3977,10 +4146,24 @@ quickChatCmd
 quickChatCmd
 	.command('new-tab [message-id]')
 	.description(
-		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+		'Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
+
+quickChatCmd
+	.command('history')
+	.description("List the recent chats, newest first (what the window's History button shows)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('history', {}, options));
+
+quickChatCmd
+	.command('recall <chat>')
+	.description(
+		'Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options) => quickChat('recall', { chatId: chat }, options));
 
 quickChatCmd
 	.command('stop')
@@ -4071,7 +4254,7 @@ const movement = program
 
 movement
 	.command('begin <id>')
-	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.description('Reserve a host-rendered Concerto shell without opening the stage')
 	.requiredOption('--title <text>', 'Concerto title shown in its frame')
 	.option('--x <px>', 'X position (px from the Concerto stage left)')
 	.option('--y <px>', 'Y position (px from the Concerto stage top)')
@@ -4082,7 +4265,7 @@ movement
 
 movement
 	.command('add <id>')
-	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.description('Add or replace a native data view or HTML mockup without opening the stage')
 	.option('--type <type>', 'view | html (default: view)')
 	.option('--x <px>', 'X position (px from movement left)')
 	.option('--y <px>', 'Y position (px from movement top)')
@@ -4155,7 +4338,7 @@ movement
 
 movement
 	.command('inspect <id>')
-	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.description('Capture a visible HTML Movement preview (requires an open stage) and diagnostics')
 	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInspect);

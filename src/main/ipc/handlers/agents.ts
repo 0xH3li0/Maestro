@@ -1,3 +1,5 @@
+import { ProviderTranslationService } from '../../provider-translation-service';
+import type { ProcessLivenessProbe } from '../../utils/agent-busy';
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
@@ -20,6 +22,11 @@ import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
+import { discoverCodexSkills } from '../../agents/codex-skills';
+import { checkCustomPath } from '../../agents/path-prober';
+import { CodexRpcRequestError, CodexRpcTransportError } from '../../codex-app-server/rpc-client';
+import { buildChildProcessEnv } from '../../process-manager/utils/envBuilder';
+import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
 import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -352,31 +359,42 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 }
 
 /**
- * Discover Codex slash commands by reading from disk.
- *
- * Codex commands come from these sources (checked in priority order):
- * 1. Project-local skills:  <cwd>/.codex/skills/<name>/SKILL.md
- * 2. User-global skills:    <CODEX_HOME>/skills/<name>/SKILL.md
- * 3. Project-local prompts: <cwd>/.codex/prompts/<name>.md
- * 4. User-global prompts:   <CODEX_HOME>/prompts/<name>.md
- *
- * Every discovered command carries the file body as its `prompt`, because
- * Maestro drives Codex through headless `codex exec`, where the CLI does not
- * expand `/name` itself - the renderer substitutes the body before sending
- * (see `useInputProcessing`), exactly as it already does for OpenCode.
+ * Discover Codex skills through skills/list so plugin, system, and repository
+ * skills follow Codex's own configuration. Native skills carry a $name invocation
+ * and their resource path; the renderer expands the slash entry before sending.
+ * Older CLIs fall back to the legacy .codex/skills directory scan. Custom prompt
+ * files are read from disk in either case and carry their body as the prompt.
  *
  * Codex's own built-in commands (/init, /compact, /review, ...) are excluded:
  * they are implemented inside the TUI and have no on-disk prompt to inline, so
  * offering them would send a literal "/compact" to the model.
  */
-async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
+async function discoverCodexSlashCommands(
+	cwd: string,
+	command: string,
+	env: NodeJS.ProcessEnv
+): Promise<DiscoveredCommand[]> {
 	const commands = new Map<string, DiscoveredCommand>();
+	let nativeSkillsAvailable = false;
+	try {
+		for (const skill of await discoverCodexSkills(command, cwd, env)) {
+			commands.set(skill.name, skill);
+		}
+		nativeSkillsAvailable = true;
+	} catch (error) {
+		const unsupportedRequest =
+			error instanceof CodexRpcRequestError && (error.code === -32601 || error.code === -32602);
+		if (!unsupportedRequest && !(error instanceof CodexRpcTransportError)) {
+			void captureException(error, { operation: 'discoverCodexSlashCommands' });
+		}
+		logger.debug('Codex skills/list unavailable; using disk discovery', LOG_CONTEXT);
+	}
 
 	const addCommand = (name: string, content: string) => {
 		if (commands.has(name)) return; // project-local wins over global
 		const doc = parseCodexMarkdownDoc(content);
 		// `user-invocable: false` marks a background/reference skill that Codex
-		// itself never offers as a `/name`, so Maestro must not either.
+		// must not be offered by the legacy disk fallback.
 		if (!doc.userInvocable) return;
 		if (!doc.body) return;
 		commands.set(name, { name, prompt: doc.body, description: doc.description });
@@ -434,10 +452,13 @@ async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredComman
 		}
 	};
 
-	for (const dir of getCodexSkillDirs(cwd)) {
-		await addSkillsFromDir(dir);
+	// An authoritative empty result must stay empty (e.g. all skills disabled).
+	if (!nativeSkillsAvailable) {
+		for (const dir of getCodexSkillDirs(cwd, env)) {
+			await addSkillsFromDir(dir);
+		}
 	}
-	for (const dir of getCodexPromptDirs(cwd)) {
+	for (const dir of getCodexPromptDirs(cwd, env)) {
 		await addPromptsFromDir(dir);
 	}
 
@@ -450,6 +471,7 @@ async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredComman
  * Dependencies required for agents handler registration
  */
 export interface AgentsHandlerDependencies {
+	getProcessManager?: () => ProcessLivenessProbe | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
@@ -1027,6 +1049,24 @@ async function discoverOpenCodeSlashCommandsRemote(
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
+	const translation =
+		sessionsStore && settingsStore && deps.getProcessManager
+			? new ProviderTranslationService({
+					sessionsStore,
+					settingsStore,
+					agentConfigsStore,
+					getAgentDetector,
+					getProcessManager: deps.getProcessManager,
+				})
+			: null;
+	ipcMain.handle(
+		'agents:translateProvider',
+		(_event, request) =>
+			translation?.run(request) ?? {
+				success: false,
+				error: 'Provider translation host unavailable',
+			}
+	);
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -1711,7 +1751,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		'agents:discoverSlashCommands',
 		withIpcErrorLogging(
 			handlerOpts('discoverSlashCommands'),
-			async (agentId: string, cwd: string, customPath?: string, sshRemoteId?: string) => {
+			async (
+				agentId: string,
+				cwd: string,
+				customPath?: string,
+				sshRemoteId?: string,
+				customEnvVars?: Record<string, string>
+			) => {
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
 
@@ -1729,16 +1775,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				const agent = await agentDetector.getAgent(agentId);
-				if (!agent?.available) {
-					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
-					return null;
-				}
-
-				// Agent-specific discovery paths
-				if (agentId === 'opencode') {
-					return discoverOpenCodeSlashCommands(cwd);
-				}
-
 				if (agentId === 'codex') {
 					// Codex skills/prompts live on the machine that runs the CLI.
 					// For an SSH-remote agent that is the remote host, so return
@@ -1751,7 +1787,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						);
 						return null;
 					}
-					return discoverCodexSlashCommands(cwd);
+					let commandPath = agent?.available ? agent.path || agent.command : undefined;
+					if (customPath) {
+						const detection = await checkCustomPath(customPath);
+						if (detection.exists && detection.path) commandPath = detection.path;
+					}
+					if (!commandPath) {
+						logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+						return null;
+					}
+					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
+					const env = buildChildProcessEnv(
+						effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
+						false,
+						settingsStore?.get('shellEnvVars', {})
+					);
+					return discoverCodexSlashCommands(cwd, commandPath, env);
+				}
+				if (!agent?.available) {
+					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+					return null;
+				}
+
+				// Agent-specific discovery paths
+				if (agentId === 'opencode') {
+					return discoverOpenCodeSlashCommands(cwd);
 				}
 
 				if (agentId === 'copilot-cli') {

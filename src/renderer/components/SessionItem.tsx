@@ -235,6 +235,7 @@ export const SessionItem = memo(function SessionItem({
 }: SessionItemProps) {
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
+	const showWorktreeProvider = useSettingsStore((s) => s.showWorktreeProvider);
 	const showLeftPanelLocationPills = useSettingsStore((s) => s.showLeftPanelLocationPills);
 	const showLeftPanelGitIndicator = useSettingsStore((s) => s.showLeftPanelGitIndicator);
 	const showLeftPanelCueIndicator = useSettingsStore((s) => s.showLeftPanelCueIndicator);
@@ -251,6 +252,9 @@ export const SessionItem = memo(function SessionItem({
 	// and a user on a handheld already knows which agent is which. State that
 	// needs attention (AUTO, ERR, unread, wizard) stays.
 	const phone = usePhoneLayout();
+	const worktreeProviderName =
+		showWorktreeProvider && !phone ? getAgentDisplayName(session.toolType) : undefined;
+	const worktreeBranchName = showWorktreeBranchName ? session.worktreeBranch : undefined;
 	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator && !phone;
 	const startupCommandTabCount =
 		session.terminalTabs?.reduce(
@@ -481,19 +485,29 @@ export const SessionItem = memo(function SessionItem({
 					</div>
 				)}
 
-				{/* Branch name for worktree children (below session name) */}
-				{variant === 'worktree' &&
-					showWorktreeBranchName &&
-					session.worktreeBranch &&
-					!isEditing && (
-						<div
-							className="text-2xs mt-0.5 truncate"
-							style={{ color: theme.colors.textDim }}
-							title={session.worktreeBranch}
-						>
-							{session.worktreeBranch}
-						</div>
-					)}
+				{/* Optional provider and branch share one line beneath worktree child names. */}
+				{variant === 'worktree' && (worktreeProviderName || worktreeBranchName) && !isEditing && (
+					<div
+						className="flex items-center gap-1 min-w-0 text-2xs mt-0.5"
+						style={{ color: theme.colors.textDim }}
+					>
+						{worktreeProviderName && (
+							<span className="shrink-0" title={`Provider: ${worktreeProviderName}`}>
+								{worktreeProviderName}
+							</span>
+						)}
+						{worktreeProviderName && worktreeBranchName && (
+							<span className="shrink-0" aria-hidden="true">
+								·
+							</span>
+						)}
+						{worktreeBranchName && (
+							<span className="truncate" title={worktreeBranchName}>
+								{worktreeBranchName}
+							</span>
+						)}
+					</div>
+				)}
 
 				{/* Session metadata row (hidden for compact worktree variant, and on a phone) */}
 				{variant !== 'worktree' && !phone && (

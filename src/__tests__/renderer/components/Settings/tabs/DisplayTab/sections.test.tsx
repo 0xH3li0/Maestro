@@ -90,6 +90,7 @@ describe('DisplayTab section components', () => {
 			setShowFullGroupLabelInBookmarks: vi.fn(),
 			setShowWorktreePill: vi.fn(),
 			setShowWorktreeBranchName: vi.fn(),
+			setShowWorktreeProvider: vi.fn(),
 		};
 
 		render(
@@ -108,6 +109,7 @@ describe('DisplayTab section components', () => {
 				showFullGroupLabelInBookmarks={false}
 				showWorktreePill={false}
 				showWorktreeBranchName={true}
+				showWorktreeProvider={false}
 				{...setters}
 			/>
 		);
@@ -169,6 +171,12 @@ describe('DisplayTab section components', () => {
 		expect(setters.setShowFullGroupLabelInBookmarks).toHaveBeenCalledWith(true);
 		expect(setters.setShowWorktreePill).toHaveBeenCalledWith(true);
 		expect(setters.setShowWorktreeBranchName).toHaveBeenCalledWith(false);
+		const providerSwitch = screen.getByRole('switch', {
+			name: 'Show provider in left panel agent list',
+		});
+		expect(providerSwitch).toHaveAttribute('aria-checked', 'false');
+		fireEvent.click(providerSwitch);
+		expect(setters.setShowWorktreeProvider).toHaveBeenCalledWith(true);
 	});
 
 	it('shows the Cue indicator only when Cue is enabled and disables full group label when hidden', () => {
@@ -198,6 +206,8 @@ describe('DisplayTab section components', () => {
 			setShowWorktreePill: vi.fn(),
 			showWorktreeBranchName: false,
 			setShowWorktreeBranchName: vi.fn(),
+			showWorktreeProvider: false,
+			setShowWorktreeProvider: vi.fn(),
 		};
 
 		render(<LeftSidePanelSection {...props} maestroCueEnabled />);

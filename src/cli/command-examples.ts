@@ -13,6 +13,32 @@
 import type { Command } from 'commander';
 
 export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
+	// RC queue steering, notifications and Quick Chat controls
+	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
+	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],
+	'queue merge': ['maestro-cli queue merge <item-id> --agent <agent-id>'],
+	'group-chat steer': ['maestro-cli group-chat steer <chat> "Focus on the failing test"'],
+	'steer-auto-run send': [
+		'maestro-cli steer-auto-run send "Keep the public API unchanged" --agent <agent-id>',
+	],
+	'steer-auto-run list': ['maestro-cli steer-auto-run list --agent <agent-id>'],
+	'steer-auto-run cancel': ['maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>'],
+	'quick-chat tab': ['maestro-cli quick-chat tab new'],
+	'quick-chat thinking': ['maestro-cli quick-chat thinking sticky'],
+	'quick-chat history': ['maestro-cli quick-chat history'],
+	'quick-chat recall': ['maestro-cli quick-chat recall <chat>'],
+	'notify inbox list': ['maestro-cli notify inbox list'],
+	'notify inbox open': ['maestro-cli notify inbox open'],
+	'notify inbox close': ['maestro-cli notify inbox close'],
+	'notify inbox read-all': ['maestro-cli notify inbox read-all'],
+	'notify inbox clear': ['maestro-cli notify inbox clear'],
+	'notify inbox collapse': ['maestro-cli notify inbox collapse'],
+	'notify inbox dismiss': ['maestro-cli notify inbox dismiss <id>'],
+	'notify inbox read': ['maestro-cli notify inbox read <id>'],
+	'notify inbox activate': ['maestro-cli notify inbox activate <id>'],
+	'notify inbox link': ['maestro-cli notify inbox link <id>'],
+	'notify inbox detail': ['maestro-cli notify inbox detail <id>'],
+
 	// Agent runs and campaigns
 	'agent-run record': ['maestro-cli agent-run record --file run.json'],
 	'agent-run append-event': [

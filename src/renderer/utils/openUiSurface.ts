@@ -14,7 +14,7 @@ import { selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
-import { notifyToast } from '../stores/notificationStore';
+import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { openAgentSettings } from '../services/agentNavigation';
 import {
 	resolveUiSurface,
@@ -58,6 +58,9 @@ export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResul
 	const actions = getModalActions();
 
 	switch (surface.id) {
+		case 'notification-center':
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			return { ok: true };
 		case 'settings':
 			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined, undefined, subTab?.id);
 			return { ok: true };

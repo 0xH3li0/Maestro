@@ -625,6 +625,22 @@ export class ChildProcessSpawner {
 					this.exitHandler.handleError(sessionId, exit.spawnError);
 					return;
 				}
+				// The local ssh client failed on its own (a dropped connection, a dead
+				// ControlMaster) while the agent on the remote may still be working.
+				// The turn settles here regardless, so the agent must stop too: left
+				// running it is a second writer on the session, and the next resume
+				// (the synopsis, or the user's next send) is refused. A Stop already
+				// signalled the remote; a finished agent leaves nothing to signal.
+				if (
+					sshRemotePidFile &&
+					!managedProcess.interrupted &&
+					((exit.exitCode ?? 0) !== 0 || exit.signal)
+				) {
+					signalRemoteAgent(
+						{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+						'terminate'
+					);
+				}
 				// Hand the exiting process in explicitly: it may already have been
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.

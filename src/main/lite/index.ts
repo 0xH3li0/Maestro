@@ -276,6 +276,8 @@ export async function startLite(): Promise<void> {
 			headers: { 'Cache-Control': 'no-store' },
 		});
 		if (response.status === 401) return undefined;
+		if (response.status === 502 || response.status === 503 || response.status === 504)
+			throw new Error('Host handshake temporarily unavailable (HTTP ' + response.status + ').');
 		if (!response.ok)
 			throw new HostConnectionError(
 				base.pathname === CONNECT_PATH
@@ -479,13 +481,17 @@ export async function startLite(): Promise<void> {
 				void (async () => {
 					try {
 						if (++count % 5 === 0) {
-							const response = await handshake(isolated, base, signal);
-
-							if (response === undefined)
-								throw new HostConnectionError(
-									'Host login expired or was revoked. Reconnect and authenticate again.'
-								);
-							validateHandshake(response, profile, !!selectedDiscovery);
+							try {
+								const response = await handshake(isolated, base, signal);
+								if (response === undefined)
+									throw new HostConnectionError(
+										'Host login expired or was revoked. Reconnect and authenticate again.'
+									);
+								validateHandshake(response, profile, !!selectedDiscovery);
+							} catch (cause) {
+								if (cause instanceof HostConnectionError) throw cause;
+								// A failed health read does not determine the live bridge state.
+							}
 						}
 						const bridge = await current.webContents.executeJavaScript(
 							'window.__MAESTRO_BRIDGE_STATE__ || "connecting"'

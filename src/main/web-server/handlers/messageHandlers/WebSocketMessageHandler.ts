@@ -63,11 +63,16 @@ import {
 	handleUpdateSessionCwd,
 	handleUpdateSessionSsh,
 	handleUpdateSessionConfig,
+	handleProviderTranslation,
 	handleListDesktopSessions,
 	handleGetSessionHistory,
 } from './sessions';
 import { handleRefreshFileTree, handleGetFileTree } from './fileTree';
-import { handleNotifyToast, handleNotifyCenterFlash } from './notifications';
+import {
+	handleNotifyToast,
+	handleNotifyCenterFlash,
+	handleNotificationInbox,
+} from './notifications';
 import { handleCadenza } from './cadenza';
 import {
 	handleMovement,
@@ -156,6 +161,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -198,6 +204,7 @@ import {
 	handleStartGroupChat,
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
+	handleSteerGroupChat,
 	handleStopGroupChat,
 } from './groupChat';
 import {
@@ -223,6 +230,8 @@ import {
 	handleListQueue,
 	handleRemoveQueueItem,
 	handleSteerQueueItem,
+	handleSetQueueItemPaused,
+	handleMergeQueueItem,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -379,6 +388,10 @@ export class WebSocketMessageHandler {
 				void handleMaestroRunCommand(this.ctx, client, message);
 				break;
 
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -445,6 +458,14 @@ export class WebSocketMessageHandler {
 
 			case 'steer_queue_item':
 				handleSteerQueueItem(this.ctx, client, message);
+				break;
+
+			case 'set_queue_item_paused':
+				handleSetQueueItemPaused(this.ctx, client, message);
+				break;
+
+			case 'merge_queue_item':
+				handleMergeQueueItem(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -559,6 +580,10 @@ export class WebSocketMessageHandler {
 				handleUpdateSessionConfig(this.ctx, client, message);
 				break;
 
+			case 'provider_translation':
+				handleProviderTranslation(this.ctx, client, message);
+				break;
+
 			case 'get_groups':
 				handleGetGroups(this.ctx, client, message);
 				break;
@@ -617,6 +642,10 @@ export class WebSocketMessageHandler {
 
 			case 'send_group_chat_message':
 				handleSendGroupChatMessage(this.ctx, client, message);
+				break;
+
+			case 'steer_group_chat':
+				handleSteerGroupChat(this.ctx, client, message);
 				break;
 
 			case 'stop_group_chat':
@@ -709,6 +738,10 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				handleTerminalResize(this.ctx, client, message);
+				break;
+
+			case 'notification_inbox':
+				void handleNotificationInbox(this.ctx, client, message);
 				break;
 
 			case 'notify_toast':

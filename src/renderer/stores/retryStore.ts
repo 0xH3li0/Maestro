@@ -57,6 +57,7 @@ import {
 	settleContextCompaction,
 	type ContextCompactionRef,
 } from '../services/contextCompaction';
+import { dropRecoveredOutageNotices } from '../utils/logEntries';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
@@ -1560,6 +1561,34 @@ function recoverInFlightRetry(sessionId: string, tabId: string, reason: string):
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);
 	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	dropRecoveredFailureText(sessionId, tabId, entry.outageId);
+}
+
+/**
+ * Take the provider's "you've hit your limit" bubble out of the transcript once
+ * the outage it reported has recovered. The green card above it already says
+ * the limit was hit and cleared; leaving the banner as the bottom-most message
+ * reads as the quota still being gone.
+ */
+function dropRecoveredFailureText(sessionId: string, tabId: string, outageId: string): void {
+	const outage = useRetryStore.getState().outages[outageId];
+	if (outage?.status !== 'recovered' || outage.resolvedAt === undefined) return;
+	const scope = {
+		outageId,
+		lastMessage: outage.lastMessage,
+		resolvedAt: outage.resolvedAt,
+	};
+	updateSessionWith(sessionId, (s) => {
+		let changed = false;
+		const aiTabs = s.aiTabs.map((t) => {
+			if (t.id !== tabId) return t;
+			const logs = dropRecoveredOutageNotices(t.logs, scope);
+			if (logs === t.logs) return t;
+			changed = true;
+			return { ...t, logs };
+		});
+		return changed ? { ...s, aiTabs } : s;
+	});
 }
 
 /**

@@ -58,6 +58,7 @@ export function registerQueueCallbacks(
 			tabId?: string,
 			images?: string[],
 			background?: boolean,
+			held?: boolean,
 			consultChain?: ConsultChain
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
@@ -107,6 +108,7 @@ export function registerQueueCallbacks(
 					tabId,
 					images,
 					background,
+					held,
 					consultChain
 				);
 
@@ -204,6 +206,107 @@ export function registerQueueCallbacks(
 				resolved = true;
 				ipcMain.removeListener(responseChannel, handleResponse);
 				resolve({ success: false, removed: false, error: 'Renderer did not respond' });
+			}, 5000);
+		});
+	});
+
+	// Round-trip `maestro-cli queue hold|resume <itemId>` into the renderer, which
+	// sets the same `paused` flag the queued card's Hold / Resume button flips.
+	server.setSetQueueItemPausedCallback(
+		async (sessionId: string, itemId: string, paused: boolean) => {
+			const mainWindow = resolveSessionWindow(sessionId);
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for setQueueItemPaused', 'WebServer');
+				return { success: false, found: false, error: 'Desktop window unavailable' };
+			}
+			return new Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>(
+				(resolve) => {
+					const responseChannel = `remote:setQueueItemPaused:response:${randomUUID()}`;
+					let resolved = false;
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							resolve({
+								success: r.success === true,
+								found: r.found === true,
+								paused: typeof r.paused === 'boolean' ? r.paused : undefined,
+								error: typeof r.error === 'string' ? r.error : undefined,
+							});
+						} else {
+							resolve({ success: false, found: false });
+						}
+					};
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Desktop window unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:setQueueItemPaused',
+						sessionId,
+						itemId,
+						paused,
+						responseChannel
+					);
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Renderer did not respond' });
+					}, 5000);
+				}
+			);
+		}
+	);
+
+	// Round-trip `maestro-cli queue merge <itemId>` into the renderer, which runs
+	// the same merge the queued card's Merge button does.
+	server.setMergeQueueItemCallback(async (sessionId: string, itemId: string) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for mergeQueueItem', 'WebServer');
+			return { success: false, merged: false, error: 'Desktop window unavailable' };
+		}
+		return new Promise<{
+			success: boolean;
+			merged: boolean;
+			mergedIntoId?: string;
+			error?: string;
+		}>((resolve) => {
+			const responseChannel = `remote:mergeQueueItem:response:${randomUUID()}`;
+			let resolved = false;
+			const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				if (typeof result === 'object' && result !== null) {
+					const r = result as Record<string, unknown>;
+					resolve({
+						success: r.success === true,
+						merged: r.merged === true,
+						mergedIntoId: typeof r.mergedIntoId === 'string' ? r.mergedIntoId : undefined,
+						error: typeof r.error === 'string' ? r.error : undefined,
+					});
+				} else {
+					resolve({ success: false, merged: false });
+				}
+			};
+			ipcMain.once(responseChannel, handleResponse);
+			if (!isWebContentsAvailable(mainWindow)) {
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve({ success: false, merged: false, error: 'Desktop window unavailable' });
+				return;
+			}
+			mainWindow.webContents.send('remote:mergeQueueItem', sessionId, itemId, responseChannel);
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve({ success: false, merged: false, error: 'Renderer did not respond' });
 			}, 5000);
 		});
 	});

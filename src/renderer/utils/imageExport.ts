@@ -19,6 +19,7 @@ import { joinPath, isAbsolutePath, fileTimestampSlug } from '../../shared/format
 import { requestFileTreeRefresh } from './fileTreeRefresh';
 import { isSessionImageRef } from '../../shared/sessionImageRefs';
 import { isWebDesktop } from './runtimeContext';
+import { readBlobAsDataUrl } from './imageData';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -146,12 +147,7 @@ export async function imgToDataUrl(img: HTMLImageElement): Promise<string | null
 	try {
 		const response = await fetch(src);
 		const blob = await response.blob();
-		return await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result as string);
-			reader.onerror = () => reject(reader.error);
-			reader.readAsDataURL(blob);
-		});
+		return await readBlobAsDataUrl(blob);
 	} catch {
 		// Fetch can fail on custom protocols or a restrictive CSP - fall back to
 		// reading the pixels the browser already painted.

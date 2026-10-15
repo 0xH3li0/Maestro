@@ -12,8 +12,18 @@ import {
 	QUICK_CHAT_MIN_WIDTH,
 	logsToQuickChatMessages,
 	parseQuickChatFontScaleRequest,
+	parseQuickChatImages,
+	parseQuickChatRecent,
+	parseQuickChatTabChoice,
+	QUICK_CHAT_MAX_RECENTS,
+	QUICK_CHAT_RECENT_MAX_TEXT,
+	QUICK_CHAT_RECENT_MAX_TURNS,
+	resolveQuickChatRecentRef,
 	resolveQuickChatSettings,
+	summarizeQuickChatRecent,
+	upsertQuickChatRecent,
 	validateQuickChatBoundsRequest,
+	type QuickChatRecent,
 } from '../../shared/quickChat';
 
 const log = (id: string, source: string, text: string) => ({ id, timestamp: 1, source, text });
@@ -51,6 +61,18 @@ describe('resolveQuickChatSettings', () => {
 			})
 		).toEqual(DEFAULT_QUICK_CHAT_SETTINGS);
 		expect(resolveQuickChatSettings({ hotkey: ['Alt', 3, 'K'] }).hotkey).toEqual(['Alt', 'K']);
+	});
+
+	it('keeps a saved thinking mode, defaults it to off, and drops an unknown one', () => {
+		expect(resolveQuickChatSettings(undefined).thinking).toBe('off');
+		expect(resolveQuickChatSettings({ thinking: 'sticky' }).thinking).toBe('sticky');
+		expect(resolveQuickChatSettings({ thinking: 'loud' }).thinking).toBe('off');
+	});
+
+	it('keeps a saved default tab, defaults it to auto, and drops an unknown one', () => {
+		expect(resolveQuickChatSettings(undefined).defaultTab).toBe('auto');
+		expect(resolveQuickChatSettings({ defaultTab: 'new' }).defaultTab).toBe('new');
+		expect(resolveQuickChatSettings({ defaultTab: 'tab' }).defaultTab).toBe('auto');
 	});
 
 	it('never hands back the shared default array', () => {
@@ -181,5 +203,217 @@ describe('describeQuickChatRoute', () => {
 		expect(describeQuickChatRoute({ ...none, status: 'searching' })).toBe('searching for a tab');
 		expect(describeQuickChatRoute({ ...none, status: 'failed' })).toBe('failed');
 		expect(describeQuickChatRoute({ ...none, status: 'cancelled' })).toBe('cancelled');
+	});
+});
+
+describe('logsToQuickChatMessages thinking', () => {
+	const reply = [
+		log('t1', 'thinking', 'Reading '),
+		log('t2', 'thinking', 'the file.'),
+		log('o1', 'stdout', 'Here is the answer.'),
+		log('t3', 'thinking', 'Checking once more.'),
+	];
+
+	it('leaves thinking out by default and when off', () => {
+		expect(logsToQuickChatMessages(reply).map((m) => m.role)).toEqual(['assistant']);
+		expect(logsToQuickChatMessages(reply, { thinking: 'off', running: true })).toHaveLength(1);
+	});
+
+	it('keeps all of it in place when sticky, merging streamed pieces', () => {
+		const messages = logsToQuickChatMessages(reply, { thinking: 'sticky' });
+		expect(messages.map((m) => [m.role, m.text])).toEqual([
+			['thinking', 'Reading the file.'],
+			['assistant', 'Here is the answer.'],
+			['thinking', 'Checking once more.'],
+		]);
+	});
+
+	it('when on, shows only the reasoning since the last answer, while the reply runs', () => {
+		const running = logsToQuickChatMessages(reply, { thinking: 'on', running: true });
+		expect(running.map((m) => [m.role, m.text])).toEqual([
+			['assistant', 'Here is the answer.'],
+			['thinking', 'Checking once more.'],
+		]);
+		const done = logsToQuickChatMessages(reply, { thinking: 'on', running: false });
+		expect(done.map((m) => m.role)).toEqual(['assistant']);
+	});
+
+	it('when on, shows reasoning before any answer has arrived', () => {
+		const messages = logsToQuickChatMessages(reply.slice(0, 2), { thinking: 'on', running: true });
+		expect(messages.map((m) => m.role)).toEqual(['thinking']);
+	});
+});
+
+describe('parseQuickChatTabChoice', () => {
+	it('reads new, auto (any case), and anything else as a tab id', () => {
+		expect(parseQuickChatTabChoice('new')).toEqual({ kind: 'new' });
+		expect(parseQuickChatTabChoice(' AUTO ')).toEqual({ kind: 'auto' });
+		expect(parseQuickChatTabChoice('tab-123')).toEqual({ kind: 'tab', tabId: 'tab-123' });
+	});
+
+	it('returns null for nothing', () => {
+		expect(parseQuickChatTabChoice('')).toBeNull();
+		expect(parseQuickChatTabChoice('  ')).toBeNull();
+		expect(parseQuickChatTabChoice(undefined)).toBeNull();
+	});
+});
+
+describe('parseQuickChatImages', () => {
+	it('takes data:image URLs, and treats a missing list as none', () => {
+		const png = 'data:image/png;base64,AAAA';
+		const svg = 'data:image/svg+xml;base64,PHN2Zz4=';
+		expect(parseQuickChatImages([png, svg])).toEqual([png, svg]);
+		expect(parseQuickChatImages(undefined)).toEqual([]);
+		expect(parseQuickChatImages(null)).toEqual([]);
+	});
+
+	it.each([
+		['a path', ['/tmp/shot.png']],
+		['a non-image data URL', ['data:text/plain;base64,AAAA']],
+		['a non-string entry', [42]],
+		['a lone string', 'data:image/png;base64,AAAA'],
+	])('rejects %s', (_label, raw) => {
+		expect(parseQuickChatImages(raw)).toBeNull();
+	});
+});
+
+const recentTurn = (id: string, text: string, timestamp = 1) => ({
+	id,
+	text,
+	timestamp,
+	phase: 'delivered' as const,
+	error: null,
+	tabId: 'tab-1',
+	agentSessionId: 'conv-1',
+	tabName: 'Calendar',
+	origin: 'new' as const,
+	queuedItemId: `q-${id}`,
+	reply: [{ id: `r-${id}`, role: 'assistant' as const, text: 'answer', timestamp: timestamp + 1 }],
+});
+
+const recentChat = (id: string, updatedAt: number, turns = [recentTurn('t1', 'hello')]) =>
+	({
+		id,
+		agentId: 'agent-1',
+		agentName: 'Pedsidian',
+		persistent: false,
+		createdAt: 0,
+		updatedAt,
+		homeTabId: 'tab-1',
+		homeAgentSessionId: 'conv-1',
+		homeTabName: 'Calendar',
+		ownedTabIds: ['tab-1'],
+		turns,
+	}) satisfies QuickChatRecent;
+
+describe('parseQuickChatRecent', () => {
+	it('reads a well-formed chat back unchanged', () => {
+		const chat = recentChat('c1', 5);
+		expect(parseQuickChatRecent(JSON.parse(JSON.stringify(chat)))).toEqual(chat);
+	});
+
+	it.each([null, 'x', {}, { id: 'c1', agentId: 'a', createdAt: 0, updatedAt: 0, turns: [] }])(
+		'rejects %j',
+		(raw) => {
+			expect(parseQuickChatRecent(raw)).toBeNull();
+		}
+	);
+
+	it('drops reasoning and malformed entries, keeping the rest', () => {
+		const chat = recentChat('c1', 5);
+		const raw = {
+			...chat,
+			ownedTabIds: ['tab-1', 7],
+			turns: [
+				{ bogus: true },
+				{
+					...chat.turns[0],
+					phase: 'searching',
+					origin: 'sideways',
+					reply: [
+						{ id: 'th', role: 'thinking', text: 'hmm', timestamp: 1 },
+						...chat.turns[0].reply,
+					],
+				},
+			],
+		};
+		const parsed = parseQuickChatRecent(raw)!;
+		expect(parsed.ownedTabIds).toEqual(['tab-1']);
+		expect(parsed.turns).toHaveLength(1);
+		expect(parsed.turns[0]).toMatchObject({ phase: 'delivered', origin: null });
+		expect(parsed.turns[0].reply.map((m) => m.role)).toEqual(['assistant']);
+	});
+
+	it('clips long texts and keeps only the latest messages', () => {
+		const turns = Array.from({ length: QUICK_CHAT_RECENT_MAX_TURNS + 5 }, (_, i) =>
+			recentTurn(`t${i}`, i === QUICK_CHAT_RECENT_MAX_TURNS + 4 ? 'x'.repeat(30_000) : 'm')
+		);
+		const parsed = parseQuickChatRecent(recentChat('c1', 5, turns))!;
+		expect(parsed.turns).toHaveLength(QUICK_CHAT_RECENT_MAX_TURNS);
+		expect(parsed.turns[0].id).toBe('t5');
+		expect(parsed.turns.at(-1)!.text.length).toBe(QUICK_CHAT_RECENT_MAX_TEXT + 1);
+	});
+});
+
+describe('upsertQuickChatRecent', () => {
+	it('replaces a chat in place of its old copy, newest activity first', () => {
+		const list = [recentChat('a', 30), recentChat('b', 20), recentChat('c', 10)];
+		const next = upsertQuickChatRecent(list, recentChat('c', 40));
+		expect(next.map((r) => r.id)).toEqual(['c', 'a', 'b']);
+	});
+
+	it('keeps at most the newest QUICK_CHAT_MAX_RECENTS', () => {
+		let list: QuickChatRecent[] = [];
+		for (let i = 0; i <= QUICK_CHAT_MAX_RECENTS; i++) {
+			list = upsertQuickChatRecent(list, recentChat(`c${i}`, i));
+		}
+		expect(list).toHaveLength(QUICK_CHAT_MAX_RECENTS);
+		expect(list.some((r) => r.id === 'c0')).toBe(false);
+	});
+});
+
+describe('summarizeQuickChatRecent', () => {
+	it("titles a chat with its first message's first line", () => {
+		const chat = recentChat('c1', 5, [
+			recentTurn('t1', '  plan the trip\nwith details  '),
+			recentTurn('t2', 'and the hotel'),
+		]);
+		expect(summarizeQuickChatRecent(chat)).toMatchObject({
+			id: 'c1',
+			title: 'plan the trip',
+			tabName: 'Calendar',
+			messageCount: 2,
+			searchText: '  plan the trip\nwith details  \nand the hotel',
+		});
+	});
+
+	it('titles an images-only chat', () => {
+		expect(summarizeQuickChatRecent(recentChat('c1', 5, [recentTurn('t1', '')])).title).toBe(
+			'Image'
+		);
+	});
+});
+
+describe('resolveQuickChatRecentRef', () => {
+	const list = [{ id: 'abc-1' }, { id: 'abd-2' }, { id: 'xyz-3' }];
+
+	it.each([
+		['abd-2', 'abd-2'],
+		['1', 'abc-1'],
+		[' 3 ', 'xyz-3'],
+		['xy', 'xyz-3'],
+	])('%j names %s', (ref, id) => {
+		expect(resolveQuickChatRecentRef(list, ref)).toEqual({ id });
+	});
+
+	it.each([
+		['', /Give a chat id/],
+		['4', /no chat 4/],
+		['0', /no chat 0/],
+		['ab', /more than one/],
+		['nope', /No recent chat nope/],
+	])('%j is an error', (ref, error) => {
+		const result = resolveQuickChatRecentRef(list, ref);
+		expect('error' in result && result.error).toMatch(error);
 	});
 });

@@ -5,14 +5,16 @@
  * is the line under a message that says where it went: "Searching tabs" while a
  * tab is being chosen, then a pill naming the tab. The pill is the way to that
  * tab in the main window. A message whose tab is mid-reply shows that it is
- * queued, with the way out: send it to a new tab instead of waiting.
+ * queued, with the way out: send it to a new tab instead of waiting. A message
+ * that went to a tab the user disagrees with has a thumbs-down beside the pill,
+ * which sends it to a new tab instead.
  *
  * Explanations are hover overlays, not native titles, which do not show in the
  * Quick Chat panel while another app is active.
  */
 
 import { useEffect, useState } from 'react';
-import { Clock, History, MessagesSquare, Plus } from 'lucide-react';
+import { Clock, History, MessagesSquare, Plus, ThumbsDown } from 'lucide-react';
 import { formatDurationHuman } from '../../shared/duration';
 import type { QuickChatRoute, QuickChatRouteOrigin } from '../../shared/quickChat';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
@@ -85,7 +87,10 @@ interface QuickChatRouteLineProps {
 	theme: Theme;
 	/** Open the message's tab in the main window. */
 	onOpenTab: () => void;
-	/** Take the message out of the queue and send it to a new tab. */
+	/**
+	 * Send the message to a new tab instead: out of the queue, or stopped and
+	 * sent again when it already ran in the tab it went to.
+	 */
 	onMoveToNewTab: () => void;
 }
 
@@ -181,6 +186,33 @@ export function QuickChatRouteLine({
 					<span className="truncate">{name}</span>
 				</button>
 			</Explained>
+			{/* A tab Maestro picked, not one it made. A queued message has its own way out above. */}
+			{route.origin !== 'new' && route.status !== 'queued' && (
+				<Explained
+					theme={theme}
+					label="Wrong tab"
+					hint={
+						route.status === 'running'
+							? `Stop the reply in "${name}" and send this message to a new tab. The chat continues there.`
+							: 'Send this message again in a new tab. The chat continues there.'
+					}
+				>
+					<button
+						type="button"
+						onClick={onMoveToNewTab}
+						aria-label="Wrong tab. Send this message to a new tab"
+						className="shrink-0 w-[2em] h-[2em] inline-flex items-center justify-center rounded-full transition-opacity opacity-90 hover:opacity-100"
+						style={{
+							...NO_DRAG_REGION,
+							color: c.accentForeground,
+							backgroundColor: c.accent,
+						}}
+						data-testid="quick-chat-route-reject"
+					>
+						<ThumbsDown className="w-3.5 h-3.5" />
+					</button>
+				</Explained>
+			)}
 		</div>
 	);
 }

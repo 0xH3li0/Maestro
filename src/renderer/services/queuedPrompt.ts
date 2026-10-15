@@ -25,7 +25,11 @@ import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
-import { applyQueuedItemDispatch, getQueueBusyContext } from '../utils/executionQueue';
+import {
+	applyQueuedItemDispatch,
+	getQueueBusyContext,
+	mergeQueuedItemIntoPrevious,
+} from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
 import { routeQueuedAutoItem } from './autoTurn';
@@ -201,6 +205,67 @@ export function removeQueuedItem(sessionId: string, itemId: string): boolean {
 		return { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) };
 	});
 	return removed;
+}
+
+/**
+ * Hold or resume one queued item: the queued card's Hold / Resume, and
+ * `maestro-cli queue hold|resume`. A held item keeps its place but nothing
+ * dispatches it until it is resumed.
+ *
+ * @returns Whether the item was in the queue to change.
+ */
+export function setQueuedItemPaused(sessionId: string, itemId: string, paused: boolean): boolean {
+	return writeQueuedItemPaused(sessionId, itemId, () => paused);
+}
+
+/**
+ * Flip one queued item between held and live: the queued card's Hold / Resume
+ * button. Reads the current state inside the same store update that writes it.
+ *
+ * @returns Whether the item was in the queue to change.
+ */
+export function toggleQueuedItemPaused(sessionId: string, itemId: string): boolean {
+	return writeQueuedItemPaused(sessionId, itemId, (current) => !current);
+}
+
+function writeQueuedItemPaused(
+	sessionId: string,
+	itemId: string,
+	next: (current: boolean) => boolean
+): boolean {
+	let found = false;
+	updateSessionWith(sessionId, (s) => {
+		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
+		found = true;
+		return {
+			...s,
+			executionQueue: s.executionQueue.map((i) =>
+				i.id === itemId ? { ...i, paused: next(!!i.paused) || undefined } : i
+			),
+		};
+	});
+	return found;
+}
+
+/**
+ * Fold one queued message into the message above it on the same tab: the queued
+ * card's Merge button, and `maestro-cli queue merge`. The rules for what merges
+ * and what the result keeps live in `mergeQueuedItemIntoPrevious`.
+ *
+ * @returns The id of the item it was merged into, or null when the item is gone
+ * or cannot be merged (no message above it, or either side is not a plain
+ * message). The lookup and the write are one store update, so the item cannot
+ * dispatch in between.
+ */
+export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): string | null {
+	let targetId: string | null = null;
+	updateSessionWith(sessionId, (s) => {
+		const result = mergeQueuedItemIntoPrevious(s.executionQueue ?? [], itemId);
+		if (!result) return s;
+		targetId = result.targetId;
+		return { ...s, executionQueue: result.queue };
+	});
+	return targetId;
 }
 
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */

@@ -169,8 +169,11 @@ export interface EditAgentModalProps {
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 		tierTargets?: TierTargets,
 		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
-		peerGrants?: PeerGrants
-	) => void;
+		peerGrants?: PeerGrants,
+		acceptTranslationLimitations?: boolean,
+		selectedUserResources?: string[],
+		migrationPlanId?: string
+	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;
 	existingSessions: Session[];

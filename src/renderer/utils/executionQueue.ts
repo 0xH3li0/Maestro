@@ -22,7 +22,11 @@ import type {
 } from '../types';
 import { generateId } from './ids';
 import { isAutoModel } from '../../shared/autoModel';
-import { STEERING_TOO_LONG_DETAIL, steeringTextTooLong } from '../../shared/chatSteering';
+import {
+	STEERING_TOO_LONG_DETAIL,
+	startsWithTuiCommandPrefix,
+	steeringTextTooLong,
+} from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -421,6 +425,69 @@ export function reorderQueueItem(
 }
 
 /**
+ * Whether a queued item can take part in a merge. Only plain messages qualify:
+ * a command has no prompt body to join, a leading-`@mention` message is
+ * answered by another agent rather than this one, and a consult hold is a turn
+ * already underway.
+ */
+function isMergeableQueueItem(item: QueuedItem): boolean {
+	return item.type === 'message' && !item.crossAgentOnly && !item.awaitingConsult;
+}
+
+/**
+ * The item a "merge into the message above" would fold `itemId` into: the
+ * nearest EARLIER item for the same tab, since that is the card drawn directly
+ * above it in the tab's queue. Null when there is none, or when either side is
+ * not a plain message (see {@link isMergeableQueueItem}).
+ */
+export function findQueuedMergeTarget(queue: QueuedItem[], itemId: string): QueuedItem | null {
+	const index = queue.findIndex((i) => i.id === itemId);
+	if (index <= 0) return null;
+	const item = queue[index];
+	if (!isMergeableQueueItem(item)) return null;
+	for (let i = index - 1; i >= 0; i--) {
+		if (queue[i].tabId !== item.tabId) continue;
+		return isMergeableQueueItem(queue[i]) ? queue[i] : null;
+	}
+	return null;
+}
+
+/**
+ * Fold queued message `itemId` into the message above it (see
+ * {@link findQueuedMergeTarget}) and return the resulting queue. The target
+ * keeps its id, place, hold state, and frozen model/effort, since it is the
+ * turn that runs first; the merged item's text is appended after a blank line
+ * and its images after the target's. A mention in either message survives, as
+ * dispatch re-plans the consult from the merged text. Returns null when the item
+ * cannot be merged.
+ */
+export function mergeQueuedItemIntoPrevious(
+	queue: QueuedItem[],
+	itemId: string
+): { queue: QueuedItem[]; targetId: string } | null {
+	const target = findQueuedMergeTarget(queue, itemId);
+	const item = queue.find((i) => i.id === itemId);
+	if (!target || !item) return null;
+	// Exactly one blank line between the two, so the second reads as its own
+	// paragraph: trailing whitespace of the first and leading blank lines of the
+	// second are dropped (the second's own indentation is kept).
+	const text = [target.text?.replace(/\s+$/, ''), item.text?.replace(/^(\s*\n)+/, '')]
+		.filter((t) => t && t.trim())
+		.join('\n\n');
+	const images = [...(target.images ?? []), ...(item.images ?? [])];
+	const merged: QueuedItem = {
+		...target,
+		text,
+		images: images.length > 0 ? images : undefined,
+		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,
+	};
+	return {
+		queue: queue.filter((i) => i.id !== itemId).map((i) => (i.id === target.id ? merged : i)),
+		targetId: target.id,
+	};
+}
+
+/**
  * The label to show for a queued item's target tab.
  *
  * `item.tabName` is a SNAPSHOT frozen when the item was queued, so an item
@@ -730,7 +797,7 @@ export function getSteerEligibility(
 	// leading `!` switches the editor to bash mode. Neither is the message the user
 	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
 	// plain input, so it is unaffected.
-	if (session.toolType === 'claude-code' && /^[/!]/.test(item.text.trimStart())) {
+	if (session.toolType === 'claude-code' && startsWithTuiCommandPrefix(item.text)) {
 		return { canSteer: false, blockedReason: 'tui-command-prefix' };
 	}
 	if (item.waitingForConnection) {

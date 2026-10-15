@@ -143,7 +143,7 @@ const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
  * is harmless: applying it is a no-op (the added agent is already in its tree,
  * the removed one already gone).
  */
-function broadcastSessionLifecycle(
+export function broadcastSessionLifecycle(
 	senderWebContentsId: number | undefined,
 	payload: SessionLifecycleSyncPayload
 ): void {
@@ -286,6 +286,23 @@ export function registerPersistenceHandlers(
 			});
 			return false;
 		});
+	};
+
+	/**
+	 * A write's observed baselines by id, with images relocated like the write.
+	 *
+	 * The renderer keeps a pasted image as a data URL in memory while disk holds
+	 * its `maestro-image://` ref. Left as-is, a baseline never equals the stored
+	 * value, so the three-way merge reads every image field as a peer's edit and
+	 * keeps the stored copy: a sent image stayed staged on disk and came back in
+	 * the composer on reload. The store is content-addressed, so relocation maps
+	 * the same bytes to the same ref the write and the stored tree carry.
+	 */
+	const observedBaselineMap = async (
+		baselines: StoredSession[]
+	): Promise<Map<string, StoredSession>> => {
+		const { sessions } = await relocateSessionImages(baselines);
+		return new Map(sessions.map((session) => [session.id, session]));
 	};
 
 	// PERF: coalesce activeSessionId disk writes.
@@ -536,7 +553,8 @@ export function registerPersistenceHandlers(
 	let nextTranscriptRequestId = 0;
 	const readOwningTranscript = (
 		sessionId: string,
-		tabId: string
+		tabId: string,
+		metadataOnly = false
 	): Promise<SessionTranscriptPatch> =>
 		new Promise((resolve, reject) => {
 			const requestId = `transcript-${++nextTranscriptRequestId}`;
@@ -555,7 +573,12 @@ export function registerPersistenceHandlers(
 			});
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win))
-					win.webContents.send('sessions:transcriptRequest', { sessionId, tabId, requestId });
+					win.webContents.send('sessions:transcriptRequest', {
+						sessionId,
+						tabId,
+						requestId,
+						metadataOnly,
+					});
 			}
 		});
 	ipcMain.handle(
@@ -574,8 +597,12 @@ export function registerPersistenceHandlers(
 					request.sessionId === patch.sessionId &&
 					request.tabId === (patch.tabId ?? '') &&
 					patch.snapshot
-				)
+				) {
 					request.resolve(patch);
+					return true;
+				}
+				// Request replies are private, including expired or mismatched replies.
+				return false;
 			}
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
@@ -591,7 +618,7 @@ export function registerPersistenceHandlers(
 		if ((event as { type?: string })?.type !== 'bridge') return sessions;
 		return Promise.all(
 			sessions.map(async (session) => {
-				const live = await readOwningTranscript(session.id, '').catch((error: unknown) => {
+				const live = await readOwningTranscript(session.id, '', true).catch((error: unknown) => {
 					logger.warn('Owning transcript unavailable for bootstrap', 'Sessions', {
 						sessionId: session.id,
 						error: error instanceof Error ? error.message : String(error),
@@ -625,6 +652,14 @@ export function registerPersistenceHandlers(
 					...content,
 					...(tab && { logs: tab.upserts }),
 					...(shell && { shellLogs: shell.upserts }),
+					transcriptSnapshots: [tab, shell]
+						.filter((patch) => patch !== undefined)
+						.map(({ sessionId, tabId, runtime, clearRuntimeFields }) => ({
+							sessionId,
+							tabId,
+							runtime,
+							clearRuntimeFields,
+						})),
 				};
 			}
 			return content;
@@ -690,7 +725,7 @@ export function registerPersistenceHandlers(
 				removeIds: string[] = [],
 				baselines: StoredSession[] = []
 			) => {
-				const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+				const baselineMap = await observedBaselineMap(baselines);
 				const remote = (event as { type?: string })?.type === 'bridge';
 				// Relocate any freshly-pasted inline images (data URLs) in the dirty
 				// sessions to the image store before they hit disk, so the sessions
@@ -877,7 +912,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle(
 		'sessions:setAll',
 		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
-			const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+			const baselineMap = await observedBaselineMap(baselines);
 			const remote = (event as { type?: string })?.type === 'bridge';
 			// Relocate inline images (data URLs) out of the sessions before they hit
 			// disk. setAll is the bootstrap/first-flush path, so this also migrates a

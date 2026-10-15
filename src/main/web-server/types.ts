@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -6,9 +7,14 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { OpenUiSurfaceRequest } from '../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -430,6 +436,14 @@ export type StarTabCallback = (
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
 /**
+ * One Auto Run steering verb, forwarded to the renderer - which holds the notes
+ * its run loop reads - and answered with whatever it did. Resolves rather than
+ * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type AutoRunSteeringCommandCallback = (
+	request: SteeringCommandRequest
+) => Promise<SteeringCommandResult>;
+/**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
@@ -589,6 +603,8 @@ export type EnqueueCommandCallback = (
 	tabId?: string,
 	images?: string[],
 	background?: boolean,
+	/** Queue Held: always queue, paused, even on an idle agent. */
+	held?: boolean,
 	/** The queued turn's place in a consult chain (see ExecuteCommandCallback). */
 	consultChain?: ConsultChain
 ) => Promise<EnqueueCommandResult>;
@@ -629,6 +645,29 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue hold|resume`: whether the item was found, and its paused state after. */
+export type SetQueueItemPausedResult = {
+	success: boolean;
+	found: boolean;
+	paused?: boolean;
+	error?: string;
+};
+export type SetQueueItemPausedCallback = (
+	sessionId: string,
+	itemId: string,
+	paused: boolean
+) => Promise<SetQueueItemPausedResult>;
+/** `maestro-cli queue merge`: whether the item was merged, and the item it was folded into. */
+export type MergeQueueItemResult = {
+	success: boolean;
+	merged: boolean;
+	mergedIntoId?: string;
+	error?: string;
+};
+export type MergeQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<MergeQueueItemResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (
@@ -822,7 +861,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
@@ -1315,7 +1354,7 @@ export type UpdateSessionSshCallback = (
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<{ success: boolean; error?: string }>;
+) => Promise<TranslationReport>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (
@@ -1432,6 +1471,16 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
+/** What to steer into a chat's running round: a queued message by id, or new text. */
+export interface SteerGroupChatRequest {
+	itemId?: string;
+	message?: string;
+	readOnly?: boolean;
+}
+export type SteerGroupChatCallback = (
+	chatId: string,
+	request: SteerGroupChatRequest
+) => Promise<GroupChatSteerResult>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 
 // =============================================================================

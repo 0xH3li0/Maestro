@@ -23,7 +23,7 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { notifyToast } from '../../../stores/notificationStore';
-import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { REGEX_AI_TAB, REGEX_BATCH } from '../../../utils/sessionIdParser';
 import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
@@ -101,8 +101,12 @@ export function useAgentClaudeModeResolvedListener(): void {
 				// on the parent session that actually owns `claudeInteractive`.
 				let actualSessionId: string;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
+				const batchMatch = sessionId.match(REGEX_BATCH);
 				if (aiTabMatch) {
 					actualSessionId = aiTabMatch[1];
+				} else if (batchMatch) {
+					// Desktop Auto Run task: `{agentId}-batch-{timestamp}`.
+					actualSessionId = batchMatch[1];
 				} else if (sessionId.endsWith('-ai') || sessionId.endsWith('-terminal')) {
 					actualSessionId = sessionId.replace(/-ai$|-terminal$/, '');
 				} else {

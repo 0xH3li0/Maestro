@@ -1097,6 +1097,16 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		keywords: ['quick chat', 'agent', 'primary agent', 'default agent'],
 	},
 	{
+		id: 'encore-quick-chat-default-tab',
+		requiresEncore: 'quickChat',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Quick Chat Default Tab',
+		description:
+			"Where a new Quick Chat's first message goes: a tab Maestro chooses, or always a new tab",
+		keywords: ['quick chat', 'default tab', 'choose tab', 'new tab', 'routing', 'route'],
+	},
+	{
 		id: 'encore-quick-chat-persistent',
 		requiresEncore: 'quickChat',
 		tab: 'encore',

@@ -1,3 +1,4 @@
+import { parseNativeLines } from '../../shared/maestro-lib/translation/native-records';
 /**
  * Claude Code Session Storage Implementation
  *
@@ -19,7 +20,10 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { computeClaudeUsageCost } from '../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../shared/claudeSessionUsage';
 import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
@@ -44,6 +48,8 @@ import type {
 import { BaseSessionStorage } from './base-session-storage';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
+import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
+import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -104,7 +110,8 @@ function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[] = []
 ): AgentSessionInfo | null {
 	try {
 		const lines = content.split('\n').filter((l) => l.trim());
@@ -113,10 +120,7 @@ function parseSessionContent(
 		let firstUserMessage = '';
 		let timestamp = new Date(stats.mtimeMs).toISOString();
 
-		// Fast regex-based extraction for message counts
-		const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-		const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-		const messageCount = userMessageCount + assistantMessageCount;
+		const messageCount = countClaudeTranscriptMessages(content);
 
 		// Extract first meaningful message content
 		// Prefer first assistant response as preview (more meaningful than system context)
@@ -161,7 +165,7 @@ function parseSessionContent(
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
 			byModel,
-		} = computeClaudeUsageCost(content);
+		} = computeClaudeUsageWithSubagents(content, subagentContents);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -229,7 +233,13 @@ async function parseSessionFile(
 		}
 
 		const content = await fs.readFile(filePath, 'utf-8');
-		return parseSessionContent(content, sessionId, projectPath, stats);
+		return parseSessionContent(
+			content,
+			sessionId,
+			projectPath,
+			stats,
+			await readClaudeSubagentTranscripts(filePath)
+		);
 	} catch (error) {
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
@@ -313,6 +323,38 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private getProjectsDir(configDir?: string): string {
 		return path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
+	}
+
+	/**
+	 * The local transcript of `sessionId`, in whichever account it was written.
+	 *
+	 * Session ids are UUIDs, so one names one file across every account dir.
+	 * The default account is tried first (the common case, and the only one when
+	 * accounts share a pool through a symlinked `projects/`); the other account
+	 * dirs are only scanned when it is not there. Without this, a tab whose agent
+	 * runs under a different `CLAUDE_CONFIG_DIR` could not be opened, resumed into
+	 * view, or edited from Maestro. Falls back to the default path so a missing
+	 * file still fails with the usual read error.
+	 */
+	private async locateLocalSessionFile(projectPath: string, sessionId: string): Promise<string> {
+		const defaultFile = path.join(this.getEncodedProjectDir(projectPath), `${sessionId}.jsonl`);
+		const exists = async (file: string): Promise<boolean> => {
+			try {
+				await fs.access(file);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		if (await exists(defaultFile)) return defaultFile;
+		for (const accountDir of await getProviderAccountDirs('claude-code')) {
+			const candidate = path.join(
+				this.getEncodedProjectDir(projectPath, accountDir),
+				`${sessionId}.jsonl`
+			);
+			if (candidate !== defaultFile && (await exists(candidate))) return candidate;
+		}
+		return defaultFile;
 	}
 
 	/**
@@ -609,8 +651,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return this.listSessionsPaginatedRemote(projectPath, options, sshConfig);
 		}
 
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
 
 		const sortedFiles = await this.statProjectSessionFiles(projectDir);
 		const totalCount = sortedFiles.length;
@@ -663,8 +705,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		options: SessionListOptions | undefined,
 		sshConfig: SshRemoteConfig
 	): Promise<PaginatedSessionsResult> {
-		const { cursor, limit = 100 } = options || {};
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const { cursor, limit = 100, configDir } = options || {};
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {
@@ -751,18 +793,15 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			}
 			content = result.data;
 		} else {
-			const projectDir = this.getEncodedProjectDir(projectPath);
-			const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 			content = await fs.readFile(sessionFile, 'utf-8');
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
-
 		const messages: SessionMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					let msgContent = '';
 					let toolUse = undefined;
@@ -851,20 +890,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (!result.success || !result.data) return [];
 				content = result.data;
 			} else {
-				const projectDir = this.getEncodedProjectDir(projectPath);
-				const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+				const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 				content = await fs.readFile(sessionFile, 'utf-8');
 			}
 		} catch {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					const textContent = extractTextFromContent(entry.message?.content);
 					if (textContent.trim()) {
@@ -909,8 +946,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			return { success: false, error: 'Delete not supported for remote sessions' };
 		}
 
-		const projectDir = this.getEncodedProjectDir(projectPath);
-		const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+		const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
 
 		try {
 			const content = await fs.readFile(sessionFile, 'utf-8');

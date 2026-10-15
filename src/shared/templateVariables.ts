@@ -269,6 +269,8 @@ export interface TemplateContext {
 	systemOne?: SystemOnePromptVariables;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	/** The clock for the date and time variables. Absent: the real time. */
+	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
 		eventType?: string;
@@ -747,7 +749,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		maestroRunPath,
 		conductorProfile,
 	} = context;
-	const now = new Date();
+	const now = context.now ?? new Date();
 	// How this agent invokes the CLI. Resolved once: it is {{MAESTRO_CLI_PATH}},
 	// and the {{PEER_AGENTS}} block writes it into the commands it teaches.
 	const maestroCliCommand = context.maestroCliPath

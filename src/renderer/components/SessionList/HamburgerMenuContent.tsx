@@ -1,4 +1,5 @@
 import {
+	Bell,
 	Wand2,
 	Plus,
 	Settings,
@@ -24,9 +25,11 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
@@ -102,13 +105,7 @@ export function HamburgerMenuContent({
 							Create a new agent session
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{shortcuts.newInstance ? formatShortcutKeys(shortcuts.newInstance.keys) : '⌘N'}
-					</span>
+					<ShortcutHint theme={theme} keys={shortcuts.newInstance?.keys ?? []} />
 				</button>
 			)}
 			{openWizard && (
@@ -128,13 +125,7 @@ export function HamburgerMenuContent({
 							Get started with AI
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
-					</span>
+					<ShortcutHint theme={theme} keys={shortcuts.openWizard?.keys ?? []} />
 				</button>
 			)}
 			<button
@@ -153,13 +144,25 @@ export function HamburgerMenuContent({
 						Quick actions and navigation
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					data-shortcut-hint=""
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
-					{shortcuts.quickAction ? formatShortcutKeys(shortcuts.quickAction.keys) : '⌘K'}
-				</span>
+				<ShortcutHint theme={theme} keys={shortcuts.quickAction?.keys ?? []} />
+			</button>
+			<button
+				onClick={() => {
+					openUiSurface({ surface: 'notification-center' });
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Bell className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Notification Center
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Unread notifications and history
+					</div>
+				</div>
+				<ShortcutHint keys={shortcuts.openNotificationCenter?.keys ?? []} theme={theme} />
 			</button>
 			{startTour && !phone && (
 				<button
@@ -198,13 +201,7 @@ export function HamburgerMenuContent({
 							View all available shortcuts
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{formatShortcutKeys(shortcuts.help.keys)}
-					</span>
+					<ShortcutHint theme={theme} keys={shortcuts.help?.keys ?? []} />
 				</button>
 			)}
 			<button
@@ -223,13 +220,7 @@ export function HamburgerMenuContent({
 						Configure preferences
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					data-shortcut-hint=""
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
-					{formatShortcutKeys(shortcuts.settings.keys)}
-				</span>
+				<ShortcutHint theme={theme} keys={shortcuts.settings?.keys ?? []} />
 			</button>
 			<button
 				onClick={() => {
@@ -247,13 +238,7 @@ export function HamburgerMenuContent({
 						View application logs
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					data-shortcut-hint=""
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
-					{formatShortcutKeys(shortcuts.systemLogs.keys)}
-				</span>
+				<ShortcutHint theme={theme} keys={shortcuts.systemLogs?.keys ?? []} />
 			</button>
 			<button
 				onClick={() => {
@@ -271,13 +256,7 @@ export function HamburgerMenuContent({
 						View running processes
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					data-shortcut-hint=""
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
-					{formatShortcutKeys(shortcuts.processMonitor.keys)}
-				</span>
+				<ShortcutHint theme={theme} keys={shortcuts.processMonitor?.keys ?? []} />
 			</button>
 			<button
 				onClick={() => {
@@ -350,13 +329,7 @@ export function HamburgerMenuContent({
 							View usage analytics
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{formatShortcutKeys(shortcuts.usageDashboard.keys)}
-					</span>
+					<ShortcutHint theme={theme} keys={shortcuts.usageDashboard?.keys ?? []} />
 				</button>
 			)}
 			{encoreFeatures.directorNotes && (
@@ -377,13 +350,7 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					{shortcuts.directorNotes && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(shortcuts.directorNotes.keys)}
-						</span>
+						<ShortcutHint theme={theme} keys={shortcuts.directorNotes?.keys ?? []} />
 					)}
 				</button>
 			)}
@@ -405,13 +372,7 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					{shortcuts.computerHistory && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(shortcuts.computerHistory.keys)}
-						</span>
+						<ShortcutHint theme={theme} keys={shortcuts.computerHistory?.keys ?? []} />
 					)}
 				</button>
 			)}
@@ -432,13 +393,7 @@ export function HamburgerMenuContent({
 							Contribute to open source
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
-					</span>
+					<ShortcutHint theme={theme} keys={shortcuts.openSymphony?.keys ?? []} />
 				</button>
 			)}
 			{encoreFeatures.maestroCue && (
@@ -458,15 +413,7 @@ export function HamburgerMenuContent({
 							Event-driven automation
 						</div>
 					</div>
-					{shortcuts.openCue && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(shortcuts.openCue.keys)}
-						</span>
-					)}
+					{shortcuts.openCue && <ShortcutHint theme={theme} keys={shortcuts.openCue?.keys ?? []} />}
 				</button>
 			)}
 			{encoreFeatures.concerto && (
@@ -487,13 +434,7 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					{shortcuts.toggleConcerto && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(shortcuts.toggleConcerto.keys)}
-						</span>
+						<ShortcutHint theme={theme} keys={shortcuts.toggleConcerto?.keys ?? []} />
 					)}
 				</button>
 			)}
@@ -515,15 +456,7 @@ export function HamburgerMenuContent({
 							Floating chat with one agent
 						</div>
 					</div>
-					{quickChatHotkey.length > 0 && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(quickChatHotkey)}
-						</span>
-					)}
+					{quickChatHotkey.length > 0 && <ShortcutHint theme={theme} keys={quickChatHotkey} />}
 				</button>
 			)}
 			{encoreFeatures.pianola && (

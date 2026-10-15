@@ -994,12 +994,13 @@ describe('myStore', () => {
 ## Key Testing Conventions
 
 1. **Always wrap modal components** in `<LayerStackProvider>`.
-2. **Use `vi.clearAllMocks()`** in `beforeEach` and `vi.restoreAllMocks()` in `afterEach`.
+2. **Isolate mock calls, implementations, and spies.** Use `vi.clearAllMocks()` in `beforeEach` and `vi.restoreAllMocks()` in `afterEach`. Clearing calls does not reset mock implementations; use `mockReset()` for a mock whose per-test implementation must not leak. Restore spies on shared adapter objects even when each test creates a new registry.
+   Native ESM namespace exports are read-only. Before spying on a Node built-in, register a pass-through `vi.mock` factory that spreads `importOriginal()` into a mutable object, preserving real filesystem behavior (see `provider-translation-service.test.ts`).
 3. **Reset Zustand stores** with `resetAllStores()` (or `resetStore` / `resetStores`) from `src/__tests__/helpers` since stores persist across tests.
 4. **Use `vi.useFakeTimers()`** when testing timeouts, intervals, or debouncing.
 5. **Mock `window.maestro`** at the setup level; override specific methods per test.
 6. **Use `data-testid`** for elements that lack accessible roles.
 7. **Prefer `screen.getByRole`** and `screen.getByText` for queries (follows Testing Library best practices).
-8. **Use `waitFor`** for async assertions and `act` for state updates.
+8. **Use `waitFor`** for async assertions and `act` for state updates. Wait for the observable boundary being asserted: group-chat `idle` can precede its asynchronous history append, so poll the persisted history and all expected entry/usage assertions together rather than reading once after `idle`.
 9. **Mock external libraries** (react-markdown, lucide-react) to avoid rendering complexity.
 10. **Test file naming**: `ComponentName.test.tsx` for components, `useHookName.test.ts` for hooks, `storeName.test.ts` for stores.

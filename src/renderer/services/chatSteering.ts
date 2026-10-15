@@ -23,7 +23,11 @@
  */
 
 import type { LogEntry, PendingSteer, QueuedItem, Session } from '../types';
-import type { QueueSteerResult, SteeringResultFrame } from '../../shared/chatSteering';
+import type {
+	QueueSteerResult,
+	SteerBubbleState,
+	SteeringResultFrame,
+} from '../../shared/chatSteering';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -127,10 +131,12 @@ function steeredLogEntry(item: QueuedItem): LogEntry {
 		source: 'user',
 		text: item.text ?? '',
 		queuedItemId: item.id,
-		// Badges the bubble with the Steer button's icon, the way forceParallel
-		// badges a force-sent one. It leaves with the bubble if the item returns to
-		// the queue, so only a message the agent actually has keeps the mark.
+		// Marks the bubble as a steer (see SteeredMessageHeader). It leaves with the
+		// bubble if the item returns to the queue, so only a message the agent
+		// actually has keeps the mark.
 		steered: true,
+		// Typed, not yet answered. settlePendingSteers() stamps what the agent did.
+		steerState: 'pending',
 		...(item.readOnlyMode && { readOnly: true }),
 	};
 }
@@ -163,6 +169,32 @@ export function returnPendingSteersToQueue(
 		}
 	}
 	return { ...next, executionQueue: [...restored, ...next.executionQueue] };
+}
+
+/**
+ * Close parked steers the agent took: drop their records and stamp each bubble
+ * with what the agent did with the message, so the transcript keeps saying it
+ * after the toast is gone. The counterpart of returnPendingSteersToQueue, which
+ * closes the steers the agent did NOT take.
+ */
+export function settlePendingSteers(
+	session: Session,
+	steerIds: ReadonlySet<string>,
+	state: Exclude<SteerBubbleState, 'pending'>
+): Session {
+	const settling = (session.pendingSteers ?? []).filter((p) => steerIds.has(p.steerId));
+	if (settling.length === 0) return session;
+	let next: Session = {
+		...session,
+		pendingSteers: (session.pendingSteers ?? []).filter((p) => !steerIds.has(p.steerId)),
+	};
+	for (const p of settling) {
+		if (!p.logEntryId) continue;
+		next = mapTabLogs(next, p.tabId, (logs) =>
+			logs.map((l) => (l.id === p.logEntryId ? { ...l, steerState: state } : l))
+		);
+	}
+	return next;
 }
 
 function notifyUnconfirmed(sessionId: string, tabId: string): void {
@@ -319,10 +351,8 @@ export async function steerQueuedItem(
 
 		if (result.verdict === 'absorbed' || result.verdict === 'queued') {
 			// Already settled; nothing left to wait for. The bubble stays.
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				pendingSteers: (s.pendingSteers ?? []).filter((p) => p.steerId !== provisionalId),
-			}));
+			const settled = result.verdict;
+			updateSessionWith(sessionId, (s) => settlePendingSteers(s, provisional, settled));
 			return { outcome: 'settled', verdict: result.verdict };
 		}
 
@@ -469,16 +499,10 @@ export function applySteeringVerdict(processKey: string, verdict: SteeringResult
 	switch (verdict.verdict) {
 		case 'absorbed':
 			// The running turn changed course. The success toast already went out.
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				pendingSteers: (s.pendingSteers ?? []).filter((p) => !ids.has(p.steerId)),
-			}));
+			updateSessionWith(sessionId, (s) => settlePendingSteers(s, ids, 'absorbed'));
 			return;
 		case 'queued':
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				pendingSteers: (s.pendingSteers ?? []).filter((p) => !ids.has(p.steerId)),
-			}));
+			updateSessionWith(sessionId, (s) => settlePendingSteers(s, ids, 'queued'));
 			notifyToast({
 				color: 'theme',
 				title: 'Steer runs after this turn',

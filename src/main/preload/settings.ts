@@ -68,11 +68,16 @@ export function createSessionsApi() {
 			return () => ipcRenderer.removeListener('sessions:transcriptSync', listener);
 		},
 		onTranscriptRequest: (
-			handler: (request: { sessionId: string; tabId: string; requestId: string }) => void
+			handler: (request: {
+				sessionId: string;
+				tabId: string;
+				requestId: string;
+				metadataOnly?: boolean;
+			}) => void
 		) => {
 			const listener = (
 				_: unknown,
-				request: { sessionId: string; tabId: string; requestId: string }
+				request: { sessionId: string; tabId: string; requestId: string; metadataOnly?: boolean }
 			) => handler(request);
 			ipcRenderer.on('sessions:transcriptRequest', listener);
 			return () => ipcRenderer.removeListener('sessions:transcriptRequest', listener);

@@ -14,12 +14,15 @@ import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
+	resolveQuickChatRecentRef,
+	summarizeQuickChatRecent,
 	type QuickChatBoundsRequest,
 	type QuickChatFontScaleRequest,
 	parseQuickChatFontScaleRequest,
 	type QuickChatCommand,
 	type QuickChatCommandResult,
 	type QuickChatLayout,
+	type QuickChatRecentSummary,
 	type QuickChatSnapshot,
 	type QuickChatStatus,
 	type QuickChatWindowAction,
@@ -28,6 +31,11 @@ import { setNamedGlobalHotkey } from '../global-hotkey-manager';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
+import {
+	createQuickChatRecents,
+	createQuickChatRecentsDiskStore,
+	type QuickChatRecentsStore,
+} from './quick-chat-recents';
 import {
 	closeQuickChatWindow,
 	getQuickChatWindow,
@@ -38,6 +46,7 @@ import {
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
 	setQuickChatFontScale,
+	setQuickChatCompactHeight,
 	setQuickChatFullView,
 	setQuickChatLayout,
 	setQuickChatWindowPinned,
@@ -63,6 +72,8 @@ export interface QuickChatControllerDeps {
 	getMainWindow: () => BrowserWindow | null;
 	/** The app window that owns an agent, or the main window when none does. */
 	getWindowForSession: (sessionId: string) => BrowserWindow | null;
+	/** Where the recent chats persist. Defaults to their own store on disk. */
+	recentsStore?: QuickChatRecentsStore;
 }
 
 export interface QuickChatController {
@@ -91,6 +102,10 @@ export interface QuickChatController {
 	/** Change the conversation's text zoom. */
 	setFontScale(request: QuickChatFontScaleRequest): QuickChatStatus;
 	getStatus(): QuickChatStatus;
+	/** The recent chats, newest first. */
+	getRecents(): QuickChatRecentSummary[];
+	/** Bring back a recent chat named by id, id prefix, or 1-based place in the list. */
+	recall(ref: string): Promise<QuickChatCommandResult>;
 }
 
 /** The app's one controller, for callers outside the DI graph (the CLI bridge). */
@@ -104,6 +119,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 	const { settingsStore, windowDeps } = deps;
 	let snapshot: QuickChatSnapshot = { ...EMPTY_QUICK_CHAT_SNAPSHOT };
 	let hotkeyRegistered = false;
+	const recents = createQuickChatRecents(deps.recentsStore ?? createQuickChatRecentsDiskStore());
 
 	const isEnabled = () => resolveEncoreFeatures(settingsStore.get('encoreFeatures')).quickChat;
 	const readSettings = () => resolveQuickChatSettings(settingsStore.get(QUICK_CHAT_SETTINGS_KEY));
@@ -211,6 +227,14 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getStatus();
 	};
 
+	const getRecents = (): QuickChatRecentSummary[] => recents.list().map(summarizeQuickChatRecent);
+
+	const recall = async (ref: string): Promise<QuickChatCommandResult> => {
+		const resolved = resolveQuickChatRecentRef(recents.list(), ref);
+		if ('error' in resolved) return { ok: false, error: resolved.error, snapshot };
+		return runCommand({ type: 'recall', chatId: resolved.id });
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -245,9 +269,21 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatLayout(next === 'expanded' ? 'expanded' : 'compact');
 		});
+		ipcMain.on('quickChat:setCompactHeight', (event, height: unknown) => {
+			if (event.sender !== getQuickChatWindow()?.webContents) return;
+			if (typeof height === 'number') setQuickChatCompactHeight(height);
+		});
 		ipcMain.on('quickChat:setFullView', (event, on: boolean) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatFullView(on === true);
+		});
+		ipcMain.handle('quickChat:getRecents', () => getRecents());
+		ipcMain.handle('quickChat:getRecent', (_event, id: unknown) =>
+			typeof id === 'string' ? recents.get(id) : null
+		);
+		// The engine reports each chat as it changes, for the recent chats list.
+		ipcMain.on('quickChat:saveRecent', (_event, recent: unknown) => {
+			if (!recents.save(recent)) logger.warn('Ignored a malformed recent chat', 'QuickChat');
 		});
 		// The engine reports state as the conversation streams.
 		ipcMain.on('quickChat:snapshot', (_event, next: QuickChatSnapshot) => {
@@ -273,6 +309,8 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		onSnapshot,
 		setFontScale,
 		getStatus,
+		getRecents,
+		recall,
 	};
 	activeController = controller;
 	return controller;

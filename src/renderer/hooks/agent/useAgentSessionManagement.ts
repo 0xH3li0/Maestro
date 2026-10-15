@@ -1,7 +1,8 @@
+import { translatedHistorySessionId } from '../../../shared/maestro-lib/translation/session';
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
-import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
+import { focusAiTabInSession, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
@@ -160,7 +161,15 @@ export function useAgentSessionManagement(
 	 */
 	const addHistoryEntry = useCallback(
 		async (entry: HistoryEntryInput) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
+			const storeState = useSessionStore.getState();
+			const activeSession = selectActiveSession(storeState);
+			// The agent this entry BELONGS to, which is not the one on screen: a
+			// turn that finishes in the background names its own agent, and every
+			// per-agent fact below (token source, SSH history mirror) must come
+			// from that agent rather than from whatever the user is looking at.
+			const entrySession = entry.sessionId
+				? selectSessionById(entry.sessionId)(storeState)
+				: activeSession;
 
 			// Use provided values or fall back to activeSession
 			const targetSessionId = entry.sessionId || activeSession?.id;
@@ -193,11 +202,8 @@ export function useAgentSessionManagement(
 						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
 					};
 				}
-				const tokenSession = entry.sessionId
-					? selectSessionById(entry.sessionId)(useSessionStore.getState())
-					: activeSession;
-				if (tokenSession?.toolType === 'claude-code') {
-					const ci = tokenSession.claudeInteractive;
+				if (entrySession?.toolType === 'claude-code') {
+					const ci = entrySession.claudeInteractive;
 					return {
 						tokenSource: ci?.mode ?? 'api',
 						...(ci?.modeReason ? { tokenSourceReason: ci.modeReason } : {}),
@@ -238,7 +244,11 @@ export function useAgentSessionManagement(
 					// Cross-agent attribution: which agent consulted this one (if any)
 					...(entry.sourceAgentName ? { sourceAgentName: entry.sourceAgentName } : {}),
 				},
-				buildSharedHistoryContext(activeSession)
+				// Keyed on the entry's OWN agent. Building this from the active
+				// session mirrored every background agent's entries into the SSH
+				// host of whichever agent happened to be on screen, and dropped
+				// the mirror for an SSH agent that finished while off screen.
+				buildSharedHistoryContext(entrySession)
 			);
 
 			// Refresh history panel to show the new entry
@@ -288,6 +298,13 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
+			try {
+				agentSessionId = translatedHistorySessionId(targetSession, agentSessionId);
+			} catch (error) {
+				if (!opts?.suppressUnavailableFlash)
+					showFlash?.(error instanceof Error ? error.message : String(error));
+				return false;
+			}
 			// Resolve the host and path the transcript lives on the same way the
 			// sessions browser does. `targetSession.sshRemoteId` alone is empty until
 			// the agent spawns in this app run, so an SSH agent opened from History
@@ -311,11 +328,9 @@ export function useAgentSessionManagement(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
 			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
-				// Switch to the existing tab instead of creating a duplicate
+				// Reveal and focus the existing tab instead of creating a duplicate.
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
-					)
+					prev.map((s) => (s.id === targetSession.id ? focusAiTabInSession(s, existingTab.id) : s))
 				);
 				setActiveAgentSessionId(agentSessionId);
 				return true;
@@ -375,11 +390,7 @@ export function useAgentSessionManagement(
 										}
 									: tab
 							);
-							return {
-								...s,
-								aiTabs: updatedTabs,
-								...aiTabFocusFields(freshExistingTab.id),
-							};
+							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
 						}
 
 						// Create tab from the CURRENT session state (not stale closure value)

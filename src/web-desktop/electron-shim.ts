@@ -346,8 +346,6 @@ class BridgeClient {
 								error +
 								'. It was not automatically retried.'
 						);
-					if (pending.channel === 'sessions:setMany' || pending.channel === 'sessions:setAll')
-						this.uncertainPersistence = true;
 					pending.reject(new Error(error));
 				}
 				return;

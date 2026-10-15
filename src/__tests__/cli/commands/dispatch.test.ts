@@ -429,6 +429,78 @@ describe('dispatch command', () => {
 		});
 	});
 
+	describe('a refused send_command', () => {
+		const replyWith = (reply: Record<string, unknown>): void => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: vi.fn().mockResolvedValue(reply) } as never)
+			);
+		};
+
+		it('fails with the reply reason instead of reporting a dropped message as delivered', async () => {
+			// What a headless host answers for a message it cannot take. The reply
+			// resolves like any other, so only reading `success` tells them apart.
+			replyWith({
+				type: 'command_result',
+				success: false,
+				sessionId: 'agent-abc-123',
+				error: 'A headless host cannot attach images to a turn. Nothing was sent.',
+			});
+
+			await dispatch('agent-abc', 'Hello', { tab: 'tab-xyz' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toEqual({
+				success: false,
+				error: 'A headless host cannot attach images to a turn. Nothing was sent.',
+				code: 'DISPATCH_REFUSED',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('fails when the reply says success: false with no reason (the desktop renderer turned it away)', async () => {
+			replyWith({ type: 'command_result', success: false, sessionId: 'agent-abc-123' });
+
+			const result = await runDispatch('agent-abc', 'Hello', {});
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Maestro refused the message',
+				code: 'DISPATCH_REFUSED',
+			});
+		});
+
+		it('does not reclassify a refusal by the words in its reason', async () => {
+			replyWith({ type: 'command_result', success: false, error: 'Session not found' });
+
+			const result = await runDispatch('agent-abc', 'Hello', {});
+
+			expect(result.code).toBe('DISPATCH_REFUSED');
+			expect(result.error).toBe('Session not found');
+		});
+
+		it('says so when a headless host queued the message behind a running turn', async () => {
+			replyWith({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-xyz',
+				queued: true,
+				itemId: 'item-4',
+				queuePosition: 1,
+			});
+
+			const result = await runDispatch('agent-abc', 'Hello', { tab: 'tab-xyz' });
+
+			expect(result).toMatchObject({
+				success: true,
+				tabId: 'tab-xyz',
+				queued: true,
+				itemId: 'item-4',
+				queuePosition: 1,
+			});
+		});
+	});
+
 	describe('--force flag', () => {
 		it('includes force=true in the payload when allowConcurrentSend is enabled', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -580,6 +652,42 @@ describe('dispatch command', () => {
 			expect(output.code).toBe('INVALID_OPTIONS');
 			expect(output.error).toContain('--queue cannot be combined with --force');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('--held sends held:true, implies --queue, and reports held on a queued item', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 1,
+				itemId: 'item-held',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Later', { held: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', tabId: 'tab-1', held: true }),
+				'enqueue_command_result'
+			);
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({
+				success: true,
+				queued: true,
+				held: true,
+				itemId: 'item-held',
+			});
+		});
+
+		it('rejects --held combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { held: true, newTab: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTIONS');
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 

@@ -120,6 +120,11 @@ import {
 	buildNotificationEnv,
 } from '../../../../main/ipc/handlers/notifications';
 import type { WindowRegistry } from '../../../../main/window-registry';
+import { requestFromRenderer } from '../../../../main/web-server/callbacks/remoteRequest';
+
+vi.mock('../../../../main/web-server/callbacks/remoteRequest', () => ({
+	requestFromRenderer: vi.fn().mockResolvedValue(true),
+}));
 
 /**
  * Build a minimal fake BrowserWindow shared by routing and queued-delivery tests.
@@ -463,6 +468,64 @@ describe('Notification IPC Handlers', () => {
 			);
 			expect(clickCalls).toHaveLength(0);
 		});
+	});
+
+	it('delivers an inbox terminal action to its owning window', async () => {
+		const owner = makeFakeWindow();
+		registerNotificationsHandlers({
+			getWindowRegistry: () => makeFakeRegistry({ 'agent-7': 'secondary' }, { secondary: owner }),
+		});
+		const action = { kind: 'open-terminal', sessionId: 'agent-7', tabRef: 'terminal-9' };
+		expect(
+			await handlers.get('notification:navigateToSource')!({}, 'agent-7', undefined, action)
+		).toEqual({ success: true });
+		expect(requestFromRenderer).toHaveBeenCalledWith(
+			owner,
+			'notification:activateAction',
+			expect.objectContaining({ args: [action], fallback: false })
+		);
+	});
+
+	it('reports a missing destination acknowledged by the owning renderer', async () => {
+		const owner = makeFakeWindow();
+		registerNotificationsHandlers({ getMainWindow: () => owner });
+		vi.mocked(requestFromRenderer).mockResolvedValueOnce(false);
+		expect(
+			await handlers.get('notification:navigateToSource')!({}, 'agent-7', undefined, {
+				kind: 'open-terminal',
+				sessionId: 'agent-7',
+				tabRef: 'closed-terminal',
+			})
+		).toEqual({ success: false });
+	});
+
+	it('rejects inbox navigation when the owner renderer has been disposed', async () => {
+		const owner = makeFakeWindow();
+		owner.webContents.isDestroyed = () => true;
+		registerNotificationsHandlers({ getMainWindow: () => owner });
+		expect(
+			await handlers.get('notification:navigateToSource')!({}, 'agent-7', undefined, {
+				kind: 'open-terminal',
+				sessionId: 'agent-7',
+				tabRef: 'terminal-9',
+			})
+		).toEqual({ success: false });
+		expect(owner.webContents.send).not.toHaveBeenCalled();
+	});
+
+	it('routes inbox source navigation to the source owner and requested tab', async () => {
+		const { dispatchDeepLink } = await import('../../../../main/deep-links');
+		const owner = makeFakeWindow();
+		const registry = makeFakeRegistry({ 'agent-7': 'secondary' }, { secondary: owner });
+		registerNotificationsHandlers({
+			getMainWindow: () => makeFakeWindow(),
+			getWindowRegistry: () => registry,
+		});
+		expect(await handlers.get('notification:navigateToSource')!({}, 'agent-7', 'tab-9')).toEqual({
+			success: true,
+		});
+		const windowGetter = vi.mocked(dispatchDeepLink).mock.calls[0][1];
+		expect(windowGetter()).toBe(owner);
 	});
 
 	describe('resolveNotificationClickWindow (multi-window routing)', () => {

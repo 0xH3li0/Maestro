@@ -1,3 +1,8 @@
+import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../../shared/notificationInbox';
 /**
  * Shared types for WebSocket message handlers.
  *
@@ -5,6 +10,7 @@
  */
 
 import type { QueueSteerResult } from '../../../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../../../shared/groupChatSteering';
 import type {
 	WebClient,
 	AutoRunDocument,
@@ -20,6 +26,7 @@ import type {
 	GroupChatState,
 	StartGroupChatOptions,
 	StartGroupChatResult,
+	SteerGroupChatRequest,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -42,6 +49,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -153,6 +161,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
@@ -169,6 +179,7 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab and sub-tab id. */
 	openModal: (params: OpenUiSurfaceRequest) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
@@ -216,6 +227,7 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
+		held?: boolean,
 		consultChain?: ConsultChain
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
@@ -231,6 +243,15 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>;
+	setQueueItemPaused: (
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	) => Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>;
+	mergeQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; merged: boolean; mergedIntoId?: string; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -368,7 +389,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<TranslationReport>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -382,6 +403,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
+	steerGroupChat?: (
+		chatId: string,
+		request: SteerGroupChatRequest
+	) => Promise<GroupChatSteerResult>;
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;

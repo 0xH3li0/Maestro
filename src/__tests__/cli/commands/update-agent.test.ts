@@ -661,7 +661,7 @@ describe('update-agent command', () => {
 			await refused({ runOn: 'provider', provider: 'codex', force: true });
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining('--provider cannot be combined with other settings edits')
+				expect.stringContaining('Provider migration must be a separate operation')
 			);
 			expect(sendCommand).not.toHaveBeenCalled();
 		});
@@ -802,31 +802,44 @@ describe('update-agent command', () => {
 		});
 	});
 
-	it('refuses --provider without --force', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		vi.mocked(getSessionById).mockReturnValue({
-			id: 'full-session-id',
-			toolType: 'claude-code',
-		} as never);
-		const sendCommand = vi.fn();
-		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
-			action({ sendCommand } as never)
-		);
-
-		await updateAgent('agent-1', { provider: 'codex' });
-
-		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--force to confirm'));
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('sends a toolType patch for --provider with --force', async () => {
+	it('reports library refusal and sends no blanket destructive switch', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({
 			id: 'full-session-id',
 			toolType: 'claude-code',
 		} as never);
 		const sendCommand = vi.fn().mockResolvedValue({
-			type: 'update_session_config_result',
+			success: false,
+			error: 'Native translation is unverified; explicit limitation acceptance required',
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+
+		await updateAgent('agent-1', { provider: 'codex' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'apply',
+					acceptTranslationLimitations: false,
+				},
+			}),
+			'provider_translation_result',
+			120000
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('uses the dedicated translation verb for --provider with --force', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'provider_translation_result',
 			success: true,
 		});
 		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
@@ -837,11 +850,16 @@ describe('update-agent command', () => {
 
 		expect(sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
-				type: 'update_session_config',
+				type: 'provider_translation',
 				sessionId: 'full-session-id',
-				configPatch: { toolType: 'codex' },
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'apply',
+					acceptTranslationLimitations: true,
+				},
 			}),
-			'update_session_config_result'
+			'provider_translation_result',
+			120000
 		);
 	});
 
@@ -1469,7 +1487,7 @@ describe('update-agent command', () => {
 			await refused({ peer: ['alpha:r'], provider: 'codex', force: true });
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining('--provider cannot be combined')
+				expect.stringContaining('Provider migration must be a separate operation')
 			);
 		});
 	});
@@ -1495,6 +1513,96 @@ describe('update-agent command', () => {
 		const parsed = JSON.parse(output);
 		expect(parsed).toMatchObject({ success: false, error: 'Connection lost' });
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+	it('uses the same provider route for dry-run and status without forcing acceptance', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		const sendCommand = vi.fn().mockResolvedValue({ success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await updateAgent('agent-1', { provider: 'codex', dryRun: true });
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'plan',
+					acceptTranslationLimitations: false,
+				},
+			}),
+			'provider_translation_result',
+			120000
+		);
+		await updateAgent('agent-1', { migration: 'status' });
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				configPatch: { migrationAction: 'status', acceptTranslationLimitations: false },
+			}),
+			'provider_translation_result',
+			120000
+		);
+	});
+	it.each(['recover', 'rollback'] as const)(
+		'waits for a %s migration report before closing the CLI connection',
+		async (migration) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn().mockResolvedValue({ success: true });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			await updateAgent('agent-1', { migration });
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					configPatch: { migrationAction: migration, acceptTranslationLimitations: false },
+				}),
+				'provider_translation_result',
+				120000
+			);
+		}
+	);
+	it('carries a reviewed operation ID through the dedicated translation request', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({ success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await updateAgent('agent-1', {
+			provider: 'codex',
+			migrationPlan: ' reviewed-plan ',
+			acceptTranslationLimitations: true,
+		});
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'provider_translation',
+				sessionId: 'full-session-id',
+				configPatch: {
+					toolType: 'codex',
+					migrationAction: 'apply',
+					migrationPlanId: 'reviewed-plan',
+					acceptTranslationLimitations: true,
+				},
+			},
+			'provider_translation_result',
+			120000
+		);
+	});
+	it('refuses an older desktop without falling back to a destructive settings patch', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'error',
+			message: 'Provider translation is unavailable',
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		await updateAgent('agent-1', { provider: 'codex', dryRun: true, json: true });
+		expect(sendCommand).toHaveBeenCalledTimes(1);
+		expect(sendCommand.mock.calls[0][0].type).toBe('provider_translation');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no legacy provider switch'));
 	});
 });
 

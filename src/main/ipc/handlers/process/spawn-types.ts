@@ -62,6 +62,10 @@ export interface SpawnProcessConfig {
 	// the authoritative value is read from the persisted session; this is only
 	// a fallback for callers that pass it inline.
 	codexTransport?: CodexTransport;
+	// maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
+	// 300s default. Auto Run raises it to its own inactivity budget, or a long
+	// silent tool call (a test suite) is killed long before Auto Run would.
+	maestroPMaxWaitSeconds?: number;
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
 	// Stats tracking options

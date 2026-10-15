@@ -13,6 +13,7 @@ import {
 } from '../../../../main/ipc/handlers/tabNaming';
 import { runLocalTask } from '../../../../main/local-models/task-router';
 import { resetLocalTaskNotices } from '../../../../main/local-models/task-notices';
+import { logger } from '../../../../main/utils/logger';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
@@ -629,6 +630,52 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// Claude Code answers a `--permission-mode plan` turn on Sonnet even when
+		// `--model haiku` is passed, so plan mode turned every cheap naming turn into
+		// a Sonnet turn. With every tool switched off it protects nothing.
+		it('drops read-only mode when the agent can switch all tools off', async () => {
+			const { buildAgentArgs, applyAgentConfigOverrides } =
+				await import('../../../../main/utils/agent-args');
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				noToolsArgs: ['--tools', ''],
+			});
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me with something',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(buildAgentArgs).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ readOnlyMode: false })
+			);
+			expect(applyAgentConfigOverrides).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.objectContaining({ readOnlyMode: false })
+			);
+			const spawnArgs = (mockProcessManager.spawn as Mock).mock.calls[0][0].args as string[];
+			expect(spawnArgs).toEqual(expect.arrayContaining(['--tools', '']));
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Test Tab');
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			await expect(resultPromise).resolves.toBe('Test Tab');
+		});
+
 		it('extracts tab name from agent output with ANSI codes', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
@@ -746,6 +793,89 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBeNull();
+		});
+
+		it('fences the message and restates the instruction after it', async () => {
+			// A message ending in a question reads as the last thing asked, so the
+			// naming instruction must come AFTER it, not only before.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+			const finish = (output: string) => {
+				onDataCallback?.('tab-naming-mock-uuid-1234', output);
+				onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			};
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'what would it take to track plugin stats?',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const prompt: string = mockProcessManager.spawn.mock.calls[0][0].prompt;
+			expect(prompt).toContain('<message>\nwhat would it take to track plugin stats?\n</message>');
+			expect(prompt.indexOf('</message>')).toBeLessThan(
+				prompt.indexOf('Reply with the tab name for the message above')
+			);
+
+			finish('Plugin Stats');
+			await expect(resultPromise).resolves.toBe('Plugin Stats');
+		});
+
+		it('returns null when the model answers the message instead of naming it', async () => {
+			// Regression: in TUI mode Haiku answered "what would it take to track
+			// plugin stats?" with a numbered list, and the line filter picked the
+			// short bold title of bullet 5, naming the tab "Respect opt-out".
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+			const finish = (output: string) => {
+				onDataCallback?.('tab-naming-mock-uuid-1234', output);
+				onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			};
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'what would it take to track plugin stats?',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			finish(
+				[
+					"I can't answer this from the code yet. Here's what it would likely take:",
+					'',
+					'1. **Find the existing pipeline.** Search for where version and theme are emitted.',
+					'2. **Define the event.** Send a plugin ID and its version.',
+					'3. **Respect opt-out.** Whatever switch disables version reporting should disable this too.',
+				].join('\n')
+			);
+
+			await expect(resultPromise).resolves.toBeNull();
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Tab naming extraction failed',
+				expect.any(String),
+				expect.objectContaining({
+					reason: expect.stringContaining('answered_instead_of_naming'),
+				})
+			);
 		});
 
 		it('extracts the tab name from Claude stream-json output (the real-world path)', async () => {

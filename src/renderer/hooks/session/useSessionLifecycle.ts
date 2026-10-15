@@ -1,3 +1,4 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
 /**
  * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
@@ -24,7 +25,6 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from '../../stores/sessionStore';
-import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -113,8 +113,11 @@ export interface SessionLifecycleReturn {
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 		tierTargets?: TierTargets,
 		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
-		peerGrants?: PeerGrants
-	) => void;
+		peerGrants?: PeerGrants,
+		acceptTranslationLimitations?: boolean,
+		selectedUserResources?: string[],
+		migrationPlanId?: string
+	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
 	/** Auto-name the currently-selected tab: close modal, show spinner, generate name via agent */
@@ -172,7 +175,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// ====================================================================
 
 	const handleSaveEditAgent = useCallback(
-		(
+		async (
 			sessionId: string,
 			name: string,
 			toolType?: ToolType,
@@ -214,8 +217,33 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 			tierTargets?: TierTargets,
 			/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
-			peerGrants?: PeerGrants
+			peerGrants?: PeerGrants,
+			acceptTranslationLimitations?: boolean,
+			selectedUserResources?: string[],
+			migrationPlanId?: string
 		) => {
+			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (toolType && before && toolType !== before.toolType) {
+				if (customPath || customArgs || Object.keys(customEnvVars ?? {}).length)
+					throw new Error(
+						'Save provider migration separately from binary, arguments or account environment edits'
+					);
+				if (workingDirectory && withWorkingDirectory(before, workingDirectory) !== before)
+					throw new Error('Change the working directory separately from provider migration');
+				const report = await requestProviderTranslation(
+					{
+						agentId: sessionId,
+						destination: toolType,
+						action: 'apply',
+						acceptLimitations: acceptTranslationLimitations,
+						selectedUserResources,
+						planId: migrationPlanId,
+					},
+					{ waitForDeferred: true }
+				);
+				if (!report.success)
+					throw new Error(report.error ?? report.result?.error ?? 'Provider migration refused');
+			}
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
 			// silently keeping the old directory.
@@ -248,7 +276,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					customPath,
 					customArgs,
-					customEnvVars,
+					customEnvVars: toolType
+						? { ...(s.customEnvVars ?? {}), ...(customEnvVars ?? {}) }
+						: customEnvVars,
 					customEnvVarsDisabled,
 					gatewayUrl,
 					// Where the agent's model runs. A target names a source and a
@@ -283,45 +313,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// opt-in is stored, so choosing Standard clears the field.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
 				};
-
-				// If the provider changed, park each tab's provider-specific state and
-				// restore whatever the incoming provider left behind. Tabs, transcripts,
-				// closed-tab history, and file preview tabs are all preserved: none of
-				// them are provider-specific, and switching back has to land the user on
-				// the same conversation they left.
-				if (toolType && toolType !== s.toolType) {
-					Object.assign(updatedFields, {
-						toolType,
-						aiTabs: s.aiTabs.map((tab) => switchTabProvider(tab, s.toolType, toolType)),
-						// Clear provider-specific overrides. These are agent-level config,
-						// not per-tab conversation state, so they are not parked - the edit
-						// modal already resets its own fields on a provider switch.
-						customPath: undefined,
-						customArgs: undefined,
-						customEnvVars: undefined,
-						customEnvVarsDisabled: undefined,
-						// `gatewayUrl` is NOT cleared here: the dialog empties its
-						// gateway field on a provider switch and validates whatever is
-						// typed afterwards against the NEW provider, so the value in
-						// `updatedFields` is already the right one.
-						customModel: undefined,
-						customEffort: undefined,
-						customContextWindow: undefined,
-						// Provenance describes the value cleared above, so it must not
-						// outlive it: a stale 'user-edited' would make the new
-						// provider's window look deliberate (finding AD1).
-						contextWindowSource: undefined,
-						enableMaestroP: undefined,
-						maestroPPath: undefined,
-						maestroPMode: undefined,
-					});
-
-					// Any turn already in flight keeps running under the provider it was
-					// sent with: settings are codified at send, and this change applies from
-					// the next message. So the agent process is deliberately left alone, and
-					// the session's busy state with it. `turnProvider` on each tab is what
-					// keeps that turn's late events attributed to the old provider.
-				}
 
 				const next = { ...s, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;

@@ -557,6 +557,7 @@ export function UsageDashboardModal({
 				<AgentDetailModal
 					session={detailSession}
 					data={data}
+					timeRange={timeRange}
 					theme={theme}
 					allSessions={sessions}
 					onClose={() => setDetailSession(null)}

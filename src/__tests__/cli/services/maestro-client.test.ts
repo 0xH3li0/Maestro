@@ -2,11 +2,11 @@
  * @file maestro-client.test.ts
  * @description Tests for the CLI WebSocket client service
  *
- * Tests the MaestroClient class including:
- * - Connection lifecycle (connect, disconnect)
- * - Command sending with response matching
- * - Timeout handling
- * - withMaestroClient helper lifecycle
+ * The connection itself moved into maestro-lib as `BridgeConnection` (its own
+ * tests live in src/shared/maestro-lib/client/__tests__/bridge-connection.test.ts).
+ * This service keeps the CLI's names for it, so these tests cover:
+ * - The aliases resolve to the library's connection and error classes
+ * - withMaestroClient helper lifecycle, through the alias
  * - resolveSessionId helper
  */
 
@@ -30,14 +30,15 @@ vi.mock('ws', async () => {
 		static OPEN = WS_OPEN;
 		constructor() {
 			super();
-			// eslint-disable-next-line @typescript-eslint/no-use-before-define
 			mockWsInstance = this as unknown as typeof mockWsInstance;
 		}
 	}
 	return { default: MockWebSocket };
 });
 
-vi.mock('../../../shared/cli-server-discovery', () => ({
+// The connection reads discovery from inside the library, so the mock goes on
+// the library module rather than on the src/shared/cli-server-discovery shim.
+vi.mock('../../../shared/maestro-lib/client/discovery', () => ({
 	readCliServerInfo: vi.fn(),
 	isCliServerRunning: vi.fn(),
 }));
@@ -50,16 +51,31 @@ import {
 	MaestroClient,
 	withMaestroClient,
 	resolveSessionId,
+	UnsupportedCommandError,
+	CommandTimeoutError,
 } from '../../../cli/services/maestro-client';
-import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
+import {
+	BridgeConnection,
+	withBridgeConnection,
+	UnsupportedCommandError as LibraryUnsupportedCommandError,
+	CommandTimeoutError as LibraryCommandTimeoutError,
+} from '../../../shared/maestro-lib/client/bridge-connection';
+import {
+	readCliServerInfo,
+	isCliServerRunning,
+} from '../../../shared/maestro-lib/client/discovery';
 import { readSessions } from '../../../cli/services/storage';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-bridge-errors';
 import WebSocket from 'ws';
 
-describe('MaestroClient', () => {
+describe('CLI names for the library bridge connection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+	});
+	it('MaestroClient and withMaestroClient are the library connection and helper', () => {
+		expect(MaestroClient).toBe(BridgeConnection);
+		expect(withMaestroClient).toBe(withBridgeConnection);
 	});
 
 	afterEach(() => {
@@ -358,6 +374,11 @@ describe('MaestroClient', () => {
 			expect(() => client.disconnect()).not.toThrow();
 		});
 	});
+
+	it('re-exports the library error classes, so instanceof checks keep matching', () => {
+		expect(UnsupportedCommandError).toBe(LibraryUnsupportedCommandError);
+		expect(CommandTimeoutError).toBe(LibraryCommandTimeoutError);
+	});
 });
 
 describe('withMaestroClient()', () => {
@@ -391,6 +412,7 @@ describe('withMaestroClient()', () => {
 
 		expect(result).toBe(actionResult);
 		expect(actionFn).toHaveBeenCalledTimes(1);
+		expect(actionFn.mock.calls[0][0]).toBeInstanceOf(MaestroClient);
 		// Should disconnect after action
 		expect(mockWsInstance.close).toHaveBeenCalled();
 	});

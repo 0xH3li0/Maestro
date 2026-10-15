@@ -10,7 +10,7 @@ const METHODS: Record<string, string> = {
 	agentSessions:
 		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionStarred snapshotStarredTranscript',
 	agents:
-		'consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
+		'translateProvider consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
 	aiCommand: 'suggest',
 	attachments: 'delete getPath list load save',
 	autorun:
@@ -40,7 +40,7 @@ const METHODS: Record<string, string> = {
 	fs: 'cancelReadFile compressFolder copyPath countItems delete deleteMany directoryInfo directorySize downloadRemoteFile fetchImageAsBase64 homeDir listTreeRemote mkdir readDir readDirTree readFile rename stat writeFile writeImageFile',
 	git: 'branch branches cancelCommand checkGhCli checkoutBranch commitAll commitCount createGist createPR diff getDefaultBranch getRepoRoot graph info init isRepo listWorktrees log numstat remote removeWorktree runCommand scanWorktreeDirectory show showFile status switch tags unwatchWorktreeDirectory watchWorktreeDirectory worktreeCheckout worktreeInfo worktreeRunSetup worktreeSetup',
 	groupChat:
-		'addHistoryEntry addParticipant appendMessage archive clearHistory create delete deleteHistoryEntry getHistory getHistoryFilePath getImages getMessages getModeratorSessionId getQueue list load queueAdd queueRemove queueReorder queueResume removeParticipant rename reportAutoRunComplete resetParticipantContext saveImage sendToModerator sendToParticipant startModerator stopAll stopModerator submitMessage update',
+		'addHistoryEntry addParticipant appendMessage archive clearHistory create delete deleteHistoryEntry getHistory getHistoryFilePath getImages getMessages getModeratorSessionId getQueue list load queueAdd queueRemove queueReorder queueResume queueSteer removeParticipant rename reportAutoRunComplete resetParticipantContext saveImage sendToModerator sendToParticipant startModerator stopAll stopModerator submitMessage update',
 	groups: 'getAll setAll',
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
@@ -48,6 +48,8 @@ const METHODS: Record<string, string> = {
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
 	logger: 'getLogLevel log',
+	// Read-only: a browser-spawned agent needs it to build the same system prompt.
+	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',

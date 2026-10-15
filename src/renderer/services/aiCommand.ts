@@ -56,6 +56,7 @@ export function resolveAiCommandProvenance(
 	const source = localModelAssignmentSourceLabel(assignment, endpoints);
 	return source ? { model: source } : {};
 }
+import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
  * Ask the model for a command line for `request`, in the context of `session`.
@@ -114,6 +115,7 @@ export async function requestAiCommand(options: {
 			customEnvVars: session.customEnvVars,
 			customModel: turnModel,
 			customEffort: turnEffort,
+			claudeTokenSource: getClaudeTokenSourceFields(session),
 			recentCommands,
 		});
 

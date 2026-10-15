@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
@@ -146,6 +147,18 @@ async function handleProcessSpawnImpl(
 
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+	const migrationAgentId = config.sessionId.replace(/-ai(?:-.+)?$/, '');
+	const migrationAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id: string;
+			providerMigration?: import('../../../../shared/maestro-lib/translation/types').ProviderMigrationState;
+		}>
+	).find((s) => s.id === migrationAgentId);
+	if (config.toolType !== 'terminal' && migrationHoldsTurns(migrationAgent?.providerMigration)) {
+		throw new Error(
+			'Provider migration is pending; the next turn remains queued until migration settles'
+		);
+	}
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
@@ -1215,17 +1228,18 @@ async function handleProcessSpawnImpl(
 	// to the renderer on the same channel the init event uses. Local only: the
 	// probe would run this machine's claude, not the remote host's.
 	if (interactiveClaudeBinPath && !sshRemoteUsed && safeSend) {
-		const probeEnvVars = { ...(customEnvVarsToPass ?? {}) };
-		delete probeEnvVars.MAESTRO_CLAUDE_BIN;
-		void probeClaudeSlashCommandsCached(
-			interactiveClaudeBinPath,
-			config.cwd,
-			buildChildProcessEnv(probeEnvVars, false, globalShellEnvVars)
-		).then((commands) => {
-			if (commands && commands.length > 0) {
-				safeSend('process:slash-commands', config.sessionId, commands);
+		// The probe runs claude itself, never maestro-p driving claude, so the
+		// wrapper's pointer is stripped from the FINAL env: it can arrive through
+		// the user's custom vars or be inherited from whatever launched Maestro.
+		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
+		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
+			(commands) => {
+				if (commands && commands.length > 0) {
+					safeSend('process:slash-commands', config.sessionId, commands);
+				}
 			}
-		});
+		);
 	}
 
 	// Arm the interactive-mode replay controller when this turn ran

@@ -32,6 +32,7 @@ import {
 import { agentTierRows, tierHarnessProblem, tierRowRecord } from '../../shared/modelTiers';
 import { describePeerConfiguration } from '../../shared/peerAgents';
 import { failCommand } from '../services/session-command';
+import { readAgentSessionSettings } from '../services/agent-settings';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -168,7 +169,6 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 				options.showSecrets || !isSecretEnvKey(entry.key) ? entry.value : maskEnvValue(entry.value),
 			secret: isSecretEnvKey(entry.key),
 		}));
-
 		const output = {
 			id: agent.id,
 			name: agent.name,
@@ -181,11 +181,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			// Where this agent's worktrees go (Git menu -> Configure Worktrees).
 			// Null when unset; `create-worktree` then picks the desktop default.
 			worktreeBasePath: agent.worktreeConfig?.basePath ?? null,
-			// Left Bar bookmark state (settable with `maestro-cli bookmark` /
-			// `unbookmark`, or `update-agent --bookmark`).
-			bookmarked: !!agent.bookmarked,
 			// Editable per-agent settings (the Edit Agent modal fields) so callers
 			// can read the full config without parsing raw store files.
+			...readAgentSessionSettings(agent),
 			nudgeMessage: agent.nudgeMessage ?? null,
 			newSessionMessage: agent.newSessionMessage ?? null,
 			customPath: agent.customPath ?? null,

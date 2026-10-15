@@ -119,6 +119,17 @@ export type SteeringVerdict =
 	| 'refused'
 	| 'unknown';
 
+/**
+ * What a steered message's transcript bubble knows about its own steer.
+ *
+ * `pending` is the gap between the two answers: the text is typed and the
+ * transcript has not yet said what the agent did with it. The other two are the
+ * verdicts that leave the bubble in the transcript; `dropped`, `refused` and
+ * `unknown` all take the bubble back out and return the message to the queue, so
+ * they never need drawing.
+ */
+export type SteerBubbleState = 'pending' | Extract<SteeringVerdict, 'absorbed' | 'queued'>;
+
 /** Why an injection was refused. Each maps to a different thing to tell the user. */
 export type SteeringRefusal =
 	| 'not-running' // no turn in flight; this is an ordinary message, not a steer
@@ -255,6 +266,16 @@ export function steeringTextBytes(text: string): number {
 /** Whether `text` is over the per-frame cap and so can never be typed as a steer. */
 export function steeringTextTooLong(text: string): boolean {
 	return steeringTextBytes(text) > STEERING_MAX_TEXT_BYTES;
+}
+
+/**
+ * Whether `text` would be read as a command by Claude's TUI rather than typed as
+ * a message: a leading `/` opens the slash-command menu (Enter would run `/clear`
+ * or `/compact` mid-turn) and a leading `!` switches the editor to bash mode.
+ * Such a message is never steered into a Claude turn; it waits and sends normally.
+ */
+export function startsWithTuiCommandPrefix(text: string): boolean {
+	return /^[/!]/.test(text.trimStart());
 }
 
 /** The detail every layer reports for an over-cap steer, so the wording cannot drift. */

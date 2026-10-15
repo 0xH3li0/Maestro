@@ -6,7 +6,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
-import { computeClaudeUsageCost } from '../../shared/modelPricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscriptsSync,
+} from '../../shared/claudeSessionUsage';
+import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
 
 // ============================================================================
 // Constants (inlined from main/constants.ts to avoid Electron dependencies)
@@ -45,6 +49,11 @@ export interface ListSessionsOptions {
 	limit?: number;
 	skip?: number;
 	search?: string;
+	/**
+	 * The agent's Claude config dir (`resolveAgentAccountDir`). Lists that
+	 * account's pool; omitted reads the default `~/.claude`.
+	 */
+	configDir?: string;
 }
 
 export interface ListSessionsResult {
@@ -133,7 +142,8 @@ function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[]
 ): AgentSessionInfo | null {
 	try {
 		const lines = content.split('\n').filter((l) => l.trim());
@@ -142,9 +152,7 @@ function parseSessionContent(
 		let firstUserMessage = '';
 		let timestamp = new Date(stats.mtimeMs).toISOString();
 
-		const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-		const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-		const messageCount = userMessageCount + assistantMessageCount;
+		const messageCount = countClaudeTranscriptMessages(content);
 
 		for (let i = 0; i < Math.min(lines.length, PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES); i++) {
 			try {
@@ -177,7 +185,7 @@ function parseSessionContent(
 			cacheReadTokens: totalCacheReadTokens,
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
-		} = computeClaudeUsageCost(content);
+		} = computeClaudeUsageWithSubagents(content, subagentContents);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -238,10 +246,14 @@ export function listClaudeSessions(
 	projectPath: string,
 	options: ListSessionsOptions = {}
 ): ListSessionsResult {
-	const { limit = 25, skip = 0, search } = options;
+	const { limit = 25, skip = 0, search, configDir } = options;
 
 	const encodedPath = encodeClaudeProjectPath(projectPath);
-	const projectDir = path.join(os.homedir(), '.claude', 'projects', encodedPath);
+	const projectDir = path.join(
+		configDir ?? path.join(os.homedir(), '.claude'),
+		'projects',
+		encodedPath
+	);
 
 	// Check if the directory exists
 	if (!fs.existsSync(projectDir)) {
@@ -265,10 +277,13 @@ export function listClaudeSessions(
 			if (stats.size === 0) continue; // Skip empty files
 
 			const content = fs.readFileSync(filePath, 'utf-8');
-			const session = parseSessionContent(content, sessionId, projectPath, {
-				size: stats.size,
-				mtimeMs: stats.mtimeMs,
-			});
+			const session = parseSessionContent(
+				content,
+				sessionId,
+				projectPath,
+				{ size: stats.size, mtimeMs: stats.mtimeMs },
+				readClaudeSubagentTranscriptsSync(filePath)
+			);
 
 			if (session) {
 				// Attach origin info

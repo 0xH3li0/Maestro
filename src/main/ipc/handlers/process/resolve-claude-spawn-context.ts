@@ -23,6 +23,12 @@ export interface ClaudeSpawnContext {
 	isClaudeCode: boolean;
 	isSshEnabled: boolean;
 	baseSessionId: string;
+	/**
+	 * Id of the persisted agent whose token source this spawn resolved from
+	 * (falls back to `baseSessionId` when no record owns the process id). The
+	 * `claudeInteractive` write-back targets this record.
+	 */
+	tokenSourceSessionId: string;
 	claudeResolvedMode: 'interactive' | 'api';
 	claudeResolvedReason: 'auto' | 'limit';
 	resolvedMaestroPBinPath: string | null;
@@ -41,6 +47,29 @@ type PersistedSessionRecord = {
 		modeReason?: 'auto' | 'limit';
 	};
 };
+
+/**
+ * Find the persisted agent record a spawn belongs to: an exact match on
+ * `baseSessionId` first, then the LONGEST record id that prefixes the process
+ * id followed by `-` (agent ids are UUIDs, so a prefix match cannot land on a
+ * neighbour). Returns undefined for spawns no agent owns (tab naming, wizard
+ * generation), which then rely on the inline token fields.
+ */
+export function findOwningSessionRecord<T extends { id?: string }>(
+	sessions: T[],
+	processSessionId: string,
+	baseSessionId: string
+): T | undefined {
+	const exact = sessions.find((s) => s?.id === baseSessionId);
+	if (exact) return exact;
+	let owner: T | undefined;
+	for (const s of sessions) {
+		const id = s?.id;
+		if (!id || !processSessionId.startsWith(`${id}-`)) continue;
+		if (!owner?.id || id.length > owner.id.length) owner = s;
+	}
+	return owner;
+}
 
 /**
  * Resolve Claude Code token source (maestro-p TUI vs `claude --print`) and
@@ -81,6 +110,13 @@ export async function resolveClaudeSpawnContext(
 	// renderer mirror (`process:claude-mode-resolved`) already strips this suffix on
 	// its side, so it still receives `config.sessionId` unchanged.
 	const baseSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
+	// The persisted agent this spawn runs on behalf of. Stripping `-ai-` is not
+	// enough: Auto Run and goal iterations spawn as `{agentId}-batch-{ts}`, the Cue
+	// assistant as `{agentId}-cue-assist-{ts}`, and none of those send the token
+	// fields inline, so they all missed the record and ran `claude --print` on an
+	// agent set to TUI. Matching the record whose id prefixes the process id
+	// covers every `{agentId}-*` shape, including ones added later.
+	let tokenSourceSessionId = baseSessionId;
 
 	let claudeResolvedMode: 'interactive' | 'api' = 'api';
 	let claudeResolvedReason: 'auto' | 'limit' = 'auto';
@@ -102,9 +138,12 @@ export async function resolveClaudeSpawnContext(
 	// dynamic/interactive selection, the direct-maestro-p-Path power-user
 	// case, and stale `claudeInteractive` cleanup.
 	if (isClaudeCode) {
-		const persistedSession = (
-			deps.sessionsStore.get('sessions', []) as PersistedSessionRecord[]
-		).find((s) => s?.id === baseSessionId);
+		const persistedSession = findOwningSessionRecord(
+			deps.sessionsStore.get('sessions', []) as PersistedSessionRecord[],
+			config.sessionId,
+			baseSessionId
+		);
+		if (persistedSession?.id) tokenSourceSessionId = persistedSession.id;
 
 		// Over SSH, warm the remote maestro-p probe BEFORE resolving so the
 		// resolver's TUI->API backstop fires on the very first spawn - the
@@ -189,6 +228,7 @@ export async function resolveClaudeSpawnContext(
 		isClaudeCode,
 		isSshEnabled,
 		baseSessionId,
+		tokenSourceSessionId,
 		claudeResolvedMode,
 		claudeResolvedReason,
 		resolvedMaestroPBinPath,

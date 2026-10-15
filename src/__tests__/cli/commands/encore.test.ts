@@ -149,6 +149,37 @@ describe('encore commands', () => {
 		expect(p.value).toMatchObject({ symphony: true, maestroCue: true });
 	});
 
+	it.each([
+		['directorNotes', false],
+		['usageStats', false],
+		['symphony', false],
+		['maestroCue', true],
+		['pianola', true],
+		['computerHistory', true],
+		['quickChat', false],
+		['maestroRun', false],
+	] as const)('changing %s preserves other saved Encore flags', async (feature, enabled) => {
+		vi.mocked(readSettingValue).mockReturnValue(
+			Object.freeze({
+				plugins: true,
+				concerto: true,
+				webLogin: false,
+				futureFeature: true,
+			})
+		);
+		const getPayload = mockSend({ success: true });
+
+		await encoreSet(feature, enabled, {});
+
+		expect(getPayload().value).toMatchObject({
+			[feature]: enabled,
+			plugins: true,
+			concerto: true,
+			webLogin: false,
+			futureFeature: true,
+		});
+	});
+
 	it('disable flips a flag off', async () => {
 		const getPayload = mockSend({ success: true });
 		await encoreSet('symphony', false, {});

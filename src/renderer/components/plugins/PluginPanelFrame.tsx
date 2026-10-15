@@ -78,6 +78,7 @@ interface PanelIpcMessageEvent extends Event {
 	args?: unknown[];
 }
 
+/** Render an isolated plugin panel and report command delivery failures without exposing arguments. */
 export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFrameProps) {
 	const [failed, setFailed] = useState(false);
 	const webviewRef = useRef<PanelWebviewElement | null>(null);
@@ -144,6 +145,15 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			if (typeof commandId !== 'string' || commandId.length === 0) return;
 			void window.maestro.plugins
 				.invokeCommand(`${panel.pluginId}/${commandId}`, args)
+				.then(({ dispatched }) => {
+					if (!dispatched) {
+						notifyToast({
+							color: 'red',
+							title: 'Plugin',
+							message: `Command could not be delivered to plugin "${panel.pluginId}". Check its status and the command input, then try again.`,
+						});
+					}
+				})
 				.catch((err) => {
 					notifyToast({
 						color: 'red',

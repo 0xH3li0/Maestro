@@ -63,4 +63,17 @@ describe('AgentProviderSelect', () => {
 		const notice = screen.getByTestId('notice');
 		expect(select.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
+	it('shows conversion labels and locks the picker while a migration saves', () => {
+		render(
+			<AgentProviderSelect
+				theme={theme}
+				value="claude-code"
+				onChange={vi.fn()}
+				disabled
+				optionLabel={(id) => `${getAgentDisplayName(id)} - carry preview`}
+			/>
+		);
+		expect(screen.getByRole('combobox', { name: 'Agent Provider' })).toBeDisabled();
+		expect(screen.getByRole('option', { name: 'Codex - carry preview' })).toHaveValue('codex');
+	});
 });

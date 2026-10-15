@@ -1,3 +1,4 @@
+import { translatedHistorySessionId } from '../../shared/maestro-lib/translation/session';
 /**
  * Quick Chat router - finds the conversation a Quick Chat message belongs in.
  *
@@ -255,7 +256,13 @@ export async function reopenClosedConversation(
 	const find = () => useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const session = find();
 	if (!session) return null;
-	const { agentSessionId } = conversation;
+	let agentSessionId: string;
+	try {
+		agentSessionId = translatedHistorySessionId(session, conversation.agentSessionId);
+	} catch (error) {
+		logger.warn('[QuickChat] History native translation is unavailable', undefined, error);
+		return null;
+	}
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
 	if (!projectPathForSessions) return null;
 

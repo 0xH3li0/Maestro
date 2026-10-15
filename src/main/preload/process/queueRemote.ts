@@ -19,6 +19,7 @@ export function createQueueRemoteApi() {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
+				held?: boolean,
 				consultChain?: ConsultChain
 			) => void
 		): (() => void) => {
@@ -31,6 +32,7 @@ export function createQueueRemoteApi() {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
+				held?: boolean,
 				consultChain?: ConsultChain
 			) => {
 				try {
@@ -42,6 +44,7 @@ export function createQueueRemoteApi() {
 						tabId,
 						images,
 						background,
+						held,
 						consultChain
 					);
 				} catch (error) {
@@ -121,6 +124,69 @@ export function createQueueRemoteApi() {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "set queue item paused" from the CLI (`queue hold`
+		 * and `queue resume`). Renderer replies via sendRemoteSetQueueItemPausedResponse.
+		 */
+		onRemoteSetQueueItemPaused: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				itemId: string,
+				paused: boolean,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, itemId, paused, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, found: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:setQueueItemPaused', handler);
+			return () => ipcRenderer.removeListener('remote:setQueueItemPaused', handler);
+		},
+
+		sendRemoteSetQueueItemPausedResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "merge queue item" from the CLI (`queue merge`).
+		 * Renderer replies via sendRemoteMergeQueueItemResponse.
+		 */
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, merged: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:mergeQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:mergeQueueItem', handler);
+		},
+
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

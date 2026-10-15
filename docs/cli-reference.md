@@ -615,6 +615,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                            | -       |
 | `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                      | -       |
 | `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                        | -       |
+| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                          | -       |
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                              | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                                                                                      | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                           | -       |
@@ -675,6 +676,42 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 
 ```bash
 maestro-cli queue remove <item-id> --agent <agent-id>
+```
+
+## `maestro-cli queue hold <item-id>`
+
+Hold a queued item, like the Hold button on its queued card: it keeps its place but does not run until resumed
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+```bash
+maestro-cli queue hold <item-id> --agent <agent-id>
+```
+
+## `maestro-cli queue resume <item-id>`
+
+Resume a held queued item, like the Resume button on its queued card: it runs when its turn comes
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+```bash
+maestro-cli queue resume <item-id> --agent <agent-id>
+```
+
+## `maestro-cli queue merge <item-id>`
+
+Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+```bash
+maestro-cli queue merge <item-id> --agent <agent-id>
 ```
 
 ## `maestro-cli queue steer <item-id>`
@@ -899,6 +936,21 @@ Send a message to a group chat (ID, ID prefix, or name); refused while busy
 maestro-cli group-chat send <chat> "Summarize where you landed"
 ```
 
+## `maestro-cli group-chat steer <chat> [message]`
+
+Type a message into the round running in a group chat instead of waiting for it to end
+
+| Option                  | Description                                                   | Default |
+| ----------------------- | ------------------------------------------------------------- | ------- |
+| `--message-file <path>` | Read the message from a file                                  | -       |
+| `--item <queued-id>`    | Steer a message already in the chat queue (ids are in status) | -       |
+| `--read-only`           | Only steer new text when the running round is read-only       | -       |
+| `--json`                | Output as JSON (for scripting)                                | -       |
+
+```bash
+maestro-cli group-chat steer <chat> "Focus on the failing test"
+```
+
 ## `maestro-cli group-chat status <chat>`
 
 Show a group chat's state, participants, and latest messages
@@ -939,7 +991,7 @@ maestro-cli group-chat stop <chat>
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -1250,6 +1302,55 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 
 ```bash
 maestro-cli auto-run-folder ~/playbooks --agent <agent-id>
+```
+
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+```bash
+maestro-cli steer-auto-run send "Keep the public API unchanged" --agent <agent-id>
+```
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+```bash
+maestro-cli steer-auto-run list --agent <agent-id>
+```
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
+
+```bash
+maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>
 ```
 
 ## `maestro-cli marketplace`
@@ -1960,8 +2061,13 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--env-park <KEY>`                      | Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with                                                                                                                                                                                                                                                  | `[]`    |
 | `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                                                                                                                                                                                   | `[]`    |
 | `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's .maestro/history/ (true/false; for an agent another Maestro controls; agent must be stopped)                                                                                                                                                                                                                | -       |
-| `--provider <type>`                     | Switch the agent provider (resets tabs + clears provider config; requires --force)                                                                                                                                                                                                                                                                          | -       |
-| `--force`                               | Confirm a destructive change (required for --provider)                                                                                                                                                                                                                                                                                                      | -       |
+| `--provider <type>`                     | Translate owned conversations and selected project knowledge to another provider                                                                                                                                                                                                                                                                            | -       |
+| `--force`                               | Alias for --accept-translation-limitations                                                                                                                                                                                                                                                                                                                  | -       |
+| `--dry-run`                             | Plan provider migration without native writes (requires --provider)                                                                                                                                                                                                                                                                                         | -       |
+| `--accept-translation-limitations`      | Accept the reported unverified or partial conversion limitations                                                                                                                                                                                                                                                                                            | -       |
+| `--migration <action>`                  | Migration operation: plan \| apply \| status \| recover \| rollback                                                                                                                                                                                                                                                                                         | -       |
+| `--migration-plan <id>`                 | Use the reviewed plan or inspect/recover a specific operation ID                                                                                                                                                                                                                                                                                            | -       |
+| `--translation-resource <path>`         | Select one user-level resource (repeatable; no account-global import)                                                                                                                                                                                                                                                                                       | `[]`    |
 | `--json`                                | Output as JSON (for scripting)                                                                                                                                                                                                                                                                                                                              | -       |
 
 ```bash
@@ -2495,7 +2601,7 @@ View and manage per-agent configuration
 
 ## `maestro-cli settings agent list [agent-id]`
 
-List agent configurations (all agents or a specific one)
+List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID
 
 | Option          | Description                           | Default |
 | --------------- | ------------------------------------- | ------- |
@@ -2508,7 +2614,7 @@ maestro-cli settings agent list <agent-id> --verbose
 
 ## `maestro-cli settings agent get <agent-id> <key>`
 
-Get a single agent config value
+Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)
 
 | Option          | Description                             | Default |
 | --------------- | --------------------------------------- | ------- |
@@ -3199,6 +3305,143 @@ Show a toast notification (queued, click X or icon to dismiss)
 ```bash
 maestro-cli notify toast "Build" "Compiled in 3.2s" --color green --timeout 10
 maestro-cli notify toast "Review ready" "Open the diff" --agent <agent-id> --open-file ./diff.md
+```
+
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+```bash
+maestro-cli notify inbox list
+```
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox open
+```
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox close
+```
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox read-all
+```
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox clear
+```
+
+## `maestro-cli notify inbox collapse`
+
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox collapse
+```
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox dismiss <id>
+```
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox read <id>
+```
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox activate <id>
+```
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox link <id>
+```
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+```bash
+maestro-cli notify inbox detail <id>
 ```
 
 ## `maestro-cli notify flash <message>`
@@ -4853,13 +5096,14 @@ Show the window state, the agent, the mode, and the current conversation
 maestro-cli quick-chat status --json
 ```
 
-## `maestro-cli quick-chat send <message>`
+## `maestro-cli quick-chat send [message]`
 
-Send a message in the current Quick Chat (starts a chat if none is open)
+Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                  | Default |
+| ------------------- | ------------------------------------------------------------ | ------- |
+| `--image <path...>` | Image file(s) to send with the message (PNG, JPG, GIF, WebP) | -       |
+| `--json`            | Output as JSON (for scripting)                               | -       |
 
 ```bash
 maestro-cli quick-chat send "What changed on main today?"
@@ -4901,6 +5145,30 @@ Float the window above other windows ("off" lets it fall behind them)
 maestro-cli quick-chat pin on
 ```
 
+## `maestro-cli quick-chat tab [target]`
+
+Where the next message goes: a tab id (from status), new, or auto; the chat stays there (no target prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat tab new
+```
+
+## `maestro-cli quick-chat thinking [mode]`
+
+Show the agent's reasoning: off, on (until the answer arrives), sticky (kept), or cycle (no mode prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat thinking sticky
+```
+
 ## `maestro-cli quick-chat font [size]`
 
 Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
@@ -4940,7 +5208,7 @@ maestro-cli quick-chat reveal
 
 ## `maestro-cli quick-chat new-tab [message-id]`
 
-Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
+Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -4948,6 +5216,30 @@ Send a message that is queued behind a busy tab to a new tab instead (default: t
 
 ```bash
 maestro-cli quick-chat new-tab <message-id>
+```
+
+## `maestro-cli quick-chat history`
+
+List the recent chats, newest first (what the window's History button shows)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat history
+```
+
+## `maestro-cli quick-chat recall <chat>`
+
+Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat recall <chat>
 ```
 
 ## `maestro-cli quick-chat stop`
@@ -5038,7 +5330,7 @@ Compose the agent-driven movement (free-placed data views) in the Maestro main w
 
 ## `maestro-cli movement begin <id>`
 
-Immediately show a host-rendered Concerto shell before its HTML is ready
+Reserve a host-rendered Concerto shell without opening the stage
 
 | Option           | Description                                  | Default |
 | ---------------- | -------------------------------------------- | ------- |
@@ -5055,7 +5347,7 @@ maestro-cli movement begin release --title "Release board"
 
 ## `maestro-cli movement add <id>`
 
-Add (or replace by id) a native data view or interactive HTML mockup
+Add or replace a native data view or HTML mockup without opening the stage
 
 | Option               | Description                                                             | Default |
 | -------------------- | ----------------------------------------------------------------------- | ------- |
@@ -5164,7 +5456,7 @@ maestro-cli movement state --json
 
 ## `maestro-cli movement inspect <id>`
 
-Capture a live HTML Movement preview and report its runtime diagnostics
+Capture a visible HTML Movement preview (requires an open stage) and diagnostics
 
 | Option           | Description                                       | Default |
 | ---------------- | ------------------------------------------------- | ------- |

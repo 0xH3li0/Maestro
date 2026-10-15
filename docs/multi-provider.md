@@ -34,9 +34,9 @@ separate transcript trees, not separate logins: they all bill the same GitHub
 account, and the split is a workspace split rather than a quota split.
 
 <Note>
-Stay on **one provider, different accounts**. Mixing providers on the same work
-is a roadmap item, not a supported workflow - see [Switching Providers](#switching-providers)
-at the bottom of this page.
+This page covers **one provider, different accounts**. Claude Code and Codex
+also have preview memory/session conversion between providers; see
+[Switching Providers](#switching-providers) for the supported versions and limits.
 </Note>
 
 ## Setting the Variable in Maestro
@@ -324,11 +324,14 @@ seamless case: the agents speak the same session format, so a conversation
 started on one account is intelligible to the other, and in Claude Code's case
 directly resumable.
 
-Pointing a single agent at a **different provider** is not that. Session history
-and memories live in each provider's own store and in its own format, so they do
-not follow the switch - the agent comes back with no idea what it was working
-on.
+Different providers use different native formats. Maestro provides preview
+conversion between **Claude Code 2.1.296** and **Codex 0.162.1**, in both
+directions, for session history and project memory. Native resume and repeated
+round-trip continuity remain unverified; other provider/version combinations
+have no supported converter.
 
-Moving an agent smoothly between providers, with its session history and
-memories carried across, is on the roadmap. Until it lands, use a separate agent
-per provider.
+In **Edit Agent**, marked provider destinations have a carry-over adapter.
+Selecting one reads a conversion plan; **Save Changes** applies it after any
+listed warnings are accepted. Blocking limitations prevent the switch. See
+[memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
+for the steps, scope, CLI examples and activity indicator.

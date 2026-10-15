@@ -13,6 +13,8 @@ import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatError } from '../output/formatter';
 import { failCommand, failFromError } from '../services/session-command';
+import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -31,6 +33,12 @@ interface StartOptions extends JsonOption {
 
 interface SendOptions extends JsonOption {
 	messageFile?: string;
+}
+
+interface SteerOptions extends JsonOption {
+	messageFile?: string;
+	item?: string;
+	readOnly?: boolean;
 }
 
 interface StatusOptions extends JsonOption {
@@ -179,6 +187,65 @@ export async function groupChatSend(
 	}
 }
 
+/**
+ * `maestro-cli group-chat steer <chat> [message]` - type a message into the round
+ * running in a chat instead of waiting for it to end. `--item <id>` steers a
+ * message already in the chat's queue (ids are in `status`), exactly like the
+ * Steer button on a queued card; both reach the same main-process function.
+ *
+ * Nothing is queued on failure: a refused steer leaves new text with the caller,
+ * and a queued item exactly where it was.
+ */
+export async function groupChatSteer(
+	chatRef: string,
+	inline: string | undefined,
+	options: SteerOptions
+): Promise<void> {
+	const message = readMessage(inline, options.messageFile, options.json);
+	const hasText = !!message && message.trim().length > 0;
+	if (hasText === !!options.item) {
+		failCommand('Pass a message or --item <queued-id>, not both', options.json);
+	}
+	if (options.item && options.readOnly) {
+		failCommand(
+			'--read-only applies to new text; a queued item keeps its own setting',
+			options.json
+		);
+	}
+
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply & { result?: GroupChatSteerResult }>(
+				{
+					type: 'steer_group_chat',
+					chatId: id,
+					...(options.item ? { itemId: options.item } : { message }),
+					...(options.readOnly && { readOnly: true }),
+				},
+				'steer_group_chat_result',
+				QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS
+			);
+			return { chatId: id, reply: res };
+		});
+		const error = bridgeError(reply);
+		if (error || !reply.result) failCommand(error ?? 'The desktop did not answer', options.json);
+		const result = reply.result;
+		const taken = result.outcome === 'delivered' || result.outcome === 'settled';
+
+		if (options.json) {
+			console.log(JSON.stringify({ success: taken, chatId, ...result }));
+		} else if (taken) {
+			console.log(`Steered into ${chatId}: ${(result.targets ?? []).join(', ')}`);
+		} else {
+			console.error(`Error: ${result.outcome}${result.detail ? `: ${result.detail}` : ''}`);
+		}
+		if (!taken) exitWith(ExitCode.GeneralError);
+	} catch (error) {
+		failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
 export async function groupChatStatus(chatRef: string, options: StatusOptions): Promise<void> {
 	const tail = options.tail === undefined ? 5 : Number(options.tail);
 	if (!Number.isInteger(tail) || tail < 0)
@@ -206,6 +273,20 @@ export async function groupChatStatus(chatRef: string, options: StatusOptions): 
 		console.log(`  State: ${stateLabel(chat)}`);
 		console.log(`  Participants: ${chat.participants.map((p) => p.name).join(', ') || '(none)'}`);
 		console.log(`  Messages: ${chat.messages.length}`);
+		if (chat.queue && chat.queue.length > 0) {
+			console.log(`  Queued: ${chat.queue.length}${chat.queuePaused ? ' (paused)' : ''}`);
+			for (const item of chat.queue) {
+				const flags = [
+					item.sending && 'sending',
+					item.failed && 'failed',
+					item.hasImages && 'images',
+				]
+					.filter(Boolean)
+					.join(', ');
+				const preview = item.text.replace(/\s+/g, ' ').slice(0, 60);
+				console.log(`    ${item.id}  ${preview}${flags ? `  [${flags}]` : ''}`);
+			}
+		}
 		for (const m of messages) {
 			const when = m.timestamp ? new Date(m.timestamp).toISOString() : '';
 			console.log(`\n--- ${m.participantName}  ${when}\n${m.content}`);

@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -5,9 +6,15 @@
  * This separates callback management from the core WebServer logic.
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
+
 import { logger } from '../../utils/logger';
 import type { CreateGistResult } from '../../../shared/gitUtils';
 import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
+import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -24,6 +31,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -62,6 +70,10 @@ import type {
 	RemoveQueueItemResult,
 	SteerQueueItemCallback,
 	SteerQueueItemResult,
+	SetQueueItemPausedCallback,
+	SetQueueItemPausedResult,
+	MergeQueueItemCallback,
+	MergeQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -119,6 +131,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatState,
 	MergeContextCallback,
 	TransferContextCallback,
@@ -166,6 +180,10 @@ import type {
 	CueInjectionScreenSetting,
 	CueInjectionScreenWriteResult,
 } from '../../../shared/cue/injection-screen';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type {
@@ -206,12 +224,16 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
 	openDocumentGraph: OpenDocumentGraphCallback | null;
 	openModal: OpenModalCallback | null;
+	notificationInbox:
+		| ((request: NotificationInboxRequest) => Promise<NotificationInboxResult>)
+		| null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
@@ -226,6 +248,8 @@ export interface WebServerCallbacks {
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
 	steerQueueItem: SteerQueueItemCallback | null;
+	setQueueItemPaused: SetQueueItemPausedCallback | null;
+	mergeQueueItem: MergeQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -270,6 +294,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
+	steerGroupChat: SteerGroupChatCallback | null;
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
@@ -318,12 +343,14 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		autoRunSteeringCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
 		openDocumentGraph: null,
 		openModal: null,
+		notificationInbox: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
@@ -338,6 +365,8 @@ export class CallbackRegistry {
 		listQueue: null,
 		removeQueueItem: null,
 		steerQueueItem: null,
+		setQueueItemPaused: null,
+		mergeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -382,6 +411,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		sendGroupChatMessage: null,
+		steerGroupChat: null,
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
@@ -519,6 +549,13 @@ export class CallbackRegistry {
 		return this.callbacks.snoozeCommand(request);
 	}
 
+	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
+		if (!this.callbacks.autoRunSteeringCommand) {
+			return { success: false, error: 'Auto Run steering is not configured' };
+		}
+		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
 		if (!this.callbacks.windowCommand) {
 			return { success: false, error: 'Window commands are not configured' };
@@ -548,6 +585,21 @@ export class CallbackRegistry {
 	async openDocumentGraph(params: OpenDocumentGraphParams): Promise<boolean> {
 		if (!this.callbacks.openDocumentGraph) return false;
 		return this.callbacks.openDocumentGraph(params);
+	}
+
+	/** Execute a history operation in the desktop renderer. */
+	async notificationInbox(request: NotificationInboxRequest): Promise<NotificationInboxResult> {
+		return (
+			this.callbacks.notificationInbox?.(request) ?? {
+				success: false,
+				error: 'Notification inbox unavailable',
+			}
+		);
+	}
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbacks.notificationInbox = callback;
 	}
 
 	async openModal(params: OpenModalParams): Promise<boolean> {
@@ -638,6 +690,7 @@ export class CallbackRegistry {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
+		held?: boolean,
 		consultChain?: ConsultChain
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
@@ -648,6 +701,7 @@ export class CallbackRegistry {
 			tabId,
 			images,
 			background,
+			held,
 			consultChain
 		);
 	}
@@ -666,6 +720,22 @@ export class CallbackRegistry {
 	async steerQueueItem(sessionId: string, itemId: string): Promise<SteerQueueItemResult> {
 		if (!this.callbacks.steerQueueItem) return { success: false, error: 'not configured' };
 		return this.callbacks.steerQueueItem(sessionId, itemId);
+	}
+
+	async setQueueItemPaused(
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	): Promise<SetQueueItemPausedResult> {
+		if (!this.callbacks.setQueueItemPaused)
+			return { success: false, found: false, error: 'not configured' };
+		return this.callbacks.setQueueItemPaused(sessionId, itemId, paused);
+	}
+
+	async mergeQueueItem(sessionId: string, itemId: string): Promise<MergeQueueItemResult> {
+		if (!this.callbacks.mergeQueueItem)
+			return { success: false, merged: false, error: 'not configured' };
+		return this.callbacks.mergeQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -946,7 +1016,7 @@ export class CallbackRegistry {
 	async updateSessionConfig(
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	): Promise<{ success: boolean; error?: string }> {
+	): Promise<TranslationReport> {
 		if (!this.callbacks.updateSessionConfig) {
 			return { success: false, error: 'Session config updates not configured' };
 		}
@@ -1000,6 +1070,16 @@ export class CallbackRegistry {
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
 		if (!this.callbacks.sendGroupChatMessage) return false;
 		return this.callbacks.sendGroupChatMessage(chatId, message);
+	}
+
+	async steerGroupChat(
+		chatId: string,
+		request: SteerGroupChatRequest
+	): Promise<GroupChatSteerResult> {
+		if (!this.callbacks.steerGroupChat) {
+			return { outcome: 'unavailable', detail: 'group chat steering is not configured' };
+		}
+		return this.callbacks.steerGroupChat(chatId, request);
 	}
 
 	async mergeContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
@@ -1278,6 +1358,10 @@ export class CallbackRegistry {
 		this.callbacks.snoozeCommand = callback;
 	}
 
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1356,6 +1440,14 @@ export class CallbackRegistry {
 
 	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
 		this.callbacks.steerQueueItem = callback;
+	}
+
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbacks.setQueueItemPaused = callback;
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbacks.mergeQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1532,6 +1624,10 @@ export class CallbackRegistry {
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbacks.sendGroupChatMessage = callback;
+	}
+
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbacks.steerGroupChat = callback;
 	}
 
 	setMergeContextCallback(callback: MergeContextCallback): void {

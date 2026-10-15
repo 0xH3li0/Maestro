@@ -681,6 +681,30 @@ describe('buildAgentLaunchPlan', () => {
 			expect(JSON.stringify(result.plan.runOn)).not.toContain('sk-workstation');
 		});
 
+		it('keeps the Run on model when translation adds Claude memory settings', () => {
+			const result = buildAgentLaunchPlan(
+				claudeInput({
+					prompt: undefined,
+					maestroEnvVars: {
+						MAESTRO_TRANSLATION_KNOWLEDGE: '/project/.maestro/provider-knowledge/migrated',
+					},
+				})
+			);
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.launchArgs).toEqual([
+				'--print',
+				'--model',
+				'qwen3:latest',
+				'--effort',
+				'high',
+				'--settings',
+				JSON.stringify({
+					autoMemoryDirectory: '/project/.maestro/provider-knowledge/migrated/memory',
+				}),
+			]);
+			expect(result.plan.envVars?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+		});
+
 		it('takes the place of the gateway, and says which gateway was passed over', () => {
 			const gatewayUrl = 'http://127.0.0.1:8787/anthropic';
 			for (const surface of SURFACES) {

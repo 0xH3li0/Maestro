@@ -54,6 +54,7 @@ function showToastSettingPreview(title: string, message: string): void {
 		// In-app preview only: no TTS command, no Notification Center entry.
 		skipCustomNotification: true,
 		skipOsNotification: true,
+		skipHistory: true,
 	});
 }
 
@@ -64,6 +65,11 @@ export interface NotificationsState {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	toastDuration: number;
+	notificationCenterLarge: boolean;
+	notificationCenterDetails: boolean;
+	notificationCenterKeyboardNavigation: boolean;
+	notificationHistoryQueuedReplies: boolean;
+	notificationHistoryAutoRunTasks: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 	/** When a finished turn is spoken about. `off` until the user opts in. */
@@ -77,6 +83,11 @@ export interface NotificationsActions {
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
 	setToastDuration: (value: number) => void;
+	setNotificationCenterLarge: (value: boolean) => void;
+	setNotificationCenterDetails: (value: boolean) => void;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 	setSpokenNotices: (value: SpokenNoticeMode) => void;
@@ -94,6 +105,11 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: 'say',
 	toastDuration: 20,
+	notificationCenterLarge: false,
+	notificationCenterDetails: false,
+	notificationCenterKeyboardNavigation: false,
+	notificationHistoryQueuedReplies: false,
+	notificationHistoryAutoRunTasks: false,
 	idleNotificationEnabled: false,
 	idleNotificationCommand: 'say Maestro is idle',
 	spokenNotices: DEFAULT_SPOKEN_NOTICE_MODE,
@@ -135,6 +151,31 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	setToastDuration: (value) => {
 		set({ toastDuration: value });
 		window.maestro.settings.set('toastDuration', value);
+	},
+
+	setNotificationCenterLarge: (value) => {
+		set({ notificationCenterLarge: value });
+		window.maestro.settings.set('notificationCenterLarge', value);
+	},
+
+	setNotificationCenterDetails: (value) => {
+		set({ notificationCenterDetails: value });
+		window.maestro.settings.set('notificationCenterDetails', value);
+	},
+
+	setNotificationCenterKeyboardNavigation: (value) => {
+		set({ notificationCenterKeyboardNavigation: value });
+		window.maestro.settings.set('notificationCenterKeyboardNavigation', value);
+	},
+
+	setNotificationHistoryQueuedReplies: (value) => {
+		set({ notificationHistoryQueuedReplies: value });
+		window.maestro.settings.set('notificationHistoryQueuedReplies', value);
+	},
+
+	setNotificationHistoryAutoRunTasks: (value) => {
+		set({ notificationHistoryAutoRunTasks: value });
+		window.maestro.settings.set('notificationHistoryAutoRunTasks', value);
 	},
 
 	setIdleNotificationEnabled: (value) => {
@@ -181,6 +222,27 @@ export function hydrateNotificationsSettings(
 
 	if (allSettings['toastDuration'] !== undefined)
 		patch.toastDuration = allSettings['toastDuration'] as number;
+
+	if (typeof allSettings['notificationCenterLarge'] === 'boolean')
+		patch.notificationCenterLarge = allSettings['notificationCenterLarge'] as boolean;
+
+	if (typeof allSettings['notificationCenterDetails'] === 'boolean')
+		patch.notificationCenterDetails = allSettings['notificationCenterDetails'] as boolean;
+
+	if (typeof allSettings['notificationCenterKeyboardNavigation'] === 'boolean')
+		patch.notificationCenterKeyboardNavigation = allSettings[
+			'notificationCenterKeyboardNavigation'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryQueuedReplies'] === 'boolean')
+		patch.notificationHistoryQueuedReplies = allSettings[
+			'notificationHistoryQueuedReplies'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryAutoRunTasks'] === 'boolean')
+		patch.notificationHistoryAutoRunTasks = allSettings[
+			'notificationHistoryAutoRunTasks'
+		] as boolean;
 
 	if (allSettings['idleNotificationEnabled'] !== undefined)
 		patch.idleNotificationEnabled = allSettings['idleNotificationEnabled'] as boolean;

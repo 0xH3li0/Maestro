@@ -26,6 +26,8 @@ export interface AgentProviderSelectProps {
 	/** Drawn under the select: what the form says about the choice. */
 	children?: ReactNode;
 	testId?: string;
+	disabled?: boolean;
+	optionLabel?: (providerId: string) => ReactNode;
 }
 
 export function AgentProviderSelect({
@@ -35,11 +37,14 @@ export function AgentProviderSelect({
 	noneLabel,
 	children,
 	testId,
+	disabled,
+	optionLabel,
 }: AgentProviderSelectProps) {
 	return (
 		<div>
 			<FormFieldLabel theme={theme}>Agent Provider</FormFieldLabel>
 			<select
+				disabled={disabled}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				aria-label="Agent Provider"
@@ -54,7 +59,7 @@ export function AgentProviderSelect({
 				{noneLabel !== undefined && <option value="">{noneLabel}</option>}
 				{SUPPORTED_AGENTS.map((agentId) => (
 					<option key={agentId} value={agentId}>
-						{getAgentDisplayName(agentId)}
+						{optionLabel ? optionLabel(agentId) : getAgentDisplayName(agentId)}
 					</option>
 				))}
 			</select>

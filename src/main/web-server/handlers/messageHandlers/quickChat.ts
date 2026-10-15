@@ -9,10 +9,13 @@
 import { getQuickChatController } from '../../../quick-chat';
 import {
 	parseQuickChatFontScaleRequest,
+	parseQuickChatImages,
+	parseQuickChatTabChoice,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatCommand,
 } from '../../../../shared/quickChat';
+import { asThinkingMode } from '../../../../shared/types';
 import { logger } from '../../../utils/logger';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -29,13 +32,27 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 	switch (message.action) {
 		case 'send': {
 			const text = typeof message.text === 'string' ? message.text : '';
-			if (!text.trim()) return { error: 'Message cannot be empty' };
-			return { type: 'send', text };
+			const images = parseQuickChatImages(message.images);
+			if (!images) return { error: 'Images must be data:image URLs' };
+			if (!text.trim() && images.length === 0) return { error: 'Message cannot be empty' };
+			return { type: 'send', text, ...(images.length > 0 && { images }) };
 		}
 		case 'new':
 			return { type: 'new' };
 		case 'keep':
 			return { type: 'setPersistent', persistent: message.persistent !== false };
+		case 'tab': {
+			const choice = parseQuickChatTabChoice(message.tab);
+			if (!choice) return { error: 'Give a tab id, new, or auto' };
+			return { type: 'setTab', choice };
+		}
+		case 'thinking': {
+			// `mode` is shared with other messages, which give it other values.
+			const raw: unknown = message.mode;
+			const mode = raw === 'cycle' ? 'cycle' : asThinkingMode(raw);
+			if (!mode) return { error: 'Thinking mode must be off, on, sticky, or cycle' };
+			return { type: 'setThinking', mode };
+		}
 		case 'agent': {
 			const agentId = typeof message.agentId === 'string' ? message.agentId : '';
 			if (!agentId) return { error: 'Agent id is required' };
@@ -115,6 +132,38 @@ export function handleQuickChat(
 			return;
 		}
 		reply({ success: true, status: controller.setFontScale(request) });
+		return;
+	}
+
+	if (action === 'history') {
+		reply({ success: true, recents: controller.getRecents(), status: controller.getStatus() });
+		return;
+	}
+
+	if (action === 'recall') {
+		const ref = typeof message.chatId === 'string' ? message.chatId : '';
+		controller
+			.recall(ref)
+			.then((result) =>
+				reply({
+					success: result.ok,
+					...(result.error ? { error: result.error } : {}),
+					status: controller.getStatus(),
+				})
+			)
+			.catch((error) => {
+				const detail = error instanceof Error ? error.message : String(error);
+				reply({ success: false, error: `Quick Chat recall failed: ${detail}` });
+			});
+		return;
+	}
+
+	// No mode (or tab) reads the current one, like a bare `font`.
+	if (
+		(action === 'thinking' && message.mode === undefined) ||
+		(action === 'tab' && message.tab === undefined)
+	) {
+		reply({ success: true, status: controller.getStatus() });
 		return;
 	}
 

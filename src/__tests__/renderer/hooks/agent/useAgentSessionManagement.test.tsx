@@ -257,3 +257,25 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 		expect(tabs[0].name).toBeNull();
 	});
 });
+
+describe('useAgentSessionManagement - translated History ownership', () => {
+	it('refuses a History entry without a destination native mapping before creating a tab', async () => {
+		const session = createMockSession({
+			id: 'translated-agent',
+			toolType: 'codex',
+			providerTranslationHistoryMappings: [
+				{ tabId: 'history:unmapped', sourceSessionId: 'unmapped', destinationSessionId: null },
+			],
+		});
+		seedActiveSession(session);
+		const deps = makeDeps(session);
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		let resumed: boolean | undefined;
+		await act(async () => {
+			resumed = await result.current.handleResumeSession('unmapped');
+		});
+		expect(resumed).toBe(false);
+		expect(deps.showFlash).toHaveBeenCalledWith(expect.stringContaining('no native mapping'));
+		expect(deps.setSessions).not.toHaveBeenCalled();
+	});
+});

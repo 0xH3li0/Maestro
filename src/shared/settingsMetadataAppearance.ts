@@ -274,6 +274,12 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showWorktreeProvider: {
+		description: 'Show the provider backing each worktree agent in the left panel.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	showStarredSessionsSection: {
 		description:
 			'Show a "Starred Sessions" section at the top of the left side bar listing every starred AI tab across all agents.',
