@@ -282,13 +282,16 @@ function choosableTabs(session: Session | null): AITab[] {
 		: [];
 }
 
-/** Where the next message goes: the user's choice, else the chat's tab, else found. */
+/**
+ * Where the next message goes: the user's choice, else the chat's tab, else the
+ * Default Tab setting.
+ */
 function nextTarget(session: Session | null): QuickChatNextTarget {
 	const choice = chat.choice;
 	if (choice?.kind === 'new' || choice?.kind === 'auto') return { kind: choice.kind };
 	const tabId = choice?.kind === 'tab' ? choice.tabId : chat.homeTabId;
 	const tab = tabId ? session?.aiTabs.find((t) => t.id === tabId) : undefined;
-	if (!tab) return { kind: 'auto' };
+	if (!tab) return { kind: choice ? 'auto' : quickChatSettings().defaultTab };
 	return { kind: 'tab', tabId: tab.id, name: tabLabel(tab), chosen: choice !== null };
 }
 
@@ -695,7 +698,9 @@ function runFreedTurns(): void {
  * better: "and when does it arrive?" names no subject, and routing it on its own
  * sent it to a stranger. The user moves the chat by choosing (`choice`): a tab,
  * a new tab, or `auto` to have the message routed as if it started the chat.
- * The chat's tab being gone (the user closed it) routes the message too.
+ * The chat's tab being gone (the user closed it) routes the message too. A
+ * message with no choice and no tab follows the Default Tab setting: routed
+ * (`auto`), or straight to a new tab (`new`).
  */
 async function routeAndDeliver(
 	sessionId: string,
@@ -719,6 +724,9 @@ async function routeAndDeliver(
 
 		let tabId: string | null = null;
 		let origin: QuickChatRouteOrigin = 'open';
+		// With no choice and no tab to follow, the Default Tab setting decides
+		// whether Maestro looks for a tab or starts a new one.
+		const fresh = choice ? choice.kind === 'new' : quickChatSettings().defaultTab === 'new';
 		if (choice?.kind === 'tab') {
 			if (!isOpen(choice.tabId)) {
 				fail(turn, 'The tab you chose for this message is no longer open');
@@ -727,7 +735,7 @@ async function routeAndDeliver(
 			tabId = choice.tabId;
 		} else if (!choice && homeTabId && isOpen(homeTabId)) {
 			tabId = homeTabId;
-		} else if (choice?.kind !== 'new') {
+		} else if (!fresh) {
 			const routed = await routeToTab(sessionId, turn);
 			if (!stillWanted()) return homeTabId;
 			if (routed) ({ tabId, origin } = routed);

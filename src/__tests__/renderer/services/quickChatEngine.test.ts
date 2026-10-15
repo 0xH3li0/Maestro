@@ -613,7 +613,8 @@ describe('move to a new tab', () => {
 		await runQuickChatCommand({ type: 'send', text: 'hi' });
 		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: sent()[0].id });
 		expect(result.ok).toBe(false);
-		expect(session('b').aiTabs).toHaveLength(2);
+		// Refusing opens no tab: the agent keeps only its own.
+		expect(session('b').aiTabs).toHaveLength(1);
 	});
 });
 
@@ -897,6 +898,56 @@ describe('choosing the tab (setTab)', () => {
 		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'new' } });
 		await runQuickChatCommand({ type: 'new' });
 		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+	});
+});
+
+describe('Default Tab setting', () => {
+	it('starts a new chat in a new tab, without routing, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'new' });
+
+		const first = await send('one');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(first.message.route).toMatchObject({ origin: 'new' });
+		expect(first.message.route!.tabId).not.toBe('b-main');
+		// Later messages follow the chat's tab, not the setting.
+		expect((await send('two')).message.route!.tabId).toBe(first.message.route!.tabId);
+	});
+
+	it('starts a new tab again after the chat tab closes, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		const first = await send('one');
+		const closed = first.message.route!.tabId!;
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) =>
+					s.id === 'b' ? { ...s, aiTabs: s.aiTabs.filter((t) => t.id !== closed) } : s
+				),
+		});
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'new' });
+		const second = await send('two');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(second.message.route).toMatchObject({ origin: 'new' });
+		expect(second.message.route!.tabId).not.toBe(closed);
+	});
+
+	it('still routes a message the user sends to any tab, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'auto' } });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+		const { message } = await send('one');
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		expect(message.route!.tabId).toBe('b-main');
+	});
+
+	it('routes the first message by default (Choose tab)', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const { message } = await send('one');
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		expect(message.route).toMatchObject({ tabId: 'b-main', origin: 'open' });
 	});
 });
 

@@ -46,7 +46,7 @@ Before your first message the window is just the composer: it grows taller as yo
 
 Every message you send from Quick Chat runs in a real AI tab on the agent you chose. It uses that agent's provider, model, working directory, SSH remote, and permissions, exactly like a tab you type into yourself. Which tab is decided once, for the chat's first message. Every later message goes to that same tab, even one whose words would fit another tab better, because a follow-up belongs to the conversation it follows. A new chat (`Cmd+N` / `Ctrl+N`, or the pencil) is how you start a new subject; its first message finds a tab again. If you close the chat's tab, the next message finds one again too.
 
-The tab name beside the agent at the top of the window shows where your next message goes. Until the chat has a tab it reads **Choose tab**, and Maestro finds one for the first message. To move the chat, click it (or press `Cmd+T` / `Ctrl+T`) and pick another of the agent's tabs, **New tab** to start fresh in a new one, or **Any tab** to let Maestro find the one that fits the next message. The chat continues in whatever tab that message lands in. The picker opens on the row in effect, with **New tab** at the top: from **Any tab**, `Cmd+T`, `Up`, `Enter` is the fast way to a new tab. From the command line, `maestro-cli quick-chat tab` does the same (`status` lists the tab ids).
+The tab name beside the agent at the top of the window shows where your next message goes. Until the chat has a tab it reads **Choose tab**, and Maestro finds one for the first message. Set **Default Tab** to **New tab** in the settings and it reads **New tab** instead: every chat starts in a new tab and nothing is searched. To move the chat, click it (or press `Cmd+T` / `Ctrl+T`) and pick another of the agent's tabs, **New tab** to start fresh in a new one, or **Any tab** to let Maestro find the one that fits the next message. The chat continues in whatever tab that message lands in. The picker opens on the row in effect, with **New tab** at the top: from **Any tab**, `Cmd+T`, `Up`, `Enter` is the fast way to a new tab. From the command line, `maestro-cli quick-chat tab` does the same (`status` lists the tab ids).
 
 While a tab is being chosen, the message shows **Searching tabs**. Then a pill under it names the tab it went to:
 
@@ -95,6 +95,7 @@ Open **Settings -> Plugins**, select **Quick Chat**, and open its **Settings** t
 
 - **Hotkey.** Click the button and press a new combo. Leave it blank to turn the hotkey off. If another app or Maestro hotkey already holds the combo, Maestro shows a warning and the hotkey stays off until you pick another one.
 - **Agent.** The agent every new chat talks to. "The agent active in the main window" follows whatever agent you last selected. You can also switch agents from the window itself: click the agent name at the top left (or press `Cmd+O` / `Ctrl+O`), type a few letters of the agent's name, group, or provider, and press `Enter`. Switching starts a new chat on that agent and saves the choice; picking the agent you are already on keeps the chat. A chat in progress stays on its agent even if you change this setting.
+- **Default Tab.** Where a new chat's first message goes, and the next message after you close the chat's tab. **Choose tab** (the default) lets Maestro find the tab: an open tab already on the subject, a conversation you closed in the last two weeks, or a new tab when nothing fits. **New tab** always starts a new tab and skips the search, so the first message sends at once. Either way, later messages stay in the chat's tab, and you can still pick a tab, **New tab**, or **Any tab** for any one message from the window.
 - **Keep new chats as tabs.** The default mode for a new chat.
 - **Record ephemeral chats in History.** On by default, so an ephemeral chat still leaves a History entry after its tab is gone. Kept chats follow your normal history setting.
 
@@ -131,7 +132,7 @@ maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move 
 
 `bounds` takes any of the four flags (`--x` and `--y` together). `--height` is the conversation height, so before the first message it is remembered rather than applied. `quick-chat status` reports the current size and spot.
 
-The settings live in `quickChatSettings` (`hotkey`, `agentId`, `persistent`, `ephemeralHistory`), readable and writable with `maestro-cli settings get` / `settings set`. Turn the feature off or on with `maestro-cli encore disable quickChat` / `encore enable quickChat`.
+The settings live in `quickChatSettings` (`hotkey`, `agentId`, `defaultTab` (`auto` or `new`), `persistent`, `ephemeralHistory`), readable and writable with `maestro-cli settings get` / `settings set`. Turn the feature off or on with `maestro-cli encore disable quickChat` / `encore enable quickChat`.
 
 ## Turning it off
 

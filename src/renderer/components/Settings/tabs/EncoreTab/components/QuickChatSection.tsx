@@ -1,11 +1,27 @@
-import { Keyboard, MessageSquare } from 'lucide-react';
-import type { QuickChatSettings } from '../../../../../../shared/quickChat';
+import { Keyboard, MessageSquare, PanelTop } from 'lucide-react';
+import type { QuickChatDefaultTab, QuickChatSettings } from '../../../../../../shared/quickChat';
 import { useSessionStore } from '../../../../../stores/sessionStore';
 import type { Theme } from '../../../../../types';
 import { KeyCaptureButton } from '../../../../ui/KeyCaptureButton';
+import { RadioGroup, type RadioOption } from '../../../../ui/RadioGroup';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
 import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
+
+const DEFAULT_TAB_OPTIONS: ReadonlyArray<RadioOption<QuickChatDefaultTab>> = [
+	{
+		value: 'auto',
+		label: 'Choose tab',
+		description:
+			'Maestro finds the tab for the first message: an open tab already on its subject, a conversation you closed in the last two weeks, or a new tab when nothing fits.',
+	},
+	{
+		value: 'new',
+		label: 'New tab',
+		description:
+			'Every chat starts in a new tab. Maestro does not look at your other tabs, so the first message sends at once.',
+	},
+];
 
 interface QuickChatSectionProps {
 	theme: Theme;
@@ -15,7 +31,8 @@ interface QuickChatSectionProps {
 
 /**
  * Quick Chat's settings, shown in its Extensions tile: the system-wide hotkey,
- * the agent chats run on, and what happens to a chat when the next one starts.
+ * the agent chats run on, where a chat's first message goes, and what happens
+ * to a chat when the next one starts.
  */
 export function QuickChatSection({
 	theme,
@@ -78,6 +95,22 @@ export function QuickChatSection({
 						))}
 					</select>
 				</SectionCard>
+			</div>
+
+			<div data-setting-id="encore-quick-chat-default-tab">
+				<SettingsSectionHeading
+					icon={PanelTop}
+					description="Where a new chat's first message goes, and the next message after you close the chat's tab. Later messages stay in that tab. You can pick another tab for any message from the window itself."
+				>
+					Default Tab
+				</SettingsSectionHeading>
+				<RadioGroup
+					value={quickChatSettings.defaultTab}
+					onChange={(defaultTab) => update({ defaultTab })}
+					options={DEFAULT_TAB_OPTIONS}
+					theme={theme}
+					ariaLabel="Quick Chat default tab"
+				/>
 			</div>
 
 			<SectionCard theme={theme}>

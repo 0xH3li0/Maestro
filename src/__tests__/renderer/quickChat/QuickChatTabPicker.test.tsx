@@ -80,9 +80,10 @@ describe('QuickChatTabPicker', () => {
 			(this.parentElement as HTMLElement).scrollTop = 40;
 		});
 		try {
-			await act(async () => {
-				renderPicker();
-			});
+			// renderPicker queries the DOM, so it cannot run inside act: React
+			// commits only when act exits. Render, then flush the height refit.
+			renderPicker();
+			await act(async () => {});
 			const rows = screen.getAllByTestId('quick-chat-tab-row');
 			expect(screen.getByRole('listbox').scrollTop).toBe(0);
 			expect(scrollSpy.mock.contexts.at(-1)).toBe(rows[1]);
