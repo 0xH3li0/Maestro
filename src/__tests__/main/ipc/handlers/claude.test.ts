@@ -109,6 +109,7 @@ vi.mock('../../../../main/utils/statsCache', () => ({
 	loadStatsCache: vi.fn(),
 	rescaleArchivedEntries: vi.fn(),
 	saveStatsCache: vi.fn(),
+	statsCacheScope: vi.fn().mockResolvedValue(undefined),
 	STATS_CACHE_VERSION: 1,
 }));
 

@@ -22,6 +22,7 @@ import {
 	PerProjectSessionStats,
 	loadStatsCache,
 	rescaleArchivedEntries,
+	statsCacheScope,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -40,6 +41,7 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		stat: vi.fn(),
+		realpath: vi.fn(),
 	},
 }));
 
@@ -679,5 +681,24 @@ describe('Derivation upgrades', () => {
 
 		// Only `live` moved, by half; `stuck` (same object, parse failed) is no evidence.
 		expect(after.gone.costUsd).toBeCloseTo(4.5, 10);
+	});
+});
+
+// Two accounts with separate pools must not share a cache file (each would
+// archive the other's sessions), but a pool shared through a symlinked
+// projects/ must keep the unscoped file so its archived sessions survive.
+describe('statsCacheScope', () => {
+	it('keeps the unscoped cache when the account resolves to the default pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async () => '/home/.claude/projects/-p');
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBeUndefined();
+	});
+
+	it('scopes the cache to a separate pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBe('/home/.claude-work/projects/-p');
 	});
 });

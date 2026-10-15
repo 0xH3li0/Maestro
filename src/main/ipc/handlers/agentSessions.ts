@@ -65,6 +65,7 @@ import {
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
 import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
+import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -405,7 +406,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			async (
 				agentId: string,
 				projectPath: string,
-				options?: SessionListOptions,
+				options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 				sshRemoteId?: string
 			): Promise<PaginatedSessionsResult> => {
 				const storage = getSessionStorage(agentId);
@@ -417,7 +418,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				// Get SSH config if provided
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 
-				const result = await storage.listSessionsPaginated(projectPath, options, sshConfig);
+				// List the pool of the account this agent actually runs under: its
+				// provider only resumes sessions from that config dir.
+				const listOptions: SessionListOptions = {
+					cursor: options?.cursor,
+					limit: options?.limit,
+					configDir: options?.ownerAgentId
+						? resolveAgentAccountDir(options.ownerAgentId)
+						: undefined,
+				};
+				const result = await storage.listSessionsPaginated(projectPath, listOptions, sshConfig);
 				logger.info(
 					`Listed paginated sessions for agent ${agentId}: ${result.sessions.length} of ${result.totalCount}${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT

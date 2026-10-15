@@ -1935,7 +1935,7 @@ interface MaestroAPI {
 		listPaginated: (
 			agentId: string,
 			projectPath: string,
-			options?: { cursor?: string; limit?: number },
+			options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 			sshRemoteId?: string
 		) => Promise<{
 			sessions: Array<{
@@ -2361,7 +2361,10 @@ interface MaestroAPI {
 				isComplete: boolean;
 			}) => void
 		) => () => void;
-		getProjectStats: (projectPath: string) => Promise<{
+		getProjectStats: (
+			projectPath: string,
+			ownerAgentId?: string
+		) => Promise<{
 			totalSessions: number;
 			totalMessages: number;
 			totalCostUsd: number;
@@ -2374,6 +2377,15 @@ interface MaestroAPI {
 				totalSessions: number;
 				totalMessages: number;
 				totalTokens: number;
+				/** `totalTokens` by kind, over the sessions that recorded one. */
+				tokenSplit?: {
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadTokens: number;
+					cacheCreationTokens: number;
+				};
+				/** Archived tokens counted in `totalTokens` with no record of their kind. */
+				unsplitTokens?: number;
 				totalCostUsd: number;
 				totalSizeBytes: number;
 				oldestTimestamp: string | null;

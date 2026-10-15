@@ -11,6 +11,7 @@
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import { createHash } from 'crypto';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import { captureException } from './sentry';
@@ -45,7 +46,13 @@ export interface PerProjectSessionStats {
 	messages: number;
 	costUsd: number;
 	sizeBytes: number;
+	/** Every token the session was billed for: input, output, cache reads and cache writes. */
 	tokens: number;
+	/**
+	 * `tokens` by kind. Absent on sessions archived before the split was stored:
+	 * their transcript is gone, so only the rescaled total survives.
+	 */
+	tokenSplit?: ProjectTokenSplit;
 	oldestTimestamp: string | null;
 	/** File modification time to detect external changes */
 	fileMtimeMs: number;
@@ -55,6 +62,14 @@ export interface PerProjectSessionStats {
 	 * If the file reappears, this flag is set back to false and the session is re-parsed.
 	 */
 	archived?: boolean;
+}
+
+/** A token total by kind, as the session browser's hover breakdown shows it. */
+export interface ProjectTokenSplit {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 }
 
 /**
@@ -96,8 +111,11 @@ export interface SessionStatsCache {
  *       session. Derivation-only, upgraded in place like v3.
  * - v5: Messages counted as prompts and model responses
  *       (`countClaudeTranscriptMessages`), not transcript lines. Upgraded in place.
+ * - v6: `tokens` counts cache reads and writes too (it was input + output only,
+ *       about 1% of what a session is billed for), and `tokenSplit` is stored.
+ *       Upgraded in place; archived sessions keep a rescaled total, no split.
  */
-export const STATS_CACHE_VERSION = 5;
+export const STATS_CACHE_VERSION = 6;
 
 /**
  * Oldest per-project cache version with the CURRENT shape. Anything from here up
@@ -112,9 +130,29 @@ export const STATS_CACHE_MIN_UPGRADABLE_VERSION = 2;
  * @param projectPath - The project directory path
  * @returns Absolute path to the cache JSON file
  */
-function getStatsCachePath(projectPath: string): string {
+function getStatsCachePath(projectPath: string, scope?: string): string {
 	const encodedPath = encodeClaudeProjectPath(projectPath);
-	return path.join(app.getPath('userData'), 'stats-cache', `${encodedPath}.json`);
+	const suffix = scope ? `--${createHash('sha1').update(scope).digest('hex').slice(0, 12)}` : '';
+	return path.join(app.getPath('userData'), 'stats-cache', `${encodedPath}${suffix}.json`);
+}
+
+/**
+ * The cache scope for a project read from `projectDir`, or `undefined` when it
+ * is the default account's pool.
+ *
+ * Two accounts with separate transcript pools must not share one cache file, or
+ * each would archive the other's sessions as deleted. Accounts that share a pool
+ * through a symlinked `projects/` resolve to the same directory and keep the
+ * unscoped file, so moving an agent to an explicit `CLAUDE_CONFIG_DIR` over the
+ * same pool never orphans the archived sessions already cached for it.
+ */
+export async function statsCacheScope(
+	projectDir: string,
+	defaultProjectDir: string
+): Promise<string | undefined> {
+	const real = (dir: string) => fs.realpath(dir).catch(() => path.resolve(dir));
+	const [actual, fallback] = await Promise.all([real(projectDir), real(defaultProjectDir)]);
+	return actual === fallback ? undefined : actual;
 }
 
 /**
@@ -125,9 +163,12 @@ function getStatsCachePath(projectPath: string): string {
  * re-parse every live session and `rescaleArchivedEntries` the rest.
  * @param projectPath - The project directory path
  */
-export async function loadStatsCache(projectPath: string): Promise<SessionStatsCache | null> {
+export async function loadStatsCache(
+	projectPath: string,
+	scope?: string
+): Promise<SessionStatsCache | null> {
 	try {
-		const cachePath = getStatsCachePath(projectPath);
+		const cachePath = getStatsCachePath(projectPath, scope);
 		const content = await fs.readFile(cachePath, 'utf-8');
 		const cache = JSON.parse(content) as SessionStatsCache;
 		if (cache.version < STATS_CACHE_MIN_UPGRADABLE_VERSION || cache.version > STATS_CACHE_VERSION) {
@@ -145,9 +186,13 @@ export async function loadStatsCache(projectPath: string): Promise<SessionStatsC
  * @param projectPath - The project directory path
  * @param cache - The cache object to save
  */
-export async function saveStatsCache(projectPath: string, cache: SessionStatsCache): Promise<void> {
+export async function saveStatsCache(
+	projectPath: string,
+	cache: SessionStatsCache,
+	scope?: string
+): Promise<void> {
 	try {
-		const cachePath = getStatsCachePath(projectPath);
+		const cachePath = getStatsCachePath(projectPath, scope);
 		const cacheDir = path.dirname(cachePath);
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
