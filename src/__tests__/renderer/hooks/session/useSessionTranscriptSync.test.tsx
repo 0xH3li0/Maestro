@@ -24,7 +24,12 @@ let stderr: (sessionId: string, data: string) => void;
 let thinking: (sessionId: string, data: string) => void;
 let tool: Parameters<NonNullable<typeof window.maestro.process.onToolExecution>>[0];
 let user: Parameters<typeof window.maestro.process.onUserInput>[0];
-let request: (payload: { sessionId: string; tabId: string; requestId: string }) => void;
+let request: (payload: {
+	sessionId: string;
+	tabId: string;
+	requestId: string;
+	metadataOnly?: boolean;
+}) => void;
 let published: SessionTranscriptPatch<LogEntry>[];
 
 beforeEach(() => {
@@ -197,6 +202,52 @@ describe('owning host transcript identities', () => {
 			expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual(canonical);
 			mirror.unmount();
 		}
+	});
+
+	it('returns live runtime inventory without copying transcript rows for metadata-only bootstrap reads', async () => {
+		const browserTabs: BrowserTab[] = [
+			{
+				id: 'browser',
+				url: 'https://example.test',
+				title: 'Host browser',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			},
+		];
+		const terminalTabs: TerminalTab[] = [
+			{
+				id: 'terminal',
+				name: null,
+				shellType: 'sh',
+				pid: 0,
+				ptyInitialized: false,
+				cwd: '/host',
+				createdAt: 1,
+				state: 'idle',
+			},
+		];
+		const shellLogs: LogEntry[] = Array.from({ length: 1000 }, (_, i) => ({
+			id: 'shell-' + i,
+			timestamp: i,
+			source: 'stdout',
+			text: 'Host terminal output',
+		}));
+		const session = createMockSession({ id: 'session', shellLogs, browserTabs, terminalTabs });
+		useSessionStore.setState({ sessions: [session], activeSessionId: 'session' });
+		const owner = renderHook(() => useSessionTranscriptSync(ready));
+		await act(async () => {
+			request({ sessionId: 'session', tabId: '', requestId: 'inventory', metadataOnly: true });
+		});
+		const snapshot = published.find((patch) => patch.snapshot)!;
+		expect(snapshot.upserts).toEqual([]);
+		expect(snapshot.removedIds).toEqual([]);
+		expect(snapshot.orderIds).toEqual([]);
+		expect(snapshot.runtime?.browserTabs).toEqual(browserTabs);
+		expect(snapshot.runtime?.terminalTabs).toEqual(terminalTabs);
+		expect(useSessionStore.getState().sessions[0].shellLogs).toEqual(shellLogs);
+		owner.unmount();
 	});
 
 	it('marks only newly received output unread relative to this client and does not re-mark replayed or bootstrap rows', async () => {

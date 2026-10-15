@@ -78,6 +78,7 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(requestProviderTranslation).mockReset();
 	vi.useFakeTimers();
 
 	// Reset stores
@@ -469,8 +470,13 @@ describe('useSessionLifecycle', () => {
 				await result.current.handleSaveEditAgent(session.id, 'Changed Name', 'codex');
 			});
 			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.toolType).toBe('codex');
-			expect(updated.name).toBe('Changed Name');
+			expect(updated).toMatchObject({
+				id: session.id,
+				toolType: 'codex',
+				name: 'Changed Name',
+				projectRoot: session.projectRoot,
+				cwd: session.cwd,
+			});
 			expect(updated.aiTabs[0]).toMatchObject({
 				id: tab.id,
 				agentSessionId: 'codex-imported',
@@ -507,32 +513,6 @@ describe('useSessionLifecycle', () => {
 			expect(updated.activeTabId).toBe('my-tab');
 			// Process should NOT be killed
 			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
-		});
-
-		it('preserves session identity fields when changing provider', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				name: 'My Agent',
-				toolType: 'claude-code' as any,
-				projectRoot: '/projects/myapp',
-				cwd: '/projects/myapp',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			// Identity fields preserved
-			expect(updated.id).toBe('session-1');
-			expect(updated.name).toBe('My Agent');
-			expect(updated.projectRoot).toBe('/projects/myapp');
-			expect(updated.cwd).toBe('/projects/myapp');
-			// Provider changed
-			expect(updated.toolType).toBe('codex');
 		});
 	});
 

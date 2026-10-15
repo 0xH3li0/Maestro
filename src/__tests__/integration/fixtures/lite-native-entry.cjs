@@ -448,7 +448,7 @@ async function main() {
 	fs.mkdirSync(path.join(web, 'assets'), { recursive: true });
 	fs.writeFileSync(
 		path.join(web, 'index.html'),
-		'<!doctype html><html><head><title>Isolated workload over real relay</title></head><body><h1>Paired fixture workload</h1><p id="transport">Connecting actual WebSocket…</p><script src="./assets/workload.js"></script></body></html>'
+		'<!doctype html><html><head><title>Isolated workload over real relay</title></head><body><h1>Paired fixture workload</h1><p id="transport">Connecting actual WebSocket…</p><label>Unsent draft <textarea id="draft"></textarea></label><script src="./assets/workload.js"></script></body></html>'
 	);
 	fs.writeFileSync(
 		path.join(web, 'assets/workload.js'),
@@ -490,6 +490,14 @@ async function main() {
 		onClientDisconnect() {},
 		onClientError() {},
 		handleMessage() {},
+	});
+	let healthFailureStatus = 0;
+	let failedHealthReads = 0;
+	api.addHook('onRequest', async (request, reply) => {
+		if (healthFailureStatus && request.url === CONNECT + '/api/lite/handshake') {
+			failedHealthReads++;
+			return reply.code(healthFailureStatus).send({ error: 'Isolated transient relay failure' });
+		}
 	});
 	require(
 		path.join(dist, 'main/web-server/routes/liteConnectionRoutes.js')
@@ -628,6 +636,31 @@ async function main() {
 	check(
 		'production Lite PIN approval opens actual HTTP/WebSocket relay with a secure browser context and no account login'
 	);
+	const healthViewId = remote.id;
+	await fill(remote, '#draft', 'Preserve this unsent draft');
+	for (const httpStatus of [502, 503, 504]) {
+		const before = failedHealthReads;
+		healthFailureStatus = httpStatus;
+		await until(() => failedHealthReads > before, 'actual failed health read ' + httpStatus);
+		await delay(1100);
+		assert.equal(
+			remote.isDestroyed(),
+			false,
+			'HTTP ' + httpStatus + ' must retain the remote view'
+		);
+		assert.equal(lite.contentView.children[0].webContents.id, healthViewId);
+		assert.equal(
+			await js(remote, 'document.querySelector("#draft").value'),
+			'Preserve this unsent draft'
+		);
+		assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+		assert.equal((await state()).status.startsWith('connected'), true);
+		healthFailureStatus = 0;
+	}
+	await capture(lite, '03c-transient-health-preserves-view');
+	check(
+		'transient HTTP 502/503/504 health reads retain the same native host view, unsent draft and connected WebSocket'
+	);
 	const credentialPath = path.join(liteDirectory, 'lite-device-credentials.json');
 	const credentialBytes = fs.readFileSync(credentialPath, 'utf8');
 	assert(!credentialBytes.includes('"credential":'));
@@ -666,8 +699,21 @@ async function main() {
 		'Escape cancels device removal, preserves pairing and returns focus without leaving management'
 	);
 	check('remembered device reconnects through scoped credential headers without a second code');
+	const disabledView = lite.contentView.children[0].webContents;
 	await click(host.webContents, '#disable-direct');
-	await until(async () => !(await state()).canReturn, 'disabled direct connection closes');
+	await until(
+		() => js(disabledView, 'window.__MAESTRO_BRIDGE_STATE__ === "disconnected"'),
+		'disabled direct WebSocket closes'
+	);
+	assert.equal(
+		await js(
+			disabledView,
+			'fetch(' +
+				JSON.stringify(CONNECT + '/api/lite/handshake') +
+				', {cache: "no-store"}).then(r => r.status)'
+		),
+		502
+	);
 	assert.equal(hostShell.host, undefined);
 	await invoke(host.webContents, 'litePairing:local', 'enable-direct', { consent: true });
 	await invoke(lite.webContents, 'lite:control', 'reconnect');

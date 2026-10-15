@@ -18,7 +18,7 @@ import {
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
-import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
+import { useFocusOnMount, useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -234,24 +234,16 @@ export function ExecutionQueueBrowser({
 		}
 	};
 
-	// Land on the card when the browser opens so the arrow keys work without a
-	// click first, and take focus back when a child surface (action menu, edit
-	// modal, force-send confirm) closes - otherwise focus falls to <body> and
-	// the next arrow key silently does nothing.
-	useEffect(() => {
-		if (!isOpen) return;
-		const id = setTimeout(() => modalRef.current?.focus(), 0);
-		return () => clearTimeout(id);
-	}, [isOpen]);
-	useFocusOnClose(
-		modalRef,
+	const hasChildSurface =
 		actionMenuOpen ||
-			!!editing ||
-			!!forceSendConfirm ||
-			!!mergeConfirm ||
-			showForcedParallelRequired
-	);
-
+		!!editing ||
+		!!forceSendConfirm ||
+		!!mergeConfirm ||
+		showForcedParallelRequired;
+	// Land on the card when opening the queue; later renders must not
+	// take focus from controls or child surfaces.
+	useFocusOnMount(modalRef, 0, isOpen);
+	useFocusOnClose(modalRef, hasChildSurface);
 	if (!isOpen) return null;
 
 	// Send now. A plain queue jump goes straight through; running alongside

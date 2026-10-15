@@ -368,6 +368,67 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		fourth.emit('message', frame({ type: 'connected' }));
 		expect(window.location.reload).toHaveBeenCalledTimes(2);
 	});
+	it('allows a new save after an acknowledged rejection without replaying the rejected save', async () => {
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const first = ipcRenderer.invoke('sessions:setMany', [{ id: 'stale' }]);
+		const refused = expect(first).rejects.toThrow('stale execution queue');
+		await Promise.resolve();
+		const request = JSON.parse(socket.sent.at(-1)!);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.response',
+				requestId: request.requestId,
+				ok: false,
+				error: 'stale execution queue',
+			})
+		);
+		await refused;
+		const second = ipcRenderer.invoke('sessions:setMany', [{ id: 'fresh' }]);
+		const accepted = expect(second).resolves.toBe(true);
+		await Promise.resolve();
+		const nextRequest = JSON.parse(socket.sent.at(-1)!);
+		expect(nextRequest.args).toEqual([[{ id: 'fresh' }]]);
+		socket.emit(
+			'message',
+			frame({ type: 'bridge.response', requestId: nextRequest.requestId, ok: true, result: true })
+		);
+		await accepted;
+		expect(
+			socket.sent
+				.map((data) => JSON.parse(data))
+				.filter(
+					(packet) => packet.channel === 'sessions:setMany' && packet.args[0][0]?.id === 'stale'
+				)
+		).toHaveLength(1);
+	});
+
+	it('holds a save with a lost acknowledgement after reconnect instead of resending shared queue state', async () => {
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const save = ipcRenderer.invoke('sessions:setMany', [{ id: 'accepted-without-ack' }]);
+		const uncertain = expect(save).rejects.toThrow('Submission uncertainty');
+		await Promise.resolve();
+		const next = reconnect(socket);
+		await uncertain;
+		next.readyState = InertWebSocket.OPEN;
+		next.emit('open');
+		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		await expect(
+			ipcRenderer.invoke('sessions:setMany', [{ id: 'unsafe-overwrite' }])
+		).rejects.toThrow('Submission uncertainty');
+		expect(
+			next.sent
+				.map((data) => JSON.parse(data))
+				.filter((packet) => packet.channel === 'sessions:setMany')
+		).toEqual([]);
+	});
+
 	it('shows lost-acknowledgement uncertainty and never reissues an accepted mutation', async () => {
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;

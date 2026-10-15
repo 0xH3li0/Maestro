@@ -178,6 +178,8 @@ export function useSessionSwitchCallbacks(
 
 	// Native notifications use the same navigation as their in-app toast.
 	useEffect(() => {
+		// Native notification clicks are owned by host windows, not remote renderers.
+		if (isWebDesktop()) return;
 		return window.maestro?.notification?.onClickAction?.((action) =>
 			dispatchToastClickAction(action, { onSessionClick: handleToastSessionClick })
 		);

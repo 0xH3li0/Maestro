@@ -18,6 +18,9 @@ import {
 import { openCodexTranslationConnection } from '../../shared/maestro-lib/codex/connection';
 import { applyTranslation } from '../../shared/maestro-lib/translation/transaction';
 
+vi.mock('node:fs/promises', async (importOriginal) => ({
+	...(await importOriginal<typeof import('node:fs/promises')>()),
+}));
 vi.mock('electron', () => ({ app: { getPath: () => '/isolated/private' } }));
 vi.mock('../../main/ipc/handlers/persistence', () => ({ broadcastSessionLifecycle: vi.fn() }));
 vi.mock('../../main/history-manager', () => ({ getHistoryManager: vi.fn() }));

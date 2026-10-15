@@ -18,6 +18,15 @@ export interface TranslationResources {
 	limitations: TranslationLimitation[];
 }
 
+async function resolveResourceRoot(root: string): Promise<string> {
+	try {
+		return await fs.realpath(root);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		return path.resolve(root);
+	}
+}
+
 /** Capture only project knowledge and explicitly selected resources, never whole provider homes. */
 export async function collectTranslationResources(
 	identity: TranslationIdentity,
@@ -25,6 +34,8 @@ export async function collectTranslationResources(
 	managedDirectory?: string
 ): Promise<TranslationResources> {
 	const projectRoot = managedDirectory ?? identity.projectRoot;
+	const realProjectRoot = await resolveResourceRoot(projectRoot);
+	const realAccountRoot = await resolveResourceRoot(identity.accountRoot);
 	const artifacts: TranslationArtifact[] = [];
 	const limitations: TranslationLimitation[] = [];
 	const seen = new Map<string, string>();
@@ -168,7 +179,7 @@ export async function collectTranslationResources(
 			root.allowedRoot &&
 			!isPathAtOrUnderRoot(
 				realRoot.replace(/\\/g, '/'),
-				path.resolve(root.allowedRoot).replace(/\\/g, '/')
+				(await resolveResourceRoot(root.allowedRoot)).replace(/\\/g, '/')
 			)
 		) {
 			limitations.push({
@@ -180,7 +191,7 @@ export async function collectTranslationResources(
 		}
 		if (
 			stat.isDirectory() &&
-			isPathAtOrUnderRoot(identity.accountRoot.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/'))
+			isPathAtOrUnderRoot(realAccountRoot.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/'))
 		) {
 			limitations.push({
 				code: 'unsafe-resource-scope',
@@ -192,7 +203,7 @@ export async function collectTranslationResources(
 		}
 		if (
 			((root.scope === 'project' && root.kind !== 'memory') || managedDirectory) &&
-			!isPathAtOrUnderRoot(realRoot.replace(/\\/g, '/'), projectRoot.replace(/\\/g, '/'))
+			!isPathAtOrUnderRoot(realRoot.replace(/\\/g, '/'), realProjectRoot.replace(/\\/g, '/'))
 		) {
 			const link = await fs.lstat(root.file);
 			if (link.isSymbolicLink()) {
@@ -239,7 +250,7 @@ export async function collectTranslationResources(
 			const outsideScope = !isPathAtOrUnderRoot(
 				real.replace(/\\/g, '/'),
 				((root.scope === 'project' && root.kind !== 'memory') || managedDirectory
-					? projectRoot
+					? realProjectRoot
 					: realRoot
 				).replace(/\\/g, '/')
 			);
