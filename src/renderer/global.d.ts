@@ -512,6 +512,13 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onRemoteNotificationInbox: (
+			callback: (
+				request: import('../shared/notificationInbox').NotificationInboxRequest
+			) =>
+				| import('../shared/notificationInbox').NotificationInboxResult
+				| Promise<import('../shared/notificationInbox').NotificationInboxResult>
+		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
 		) => () => void;
@@ -2622,6 +2629,25 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
+		changeHistory: (
+			change: import('../shared/notificationHistory').NotificationHistoryChange
+		) => Promise<import('../shared/notificationHistory').NotificationHistorySnapshot>;
+		onHistoryChanged: (
+			callback: (
+				snapshot: import('../shared/notificationHistory').NotificationHistorySnapshot
+			) => void
+		) => () => void;
+		navigateToSource: (
+			sessionId: string,
+			tabId?: string,
+			action?: import('../shared/toastClickAction').ToastClickAction
+		) => Promise<{ success: boolean }>;
+		onActivateAction: (
+			callback: (
+				action: import('../shared/toastClickAction').ToastClickAction
+			) => boolean | Promise<boolean>
+		) => () => void;
+
 		show: (
 			title: string,
 			body: string,

@@ -10,6 +10,37 @@ import type { SearchableSetting } from './searchableSettings';
 
 export const NOTIFICATION_SETTINGS: SearchableSetting[] = [
 	{
+		id: 'notifications-center',
+		tab: 'notifications',
+		tabLabel: 'Notifications',
+		label: 'Notification center',
+		description:
+			'Optional inbox size, full details, keyboard navigation, shortcut setup, queued reply and Auto Run task history.',
+		keywords: [
+			'inbox',
+			'notification center',
+			'larger',
+			'wider',
+			'taller',
+			'expand',
+			'details',
+			'source',
+			'title',
+			'message',
+			'keyboard',
+			'focus',
+			'arrow',
+			'shortcut',
+			'unbound',
+			'queued',
+			'reply',
+			'auto run',
+			'task',
+			'history',
+			'default',
+		],
+	},
+	{
 		id: 'notifications-os',
 		tab: 'notifications',
 		tabLabel: 'Notifications',

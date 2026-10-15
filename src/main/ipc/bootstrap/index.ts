@@ -40,6 +40,7 @@ import {
 	registerWebLoginHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
@@ -495,7 +496,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationHistoryHandlers();
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });
