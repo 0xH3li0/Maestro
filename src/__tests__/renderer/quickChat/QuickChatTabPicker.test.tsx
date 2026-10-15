@@ -1,12 +1,12 @@
 /**
  * QuickChatTabPicker - choose the tab the next Quick Chat message goes to.
  *
- * The fixed rows (New tab, Any tab) come first so Cmd+J then Enter starts a
+ * The fixed rows (New tab, Any tab) come first so Cmd+T, Up, Enter starts a
  * new tab, and the row for where the next message goes now is selected.
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QuickChatTabPicker } from '../../../renderer/quickChat/QuickChatTabPicker';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QuickChatNextTarget, QuickChatTabOption } from '../../../shared/quickChat';
@@ -66,6 +66,31 @@ describe('QuickChatTabPicker', () => {
 		expect(screen.getAllByTestId('quick-chat-tab-row')).toHaveLength(1);
 		fireEvent.keyDown(input, { key: 'Enter' });
 		expect(onPick).toHaveBeenCalledWith('tab:t2');
+	});
+
+	it('keeps New tab in view once the window grows to fit the picker', async () => {
+		// The picker mounts while the window is still composer-sized: the first
+		// scroll to the selected row (Any tab) ran against a list one row tall and
+		// scrolled New tab out of view. Once the list has its height, it refits
+		// from the top.
+		const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(200);
+		const scrollSpy = vi.mocked(Element.prototype.scrollIntoView);
+		scrollSpy.mockClear();
+		scrollSpy.mockImplementationOnce(function (this: Element) {
+			(this.parentElement as HTMLElement).scrollTop = 40;
+		});
+		try {
+			// renderPicker queries the DOM, so it cannot run inside act: React
+			// commits only when act exits. Render, then flush the height refit.
+			renderPicker();
+			await act(async () => {});
+			const rows = screen.getAllByTestId('quick-chat-tab-row');
+			expect(screen.getByRole('listbox').scrollTop).toBe(0);
+			expect(scrollSpy.mock.contexts.at(-1)).toBe(rows[1]);
+			expect(scrollSpy).toHaveBeenLastCalledWith({ block: 'nearest' });
+		} finally {
+			heightSpy.mockRestore();
+		}
 	});
 
 	it('closes on Escape without picking', () => {

@@ -60,6 +60,12 @@ describe('resolveQuickChatSettings', () => {
 		expect(resolveQuickChatSettings({ thinking: 'loud' }).thinking).toBe('off');
 	});
 
+	it('keeps a saved default tab, defaults it to auto, and drops an unknown one', () => {
+		expect(resolveQuickChatSettings(undefined).defaultTab).toBe('auto');
+		expect(resolveQuickChatSettings({ defaultTab: 'new' }).defaultTab).toBe('new');
+		expect(resolveQuickChatSettings({ defaultTab: 'tab' }).defaultTab).toBe('auto');
+	});
+
 	it('never hands back the shared default array', () => {
 		const resolved = resolveQuickChatSettings(undefined);
 		resolved.hotkey.push('X');

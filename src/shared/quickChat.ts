@@ -18,7 +18,7 @@
  * closed in the last two weeks (reopened for it), or to a new tab. Every later
  * message goes to that same tab, queued behind the reply it follows. The chat
  * moves only when the user says so (picks another tab or a new one for the next
- * message, or moves a queued message to a new tab), or when its tab is closed
+ * message, or moves a message to a new tab), or when its tab is closed
  * (the next message is routed again). Each message carries a
  * {@link QuickChatRoute} saying where it went. See src/shared/quickChatRouting.ts
  * for how the first message's tab is chosen.
@@ -40,6 +40,15 @@ export const QUICK_CHAT_ENCORE_FLAG = 'quickChat' as const;
 /** Settings key holding {@link QuickChatSettings}. */
 export const QUICK_CHAT_SETTINGS_KEY = 'quickChatSettings' as const;
 
+/**
+ * Where a message goes when the chat has no tab for it: a new chat's first
+ * message, or the next one after the chat's tab was closed.
+ * - `auto` ("Choose tab"): Maestro finds the tab (see src/shared/quickChatRouting.ts).
+ * - `new`: always a new tab; nothing is searched.
+ * The user can still pick a tab, a new tab, or `auto` for any one message.
+ */
+export type QuickChatDefaultTab = 'auto' | 'new';
+
 export interface QuickChatSettings {
 	/** System-wide hotkey as a key array (same format as in-app shortcuts). Empty disables it. */
 	hotkey: string[];
@@ -47,6 +56,8 @@ export interface QuickChatSettings {
 	agentId: string;
 	/** Default mode for a new chat: true keeps it as a visible tab, false is ephemeral. */
 	persistent: boolean;
+	/** Where a message goes when it has no tab to follow (see {@link QuickChatDefaultTab}). */
+	defaultTab: QuickChatDefaultTab;
 	/** Whether turns in an ephemeral chat write History entries. */
 	ephemeralHistory: boolean;
 	/**
@@ -61,6 +72,7 @@ export const DEFAULT_QUICK_CHAT_SETTINGS: Readonly<QuickChatSettings> = {
 	hotkey: ['Alt', 'Space'],
 	agentId: '',
 	persistent: false,
+	defaultTab: 'auto',
 	ephemeralHistory: true,
 	thinking: 'off',
 };
@@ -83,6 +95,10 @@ export function resolveQuickChatSettings(raw: unknown): QuickChatSettings {
 			typeof stored.persistent === 'boolean'
 				? stored.persistent
 				: DEFAULT_QUICK_CHAT_SETTINGS.persistent,
+		defaultTab:
+			stored.defaultTab === 'auto' || stored.defaultTab === 'new'
+				? stored.defaultTab
+				: DEFAULT_QUICK_CHAT_SETTINGS.defaultTab,
 		ephemeralHistory:
 			typeof stored.ephemeralHistory === 'boolean'
 				? stored.ephemeralHistory
@@ -258,8 +274,9 @@ export type QuickChatCommand =
 	/** Stop every reply in progress and withdraw every message still queued. */
 	| { type: 'stop' }
 	/**
-	 * Take a QUEUED message out of the queue and send it to a new tab instead, so
-	 * it stops waiting on the tab it was routed to. `messageId` defaults to the
+	 * Send a message to a new tab instead of the tab it went to. A QUEUED message
+	 * leaves the queue; one that already ran (or is running) is stopped there and
+	 * sent again. The chat moves to the new tab. `messageId` defaults to the
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }

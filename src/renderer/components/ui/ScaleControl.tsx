@@ -35,6 +35,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseScalePreferenceReturn } from '../../hooks/ui/useScalePreference';
 import { HoverTooltip } from './HoverTooltip';
+import { shortcutText, type ShortcutChords } from './ShortcutHint';
 
 export interface ScaleControlProps {
 	theme: Theme;
@@ -54,7 +55,11 @@ export interface ScaleControlProps {
 	 * appended to the tooltips: "Increase thumbnail size (+)". A shortcut the
 	 * button never names is one nobody finds.
 	 */
-	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
+	shortcutHint?: {
+		decrease?: string | ShortcutChords;
+		increase?: string | ShortcutChords;
+		reset?: string | ShortcutChords;
+	};
 	/** Visual treatment. Defaults to `inline`. */
 	variant?: 'inline' | 'floating' | 'ghost';
 	/**
@@ -108,7 +113,8 @@ export const ScaleControl = React.memo(function ScaleControl({
 	const ghost = variant === 'ghost';
 	const collapsed = floating && collapsible && !!CollapsedIcon;
 	const percent = Math.round(scale * 100);
-	const withKey = (label: string, key?: string) => (key ? `${label} (${key})` : label);
+	const withKey = (label: string, key?: string | ShortcutChords) =>
+		key ? `${label} (${shortcutText(key)})` : label;
 
 	const small = size === 'sm';
 	const boxClass = small ? 'w-6 h-6' : 'w-7 h-7';
@@ -129,7 +135,11 @@ export const ScaleControl = React.memo(function ScaleControl({
 	// One label per button, drawn either as a native title or as an overlay with
 	// the key as a hint. `aria-label` stays the plain action in both.
 	const overlay = tooltips === 'overlay';
-	const tip = (label: string, key: string | undefined, button: React.ReactElement) =>
+	const tip = (
+		label: string,
+		key: string | ShortcutChords | undefined,
+		button: React.ReactElement
+	) =>
 		overlay ? (
 			<HoverTooltip theme={theme} label={label} shortcut={key}>
 				{button}
@@ -137,7 +147,8 @@ export const ScaleControl = React.memo(function ScaleControl({
 		) : (
 			button
 		);
-	const titleFor = (label: string, key?: string) => (overlay ? undefined : withKey(label, key));
+	const titleFor = (label: string, key?: string | ShortcutChords) =>
+		overlay ? undefined : withKey(label, key);
 
 	// Collapsed rests as a circle and opens on hover or keyboard focus. The
 	// buttons are clipped rather than unmounted so a Tab into them expands the

@@ -29,7 +29,8 @@ import {
 import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { getCliPrompt, getCliTaskSelectionBlock } from './prompt-loader';
-import { addHistoryEntry, readGroups, readHistory } from './storage';
+import { addHistoryEntry, readGroups, readHistory, readSettings } from './storage';
+import { autoRunMaestroPMaxWaitSeconds } from '../../shared/claudeTokenMode';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 
 /** The Claude token source and the other settings every task and synopsis turn honors. */
@@ -101,7 +102,15 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 								source: 'cli:autorun',
 								prompt: request.prompt,
 							},
-							{ ...autoRunTurnOptions(session), appendSystemPrompt }
+							{
+								...autoRunTurnOptions(session),
+								appendSystemPrompt,
+								// A TUI task gets Auto Run's idle budget, not maestro-p's 300s.
+								maestroPMaxWaitSeconds: autoRunMaestroPMaxWaitSeconds({
+									autoRunInactivityTimeoutMin: readSettings().autoRunInactivityTimeoutMin,
+									autoRunMaxTaskDurationMin: readSettings().autoRunMaxTaskDurationMin,
+								}),
+							}
 						);
 					case 'synopsis':
 						// A resume into the session that already holds the system prompt:

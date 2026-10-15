@@ -2,7 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../../ui/ShortcutHint';
 import { getStatusColor } from '../../../utils/theme';
 import type { QuickAction } from '../types';
 import { RunningAgentSubtext } from './RunningAgentSubtext';
@@ -103,9 +103,7 @@ export function QuickActionRow({
 			    be handed its shortcut record, and an empty chip would draw a blank
 			    box where a chord belongs. */}
 			{action.shortcut?.keys?.length ? (
-				<span className="text-xs font-mono opacity-60" data-shortcut-hint="">
-					{formatShortcutKeys(action.shortcut.keys)}
-				</span>
+				<ShortcutKeys theme={theme} keys={action.shortcut.keys} onAccent={isSelected} />
 			) : null}
 		</button>
 	);

@@ -1227,14 +1227,12 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
 			});
 
-			// Regression: desktop Auto Run spawns each task as
-			// `{agentId}-batch-{timestamp}`. The handler must strip that suffix
-			// before the persisted lookup, or the run misses the agent's TUI
-			// setting and silently falls back to `claude --print` (API).
-			it('honors the persisted TUI token source for a -batch- Auto Run spawn', async () => {
+			// Auto Run (and goal iterations) spawn as `{agentId}-batch-{ts}` and send no
+			// token fields inline, so the TUI setting has to resolve from the id alone.
+			it('runs an Auto Run batch spawn through maestro-p with its idle budget', async () => {
 				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
-				mockProcessManager.spawn.mockReturnValue({ pid: 4251, success: true });
+				mockProcessManager.spawn.mockReturnValue({ pid: 4245, success: true });
 				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
 					if (key === 'sessions') {
 						return [
@@ -1251,17 +1249,21 @@ describe('process IPC handlers', () => {
 
 				const handler = handlers.get('process:spawn');
 				await handler!({} as any, {
-					sessionId: 'session-tui-batch-1739000000000',
+					sessionId: 'session-tui-batch-1760000000000',
 					toolType: 'claude-code',
 					cwd: '/test',
 					command: '/usr/local/bin/claude',
 					args: claudeCodeAgent.args,
-					prompt: 'hi',
+					prompt: 'task',
+					maestroPMaxWaitSeconds: 14400,
 				});
 
 				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 				expect(spawnCall.command).toBe(process.execPath);
 				expect(spawnCall.args[0]).toBe(maestroPPath);
+				const maxWaitAt = spawnCall.args.indexOf('--max-wait');
+				expect(maxWaitAt).toBeGreaterThan(-1);
+				expect(spawnCall.args[maxWaitAt + 1]).toBe('14400');
 			});
 
 			// The TUI announces no slash commands, so a maestro-p turn probes for

@@ -597,7 +597,7 @@ describe('move to a new tab', () => {
 		expect(sent(result.snapshot.messages)[0].route).toMatchObject({ origin: 'new' });
 	});
 
-	it('refuses once the message has started, so it cannot run twice', async () => {
+	it('refuses a message that already started a new tab of its own', async () => {
 		const { message } = await send('hello');
 		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
 		expect(result.ok).toBe(false);
@@ -608,17 +608,88 @@ describe('move to a new tab', () => {
 		expect((await runQuickChatCommand({ type: 'moveToNewTab' })).ok).toBe(false);
 	});
 
-	it('refuses a message an automatic retry is holding, which would run it twice', async () => {
-		const { message } = await send('hi');
-		const tabId = message.route!.tabId!;
-		holdForRetry(tabId, tab('b', tabId).logs[0].queuedItemId!);
-
-		// It sits in the queue, but it is not waiting: it already ran once.
-		expect(sent()[0].route?.status).toBe('running');
-		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+	it('refuses a message still searching for a tab', async () => {
+		vi.mocked(routeQuickChatMessage).mockReturnValue(new Promise(() => {}));
+		await runQuickChatCommand({ type: 'send', text: 'hi' });
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: sent()[0].id });
 		expect(result.ok).toBe(false);
-		expect(session('b').executionQueue).toHaveLength(1);
-		expect(session('b').aiTabs).toHaveLength(2);
+		// Refusing opens no tab: the agent keeps only its own.
+		expect(session('b').aiTabs).toHaveLength(1);
+	});
+});
+
+describe('wrong tab (thumbs-down): move a message that already ran', () => {
+	async function sendToMain(text = 'about the deploy') {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		return send(text);
+	}
+
+	it('stops the reply in the wrong tab and sends the message again in a new tab', async () => {
+		const { message } = await sendToMain();
+		expect(message.route).toMatchObject({ status: 'running', tabId: 'b-main', origin: 'open' });
+
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+
+		expect(result.ok).toBe(true);
+		expect(window.maestro.process.interrupt).toHaveBeenCalledWith('b-ai-b-main');
+		const moved = sent(result.snapshot.messages)[0];
+		expect(moved.route).toMatchObject({ status: 'running', origin: 'new' });
+		expect(moved.route!.tabId).not.toBe('b-main');
+		expect(tab('b', moved.route!.tabId).logs[0]).toMatchObject({ text: 'about the deploy' });
+		// What reached the old tab stays there: it is the user's own tab.
+		expect(tab('b', 'b-main').logs[0]).toMatchObject({ text: 'about the deploy' });
+	});
+
+	it('sends a finished message again without interrupting anything', async () => {
+		const { message } = await sendToMain();
+		reply('b', 'b-main', 'an answer for the wrong tab');
+
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+
+		expect(result.ok).toBe(true);
+		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
+		const moved = sent(result.snapshot.messages)[0];
+		expect(moved.route).toMatchObject({ status: 'running', origin: 'new' });
+		// The thread shows the new tab's reply, not the wrong tab's.
+		expect(result.snapshot.messages.map((m) => m.text)).not.toContain(
+			'an answer for the wrong tab'
+		);
+	});
+
+	it('moves the chat: the next message follows to the new tab', async () => {
+		const { message } = await sendToMain();
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+		const movedTo = sent(result.snapshot.messages)[0].route!.tabId;
+		reply('b', movedTo!, 'ok');
+		const next = await send('and then?');
+		expect(next.message.route!.tabId).toBe(movedTo);
+	});
+
+	it('leaves alone a turn the user started in the old tab afterwards', async () => {
+		const { message } = await sendToMain();
+		reply('b', 'b-main', 'done');
+		patchTab('b', 'b-main', (t) => ({
+			state: 'busy',
+			logs: [...t.logs, { id: 'own', timestamp: 3, source: 'user', text: 'mine' } as LogEntry],
+		}));
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+		expect(result.ok).toBe(true);
+		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
+	});
+
+	it('ends an automatic retry holding the message, so it never runs in both tabs', async () => {
+		const { message } = await sendToMain('hi');
+		holdForRetry('b-main', tab('b', 'b-main').logs[0].queuedItemId!);
+		expect(sent()[0].route?.status).toBe('running');
+
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+
+		expect(result.ok).toBe(true);
+		expect(useRetryStore.getState().retries).toEqual({});
+		const moved = sent(result.snapshot.messages)[0];
+		expect(moved.route).toMatchObject({ origin: 'new' });
+		// The held resend left the queue; only the moved message was queued, and it ran.
+		expect(session('b').executionQueue.filter((i) => i.tabId === 'b-main')).toEqual([]);
 	});
 });
 
@@ -827,6 +898,56 @@ describe('choosing the tab (setTab)', () => {
 		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'new' } });
 		await runQuickChatCommand({ type: 'new' });
 		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+	});
+});
+
+describe('Default Tab setting', () => {
+	it('starts a new chat in a new tab, without routing, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'new' });
+
+		const first = await send('one');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(first.message.route).toMatchObject({ origin: 'new' });
+		expect(first.message.route!.tabId).not.toBe('b-main');
+		// Later messages follow the chat's tab, not the setting.
+		expect((await send('two')).message.route!.tabId).toBe(first.message.route!.tabId);
+	});
+
+	it('starts a new tab again after the chat tab closes, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		const first = await send('one');
+		const closed = first.message.route!.tabId!;
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) =>
+					s.id === 'b' ? { ...s, aiTabs: s.aiTabs.filter((t) => t.id !== closed) } : s
+				),
+		});
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'new' });
+		const second = await send('two');
+		expect(routeQuickChatMessage).not.toHaveBeenCalled();
+		expect(second.message.route).toMatchObject({ origin: 'new' });
+		expect(second.message.route!.tabId).not.toBe(closed);
+	});
+
+	it('still routes a message the user sends to any tab, when set to new', async () => {
+		setQuickChatSettings({ defaultTab: 'new' });
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		await runQuickChatCommand({ type: 'setTab', choice: { kind: 'auto' } });
+		expect(buildQuickChatSnapshot().next).toEqual({ kind: 'auto' });
+		const { message } = await send('one');
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		expect(message.route!.tabId).toBe('b-main');
+	});
+
+	it('routes the first message by default (Choose tab)', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		const { message } = await send('one');
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		expect(message.route).toMatchObject({ tabId: 'b-main', origin: 'open' });
 	});
 });
 

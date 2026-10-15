@@ -62,7 +62,11 @@ import {
 	handleGetSessionHistory,
 } from './sessions';
 import { handleRefreshFileTree, handleGetFileTree } from './fileTree';
-import { handleNotifyToast, handleNotifyCenterFlash } from './notifications';
+import {
+	handleNotifyToast,
+	handleNotifyCenterFlash,
+	handleNotificationInbox,
+} from './notifications';
 import { handleCadenza } from './cadenza';
 import {
 	handleMovement,
@@ -664,6 +668,10 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				handleTerminalResize(this.ctx, client, message);
+				break;
+
+			case 'notification_inbox':
+				void handleNotificationInbox(this.ctx, client, message);
 				break;
 
 			case 'notify_toast':

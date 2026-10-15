@@ -97,6 +97,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[GroupChat]';
 
@@ -148,11 +152,28 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export function resolveParticipantSshRemoteConfig(
 	participantName: string
 ): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
+	return findParticipantSourceSession(participantName)?.sessionSshRemoteConfig;
+}
+
+/**
+ * The Claude token source of the agent a participant was added from, resolved
+ * by the same name match as {@link resolveParticipantSshRemoteConfig}, so a
+ * participant whose agent is set to TUI summarizes through maestro-p like its
+ * turns do. Undefined when the source agent is gone (the summary runs as API).
+ */
+export function resolveParticipantClaudeTokenSource(
+	participantName: string
+): ClaudeTokenSourceFields | undefined {
+	const match = findParticipantSourceSession(participantName);
+	// StoredSession keeps these fields behind its index signature.
+	return match ? getClaudeTokenSourceFields(match as ClaudeTokenSourceFields) : undefined;
+}
+
+function findParticipantSourceSession(participantName: string) {
 	const sessions = getSessionsStore().get('sessions', []);
-	const match = sessions.find(
+	return sessions.find(
 		(session) => mentionMatches(session.name, participantName) || session.name === participantName
 	);
-	return match?.sessionSshRemoteConfig;
 }
 
 /**
@@ -1001,6 +1022,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 							sessionCustomModel: cheapSummary.model,
 							sessionCustomEffort: cheapSummary.effort,
 							sessionSshRemoteConfig: participantSshRemoteConfig,
+							claudeTokenSource: resolveParticipantClaudeTokenSource(participantName),
 							sshStore: participantSshRemoteConfig?.enabled
 								? createSshRemoteStoreAdapter(getSettingsStore())
 								: undefined,

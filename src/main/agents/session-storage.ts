@@ -118,6 +118,12 @@ export type SessionSearchMode = 'title' | 'user' | 'assistant' | 'all';
 export interface SessionListOptions {
 	cursor?: string;
 	limit?: number;
+	/**
+	 * The agent's account dir (`CLAUDE_CONFIG_DIR` and the like), from
+	 * `resolveAgentAccountDir`. Lists that account's transcript pool instead of
+	 * the provider default. Providers that keep no account dir ignore it.
+	 */
+	configDir?: string;
 }
 
 /**

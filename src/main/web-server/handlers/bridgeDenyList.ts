@@ -48,6 +48,8 @@ const METHODS: Record<string, string> = {
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
 	logger: 'getLogLevel log',
+	// Read-only: a browser-spawned agent needs it to build the same system prompt.
+	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',

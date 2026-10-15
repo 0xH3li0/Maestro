@@ -45,8 +45,8 @@ import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
+import type { ShortcutChords } from '../components/ui/ShortcutHint';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
@@ -68,20 +68,22 @@ const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 /** The window's in-window chords: Cmd (Ctrl off macOS) plus this letter. */
 const QUICK_CHAT_KEYS = {
 	newChat: 'n',
-	picker: 'k',
-	tabPicker: 'j',
-	keep: 'b',
+	picker: 'o',
+	tabPicker: 't',
+	keep: 's',
 	pin: 'p',
-	openTab: 't',
 	close: 'w',
 } as const;
 
 /**
- * Chords that take Shift too. Only the thinking toggle, on the same chord the
- * main window's composer uses for its thinking chip.
+ * Chords that take Shift too: the thinking toggle, on the same chord the main
+ * window's composer uses for its thinking chip, and opening the chat's tab in
+ * Maestro, on the tab picker's letter.
  */
 const QUICK_CHAT_SHIFT_KEYS = {
 	thinking: 'k',
+	/** Shift on the tab picker's letter: open the chat's tab in Maestro itself. */
+	openTab: 't',
 } as const;
 
 /** What the thinking button says in each mode, and what a click does next. */
@@ -169,7 +171,7 @@ function QuickChatTooltip({
 }: {
 	label: string;
 	hint?: string;
-	shortcut?: string;
+	shortcut?: string | ShortcutChords;
 	theme: Theme;
 	/** Wrapper classes, for a trigger that must keep shrinking in a flex row. */
 	triggerClassName?: string;
@@ -209,7 +211,7 @@ function IconButton({
 }: {
 	label: string;
 	hint?: string;
-	shortcut?: string;
+	shortcut?: string | ShortcutChords;
 	onClick: () => void;
 	theme: Theme;
 	children: React.ReactNode;
@@ -320,7 +322,7 @@ function QuickChatWindow() {
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	/** Which picker is open: the agent's (Cmd+K) or the next message's tab (Cmd+J). */
+	/** Which picker is open: the agent's (Cmd+O) or the next message's tab (Cmd+T). */
 	const [picker, setPicker] = useState<'agent' | 'tab' | null>(null);
 	const pickerOpen = picker !== null;
 	const [pinned, setPinned] = useState(true);
@@ -454,8 +456,8 @@ function QuickChatWindow() {
 		},
 		[run]
 	);
-	const pickerShortcut = formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.picker]);
-	const tabPickerShortcut = formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.tabPicker]);
+	const pickerShortcut = ['Meta', QUICK_CHAT_KEYS.picker];
+	const tabPickerShortcut = ['Meta', QUICK_CHAT_KEYS.tabPicker];
 	const newChat = useCallback(() => {
 		setDraft('');
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
@@ -509,19 +511,19 @@ function QuickChatWindow() {
 
 	useEffect(() => {
 		// Cmd (Ctrl off macOS) + letter. Shift is left free for the composer,
-		// except for the thinking chord, which matches the main window's.
+		// except for the few chords in QUICK_CHAT_SHIFT_KEYS.
 		const chords: Record<string, () => void> = {
 			[QUICK_CHAT_KEYS.newChat]: newChat,
 			[QUICK_CHAT_KEYS.picker]: togglePicker,
 			[QUICK_CHAT_KEYS.tabPicker]: toggleTabPicker,
 			[QUICK_CHAT_KEYS.keep]: togglePersistent,
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
-			[QUICK_CHAT_KEYS.openTab]: openInMaestro,
 			// Closes the window whatever is open in it, unlike Escape.
 			[QUICK_CHAT_KEYS.close]: hide,
 		};
 		const shiftChords: Record<string, () => void> = {
 			[QUICK_CHAT_SHIFT_KEYS.thinking]: cycleThinking,
+			[QUICK_CHAT_SHIFT_KEYS.openTab]: openInMaestro,
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			// The diagram viewer owns the keyboard while it is open: its layer
@@ -590,7 +592,8 @@ function QuickChatWindow() {
 			label="Switch agent"
 			hint="Switching starts a new chat."
 			shortcut={pickerShortcut}
-			triggerClassName="inline-flex min-w-0"
+			// The agent keeps its name (capped below); a long tab name is what gives way.
+			triggerClassName="inline-flex min-w-0 shrink-0"
 		>
 			<button
 				type="button"
@@ -614,7 +617,7 @@ function QuickChatWindow() {
 	// message Maestro finds the tab; after it, the chat stays in its tab until
 	// the user picks another one (or a new one) here.
 	const next = snapshot.next;
-	const tabLabel = next.kind === 'tab' ? next.name : next.kind === 'new' ? 'New tab' : 'Any tab';
+	const tabLabel = next.kind === 'tab' ? next.name : next.kind === 'new' ? 'New tab' : 'Choose tab';
 	const tabHint =
 		next.kind === 'tab'
 			? next.chosen
@@ -636,7 +639,9 @@ function QuickChatWindow() {
 				onClick={toggleTabPicker}
 				aria-label={`Choose the tab: ${tabLabel}`}
 				aria-expanded={picker === 'tab'}
-				className="flex items-center gap-1 text-sm max-w-[220px] min-w-0 rounded-md px-1 hover:opacity-100 opacity-80"
+				// No fixed cap: a long tab name takes the room the header has and
+				// truncates only when it runs out (the header keeps a gap before its buttons).
+				className="flex items-center gap-1 text-sm max-w-full min-w-0 rounded-md px-1 hover:opacity-100 opacity-80"
 				style={{ ...NO_DRAG_REGION, color: next.kind === 'auto' ? c.textDim : c.textMain }}
 				data-testid="quick-chat-tab-button"
 			>
@@ -705,9 +710,9 @@ function QuickChatWindow() {
 						tooltips="overlay"
 						target="text"
 						shortcutHint={{
-							decrease: formatShortcutKeys(['Meta', '-']),
-							increase: formatShortcutKeys(['Meta', '=']),
-							reset: formatShortcutKeys(['Meta', '0']),
+							decrease: ['Meta', '-'],
+							increase: ['Meta', '='],
+							reset: ['Meta', '0'],
 						}}
 						testId="quick-chat-font-scale"
 					/>
@@ -717,7 +722,7 @@ function QuickChatWindow() {
 					theme={theme}
 					label={THINKING_LABELS[snapshot.thinking].label}
 					hint={THINKING_LABELS[snapshot.thinking].hint}
-					shortcut={formatShortcutKeys(['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking])}
+					shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking]}
 					onClick={cycleThinking}
 				>
 					<span className="relative flex">
@@ -745,7 +750,7 @@ function QuickChatWindow() {
 							? `This chat stays as a tab on ${agentName} after you start a new one. Click to make it temporary again.`
 							: `Temporary: this chat is deleted when you start a new one. Click to keep it as a tab on ${agentName}.`
 					}
-					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.keep])}
+					shortcut={['Meta', QUICK_CHAT_KEYS.keep]}
 					onClick={togglePersistent}
 				>
 					{snapshot.persistent ? (
@@ -762,7 +767,7 @@ function QuickChatWindow() {
 							? 'Floats above other windows. Click to let it fall behind them.'
 							: 'Falls behind other windows when you click away. Click to float it on top.'
 					}
-					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.pin])}
+					shortcut={['Meta', QUICK_CHAT_KEYS.pin]}
 					onClick={togglePinned}
 				>
 					{pinned ? (
@@ -821,11 +826,14 @@ function QuickChatWindow() {
 			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
 				<div className="h-7 mb-3 flex items-center gap-2 px-4 shrink-0" style={DRAG_REGION}>
-					<div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm">{headerPickers}</div>
+					{/* pr-6: the tab name never runs right up to the buttons. */}
+					<div className="flex-1 min-w-0 flex items-center gap-1.5 text-sm pr-6">
+						{headerPickers}
+					</div>
 					<IconButton
 						theme={theme}
 						label="New chat"
-						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.newChat])}
+						shortcut={['Meta', QUICK_CHAT_KEYS.newChat]}
 						onClick={newChat}
 					>
 						<PenSquare className="w-4 h-4" />
@@ -834,7 +842,7 @@ function QuickChatWindow() {
 						theme={theme}
 						label="Open in Maestro"
 						hint="Shows this chat as a tab in the main window."
-						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.openTab])}
+						shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.openTab]}
 						onClick={openInMaestro}
 						disabled={!snapshot.tabId}
 					>
@@ -848,8 +856,8 @@ function QuickChatWindow() {
 						// Cmd+W always closes.
 						shortcut={
 							pickerOpen
-								? formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])
-								: `Esc / ${formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.close])}`
+								? ['Meta', QUICK_CHAT_KEYS.close]
+								: [['Escape'], ['Meta', QUICK_CHAT_KEYS.close]]
 						}
 						onClick={hide}
 					>

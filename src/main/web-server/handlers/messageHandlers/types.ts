@@ -1,4 +1,8 @@
 import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../../shared/notificationInbox';
 /**
  * Shared types for WebSocket message handlers.
  *
@@ -162,6 +166,7 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {

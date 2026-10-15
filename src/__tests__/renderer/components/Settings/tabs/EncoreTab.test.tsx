@@ -171,6 +171,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 			hotkey: ['Alt', 'Space'],
 			agentId: '',
 			persistent: false,
+			defaultTab: 'auto',
 			ephemeralHistory: true,
 		},
 		setQuickChatSettings: vi.fn(),

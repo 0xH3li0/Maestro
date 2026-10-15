@@ -2281,6 +2281,99 @@ Show a toast notification (queued, click X or icon to dismiss)
 | `--open-url <url>`        | On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)                                                                                                                    | -       |
 | `--json`                  | Output as JSON (for scripting)                                                                                                                                                                                                 | -       |
 
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox collapse`
+
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
 ## `maestro-cli notify flash <message>`
 
 Show a center-screen flash (momentary, exclusive - replaces any active flash)
@@ -2461,7 +2554,7 @@ Open a tab of the chat in the main Maestro window: the tab a message went to, or
 
 ## `maestro-cli quick-chat new-tab [message-id]`
 
-Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
+Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

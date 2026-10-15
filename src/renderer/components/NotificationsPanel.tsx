@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState, useEffect } from 'react';
 import {
 	Bell,
@@ -18,6 +19,11 @@ import type { ToastPosition } from '../../shared/toastPosition';
 import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
+import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
+import { SectionCard } from './Settings/tabs/DisplayTab/components/SectionCard';
+import { ToggleSettingRow } from './Settings/tabs/DisplayTab/components/ToggleSettingRow';
+import { useSettingsStore } from '../stores/settingsStore';
+import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
 import { showOsNotification } from '../stores/notificationStore';
 
@@ -38,6 +44,7 @@ interface NotificationsPanelProps {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
 	setIdleNotificationCommand: (value: string) => void;
+	onConfigureNotificationShortcut?: () => void;
 	theme: Theme;
 }
 
@@ -61,7 +68,23 @@ export function NotificationsPanel({
 	idleNotificationCommand,
 	setIdleNotificationCommand,
 	theme,
+	onConfigureNotificationShortcut,
 }: NotificationsPanelProps) {
+	const settings = useSettingsStore(
+		useShallow((s) => ({
+			notificationCenterLarge: s.notificationCenterLarge,
+			setNotificationCenterLarge: s.setNotificationCenterLarge,
+			notificationCenterDetails: s.notificationCenterDetails,
+			setNotificationCenterDetails: s.setNotificationCenterDetails,
+			notificationCenterKeyboardNavigation: s.notificationCenterKeyboardNavigation,
+			setNotificationCenterKeyboardNavigation: s.setNotificationCenterKeyboardNavigation,
+			notificationHistoryQueuedReplies: s.notificationHistoryQueuedReplies,
+			setNotificationHistoryQueuedReplies: s.setNotificationHistoryQueuedReplies,
+			notificationHistoryAutoRunTasks: s.notificationHistoryAutoRunTasks,
+			setNotificationHistoryAutoRunTasks: s.setNotificationHistoryAutoRunTasks,
+			shortcuts: s.shortcuts,
+		}))
+	);
 	// Custom notification test state
 	const [testNotificationId, setTestNotificationId] = useState<number | null>(null);
 	const [testStatus, setTestStatus] = useState<TestStatus>('idle');
@@ -125,6 +148,77 @@ export function NotificationsPanel({
 
 	return (
 		<div className="space-y-6">
+			<div data-setting-id="notifications-center">
+				<SettingsSectionHeading
+					icon={Bell}
+					description="Optional inbox enhancements. All are off by default."
+				>
+					Notification center
+				</SettingsSectionHeading>
+				<SectionCard theme={theme}>
+					<ToggleSettingRow
+						theme={theme}
+						title="Use a larger notification center"
+						description="Use a wider, taller inbox while keeping it within the window."
+						checked={settings.notificationCenterLarge}
+						onChange={settings.setNotificationCenterLarge}
+						ariaLabel="Use a larger notification center"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Expand notification details"
+						description="Read full source names, titles, and messages inside the inbox."
+						checked={settings.notificationCenterDetails}
+						onChange={settings.setNotificationCenterDetails}
+						ariaLabel="Expand notification details"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Keyboard navigation in the notification center"
+						description="Focus the inbox when it opens and navigate entries with arrow keys."
+						checked={settings.notificationCenterKeyboardNavigation}
+						onChange={settings.setNotificationCenterKeyboardNavigation}
+						ariaLabel="Keyboard navigation in the notification center"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Record each queued reply"
+						description="Keep every completed queued reply in notification history. By default, only the final reply is recorded."
+						checked={settings.notificationHistoryQueuedReplies}
+						onChange={settings.setNotificationHistoryQueuedReplies}
+						ariaLabel="Record each queued reply"
+						clickableRow
+					/>
+					<ToggleSettingRow
+						theme={theme}
+						title="Record each Auto Run task"
+						description="Keep each completed Auto Run task in notification history. By default, run outcomes, warnings, and errors are recorded."
+						checked={settings.notificationHistoryAutoRunTasks}
+						onChange={settings.setNotificationHistoryAutoRunTasks}
+						ariaLabel="Record each Auto Run task"
+						clickableRow
+					/>
+					<p className="text-xs opacity-70">
+						Configure Open Notification Center in Shortcuts. It starts unbound; your existing
+						binding is preserved.
+					</p>
+					{onConfigureNotificationShortcut && (
+						<button
+							type="button"
+							className="text-xs hover:underline"
+							style={{ color: theme.colors.accent }}
+							onClick={onConfigureNotificationShortcut}
+						>
+							Configure notification shortcut
+							{shortcutSuffix(settings.shortcuts.openNotificationCenter?.keys)}
+						</button>
+					)}
+				</SectionCard>
+			</div>
+
 			{/* OS Notifications */}
 			<div data-setting-id="notifications-os">
 				<SettingCheckbox
@@ -482,8 +576,10 @@ export function NotificationsPanel({
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					How long toast notifications remain on screen. "Off" disables them entirely. "Never" means
-					they stay until manually dismissed.
+					How long toast notifications remain on screen. "Off" hides in-app floating toasts. "Never"
+					means they stay until manually dismissed. Either way, every notification is kept in the
+					notification center (the bell in the header). OS and custom notifications are controlled
+					separately.
 				</p>
 			</div>
 

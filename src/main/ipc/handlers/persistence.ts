@@ -288,6 +288,23 @@ export function registerPersistenceHandlers(
 		});
 	};
 
+	/**
+	 * A write's observed baselines by id, with images relocated like the write.
+	 *
+	 * The renderer keeps a pasted image as a data URL in memory while disk holds
+	 * its `maestro-image://` ref. Left as-is, a baseline never equals the stored
+	 * value, so the three-way merge reads every image field as a peer's edit and
+	 * keeps the stored copy: a sent image stayed staged on disk and came back in
+	 * the composer on reload. The store is content-addressed, so relocation maps
+	 * the same bytes to the same ref the write and the stored tree carry.
+	 */
+	const observedBaselineMap = async (
+		baselines: StoredSession[]
+	): Promise<Map<string, StoredSession>> => {
+		const { sessions } = await relocateSessionImages(baselines);
+		return new Map(sessions.map((session) => [session.id, session]));
+	};
+
 	// PERF: coalesce activeSessionId disk writes.
 	//
 	// The renderer calls sessions:setActiveSessionId immediately on every session
@@ -708,7 +725,7 @@ export function registerPersistenceHandlers(
 				removeIds: string[] = [],
 				baselines: StoredSession[] = []
 			) => {
-				const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+				const baselineMap = await observedBaselineMap(baselines);
 				const remote = (event as { type?: string })?.type === 'bridge';
 				// Relocate any freshly-pasted inline images (data URLs) in the dirty
 				// sessions to the image store before they hit disk, so the sessions
@@ -895,7 +912,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle(
 		'sessions:setAll',
 		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
-			const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+			const baselineMap = await observedBaselineMap(baselines);
 			const remote = (event as { type?: string })?.type === 'bridge';
 			// Relocate inline images (data URLs) out of the sessions before they hit
 			// disk. setAll is the bootstrap/first-flush path, so this also migrates a

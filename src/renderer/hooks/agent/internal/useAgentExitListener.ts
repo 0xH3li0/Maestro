@@ -857,11 +857,14 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							);
 						});
 				}, 0);
-			} else if (toastData && !(tabIdFromSession && isRetryPending(tabIdFromSession))) {
-				// A retry counting down means this turn FAILED and will run again, so
-				// it gets no completion toast or sound. Without this gate each failed
-				// attempt of an outage announced itself as a green success, quoting
-				// whatever the dying turn printed last.
+			}
+
+			if (
+				toastData &&
+				!(tabIdFromSession && isRetryPending(tabIdFromSession)) &&
+				(!queuedItemToProcess || useSettingsStore.getState().notificationHistoryQueuedReplies)
+			) {
+				// Retry attempts have failed, so they must not announce a successful completion.
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,
@@ -894,20 +897,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						(currentActiveSession?.id === actualSessionId &&
 							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession));
 
-					if (!isViewingCompletedTab) {
-						notifyToast({
-							type: 'success',
-							title: toastData!.title,
-							message: toastData!.summary,
-							group: toastData!.groupName,
-							project: toastData!.projectName,
-							taskDuration: toastData!.duration,
-							agentSessionId: toastData!.agentSessionId,
-							tabName: toastData!.tabName,
-							sessionId: toastData!.sessionId,
-							tabId: toastData!.tabId,
-						});
-					} else {
+					const historyOnly = !!queuedItemToProcess || isViewingCompletedTab;
+					notifyToast({
+						historyOnly,
+						type: 'success',
+						title: toastData!.title,
+						message: toastData!.summary,
+						group: toastData!.groupName,
+						project: toastData!.projectName,
+						taskDuration: toastData!.duration,
+						agentSessionId: toastData!.agentSessionId,
+						tabName: toastData!.tabName,
+						sessionId: toastData!.sessionId,
+						tabId: toastData!.tabId,
+					});
+					if (isViewingCompletedTab && !queuedItemToProcess) {
 						// Viewing the completed tab: the visual toast is suppressed (no need
 						// to pop a toast about the tab you're already watching), but the
 						// audio/TTS cue must still fire. Otherwise custom notifications are

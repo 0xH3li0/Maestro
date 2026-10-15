@@ -25,6 +25,11 @@
  *   it knows the URL
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -634,6 +639,13 @@ export class WebServer {
 
 	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
 		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	/** Register the request-response bridge to the desktop history store. */
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbackRegistry.setNotificationInboxCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -1333,6 +1345,7 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
+			notificationInbox: (request) => this.callbackRegistry.notificationInbox(request),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>

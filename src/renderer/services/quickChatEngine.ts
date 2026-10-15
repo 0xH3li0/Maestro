@@ -282,13 +282,16 @@ function choosableTabs(session: Session | null): AITab[] {
 		: [];
 }
 
-/** Where the next message goes: the user's choice, else the chat's tab, else found. */
+/**
+ * Where the next message goes: the user's choice, else the chat's tab, else the
+ * Default Tab setting.
+ */
 function nextTarget(session: Session | null): QuickChatNextTarget {
 	const choice = chat.choice;
 	if (choice?.kind === 'new' || choice?.kind === 'auto') return { kind: choice.kind };
 	const tabId = choice?.kind === 'tab' ? choice.tabId : chat.homeTabId;
 	const tab = tabId ? session?.aiTabs.find((t) => t.id === tabId) : undefined;
-	if (!tab) return { kind: 'auto' };
+	if (!tab) return { kind: choice ? 'auto' : quickChatSettings().defaultTab };
 	return { kind: 'tab', tabId: tab.id, name: tabLabel(tab), chosen: choice !== null };
 }
 
@@ -695,7 +698,9 @@ function runFreedTurns(): void {
  * better: "and when does it arrive?" names no subject, and routing it on its own
  * sent it to a stranger. The user moves the chat by choosing (`choice`): a tab,
  * a new tab, or `auto` to have the message routed as if it started the chat.
- * The chat's tab being gone (the user closed it) routes the message too.
+ * The chat's tab being gone (the user closed it) routes the message too. A
+ * message with no choice and no tab follows the Default Tab setting: routed
+ * (`auto`), or straight to a new tab (`new`).
  */
 async function routeAndDeliver(
 	sessionId: string,
@@ -719,6 +724,9 @@ async function routeAndDeliver(
 
 		let tabId: string | null = null;
 		let origin: QuickChatRouteOrigin = 'open';
+		// With no choice and no tab to follow, the Default Tab setting decides
+		// whether Maestro looks for a tab or starts a new one.
+		const fresh = choice ? choice.kind === 'new' : quickChatSettings().defaultTab === 'new';
 		if (choice?.kind === 'tab') {
 			if (!isOpen(choice.tabId)) {
 				fail(turn, 'The tab you chose for this message is no longer open');
@@ -727,7 +735,7 @@ async function routeAndDeliver(
 			tabId = choice.tabId;
 		} else if (!choice && homeTabId && isOpen(homeTabId)) {
 			tabId = homeTabId;
-		} else if (choice?.kind !== 'new') {
+		} else if (!fresh) {
 			const routed = await routeToTab(sessionId, turn);
 			if (!stillWanted()) return homeTabId;
 			if (routed) ({ tabId, origin } = routed);
@@ -859,8 +867,18 @@ async function stop(): Promise<void> {
 	);
 }
 
-/** Send a message that is waiting in the queue to a new tab instead. */
-function moveToNewTab(messageId: string | undefined): string | null {
+/**
+ * Send a message to a new tab instead of the one it went to: the user disagrees
+ * with the tab it was routed to, or does not want to wait on it.
+ *
+ * A message still queued leaves the queue. One that already started is stopped
+ * where it is, so it never runs in both tabs, and is sent again in the new tab.
+ * One that finished is sent again. Whatever it left in the old tab stays there:
+ * that tab is the user's own, and its transcript is not ours to edit.
+ *
+ * Without `messageId`, the latest queued message moves.
+ */
+async function moveToNewTab(messageId: string | undefined): Promise<string | null> {
 	const session = findSession(chat.sessionId);
 	const queued = (turn: Turn) => !!session && turnView(session, turn).route.status === 'queued';
 	const turn = messageId
@@ -869,17 +887,33 @@ function moveToNewTab(messageId: string | undefined): string | null {
 	if (!session || !turn) {
 		return messageId ? 'That message is not in this chat' : 'No message is waiting in the queue';
 	}
-	// A message an automatic recovery is holding already ran once and will be
-	// resent where it is: moving it would run it in both tabs.
-	if (isHeldByRecovery(turn.queuedItemId)) {
-		return 'That message is being retried automatically, so it cannot be moved';
+	if (turn.phase === 'searching') return 'A tab is still being found for that message';
+	if (turn.phase === 'failed' || !turn.tabId) return 'That message did not reach a tab';
+	if (turn.origin === 'new' && chat.ownedTabIds.has(turn.tabId) && !queued(turn)) {
+		return 'That message is already in a new tab';
 	}
-	// One store update decides it: only a message still in the queue is moved,
-	// so it can never run in both tabs.
-	if (!turn.queuedItemId || !removeQueuedItem(session.id, turn.queuedItemId)) {
-		return 'That message is no longer waiting: it already started';
+
+	const oldTabId = turn.tabId;
+	// A message an automatic recovery holds in the queue already ran once.
+	const held = isHeldByRecovery(turn.queuedItemId);
+	// One store update decides it: a message taken out of the queue here, and
+	// not held, never ran. Anything else may be running in the old tab now.
+	const withdrawn = !!turn.queuedItemId && removeQueuedItem(session.id, turn.queuedItemId);
+	if (!withdrawn || held) {
+		// A recovery resends from its own copy of the prompt. End it, or the
+		// message would run again in the old tab after it moved.
+		cancelRecoveryForTab(session.id, oldTabId);
+		const fresh = findSession(session.id);
+		if (fresh && turnView(fresh, turn).route.status === 'running') {
+			// A reply that finished on its own a moment ago has nothing to interrupt.
+			await window.maestro.process.interrupt(`${session.id}-ai-${oldTabId}`).catch(() => false);
+		}
+		// The chat can end while the interrupt is awaited.
+		if (!chat.turns.includes(turn)) return null;
 	}
-	const tabId = createChatTab(session, turn.text);
+
+	const live = findSession(session.id);
+	const tabId = live ? createChatTab(live, turn.text) : null;
 	if (!tabId) return fail(turn, 'Could not open a tab on this agent');
 	const error = deliverToTab(turn, session.id, tabId, 'new');
 	// The conversation moves with it: the next message follows it to the new tab.
@@ -955,7 +989,7 @@ export async function runQuickChatCommand(
 			await stop();
 			break;
 		case 'moveToNewTab':
-			error = moveToNewTab(command.messageId);
+			error = await moveToNewTab(command.messageId);
 			break;
 		case 'sync':
 			break;

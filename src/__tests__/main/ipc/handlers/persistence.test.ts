@@ -9,6 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
+import {
+	configureImageStore,
+	__resetImageStoreCacheForTests,
+} from '../../../../main/storage/session-image-store';
 import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
@@ -2318,6 +2323,55 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 	describe('multi-client observed writes', () => {
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'clears a sent image whose baseline still holds it inline (%s)',
+			async (channel) => {
+				// The renderer keeps the pasted image as a data URL; disk holds its ref.
+				configureImageStore(path.join(os.tmpdir(), `maestro-image-store-${process.pid}`));
+				const pasted = 'data:image/png;base64,iVBORw0KGgo=';
+				const drafted = {
+					id: 'shared',
+					name: 'Agent',
+					toolType: 'claude-code',
+					cwd: '/host',
+					aiTabs: [{ id: 'one', logs: [], inputValue: 'look', stagedImages: [pasted] }],
+					executionQueue: [{ id: 'queued', type: 'message', text: 'look', images: [pasted] }],
+				};
+				let stored: StoredSession[] = [];
+				mockSessionsStore.get.mockImplementation((key) => (key === 'sessions' ? stored : ''));
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (key === 'sessions') stored = value;
+				});
+				const save = (sessions: unknown[], baselines: unknown[]) =>
+					channel === 'sessions:setMany'
+						? handlers.get(channel)!({}, sessions, [], baselines)
+						: handlers.get(channel)!({}, sessions, baselines);
+
+				try {
+					await save([drafted], []);
+					expect(stored[0].aiTabs[0].stagedImages?.[0]).toMatch(/^maestro-image:\/\//);
+
+					const sent = {
+						...drafted,
+						aiTabs: [
+							{
+								id: 'one',
+								logs: [{ id: 'user', text: 'look', images: [pasted] }],
+								inputValue: '',
+								stagedImages: [],
+							},
+						],
+						executionQueue: [],
+					};
+					await save([sent], [drafted]);
+
+					expect(stored[0].aiTabs[0].stagedImages).toEqual([]);
+					expect(stored[0].executionQueue).toEqual([]);
+				} finally {
+					__resetImageStoreCacheForTests();
+				}
+			}
+		);
 		it('broadcasts merged host state instead of stale fields from a remote save', async () => {
 			const baseline = {
 				id: 'shared',
