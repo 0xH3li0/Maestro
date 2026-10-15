@@ -258,6 +258,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Send a message, or run a shell command                                   | `send`, `dispatch`, `send-terminal`                                                              |
 | Consult another agent (`@mention`)                                       | `ask <agent> "<question>" --from <caller>`                                                       |
 | Open a file / URL / terminal tab                                         | `open-file`, `open-browser`, `open-terminal`                                                     |
+| Click a folder link (reveal it in the Files panel)                       | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
 | Open a modal or dashboard                                                | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
 | Auto Run: start, stop, resume, skip, abort                               | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
 | Settings, theme, Encore features                                         | `settings`, `theme`, `set-theme`, `encore`                                                       |
