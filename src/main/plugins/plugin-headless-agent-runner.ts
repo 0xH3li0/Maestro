@@ -6,6 +6,7 @@ import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-too
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
 import { checkCustomPath } from '../agents/path-prober';
@@ -171,9 +172,8 @@ export function createPluginHeadlessAgentRunner(
 				try {
 					deps.recordRelayOrigin?.(agent, conversationId);
 				} catch (error) {
-					logger.warn('Could not record Relay session origin', '[PluginHeadless]', {
-						error: String(error),
-					});
+					// Keep the original exception; reporting must not delay authority cleanup.
+					void captureException(error, { operation: 'plugin-headless.recordRelayOrigin' });
 				}
 			}
 			// Revoke authority even if removing the on-disk proof fails.

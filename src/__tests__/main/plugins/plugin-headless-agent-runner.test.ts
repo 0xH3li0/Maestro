@@ -3,9 +3,15 @@ import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import { isAgentBusy } from '../../../main/utils/agent-busy';
+import { captureException } from '../../../main/utils/sentry';
+
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 import type { SpawnAgentOptions } from '../../../cli/services/agent-spawner';
 import type { SessionInfo } from '../../../shared/types';
-import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
+import {
+	createPluginHeadlessAgentRunner,
+	type PluginHeadlessRunnerDeps,
+} from '../../../main/plugins/plugin-headless-agent-runner';
 
 const agent = {
 	id: 'agent-a',
@@ -703,3 +709,94 @@ it('retains known Relay provenance when cancelled before provider spawn', async 
 	expect(isAgentBusy(agent, undefined)).toBe(false);
 	expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'known-conversation');
 });
+
+it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
+	'reports the original provenance exception without replacing %s or delaying security cleanup',
+	async (outcome) => {
+		const provenanceError = new Error('Origin store write failed');
+		const providerError = new Error('Provider failed');
+		const controller = new AbortController();
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const issueRunToken = vi.fn((id: string, ttl: number) => identity.issue(id, ttl));
+		let proofFile: string | undefined;
+		let finishReporting!: () => void;
+		const reporter = vi.mocked(captureException);
+		reporter.mockReset().mockReturnValueOnce(
+			new Promise<void>((resolve) => {
+				finishReporting = resolve;
+			})
+		);
+		const recordRelayOrigin = vi.fn(() => {
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+			throw provenanceError;
+		});
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(
+			async (_type, _cwd, _prompt, _session, options) => {
+				proofFile = options!.pluginRunProofFile;
+				options!.onProcessStarted?.(501);
+				expect(isAgentBusy(agent, undefined)).toBe(true);
+				const token = fs.readFileSync(proofFile!, 'utf8');
+				expect(identity.resolve(token)).toEqual({ callerAgentId: agent.id });
+				if (outcome === 'throw') throw providerError;
+				return outcome === 'success'
+					? { success: true, response: 'answer', agentSessionId: 'conversation' }
+					: { success: false, error: 'provider timeout', agentSessionId: 'conversation' };
+			}
+		);
+		const removeProof = vi.spyOn(runIdentity, 'removePluginRunProofFile');
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => {
+				if (outcome === 'cancel-before-spawn') controller.abort();
+				return { available: true };
+			},
+			hasPluginTools: () => true,
+			spawn,
+			recordRelayOrigin,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		try {
+			const pending = run(agent.id, 'hello', 'conversation', controller.signal, 'relay');
+			if (outcome === 'throw') await expect(pending).rejects.toBe(providerError);
+			else if (outcome === 'cancel-before-spawn') {
+				await expect(pending).resolves.toEqual({
+					success: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run timed out or was cancelled',
+				});
+				expect(spawn).not.toHaveBeenCalled();
+			} else {
+				await expect(pending).resolves.toEqual({
+					success: outcome === 'success',
+					response: outcome === 'success' ? 'answer' : null,
+					sessionId: 'conversation',
+					usageStats: undefined,
+					...(outcome === 'error' ? { error: 'provider timeout' } : {}),
+				});
+			}
+			// Reporting is still pending: it must not hold the turn or its authority open.
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
+				callerAgentId: null,
+			});
+			expect(removeProof).toHaveBeenCalledOnce();
+			proofFile = removeProof.mock.calls[0][0];
+			expect(fs.existsSync(proofFile)).toBe(false);
+			expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'conversation');
+			expect(reporter).toHaveBeenCalledExactlyOnceWith(provenanceError, {
+				operation: 'plugin-headless.recordRelayOrigin',
+			});
+			expect(reporter.mock.calls[0][0]).toBe(provenanceError);
+		} finally {
+			finishReporting();
+			reporter.mockReset();
+			removeProof.mockRestore();
+			if (proofFile && fs.existsSync(proofFile)) runIdentity.removePluginRunProofFile(proofFile);
+		}
+	}
+);
