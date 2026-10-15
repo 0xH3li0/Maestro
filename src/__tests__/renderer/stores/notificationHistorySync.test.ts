@@ -46,6 +46,7 @@ let firstWindow: typeof import('../../../renderer/stores/notificationStore');
 let sessionStore: typeof import('../../../renderer/stores/sessionStore');
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 let cleanup: (() => void)[] = [];
 beforeEach(async () => {
@@ -58,7 +59,7 @@ beforeEach(async () => {
 	host.listeners.clear();
 	host.set.mockReset();
 	registerNotificationHistoryHandlers();
-	localStorage.clear();
+	installLocalStorageMock();
 	Object.assign(window.maestro.notification, {
 		changeHistory: (change: NotificationHistoryChange) =>
 			host.handlers.get('notification:changeHistory')!({}, change),

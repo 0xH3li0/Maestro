@@ -28,6 +28,7 @@ import {
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { showOsNotification } from '../../../renderer/stores/notificationStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 // runtimeContext is mocked so tests can flip between the Electron desktop path
 // (default false) and the web-desktop browser path.
@@ -1149,17 +1150,8 @@ describe('notificationStore', () => {
 		const history = () => useNotificationStore.getState().history;
 
 		beforeEach(() => {
-			const stored = new Map<string, string>();
-			vi.stubGlobal('localStorage', {
-				getItem: (key: string) => stored.get(key) ?? null,
-				setItem: (key: string, value: string) => void stored.set(key, value),
-				removeItem: (key: string) => void stored.delete(key),
-			});
+			installLocalStorageMock();
 			useNotificationStore.setState({ history: [], notificationCenterOpen: false });
-		});
-
-		afterEach(() => {
-			vi.unstubAllGlobals();
 		});
 
 		it('records every toast as unread, newest first', () => {
@@ -1343,6 +1335,10 @@ describe('notificationStore', () => {
 });
 
 describe('history-only completion recording', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+	});
+
 	it('persists an entry without a popup, audio, OS notification, or expiry timer', () => {
 		useNotificationStore.setState({ history: [] });
 		useNotificationStore.getState().setAudioFeedback(true, 'say');
