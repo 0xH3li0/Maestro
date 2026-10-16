@@ -15,10 +15,23 @@
  * The body draws the chosen style (`GAUGE_STYLE_COMPONENTS`): one gauge for the
  * chosen metric, or In, Out, and Combined side by side on ONE shared scale so
  * the three read against each other at a glance.
+ *
+ * Two ways out: the X in the title strip, and Escape while focus is inside the
+ * card. The card is focusable but out of the tab order and never takes focus on
+ * its own, so showing it from the hotkey, palette, or menu leaves the caret in
+ * the composer, and an always-visible widget never swallows Escape app-wide.
  */
 
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type CSSProperties,
+} from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Gauge, GripVertical, Settings, X } from 'lucide-react';
 
 import {
@@ -40,6 +53,7 @@ import {
 import { GAUGE_STYLE_COMPONENTS } from './styles';
 import { ThroughputGaugeSettingsPopover } from './ThroughputGaugeSettingsPopover';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
@@ -72,14 +86,44 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 	const peak = useThroughputGaugeStore((s) => s.peak);
 	const history = useThroughputGaugeStore((s) => s.history);
 	const hide = useThroughputGaugeStore((s) => s.hide);
+	const toggleKeys = useSettingsStore((s) => s.shortcuts.toggleThroughputGauge?.keys);
 	const saveRect = useThroughputGaugeStore((s) => s.setRect);
 	const activeAgentName = useSessionStore((s) =>
 		scope === 'active' ? (selectActiveSession(s)?.name ?? null) : null
 	);
 
+	const frameRef = useRef<HTMLDivElement | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const gearRef = useRef<HTMLButtonElement>(null);
 	const closeSettings = useCallback(() => setSettingsOpen(false), []);
+
+	// The popover holds focus while open, so closing it drops focus on <body>
+	// and the next Escape would not reach the card. Hand it back to the frame,
+	// but only when it was lost: an outside click that closed the popover keeps
+	// focus wherever that click put it.
+	const settingsWereOpenRef = useRef(false);
+	useLayoutEffect(() => {
+		const wasOpen = settingsWereOpenRef.current;
+		settingsWereOpenRef.current = settingsOpen;
+		if (!wasOpen || settingsOpen) return;
+		const active = document.activeElement;
+		if (!active || active === document.body) frameRef.current?.focus({ preventScroll: true });
+	}, [settingsOpen]);
+
+	/**
+	 * Escape hides the card, scoped to the card the way `FloatingMediaPlayer`
+	 * scopes it: the gauge floats over a workspace the user keeps typing in, so
+	 * Escape belongs to it only while focus is inside it. An open gear popover
+	 * is the innermost thing Escape can close, so it goes first; it normally
+	 * answers the key itself, and this branch covers a press on the frame.
+	 */
+	const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+		if (e.key !== 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (settingsOpen) setSettingsOpen(false);
+		else hide();
+	};
 
 	// Asked through the same predicate AppShell uses to draw the strip, so the
 	// two cannot disagree about where the drag region is.
@@ -156,12 +200,16 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 		);
 	};
 
-	const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+	const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+		// Grabbing the title strip claims focus, so the Escape that follows goes
+		// to the card the user is holding, not the surface behind it.
+		frameRef.current?.focus({ preventScroll: true });
 		runGesture(e, 'move', (origin, dx, dy) => ({
 			...origin,
 			left: origin.left + dx,
 			top: origin.top + dy,
 		}));
+	};
 
 	const onResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
 		runGesture(e, 'resize', (origin, dx, dy) => ({
@@ -194,6 +242,15 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 	// Toasts step over the card when it sits low enough to be covered by them.
 	const avoidToastsRef = useToastAvoidZone(`${rect.left},${rect.top},${rect.width},${rect.height}`);
 	const liftsToasts = gaugeLiftsToasts(rect, viewport());
+	// One element, two owners: the frame ref (focus) and, only while the card
+	// sits low, the toast avoid zone.
+	const setFrame = useCallback(
+		(element: HTMLDivElement | null) => {
+			frameRef.current = element;
+			avoidToastsRef(liftsToasts ? element : null);
+		},
+		[avoidToastsRef, liftsToasts]
+	);
 
 	const StyleComponent = GAUGE_STYLE_COMPONENTS[style];
 	const scopeCaption = throughputScopeCaption(scope, activeAgentName);
@@ -251,11 +308,15 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 
 	return (
 		<div
-			ref={liftsToasts ? avoidToastsRef : undefined}
+			ref={setFrame}
 			data-testid="floating-throughput-gauge"
 			data-layout={layout}
 			data-style={style}
-			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
+			// Focusable but not in the tab order: -1 is enough to hold focus after a
+			// click, which is what scopes Escape to the card.
+			tabIndex={-1}
+			onKeyDown={handleKeyDown}
+			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none outline-none"
 			style={
 				{
 					left: rect.left,
@@ -311,8 +372,8 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 				</GhostIconButton>
 				<GhostIconButton
 					onClick={hide}
-					title="Close gauge"
-					ariaLabel="Close throughput gauge"
+					title={`Hide gauge${shortcutSuffix(toggleKeys)}`}
+					ariaLabel="Hide throughput gauge"
 					color={theme.colors.textDim}
 					testId="throughput-gauge-close"
 				>

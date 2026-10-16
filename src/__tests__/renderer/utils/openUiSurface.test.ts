@@ -5,10 +5,12 @@
  * it (which would throw the running conversation away).
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openUiSurface } from '../../../renderer/utils/openUiSurface';
 import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
 
 describe('openUiSurface - feedback', () => {
 	beforeEach(() => {
@@ -38,5 +40,39 @@ describe('openUiSurface - quick-chat', () => {
 		show.mockClear();
 		expect(openUiSurface('quick-chat')).toEqual({ ok: true });
 		expect(show).toHaveBeenCalledWith('show');
+	});
+});
+
+describe('openUiSurface - throughput-gauge', () => {
+	const initialEncore = useSettingsStore.getState().encoreFeatures;
+	const setGaugeFlag = (on: boolean) =>
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, throughputGauge: on },
+		}));
+
+	beforeEach(() => {
+		useThroughputGaugeStore.setState({ visible: false });
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState({ encoreFeatures: initialEncore });
+	});
+
+	it('shows the floating gauge through its own store, not as a modal', () => {
+		setGaugeFlag(true);
+		expect(openUiSurface('throughput-gauge')).toEqual({ ok: true });
+		expect(useThroughputGaugeStore.getState().visible).toBe(true);
+	});
+
+	it('resolves the gauge by its aliases', () => {
+		setGaugeFlag(true);
+		expect(openUiSurface('tps')).toEqual({ ok: true });
+		expect(useThroughputGaugeStore.getState().visible).toBe(true);
+	});
+
+	it('refuses while the Encore Feature is off', () => {
+		setGaugeFlag(false);
+		expect(openUiSurface('throughput-gauge').ok).toBe(false);
+		expect(useThroughputGaugeStore.getState().visible).toBe(false);
 	});
 });

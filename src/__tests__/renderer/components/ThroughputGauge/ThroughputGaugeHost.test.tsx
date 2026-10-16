@@ -419,6 +419,13 @@ describe('ThroughputGaugeHost', () => {
 			prototype.releasePointerCapture = originalCapture.release;
 		});
 
+		it('takes focus when the title strip is grabbed, so Escape reaches the card', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			drag(screen.getByTestId('throughput-gauge-drag-handle'), 0, 0);
+			release();
+			expect(document.activeElement).toBe(screen.getByTestId('floating-throughput-gauge'));
+		});
+
 		it('opens bottom-left above the composer with nothing stored', () => {
 			render(<ThroughputGaugeHost theme={mockTheme} />);
 			expect(cardRect()).toEqual(INITIAL);
@@ -504,6 +511,86 @@ describe('ThroughputGaugeHost', () => {
 				top: VIEWPORT.height - GAUGE_DEFAULT_SIZE.all.height - GAUGE_INPUT_AREA_CLEARANCE,
 				...GAUGE_DEFAULT_SIZE.all,
 			});
+		});
+	});
+
+	describe('two ways out and focus', () => {
+		const card = () => screen.getByTestId('floating-throughput-gauge');
+
+		beforeEach(() => setFlag(true));
+
+		it('labels the close button and names the hotkey in its tooltip', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			const close = screen.getByTestId('throughput-gauge-close');
+			expect(close).toHaveAttribute('aria-label', 'Hide throughput gauge');
+			expect(close.getAttribute('title')).toMatch(/^Hide gauge \(.+\)$/);
+		});
+
+		it('Escape with focus inside the card hides it', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			act(() => card().focus());
+
+			fireEvent.keyDown(card(), { key: 'Escape' });
+
+			expect(screen.queryByTestId('floating-throughput-gauge')).toBeNull();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+
+		it('Escape with focus elsewhere leaves the card up', () => {
+			render(
+				<>
+					<textarea data-testid="composer" />
+					<ThroughputGaugeHost theme={mockTheme} />
+				</>
+			);
+			const composer = screen.getByTestId('composer');
+			act(() => composer.focus());
+
+			fireEvent.keyDown(composer, { key: 'Escape' });
+
+			expect(card()).toBeInTheDocument();
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
+		});
+
+		it('Escape with the gear popover open closes only the popover', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			fireEvent.click(screen.getByTestId('throughput-gauge-settings-button'));
+			const popover = screen.getByTestId('throughput-gauge-settings');
+
+			fireEvent.keyDown(popover, { key: 'Escape' });
+
+			expect(screen.queryByTestId('throughput-gauge-settings')).toBeNull();
+			expect(card()).toBeInTheDocument();
+		});
+
+		it('Escape on the frame with the popover open closes the popover first', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			fireEvent.click(screen.getByTestId('throughput-gauge-settings-button'));
+			act(() => card().focus());
+
+			fireEvent.keyDown(card(), { key: 'Escape' });
+			expect(screen.queryByTestId('throughput-gauge-settings')).toBeNull();
+			expect(card()).toBeInTheDocument();
+
+			fireEvent.keyDown(card(), { key: 'Escape' });
+			expect(screen.queryByTestId('floating-throughput-gauge')).toBeNull();
+		});
+
+		it('showing the card leaves focus in the composer', () => {
+			useThroughputGaugeStore.setState({ visible: false });
+			render(
+				<>
+					<textarea data-testid="composer" />
+					<ThroughputGaugeHost theme={mockTheme} />
+				</>
+			);
+			const composer = screen.getByTestId('composer');
+			act(() => composer.focus());
+
+			act(() => useThroughputGaugeStore.getState().show());
+
+			expect(card()).toBeInTheDocument();
+			expect(document.activeElement).toBe(composer);
 		});
 	});
 });

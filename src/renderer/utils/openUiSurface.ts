@@ -13,6 +13,7 @@ import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
 import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
@@ -77,6 +78,11 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			void quickChat.window('show');
 			return { ok: true };
 		}
+		case 'throughput-gauge':
+			// A floating card, not a modal: show it through its own store. Showing
+			// never moves focus, so the user keeps typing where they were.
+			useThroughputGaugeStore.getState().show();
+			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };

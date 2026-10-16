@@ -214,6 +214,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Show/Hide All Cadenzas',
 		keys: ['Alt', 'Meta', 'Shift', 'c'],
 	},
+	// T for Throughput (or tokens). Opt+Cmd+T is the Tab Switcher, so the gauge
+	// takes the Shift sibling, the same way Cadenzas sit beside Concerto.
+	toggleThroughputGauge: {
+		id: 'toggleThroughputGauge',
+		label: 'Show/Hide Throughput Gauge',
+		keys: ['Alt', 'Meta', 'Shift', 't'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

@@ -1337,11 +1337,34 @@ export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 	usage: {
 		overview: [
-			'Turn this on and a small analog dial floats over the Main Window. Its needle shows how many tokens per second all of your agents are reading and writing together, averaged over the last few seconds, with a tick that marks the peak. Drag it by its title strip, and close it with the X.',
+			'A small gauge that floats over the Main Window and shows how many tokens per second your agents are reading and writing, averaged over the last few seconds, with a mark at the peak. It pops up as soon as you turn this on. Drag it by its title strip, resize it from its corner, and close it with the X or with Escape while it has focus.',
+			'Scope (all agents or only the active one), metric (In, Out, or Combined), layout (one gauge or all three side by side), style (Dial, VU, LCD, or Sparkline), and the averaging window are all set from the gear on the gauge, or from the settings below.',
+		],
+		access: [
+			{
+				label: 'Show or hide the gauge',
+				shortcutId: 'toggleThroughputGauge',
+				commandPalette: 'Show Throughput Gauge',
+				menu: 'Throughput Gauge in the Left Bar hamburger menu',
+			},
+			{
+				label: 'Change scope, metric, layout, style, or window',
+				commandPalette: 'Throughput Gauge: Style',
+				menu: 'the gear on the gauge',
+			},
+			{
+				label: 'Start the peak mark again from the current reading',
+				commandPalette: 'Reset Throughput Gauge Peak',
+				menu: 'Reset peak, under the gear on the gauge',
+			},
 		],
 		notes: [
-			'The live needle estimates tokens written from the text as it streams, then corrects itself when the provider reports the real counts at the end of each turn. Tokens read count new input and cache writes; cache reads are left out, because they re-read context the agent already sent.',
+			'The live reading estimates tokens written from the text as it streams, then corrects itself when the provider reports the real counts at the end of each turn.',
+			'Tokens read count new input and cache writes. Cache reads are left out, because they re-read context the agent already sent.',
+			'Group chat moderators and participants do not move the gauge: their output stays in the main process, and only agent tabs, Auto Run, and synopsis turns are counted.',
+			'Turning this off removes the gauge and stops all capture. Nothing keeps listening in the background.',
 		],
+		docsSlug: 'throughput-gauge',
 	},
 };
 
