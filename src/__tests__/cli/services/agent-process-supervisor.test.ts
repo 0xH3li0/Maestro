@@ -207,6 +207,17 @@ describe('semantic inactivity policy', () => {
 		expect(onStop).toHaveBeenCalledOnce();
 	});
 
+	it('preserves an ID-less tool deadline across delayed model events without poll renewal', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'delayed model event', raw: {} });
+		await vi.advanceTimersByTimeAsync(20 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		await vi.advanceTimersByTimeAsync(35 * 60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
 	it('signals before publishing a timeout status', async () => {
 		await vi.advanceTimersByTimeAsync(1_200_000);
 		const signalOrder = vi.mocked(child.kill).mock.invocationCallOrder[0];

@@ -131,9 +131,10 @@ export function superviseAgentProcess(
 	const modelProgress = (): void => {
 		lastProgress = Date.now();
 		startup?.disarm();
-		toolDeadline = undefined;
+		// A delayed model event cannot revoke an ID-less tool's original
+		// allowance. Without correlation, neither it nor a poll renews that lease.
+		if (!anonymousTool) toolDeadline = undefined;
 		lastToolCompletion = undefined;
-		anonymousTool = false;
 		// New model work may renew the bounded allowance of an existing tool.
 		if (profile && [...tools.values()].some(Boolean)) toolDeadline = lastProgress + profile.toolMs;
 		if (warned) options.onStatus?.('Agent run recovered: new model progress observed');
