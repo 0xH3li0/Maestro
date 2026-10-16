@@ -24,6 +24,7 @@ Every playbook run uses command-scoped `NODE_ENV=test` and the approved newline-
 | 1     | `renderer/hooks/ui`                            | 22 → 3               | 182 / 182      | 6.83s       | runtimeContext false/true factories split between layout and gestures; Original file-level hooks scoped to existing describes; local collisions renamed.                                                                                       |
 | 2     | `renderer/components/FilePreview/markdownFast` | 14 → 2               | 229 / 229      | 1.73s       | No same-module factory conflicts; Highlighter/preview and parser/pipeline domains separated.                                                                                                                                                   |
 | 3     | `renderer/hooks/agent/internal`                | 15 → 4               | 152 / 152      | 3.73s       | Ownership WindowContext factory contaminated tool capture: 8 initial failures; ownership suite restored verbatim as an isolated file; Final directory run includes 80 unchanged descendant-helper tests (232 total); exact parent remains 152. |
+| 4     | `renderer/hooks/batch`                         | 21 → 6               | 273 / 273      | 10.43s      | Remote processor mocked real kill/document/worktree hooks: 25 initial failures, resolved by restoring its source as an isolated file; 1,760-line worktree suite stays unmerged. Descendants add 21 tests (294 total).                          |
 
 Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook folder. Warnings are retained; green assertions do not imply warning-free execution.
 
@@ -50,3 +51,12 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 - `execution.merged.test.tsx` ← `useAgentExitListener.test.tsx`, `useAgentThinkingListener.test.tsx`, `useAgentToolExecutionListener.test.tsx`, `useThoughtStreamCaptureListener.test.tsx`
 - `usage.merged.test.tsx` ← `useAgentUsageListener.test.tsx`, `useThoughtStreamToolListener.test.tsx`
 - Unmerged `useOwnedSessionGate.test.tsx`
+
+### renderer/hooks/batch
+
+- `summaries.merged.test.tsx` ← `batchFinalSummary.test.ts`, `batchFlushState.test.ts`, `batchLoopSummary.test.ts`, `batchProgressPoll.test.ts`, `batchUtilsHitl.test.ts`, `batchUtilsHumanSteps.test.ts`, `playbookAutoName.test.ts`, `useBatchSelectors.test.ts`
+- `state.merged.test.tsx` ← `batchReducer.test.ts`, `useAutoRunHandlers.refresh.test.ts`, `useAutoRunHandlers.remote.test.ts`, `useAutoRunStateMirror.test.ts`
+- Unmerged `useAutoRunHandlers.worktree.test.ts`
+- `actions.merged.test.tsx` ← `useBatchBroadcast.test.ts`, `useBatchControlActions.test.ts`, `useBatchKillAction.test.ts`, `useDocumentProcessor.steering.test.ts`, `useWorktreeManager.test.ts`
+- `runners.merged.test.tsx` ← `useGoalRunner.test.ts`, `useTimeTracking.test.ts`
+- Unmerged `useBatchProcessor.remote.test.ts`
