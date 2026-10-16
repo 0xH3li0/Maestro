@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import * as termination from '../../../shared/maestro-lib/control/termination';
 import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
@@ -12,6 +12,26 @@ afterEach(() => {
 });
 
 describe('headless process supervision', () => {
+	it('keeps new normalized model work alive beyond the old one-hour deadline', async () => {
+		vi.useFakeTimers();
+		const onStop = vi.fn();
+		const supervision = superviseAgentProcess({} as ChildProcess, {
+			timeoutMs: 6 * 60 * 60_000,
+			idle: { warnMs: 10 * 60_000, idleMs: 20 * 60_000, toolMs: 60 * 60_000 },
+			onStop,
+			onForcedStop: vi.fn(),
+		});
+		try {
+			for (let step = 0; step < 14; step++) {
+				supervision.observe({ type: 'text', text: `new work ${step}`, raw: {} });
+				await vi.advanceTimersByTimeAsync(5 * 60_000);
+			}
+			expect(onStop).not.toHaveBeenCalled();
+		} finally {
+			supervision.dispose();
+		}
+	});
+
 	it.each(['startup', 'lifetime', 'abort'] as const)(
 		'terminates %s and releases the caller even when close never arrives',
 		async (cause) => {
@@ -36,9 +56,9 @@ describe('headless process supervision', () => {
 			if (cause === 'abort') controller.abort();
 			else await vi.advanceTimersByTimeAsync(cause === 'startup' ? 120_000 : 3_600_000);
 			expect(onStop).toHaveBeenCalledTimes(1);
-			expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+			expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 			expect(onForcedStop).not.toHaveBeenCalled();
-			await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
+			await vi.advanceTimersByTimeAsync(5_000 + HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 			expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
 			expect(onForcedStop).toHaveBeenCalledTimes(1);
 			expect(child.stdout?.destroy).toHaveBeenCalled();
@@ -64,10 +84,10 @@ describe('headless process supervision', () => {
 		controller.abort();
 		expect(stop).toHaveBeenCalledWith(
 			{ child },
-			{ from: 'terminate', graceMs: 0, immediate: true, label: 'headless agent' }
+			{ from: 'terminate', graceMs: 5_000, label: 'headless agent' }
 		);
-		expect(onStop).toHaveBeenCalledWith('Agent run timed out or was cancelled');
-		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		expect(onStop).toHaveBeenCalledWith('Agent run cancelled');
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 		supervision.dispose();
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -85,12 +105,12 @@ describe('headless process supervision', () => {
 			onForcedStop: vi.fn(),
 		});
 		await vi.advanceTimersByTimeAsync(100);
-		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 		// The caller disposes on close, including a repeated cleanup.
 		supervision.dispose();
 		supervision.dispose();
-		expect(child.kill).toHaveBeenCalledTimes(2);
-		expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
+		expect(child.kill).toHaveBeenCalledTimes(1);
+		expect(child.kill).toHaveBeenLastCalledWith('SIGTERM');
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
@@ -140,7 +160,7 @@ describe('headless process supervision', () => {
 				if (cause === 'abort') controller.abort();
 				else await vi.advanceTimersByTimeAsync(100);
 				expect(child.exitCode).toBeNull();
-				await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
+				await vi.advanceTimersByTimeAsync(5_000 + HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 				vi.useRealTimers();
 				expect(await closed).toEqual({ code: null, signal: 'SIGKILL' });
 			} finally {
@@ -151,4 +171,178 @@ describe('headless process supervision', () => {
 			}
 		}
 	);
+});
+
+describe('semantic inactivity policy', () => {
+	let child: ChildProcess;
+	let supervision: ReturnType<typeof superviseAgentProcess>;
+	let onStop: ReturnType<typeof vi.fn>;
+	let onStatus: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		vi.useFakeTimers();
+		child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+			stdout: { destroy: vi.fn() },
+			stderr: { destroy: vi.fn() },
+		}) as unknown as ChildProcess;
+		onStop = vi.fn();
+		onStatus = vi.fn();
+		supervision = superviseAgentProcess(child, {
+			timeoutMs: 21_600_000,
+			idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+			onStop,
+			onStatus,
+			onForcedStop: vi.fn(),
+		});
+	});
+	afterEach(() => supervision.dispose());
+
+	it('bounds provider exit with inherited stdio instead of waiting for the idle budget', async () => {
+		supervision.observe({ type: 'text', text: 'initial work', raw: {} });
+		child.emit('exit', 1, null);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(
+			expect.stringContaining('exited without closing')
+		);
+		expect(child.stdout?.destroy).toHaveBeenCalled();
+	});
+
+	it('warns once at ten minutes and stops at twenty; warning does not renew', async () => {
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('Warning:'));
+		await vi.advanceTimersByTimeAsync(599_999);
+		expect(onStop).not.toHaveBeenCalled();
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledWith(expect.stringContaining('semantic inactivity'));
+		// Timeout requests graceful termination, then the shared ladder escalates.
+		expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+		expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+	});
+
+	it('recovers on new private reasoning then warns again without exposing content', async () => {
+		await vi.advanceTimersByTimeAsync(600_000);
+		supervision.observe({ type: 'text', isReasoning: true, text: 'PRIVATE_REASONING', raw: {} });
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('recovered'));
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStatus).toHaveBeenCalledTimes(3);
+		expect(onStatus.mock.calls.flat().join()).not.toContain('PRIVATE_REASONING');
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(600_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('ignores duplicate/replayed text, unchanged or declining usage, retry and noise', async () => {
+		const event = { type: 'text' as const, text: 'same', raw: {} };
+		supervision.observe(event);
+		supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: 5 }, raw: {} });
+		for (let n = 0; n < 4; n++) {
+			await vi.advanceTimersByTimeAsync(300_000);
+			supervision.observe(event);
+			supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: 4 }, raw: {} });
+			supervision.observe({ type: 'text', text: `retry ${n}`, isRetryNotice: true, raw: {} });
+			supervision.observe({ type: 'system', text: `typing ${n}`, raw: {} });
+			supervision.observe({ type: 'text', text: `stdout ${n}`, raw: 'not parsed' });
+		}
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('accepts increasing token counts and caps active work at six hours', async () => {
+		for (let n = 1; n <= 72; n++) {
+			supervision.observe({ type: 'usage', usage: { inputTokens: 20, outputTokens: n }, raw: {} });
+			await vi.advanceTimersByTimeAsync(300_000);
+		}
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(
+			expect.stringContaining('absolute runtime ceiling')
+		);
+	});
+
+	it.each(['shell', 'functions.wait', 'functions.request_user_input'])(
+		'protects a quiet %s within a finite allowance and ignores repeated polls',
+		async (toolName) => {
+			supervision.observe({
+				type: 'tool_use',
+				toolName,
+				toolCallId: 'one',
+				toolState: { status: 'running', input: 'PRIVATE_TOOL' },
+				raw: {},
+			});
+			await vi.advanceTimersByTimeAsync(1_200_000);
+			expect(onStop).not.toHaveBeenCalled();
+			for (let n = 0; n < 8; n++) {
+				supervision.observe({
+					type: 'tool_use',
+					toolCallId: `poll-${n}`,
+					toolState: { status: 'running' },
+					raw: {},
+				});
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).toHaveBeenCalledExactlyOnceWith(
+				expect.stringContaining('tool or wait budget')
+			);
+			expect(onStatus.mock.calls.flat().join()).not.toContain('PRIVATE_TOOL');
+		}
+	);
+
+	it('allows a correlated long tool completion to hand back to the model', async () => {
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(30 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(onStop).not.toHaveBeenCalled();
+		supervision.observe({ type: 'text', text: 'build verified', raw: {} });
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+	});
+
+	it('ignores orphan completions and children without an open registered parent', async () => {
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'unknown',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		supervision.observe({ type: 'text', text: 'orphan', parentToolUseId: 'unknown', raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('accepts new work from a correlated child but not after its parent closes', async () => {
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'parent',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(30 * 60_000);
+		supervision.observe({ type: 'text', text: 'child work', parentToolUseId: 'parent', raw: {} });
+		expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining('recovered'));
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'parent',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({ type: 'text', text: 'late child', parentToolUseId: 'parent', raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
 });

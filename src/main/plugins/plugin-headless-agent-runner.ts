@@ -13,10 +13,13 @@ import { checkCustomPath } from '../agents/path-prober';
 
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+	type HeadlessIdleProfile,
 	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
 } from '../../shared/plugins/headless-agent-timeouts';
 
 export interface PluginHeadlessRunnerDeps {
+	idleProfile?: Readonly<HeadlessIdleProfile>;
 	getAgent: (agentId: string) => SessionInfo | undefined;
 	detectAgent: (type: SessionInfo['toolType']) => Promise<{ available: boolean; path?: string }>;
 	getAgentConfig?: (type: SessionInfo['toolType']) => Record<string, unknown>;
@@ -91,6 +94,8 @@ export function createPluginHeadlessAgentRunner(
 				error: `Agent CLI unavailable: ${agent.toolType}`,
 			};
 		}
+		// Complete asynchronous preparation before issuing time-bounded run authority.
+		const systemPrompt = await deps.prepareSystemPrompt(agent);
 		const runToken =
 			local && deps.hasPluginTools()
 				? deps.issueRunToken(agent.id, HEADLESS_RUN_COMPLETION_TIMEOUT_MS, receiptToolId)
@@ -122,7 +127,7 @@ export function createPluginHeadlessAgentRunner(
 				agentCommand: detection?.path,
 				additionalDirectories: agent.additionalDirectories,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt: await deps.prepareSystemPrompt(agent),
+				appendSystemPrompt: systemPrompt,
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
@@ -130,6 +135,7 @@ export function createPluginHeadlessAgentRunner(
 				pluginRunProofFile,
 				mcpCliScriptPath: deps.cliScriptPath(),
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
+				idle: deps.idleProfile ?? HEADLESS_IDLE_PROFILE,
 				signal,
 				onProcessStarted: (pid) => {
 					if (pid && !signal?.aborted && !settled && !releaseActivity) {
