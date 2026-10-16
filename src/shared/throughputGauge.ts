@@ -193,6 +193,18 @@ export function throughputOptionLabel<T>(
 }
 
 /**
+ * Whose output the gauge counts, in words: "all agents", or the active
+ * agent's name. `activeAgentName` is null when there is no active agent.
+ */
+export function throughputScopeCaption(
+	scope: ThroughputScope,
+	activeAgentName: string | null
+): string {
+	if (scope === 'all') return 'all agents';
+	return activeAgentName || 'no active agent';
+}
+
+/**
  * The gauge's caption, naming what it measures: the metric, then whose output
  * ("Out, all agents", "Combined, Backend"). `activeAgentName` is the active
  * agent's name; pass null when there is none.
@@ -203,6 +215,5 @@ export function throughputGaugeCaption(
 	activeAgentName: string | null
 ): string {
 	const metricLabel = throughputOptionLabel(THROUGHPUT_METRICS, metric);
-	if (scope === 'all') return `${metricLabel}, all agents`;
-	return `${metricLabel}, ${activeAgentName || 'no active agent'}`;
+	return `${metricLabel}, ${throughputScopeCaption(scope, activeAgentName)}`;
 }

@@ -7,30 +7,76 @@
  * writes here per chunk, so a fast stream costs the gauge four renders a
  * second, not one per token.
  *
+ * `history` keeps one buffer per metric (in, out, combined), so the sparkline
+ * style has a past to draw in both layouts and switching the shown metric does
+ * not start its chart from empty. Each publish appends to all three in the
+ * same single write.
+ *
  * `peak` and `history` only compare readings taken under one rule. The capture
- * hook calls `restartReadings()` when the scope or the rolling window changes,
- * and `history` restarts by itself when the metric it records changes.
+ * hook calls `restartReadings()` when the scope or the rolling window changes.
  *
  * `visible` is the user's close/open latch and is remembered across launches.
  * It is separate from the Encore flag: the flag decides whether the gauge
  * exists at all, `visible` whether its card is on screen.
+ *
+ * `rects` is where the card sits and how big it is, one rect per layout,
+ * remembered across launches. It is written when a drag or resize ENDS, never
+ * per pointer move.
  */
 
 import { create } from 'zustand';
+import type { ThroughputLayout } from '../../shared/throughputGauge';
 import type { ThroughputMetric, ThroughputRates } from '../../shared/throughputRate';
+import {
+	sanitizeGaugeRects,
+	type GaugeRect,
+	type GaugeRects,
+} from '../components/ThroughputGauge/gaugeGeometry';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 /** localStorage key for the card's open/closed latch. */
 export const THROUGHPUT_GAUGE_VISIBLE_KEY = 'throughputGauge.visible';
+/** localStorage key for the card's per-layout position and size. */
+export const THROUGHPUT_GAUGE_RECTS_KEY = 'throughputGauge.rects';
 
-/** How many published readings `history` keeps (for a sparkline). */
+/** How many published readings each `history` buffer keeps (for a sparkline). */
 export const THROUGHPUT_HISTORY_LENGTH = 60;
 
+/** Recent readings per metric, oldest first. */
+export type ThroughputHistory = Readonly<Record<ThroughputMetric, readonly number[]>>;
+
 const ZERO_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
+const EMPTY_HISTORY: ThroughputHistory = { in: [], out: [], combined: [] };
+const METRICS: readonly ThroughputMetric[] = ['in', 'out', 'combined'];
 
 function loadVisible(): boolean {
 	const raw = safeStorageGet(THROUGHPUT_GAUGE_VISIBLE_KEY);
 	return raw === null ? true : raw === 'true';
+}
+
+function loadRects(): GaugeRects {
+	const raw = safeStorageGet(THROUGHPUT_GAUGE_RECTS_KEY);
+	if (raw === null) return {};
+	try {
+		return sanitizeGaugeRects(JSON.parse(raw));
+	} catch {
+		// Not JSON: an older or hand-edited value. Open at the defaults.
+		return {};
+	}
+}
+
+/** `buffer` with `reading` appended, capped at {@link THROUGHPUT_HISTORY_LENGTH}. */
+function appendReading(buffer: readonly number[], reading: number): number[] {
+	const kept =
+		buffer.length >= THROUGHPUT_HISTORY_LENGTH
+			? buffer.slice(buffer.length - THROUGHPUT_HISTORY_LENGTH + 1)
+			: buffer.slice();
+	kept.push(reading);
+	return kept;
+}
+
+function hasNonzeroHistory(history: ThroughputHistory): boolean {
+	return METRICS.some((metric) => history[metric].some((value) => value > 0));
 }
 
 function isIdle(rates: ThroughputRates): boolean {
@@ -44,10 +90,10 @@ export interface ThroughputGaugeState {
 	rates: ThroughputRates;
 	/** Highest reading per metric since the last `resetPeak()`. */
 	peak: ThroughputRates;
-	/** The last {@link THROUGHPUT_HISTORY_LENGTH} readings of `historyMetric`, oldest first. */
-	history: number[];
-	/** The metric `history` records. */
-	historyMetric: ThroughputMetric;
+	/** The last {@link THROUGHPUT_HISTORY_LENGTH} readings of each metric. */
+	history: ThroughputHistory;
+	/** Where the card sits, per layout. Persisted; empty until the user moves or resizes it. */
+	rects: GaugeRects;
 }
 
 export interface ThroughputGaugeActions {
@@ -58,12 +104,10 @@ export interface ThroughputGaugeActions {
 	resetPeak: () => void;
 	/** Zero `peak` and empty `history`: the reading rule (scope or window) changed. */
 	restartReadings: () => void;
-	/**
-	 * Take one timer reading: set `rates`, raise `peak`, and append
-	 * `rates[historyMetric]` to `history`, which starts over when `historyMetric`
-	 * differs from the last call's.
-	 */
-	publish: (rates: ThroughputRates, historyMetric?: ThroughputMetric) => void;
+	/** Take one timer reading: set `rates`, raise `peak`, and append each metric to its history. */
+	publish: (rates: ThroughputRates) => void;
+	/** Remember the card's rect for a layout. Call at the END of a drag or resize. */
+	setRect: (layout: ThroughputLayout, rect: GaugeRect) => void;
 }
 
 export type ThroughputGaugeStore = ThroughputGaugeState & ThroughputGaugeActions;
@@ -78,8 +122,8 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 		visible: loadVisible(),
 		rates: ZERO_RATES,
 		peak: ZERO_RATES,
-		history: [],
-		historyMetric: 'combined',
+		history: EMPTY_HISTORY,
+		rects: loadRects(),
 
 		show: () => setVisible(true),
 		hide: () => setVisible(false),
@@ -87,29 +131,16 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 
 		resetPeak: () => set({ peak: get().rates }),
 
-		restartReadings: () => set({ peak: ZERO_RATES, history: [] }),
+		restartReadings: () => set({ peak: ZERO_RATES, history: EMPTY_HISTORY }),
 
-		publish: (rates, historyMetric = 'combined') => {
+		publish: (rates) => {
 			const state = get();
-			const sameMetric = historyMetric === state.historyMetric;
-			// An idle app publishes zeros four times a second. Once the history has
-			// drained to zeros too there is nothing left to change, so skip the write
-			// and keep an idle gauge at zero renders.
-			if (
-				sameMetric &&
-				isIdle(rates) &&
-				isIdle(state.rates) &&
-				!state.history.some((value) => value > 0)
-			) {
+			// An idle app publishes zeros four times a second. Once the histories
+			// have drained to zeros too there is nothing left to change, so skip the
+			// write and keep an idle gauge at zero renders.
+			if (isIdle(rates) && isIdle(state.rates) && !hasNonzeroHistory(state.history)) {
 				return;
 			}
-			// A history of another metric is not this one's past: start it over.
-			const previous = sameMetric ? state.history : [];
-			const history =
-				previous.length >= THROUGHPUT_HISTORY_LENGTH
-					? previous.slice(previous.length - THROUGHPUT_HISTORY_LENGTH + 1)
-					: previous.slice();
-			history.push(rates[historyMetric]);
 			set({
 				rates,
 				peak: {
@@ -117,9 +148,18 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 					out: Math.max(state.peak.out, rates.out),
 					combined: Math.max(state.peak.combined, rates.combined),
 				},
-				history,
-				historyMetric,
+				history: {
+					in: appendReading(state.history.in, rates.in),
+					out: appendReading(state.history.out, rates.out),
+					combined: appendReading(state.history.combined, rates.combined),
+				},
 			});
+		},
+
+		setRect: (layout, rect) => {
+			const rects = { ...get().rects, [layout]: rect };
+			safeStorageSet(THROUGHPUT_GAUGE_RECTS_KEY, JSON.stringify(rects));
+			set({ rects });
 		},
 	};
 });

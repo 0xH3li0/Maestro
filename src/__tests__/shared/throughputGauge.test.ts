@@ -14,6 +14,7 @@ import {
 	THROUGHPUT_WINDOW_OPTIONS,
 	throughputGaugeCaption,
 	throughputOptionLabel,
+	throughputScopeCaption,
 	throughputWindowLabel,
 	type ThroughputGaugeSettings,
 	type ThroughputLayout,
@@ -223,6 +224,13 @@ describe('throughputGauge settings model', () => {
 			expect(throughputGaugeCaption('out', 'all', 'Backend')).toBe('Out, all agents');
 			expect(throughputGaugeCaption('combined', 'active', 'Backend')).toBe('Combined, Backend');
 			expect(throughputGaugeCaption('in', 'active', null)).toBe('In, no active agent');
+		});
+
+		it('captions the scope alone', () => {
+			expect(throughputScopeCaption('all', 'Backend')).toBe('all agents');
+			expect(throughputScopeCaption('active', 'Backend')).toBe('Backend');
+			expect(throughputScopeCaption('active', null)).toBe('no active agent');
+			expect(throughputScopeCaption('active', '')).toBe('no active agent');
 		});
 	});
 });

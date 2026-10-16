@@ -2,7 +2,9 @@
  * Tests for ThroughputGaugeHost: nothing exists while the `throughputGauge`
  * Encore Feature is off, a mid-session flip on subscribes and pops the card up,
  * the close latch survives a remount, live process events move the published
- * needle, and the capture loop honors the scope, window, and metric settings.
+ * needle, the capture loop honors the scope, window, and metric settings, and
+ * the card's position and size persist on drag or resize end, come back on
+ * remount, and are pulled into a smaller window.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,9 +17,16 @@ import {
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
+	THROUGHPUT_GAUGE_RECTS_KEY,
 	THROUGHPUT_GAUGE_VISIBLE_KEY,
 	useThroughputGaugeStore,
 } from '../../../../renderer/stores/throughputGaugeStore';
+import {
+	GAUGE_CLAMP_MARGIN,
+	GAUGE_DEFAULT_SIZE,
+	GAUGE_EDGE_MARGIN,
+	GAUGE_INPUT_AREA_CLEARANCE,
+} from '../../../../renderer/components/ThroughputGauge/gaugeGeometry';
 import { ENCORE_FEATURE_DEFAULTS } from '../../../../shared/encoreFeatureDefaults';
 import {
 	DEFAULT_THROUGHPUT_GAUGE_SETTINGS,
@@ -102,8 +111,8 @@ describe('ThroughputGaugeHost', () => {
 			visible: true,
 			rates: ZERO,
 			peak: ZERO,
-			history: [],
-			historyMetric: 'combined',
+			history: { in: [], out: [], combined: [] },
+			rects: {},
 		});
 		setGaugeSettings({});
 		useSessionStore.setState({
@@ -186,6 +195,10 @@ describe('ThroughputGaugeHost', () => {
 		setFlag(true);
 		render(<ThroughputGaugeHost theme={mockTheme} />);
 		useThroughputGaugeStore.setState({ rates: { in: 5, out: 5, combined: 10 } });
+		// The test setup's ResizeObserver mock reports on a setTimeout; let the
+		// card's toast avoid zone take its first report so only the gauge's own
+		// timers are left to count.
+		act(() => vi.runOnlyPendingTimers());
 
 		act(() => setFlag(false));
 
@@ -215,8 +228,8 @@ describe('ThroughputGaugeHost', () => {
 		expect(rates.out).toBeGreaterThan(0);
 		expect(rates.combined).toBeCloseTo(rates.in + rates.out);
 		expect(peak.combined).toBe(rates.combined);
-		expect(history[history.length - 1]).toBe(rates.combined);
-		expect(screen.getByTestId('throughput-dial-reading').textContent).not.toBe('0');
+		expect(history.combined[history.combined.length - 1]).toBe(rates.combined);
+		expect(screen.getByTestId('throughput-gauge-reading').textContent).not.toBe('0');
 	});
 
 	it('with scope active, output from another agent does not move the rate', () => {
@@ -238,7 +251,8 @@ describe('ThroughputGaugeHost', () => {
 		});
 		// 1300 tokens from the active agent over the default 10s window.
 		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
-		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Combined, Backend');
+		expect(screen.getByTestId('throughput-gauge-label').textContent).toBe('Combined');
+		expect(screen.getByTestId('throughput-gauge-caption').textContent).toBe('Backend');
 	});
 
 	it('with scope all, every agent counts', () => {
@@ -253,7 +267,7 @@ describe('ThroughputGaugeHost', () => {
 		});
 
 		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
-		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Combined, all agents');
+		expect(screen.getByTestId('throughput-gauge-caption').textContent).toBe('all agents');
 	});
 
 	it('averages over the chosen window and resets the peak when the window changes', () => {
@@ -277,7 +291,7 @@ describe('ThroughputGaugeHost', () => {
 		const { rates, peak, history } = useThroughputGaugeStore.getState();
 		expect(rates.combined).toBeCloseTo(50);
 		expect(peak.combined).toBeCloseTo(50);
-		expect(history).toEqual([rates.combined]);
+		expect(history.combined).toEqual([rates.combined]);
 	});
 
 	it('changing the scope also resets the peak, keeping the same listeners', () => {
@@ -302,7 +316,7 @@ describe('ThroughputGaugeHost', () => {
 		expect(listeners.unsubscribes.onUsage).not.toHaveBeenCalled();
 	});
 
-	it('shows the chosen metric and records its history', () => {
+	it("shows the chosen metric and records every metric's history", () => {
 		vi.useFakeTimers();
 		setGaugeSettings({ metric: 'out' });
 		setFlag(true);
@@ -314,11 +328,11 @@ describe('ThroughputGaugeHost', () => {
 			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
 		});
 
-		const { rates, history, historyMetric } = useThroughputGaugeStore.getState();
-		expect(historyMetric).toBe('out');
-		expect(history).toEqual([rates.out]);
-		expect(screen.getByTestId('throughput-dial-reading').textContent).toBe('30');
-		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Out, all agents');
+		const { rates, history } = useThroughputGaugeStore.getState();
+		expect(history).toEqual({ in: [rates.in], out: [rates.out], combined: [rates.combined] });
+		expect(screen.getByTestId('throughput-gauge-reading').textContent).toBe('30');
+		expect(screen.getByTestId('throughput-gauge-label').textContent).toBe('Out');
+		expect(screen.getByTestId('throughput-gauge-caption').textContent).toBe('all agents');
 	});
 
 	it('ignores command-terminal output', () => {
@@ -334,5 +348,162 @@ describe('ThroughputGaugeHost', () => {
 
 		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
 		expect(throughputTracker.sampleCount()).toBe(0);
+	});
+
+	describe('remembered geometry', () => {
+		const VIEWPORT = { width: 1024, height: 768 };
+		const SIZE = GAUGE_DEFAULT_SIZE.single;
+		const INITIAL = {
+			left: GAUGE_EDGE_MARGIN,
+			top: VIEWPORT.height - SIZE.height - GAUGE_INPUT_AREA_CLEARANCE,
+			...SIZE,
+		};
+		const prototype = HTMLElement.prototype as unknown as Record<string, unknown>;
+		const originalCapture = {
+			set: prototype.setPointerCapture,
+			release: prototype.releasePointerCapture,
+		};
+
+		/** A pointer event jsdom can dispatch: a MouseEvent carrying a pointer id. */
+		function pointer(type: string, clientX: number, clientY: number): MouseEvent {
+			const event = new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true });
+			Object.defineProperty(event, 'pointerId', { value: 1 });
+			return event;
+		}
+
+		function drag(handle: Element, dx: number, dy: number) {
+			act(() => {
+				handle.dispatchEvent(pointer('pointerdown', 100, 100));
+				window.dispatchEvent(pointer('pointermove', 100 + dx / 2, 100 + dy / 2));
+				window.dispatchEvent(pointer('pointermove', 100 + dx, 100 + dy));
+			});
+		}
+
+		function release() {
+			act(() => {
+				window.dispatchEvent(pointer('pointerup', 0, 0));
+			});
+		}
+
+		function setViewport(width: number, height: number) {
+			Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+			Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
+		}
+
+		function cardRect() {
+			const card = screen.getByTestId('floating-throughput-gauge');
+			return {
+				left: parseFloat(card.style.left),
+				top: parseFloat(card.style.top),
+				width: parseFloat(card.style.width),
+				height: parseFloat(card.style.height),
+			};
+		}
+
+		function storedRects() {
+			const raw = storage.get(THROUGHPUT_GAUGE_RECTS_KEY);
+			return raw ? JSON.parse(raw) : undefined;
+		}
+
+		beforeEach(() => {
+			prototype.setPointerCapture = vi.fn();
+			prototype.releasePointerCapture = vi.fn();
+			setViewport(VIEWPORT.width, VIEWPORT.height);
+			// No custom title strip, so the numbers below are the plain viewport's.
+			useSettingsStore.setState({ useNativeTitleBar: true });
+			setFlag(true);
+		});
+
+		afterEach(() => {
+			prototype.setPointerCapture = originalCapture.set;
+			prototype.releasePointerCapture = originalCapture.release;
+		});
+
+		it('opens bottom-left above the composer with nothing stored', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(cardRect()).toEqual(INITIAL);
+		});
+
+		it('persists the rect when a drag ends, not while it moves', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			drag(screen.getByTestId('throughput-gauge-drag-handle'), 100, -50);
+			const moved = { ...INITIAL, left: INITIAL.left + 100, top: INITIAL.top - 50 };
+			expect(cardRect()).toEqual(moved);
+			expect(storedRects()).toBeUndefined();
+
+			release();
+			expect(storedRects()).toEqual({ single: moved });
+			expect(useThroughputGaugeStore.getState().rects.single).toEqual(moved);
+		});
+
+		it('persists the size when a resize from the grip ends', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			drag(screen.getByTestId('modal-resize-grip'), 60, 30);
+			release();
+
+			const resized = { ...INITIAL, width: SIZE.width + 60, height: SIZE.height + 30 };
+			expect(cardRect()).toEqual(resized);
+			expect(storedRects()).toEqual({ single: resized });
+		});
+
+		it('restores the remembered rect on remount', () => {
+			const first = render(<ThroughputGaugeHost theme={mockTheme} />);
+			drag(screen.getByTestId('throughput-gauge-drag-handle'), 200, -100);
+			release();
+			const saved = cardRect();
+			first.unmount();
+
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(cardRect()).toEqual(saved);
+		});
+
+		it('clamps a stored rect from a bigger window back into a smaller one', () => {
+			useThroughputGaugeStore.setState({
+				rects: { single: { left: 1800, top: 1200, width: 300, height: 260 } },
+			});
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect(cardRect()).toEqual({
+				left: VIEWPORT.width - GAUGE_CLAMP_MARGIN - 300,
+				top: VIEWPORT.height - GAUGE_CLAMP_MARGIN - 260,
+				width: 300,
+				height: 260,
+			});
+		});
+
+		it('pulls the card back in when the window shrinks, without overwriting the saved rect', () => {
+			const saved = { left: 700, top: 400, ...SIZE };
+			useThroughputGaugeStore.setState({ rects: { single: saved } });
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(cardRect()).toEqual(saved);
+
+			act(() => {
+				setViewport(600, 500);
+				window.dispatchEvent(new Event('resize'));
+			});
+
+			expect(cardRect()).toEqual({
+				left: 600 - GAUGE_CLAMP_MARGIN - SIZE.width,
+				top: 500 - GAUGE_CLAMP_MARGIN - SIZE.height,
+				...SIZE,
+			});
+			expect(useThroughputGaugeStore.getState().rects.single).toEqual(saved);
+		});
+
+		it('remembers a separate rect for the all-three layout', () => {
+			useThroughputGaugeStore.setState({
+				rects: { single: { left: 300, top: 200, ...SIZE } },
+			});
+			setGaugeSettings({ layout: 'all' });
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect(cardRect()).toEqual({
+				left: GAUGE_EDGE_MARGIN,
+				top: VIEWPORT.height - GAUGE_DEFAULT_SIZE.all.height - GAUGE_INPUT_AREA_CLEARANCE,
+				...GAUGE_DEFAULT_SIZE.all,
+			});
+		});
 	});
 });

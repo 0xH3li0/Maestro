@@ -102,7 +102,7 @@ export function useThroughputCapture(): void {
 		const timer = setInterval(() => {
 			const now = performance.now();
 			throughputTracker.prune(now);
-			const { scope, metric, windowMs } = useSettingsStore.getState().throughputGaugeSettings;
+			const { scope, windowMs } = useSettingsStore.getState().throughputGaugeSettings;
 			const activeAgentId =
 				scope === 'active' ? (selectActiveSession(useSessionStore.getState())?.id ?? null) : null;
 			const gauge = useThroughputGaugeStore.getState();
@@ -116,7 +116,7 @@ export function useThroughputCapture(): void {
 				scope === 'active'
 					? (sample: ThroughputSample) => sample.agentId === activeAgentId
 					: undefined;
-			gauge.publish(throughputTracker.rates(now, windowMs, filter), metric);
+			gauge.publish(throughputTracker.rates(now, windowMs, filter));
 		}, THROUGHPUT_PUBLISH_MS);
 
 		return () => {

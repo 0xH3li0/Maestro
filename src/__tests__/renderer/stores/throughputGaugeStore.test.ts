@@ -1,18 +1,20 @@
 /**
  * Tests for throughputGaugeStore: the persisted open/closed latch, the peak
- * that only rises until reset, the bounded history of the displayed metric,
- * the restart a new reading rule triggers, and the idle short-circuit that
- * keeps an idle gauge at zero store writes.
+ * that only rises until reset, the bounded history of every metric, the
+ * restart a new reading rule triggers, the idle short-circuit that keeps an
+ * idle gauge at zero store writes, and the persisted per-layout card rects.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import {
+	THROUGHPUT_GAUGE_RECTS_KEY,
 	THROUGHPUT_GAUGE_VISIBLE_KEY,
 	THROUGHPUT_HISTORY_LENGTH,
 	useThroughputGaugeStore,
 } from '../../../renderer/stores/throughputGaugeStore';
 
 const ZERO = { in: 0, out: 0, combined: 0 };
+const EMPTY_HISTORY = { in: [], out: [], combined: [] };
 
 function rates(inRate: number, outRate: number) {
 	return { in: inRate, out: outRate, combined: inRate + outRate };
@@ -27,8 +29,8 @@ describe('throughputGaugeStore', () => {
 			visible: true,
 			rates: ZERO,
 			peak: ZERO,
-			history: [],
-			historyMetric: 'combined',
+			history: EMPTY_HISTORY,
+			rects: {},
 		});
 	});
 
@@ -62,11 +64,16 @@ describe('throughputGaugeStore', () => {
 	});
 
 	describe('publish', () => {
-		it('sets the rates and appends the combined reading to history', () => {
+		it('sets the rates and appends every metric to its own history in one write', () => {
+			const listener = vi.fn();
+			const unsubscribe = useThroughputGaugeStore.subscribe(listener);
 			useThroughputGaugeStore.getState().publish(rates(10, 5));
+			unsubscribe();
+
 			const state = useThroughputGaugeStore.getState();
 			expect(state.rates).toEqual(rates(10, 5));
-			expect(state.history).toEqual([15]);
+			expect(state.history).toEqual({ in: [10], out: [5], combined: [15] });
+			expect(listener).toHaveBeenCalledTimes(1);
 		});
 
 		it('raises each peak independently and never lowers it', () => {
@@ -81,21 +88,23 @@ describe('throughputGaugeStore', () => {
 			const { publish } = useThroughputGaugeStore.getState();
 			for (let i = 1; i <= THROUGHPUT_HISTORY_LENGTH + 5; i++) publish(rates(i, 0));
 			const { history } = useThroughputGaugeStore.getState();
-			expect(history).toHaveLength(THROUGHPUT_HISTORY_LENGTH);
-			expect(history[0]).toBe(6);
-			expect(history[history.length - 1]).toBe(THROUGHPUT_HISTORY_LENGTH + 5);
+			for (const buffer of [history.in, history.out, history.combined]) {
+				expect(buffer).toHaveLength(THROUGHPUT_HISTORY_LENGTH);
+			}
+			expect(history.in[0]).toBe(6);
+			expect(history.in[history.in.length - 1]).toBe(THROUGHPUT_HISTORY_LENGTH + 5);
 		});
 
 		it('keeps writing zeros until the history has drained, then stops writing', () => {
 			const { publish } = useThroughputGaugeStore.getState();
 			publish(rates(3, 0));
 			publish(ZERO);
-			expect(useThroughputGaugeStore.getState().history).toEqual([3, 0]);
+			expect(useThroughputGaugeStore.getState().history.combined).toEqual([3, 0]);
 
 			// Drain the nonzero reading out of the history.
 			for (let i = 0; i < THROUGHPUT_HISTORY_LENGTH; i++) publish(ZERO);
 			const drained = useThroughputGaugeStore.getState();
-			expect(drained.history.every((value) => value === 0)).toBe(true);
+			expect(drained.history.combined.every((value) => value === 0)).toBe(true);
 
 			// Fully idle now: another zero is not a write.
 			publish(ZERO);
@@ -123,34 +132,43 @@ describe('throughputGaugeStore', () => {
 		restartReadings();
 		const state = useThroughputGaugeStore.getState();
 		expect(state.peak).toEqual(ZERO);
-		expect(state.history).toEqual([]);
+		expect(state.history).toEqual(EMPTY_HISTORY);
 		expect(state.rates).toEqual(rates(100, 50));
 	});
 
-	describe('history metric', () => {
-		it('records the reading of the metric it is given', () => {
-			const { publish } = useThroughputGaugeStore.getState();
-			publish(rates(10, 4), 'out');
-			publish(rates(20, 6), 'out');
-			const state = useThroughputGaugeStore.getState();
-			expect(state.history).toEqual([4, 6]);
-			expect(state.historyMetric).toBe('out');
+	describe('rects', () => {
+		const rect = { left: 40, top: 300, width: 240, height: 220 };
+
+		it('setRect stores the rect for its layout and persists all of them', () => {
+			const { setRect } = useThroughputGaugeStore.getState();
+			setRect('single', rect);
+			setRect('all', { ...rect, width: 600 });
+
+			expect(useThroughputGaugeStore.getState().rects).toEqual({
+				single: rect,
+				all: { ...rect, width: 600 },
+			});
+			expect(JSON.parse(storage.get(THROUGHPUT_GAUGE_RECTS_KEY) ?? '')).toEqual({
+				single: rect,
+				all: { ...rect, width: 600 },
+			});
 		});
 
-		it('starts the history over when the metric changes', () => {
-			const { publish } = useThroughputGaugeStore.getState();
-			publish(rates(10, 4));
-			publish(rates(10, 4));
-			publish(rates(10, 4), 'in');
-			expect(useThroughputGaugeStore.getState().history).toEqual([10]);
+		it('loads stored rects at startup, dropping bad ones', async () => {
+			storage.set(
+				THROUGHPUT_GAUGE_RECTS_KEY,
+				JSON.stringify({ single: rect, all: { left: 'nope' } })
+			);
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/throughputGaugeStore');
+			expect(fresh.useThroughputGaugeStore.getState().rects).toEqual({ single: rect });
 		});
 
-		it('writes a metric change even while idle', () => {
-			const { publish } = useThroughputGaugeStore.getState();
-			publish(ZERO, 'in');
-			const state = useThroughputGaugeStore.getState();
-			expect(state.historyMetric).toBe('in');
-			expect(state.history).toEqual([0]);
+		it('starts with no rects when the stored value is not JSON', async () => {
+			storage.set(THROUGHPUT_GAUGE_RECTS_KEY, '{not json');
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/throughputGaugeStore');
+			expect(fresh.useThroughputGaugeStore.getState().rects).toEqual({});
 		});
 	});
 });

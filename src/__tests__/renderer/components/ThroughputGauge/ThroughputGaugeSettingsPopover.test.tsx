@@ -33,7 +33,12 @@ describe('ThroughputGaugeSettingsPopover', () => {
 		useSettingsStore.setState({
 			throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 		});
-		useThroughputGaugeStore.setState({ visible: true, rates: ZERO, peak: ZERO, history: [] });
+		useThroughputGaugeStore.setState({
+			visible: true,
+			rates: ZERO,
+			peak: ZERO,
+			history: { in: [], out: [], combined: [] },
+		});
 	});
 
 	it('the gear toggles the popover', () => {

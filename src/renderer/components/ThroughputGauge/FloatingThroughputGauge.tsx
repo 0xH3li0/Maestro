@@ -2,29 +2,48 @@
  * FloatingThroughputGauge - the card the Throughput Gauge lives in.
  *
  * Floats over the Main Window like the media player (`FloatingMediaPlayer`),
- * follows the user across agents and tabs, and is dragged by its title strip.
- * It opens parked bottom-left so it never lands on the media player, which
- * opens bottom-right.
+ * follows the user across agents and tabs, is dragged by its title strip and
+ * resized by its corner grip. It opens parked bottom-left above the composer so
+ * it never lands on the media player, which opens bottom-right.
  *
- * The card is clamped inside the viewport on every drag step and on window
- * resize, and kept below the custom title strip when one is drawn: that strip
- * is an OS drag region, so a card pushed under it would stop taking clicks.
+ * Position and size are remembered per layout (`throughputGaugeStore.rects`),
+ * written when a drag or resize ends, never per pointer move. Every rect the
+ * card draws goes through `fitGaugeRect`, on each drag step, on window resize,
+ * and when the custom title strip appears, so the card stays on screen and out
+ * from under the strip's OS drag region.
  *
- * The gear beside close opens the settings popover. The dial shows the chosen
- * metric. Until the other styles and the three-gauge layout exist, every style
- * and layout draws the dial; the choice is still saved.
+ * The body draws the chosen style (`GAUGE_STYLE_COMPONENTS`): one gauge for the
+ * chosen metric, or In, Out, and Combined side by side on ONE shared scale so
+ * the three read against each other at a glance.
  */
 
-import { memo, useCallback, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Gauge, GripVertical, Settings, X } from 'lucide-react';
 
-import { throughputGaugeCaption } from '../../../shared/throughputGauge';
-import { AnalogDial } from './AnalogDial';
+import {
+	THROUGHPUT_METRICS,
+	throughputOptionLabel,
+	throughputScopeCaption,
+} from '../../../shared/throughputGauge';
+import type { ThroughputMetric } from '../../../shared/throughputRate';
+import { niceGaugeMax } from './gaugeScale';
+import {
+	fitGaugeRect,
+	gaugeLiftsToasts,
+	GAUGE_DEFAULT_SIZE,
+	resolveGaugeRect,
+	sameGaugeRect,
+	type GaugeRect,
+	type GaugeViewport,
+} from './gaugeGeometry';
+import { GAUGE_STYLE_COMPONENTS } from './styles';
 import { ThroughputGaugeSettingsPopover } from './ThroughputGaugeSettingsPopover';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useMobileLandscape } from '../../hooks/remote/useMobileLandscape';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
@@ -33,49 +52,13 @@ import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { APP_TITLE_STRIP_HEIGHT, shouldShowAppTitleStrip } from '../../utils/appTitleStrip';
 import type { Theme } from '../../types';
 
-/** Fixed card size for now; the card is not resizable yet. */
-export const THROUGHPUT_GAUGE_CARD_WIDTH = 208;
-export const THROUGHPUT_GAUGE_CARD_HEIGHT = 212;
-/** Gap kept between the card and the window edges. */
-export const THROUGHPUT_GAUGE_EDGE_MARGIN = 24;
 /** Same layer as the media player: above the panels, below modals and toasts. */
 const FLOAT_Z_INDEX = 60;
 
-export interface GaugePosition {
-	left: number;
-	top: number;
-}
+/** The "All three" layout's gauges, left to right. */
+export const ALL_LAYOUT_METRICS: readonly ThroughputMetric[] = ['in', 'out', 'combined'];
 
-interface GaugeViewport {
-	width: number;
-	height: number;
-	/** Height at the top the card must stay below (the custom title strip). */
-	top: number;
-}
-
-/** Keep the whole card on screen and below the title strip. */
-export function clampGaugePosition(
-	position: GaugePosition,
-	viewport: GaugeViewport
-): GaugePosition {
-	const maxLeft = Math.max(0, viewport.width - THROUGHPUT_GAUGE_CARD_WIDTH);
-	const maxTop = Math.max(viewport.top, viewport.height - THROUGHPUT_GAUGE_CARD_HEIGHT);
-	return {
-		left: Math.min(Math.max(0, position.left), maxLeft),
-		top: Math.min(Math.max(viewport.top, position.top), maxTop),
-	};
-}
-
-/** Where the card opens: bottom-left, clear of the media player's corner. */
-export function initialGaugePosition(viewport: GaugeViewport): GaugePosition {
-	return clampGaugePosition(
-		{
-			left: THROUGHPUT_GAUGE_EDGE_MARGIN,
-			top: viewport.height - THROUGHPUT_GAUGE_CARD_HEIGHT - THROUGHPUT_GAUGE_EDGE_MARGIN,
-		},
-		viewport
-	);
-}
+const metricLabel = (metric: ThroughputMetric) => throughputOptionLabel(THROUGHPUT_METRICS, metric);
 
 interface FloatingThroughputGaugeProps {
 	theme: Theme;
@@ -84,10 +67,12 @@ interface FloatingThroughputGaugeProps {
 export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 	theme,
 }: FloatingThroughputGaugeProps) {
-	const { metric, scope } = useSettingsStore((s) => s.throughputGaugeSettings);
-	const value = useThroughputGaugeStore((s) => s.rates[metric]);
-	const peak = useThroughputGaugeStore((s) => s.peak[metric]);
+	const { metric, scope, layout, style } = useSettingsStore((s) => s.throughputGaugeSettings);
+	const rates = useThroughputGaugeStore((s) => s.rates);
+	const peak = useThroughputGaugeStore((s) => s.peak);
+	const history = useThroughputGaugeStore((s) => s.history);
 	const hide = useThroughputGaugeStore((s) => s.hide);
+	const saveRect = useThroughputGaugeStore((s) => s.setRect);
 	const activeAgentName = useSessionStore((s) =>
 		scope === 'active' ? (selectActiveSession(s)?.name ?? null) : null
 	);
@@ -119,38 +104,164 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 		[]
 	);
 
-	const [position, setPosition] = useState<GaugePosition>(() => initialGaugePosition(viewport()));
-	const [dragging, setDragging] = useState(false);
+	// The live rect, tagged with its layout. A layout switch swaps in that
+	// layout's remembered rect (or its default) during render.
+	const [geometry, setGeometry] = useState(() => ({
+		layout,
+		rect: resolveGaugeRect(layout, useThroughputGaugeStore.getState().rects[layout], viewport()),
+	}));
+	if (geometry.layout !== layout) {
+		setGeometry({
+			layout,
+			rect: resolveGaugeRect(layout, useThroughputGaugeStore.getState().rects[layout], viewport()),
+		});
+	}
+	const rect = geometry.rect;
+	const setRect = (next: GaugeRect) => setGeometry({ layout, rect: next });
+
+	const [gesture, setGesture] = useState<'move' | 'resize' | null>(null);
 	const startDrag = usePointerDrag();
 
-	const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) => {
-		const origin = position;
-		const endDrag = () => setDragging(false);
+	/**
+	 * Run one move or resize gesture. `next` maps the pointer delta to a rect;
+	 * the result is fitted on every step and saved once, when the gesture ends.
+	 * Escape puts the card back where the gesture started.
+	 */
+	const runGesture = (
+		e: ReactPointerEvent<HTMLElement>,
+		kind: 'move' | 'resize',
+		next: (origin: GaugeRect, dx: number, dy: number) => GaugeRect
+	) => {
+		const origin = rect;
+		let latest = origin;
 		startDrag(
 			e,
 			(dx, dy) => {
-				setDragging(true);
-				setPosition(
-					clampGaugePosition({ left: origin.left + dx, top: origin.top + dy }, viewport())
-				);
+				setGesture(kind);
+				latest = fitGaugeRect(next(origin, dx, dy), layout, viewport());
+				setRect(latest);
 			},
-			{ ignoreButtons: true, onEnd: endDrag, onCancel: endDrag }
+			{
+				ignoreButtons: kind === 'move',
+				stopPropagation: kind === 'resize',
+				onEnd: () => {
+					setGesture(null);
+					if (latest !== origin) saveRect(layout, latest);
+				},
+				onCancel: () => {
+					setGesture(null);
+					setRect(origin);
+				},
+			}
 		);
 	};
 
-	// A smaller window can leave the card partly off screen; pull it back in.
-	useEventListener('resize', () => setPosition((prev) => clampGaugePosition(prev, viewport())));
+	const onDragStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+		runGesture(e, 'move', (origin, dx, dy) => ({
+			...origin,
+			left: origin.left + dx,
+			top: origin.top + dy,
+		}));
+
+	const onResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+		runGesture(e, 'resize', (origin, dx, dy) => ({
+			...origin,
+			width: origin.width + dx,
+			height: origin.height + dy,
+		}));
+
+	const defaultSize = GAUGE_DEFAULT_SIZE[layout];
+	const resetSize = () => {
+		const next = fitGaugeRect({ ...rect, ...defaultSize }, layout, viewport());
+		setRect(next);
+		saveRect(layout, next);
+	};
+
+	// A smaller window, or the title strip appearing, can leave the card partly
+	// off screen or under the strip; pull it back in. Not saved: the remembered
+	// rect is the user's choice and comes back when the window grows again.
+	const refit = useCallback(
+		() =>
+			setGeometry((prev) => {
+				const fitted = fitGaugeRect(prev.rect, prev.layout, viewport());
+				return sameGaugeRect(fitted, prev.rect) ? prev : { ...prev, rect: fitted };
+			}),
+		[viewport]
+	);
+	useEventListener('resize', refit);
+	useEffect(refit, [topInset, refit]);
+
+	// Toasts step over the card when it sits low enough to be covered by them.
+	const avoidToastsRef = useToastAvoidZone(`${rect.left},${rect.top},${rect.width},${rect.height}`);
+	const liftsToasts = gaugeLiftsToasts(rect, viewport());
+
+	const StyleComponent = GAUGE_STYLE_COMPONENTS[style];
+	const scopeCaption = throughputScopeCaption(scope, activeAgentName);
+
+	let body;
+	if (layout === 'all') {
+		// One scale for all three, from the largest reading and peak among them.
+		const max = niceGaugeMax(
+			Math.max(...ALL_LAYOUT_METRICS.map((m) => rates[m])),
+			Math.max(...ALL_LAYOUT_METRICS.map((m) => peak[m]))
+		);
+		body = (
+			<>
+				<div className="flex-1 min-h-0 grid grid-cols-3 gap-2">
+					{ALL_LAYOUT_METRICS.map((m) => (
+						<div key={m} className="min-w-0 min-h-0" data-testid={`throughput-gauge-${m}`}>
+							<StyleComponent
+								theme={theme}
+								value={rates[m]}
+								peak={peak[m]}
+								max={max}
+								label={metricLabel(m)}
+								history={history[m]}
+								compact
+							/>
+						</div>
+					))}
+				</div>
+				<div
+					className="shrink-0 truncate text-2xs leading-tight text-center"
+					style={{ color: theme.colors.textDim }}
+					title={scopeCaption}
+					data-testid="throughput-gauge-scope-caption"
+				>
+					{scopeCaption}
+				</div>
+			</>
+		);
+	} else {
+		body = (
+			<div className="flex-1 min-h-0">
+				<StyleComponent
+					theme={theme}
+					value={rates[metric]}
+					peak={peak[metric]}
+					max={niceGaugeMax(rates[metric], peak[metric])}
+					label={metricLabel(metric)}
+					caption={scopeCaption}
+					history={history[metric]}
+					compact={false}
+				/>
+			</div>
+		);
+	}
 
 	return (
 		<div
+			ref={liftsToasts ? avoidToastsRef : undefined}
 			data-testid="floating-throughput-gauge"
+			data-layout={layout}
+			data-style={style}
 			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
 			style={
 				{
-					left: position.left,
-					top: Math.max(position.top, topInset),
-					width: THROUGHPUT_GAUGE_CARD_WIDTH,
-					height: THROUGHPUT_GAUGE_CARD_HEIGHT,
+					left: rect.left,
+					top: rect.top,
+					width: rect.width,
+					height: rect.height,
 					zIndex: FLOAT_Z_INDEX,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -163,9 +274,13 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 			{/* Title strip doubles as the drag handle. */}
 			<div
 				className="shrink-0 flex items-center gap-1.5 pl-1 pr-1.5 h-8 border-b"
-				style={{ borderColor: theme.colors.border, cursor: dragging ? 'grabbing' : 'grab' }}
+				style={{
+					borderColor: theme.colors.border,
+					cursor: gesture === 'move' ? 'grabbing' : 'grab',
+				}}
 				onPointerDown={onDragStart}
 				title="Drag to move"
+				data-testid="throughput-gauge-drag-handle"
 			>
 				<GripVertical
 					className="w-3.5 h-4 shrink-0 opacity-60"
@@ -205,15 +320,15 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 				</GhostIconButton>
 			</div>
 
-			<div className="flex-1 min-h-0 flex items-center justify-center px-2 pb-1">
-				<AnalogDial
-					theme={theme}
-					value={value}
-					peak={peak}
-					label="tok/s"
-					caption={throughputGaugeCaption(metric, scope, activeAgentName)}
-				/>
-			</div>
+			<div className="flex-1 min-h-0 flex flex-col px-2 pt-1 pb-1.5">{body}</div>
+
+			<ModalResizeGrip
+				theme={theme}
+				label="Resize throughput gauge"
+				onResizePointerDown={onResizeStart}
+				onReset={resetSize}
+				canReset={rect.width !== defaultSize.width || rect.height !== defaultSize.height}
+			/>
 
 			{settingsOpen && (
 				<ThroughputGaugeSettingsPopover theme={theme} anchorRef={gearRef} onClose={closeSettings} />
