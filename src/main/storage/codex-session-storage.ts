@@ -41,6 +41,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
+import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -68,7 +69,10 @@ function getCodexSessionsDir(accountDir?: string): string {
 // Bumped to 5: pruning is now scoped to the account dir that was walked, so
 // entries left behind by an account dir that no longer exists are unreachable.
 // One clean slate here retires the ones that predate the scoped prune.
-const CODEX_SESSION_CACHE_VERSION = 5;
+//
+// Bumped to 6: sessions carry per-call token speed buckets (`speed`), which
+// cached entries lack and the fingerprint cannot ask for.
+const CODEX_SESSION_CACHE_VERSION = 6;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**
@@ -311,6 +315,7 @@ async function parseSessionFile(
 		let userMessageCount = 0;
 		let assistantMessageCount = 0;
 		const tokenCounts = new CodexTokenCounts();
+		const speedTracker = new CodexTokenSpeedTracker();
 		let firstTimestamp = timestamp;
 		let lastTimestamp = timestamp;
 		// Codex is single-model per session; the model id lives on turn_context /
@@ -329,6 +334,8 @@ async function parseSessionFile(
 				if (entry.type === 'turn_context' && entry.payload?.model) {
 					capturedModel = entry.payload.model;
 				}
+
+				speedTracker.observe(entry, capturedModel);
 
 				// Handle turn.completed for usage stats (already per-turn)
 				if (entry.type === 'turn.completed' && entry.usage) {
@@ -471,6 +478,7 @@ async function parseSessionFile(
 			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
 			durationSeconds,
 			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
+			speed: speedTracker.result(),
 		};
 	} catch (error) {
 		// RangeError: Invalid string length occurs when the file is too large for V8

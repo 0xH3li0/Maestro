@@ -2911,6 +2911,16 @@ Show aggregated Usage Dashboard metrics for a time range
 | `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
 | `--json`              | Output the full aggregation object as JSON                       | -       |
 
+## `maestro-cli stats-tokens`
+
+Show token usage, cost, and tokens per second (average and peak) per provider and model
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
+| `--json`              | Output the full token usage object as JSON                       | -       |
+
 ## `maestro-cli stats-query <sql>`
 
 Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)

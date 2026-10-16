@@ -48,8 +48,9 @@ const LOG_CONTEXT = '[SessionInfoCache]';
  * v2: Claude usage counted once per API response, not once per JSONL line.
  * v3: Claude subagent transcripts priced into their parent session.
  * v4: Claude messages counted as prompts and responses, not transcript lines.
+ * v5: Claude sessions carry per-call token speed buckets (`speed`).
  */
-export const SESSION_INFO_CACHE_VERSION = 4;
+export const SESSION_INFO_CACHE_VERSION = 5;
 
 /** One source file to resolve: its identity within the scope plus its fingerprint. */
 export interface SessionFileRef {

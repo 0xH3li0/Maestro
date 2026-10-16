@@ -5,6 +5,7 @@
 
 import {
 	formatSize,
+	formatTokensPerSecond,
 	formatNumber,
 	formatCount,
 	formatTokens,
@@ -144,6 +145,20 @@ describe('shared/formatters', () => {
 	// ==========================================================================
 	// formatTokensCompact tests (without ~ prefix, decimal)
 	// ==========================================================================
+	describe('formatTokensPerSecond', () => {
+		it('uses one decimal below 100, whole numbers below 1,000, then compact', () => {
+			expect(formatTokensPerSecond(42.66)).toBe('42.7');
+			expect(formatTokensPerSecond(412.4)).toBe('412');
+			expect(formatTokensPerSecond(38_400)).toBe('38.4K');
+		});
+
+		it('renders an unmeasured rate as a dash', () => {
+			expect(formatTokensPerSecond(0)).toBe('-');
+			expect(formatTokensPerSecond(-1)).toBe('-');
+			expect(formatTokensPerSecond(Number.NaN)).toBe('-');
+		});
+	});
+
 	describe('formatTokensCompact', () => {
 		it('should format small token counts', () => {
 			expect(formatTokensCompact(0)).toBe('0');

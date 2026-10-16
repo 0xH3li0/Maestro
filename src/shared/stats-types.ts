@@ -5,6 +5,7 @@
  */
 
 import type { DurationPercentiles } from './percentiles';
+import type { PromptCadence } from './promptCadence';
 
 /**
  * A single AI query event - represents one user/auto message -> AI response cycle
@@ -184,6 +185,12 @@ export interface StatsAggregation {
 	};
 	/** Number of image annotations saved in the time range */
 	imageAnnotations: number;
+	/**
+	 * How often the user prompts agents: interactive turns only, per calendar
+	 * day, hour and weekday. Unlike every other field here the window is
+	 * calendar-aligned (N local days including today), not rolling.
+	 */
+	prompts: PromptCadence;
 }
 
 /**
