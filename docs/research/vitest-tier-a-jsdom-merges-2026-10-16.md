@@ -26,6 +26,7 @@ Every playbook run uses command-scoped `NODE_ENV=test` and the approved newline-
 | 3     | `renderer/hooks/agent/internal`                | 15 → 4               | 152 / 152      | 3.73s       | Ownership WindowContext factory contaminated tool capture: 8 initial failures; ownership suite restored verbatim as an isolated file; Final directory run includes 80 unchanged descendant-helper tests (232 total); exact parent remains 152. |
 | 4     | `renderer/hooks/batch`                         | 21 → 6               | 273 / 273      | 10.43s      | Remote processor mocked real kill/document/worktree hooks: 25 initial failures, resolved by restoring its source as an isolated file; 1,760-line worktree suite stays unmerged. Descendants add 21 tests (294 total).                          |
 | 5     | `renderer/hooks/cue`                           | 16 → 7               | 273 / 273      | 2.29s       | Viewport pipelineGraph mock omitted resolvePipelineOffset required by real layout: 14 initial failures / 17 unhandled errors; both original files retained separately. Other persistence/selection/state factory conflicts remain isolated.    |
+| 6     | `renderer/hooks/tabs/internal`                 | 10 → 2               | 102 / 102      | 2.60s       | Helper/AI/terminal and browser/file/unified-handler domains separated; no mock conflict failures.                                                                                                                                              |
 
 Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook folder. Warnings are retained; green assertions do not imply warning-free execution.
 
@@ -72,3 +73,8 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 - Unmerged `usePipelineSelection.test.ts`
 - Unmerged `usePipelineState.test.ts`
 - Unmerged `usePipelineViewport.test.ts`
+
+### renderer/hooks/tabs/internal
+
+- `helpers.merged.test.tsx` ← `browserTabHelpers.test.ts`, `filePreviewTabHelpers.test.ts`, `unifiedCloseHelpers.test.ts`, `useAITabHandlers.test.ts`, `useScrollLogHandlers.test.ts`, `useTabDerivedState.test.ts`, `useTerminalTabHandlers.test.ts`
+- `handlers.merged.test.tsx` ← `useBrowserTabHandlers.test.ts`, `useFilePreviewTabHandlers.test.ts`, `useUnifiedTabHandlers.test.ts`
