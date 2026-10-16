@@ -66,8 +66,9 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 	const [category, setCategory] = useState<CategoryFilter>('all');
 	const [onlyInstalled, setOnlyInstalled] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	// A cleared request (the user picked a tab) returns to the grid too.
 	useEffect(() => {
-		if (tileRequest) setSelectedKey(builtinExtensionKey(tileRequest.flag));
+		setSelectedKey(tileRequest ? builtinExtensionKey(tileRequest.flag) : null);
 	}, [tileRequest]);
 	// Remembered rather than reset per visit: which order the grid reads in is a
 	// standing preference, and Settings unmounts this view on every tab switch.
@@ -222,6 +223,7 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 					onRevoke={revokePlugin}
 					getGrants={getGrants}
 					settingsBody={selected.flag ? settingsBodies?.[selected.flag] : undefined}
+					settingsRequest={tileRequest?.flag === selected.flag ? tileRequest : null}
 				/>
 			) : (
 				<>

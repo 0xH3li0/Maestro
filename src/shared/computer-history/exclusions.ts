@@ -9,9 +9,9 @@
  * Each entry names an app once and lists how the helper identifies it per
  * platform (see Plans/computer-history-plan.md): macOS bundle ids, Windows
  * lowercase exe names, Linux desktop ids or lowercase exe names. `names` are
- * the app's display names, blocked on every platform: the helper matches a
- * block by id OR display name, so a name catches a build whose id differs
- * from the one listed here. Matching is case-insensitive, so everything is
+ * the app's display names, blocked wherever the entry applies: the helper
+ * matches a block by id OR display name, so a name catches a build whose id
+ * differs from the one listed here. Matching is case-insensitive, so everything is
  * kept lowercase except the display label.
  */
 
@@ -39,7 +39,7 @@ export const BUILT_IN_EXCLUSION_CATEGORIES: readonly {
 interface BuiltInExclusion {
 	label: string;
 	category: BuiltInExclusionCategory;
-	/** Display names blocked on every platform (lowercase). */
+	/** Display names blocked wherever the entry applies (lowercase). */
 	names?: readonly string[];
 	ids: Partial<Record<ObservedPlatform, readonly string[]>>;
 }
@@ -332,12 +332,14 @@ function appliesOn(entry: BuiltInExclusion, platform: ObservedPlatform): boolean
 }
 
 /**
- * Built-in blocked values for one platform (lowercase): the ids for that
- * platform plus every display name. Sent to the helper as `blockApps`.
+ * Built-in blocked values for one platform (lowercase): the ids and display
+ * names of the entries that apply there, so this is exactly what
+ * `builtInExclusions(platform)` shows. Sent to the helper as `blockApps`.
  */
 export function builtInBlockedApps(platform: ObservedPlatform): string[] {
 	const out = new Set<string>();
 	for (const entry of BUILT_IN_EXCLUSIONS) {
+		if (!appliesOn(entry, platform)) continue;
 		for (const id of entry.ids[platform] ?? []) out.add(id);
 		for (const name of entry.names ?? []) out.add(name);
 	}
@@ -360,9 +362,10 @@ const ALL_BUILT_IN_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * The ingest re-check: the app's id is a built-in id on ANY platform, or its
- * display name is a built-in name. Ids never match names, so a Linux id that
- * is a plain word cannot block a same-named app on macOS.
+ * The ingest re-check, a platform-agnostic backstop behind the helper: the
+ * app's id is a built-in id on ANY platform, or its display name is any
+ * built-in name. Ids never match names, so a Linux id that is a plain word
+ * cannot block a same-named app on macOS.
  */
 export function isBuiltInBlockedApp(app: { id?: string; name?: string }): boolean {
 	const id = app.id?.trim().toLowerCase();

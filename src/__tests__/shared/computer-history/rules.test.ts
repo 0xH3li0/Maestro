@@ -275,6 +275,10 @@ describe('exclusions, time parsing, kinds', () => {
 	it('built-ins carry display names to every platform, but ids stay ids', () => {
 		expect(builtInBlockedApps('windows')).toContain('1password');
 		expect(builtInBlockedApps('macos')).toContain('com.ledger.live');
+		// Names block only where the entry applies, so the list shows every block.
+		expect(builtInBlockedApps('linux')).not.toContain('dashlane');
+		expect(builtInExclusions('linux').map((e) => e.label)).not.toContain('Dashlane');
+		expect(builtInBlockedApps('linux')).toContain('ente auth');
 		// A Linux id that is a plain word does not block a same-named macOS app.
 		expect(isBuiltInBlockedApp({ id: 'com.example.sparrow', name: 'Sparrow' })).toBe(false);
 		expect(isBuiltInBlockedApp({ id: 'com.sparrowwallet.sparrow', name: 'S' })).toBe(true);

@@ -128,6 +128,22 @@ describe('ExtensionsView tile deep link', () => {
 		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
 		expect(settingsEscape).not.toHaveBeenCalled();
 	});
+
+	it('returns to the grid when the request is cleared (the user picked a tab)', () => {
+		const settingsEscape = vi.fn();
+		const { rerender } = render(
+			<LayerStackProvider>
+				<SettingsHost onEscape={settingsEscape} tileRequest={{ flag: 'maestroCue' }} />
+			</LayerStackProvider>
+		);
+		expect(screen.getByTestId('extension-details-stub')).toBeInTheDocument();
+		rerender(
+			<LayerStackProvider>
+				<SettingsHost onEscape={settingsEscape} tileRequest={null} />
+			</LayerStackProvider>
+		);
+		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
+	});
 });
 
 describe('ExtensionsView escape routing', () => {
