@@ -465,12 +465,16 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 		lacks?: string[];
 	}
 
+	// The section's own opening, not the bare `computer-history` slug: the reference
+	// index and the docs list name that slug in every agent's prompt.
+	const COMPUTER_HISTORY_SECTION = 'The user turned on Computer History';
+
 	const FIXTURES: SystemPromptFixture[] = [
 		{
 			name: 'a local agent with Concerto and Computer History on',
 			encoreFeatures: { concerto: true, computerHistory: true },
 			session: { isGitRepo: true },
-			contains: ['concerto', 'computer-history'],
+			contains: ['concerto', COMPUTER_HISTORY_SECTION],
 		},
 		{
 			name: 'an SSH agent: the localOnly sections are dropped',
@@ -478,7 +482,7 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 			session: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } as never },
 			maestroRunReady: true,
 			contains: ['concerto'],
-			lacks: ['computer-history', RUN_BINARY],
+			lacks: [COMPUTER_HISTORY_SECTION, RUN_BINARY],
 		},
 		{
 			name: 'the Pianola manager with MaestroRun ready',
