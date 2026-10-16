@@ -118,6 +118,15 @@ describe('ComputerHistoryViewer', () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it('gives the body the theme text color so opacity-dimmed descriptions stay readable', async () => {
+		renderViewer();
+		const body = await screen.findByTestId('computer-history-body');
+		expect(body.style.color).toBeTruthy();
+		const probe = document.createElement('div');
+		probe.style.color = mockTheme.colors.textMain;
+		expect(body.style.color).toBe(probe.style.color);
+	});
+
 	it('pauses from the header', async () => {
 		renderViewer();
 		fireEvent.click(await screen.findByTestId('computer-history-pause'));
