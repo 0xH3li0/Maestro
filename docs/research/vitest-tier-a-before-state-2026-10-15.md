@@ -95,3 +95,34 @@ The sole failed assertion in the JSON profile is:
 This matches the preceding playbook's documented Windows symlink privilege limitation. It was not skipped, suppressed, or changed. Restoring the ability to create file symlinks requires an authorized human environment change; no such change was attempted. Captured stderr is retained, including mock diagnostics; the recorded assertion totals do not imply warning-free execution.
 
 The preceding `04 - Final Verification and Measurement` verdict recommends **no further rollout**, using a corrected jsdom floor cost of 0.83–1.23s and node floor cost of 0.036–0.074s. This Stage 0 capture does not reverse that verdict. Later stages must account for it, the non-green baseline, and measured directory counts rather than treating the template's 338-file estimate as the observed state.
+
+## Authorized resume gate (2026-10-16)
+
+The followup playbook now authorizes excluding only `explicit host file transfer > does not overwrite a preexisting attachment file symlink` for this Auto Run. The permission-restoration requirement above is historical, not a prerequisite for the filtered gate. The test source, shared Vitest configuration, repository push hooks, and machine permissions remain unchanged.
+
+The first filtered invocation inherited `NODE_ENV=production` from the runner and exited 1. Its log contains `act(...) is not supported in production builds of React`, module-load failures, and mock failures. That invocation is not a valid test-environment baseline. Evidence: `C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working/vt-fu-resume-filtered-a-2026-10-16.log`.
+
+With command-scoped `NODE_ENV=test`, a focused filtered run of `renderer/hooks/usePluginContributions.test.tsx` and `renderer/focusRingCss.test.ts` passed all five tests (2.66s command wall). Use this environment for subsequent playbook Vitest invocations; do not change shared configuration or broaden the exclusion.
+
+```bash
+NODE_ENV=test npx vitest run --config vitest.config.mts --testNamePattern "^(?!.*does not overwrite a preexisting attachment file symlink).*$"
+```
+
+### Observed result and unresolved acceptance mismatch
+
+The corrected-environment filtered run exited 0: **1705 passed / 1 skipped files (1706); 45523 passed / 0 failed / 120 skipped tests (45643); 296.09s Vitest wall**. Log: `C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working/vt-fu-resume-filtered-a-test-env-2026-10-16.log`, lines 2067-2070. A second filtered full-suite invocation with default and JSON reporters also exited 0 with the same assertion counts (291.08s command wall). These are passing filtered runs, not unfiltered full-suite coverage and not the requested 45522/0/121 gate.
+
+Assertion-level comparison against Stage 0 found exactly four status changes:
+
+| Test                                                                                   | Stage 0 | Filtered profile | Explanation                                                                                                                                 |
+| -------------------------------------------------------------------------------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fileRoutes.test.ts`: `does not overwrite a preexisting attachment file symlink`       | failed  | skipped          | Authorized exclusion.                                                                                                                       |
+| `main/lite/lite.test.ts`: SSH-host rejection case with input `host\nother`             | passed  | skipped          | The supplied regex ends with `.*$`; JavaScript dot does not match the newline in the test name. This is an unintended additional exclusion. |
+| `messageHandlers.test.ts`: `should allow a real subdirectory of the session root`      | skipped | passed           | Existing `describe.skipIf(!canSymlink())` capability probe now succeeds.                                                                    |
+| `messageHandlers.test.ts`: `should reject a symlink pointing outside the session root` | skipped | passed           | Same capability-gated group. No permission change was performed by this run.                                                                |
+
+A focused JSON run of `fileRoutes.test.ts` confirmed 20 passed / 1 skipped / 0 failed, with the named symlink test as its only skipped assertion. All 20 exact-directory file/test/pass/skip invariants remain identical to Stage 0. No directory merges were started.
+
+The resume checkbox remains unchecked. Human approval is needed to replace the supplied pattern with the newline-safe equivalent `^(?![\s\S]*does not overwrite a preexisting attachment file symlink)[\s\S]*$` and accept the capability-driven baseline change. With those two formerly skipped tests passing, the expected breakdown would be **45524 passed / 0 failed / 119 skipped** out of the unchanged 45643 tests; that corrected-pattern full-suite result has not been run. Do not force additional skips to reproduce historical counts.
+
+Profile: `C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working/vt-fu-resume-filtered-a-test-env-2026-10-16.json`; SHA-256 `36f331bef0503b7d7f454267525b6f1c870923da7aebafce8fda57d60c6a7f77`. Companion log: `vt-fu-resume-filtered-a-profile-2026-10-16.log`. Focused assertion evidence: `vt-fu-resume-file-routes-2026-10-16.json` in the same Working directory.
