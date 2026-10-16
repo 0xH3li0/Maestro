@@ -7,6 +7,7 @@
  * - formatNumber: Large numbers with k/M/B suffixes
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
+ * - formatTokensPerSecond: Token throughput rates (dash when unmeasured)
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
  * - formatCacheAge: Cache age labels ("just now", "5m ago", "2h ago")
  * - formatAgeShort: Compact age badge ("new", "5m", "3h", "5d", "3w", "6mo", "3.5y")
@@ -183,6 +184,18 @@ export function formatTokensCompact(tokens: number): string {
 	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
 	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
 	return tokens.toString();
+}
+
+/**
+ * Format a tokens-per-second rate: one decimal below 100 (`42.7`), whole
+ * numbers below 1,000 (`412`), then compact (`38.4K`). A rate of zero means
+ * "not measured" on every surface that shows one, so it renders as a dash.
+ */
+export function formatTokensPerSecond(tps: number): string {
+	if (!Number.isFinite(tps) || tps <= 0) return '-';
+	if (tps < 100) return tps.toFixed(1);
+	if (tps < 1000) return Math.round(tps).toString();
+	return formatTokensCompact(tps);
 }
 
 /**

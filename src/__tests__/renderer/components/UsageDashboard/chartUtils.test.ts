@@ -16,7 +16,10 @@ import {
 	BAR_CHART_ROW_STYLE,
 	DONUT_CHART,
 	describeDonutArc,
+	getSeriesColor,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
+import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
+import { mockTheme } from '../../../helpers/mockTheme';
 import type { Session } from '../../../../renderer/types';
 
 let idCounter = 0;
@@ -372,5 +375,17 @@ describe('bar chart grid', () => {
 			gridTemplateColumns: 'subgrid',
 			gridColumn: '1 / -1',
 		});
+	});
+});
+
+describe('getSeriesColor', () => {
+	it('gives the first series the theme accent and cycles a fixed palette after it', () => {
+		expect(getSeriesColor(0, mockTheme)).toBe(mockTheme.colors.accent);
+		expect(getSeriesColor(1, mockTheme)).toBe('#10b981');
+		expect(getSeriesColor(9, mockTheme)).toBe('#10b981');
+	});
+
+	it('uses the colorblind palette when asked', () => {
+		expect(getSeriesColor(2, mockTheme, true)).toBe(COLORBLIND_AGENT_PALETTE[2]);
 	});
 });

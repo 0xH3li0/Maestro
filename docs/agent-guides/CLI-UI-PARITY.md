@@ -282,6 +282,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Auto Run panel: Change folder                                            | `auto-run-folder <path> -a <agent>`                                                              |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)   | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
 | Playbook Exchange: browse, README, install                               | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
+| Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)  | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
 
 ## Open gaps
 

@@ -3,6 +3,7 @@ import type { UsageDashboardViewMode as ViewMode } from '../../../types';
 export const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'token-speed',
 	'delegation-score',
 	'query-percentiles',
 	'agent-comparison',
@@ -55,6 +56,7 @@ export type SectionId =
 const SECTION_LABELS: Record<SectionId, string> = {
 	'year-in-pixels': 'Past Year Activity Strip',
 	'summary-cards': 'Summary Cards',
+	'token-speed': 'Tokens per Second',
 	'delegation-score': 'Delegation Score',
 	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
