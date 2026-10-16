@@ -35,6 +35,7 @@ import type { ToastPosition } from '../../../shared/toastPosition';
 import type { SpokenNoticeMode } from '../../../shared/spokenNotices';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import type { QuickChatSettings } from '../../../shared/quickChat';
+import type { ThroughputGaugeSettings } from '../../../shared/throughputGauge';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -208,6 +209,8 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
+	setNotificationCenterEnabled: (value: boolean) => void;
 	notificationCenterLarge: boolean;
 	setNotificationCenterLarge: (value: boolean) => void;
 	notificationCenterDetails: boolean;
@@ -505,6 +508,10 @@ export interface UseSettingsReturn {
 	// Quick Chat settings (hotkey, agent, ephemeral/persistent defaults)
 	quickChatSettings: QuickChatSettings;
 	setQuickChatSettings: (value: QuickChatSettings) => void;
+
+	// Throughput Gauge settings (scope, metric, layout, style, rate window)
+	throughputGaugeSettings: ThroughputGaugeSettings;
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;

@@ -1,5 +1,5 @@
 /**
- * Tests for NotificationCenter - the header bell and its history popover.
+ * Tests for NotificationCenter - the Left Bar bell and its history popover.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -62,7 +62,9 @@ describe('NotificationCenter', () => {
 		installLocalStorageMock();
 		useSessionStore.setState(useSessionStore.getInitialState(), true);
 		useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+		useSettingsStore.setState({ notificationCenterEnabled: true });
 		useNotificationStore.setState({ notificationCenterExpandedId: null });
+		useNotificationStore.getState().setHistoryEnabled(true);
 		mockJumpToAgent.mockReturnValue(true);
 		seed([]);
 		useNotificationStore.setState({ historyPersistenceFailed: false });
@@ -103,6 +105,19 @@ describe('NotificationCenter', () => {
 
 		fireEvent.click(screen.getByTestId('notification-center-button'));
 		expect(screen.queryByTestId('notification-center')).not.toBeInTheDocument();
+	});
+
+	it('lays out the header as title, centered filter, then close on the right', () => {
+		seed([record()], true);
+		render(<NotificationCenterHost theme={mockTheme} />);
+
+		const header = screen.getByText('Notifications').parentElement!;
+		expect(header).toHaveClass('grid-cols-[1fr_auto_1fr]');
+		const close = screen.getByRole('button', { name: 'Close notifications' });
+		const filter = screen.getByTestId('notification-center-filter');
+		expect(header.lastElementChild).toBe(close);
+		expect(close).toHaveClass('justify-self-end');
+		expect(Array.from(header.children).indexOf(filter)).toBe(1);
 	});
 
 	it('portals the popover out of the header subtree', () => {

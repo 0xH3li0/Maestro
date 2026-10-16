@@ -64,7 +64,8 @@ export type UiSurfaceEncoreFlag =
 	| 'concerto'
 	| 'aCappella'
 	| 'computerHistory'
-	| 'quickChat';
+	| 'quickChat'
+	| 'throughputGauge';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -139,7 +140,7 @@ export const UI_SURFACES: UiSurface[] = [
 		modal: 'notificationCenter',
 		description: 'Persistent notification history and unread entries.',
 		commandPalette: 'Open Notification Center',
-		click: 'the bell in the Main Panel header',
+		click: 'the bell in the Left Bar header (Settings → Notifications → Notification center)',
 	},
 	{
 		id: 'concerto',
@@ -407,6 +408,19 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Open Quick Chat',
 		click: 'Quick Chat in the Left Bar hamburger menu',
 		encore: 'quickChat',
+	},
+	{
+		// Not a modal: the gauge is a floating card owned by its own store, shown
+		// through that store (see openUiSurface) so it never takes focus.
+		id: 'throughput-gauge',
+		label: 'Throughput Gauge',
+		aliases: ['gauge', 'tokens-per-second', 'tps'],
+		modal: 'throughputGauge',
+		description: 'The floating gauge of live tokens per second across your agents.',
+		shortcutId: 'toggleThroughputGauge',
+		commandPalette: 'Show Throughput Gauge',
+		click: 'Throughput Gauge in the Left Bar hamburger menu',
+		encore: 'throughputGauge',
 	},
 	{
 		id: 'feedback',

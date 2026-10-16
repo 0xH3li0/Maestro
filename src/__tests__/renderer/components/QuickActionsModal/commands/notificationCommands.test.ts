@@ -5,10 +5,11 @@ import type { ToastPosition } from '../../../../../shared/toastPosition';
 function harness(
 	visibleToastCount: number,
 	toastPosition: ToastPosition = 'bottom-right',
-	unreadNotificationCount = 0
+	unreadNotificationCount = 0,
+	notificationCenterEnabled = true
 ) {
 	const clearToasts = vi.fn();
-	const openNotificationCenter = vi.fn();
+	const openNotificationCenter = notificationCenterEnabled ? vi.fn() : undefined;
 	const setToastPosition = vi.fn();
 	const setQuickActionOpen = vi.fn();
 	const actions = buildNotificationCommands({
@@ -115,6 +116,13 @@ describe('buildNotificationCommands', () => {
 		open.action();
 		expect(openNotificationCenter).toHaveBeenCalledTimes(1);
 		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('drops Open Notification Center while its Encore Feature is off', () => {
+		const { actions } = harness(0, 'bottom-right', 3, false);
+		expect(actions.some((a) => a.id === 'open-notification-center')).toBe(false);
+		// The toast commands do not depend on the inbox.
+		expect(actions.some((a) => a.id === 'clear-all-notifications')).toBe(true);
 	});
 
 	it('says when nothing is unread, and singularizes a lone one', () => {

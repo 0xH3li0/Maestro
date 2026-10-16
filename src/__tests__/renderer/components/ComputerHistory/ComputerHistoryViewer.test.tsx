@@ -60,7 +60,7 @@ function makeApi() {
 		digests: vi.fn(async () => []),
 		getConfig: vi.fn(async () => defaultComputerHistoryConfig()),
 		knownApps: vi.fn(async () => []),
-		listRules: vi.fn(async () => ({ rules: [], builtIn: [] })),
+		listRules: vi.fn(async () => ({ rules: [], builtIn: [], builtInApps: [] })),
 	};
 }
 
@@ -116,6 +116,15 @@ describe('ComputerHistoryViewer', () => {
 		expect((search as HTMLInputElement).value).toBe('');
 		fireEvent.click(screen.getByTestId('computer-history-esc'));
 		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('gives the body the theme text color so opacity-dimmed descriptions stay readable', async () => {
+		renderViewer();
+		const body = await screen.findByTestId('computer-history-body');
+		expect(body.style.color).toBeTruthy();
+		const probe = document.createElement('div');
+		probe.style.color = mockTheme.colors.textMain;
+		expect(body.style.color).toBe(probe.style.color);
 	});
 
 	it('pauses from the header', async () => {

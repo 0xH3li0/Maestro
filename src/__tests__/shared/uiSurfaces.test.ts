@@ -117,6 +117,20 @@ describe('resolveUiSurface', () => {
 		}
 	});
 
+	it('resolves the Throughput Gauge by id and by every alias', () => {
+		for (const name of ['throughput-gauge', 'gauge', 'tokens-per-second', 'tps']) {
+			expect(resolveUiSurface(name)?.id, name).toBe('throughput-gauge');
+		}
+		expect(resolveUiSurface('gauge')?.encore).toBe('throughputGauge');
+	});
+
+	it('points the Notification Center at the Left Bar bell, with no Encore gate', () => {
+		const surface = resolveUiSurface('inbox');
+		expect(surface?.id).toBe('notification-center');
+		expect(surface?.encore).toBeUndefined();
+		expect(surface?.click).toContain('the bell in the Left Bar header');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

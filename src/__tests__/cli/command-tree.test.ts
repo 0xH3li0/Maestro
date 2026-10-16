@@ -12,6 +12,8 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Command } from 'commander';
+import * as fs from 'fs';
+import * as path from 'path';
 
 import { program } from '../../cli/index';
 import {
@@ -89,6 +91,24 @@ const walked = walk(program);
 const paths = new Set(walked.map((entry) => entry.path));
 
 describe('maestro-cli command tree', () => {
+	it('registers host start, status and stop', () => {
+		for (const command of ['host', 'host start', 'host status', 'host stop']) {
+			expect(paths.has(command), command).toBe(true);
+		}
+	});
+
+	it('registers every command docs/cli-reference.md documents', () => {
+		const markdown = fs.readFileSync(
+			path.join(__dirname, '../../../docs/cli-reference.md'),
+			'utf8'
+		);
+		const documented = [...markdown.matchAll(/^## `maestro-cli([^`]*)`\r?$/gm)].map((match) =>
+			match[1].replace(/\s+[<[].*$/, '').trim()
+		);
+		expect(documented.length).toBeGreaterThan(0);
+		expect(documented.filter((command) => !paths.has(command))).toEqual([]);
+	});
+
 	it('registers commands to walk', () => {
 		expect(walked.length).toBeGreaterThan(100);
 		expect(paths.has('models server start')).toBe(true);

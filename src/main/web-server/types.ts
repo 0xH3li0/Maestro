@@ -16,6 +16,10 @@ import type {
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../../shared/throughputGaugeCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -449,6 +453,14 @@ export type AutoRunSteeringCommandCallback = (
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
  */
 export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
+/**
+ * `maestro-cli throughput-gauge` - show, hide, configure, or read the gauge.
+ * Answered by the primary window, which owns the live rates. Resolves rather
+ * than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ThroughputGaugeCommandCallback = (
+	request: ThroughputGaugeCommandRequest
+) => Promise<ThroughputGaugeCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,

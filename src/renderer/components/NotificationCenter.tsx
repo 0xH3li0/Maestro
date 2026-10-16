@@ -1,5 +1,9 @@
 /**
- * NotificationCenter - the bell in the Main Panel header and the popover it opens.
+ * NotificationCenter - the bell in the Left Bar header and the popover it opens.
+ *
+ * Switched on by the `notificationCenterEnabled` setting, off by default. The
+ * history is app-wide rather than per agent, so the bell sits with the other
+ * global indicators in the Left Bar rather than in an agent's Main Panel header.
  *
  * A toast is gone once it leaves the screen. This is where it goes: every toast
  * is also recorded in `notificationStore.history`, and the popover lists that
@@ -65,7 +69,7 @@ export const NotificationCenter = memo(function NotificationCenter({
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="relative p-2 rounded hover:bg-white/5 shrink-0"
+				className="relative p-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				title={`${label}${shortcutSuffix(shortcut?.keys)}`}
 				aria-label={label}
 				aria-haspopup="dialog"
@@ -73,10 +77,10 @@ export const NotificationCenter = memo(function NotificationCenter({
 				id="notification-center-trigger"
 				data-testid="notification-center-button"
 			>
-				<Bell className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+				<Bell className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 				{unreadCount > 0 && (
 					<span
-						className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-1 rounded-full text-3xs font-bold leading-[14px] text-center"
+						className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-1 rounded-full text-3xs font-bold leading-[14px] text-center"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						data-testid="notification-center-badge"
 						aria-hidden="true"
@@ -89,7 +93,7 @@ export const NotificationCenter = memo(function NotificationCenter({
 	);
 });
 
-/** App-level host: history remains reachable when the Main Panel header is absent. */
+/** App-level host: history remains reachable when the Left Bar is hidden. */
 export function NotificationCenterHost({ theme }: NotificationCenterProps) {
 	const open = useNotificationStore((s) => s.notificationCenterOpen);
 	const large = useSettingsStore((s) => s.notificationCenterLarge);
@@ -102,7 +106,7 @@ export function NotificationCenterHost({ theme }: NotificationCenterProps) {
 		<>
 			<span
 				aria-hidden="true"
-				className="fixed right-4 top-12 pointer-events-none"
+				className="fixed left-4 top-12 pointer-events-none"
 				ref={fallbackRef}
 			/>
 			{open && (
@@ -134,7 +138,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	const [viewport, setViewport] = useState(getViewportSize);
 	useEventListener('resize', () => setViewport(getViewportSize()));
 	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
-		align: 'end',
+		align: 'start',
 		contentKey: `${viewport.width}:${viewport.height}`,
 		minPlacementSize: clampModalSize(defaultSize, { viewport, minSize: DEFAULT_MODAL_MIN_SIZE }),
 	});
@@ -146,7 +150,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 		eventType: 'click',
 	});
 
-	// Align to the bell on opening, then keep the top-left fixed while dragging.
+	// Open rightward from the bell, then keep the top-left fixed while dragging.
 	// The remaining viewport space bounds east/south growth, including the fallback anchor.
 	const resize = useResizableModal({
 		resizeKey: large ? 'notification-center-large' : 'notification-center',
@@ -269,22 +273,18 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 			aria-label="Notifications"
 			data-testid="notification-center"
 		>
+			{/* Title, filter, close: the 1fr side columns keep the filter centered
+			    whatever the title's width. */}
 			<div
-				className="flex items-center justify-between gap-2 px-3 py-2 border-b shrink-0"
+				className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2 border-b shrink-0"
 				style={{ borderColor: theme.colors.border }}
 			>
-				<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+				<span
+					className="text-sm font-bold justify-self-start"
+					style={{ color: theme.colors.textMain }}
+				>
 					Notifications
 				</span>
-				<button
-					type="button"
-					onClick={onClose}
-					aria-label="Close notifications"
-					className="p-1 rounded hover:bg-white/5"
-					style={{ color: theme.colors.textDim }}
-				>
-					<X className="w-4 h-4" />
-				</button>
 				<SegmentedControl
 					value={filter}
 					onChange={setFilter}
@@ -293,6 +293,15 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 					ariaLabel="Filter notifications"
 					testId="notification-center-filter"
 				/>
+				<button
+					type="button"
+					onClick={onClose}
+					aria-label="Close notifications"
+					className="p-1 rounded hover:bg-white/5 justify-self-end"
+					style={{ color: theme.colors.textDim }}
+				>
+					<X className="w-4 h-4" />
+				</button>
 			</div>
 
 			{historyPersistenceFailed && (

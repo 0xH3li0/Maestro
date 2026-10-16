@@ -245,6 +245,10 @@ import type { GroupSeededCreateReport } from '../shared/groupAgentDefaults';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../shared/throughputGaugeCommands';
+import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../shared/autoRunSteeringCommands';
@@ -452,6 +456,12 @@ interface MaestroAPI {
 		}) => Promise<{ exitCode: number }>;
 		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
 		cancelCommand: (sessionId: string) => Promise<boolean>;
+		getHeadlessActivity: () => Promise<
+			import('../shared/headlessAgentActivity').HeadlessAgentActivity
+		>;
+		onHeadlessActivity: (
+			handler: (activity: import('../shared/headlessAgentActivity').HeadlessAgentActivity) => void
+		) => () => void;
 		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
@@ -615,6 +625,14 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
+		onRemoteThroughputGaugeCommand: (
+			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteThroughputGaugeCommandResponse: (
+			responseChannel: string,
+			result: ThroughputGaugeCommandResult
+		) => void;
 		onRemoteReorderTab: (
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;

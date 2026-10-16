@@ -38,7 +38,7 @@ function makeSupervisor(
 ) {
 	const messages: unknown[] = [];
 	const supervisor = new ObserverSupervisor({
-		resolveBinary: () => '/bin/maestro-observer',
+		resolveBinary: () => '/bin/maestro-computer-history',
 		onMessage: (m) => messages.push(m),
 		spawnChild: spawnChild as never,
 		...overrides,
@@ -64,7 +64,11 @@ describe('ObserverSupervisor', () => {
 		const onSpawned = vi.fn();
 		const { supervisor, messages } = makeSupervisor({ onSpawned });
 		supervisor.start();
-		expect(spawnChild).toHaveBeenCalledWith('/bin/maestro-observer', [], expect.any(Object));
+		expect(spawnChild).toHaveBeenCalledWith(
+			'/bin/maestro-computer-history',
+			[],
+			expect.any(Object)
+		);
 		expect(onSpawned).toHaveBeenCalledTimes(1);
 		const out = children[0].stdout;
 		out.write('{"kind":"helper.status","a":');
@@ -171,16 +175,18 @@ describe('observerBinaryCandidates', () => {
 			platform: 'win32',
 			arch: 'x64',
 		});
-		expect(list[0]).toBe(path.join('/App/Resources', 'native', 'maestro-observer.exe'));
-		expect(list[1]).toBe(path.resolve('/repo/dist/native/win32-x64/maestro-observer.exe'));
-		expect(list).toContain(path.resolve('/repo/dist/native/win32-x64/maestro-observer.exe'));
+		expect(list[0]).toBe(path.join('/App/Resources', 'native', 'maestro-computer-history.exe'));
+		expect(list[1]).toBe(path.resolve('/repo/dist/native/win32-x64/maestro-computer-history.exe'));
+		expect(list).toContain(
+			path.resolve('/repo/dist/native/win32-x64/maestro-computer-history.exe')
+		);
 	});
 
 	it('a packaged app uses ONLY the bundled helper (no cwd or dist fallbacks)', () => {
 		const opts = { moduleDir: '/x', cwd: '/evil/cwd', platform: 'darwin' as const, arch: 'arm64' };
 		expect(
 			observerBinaryCandidates({ ...opts, packaged: true, resourcesPath: '/App/Resources' })
-		).toEqual([path.join('/App/Resources', 'native', 'maestro-observer')]);
+		).toEqual([path.join('/App/Resources', 'native', 'maestro-computer-history')]);
 		expect(observerBinaryCandidates({ ...opts, packaged: true })).toEqual([]);
 	});
 });

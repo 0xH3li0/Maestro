@@ -30,7 +30,7 @@ pub fn create() -> Box<dyn Observer> {
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-compile_error!("maestro-observer supports macOS, Windows, and Linux only");
+compile_error!("maestro-computer-history supports macOS, Windows, and Linux only");
 
 /// Clamps a string read from the OS before it enters the engine, so a
 /// pathological multi-megabyte value cannot balloon memory. The engine applies

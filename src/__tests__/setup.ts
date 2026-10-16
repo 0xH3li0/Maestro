@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import React from 'react';
+import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
+import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -1016,6 +1018,7 @@ const mockMaestro = {
 				bySessionByDay: {},
 				bySource: { user: 0, auto: 0 },
 			},
+			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
 			generatedAtMs: 0,
 		}),
@@ -1302,3 +1305,10 @@ if (typeof window !== 'undefined') {
 		value: mockMaestro,
 	});
 }
+
+// `useCachedResource` keeps results at module scope so a remounted surface
+// renders instantly. Within one test file that would hand one test's fetched
+// data to the next, so every test starts from an empty cache.
+afterEach(() => {
+	clearCachedResources();
+});

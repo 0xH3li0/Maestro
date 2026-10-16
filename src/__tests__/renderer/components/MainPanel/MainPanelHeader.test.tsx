@@ -117,12 +117,6 @@ vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 // paths. Assigned in beforeEach, restored in afterEach.
 let mockOpenModal: ReturnType<typeof vi.spyOn>;
 
-// The bell has its own test file. Rendering it for real here would load the
-// agent-navigation stores behind the narrow modalStore mock above.
-vi.mock('../../../../renderer/components/NotificationCenter', () => ({
-	NotificationCenter: () => null,
-}));
-
 function makeSession(overrides: Partial<Session> = {}): Session {
 	return {
 		id: 'session-1',

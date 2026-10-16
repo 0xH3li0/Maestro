@@ -22,6 +22,7 @@ import { SecretScreenConfirmHost } from './SecretScreenConfirmHost';
 import { DictationHost } from './DictationHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
+import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
@@ -323,6 +324,10 @@ export function AppShell({
 			    floating player, which the user can drag anywhere. See
 			    MediaPlaybackHost. */}
 			<MediaPlaybackHost theme={theme} />
+			{/* --- THROUGHPUT GAUGE (single, app-wide; Encore Feature) ---
+			    Floating tokens/sec dial. Renders nothing and listens to nothing
+			    while the throughputGauge flag is off. See ThroughputGaugeHost. */}
+			<ThroughputGaugeHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
 			<ContextTimelinePanel theme={theme} />

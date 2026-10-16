@@ -14,6 +14,7 @@ import { DEFAULT_DOWNLOAD_BASE } from '../../shared/local-models/download-base';
 import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
 import { DEFAULT_MAX_CONSULTATIONS_PER_TURN } from '../../shared/consultBudget';
+import { DEFAULT_THROUGHPUT_GAUGE_SETTINGS } from '../../shared/throughputGauge';
 
 import type {
 	MaestroSettings,
@@ -158,6 +159,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 		...DEFAULT_QUICK_CHAT_SETTINGS,
 		hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey],
 	},
+	// Throughput Gauge: scope, metric, layout, style, and rate window
+	throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
 	utilityAgentId: null,
 	utilityModelId: null,

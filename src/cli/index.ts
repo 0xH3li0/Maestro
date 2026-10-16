@@ -31,6 +31,15 @@ import {
 	snoozeWake,
 } from './commands/snooze';
 import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
+import {
+	throughputGaugeFlagChoices,
+	throughputGaugeHide,
+	throughputGaugeResetPeak,
+	throughputGaugeSet,
+	throughputGaugeShow,
+	throughputGaugeStatus,
+	throughputGaugeToggle,
+} from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -76,6 +85,7 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
+import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -256,7 +266,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsModels, statsQuery } from './commands/stats';
+import { stats, statsModels, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -875,6 +885,59 @@ program
 	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
 	.option('--json', 'Output as JSON')
 	.action(snoozeWake);
+
+// Throughput Gauge commands - the CLI half of the floating tokens/sec gauge (an
+// Encore Feature): show and hide, the gear's five settings, Reset peak, and a
+// status read. Every verb answers with the gauge's status after it ran.
+const throughputGauge = program
+	.command('throughput-gauge')
+	.description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
+
+const gaugeFlagHelp = (label: string, field: Parameters<typeof throughputGaugeFlagChoices>[0]) =>
+	`${label}: ${throughputGaugeFlagChoices(field).join(' | ')}`;
+
+throughputGauge
+	.command('show')
+	.description('Put the gauge on screen (does not move focus)')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeShow);
+
+throughputGauge
+	.command('hide')
+	.description('Take the gauge off screen')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeHide);
+
+throughputGauge
+	.command('toggle')
+	.description(
+		'Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)'
+	)
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeToggle);
+
+throughputGauge
+	.command('set')
+	.description('Change one or more gauge settings, like the gear on the gauge')
+	.option('--scope <scope>', gaugeFlagHelp('Whose output to count', 'scope'))
+	.option('--metric <metric>', gaugeFlagHelp('Which reading to show', 'metric'))
+	.option('--layout <layout>', gaugeFlagHelp('One gauge or all three', 'layout'))
+	.option('--style <style>', gaugeFlagHelp('How the reading is drawn', 'style'))
+	.option('--window <seconds>', gaugeFlagHelp('Rolling-average window in seconds', 'windowMs'))
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeSet);
+
+throughputGauge
+	.command('reset-peak')
+	.description('Start the peak mark again from the current reading')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeResetPeak);
+
+throughputGauge
+	.command('status')
+	.description('Read visibility, settings, live rates, and peaks')
+	.option('--json', 'Output as JSON (enabled, visible, settings, rates, peak, windowMs)')
+	.action(throughputGaugeStatus);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
@@ -1616,6 +1679,51 @@ program
 	.description('Diagnose CLI connectivity, version skew, and configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
+
+// Host commands - run Maestro's runtime detached (no desktop) and control that process
+const host = program
+	.command('host')
+	.description('Run the Maestro runtime detached, with no desktop app, and control it');
+
+host
+	.command('start')
+	.description('Start a detached host that serves this data directory over the bridge')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--port <port>', 'Port to listen on (default: any free port)')
+	.option(
+		'--foreground',
+		'Serve in this process instead of detaching (what the detached child runs)'
+	)
+	.option(
+		'--stop-grace <seconds>',
+		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStart(options, cliVersion));
+
+host
+	.command('status')
+	.description('Report the host: pid, uptime, lock holder, Cue state, and work in flight')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStatus(options));
+
+host
+	.command('stop')
+	.description(
+		'Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)'
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option(
+		'--wait [seconds]',
+		'Wait for work in flight to finish (default 300s), then stop; never forces'
+	)
+	.option('--force', 'Stop even with work in flight; a run records how it ended first')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStop(options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -2745,6 +2853,10 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option(
+		'--skip-private-windows <on|off>',
+		'Never record private / incognito browser windows (default on)'
+	)
 	.option('--digests <on|off>', 'Write 15-minute digests (off by default)')
 	.option(
 		'--digest-source <local|agent>',
@@ -4483,6 +4595,16 @@ statsCommand
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full model usage record as JSON')
 	.action((_options: unknown, command: Command) => statsModels(command.optsWithGlobals()));
+
+program
+	.command('stats-tokens')
+	.description(
+		'Show token usage, cost, and tokens per second (average and peak) per provider and model'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
+	.option('--json', 'Output the full token usage object as JSON')
+	.action(statsTokens);
 
 program
 	.command('stats-query <sql>')

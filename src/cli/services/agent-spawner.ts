@@ -169,6 +169,7 @@ type SpawnOverrides = Pick<
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
 	| 'onProgress'
+	| 'onProcessStarted'
 	| 'maestroPMaxWaitSeconds'
 >;
 
@@ -1078,6 +1079,7 @@ async function spawnClaudeAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onLine: processLine,
 			onOversizedLine: warnOversizedLineBuffer,
@@ -1411,6 +1413,7 @@ async function spawnJsonLineAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onEvent: (event) => {
 				if (stopped || overrides.signal?.aborted) {
@@ -1562,6 +1565,8 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
+	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
@@ -1710,6 +1715,7 @@ async function spawnAgentOnce(
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
 		onProgress: options?.onProgress,
+		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,

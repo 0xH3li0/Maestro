@@ -39,8 +39,9 @@ const LOG_CONTEXT = '[TokenUsageCache]';
  * v5 counts Claude usage once per API response rather than once per JSONL line
  * (each content block repeats its response's usage), the same kind of fix.
  * v6 prices a session's subagent transcripts into it.
+ * v7 carries per-call token speed buckets (`speed`).
  */
-export const TOKEN_USAGE_CACHE_VERSION = 6;
+export const TOKEN_USAGE_CACHE_VERSION = 7;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

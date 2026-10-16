@@ -41,7 +41,12 @@ import {
 	ruleIdFor,
 	type ComputerHistoryConfigPatch,
 } from '../../shared/computer-history/config';
-import { builtInBlockedApps, observedPlatformFor } from '../../shared/computer-history/exclusions';
+import {
+	builtInBlockedApps,
+	builtInExclusions,
+	observedPlatformFor,
+} from '../../shared/computer-history/exclusions';
+import type { BuiltInExclusionView } from '../../shared/computer-history/exclusions';
 import {
 	appRuleMatches,
 	appRuleValues,
@@ -130,8 +135,10 @@ export interface ClearResult {
 
 export interface RulesListing {
 	rules: CaptureRule[];
-	/** Always-on exclusions for this platform (not editable). */
+	/** Always-on blocked app ids and names for this platform (not editable). */
 	builtIn: string[];
+	/** The same exclusions as named apps, for display. */
+	builtInApps: BuiltInExclusionView[];
 }
 
 const ROLLOVER_CHECK_MS = 15_000;
@@ -300,7 +307,7 @@ export class ComputerHistoryService {
 			if (waiting) {
 				this.deps.log?.(
 					'warn',
-					'maestro-observer still reports Accessibility as denied after restarts; not retrying'
+					'maestro-computer-history still reports Accessibility as denied after restarts; not retrying'
 				);
 			}
 			if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
@@ -319,7 +326,10 @@ export class ComputerHistoryService {
 		if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
 		this.accessRecheckTimer = undefined;
 		this.accessRestarts += 1;
-		this.deps.log?.('info', 'Accessibility was granted; restarting maestro-observer to pick it up');
+		this.deps.log?.(
+			'info',
+			'Accessibility was granted; restarting maestro-computer-history to pick it up'
+		);
 		this.helperStatus = null;
 		this.supervisor.restart();
 		this.notify(true);
@@ -350,7 +360,7 @@ export class ComputerHistoryService {
 			return false;
 		}
 		if (event.kind === 'helper.error') {
-			this.deps.log?.('warn', `maestro-observer: ${event.text ?? ''}`);
+			this.deps.log?.('warn', `maestro-computer-history: ${event.text ?? ''}`);
 			return false;
 		}
 		this.noteSeenApp(event.app);
@@ -364,6 +374,7 @@ export class ComputerHistoryService {
 				rules: config.rules,
 				appMode: config.appMode,
 				blockPids: this.blockPids(),
+				skipPrivateWindows: config.skipPrivateWindows,
 			})
 		) {
 			this.eventsDropped += 1;
@@ -456,7 +467,11 @@ export class ComputerHistoryService {
 		const before = this.getConfig();
 		const next = applyConfigPatch(before, patch);
 		await this.saveConfig(next);
-		if (next.snapshots !== before.snapshots || next.appMode !== before.appMode) {
+		if (
+			next.snapshots !== before.snapshots ||
+			next.appMode !== before.appMode ||
+			next.skipPrivateWindows !== before.skipPrivateWindows
+		) {
 			this.configureHelper();
 		}
 		if (
@@ -550,7 +565,11 @@ export class ComputerHistoryService {
 	// ------------------------------------------------------------------
 
 	listRules(): RulesListing {
-		return { rules: [...this.getConfig().rules], builtIn: builtInBlockedApps(this.platform) };
+		return {
+			rules: [...this.getConfig().rules],
+			builtIn: builtInBlockedApps(this.platform),
+			builtInApps: builtInExclusions(this.platform),
+		};
 	}
 
 	/**
@@ -827,6 +846,7 @@ export class ComputerHistoryService {
 				.filter((r) => r.match === 'domain' && r.action === 'ignore')
 				.map((r) => r.value),
 			...(config.appMode === 'include' ? { allowApps: appRuleValues(config.rules, 'record') } : {}),
+			skipPrivateWindows: config.skipPrivateWindows,
 			snapshots: config.snapshots,
 			maxTextBytes: MAX_TEXT_BYTES,
 			maxSnapshotBytes: MAX_SNAPSHOT_BYTES,

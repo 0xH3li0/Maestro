@@ -114,6 +114,11 @@ const VIEW_MENU_COMMANDS: MenuEntry[] = [
 	{ label: 'Switch Agent...', shortcutId: 'agentSwitcher' },
 	'separator',
 	{ label: 'Usage Dashboard', shortcutId: 'usageDashboard', encoreFlag: 'usageStats' },
+	{
+		label: 'Throughput Gauge',
+		shortcutId: 'toggleThroughputGauge',
+		encoreFlag: 'throughputGauge',
+	},
 	{ label: 'System Log Viewer', shortcutId: 'systemLogs' },
 	{ label: 'Process Monitor', shortcutId: 'processMonitor' },
 	'separator',

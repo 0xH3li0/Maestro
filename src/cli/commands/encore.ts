@@ -32,6 +32,7 @@ const FEATURES: Record<string, string> = {
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun (macOS)',
 	aCappella: 'A Cappella (Voice)',
+	throughputGauge: 'Throughput Gauge',
 };
 
 /** Every feature id `enable` accepts on some platform, in the order `list` prints them. */
@@ -65,6 +66,11 @@ const ALIASES: Record<string, string> = {
 	acappella: 'aCappella',
 	voice: 'aCappella',
 	'voice-mode': 'aCappella',
+	'throughput-gauge': 'throughputGauge',
+	throughputgauge: 'throughputGauge',
+	throughput: 'throughputGauge',
+	gauge: 'throughputGauge',
+	tps: 'throughputGauge',
 };
 
 interface EncoreOptions {

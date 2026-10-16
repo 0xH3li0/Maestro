@@ -74,6 +74,7 @@ beforeEach(async () => {
 		historyPersistenceFailed: false,
 	});
 	firstWindow.useNotificationStore.getState().setOsNotifications(false);
+	firstWindow.useNotificationStore.getState().setHistoryEnabled(true);
 	cleanup.push(firstWindow.startNotificationHistorySync());
 	await firstWindow.flushNotificationHistoryWrites();
 });
@@ -107,6 +108,7 @@ describe('authoritative notification history across windows', () => {
 	it('retains simultaneous completions, read state and clear without stale resurrection', async () => {
 		vi.resetModules();
 		const secondWindow = await import('../../../renderer/stores/notificationStore');
+		secondWindow.useNotificationStore.getState().setHistoryEnabled(true);
 		cleanup.push(secondWindow.startNotificationHistorySync());
 		await secondWindow.flushNotificationHistoryWrites();
 		firstWindow.notifyToast({ title: 'Window A', message: '', historyOnly: true });

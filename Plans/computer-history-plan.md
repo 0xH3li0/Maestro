@@ -13,7 +13,7 @@ Target branch: `rc` (the plugin system exists only there). Work branch:
 | #   | Decision                                                                                                                                                                                                                                                                                                                                |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | First-party plugin `com.maestro.computer-history`, Encore flag `computerHistory`, default off. Host code, not a sandboxed community plugin: the sandbox has no path to OS permissions or native code.                                                                                                                                   |
-| D2  | One Rust helper binary, `maestro-observer`, with three platform adapters behind one event schema: macOS AX, Windows UI Automation, Linux AT-SPI2. All three platforms ship together. Parity is required.                                                                                                                                |
+| D2  | One Rust helper binary, `maestro-computer-history`, with three platform adapters behind one event schema: macOS AX, Windows UI Automation, Linux AT-SPI2. All three platforms ship together. Parity is required.                                                                                                                        |
 | D3  | No keystroke logging. Typed text comes from the field's committed value through the accessibility API (value-changed events, debounced, plus focus-out). No CGEventTap, no low-level keyboard hook, no Input Monitoring permission. A password typed into a remote-desktop viewer is never captured because the viewer exposes no text. |
 | D4  | Store at `<userData>/computer-history/`. 15-minute UTC segments (:00/:15/:30/:45), an `index.jsonl` manifest, and a `SCHEMA.md` the app writes on start.                                                                                                                                                                                |
 | D5  | System-prompt injection through a generic `systemPromptSection` on `FirstPartyPluginDefinition`. One shared assembler for desktop, CLI, and main-process spawns. Community plugins can NOT inject system-prompt text (every agent would carry it; prompt-injection surface).                                                            |
@@ -32,7 +32,7 @@ Target branch: `rc` (the plugin system exists only there). Work branch:
 
 ```mermaid
 flowchart LR
-  subgraph helper["maestro-observer (Rust)"]
+  subgraph helper["maestro-computer-history (Rust)"]
     M[macos: AX] --> N
     W[windows: UIA] --> N
     L[linux: AT-SPI2] --> N
@@ -46,19 +46,19 @@ flowchart LR
   SP --> A["every Maestro-spawned agent"]
 ```
 
-| Piece                                        | Location                                                                                            |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Rust crate                                   | `native/maestro-observer/`                                                                          |
-| Helper build script                          | `scripts/build-maestro-observer.mjs` -> `dist/native/<platform>-<arch>/maestro-observer[.exe]`      |
-| Shared types, paths, reader                  | `src/shared/computer-history/`                                                                      |
-| Secret redaction (canonical)                 | `src/shared/redactSecrets.ts` (agent-run/redact.ts imports it)                                      |
-| Main service + supervisor                    | `src/main/computer-history/`                                                                        |
-| First-party definition                       | `src/shared/plugins/first-party.ts` (`COMPUTER_HISTORY_FIRST_PARTY_PLUGIN`)                         |
-| Shared system-prompt assembler               | `src/shared/maestroSystemPrompt.ts`                                                                 |
-| System-prompt delivery (flag / file / embed) | `src/main/utils/system-prompt-delivery.ts`                                                          |
-| Main-process system-prompt builder           | `src/main/utils/maestro-system-prompt.ts`                                                           |
-| Prompts                                      | `src/prompts/computer-history-system.md` (section), `src/prompts/_computer-history.md` (full guide) |
-| CLI                                          | `src/cli/commands/computer-history.ts`                                                              |
+| Piece                                        | Location                                                                                                       |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Rust crate                                   | `native/maestro-computer-history/`                                                                             |
+| Helper build script                          | `scripts/build-maestro-computer-history.mjs` -> `dist/native/<platform>-<arch>/maestro-computer-history[.exe]` |
+| Shared types, paths, reader                  | `src/shared/computer-history/`                                                                                 |
+| Secret redaction (canonical)                 | `src/shared/redactSecrets.ts` (agent-run/redact.ts imports it)                                                 |
+| Main service + supervisor                    | `src/main/computer-history/`                                                                                   |
+| First-party definition                       | `src/shared/plugins/first-party.ts` (`COMPUTER_HISTORY_FIRST_PARTY_PLUGIN`)                                    |
+| Shared system-prompt assembler               | `src/shared/maestroSystemPrompt.ts`                                                                            |
+| System-prompt delivery (flag / file / embed) | `src/main/utils/system-prompt-delivery.ts`                                                                     |
+| Main-process system-prompt builder           | `src/main/utils/maestro-system-prompt.ts`                                                                      |
+| Prompts                                      | `src/prompts/computer-history-system.md` (section), `src/prompts/_computer-history.md` (full guide)            |
+| CLI                                          | `src/cli/commands/computer-history.ts`                                                                         |
 
 ## Helper protocol (contract between Rust and TypeScript)
 
@@ -68,7 +68,7 @@ The helper is a long-lived child of the Electron main process.
 - stdin: NDJSON commands, one per line.
 - stderr: free-form diagnostics; main logs it, never parses it.
 - The helper MUST exit within 1 s when stdin reaches EOF (the parent died).
-- `--version` prints `maestro-observer <semver>` and exits.
+- `--version` prints `maestro-computer-history <semver>` and exits.
 - `--probe` prints one `helper.status` line and exits (no observation). Used by `status` checks.
 
 ### ObservedEvent (protocol v1)

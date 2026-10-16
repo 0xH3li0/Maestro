@@ -3,8 +3,16 @@ import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import { autoTurnReport } from '../../../shared/autoTurn';
+import { isAgentBusy } from '../../../main/utils/agent-busy';
+import { captureException } from '../../../main/utils/sentry';
+
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+import type { SpawnAgentOptions } from '../../../cli/services/agent-spawner';
 import type { SessionInfo } from '../../../shared/types';
-import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
+import {
+	createPluginHeadlessAgentRunner,
+	type PluginHeadlessRunnerDeps,
+} from '../../../main/plugins/plugin-headless-agent-runner';
 
 const agent = {
 	id: 'agent-a',
@@ -714,6 +722,40 @@ describe('plugin headless agent runner', () => {
 			);
 		});
 
+		it('records Auto routing and relay origin for the same provider session', async () => {
+			const recordRelayOrigin = vi.fn();
+			const turn = { model: 'haiku', effort: 'low' };
+			const { run, noteAutoSessionLaunch } = harness(turn, { recordRelayOrigin });
+
+			const reply = await run('agent-a', 'rename the helper', undefined, undefined, 'relay');
+
+			expect(reply.success).toBe(true);
+			expect(noteAutoSessionLaunch).toHaveBeenCalledWith(
+				'claude-code',
+				'sess-new',
+				expect.objectContaining(turn)
+			);
+			expect(recordRelayOrigin).toHaveBeenCalledWith(autoAgent, 'sess-new');
+		});
+
+		it('keeps relay origin if recording the Auto launch throws', async () => {
+			const recordRelayOrigin = vi.fn();
+			const { run } = harness(
+				{ model: 'haiku' },
+				{
+					recordRelayOrigin,
+					noteAutoSessionLaunch: () => {
+						throw new Error('Auto launch was not recorded');
+					},
+				}
+			);
+
+			await expect(
+				run('agent-a', 'rename the helper', undefined, undefined, 'relay')
+			).rejects.toThrow('Auto launch was not recorded');
+			expect(recordRelayOrigin).toHaveBeenCalledWith(autoAgent, 'sess-new');
+		});
+
 		it('fails the send by name, and spawns nothing, when the tier target cannot be used', async () => {
 			const { run, spawn, noteAutoSessionLaunch } = harness({
 				refusal: {
@@ -882,3 +924,261 @@ describe('plugin headless agent runner', () => {
 		});
 	});
 });
+
+describe('headless activity is live process evidence', () => {
+	it('counts parallel Relay turns independently without touching desktop tabs', async () => {
+		const liveDesktop = new Set<string>();
+		const probe = { get: (id: string) => (liveDesktop.has(id) ? {} : undefined) };
+		const target = { ...agent, activeTabId: 'desktop', aiTabs: [{ id: 'desktop' }] };
+		const runs: Array<{
+			options: SpawnAgentOptions & { onProcessStarted?: (pid: number | undefined) => void };
+			finish: (value: { success: boolean; response: string }) => void;
+		}> = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => target as SessionInfo,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn: async (_type, _cwd, _prompt, _session, options) =>
+				new Promise((finish) => runs.push({ options: options!, finish })),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(isAgentBusy(target, probe)).toBe(false);
+		const first = run(agent.id, 'one', undefined, undefined, 'relay');
+		const second = run(agent.id, 'two', undefined, undefined, 'relay');
+		await vi.waitFor(() => expect(runs).toHaveLength(2));
+		// Dispatch/preparation/queue presence alone is not evidence of a process.
+		expect(isAgentBusy(target, probe)).toBe(false);
+		try {
+			runs[0].options.onProcessStarted?.(101);
+			runs[0].options.onProcessStarted?.(101); // duplicate start
+			runs[1].options.onProcessStarted?.(102);
+			expect(isAgentBusy(target, probe)).toBe(true);
+			expect(isAgentBusy({ id: 'other-agent' }, probe)).toBe(false);
+			runs[0].finish({ success: true, response: 'done' });
+			await first;
+			expect(isAgentBusy(target, probe)).toBe(true);
+			liveDesktop.add(`${agent.id}-ai-desktop`);
+			runs[1].finish({ success: true, response: 'done' });
+			await second;
+			expect(isAgentBusy(target, probe)).toBe(true);
+			liveDesktop.clear();
+			expect(isAgentBusy(target, probe)).toBe(false);
+			runs[0].options.onProcessStarted?.(101); // late start cannot revive it
+			expect(isAgentBusy(target, probe)).toBe(false);
+		} finally {
+			for (const r of runs) r.finish({ success: true, response: 'cleanup' });
+			await Promise.all([first, second]);
+		}
+	});
+});
+
+describe('headless lifecycle terminal paths', () => {
+	it.each(['success', 'error', 'timeout', 'cancel', 'plugin-stop', 'throw'] as const)(
+		'releases only its own process on %s and ignores late starts',
+		async (outcome) => {
+			const controller = new AbortController();
+			const recordRelayOrigin = vi.fn();
+			let started!: (pid: number | undefined) => void;
+			let end!: () => void;
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				recordRelayOrigin,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => false,
+				spawn: async (_type, _cwd, _prompt, _session, options) => {
+					started = (
+						options as SpawnAgentOptions & { onProcessStarted: (pid: number | undefined) => void }
+					).onProcessStarted;
+					started?.(301);
+					await new Promise<void>((resolve) => {
+						end = resolve;
+					});
+					if (outcome === 'throw') throw new Error('spawn failure');
+					return outcome === 'success'
+						? { success: true, response: 'done', agentSessionId: 'relay-conversation' }
+						: { success: false, error: outcome, agentSessionId: 'relay-conversation' };
+				},
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const pending = run(agent.id, 'hello', undefined, controller.signal, 'relay');
+			await vi.waitFor(() => expect(end).toBeTypeOf('function'));
+			try {
+				expect(isAgentBusy(agent, undefined)).toBe(true);
+				if (outcome === 'cancel' || outcome === 'plugin-stop') {
+					controller.abort();
+					expect(isAgentBusy(agent, undefined)).toBe(true);
+				}
+				end();
+				if (outcome === 'throw') await expect(pending).rejects.toThrow('spawn failure');
+				else {
+					await pending;
+					expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'relay-conversation');
+				}
+				expect(isAgentBusy(agent, undefined)).toBe(false);
+				started?.(301);
+				expect(isAgentBusy(agent, undefined)).toBe(false);
+			} finally {
+				end();
+				await pending.catch(() => {});
+			}
+		}
+	);
+});
+
+describe('cancelled preparation', () => {
+	it('ignores its first delayed start after cancellation', async () => {
+		const controller = new AbortController();
+		const runs: Array<{
+			options: SpawnAgentOptions;
+			finish: (value: { success: boolean; response: string }) => void;
+		}> = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn: async (_type, _cwd, _prompt, _session, options) =>
+				new Promise((finish) => runs.push({ options: options!, finish })),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const pending = run(agent.id, 'cancelled', undefined, controller.signal, 'relay');
+		await vi.waitFor(() => expect(runs).toHaveLength(1));
+		controller.abort();
+		try {
+			runs[0].options.onProcessStarted?.(401);
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+		} finally {
+			runs[0].finish({ success: true, response: 'late' });
+			await pending;
+		}
+	});
+});
+
+it('retains known Relay provenance when cancelled before provider spawn', async () => {
+	const controller = new AbortController();
+	const recordRelayOrigin = vi.fn();
+	const spawn = vi.fn();
+	const run = createPluginHeadlessAgentRunner({
+		getAgent: () => agent,
+		detectAgent: async () => {
+			controller.abort();
+			return { available: true };
+		},
+		hasPluginTools: () => false,
+		spawn,
+		recordRelayOrigin,
+		prepareSystemPrompt: async () => undefined,
+		issueRunToken: vi.fn(),
+		revokeRunToken: vi.fn(),
+		cliScriptPath: () => '/cli.js',
+		audit: vi.fn(),
+	});
+	expect(
+		await run(agent.id, 'resume', 'known-conversation', controller.signal, 'relay')
+	).toMatchObject({ success: false });
+	expect(spawn).not.toHaveBeenCalled();
+	expect(isAgentBusy(agent, undefined)).toBe(false);
+	expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'known-conversation');
+});
+
+it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
+	'reports the original provenance exception without replacing %s or delaying security cleanup',
+	async (outcome) => {
+		const provenanceError = new Error('Origin store write failed');
+		const providerError = new Error('Provider failed');
+		const controller = new AbortController();
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const issueRunToken = vi.fn((id: string, ttl: number) => identity.issue(id, ttl));
+		let proofFile: string | undefined;
+		let finishReporting!: () => void;
+		const reporter = vi.mocked(captureException);
+		reporter.mockReset().mockReturnValueOnce(
+			new Promise<void>((resolve) => {
+				finishReporting = resolve;
+			})
+		);
+		const recordRelayOrigin = vi.fn(() => {
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+			throw provenanceError;
+		});
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(
+			async (_type, _cwd, _prompt, _session, options) => {
+				proofFile = options!.pluginRunProofFile;
+				options!.onProcessStarted?.(501);
+				expect(isAgentBusy(agent, undefined)).toBe(true);
+				const token = fs.readFileSync(proofFile!, 'utf8');
+				expect(identity.resolve(token)).toEqual({ callerAgentId: agent.id });
+				if (outcome === 'throw') throw providerError;
+				return outcome === 'success'
+					? { success: true, response: 'answer', agentSessionId: 'conversation' }
+					: { success: false, error: 'provider timeout', agentSessionId: 'conversation' };
+			}
+		);
+		const removeProof = vi.spyOn(runIdentity, 'removePluginRunProofFile');
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => {
+				if (outcome === 'cancel-before-spawn') controller.abort();
+				return { available: true };
+			},
+			hasPluginTools: () => true,
+			spawn,
+			recordRelayOrigin,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		try {
+			const pending = run(agent.id, 'hello', 'conversation', controller.signal, 'relay');
+			if (outcome === 'throw') await expect(pending).rejects.toBe(providerError);
+			else if (outcome === 'cancel-before-spawn') {
+				await expect(pending).resolves.toEqual({
+					success: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run timed out or was cancelled',
+				});
+				expect(spawn).not.toHaveBeenCalled();
+			} else {
+				await expect(pending).resolves.toEqual({
+					success: outcome === 'success',
+					response: outcome === 'success' ? 'answer' : null,
+					sessionId: 'conversation',
+					usageStats: undefined,
+					...(outcome === 'error' ? { error: 'provider timeout' } : {}),
+				});
+			}
+			// Reporting is still pending: it must not hold the turn or its authority open.
+			expect(isAgentBusy(agent, undefined)).toBe(false);
+			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
+				callerAgentId: null,
+			});
+			expect(removeProof).toHaveBeenCalledOnce();
+			proofFile = removeProof.mock.calls[0][0];
+			expect(fs.existsSync(proofFile)).toBe(false);
+			expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'conversation');
+			expect(reporter).toHaveBeenCalledExactlyOnceWith(provenanceError, {
+				operation: 'plugin-headless.recordRelayOrigin',
+			});
+			expect(reporter.mock.calls[0][0]).toBe(provenanceError);
+		} finally {
+			finishReporting();
+			reporter.mockReset();
+			removeProof.mockRestore();
+			if (proofFile && fs.existsSync(proofFile)) runIdentity.removePluginRunProofFile(proofFile);
+		}
+	}
+);

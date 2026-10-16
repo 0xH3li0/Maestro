@@ -1,5 +1,5 @@
 /**
- * Computer History - supervisor for the `maestro-observer` helper.
+ * Computer History - supervisor for the `maestro-computer-history` helper.
  *
  * The helper is a long-lived child of the main process (never detached, so it
  * dies with the app; it also exits within 1 s of stdin EOF). Argv is FIXED:
@@ -35,7 +35,7 @@ const MAX_STDERR_LINES = 50;
 /** Snapshots are capped at 32 KB of text; JSON escaping can roughly double it. */
 export const DEFAULT_MAX_LINE_BYTES = 256 * 1024;
 
-export const OBSERVER_BINARY_BASENAME = 'maestro-observer';
+export const OBSERVER_BINARY_BASENAME = 'maestro-computer-history';
 
 export type ObserverChildSpawner = (
 	command: string,
@@ -95,7 +95,7 @@ export function observerBinaryCandidates(opts: {
 	// dist/main/computer-history/*.js -> dist/native/<platform>-<arch>/
 	out.push(path.resolve(opts.moduleDir, '..', '..', 'native', dir, name));
 	out.push(path.resolve(opts.cwd, 'dist', 'native', dir, name));
-	out.push(path.resolve(opts.cwd, 'native', 'maestro-observer', 'target', 'release', name));
+	out.push(path.resolve(opts.cwd, 'native', 'maestro-computer-history', 'target', 'release', name));
 	return out;
 }
 
@@ -213,7 +213,7 @@ export class ObserverSupervisor {
 		const binary = this.deps.resolveBinary();
 		this.binaryPath = binary;
 		if (!binary) {
-			this.lastError = 'maestro-observer is not installed for this platform';
+			this.lastError = 'maestro-computer-history is not installed for this platform';
 			this.setState('binary-missing');
 			return;
 		}
@@ -262,7 +262,7 @@ export class ObserverSupervisor {
 			}
 			if (this.startedAt && Date.now() - this.startedAt >= STABLE_RUN_MS) this.restarts = 0;
 			this.lastError = signal ? `killed by signal ${signal}` : `exited with code ${code ?? 'null'}`;
-			this.deps.log?.('warn', `maestro-observer ${this.lastError}`);
+			this.deps.log?.('warn', `maestro-computer-history ${this.lastError}`);
 			this.scheduleRestart();
 		});
 
@@ -277,7 +277,10 @@ export class ObserverSupervisor {
 		this.restarts += 1;
 		if (this.restarts > MAX_RESTARTS) {
 			this.setState('failed');
-			this.deps.log?.('error', `maestro-observer failed after ${MAX_RESTARTS} restarts; giving up`);
+			this.deps.log?.(
+				'error',
+				`maestro-computer-history failed after ${MAX_RESTARTS} restarts; giving up`
+			);
 			return;
 		}
 		const delay = Math.min(BACKOFF_BASE_MS * 2 ** (this.restarts - 1), BACKOFF_CAP_MS);

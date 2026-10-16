@@ -9,6 +9,7 @@ import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { notifyToast, useNotificationStore } from '../../../renderer/stores/notificationStore';
+import { NOTIFICATION_CENTER_DISABLED_ERROR } from '../../../shared/notificationInbox';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: vi.fn(() => false) }));
 
@@ -27,7 +28,10 @@ describe('notification inbox operations', () => {
 		delete (window.maestro.notification as Partial<typeof window.maestro.notification>)
 			.navigateToSource;
 		useSessionStore.setState(useSessionStore.getInitialState(), true);
-		useSettingsStore.setState({ notificationCenterDetails: false });
+		useSettingsStore.setState({
+			notificationCenterDetails: false,
+			notificationCenterEnabled: true,
+		});
 		useNotificationStore.setState({ notificationCenterExpandedId: null });
 		useNotificationStore.setState({
 			history: [],
@@ -37,6 +41,24 @@ describe('notification inbox operations', () => {
 		});
 		useNotificationStore.getState().setDefaultDuration(-1);
 		useNotificationStore.getState().setOsNotifications(false);
+		useNotificationStore.getState().setHistoryEnabled(true);
+	});
+
+	it('refuses inbox verbs while the Notification Center is off, but still clears toasts', async () => {
+		notifyToast({ title: 'Recorded', message: '' });
+		useSettingsStore.setState({ notificationCenterEnabled: false });
+
+		for (const action of ['list', 'open', 'read-all', 'clear'] as const) {
+			await expect(performNotificationInboxAction({ action })).resolves.toEqual({
+				success: false,
+				error: NOTIFICATION_CENTER_DISABLED_ERROR,
+			});
+		}
+		expect(useNotificationStore.getState().notificationCenterOpen).toBe(false);
+		expect(useNotificationStore.getState().history).toHaveLength(1);
+
+		const result = await performNotificationInboxAction({ action: 'dismiss' });
+		expect(result.success).toBe(true);
 	});
 	it('reads and clears the same history seen by the UI, and returns current unread counts', async () => {
 		const first = notifyToast({ title: 'First', message: '' });

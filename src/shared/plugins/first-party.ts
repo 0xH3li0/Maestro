@@ -44,7 +44,8 @@ export type FirstPartyEncoreFlag =
 	| 'webLogin'
 	| 'computerHistory'
 	| 'quickChat'
-	| 'maestroRun';
+	| 'maestroRun'
+	| 'throughputGauge';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -1185,7 +1186,7 @@ export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		{
 			capability: 'background:service',
 			reason:
-				'Run the supervised accessibility observer (maestro-observer) and the segment writer while the feature is on.',
+				'Run the supervised accessibility observer (maestro-computer-history) and the segment writer while the feature is on.',
 		},
 	],
 	// NOTE: the recorder reads the OS accessibility tree (macOS AX, Windows UI
@@ -1390,6 +1391,84 @@ export const MAESTRO_RUN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * Throughput Gauge runs entirely in the renderer: a listener counts the tokens
+ * in live agent output and usage events (`src/shared/throughputRate.ts`) and a
+ * floating dial draws the rate. It spawns nothing and fetches nothing; the
+ * permissions below are the honest disclosure of what it reads.
+ */
+export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN_ID = 'com.maestro.throughput-gauge';
+
+export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN_ID,
+	name: 'Throughput Gauge',
+	description:
+		'A floating gauge that shows how many tokens per second your agents are reading and writing, live.',
+	firstParty: true,
+	category: 'insights',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Throughput Gauge Encore flag and its display settings.',
+		},
+		{
+			capability: 'agents:read',
+			reason:
+				'Follow which agents are running and the token counts each turn reports, to measure tokens read.',
+		},
+		{
+			capability: 'transcripts:read',
+			reason:
+				'Estimate tokens written from agent output as it streams. The text is only counted; it is never stored or shown.',
+		},
+	],
+	settingsNamespace: 'throughputGauge',
+	encoreFlag: 'throughputGauge',
+	releaseDate: '2026-10-15',
+	// No supervised service: the listener and the 250ms publish timer exist only
+	// while the flag is on, and turning it off unmounts both.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'A small gauge that floats over the Main Window and shows how many tokens per second your agents are reading and writing, averaged over the last few seconds, with a mark at the peak. It pops up as soon as you turn this on. Drag it by its title strip, resize it from its corner, and close it with the X or with Escape while it has focus.',
+			'Scope (all agents or only the active one), metric (In, Out, or Combined), layout (one gauge or all three side by side), style (Dial, VU, LCD, or Sparkline), and the averaging window are all set from the gear on the gauge, or from the settings below.',
+		],
+		access: [
+			{
+				label: 'Show or hide the gauge',
+				shortcutId: 'toggleThroughputGauge',
+				commandPalette: 'Show Throughput Gauge',
+				menu: 'Throughput Gauge in the Left Bar hamburger menu',
+			},
+			{
+				label: 'Change scope, metric, layout, style, or window',
+				commandPalette: 'Throughput Gauge: Style',
+				menu: 'the gear on the gauge',
+			},
+			{
+				label: 'Start the peak mark again from the current reading',
+				commandPalette: 'Reset Throughput Gauge Peak',
+				menu: 'Reset peak, under the gear on the gauge',
+			},
+		],
+		agentCommands: [
+			{
+				label: 'Read the live rate, peak, and settings',
+				command: 'maestro-cli throughput-gauge status --json',
+			},
+			{ label: 'Show or hide the gauge', command: 'maestro-cli throughput-gauge show' },
+			{ label: 'Change the style', command: 'maestro-cli throughput-gauge set --style lcd' },
+		],
+		notes: [
+			'The live reading estimates tokens written from the text as it streams, then corrects itself when the provider reports the real counts at the end of each turn.',
+			'Tokens read count new input and cache writes. Cache reads are left out, because they re-read context the agent already sent.',
+			'Group chat moderators and participants do not move the gauge: their output stays in the main process, and only agent tabs, Auto Run, and synopsis turns are counted.',
+			'Turning this off removes the gauge and stops all capture. Nothing keeps listening in the background.',
+		],
+		docsSlug: 'throughput-gauge',
+	},
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -1408,6 +1487,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
+	THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -1433,4 +1513,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
+	throughputGauge: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 };

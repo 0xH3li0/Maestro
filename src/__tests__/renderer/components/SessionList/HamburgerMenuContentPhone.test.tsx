@@ -14,6 +14,7 @@ import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpo
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -41,6 +42,7 @@ afterEach(() => {
 describe('HamburgerMenuContent on a phone', () => {
 	it.each([false, true])('opens notification history without a header on phone=%s', (phone) => {
 		mockedUsePhoneLayout.mockReturnValue(phone);
+		useSettingsStore.setState({ notificationCenterEnabled: true });
 		useNotificationStore.getState().setNotificationCenterOpen(false);
 		const closeMenu = vi.fn();
 		renderMenu(closeMenu);
@@ -48,6 +50,13 @@ describe('HamburgerMenuContent on a phone', () => {
 		expect(useNotificationStore.getState().notificationCenterOpen).toBe(true);
 		expect(closeMenu).toHaveBeenCalledWith(false);
 		useNotificationStore.getState().setNotificationCenterOpen(false);
+		useSettingsStore.setState({ notificationCenterEnabled: false });
+	});
+
+	it('hides Notification Center while it is switched off', () => {
+		useSettingsStore.setState({ notificationCenterEnabled: false });
+		renderMenu();
+		expect(screen.queryByRole('button', { name: /Notification Center/ })).not.toBeInTheDocument();
 	});
 
 	it('offers the keyboard-only entries on desktop', () => {

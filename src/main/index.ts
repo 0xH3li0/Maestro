@@ -123,6 +123,12 @@ import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { localSystemOneAccess } from './utils/maestro-system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
+import { getSessionIdsBusyWithCli } from '../shared/cli-activity';
+import { isAgentBusy } from './utils/agent-busy';
+import {
+	getHeadlessAgentActivity,
+	onHeadlessAgentActivityChange,
+} from './utils/headless-agent-activity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
 import { noteAutoSessionLaunch, resolveAgentAutoTurn } from './local-models/auto-turn';
 import { generateTabName } from './ipc/handlers/tabNaming';
@@ -2273,6 +2279,7 @@ app
 		const pluginSettingsDeleteNamespace = (prefix: string): void =>
 			pluginSettingsStore.delete(prefix.replace(/\.$/, ''));
 		const pluginSessionsList = (): PluginSessionMetadata[] => {
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			const sessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
 			return sessions
 				.filter((s) => typeof s?.id === 'string')
@@ -2280,7 +2287,21 @@ app
 					id: s.id as string,
 					...(typeof s.name === 'string' ? { title: s.name } : {}),
 					...(typeof s.toolType === 'string' ? { agentId: s.toolType } : {}),
-					...(typeof s.status === 'string' ? { status: s.status } : {}),
+					status: isAgentBusy(
+						{
+							id: s.id as string,
+							activeTabId: s.activeTabId as string | undefined,
+							aiTabs: s.aiTabs as Array<{ id?: string }> | undefined,
+						},
+						processManager,
+						cliBusySessionIds
+					)
+						? 'busy'
+						: typeof s.state === 'string'
+							? s.state
+							: typeof s.status === 'string'
+								? s.status
+								: 'idle',
 					...(typeof s.createdAt === 'number' ? { createdAt: s.createdAt } : {}),
 					...(typeof s.updatedAt === 'number' ? { updatedAt: s.updatedAt } : {}),
 					...(typeof s.cwd === 'string' ? { projectPath: s.cwd } : {}),
@@ -2798,6 +2819,7 @@ app
 			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
+			recordRelayOrigin: markRelaySession,
 			// This builder runs in the main process here, so it asks the System One
 			// service directly instead of the WS bridge the CLI goes through, and it
 			// reads the agent list from the store instead of the sessions file.
@@ -2820,6 +2842,9 @@ app
 				),
 			resolveAutoTurn: resolveAgentAutoTurn,
 			noteAutoSessionLaunch,
+		});
+		onHeadlessAgentActivityChange(() => {
+			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
 		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({

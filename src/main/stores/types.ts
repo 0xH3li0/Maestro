@@ -13,6 +13,7 @@ import type { LocalModelAssignments } from '../../shared/local-models/tasks';
 import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
+import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -146,6 +147,9 @@ export interface MaestroSettings {
 	// Quick Chat (Encore Feature): its own system-wide hotkey, target agent, and
 	// ephemeral/persistent defaults. See src/shared/quickChat.ts.
 	quickChatSettings: QuickChatSettings;
+	// Throughput Gauge (Encore Feature): scope, metric, layout, style, and rate
+	// window. See src/shared/throughputGauge.ts.
+	throughputGaugeSettings: ThroughputGaugeSettings;
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;

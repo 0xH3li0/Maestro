@@ -22,6 +22,7 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	computerHistory: 'computerHistory',
 	toggleConcerto: 'concerto',
 	toggleCadenzas: 'concerto',
+	toggleThroughputGauge: 'throughputGauge',
 };
 
 type EncoreFlagsInput = Partial<EncoreFeatureFlags> | null | undefined;

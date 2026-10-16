@@ -8,6 +8,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { PerformanceMetrics } from '../../shared/performance-metrics';
 import type { StatsTimeRange } from '../../shared/stats-types';
+import { toLocalYmd } from '../../shared/localDay';
 
 export const LOG_CONTEXT = '[StatsDB]';
 
@@ -30,14 +31,9 @@ export { generateId, normalizePath } from '../../shared/maestro-lib/stats/utils'
  * Convert a Unix timestamp (ms) to a YYYY-MM-DD bucket using the local
  * timezone. Shared by every per-day rolled-up counter (shortcut usage,
  * multi-window usage) so the bucket boundary is identical across them.
+ * Re-exported from `src/shared/localDay.ts`, its canonical home.
  */
-export function toLocalYmd(timestamp: number): string {
-	const d = new Date(timestamp);
-	const yyyy = d.getFullYear();
-	const mm = String(d.getMonth() + 1).padStart(2, '0');
-	const dd = String(d.getDate()).padStart(2, '0');
-	return `${yyyy}-${mm}-${dd}`;
-}
+export { toLocalYmd } from '../../shared/localDay';
 
 /**
  * Convert a StatsTimeRange to its YYYY-MM-DD lower bound for the daily-bucket

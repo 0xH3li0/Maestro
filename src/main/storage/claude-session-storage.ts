@@ -49,6 +49,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
 import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
+import { computeClaudeTokenSpeed } from '../../shared/tokenSpeed';
 import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
@@ -206,6 +207,9 @@ function parseSessionContent(
 			cacheReadTokens: totalCacheReadTokens,
 			cacheCreationTokens: totalCacheCreationTokens,
 			byModel: claudeModelUsage(byModel),
+			// Timed per transcript: a subagent's first call must not be timed
+			// from the parent's last line.
+			speed: computeClaudeTokenSpeed([content, ...subagentContents]),
 			durationSeconds,
 		};
 	} catch (error) {

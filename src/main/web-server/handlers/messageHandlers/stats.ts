@@ -2,7 +2,7 @@
  * Stats domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
- * get_stats_aggregation, get_model_usage, stats_query, get_achievements,
+ * get_stats_aggregation, get_model_usage, get_token_usage, stats_query, get_achievements,
  * generate_director_notes_synopsis.
  */
 
@@ -10,6 +10,8 @@ import { getStatsDB } from '../../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../../stats/readonly-query';
 import { readModelUsage } from '../../../local-models/model-usage';
 import { isStatsTimeRange, STATS_TIME_RANGES } from '../../../../shared/stats-types';
+import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
+import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -107,6 +109,39 @@ export async function handleGetModelUsage(
 			error: error instanceof Error ? error.message : String(error),
 		});
 	}
+}
+
+/**
+ * Handle get_token_usage message - the Usage Dashboard's Tokens payload (totals,
+ * breakdowns, and per-call token speed) for a time range, read from the
+ * agents' transcripts by the same accessor the Tokens tab uses.
+ */
+export function handleGetTokenUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const range = (message.range as string) || 'week';
+	if (!isStatsTimeRange(range)) {
+		ctx.sendError(client, `Invalid range. Must be one of: ${STATS_TIME_RANGES.join(', ')}`);
+		return;
+	}
+
+	getTokenUsageAggregate(tokenUsageQueryForRange(range), message.force === true)
+		.then((data) => {
+			ctx.send(client, {
+				type: 'token_usage',
+				data,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(
+				client,
+				`Failed to get token usage: ${error instanceof Error ? error.message : String(error)}`
+			);
+		});
 }
 
 /**

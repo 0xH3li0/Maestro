@@ -64,6 +64,13 @@ export interface SearchableSetting {
 	 * user turns the feature on, so it has to stay findable.
 	 */
 	requiresEncore?: keyof EncoreFeatureFlags;
+	/**
+	 * The Plugins tile whose details pane renders this entry's anchor, when the
+	 * entry is that tile's own (it has no `requiresEncore`). A jump opens the
+	 * tile first: the anchor is not mounted while the grid shows, so without
+	 * this the jump would land on the grid and give up.
+	 */
+	encoreTile?: keyof EncoreFeatureFlags;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +94,17 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 /** The place inside its tab that holds a setting, or `undefined` for a setting on a plain tab. */
 export function settingSubTab(settingId: string): string | undefined {
 	return ALL_SEARCHABLE_SETTINGS.find((setting) => setting.id === settingId)?.subTab;
+}
+
+/**
+ * The Plugins tile a jump to `settingId` has to open, or undefined when the
+ * anchor is not inside one. Sub-settings live in their feature's tile, so
+ * `requiresEncore` names it; a tile's own entry names it with `encoreTile`.
+ */
+export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlags | undefined {
+	const entry = ALL_SEARCHABLE_SETTINGS.find((s) => s.id === settingId);
+	if (entry?.tab !== 'encore') return undefined;
+	return entry.encoreTile ?? entry.requiresEncore;
 }
 
 /**

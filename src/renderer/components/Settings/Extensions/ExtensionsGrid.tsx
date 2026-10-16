@@ -23,6 +23,7 @@ import {
 	Mic,
 	ScanEye,
 	KeyRound,
+	Gauge,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -67,6 +68,7 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	aCappella: Mic,
 	computerHistory: ScanEye,
 	maestroRun: KeyRound,
+	throughputGauge: Gauge,
 };
 
 const TRUST_META: Record<

@@ -945,6 +945,24 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it.each(['claude-code', 'codex'] as const)(
+			'reports the actual %s process only after launch',
+			async (type) => {
+				const onProcessStarted = vi.fn();
+				Object.assign(mockChild, { pid: 45123 });
+				try {
+					const pending = spawnAgent(type, '/project', 'prompt', undefined, { onProcessStarted });
+					expect(onProcessStarted).not.toHaveBeenCalled();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					expect(onProcessStarted).toHaveBeenCalledExactlyOnceWith(45123);
+					mockChild.emit('close', 0);
+					await pending;
+				} finally {
+					delete (mockChild as { pid?: number }).pid;
+				}
+			}
+		);
+
 		it.each([undefined, 'provider-session'])(
 			'injects Codex MCP config beside exec config (resume=%s)',
 			async (session) => {

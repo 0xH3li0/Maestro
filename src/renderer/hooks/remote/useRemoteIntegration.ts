@@ -32,8 +32,10 @@ import {
 import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
@@ -1477,6 +1479,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		defaultSaveToHistory,
 		defaultShowThinking,
 	]);
+
+	// Handle a remote Throughput Gauge verb (`maestro-cli throughput-gauge`). Main
+	// sends it to the primary window, which owns the live rates; the service
+	// calls the same store actions as the hotkey, palette, menu, and popover.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteThroughputGaugeCommand(
+			(request, responseChannel) => {
+				const reply = (result: ThroughputGaugeCommandResult) =>
+					window.maestro.process.sendRemoteThroughputGaugeCommandResponse(responseChannel, result);
+				runRemoteThroughputGaugeCommand(request).then(reply, (error: unknown) => {
+					// Expected failures (feature off, bad patch, disk refused the write)
+					// come back as a result; a rejection is a defect, so Sentry sees it.
+					logger.error('[useRemoteIntegration] Throughput Gauge command failed', undefined, error);
+					captureException(error, {
+						extra: { context: 'remoteThroughputGaugeCommand', action: request.action },
+					});
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
 
 	// Handle remote open file tab from web/CLI interface
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)

@@ -16,6 +16,7 @@
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
+import type { TokenSpeedBucket } from '../../shared/tokenSpeed';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
@@ -72,6 +73,12 @@ export interface AgentSessionInfo {
 	 * dashboard. Absent means "not computed", not "no models".
 	 */
 	byModel?: ModelTokenUsage[];
+	/**
+	 * Per-API-call throughput, bucketed per local hour and model. Only storages
+	 * whose transcripts time each call (claude, codex) populate it; absent means
+	 * "not measurable", which the dashboard reports rather than counting as zero.
+	 */
+	speed?: TokenSpeedBucket[];
 	durationSeconds: number;
 	origin?: AgentSessionOrigin;
 	sessionName?: string;

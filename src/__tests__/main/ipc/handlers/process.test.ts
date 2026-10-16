@@ -11,6 +11,7 @@
  * - runCommand: Execute a single command and capture output
  */
 
+import { trackHeadlessAgentActivity } from '../../../../main/utils/headless-agent-activity';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -463,6 +464,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:getHeadlessActivity',
 				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
@@ -475,6 +477,28 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('process:getHeadlessActivity', () => {
+		it('reads independent live run counts without creating a desktop process', async () => {
+			const query = handlers.get('process:getHeadlessActivity')!;
+			const first = trackHeadlessAgentActivity('relay-target');
+			const second = trackHeadlessAgentActivity('relay-target');
+			try {
+				const snapshot = await query({});
+				expect(snapshot.counts['relay-target']).toBe(2);
+				first();
+				first();
+				const next = await query({});
+				expect(next.counts['relay-target']).toBe(1);
+				expect(next.revision).toBeGreaterThan(snapshot.revision);
+				second();
+				expect((await query({})).counts['relay-target']).toBeUndefined();
+			} finally {
+				first();
+				second();
+			}
 		});
 	});
 

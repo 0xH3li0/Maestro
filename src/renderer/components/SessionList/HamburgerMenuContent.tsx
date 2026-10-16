@@ -22,12 +22,14 @@ import {
 	MessageCircle,
 	Sparkles,
 	Waypoints,
+	Gauge,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { openUrl } from '../../utils/openUrl';
@@ -56,6 +58,7 @@ export function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	// A phone has no keyboard and no room for a guided tour's anchored
@@ -146,24 +149,26 @@ export function HamburgerMenuContent({
 				</div>
 				<ShortcutHint theme={theme} keys={shortcuts.quickAction?.keys ?? []} />
 			</button>
-			<button
-				onClick={() => {
-					openUiSurface({ surface: 'notification-center' });
-					setMenuOpen(false);
-				}}
-				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-			>
-				<Bell className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Notification Center
+			{notificationCenterEnabled && (
+				<button
+					onClick={() => {
+						openUiSurface({ surface: 'notification-center' });
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Bell className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Notification Center
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Unread notifications and history
+						</div>
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						Unread notifications and history
-					</div>
-				</div>
-				<ShortcutHint keys={shortcuts.openNotificationCenter?.keys ?? []} theme={theme} />
-			</button>
+					<ShortcutHint keys={shortcuts.openNotificationCenter?.keys ?? []} theme={theme} />
+				</button>
+			)}
 			{startTour && !phone && (
 				<button
 					onClick={() => {
@@ -435,6 +440,28 @@ export function HamburgerMenuContent({
 					</div>
 					{shortcuts.toggleConcerto && (
 						<ShortcutHint theme={theme} keys={shortcuts.toggleConcerto?.keys ?? []} />
+					)}
+				</button>
+			)}
+			{encoreFeatures.throughputGauge && (
+				<button
+					onClick={() => {
+						useThroughputGaugeStore.getState().toggle();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Gauge className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Throughput Gauge
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Live tokens per second
+						</div>
+					</div>
+					{shortcuts.toggleThroughputGauge && (
+						<ShortcutHint theme={theme} keys={shortcuts.toggleThroughputGauge?.keys ?? []} />
 					)}
 				</button>
 			)}

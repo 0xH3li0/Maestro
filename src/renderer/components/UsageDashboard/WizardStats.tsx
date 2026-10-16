@@ -12,13 +12,13 @@
  * moving it to a different tab is a one-line change.
  */
 
-import { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { Wand2, Clock, FileText, ListChecks, MessagesSquare, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, WizardRun } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { MetricCard } from './MetricCard';
+import { useDashboardResource } from './useDashboardResource';
 
 interface WizardStatsProps {
 	/** Current time range for filtering */
@@ -43,28 +43,16 @@ interface DayBucket {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const NO_RUNS: WizardRun[] = [];
+
 export const WizardStats = memo(function WizardStats({ timeRange, theme }: WizardStatsProps) {
-	const [runs, setRuns] = useState<WizardRun[]>([]);
-	const [loading, setLoading] = useState(true);
+	const { data, loading } = useDashboardResource(
+		`wizard-runs:${timeRange}`,
+		() => window.maestro.stats.getWizardRuns(timeRange),
+		'fetchWizardStats'
+	);
+	const runs = data ?? NO_RUNS;
 	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
-
-	const fetchRuns = useCallback(async () => {
-		try {
-			setRuns(await window.maestro.stats.getWizardRuns(timeRange));
-		} catch (err) {
-			captureException(err, { extra: { operation: 'fetchWizardStats' } });
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	useEffect(() => {
-		fetchRuns();
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchRuns();
-		});
-		return () => unsubscribe();
-	}, [fetchRuns]);
 
 	const summary = useMemo(() => {
 		const productive = runs.filter((r) => r.documents > 0);

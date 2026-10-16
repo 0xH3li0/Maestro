@@ -13,6 +13,16 @@
 import type { Command } from 'commander';
 
 export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
+	// RC surfaces and the detached runtime host
+	'throughput-gauge show': ['maestro-cli throughput-gauge show'],
+	'throughput-gauge hide': ['maestro-cli throughput-gauge hide'],
+	'throughput-gauge toggle': ['maestro-cli throughput-gauge toggle'],
+	'throughput-gauge set': ['maestro-cli throughput-gauge set --metric out --style vu --window 10'],
+	'throughput-gauge reset-peak': ['maestro-cli throughput-gauge reset-peak'],
+	'throughput-gauge status': ['maestro-cli throughput-gauge status --json'],
+	'host start': ['maestro-cli host start --dev'],
+	'host status': ['maestro-cli host status --dev --json'],
+	'host stop': ['maestro-cli host stop --dev --wait'],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],
@@ -572,6 +582,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	],
 	'feedback subscribe': ['maestro-cli feedback subscribe 1234 --comment "Also seen on 1.4"'],
 	stats: ['maestro-cli stats --range month --json'],
+	'stats-tokens': ['maestro-cli stats-tokens --range week --json'],
 	'stats models': ['maestro-cli stats models --range week --json'],
 	'stats-query': [
 		'maestro-cli stats-query "SELECT agent_id, COUNT(*) FROM query_events WHERE start_time > ? GROUP BY agent_id" --param 1760000000000',

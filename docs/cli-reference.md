@@ -873,6 +873,87 @@ Bring a snoozed tab back right now (alias for "snooze wake")
 maestro-cli unsnooze <snooze-id>
 ```
 
+## `maestro-cli throughput-gauge`
+
+Show, hide, configure, or read the Throughput Gauge (tokens per second)
+
+## `maestro-cli throughput-gauge show`
+
+Put the gauge on screen (does not move focus)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+```bash
+maestro-cli throughput-gauge show
+```
+
+## `maestro-cli throughput-gauge hide`
+
+Take the gauge off screen
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+```bash
+maestro-cli throughput-gauge hide
+```
+
+## `maestro-cli throughput-gauge toggle`
+
+Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+```bash
+maestro-cli throughput-gauge toggle
+```
+
+## `maestro-cli throughput-gauge set`
+
+Change one or more gauge settings, like the gear on the gauge
+
+| Option               | Description                                              | Default |
+| -------------------- | -------------------------------------------------------- | ------- |
+| `--scope <scope>`    | Whose output to count: all \| active                     | -       |
+| `--metric <metric>`  | Which reading to show: combined \| in \| out             | -       |
+| `--layout <layout>`  | One gauge or all three: single \| all                    | -       |
+| `--style <style>`    | How the reading is drawn: dial \| vu \| lcd \| sparkline | -       |
+| `--window <seconds>` | Rolling-average window in seconds: 5 \| 10 \| 30 \| 60   | -       |
+| `--json`             | Output the gauge status as JSON                          | -       |
+
+```bash
+maestro-cli throughput-gauge set --metric out --style vu --window 10
+```
+
+## `maestro-cli throughput-gauge reset-peak`
+
+Start the peak mark again from the current reading
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+```bash
+maestro-cli throughput-gauge reset-peak
+```
+
+## `maestro-cli throughput-gauge status`
+
+Read visibility, settings, live rates, and peaks
+
+| Option   | Description                                                        | Default |
+| -------- | ------------------------------------------------------------------ | ------- |
+| `--json` | Output as JSON (enabled, visible, settings, rates, peak, windowMs) | -       |
+
+```bash
+maestro-cli throughput-gauge status --json
+```
+
 ## `maestro-cli session`
 
 Inspect open desktop tabs and their conversation history
@@ -1786,6 +1867,57 @@ Diagnose CLI connectivity, version skew, and configuration
 
 ```bash
 maestro-cli doctor --json
+```
+
+## `maestro-cli host`
+
+Run the Maestro runtime detached, with no desktop app, and control it
+
+## `maestro-cli host start`
+
+Start a detached host that serves this data directory over the bridge
+
+| Option                   | Description                                                                                        | Default |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ------- |
+| `--data-dir <path>`      | Maestro data directory (default: resolved like the desktop app)                                    | -       |
+| `--dev`                  | Use the development data directory                                                                 | -       |
+| `--port <port>`          | Port to listen on (default: any free port)                                                         | -       |
+| `--foreground`           | Serve in this process instead of detaching (what the detached child runs)                          | -       |
+| `--stop-grace <seconds>` | On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once) | -       |
+| `--json`                 | Output as JSON (for scripting)                                                                     | -       |
+
+```bash
+maestro-cli host start --dev
+```
+
+## `maestro-cli host status`
+
+Report the host: pid, uptime, lock holder, Cue state, and work in flight
+
+| Option              | Description                                                     | Default |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app) | -       |
+| `--dev`             | Use the development data directory                              | -       |
+| `--json`            | Output as JSON (for scripting)                                  | -       |
+
+```bash
+maestro-cli host status --dev --json
+```
+
+## `maestro-cli host stop`
+
+Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)
+
+| Option              | Description                                                               | Default |
+| ------------------- | ------------------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app)           | -       |
+| `--dev`             | Use the development data directory                                        | -       |
+| `--wait [seconds]`  | Wait for work in flight to finish (default 300s), then stop; never forces | -       |
+| `--force`           | Stop even with work in flight; a run records how it ended first           | -       |
+| `--json`            | Output as JSON (for scripting)                                            | -       |
+
+```bash
+maestro-cli host stop --dev --wait
 ```
 
 ## `maestro-cli completions <shell>`
@@ -2751,7 +2883,7 @@ maestro-cli encore list
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, aCappella)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, aCappella, throughputGauge)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2963,16 +3095,17 @@ maestro-cli computer-history enable-accessibility
 
 Show settings, or change them with the flags below
 
-| Option                           | Description                                                                                             | Default |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
-| `--retention-days <n>`           | Keep this many days (default 90)                                                                        | -       |
-| `--max-gb <n>`                   | Keep at most this many GB (default 25)                                                                  | -       |
-| `--snapshots <on\|off>`          | Record visible window text snapshots                                                                    | -       |
-| `--digests <on\|off>`            | Write 15-minute digests (off by default)                                                                | -       |
-| `--digest-source <local\|agent>` | Who writes digests: the model assigned to the history-digests task (models assign), or the digest agent | -       |
-| `--digest-agent <id>`            | Agent that writes digests; also sets the source to agent (empty string clears it)                       | -       |
-| `--digest-rollup <on\|off>`      | Also write 6-hour roll-ups from the 15-minute digests (default on)                                      | -       |
-| `--json`                         | Output as JSON (for scripting)                                                                          | -       |
+| Option                             | Description                                                                                             | Default |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--retention-days <n>`             | Keep this many days (default 90)                                                                        | -       |
+| `--max-gb <n>`                     | Keep at most this many GB (default 25)                                                                  | -       |
+| `--snapshots <on\|off>`            | Record visible window text snapshots                                                                    | -       |
+| `--skip-private-windows <on\|off>` | Never record private / incognito browser windows (default on)                                           | -       |
+| `--digests <on\|off>`              | Write 15-minute digests (off by default)                                                                | -       |
+| `--digest-source <local\|agent>`   | Who writes digests: the model assigned to the history-digests task (models assign), or the digest agent | -       |
+| `--digest-agent <id>`              | Agent that writes digests; also sets the source to agent (empty string clears it)                       | -       |
+| `--digest-rollup <on\|off>`        | Also write 6-hour roll-ups from the 15-minute digests (default on)                                      | -       |
+| `--json`                           | Output as JSON (for scripting)                                                                          | -       |
 
 ```bash
 maestro-cli computer-history config --retention-days 30 --digests on
@@ -5628,6 +5761,20 @@ Show what every model other than a provider's own did: sources, tasks, Run on ag
 
 ```bash
 maestro-cli stats models --range week --json
+```
+
+## `maestro-cli stats-tokens`
+
+Show token usage, cost, and tokens per second (average and peak) per provider and model
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
+| `--json`              | Output the full token usage object as JSON                       | -       |
+
+```bash
+maestro-cli stats-tokens --range week --json
 ```
 
 ## `maestro-cli stats-query <sql>`

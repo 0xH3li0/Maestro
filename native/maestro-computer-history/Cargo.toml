@@ -1,5 +1,5 @@
 [package]
-name = "maestro-observer"
+name = "maestro-computer-history"
 version = "0.1.0"
 edition = "2021"
 description = "Maestro Computer History accessibility observer (macOS AX, Windows UIA, Linux AT-SPI2)"

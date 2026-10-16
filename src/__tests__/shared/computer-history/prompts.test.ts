@@ -47,6 +47,16 @@ describe('Computer History prompts', () => {
 		expect(guide).toMatch(/never turn computer history on yourself/i);
 	});
 
+	it('frames history as a breadcrumb trail with known gaps, in both layers', () => {
+		const read = (file: string) => fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8');
+		expect(read('computer-history-system.md')).toMatch(/breadcrumb trail, not the full record/);
+		const guide = read('_computer-history.md');
+		expect(guide).toContain('## What it misses');
+		expect(guide).toContain('## Use it as a breadcrumb trail');
+		expect(guide).toMatch(/never as "did not happen"/);
+		expect(guide).toContain('{{REF:_desktop-instrumentation}}');
+	});
+
 	it('the on-demand includes route an agent to it, gated and never self-enabled', () => {
 		const read = (file: string) => fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8');
 		const cli = read('_maestro-cli.md');

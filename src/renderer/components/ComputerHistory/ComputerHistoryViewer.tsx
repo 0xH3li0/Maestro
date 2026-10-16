@@ -430,7 +430,14 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 						</div>
 					)}
 
-					<div ref={bodyRef} className="flex-1 min-h-0 flex">
+					{/* Panes dim descriptions with `opacity-70` (the Settings scale), which
+					    only reads when the color it fades is the theme's, not the UA black. */}
+					<div
+						ref={bodyRef}
+						className="flex-1 min-h-0 flex"
+						style={{ color: theme.colors.textMain }}
+						data-testid="computer-history-body"
+					>
 						{tab === 'timeline' && (
 							<>
 								{showSidebar && (

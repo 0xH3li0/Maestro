@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Archive, Ban, Eye, ScrollText, Shield, Trash2 } from 'lucide-react';
+import { Archive, Ban, Eye, ScrollText, Shield, Trash2 } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
@@ -46,6 +46,87 @@ const HOUR_MS = 60 * 60_000;
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+type BannerTone = 'ok' | 'warn' | 'error' | 'idle';
+
+const STATE_TONES: Record<RecorderState, BannerTone> = {
+	off: 'idle',
+	recording: 'ok',
+	paused: 'idle',
+	blocked: 'warn',
+	starting: 'idle',
+	'binary-missing': 'error',
+	restarting: 'warn',
+	failed: 'error',
+};
+
+function stateDetail(state: RecorderState, eventsStored: number, pausedUntil: string | null) {
+	switch (state) {
+		case 'off':
+			return 'Turn Computer History on from the tile header to start recording.';
+		case 'recording':
+			return `Recording the app in front. ${eventsStored} events recorded this session.`;
+		case 'paused':
+			return !pausedUntil || pausedUntil === 'forever'
+				? 'Paused until you resume.'
+				: `Paused until ${new Date(pausedUntil).toLocaleString()}.`;
+		case 'blocked':
+			return 'Nothing is recorded until the permission below is granted.';
+		case 'starting':
+			return 'The recorder is starting.';
+		case 'binary-missing':
+			return 'This build of Maestro does not include the recorder (maestro-computer-history), so nothing is recorded. Release builds include it. A build from source needs npm run build:computer-history (Rust toolchain) before packaging.';
+		case 'restarting':
+			return 'The recorder stopped and restarts in a moment.';
+		case 'failed':
+			return 'The recorder crashed repeatedly and stopped. Turn Computer History off and on again to retry.';
+	}
+}
+
+/** Prominent recorder state at the top of the panel: what it is doing, and why not. */
+function RecorderStatusBanner({
+	theme,
+	state,
+	eventsStored,
+	pausedUntil,
+}: {
+	theme: Theme;
+	state: RecorderState;
+	eventsStored: number;
+	pausedUntil: string | null;
+}) {
+	const tone = STATE_TONES[state];
+	const color =
+		tone === 'ok'
+			? theme.colors.success
+			: tone === 'warn'
+				? theme.colors.warning
+				: tone === 'error'
+					? theme.colors.error
+					: theme.colors.textDim;
+	return (
+		<div
+			role="status"
+			data-testid="computer-history-status-banner"
+			data-state={state}
+			className="flex items-start gap-3 p-3 rounded border"
+			style={{ borderColor: `${color}60`, backgroundColor: `${color}15` }}
+		>
+			<span
+				className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0${state === 'recording' ? ' animate-pulse' : ''}`}
+				style={{ backgroundColor: color }}
+			/>
+			<div className="min-w-0">
+				<div className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
+					{STATE_LABELS[state]}
+				</div>
+				<p className="text-xs mt-0.5 select-text" style={{ color: theme.colors.textDim }}>
+					{stateDetail(state, eventsStored, pausedUntil)}
+				</p>
+			</div>
+		</div>
+	);
 }
 
 export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
@@ -178,6 +259,12 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 
 	return (
 		<div data-setting-id="encore-computer-history" className="space-y-5">
+			<RecorderStatusBanner
+				theme={theme}
+				state={enabled ? (status?.state ?? 'starting') : 'off'}
+				eventsStored={status?.eventsStored ?? 0}
+				pausedUntil={status?.pausedUntil ?? null}
+			/>
 			<div>
 				<SettingsSectionHeading
 					icon={Eye}
@@ -186,35 +273,9 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 					Recorder
 				</SettingsSectionHeading>
 				<SectionCard theme={theme}>
-					<div>
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							{enabled ? STATE_LABELS[status?.state ?? 'starting'] : 'Off'}
-						</div>
-						<p className="text-xs opacity-70 mt-0.5">
-							{enabled
-								? `${status?.eventsStored ?? 0} events recorded this session. Stored in ${status?.storeDir ?? 'the Maestro data folder'}.`
-								: 'Turn Computer History on from the tile header to start recording.'}
-						</p>
-						{status?.pausedUntil && (
-							<p className="text-xs opacity-70 mt-0.5">
-								{status.pausedUntil === 'forever'
-									? 'Paused until you resume.'
-									: `Paused until ${new Date(status.pausedUntil).toLocaleString()}.`}
-							</p>
-						)}
-					</div>
-					{status?.state === 'binary-missing' && (
-						<div
-							className="flex items-start gap-1.5 text-xs"
-							style={{ color: theme.colors.warning }}
-						>
-							<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-							<span>
-								The maestro-observer helper is not installed for this platform. Builds from source
-								need the Rust toolchain; see the Computer History docs.
-							</span>
-						</div>
-					)}
+					<p className="text-xs opacity-70">
+						Stored in {status?.storeDir ?? 'the Maestro data folder'}.
+					</p>
 					{enabled && (
 						<div className="flex flex-wrap gap-2">
 							{paused ? (

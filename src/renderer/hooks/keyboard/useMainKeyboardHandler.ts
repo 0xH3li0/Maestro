@@ -12,6 +12,7 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
@@ -777,7 +778,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
 				trackShortcut('openLeaderboard');
-			} else if (ctx.isShortcut(e, 'openNotificationCenter')) {
+			} else if (
+				ctx.isShortcut(e, 'openNotificationCenter') &&
+				useSettingsStore.getState().notificationCenterEnabled
+			) {
 				e.preventDefault();
 				useNotificationStore.getState().setNotificationCenterOpen(true);
 				trackShortcut('openNotificationCenter');
@@ -1098,6 +1102,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				toggleAllCadenzas();
 				trackShortcut('toggleCadenzas');
+			} else if (
+				ctx.isShortcut(e, 'toggleThroughputGauge') &&
+				ctx.encoreFeatures?.throughputGauge
+			) {
+				// Toggle the visibility latch only. Showing the card never moves focus,
+				// so the composer keeps the caret.
+				e.preventDefault();
+				useThroughputGaugeStore.getState().toggle();
+				trackShortcut('toggleThroughputGauge');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

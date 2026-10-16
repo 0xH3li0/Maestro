@@ -77,6 +77,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Delegation Graph              | unassigned by default   | unassigned by default     |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |

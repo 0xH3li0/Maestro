@@ -15,7 +15,6 @@
 import { memo, useMemo } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import {
 	findSessionByStatId,
@@ -24,6 +23,7 @@ import {
 	BAR_CHART_GRID_CLASS,
 	BAR_CHART_GRID_STYLE,
 	BAR_CHART_ROW_STYLE,
+	getSeriesColor,
 } from './chartUtils';
 
 interface AgentEfficiencyChartProps {
@@ -38,29 +38,6 @@ interface AgentEfficiencyChartProps {
 	sessions?: Session[];
 	/** Active drill-down filter key - when set, non-matching entries dim to 0.3 opacity. */
 	activeFilterKey?: string | null;
-}
-
-/**
- * Get color for an agent
- */
-function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-	if (index === 0) {
-		return theme.colors.accent;
-	}
-	const additionalColors = [
-		'#10b981',
-		'#8b5cf6',
-		'#ef4444',
-		'#06b6d4',
-		'#ec4899',
-		'#f59e0b',
-		'#84cc16',
-		'#6366f1',
-	];
-	return additionalColors[(index - 1) % additionalColors.length];
 }
 
 export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
@@ -264,7 +241,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 					}
 					return efficiencyData.map((agent) => {
 						const percentage = maxDuration > 0 ? (agent.avgDuration / maxDuration) * 100 : 0;
-						const color = getAgentColor(providerColorIdx[agent.agent], theme, colorBlindMode);
+						const color = getSeriesColor(providerColorIdx[agent.agent], theme, colorBlindMode);
 						const isDimmed = activeFilterKey !== null && activeFilterKey !== agent.key;
 
 						return (

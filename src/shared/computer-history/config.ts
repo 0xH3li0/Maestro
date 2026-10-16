@@ -38,6 +38,7 @@ export function defaultComputerHistoryConfig(): ComputerHistoryConfig {
 		maxBytes: DEFAULT_MAX_BYTES,
 		snapshots: true,
 		appMode: 'exclude',
+		skipPrivateWindows: true,
 		rules: [],
 		pausedUntil: null,
 		digests: { enabled: false, source: 'local', agentId: null, rollup: true },
@@ -173,6 +174,8 @@ export function normalizeConfig(raw: unknown): ComputerHistoryConfig {
 		maxBytes: clampInt(r.maxBytes, MIN_MAX_BYTES, MAX_MAX_BYTES, d.maxBytes),
 		snapshots: typeof r.snapshots === 'boolean' ? r.snapshots : d.snapshots,
 		appMode: normalizeAppMode(r.appMode),
+		// Only an explicit `false` records private windows.
+		skipPrivateWindows: r.skipPrivateWindows !== false,
 		rules,
 		pausedUntil: normalizePausedUntil(r.pausedUntil),
 		// The 6-hour roll-up rides along with digests unless explicitly off.
@@ -206,6 +209,7 @@ export interface ComputerHistoryConfigPatch {
 	maxBytes?: number;
 	snapshots?: boolean;
 	appMode?: AppCaptureMode;
+	skipPrivateWindows?: boolean;
 	digests?: {
 		enabled?: boolean;
 		source?: DigestSource;
@@ -225,6 +229,9 @@ export function applyConfigPatch(
 		...(patch.maxBytes !== undefined ? { maxBytes: patch.maxBytes } : {}),
 		...(patch.snapshots !== undefined ? { snapshots: patch.snapshots } : {}),
 		...(patch.appMode !== undefined ? { appMode: patch.appMode } : {}),
+		...(patch.skipPrivateWindows !== undefined
+			? { skipPrivateWindows: patch.skipPrivateWindows }
+			: {}),
 		digests: {
 			...config.digests,
 			...(patch.digests?.enabled !== undefined ? { enabled: patch.digests.enabled } : {}),

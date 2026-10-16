@@ -60,7 +60,8 @@ import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from '.
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import { PluginSettingsCard } from './PluginSettingsCard';
-import { settingSubTab, type SearchableSetting } from './searchableSettings';
+import { encoreTileForSetting, settingSubTab, type SearchableSetting } from './searchableSettings';
+import type { EncoreTileRequest } from './tabs/EncoreTab/types';
 import type { SettingsModalData } from '../../stores/modalStore';
 
 /**
@@ -346,8 +347,16 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const handledSettingIdRef = useRef<string | null>(null);
 	const handledNavigationRequestRef = useRef<SettingsModalData | undefined>(undefined);
 	const pendingPluginSettingIdRef = useRef<string | null>(null);
+	// A jump to a setting inside a Plugins tile opens that tile; a plain tab
+	// pick drops the request so returning to Plugins shows the grid again.
+	const [encoreTileRequest, setEncoreTileRequest] = useState<EncoreTileRequest | null>(null);
+	const requestEncoreTileFor = useCallback((settingId: string) => {
+		const flag = encoreTileForSetting(settingId);
+		setEncoreTileRequest(flag ? { flag } : null);
+	}, []);
 	const selectTab = useCallback((tab: SettingsTabId) => {
 		pendingPluginSettingIdRef.current = null;
+		setEncoreTileRequest(null);
 		setActiveTab(tab);
 	}, []);
 
@@ -394,8 +403,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			setQueryRef.current('');
 			requestSubTab(settingSubTab(settingId));
 			selectTab(tab);
+			requestEncoreTileFor(settingId);
 		},
-		[selectTab, requestSubTab]
+		[selectTab, requestSubTab, requestEncoreTileFor]
 	);
 
 	// Deep link from outside Settings (e.g. a disabled control explaining which
@@ -415,6 +425,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen || !initialSettingId) {
 			handledSettingIdRef.current = null;
 			pendingPluginSettingIdRef.current = null;
+			if (!isOpen) setEncoreTileRequest(null);
 			return;
 		}
 		if (
@@ -426,6 +437,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		handledSettingIdRef.current = initialSettingId;
 		pendingPluginSettingIdRef.current = null;
 		pendingScrollIdRef.current = initialSettingId;
+		requestEncoreTileFor(initialSettingId);
 		if (initialSettingId.startsWith('plugin-settings:')) {
 			// Keep only unresolved requests pending. A user tab selection cancels
 			// the request, so later registry refreshes cannot replay an old link.
@@ -434,7 +446,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			setActiveTab('encore');
 		}
 		setDeepLinkJump((n) => n + 1);
-	}, [isOpen, initialSettingId, initialNavigationRequest]);
+	}, [isOpen, initialSettingId, initialNavigationRequest, requestEncoreTileFor]);
 
 	useEffect(() => {
 		const targetId = pendingPluginSettingIdRef.current;
@@ -851,7 +863,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 						{activeTab === 'models' && <ModelsSettingsTab theme={theme} nav={modelsNav} />}
 
-						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
+						{activeTab === 'encore' && (
+							<EncoreTab theme={theme} isOpen={isOpen} tileRequest={encoreTileRequest} />
+						)}
 
 						{settingsPanels.map(
 							(panel) =>

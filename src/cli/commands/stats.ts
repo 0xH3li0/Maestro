@@ -3,6 +3,7 @@
 //   maestro-cli stats [--range <r>] [--json]          -> aggregated dashboard metrics
 //   maestro-cli stats models [--range <r>] [--json]   -> the dashboard's Models tab
 //   maestro-cli stats-query "<sql>" [--json]           -> arbitrary read-only SQL
+//   maestro-cli stats-tokens [--range <r>] [--json] -> Tokens tab: totals + speed
 //
 // All route through the running desktop app over the existing WebSocket
 // bridge; the app owns the open stats database and runs the query/aggregation
@@ -14,6 +15,17 @@ import { formatModelUsage } from '../output/formatter';
 import type { ModelUsage } from '../../shared/local-models/model-usage';
 import { isStatsTimeRange, STATS_TIME_RANGES } from '../../shared/stats-types';
 import { failCommand } from '../services/session-command';
+import {
+	formatCalendarDay,
+	formatCost,
+	formatDurationHuman,
+	formatHourOfDay,
+	formatTokensCompact,
+	formatTokensPerSecond,
+} from '../../shared/formatters';
+import type { PromptCadence } from '../../shared/promptCadence';
+import type { TokenUsageAggregate } from '../../shared/tokenUsage';
+import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 
 interface StatsOptions {
 	range?: string;
@@ -29,6 +41,16 @@ interface AggregationResponse {
 	type: string;
 	data: Record<string, unknown>;
 	error?: string;
+}
+
+interface TokenUsageResponse {
+	type: string;
+	data: TokenUsageAggregate;
+	error?: string;
+}
+
+interface StatsTokensOptions extends StatsOptions {
+	refresh?: boolean;
 }
 
 interface StatsQueryResponse {
@@ -114,6 +136,86 @@ export async function statsModels(options: StatsOptions): Promise<void> {
 }
 
 /**
+ * `maestro-cli stats-tokens` - the Usage Dashboard's Tokens tab: token and cost
+ * totals plus tokens per second (average and peak, input/output/total) overall,
+ * per provider, and per model. `--refresh` re-reads changed transcripts instead
+ * of serving the app's short-lived in-memory result.
+ */
+export async function statsTokens(options: StatsTokensOptions): Promise<void> {
+	const range = options.range || 'week';
+
+	if (!isStatsTimeRange(range)) {
+		handleCommandError(
+			new Error(
+				`Invalid range "${options.range}". Must be one of: ${STATS_TIME_RANGES.join(', ')}`
+			),
+			options.json
+		);
+	}
+
+	try {
+		const result = await withMaestroClient(async (client) => {
+			return client.sendCommand<TokenUsageResponse>(
+				{ type: 'get_token_usage', range, force: options.refresh === true },
+				'token_usage'
+			);
+		});
+
+		if (options.json) {
+			console.log(JSON.stringify({ range, ...result.data }, null, 2));
+			return;
+		}
+
+		printTokenUsageSummary(range, result.data);
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+function speedLine(stats: TokenSpeedStats): string {
+	return (
+		`avg ${formatTokensPerSecond(stats.avgInputTps)} in / ${formatTokensPerSecond(stats.avgOutputTps)} out / ${formatTokensPerSecond(stats.avgTotalTps)} total` +
+		`, peak ${formatTokensPerSecond(stats.peakInputTps)} / ${formatTokensPerSecond(stats.peakOutputTps)} / ${formatTokensPerSecond(stats.peakTotalTps)}` +
+		` (${stats.calls} calls)`
+	);
+}
+
+function printTokenUsageSummary(range: string, data: TokenUsageAggregate): void {
+	const { totals, speed } = data;
+	const lines: string[] = [];
+	lines.push(`Token Usage (${range})`);
+	lines.push(`  Cost:            ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`);
+	lines.push(
+		`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ${formatTokensCompact(totals.cacheReadTokens)} cache read`
+	);
+	lines.push(`  Sessions:        ${totals.sessionCount}`);
+	lines.push('');
+	lines.push('Tokens per second (per API call)');
+	lines.push(`  Overall:         ${speedLine(speed.overall)}`);
+	if (speed.overall.peakOutputAtMs !== undefined) {
+		lines.push(
+			`  Output peak:     ${new Date(speed.overall.peakOutputAtMs).toLocaleString()}${speed.overall.peakOutputModel ? ` on ${speed.overall.peakOutputModel}` : ''}`
+		);
+	}
+	if (speed.busiestHour) {
+		lines.push(
+			`  Busiest hour:    ${formatTokensPerSecond(speed.busiestHour.totalTps)} tok/s across all agents (${new Date(speed.busiestHour.startMs).toLocaleString()})`
+		);
+	}
+	if (speed.byAgent.length > 0) {
+		lines.push('  By provider:');
+		for (const group of speed.byAgent) lines.push(`    ${group.label}: ${speedLine(group)}`);
+	}
+	if (speed.byModel.length > 0) {
+		lines.push('  By model:');
+		for (const group of speed.byModel) lines.push(`    ${group.label}: ${speedLine(group)}`);
+	}
+	lines.push('');
+	lines.push('Run with --json for every breakdown, the hour-of-day split, and the timelines.');
+	console.log(lines.join('\n'));
+}
+
+/**
  * `maestro-cli stats-query` - run a single read-only SQL statement against the
  * stats database. Positional `?` placeholders bind to repeated `--param` values.
  */
@@ -169,9 +271,44 @@ function printAggregationSummary(range: string, data: Record<string, unknown>): 
 		}
 	}
 
+	const prompts = data.prompts as PromptCadence | undefined;
+	if (prompts && prompts.total > 0) {
+		lines.push('');
+		lines.push(...promptCadenceLines(prompts));
+	}
+
 	lines.push('');
 	lines.push('Run with --json for the full aggregation object.');
 	console.log(lines.join('\n'));
+}
+
+/**
+ * The Usage Dashboard's Prompts section: interactive turns only (Auto Run
+ * excluded), calendar-day window. Per-day figures leave out today.
+ */
+function promptCadenceLines(p: PromptCadence): string[] {
+	const rate = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+	const day = (d: { date: string; count: number } | null) =>
+		d ? `${d.count} (${formatCalendarDay(d.date)})` : '-';
+	const lines = [
+		`Prompts (${formatCalendarDay(p.windowStart)} to today, ${p.calendarDays} days)`,
+		`  Total:           ${p.total} across ${p.activeDays} active days`,
+		`  Per day:         avg ${rate(p.avgPerDay)}, ${rate(p.avgPerActiveDay)} per active day, median ${rate(p.perDay.p50)}, p90 ${rate(p.perDay.p90)}`,
+		`  Busiest day:     ${day(p.busiestDay)}`,
+		`  Quietest active: ${day(p.quietestActiveDay)}`,
+		`  Streak:          ${p.currentStreak} days current, ${p.longestStreak} longest`,
+	];
+	if (p.peakHour !== null) {
+		lines.push(
+			`  Peak hour:       ${formatHourOfDay(p.peakHour)}${p.busiestHour ? `, record ${p.busiestHour.count} in one hour (${formatCalendarDay(p.busiestHour.date)})` : ''}`
+		);
+	}
+	if (p.gapMs.count > 0) {
+		lines.push(
+			`  Between prompts: median ${formatDurationHuman(p.gapMs.p50)} while working, ${p.stretches} working stretches`
+		);
+	}
+	return lines;
 }
 
 function printRowsTable(result: StatsQueryResponse): void {

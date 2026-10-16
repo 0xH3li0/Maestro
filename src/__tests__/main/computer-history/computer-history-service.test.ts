@@ -49,7 +49,7 @@ function fakeSupervisor(deps: ObserverSupervisorDeps): ObserverSupervisorLike {
 		status: () => ({
 			state: running ? 'running' : 'stopped',
 			restarts: 0,
-			binaryPath: '/bin/maestro-observer',
+			binaryPath: '/bin/maestro-computer-history',
 			recentStderr: [],
 		}),
 	};
@@ -60,7 +60,7 @@ function makeService(extra: Partial<ConstructorParameters<typeof ComputerHistory
 		userDataDir: userData,
 		isEnabled: () => enabled,
 		createSupervisor: fakeSupervisor,
-		resolveBinary: () => '/bin/maestro-observer',
+		resolveBinary: () => '/bin/maestro-computer-history',
 		platform: 'darwin',
 		now: () => now,
 		getBlockPids: () => [999],
@@ -125,6 +125,7 @@ describe('ComputerHistoryService lifecycle', () => {
 			cmd: 'configure',
 			blockPids: [999],
 			blockDomains: [],
+			skipPrivateWindows: true,
 			snapshots: true,
 			maxTextBytes: 8192,
 			maxSnapshotBytes: 32768,
@@ -384,11 +385,34 @@ describe('rules', () => {
 		const listing = service.listRules();
 		expect(listing.rules).toHaveLength(1);
 		expect(listing.builtIn).toContain('com.maestro.app');
+		expect(listing.builtInApps).toContainEqual({
+			label: '1Password',
+			category: 'password-manager',
+		});
 		await service.addRule('domain', 'https://bank.example.com/x');
 		expect(await service.removeRule('bank.example.com')).toMatchObject({ match: 'domain' });
 		expect(await service.removeRule(rule.id)).toMatchObject({ id: rule.id });
 		expect(await service.removeRule('nope')).toBeNull();
 		await expect(service.addRule('domain', 'not a domain')).rejects.toThrow(/not a domain/);
+		await service.stop();
+	});
+});
+
+describe('private browser windows', () => {
+	const incognito = { window: { title: 'Bank - Google Chrome (Incognito)' } };
+
+	it('are dropped by default and recorded once the user opts in', async () => {
+		const service = makeService();
+		await service.start();
+		expect(await service.ingest(textEvent('secret', incognito))).toBe(false);
+
+		await service.setConfig({ skipPrivateWindows: false });
+		const configure = sent.filter((c) => c.cmd === 'configure').at(-1) as Record<string, unknown>;
+		expect(configure.skipPrivateWindows).toBe(false);
+		expect(await service.ingest(textEvent('opted in', incognito))).toBe(true);
+
+		await service.setConfig({ skipPrivateWindows: true });
+		expect(await service.ingest(textEvent('secret again', incognito))).toBe(false);
 		await service.stop();
 	});
 });
