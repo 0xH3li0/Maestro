@@ -10,7 +10,15 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError } from '../output/formatter';
-import { formatCost, formatTokensCompact, formatTokensPerSecond } from '../../shared/formatters';
+import {
+	formatCalendarDay,
+	formatCost,
+	formatDurationHuman,
+	formatHourOfDay,
+	formatTokensCompact,
+	formatTokensPerSecond,
+} from '../../shared/formatters';
+import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 
@@ -221,9 +229,44 @@ function printAggregationSummary(range: string, data: Record<string, unknown>): 
 		}
 	}
 
+	const prompts = data.prompts as PromptCadence | undefined;
+	if (prompts && prompts.total > 0) {
+		lines.push('');
+		lines.push(...promptCadenceLines(prompts));
+	}
+
 	lines.push('');
 	lines.push('Run with --json for the full aggregation object.');
 	console.log(lines.join('\n'));
+}
+
+/**
+ * The Usage Dashboard's Prompts section: interactive turns only (Auto Run
+ * excluded), calendar-day window. Per-day figures leave out today.
+ */
+function promptCadenceLines(p: PromptCadence): string[] {
+	const rate = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+	const day = (d: { date: string; count: number } | null) =>
+		d ? `${d.count} (${formatCalendarDay(d.date)})` : '-';
+	const lines = [
+		`Prompts (${formatCalendarDay(p.windowStart)} to today, ${p.calendarDays} days)`,
+		`  Total:           ${p.total} across ${p.activeDays} active days`,
+		`  Per day:         avg ${rate(p.avgPerDay)}, ${rate(p.avgPerActiveDay)} per active day, median ${rate(p.perDay.p50)}, p90 ${rate(p.perDay.p90)}`,
+		`  Busiest day:     ${day(p.busiestDay)}`,
+		`  Quietest active: ${day(p.quietestActiveDay)}`,
+		`  Streak:          ${p.currentStreak} days current, ${p.longestStreak} longest`,
+	];
+	if (p.peakHour !== null) {
+		lines.push(
+			`  Peak hour:       ${formatHourOfDay(p.peakHour)}${p.busiestHour ? `, record ${p.busiestHour.count} in one hour (${formatCalendarDay(p.busiestHour.date)})` : ''}`
+		);
+	}
+	if (p.gapMs.count > 0) {
+		lines.push(
+			`  Between prompts: median ${formatDurationHuman(p.gapMs.p50)} while working, ${p.stretches} working stretches`
+		);
+	}
+	return lines;
 }
 
 function printRowsTable(result: StatsQueryResponse): void {

@@ -244,6 +244,26 @@ export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<numbe
 }
 
 /**
+ * Split a dense per-day series into at most `maxGroups` runs of equal length
+ * (the last run may be shorter), for a long range that would otherwise draw
+ * more bars than the chart has pixels for. Returns one single-item group per
+ * day when the series already fits.
+ *
+ * Grouping is by a fixed number of consecutive days rather than by calendar
+ * week: the buckets stay equal width, which is what makes neighbouring bars
+ * comparable, and a partial week at either end can't render as a dip that never
+ * happened.
+ */
+export function chunkIntoEqualGroups<T>(items: readonly T[], maxGroups: number): T[][] {
+	const limit = Math.max(1, maxGroups);
+	if (items.length <= limit) return items.map((item) => [item]);
+	const groupSize = Math.ceil(items.length / limit);
+	const groups: T[][] = [];
+	for (let i = 0; i < items.length; i += groupSize) groups.push(items.slice(i, i + groupSize));
+	return groups;
+}
+
+/**
  * Layout for the dashboard's horizontal bar charts (Agent Efficiency, Agent
  * Comparison, By Agent Type, the token cost breakdowns): one CSS grid whose
  * first column is the name, second the bar, third the trailing value.

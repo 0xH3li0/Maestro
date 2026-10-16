@@ -17,6 +17,7 @@ import {
 	DONUT_CHART,
 	describeDonutArc,
 	getSeriesColor,
+	chunkIntoEqualGroups,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
 import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -327,6 +328,27 @@ describe('computeAxisLabelIndices', () => {
 
 	it('is unchanged at the default budget', () => {
 		expect([...computeAxisLabelIndices(31, 7)]).toEqual([...computeAxisLabelIndices(31)]);
+	});
+});
+
+describe('chunkIntoEqualGroups', () => {
+	it('keeps one item per group when the series fits', () => {
+		expect(chunkIntoEqualGroups([1, 2, 3], 5)).toEqual([[1], [2], [3]]);
+	});
+
+	it('groups into equal runs with a shorter final run', () => {
+		expect(chunkIntoEqualGroups([1, 2, 3, 4, 5, 6, 7], 3)).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+	});
+
+	it('never returns more groups than asked for', () => {
+		const items = Array.from({ length: 365 }, (_, i) => i);
+		const groups = chunkIntoEqualGroups(items, 120);
+		expect(groups.length).toBeLessThanOrEqual(120);
+		expect(groups.flat()).toEqual(items);
+	});
+
+	it('treats a non-positive limit as one group', () => {
+		expect(chunkIntoEqualGroups([1, 2], 0)).toEqual([[1, 2]]);
 	});
 });
 

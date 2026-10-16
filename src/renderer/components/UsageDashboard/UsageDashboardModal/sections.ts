@@ -27,6 +27,7 @@ export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'agent-usage',
 ] as const;
 export const ACTIVITY_SECTIONS = [
+	'prompt-cadence',
 	'delegation-trend',
 	'activity-heatmap',
 	'weekday-comparison',
@@ -58,6 +59,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
 	'summary-cards': 'Summary Cards',
 	'token-speed': 'Tokens per Second',
 	'delegation-score': 'Delegation Score',
+	'prompt-cadence': 'Prompts',
 	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
 	'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',

@@ -309,6 +309,18 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 }
 
 /**
+ * Format an hour of day (0-23) as a clock label: 0 -> "12 AM", 13 -> "1 PM".
+ * The Usage Dashboard's peak-hour cards and `maestro-cli stats` both print it.
+ * (`PeakHoursChart` keeps its own lowercase "8pm" variant for axis labels - a
+ * different style, not a duplicate of this one.)
+ */
+export function formatHourOfDay(hour: number): string {
+	const suffix = hour >= 12 ? 'PM' : 'AM';
+	const displayHour = hour % 12 || 12;
+	return `${displayHour} ${suffix}`;
+}
+
+/**
  * Format a calendar day (`YYYY-MM-DD`) for display, e.g. "Jul 10, 2026".
  *
  * The parts are read out of the string and fed to a LOCAL `Date` rather than

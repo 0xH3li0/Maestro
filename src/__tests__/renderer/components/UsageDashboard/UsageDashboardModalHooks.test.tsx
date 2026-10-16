@@ -11,6 +11,7 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/hooks';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 const mockNotifyToast = vi.hoisted(() => vi.fn());
 vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -53,6 +54,7 @@ const sampleAggregation: StatsAggregation = {
 		parent: { count: 2, duration: 1000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 const mockGetAggregation = vi.fn();
