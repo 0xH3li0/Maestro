@@ -24,7 +24,12 @@ import {
 	readStoreStats,
 	summarizeApps,
 } from '../../shared/computer-history/reader';
-import { builtInBlockedApps, observedPlatformFor } from '../../shared/computer-history/exclusions';
+import {
+	BUILT_IN_EXCLUSION_CATEGORIES,
+	builtInBlockedApps,
+	builtInExclusions,
+	observedPlatformFor,
+} from '../../shared/computer-history/exclusions';
 import { GIB } from '../../shared/computer-history/config';
 import { parseDurationInput, parseTimeInput } from '../../shared/computer-history/timeRange';
 import {
@@ -74,6 +79,7 @@ export interface ConfigCliOptions extends JsonOption {
 	retentionDays?: string;
 	maxGb?: string;
 	snapshots?: string;
+	skipPrivateWindows?: string;
 	digests?: string;
 	digestAgent?: string;
 	digestRollup?: string;
@@ -512,10 +518,19 @@ export async function computerHistoryResume(options: JsonOption): Promise<void> 
 
 export async function computerHistoryRulesList(options: JsonOption): Promise<void> {
 	const config = await readStoreConfig(storeDir());
-	const builtIn = builtInBlockedApps(observedPlatformFor(process.platform));
+	const platform = observedPlatformFor(process.platform);
+	const builtIn = builtInBlockedApps(platform);
+	const builtInApps = builtInExclusions(platform);
 	if (options.json) {
 		console.log(
-			JSON.stringify({ success: true, appMode: config.appMode, rules: config.rules, builtIn })
+			JSON.stringify({
+				success: true,
+				appMode: config.appMode,
+				skipPrivateWindows: config.skipPrivateWindows,
+				rules: config.rules,
+				builtIn,
+				builtInApps,
+			})
 		);
 		return;
 	}
@@ -538,8 +553,13 @@ export async function computerHistoryRulesList(options: JsonOption): Promise<voi
 			);
 		}
 	}
+	console.log('Always excluded on this platform: password fields, and these apps:');
+	for (const category of BUILT_IN_EXCLUSION_CATEGORIES) {
+		const labels = builtInApps.filter((a) => a.category === category.id).map((a) => a.label);
+		if (labels.length > 0) console.log(`  ${category.label}: ${labels.join(', ')}`);
+	}
 	console.log(
-		`Always excluded on this platform: ${builtIn.length} password-manager and Maestro app ids, private browser windows, and password fields.`
+		`Private browser windows: ${config.skipPrivateWindows ? 'never recorded' : 'recorded (config --skip-private-windows on stops it)'}`
 	);
 }
 
@@ -740,6 +760,13 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 	if (options.snapshots !== undefined) {
 		patch.snapshots = parseOnOff(options.snapshots, '--snapshots', options.json);
 	}
+	if (options.skipPrivateWindows !== undefined) {
+		patch.skipPrivateWindows = parseOnOff(
+			options.skipPrivateWindows,
+			'--skip-private-windows',
+			options.json
+		);
+	}
 	const digests: Record<string, unknown> = {};
 	if (options.digests !== undefined) {
 		digests.enabled = parseOnOff(options.digests, '--digests', options.json);
@@ -767,6 +794,7 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 				`Max size:    ${formatSize(config.maxBytes)}`,
 				`Snapshots:   ${config.snapshots ? 'on' : 'off'}`,
 				`App mode:    ${describeAppMode(config.appMode)}`,
+				`Private:     ${config.skipPrivateWindows ? 'private browser windows skipped' : 'private browser windows recorded'}`,
 				`Paused:      ${config.pausedUntil ?? 'no'}`,
 				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}`,
 				`Rules:       ${config.rules.length}`,

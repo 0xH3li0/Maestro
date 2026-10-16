@@ -2349,6 +2349,10 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option(
+		'--skip-private-windows <on|off>',
+		'Never record private / incognito browser windows (default on)'
+	)
 	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
 	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
 	.option(

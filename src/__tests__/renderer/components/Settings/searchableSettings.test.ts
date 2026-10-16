@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	searchSettings,
 	ALL_SEARCHABLE_SETTINGS,
+	encoreTileForSetting,
 } from '../../../../renderer/components/Settings/searchableSettings';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -179,6 +180,32 @@ describe('searchableSettings', () => {
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
+		});
+
+		it('maps a jump to the Plugins tile whose details pane holds it', () => {
+			expect(encoreTileForSetting('encore-computer-history')).toBe('computerHistory');
+			expect(encoreTileForSetting('encore-cue')).toBe('maestroCue');
+			// A sub-setting opens its feature's tile through requiresEncore.
+			expect(encoreTileForSetting('encore-director-notes-provider')).toBe('directorNotes');
+			// Grid-level anchors and other tabs open nothing.
+			expect(encoreTileForSetting('encore-pianola')).toBeUndefined();
+			expect(encoreTileForSetting('encore-plugins')).toBeUndefined();
+			expect(encoreTileForSetting('nope')).toBeUndefined();
+		});
+
+		it('every tile entry with a settings body names its tile', () => {
+			const withBodies = [
+				'encore-usage-stats',
+				'encore-symphony',
+				'encore-cue',
+				'encore-computer-history',
+				'encore-coworking',
+				'encore-director-notes',
+				'encore-maestro-run',
+				'encore-quick-chat',
+				'encore-throughput-gauge',
+			];
+			for (const id of withBodies) expect(encoreTileForSetting(id), id).toBeDefined();
 		});
 
 		it('should return no results for gibberish', () => {

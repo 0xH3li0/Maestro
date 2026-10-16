@@ -140,6 +140,7 @@ export type HelperCommand =
 			blockDomains: string[];
 			/** Include mode only: record nothing but these apps (empty = nothing). */
 			allowApps?: string[];
+			skipPrivateWindows: boolean;
 			snapshots: boolean;
 			maxTextBytes: number;
 			maxSnapshotBytes: number;
@@ -183,6 +184,11 @@ export interface ComputerHistoryConfig {
 	snapshots: boolean;
 	/** Which app rules decide what is recorded (see AppCaptureMode). */
 	appMode: AppCaptureMode;
+	/**
+	 * Hide private / incognito browser windows (nothing read, not even the
+	 * title). On by default; the user may switch it off.
+	 */
+	skipPrivateWindows: boolean;
 	rules: CaptureRule[];
 	/** ISO timestamp, `'forever'`, or null when recording. */
 	pausedUntil: string | null;

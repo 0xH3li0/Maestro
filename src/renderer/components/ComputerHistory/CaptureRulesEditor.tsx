@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Globe, Lock, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, EyeOff, Globe, Lock, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { FilterInput } from '../ui/FilterInput';
@@ -29,6 +29,8 @@ import { notifyToast } from '../../stores/notificationStore';
 import { formatDurationCompact } from '../../../shared/duration';
 import { appRuleMatches } from '../../../shared/computer-history/rules';
 import type { AppActivity } from '../../../shared/computer-history/reader';
+import { BUILT_IN_EXCLUSION_CATEGORIES } from '../../../shared/computer-history/exclusions';
+import type { BuiltInExclusionView } from '../../../shared/computer-history/exclusions';
 import type {
 	AppCaptureMode,
 	CaptureRule,
@@ -123,7 +125,7 @@ export function CaptureRulesEditor({
 	const api = window.maestro?.computerHistory;
 	const [config, setConfig] = useState<ComputerHistoryConfig | null>(null);
 	const [apps, setApps] = useState<AppActivity[]>([]);
-	const [builtInCount, setBuiltInCount] = useState(0);
+	const [builtInApps, setBuiltInApps] = useState<BuiltInExclusionView[]>([]);
 	const [filter, setFilter] = useState('');
 	const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
 	const [manualApp, setManualApp] = useState('');
@@ -139,7 +141,7 @@ export function CaptureRulesEditor({
 		]);
 		setConfig(cfg);
 		setApps(known);
-		setBuiltInCount(rules.builtIn.length);
+		setBuiltInApps(rules.builtInApps);
 		return cfg;
 	}, [api]);
 
@@ -192,6 +194,13 @@ export function CaptureRulesEditor({
 
 	const setMode = (next: AppCaptureMode) =>
 		void mutate('mode', () => api.setConfig({ appMode: next }), 'Could not change the app mode');
+
+	const setSkipPrivateWindows = (skip: boolean) =>
+		void mutate(
+			'private-windows',
+			() => api.setConfig({ skipPrivateWindows: skip }),
+			'Could not change private window recording'
+		);
 
 	const toggleApp = (row: AppRow, record: boolean) => {
 		const removeAll = (rules: CaptureRule[]) => Promise.all(rules.map((r) => api.removeRule(r.id)));
@@ -274,8 +283,7 @@ export function CaptureRulesEditor({
 					{mode === 'exclude'
 						? 'Every app is recorded unless you switch it off below.'
 						: 'Only the apps you switch on below are recorded. Everything else is never read.'}{' '}
-					Password managers, private browser windows, password fields, and Maestro itself are always
-					excluded ({builtInCount} built-in app ids).
+					Password fields and the apps under Always excluded are never recorded in either mode.
 				</p>
 				{includeListEmpty && (
 					<div
@@ -396,6 +404,29 @@ export function CaptureRulesEditor({
 				</div>
 			</div>
 
+			<div
+				className="flex items-center gap-3 px-3 py-2 rounded border"
+				style={{ borderColor: theme.colors.border }}
+				data-testid="computer-history-private-windows"
+			>
+				<EyeOff className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.textDim }} />
+				<div className="flex-1 min-w-0">
+					<div className="text-sm" style={{ color: theme.colors.textMain }}>
+						Don't record private browser windows
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Incognito, Private Browsing, and InPrivate windows record nothing, not even their title.
+					</div>
+				</div>
+				<ToggleSwitch
+					checked={config.skipPrivateWindows}
+					onChange={setSkipPrivateWindows}
+					theme={theme}
+					disabled={busyIds.has('private-windows')}
+					ariaLabel="Don't record private browser windows"
+				/>
+			</div>
+
 			<div className="space-y-2">
 				<div
 					className="flex items-center gap-1.5 text-sm font-medium"
@@ -471,6 +502,38 @@ export function CaptureRulesEditor({
 					</p>
 				)}
 			</div>
+
+			{builtInApps.length > 0 && (
+				<details className="space-y-2" data-testid="computer-history-built-in">
+					<summary
+						className="flex items-center gap-1.5 text-sm font-medium cursor-pointer select-none"
+						style={{ color: theme.colors.textMain }}
+					>
+						<ShieldCheck className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Always excluded ({builtInApps.length} apps)
+					</summary>
+					<p className="text-xs opacity-70">
+						Built in and not editable. These apps hold passwords, one-time codes, or keys, so
+						nothing in them is ever read.
+					</p>
+					<dl className="space-y-1.5 text-xs">
+						{BUILT_IN_EXCLUSION_CATEGORIES.map((category) => {
+							const labels = builtInApps
+								.filter((a) => a.category === category.id)
+								.map((a) => a.label);
+							if (labels.length === 0) return null;
+							return (
+								<div key={category.id} className="flex gap-3">
+									<dt className="w-44 flex-shrink-0" style={{ color: theme.colors.textDim }}>
+										{category.label}
+									</dt>
+									<dd style={{ color: theme.colors.textMain }}>{labels.join(', ')}</dd>
+								</div>
+							);
+						})}
+					</dl>
+				</details>
+			)}
 		</div>
 	);
 }
