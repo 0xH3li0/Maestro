@@ -41,6 +41,7 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import { persistTabStarred } from '../../utils/starredSessions';
+import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import {
 	withWorkingDirectory,
@@ -591,7 +592,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// back, so a registry we never read is never persisted.
 	useEffect(() => {
 		if (initialLoadComplete && groupsLoaded) {
-			window.maestro.groups.setAll(groups);
+			void flushGroupsToDisk();
 		}
 	}, [groups, initialLoadComplete, groupsLoaded]);
 

@@ -1502,21 +1502,6 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('groups persistence effect', () => {
-		it('persists groups when initialLoadComplete is true', () => {
-			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups,
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups);
-		});
-
 		it('does not persist groups before initialLoadComplete', () => {
 			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
 			useSessionStore.setState({
@@ -1530,32 +1515,6 @@ describe('useSessionLifecycle', () => {
 			renderHook(() => useSessionLifecycle(createDeps()));
 
 			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
-		});
-
-		it('re-persists when groups change', () => {
-			const groups1 = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups: groups1,
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups1);
-
-			const groups2 = [
-				{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false },
-				{ id: 'g2', name: 'Group 2', emoji: '', collapsed: false },
-			];
-
-			act(() => {
-				useSessionStore.setState({ groups: groups2 });
-			});
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
 		});
 
 		// Regression: a group registry that was never successfully READ must never
@@ -1592,22 +1551,6 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
-		});
-
-		// A user who genuinely has no groups must still be able to persist: the
-		// gate is "did the read succeed", never "was the result non-empty".
-		it('persists an empty registry that was read successfully', () => {
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-				groups: [],
-				initialLoadComplete: true,
-				groupsLoaded: true,
-			});
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 

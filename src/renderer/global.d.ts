@@ -360,7 +360,10 @@ interface MaestroAPI {
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
-		setAll: (groups: any[]) => Promise<boolean>;
+		setAll: (
+			groups: import('../shared/types').Group[],
+			baseline: import('../shared/types').Group[]
+		) => Promise<boolean>;
 	};
 	process: {
 		onRemoteStartAutoRun: (
@@ -1425,6 +1428,9 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		getAutoRunStates: () => Promise<
+			Record<string, import('../shared/autoRunBroadcast').AutoRunBroadcastState>
+		>;
 		onLiteReady: (getReady: () => boolean) => () => void;
 		startAutoRun: (
 			sessionId: string,
