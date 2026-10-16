@@ -1,18 +1,26 @@
-/**
- * Tests for the DocumentNode React Flow custom node component
- */
-
+// Merged suites; test bodies and names preserved, file-level hooks scoped to their original suites.
 import { describe, it, expect } from 'vitest';
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { ReactFlowProvider } from 'reactflow';
-import {
-	DocumentNode,
-	type DocumentNodeProps,
-} from '../../../../renderer/components/DocumentGraph/DocumentNode';
+import { DocumentNode } from '../../../../renderer/components/DocumentGraph/DocumentNode';
+import type { DocumentNodeProps } from '../../../../renderer/components/DocumentGraph/DocumentNode';
 import type { Theme } from '../../../../renderer/types';
-
 import { mockTheme } from '../../../helpers/mockTheme';
+import { ExternalLinkNode } from '../../../../renderer/components/DocumentGraph/ExternalLinkNode';
+import type { ExternalLinkNodeProps } from '../../../../renderer/components/DocumentGraph/ExternalLinkNode';
+import {
+	formatNeighborDepth,
+	NEIGHBOR_DEPTH_ALL,
+	NEIGHBOR_DEPTH_MAX,
+	nextNeighborDepth,
+} from '../../../../renderer/components/DocumentGraph/neighborDepth';
+
+// ===== from src/__tests__/renderer/components/DocumentGraph/DocumentNode.test.tsx =====
+/**
+ * Tests for the DocumentNode React Flow custom node component
+ */
+
 // Mock theme for testing
 
 // Helper to create node props
@@ -895,5 +903,479 @@ describe('DocumentNode', () => {
 			expect(screen.getByText('5.2 MB')).toBeInTheDocument();
 			expect(screen.getByTestId('large-file-indicator')).toBeInTheDocument();
 		});
+	});
+});
+
+// ===== from src/__tests__/renderer/components/DocumentGraph/ExternalLinkNode.test.tsx =====
+/**
+ * Tests for the ExternalLinkNode React Flow custom node component
+ */
+
+// Mock theme for testing
+
+// Helper to create node props
+function createNodePropsExternalLinkNode(
+	overrides: Partial<ExternalLinkNodeProps['data']> = {}
+): ExternalLinkNodeProps {
+	return {
+		id: 'test-external-1',
+		type: 'externalLinkNode',
+		data: {
+			nodeType: 'external',
+			domain: 'example.com',
+			linkCount: 1,
+			urls: ['https://example.com/page'],
+			theme: mockTheme,
+			...overrides,
+		},
+		selected: false,
+		isConnectable: true,
+		xPos: 0,
+		yPos: 0,
+		zIndex: 0,
+		dragging: false,
+	} as ExternalLinkNodeProps;
+}
+
+// Wrapper component for React Flow context
+function renderWithProviderExternalLinkNode(ui: React.ReactElement) {
+	return render(<ReactFlowProvider>{ui}</ReactFlowProvider>);
+}
+
+describe('ExternalLinkNode', () => {
+	describe('Basic Rendering', () => {
+		it('renders the domain name', () => {
+			const props = createNodePropsExternalLinkNode({ domain: 'github.com' });
+			renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			expect(screen.getByText('github.com')).toBeInTheDocument();
+		});
+
+		it('renders domain without www prefix', () => {
+			const props = createNodePropsExternalLinkNode({ domain: 'mozilla.org' });
+			renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			expect(screen.getByText('mozilla.org')).toBeInTheDocument();
+		});
+
+		it('renders globe icon', () => {
+			const props = createNodePropsExternalLinkNode();
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			// Lucide icons render as SVG elements
+			const svgs = container.querySelectorAll('svg');
+			expect(svgs.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('Link Count Badge', () => {
+		it('shows badge when linkCount is greater than 1', () => {
+			const props = createNodePropsExternalLinkNode({ linkCount: 5 });
+			renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		it('does not show badge when linkCount is 1', () => {
+			const props = createNodePropsExternalLinkNode({ linkCount: 1 });
+			renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			// Should not find a "1" badge
+			expect(screen.queryByText('1')).not.toBeInTheDocument();
+		});
+
+		it('badge has tooltip with count info', () => {
+			const props = createNodePropsExternalLinkNode({ linkCount: 3 });
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const badge = container.querySelector('[title="3 links to this domain"]');
+			expect(badge).toBeInTheDocument();
+		});
+	});
+
+	describe('URL Tooltip', () => {
+		it('shows single URL as tooltip when only one URL', () => {
+			const props = createNodePropsExternalLinkNode({
+				urls: ['https://example.com/docs/guide'],
+			});
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const node = container.querySelector('.external-link-node');
+			expect(node).toHaveAttribute('title', 'https://example.com/docs/guide');
+		});
+
+		it('shows all URLs in tooltip when multiple URLs', () => {
+			const props = createNodePropsExternalLinkNode({
+				urls: [
+					'https://example.com/page1',
+					'https://example.com/page2',
+					'https://example.com/page3',
+				],
+				linkCount: 3,
+			});
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const node = container.querySelector('.external-link-node');
+			const expectedTooltip =
+				'https://example.com/page1\nhttps://example.com/page2\nhttps://example.com/page3';
+			expect(node).toHaveAttribute('title', expectedTooltip);
+		});
+	});
+
+	describe('Selection State', () => {
+		it('applies accent border when selected', () => {
+			const props = createNodePropsExternalLinkNode();
+			const selectedProps = { ...props, selected: true };
+
+			const { container } = renderWithProviderExternalLinkNode(
+				<ExternalLinkNode {...selectedProps} />
+			);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({ borderColor: mockTheme.colors.accent });
+		});
+
+		it('applies default border when not selected', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({ borderColor: mockTheme.colors.border });
+		});
+
+		it('applies thicker border when selected', () => {
+			const props = createNodePropsExternalLinkNode();
+			const selectedProps = { ...props, selected: true };
+
+			const { container } = renderWithProviderExternalLinkNode(
+				<ExternalLinkNode {...selectedProps} />
+			);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({ borderWidth: '2px' });
+		});
+	});
+
+	describe('Dashed Border Style', () => {
+		it('uses dashed border to distinguish from document nodes', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({ borderStyle: 'dashed' });
+		});
+	});
+
+	describe('Theme Integration', () => {
+		it('uses theme bgSidebar color for background', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				backgroundColor: mockTheme.colors.bgSidebar,
+			});
+		});
+
+		it('uses accent color for badge background', () => {
+			const props = createNodePropsExternalLinkNode({ linkCount: 2 });
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const badge = container.querySelector('[title="2 links to this domain"]');
+			expect(badge).toHaveStyle({
+				backgroundColor: mockTheme.colors.accent,
+			});
+		});
+
+		it('works with light theme colors', () => {
+			const lightTheme: Theme = {
+				id: 'github-light',
+				name: 'GitHub',
+				mode: 'light',
+				colors: {
+					bgMain: '#ffffff',
+					bgSidebar: '#f6f8fa',
+					bgActivity: '#eff2f5',
+					border: '#d0d7de',
+					textMain: '#24292f',
+					textDim: '#57606a',
+					accent: '#0969da',
+					accentDim: 'rgba(9, 105, 218, 0.1)',
+					accentText: '#0969da',
+					accentForeground: '#ffffff',
+					success: '#1a7f37',
+					warning: '#9a6700',
+					error: '#cf222e',
+				},
+			};
+
+			const props = createNodePropsExternalLinkNode({ theme: lightTheme });
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				backgroundColor: lightTheme.colors.bgSidebar,
+			});
+		});
+	});
+
+	describe('React Flow Integration', () => {
+		it('renders input handle at top', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const handles = container.querySelectorAll('.react-flow__handle');
+			expect(handles.length).toBe(1); // Only input handle, no output
+
+			const targetHandle = container.querySelector('.react-flow__handle-top');
+			expect(targetHandle).toBeInTheDocument();
+		});
+
+		it('does not render output handle (leaf node)', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			// Should not have a bottom handle since external links are leaf nodes
+			const sourceHandle = container.querySelector('.react-flow__handle-bottom');
+			expect(sourceHandle).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Compact Size', () => {
+		it('has smaller dimensions than document nodes', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			// External link nodes have max-width of 160px vs document nodes' 280px
+			expect(nodeElement).toHaveStyle({ maxWidth: '160px' });
+		});
+
+		it('has rounded corners for pill-like appearance', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({ borderRadius: '12px' });
+		});
+	});
+
+	describe('Search/Filter Dimming', () => {
+		it('renders with full opacity when search is not active', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: false,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				opacity: '1',
+				filter: 'none',
+			});
+		});
+
+		it('renders with full opacity when search is active and node matches', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				opacity: '1',
+				filter: 'none',
+			});
+		});
+
+		it('renders with reduced opacity when search is active and node does not match', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: false,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				opacity: '0.35',
+				filter: 'grayscale(50%)',
+			});
+		});
+
+		it('renders with full opacity when searchActive/searchMatch are undefined', () => {
+			const props = createNodePropsExternalLinkNode();
+			// Don't set searchActive or searchMatch - should default to full opacity
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				opacity: '1',
+				filter: 'none',
+			});
+		});
+	});
+
+	describe('Search Highlighting', () => {
+		it('applies accent border color when search is active and node matches', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveStyle({
+				borderColor: mockTheme.colors.accent,
+				borderWidth: '2px',
+			});
+		});
+
+		it('applies highlight glow box-shadow when search is active and node matches', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			const style = nodeElement?.getAttribute('style') || '';
+			// Should have a box-shadow with the accent color for the glow effect
+			expect(style).toContain('box-shadow');
+			expect(style).toContain(mockTheme.colors.accent.replace('#', ''));
+		});
+
+		it('adds search-highlight class when search is active and node matches', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).toHaveClass('search-highlight');
+		});
+
+		it('does not add search-highlight class when search is not active', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: false,
+				searchMatch: true,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).not.toHaveClass('search-highlight');
+		});
+
+		it('does not add search-highlight class when node does not match', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: false,
+			});
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			expect(nodeElement).not.toHaveClass('search-highlight');
+		});
+
+		it('prioritizes highlight border over selection border when both apply', () => {
+			const props = createNodePropsExternalLinkNode({
+				searchActive: true,
+				searchMatch: true,
+			});
+			const selectedProps = { ...props, selected: true };
+
+			const { container } = renderWithProviderExternalLinkNode(
+				<ExternalLinkNode {...selectedProps} />
+			);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			// Both highlight and selection would have accent border - should still be accent
+			expect(nodeElement).toHaveStyle({
+				borderColor: mockTheme.colors.accent,
+				borderWidth: '2px',
+			});
+			// Should still have the search-highlight class for animation
+			expect(nodeElement).toHaveClass('search-highlight');
+		});
+
+		it('does not apply highlight styling when searchActive/searchMatch are undefined', () => {
+			const props = createNodePropsExternalLinkNode();
+
+			const { container } = renderWithProviderExternalLinkNode(<ExternalLinkNode {...props} />);
+
+			const nodeElement = container.querySelector('.external-link-node');
+			// Should use default border color, not accent
+			expect(nodeElement).toHaveStyle({
+				borderColor: mockTheme.colors.border,
+			});
+			expect(nodeElement).not.toHaveClass('search-highlight');
+		});
+	});
+});
+
+// ===== from src/__tests__/renderer/components/DocumentGraph/neighborDepth.test.ts =====
+/**
+ * The Document Graph's neighbor-depth ladder, behind the `D` shortcut.
+ *
+ * The rule worth pinning is that `0` means "All" and is therefore the WIDEST
+ * view, so it sits at the TOP of the cycle rather than where its numeric value
+ * would put it. Sorting these numerically instead would make D read as
+ * narrowing the graph on the wrap.
+ */
+
+describe('nextNeighborDepth', () => {
+	it('widens one level per step', () => {
+		expect(nextNeighborDepth(1)).toBe(2);
+		expect(nextNeighborDepth(2)).toBe(3);
+		expect(nextNeighborDepth(NEIGHBOR_DEPTH_MAX - 1)).toBe(NEIGHBOR_DEPTH_MAX);
+	});
+
+	it('treats All as the widest rung, not the narrowest', () => {
+		expect(nextNeighborDepth(NEIGHBOR_DEPTH_MAX)).toBe(NEIGHBOR_DEPTH_ALL);
+		expect(nextNeighborDepth(NEIGHBOR_DEPTH_ALL)).toBe(1);
+	});
+
+	it('completes a full cycle back to where it started', () => {
+		let depth = 1;
+		const seen: number[] = [depth];
+		for (let i = 0; i < NEIGHBOR_DEPTH_MAX; i++) {
+			depth = nextNeighborDepth(depth);
+			seen.push(depth);
+		}
+		expect(seen).toEqual([1, 2, 3, 4, 5, NEIGHBOR_DEPTH_ALL]);
+		expect(nextNeighborDepth(depth)).toBe(1);
+	});
+
+	it('recovers from an out-of-range or non-numeric depth', () => {
+		expect(nextNeighborDepth(-3)).toBe(1);
+		expect(nextNeighborDepth(99)).toBe(NEIGHBOR_DEPTH_ALL);
+		expect(nextNeighborDepth(Number.NaN)).toBe(1);
+		expect(nextNeighborDepth(2.6)).toBe(3);
+	});
+});
+
+describe('formatNeighborDepth', () => {
+	it('names the sentinel rather than printing 0', () => {
+		expect(formatNeighborDepth(NEIGHBOR_DEPTH_ALL)).toBe('All');
+		expect(formatNeighborDepth(3)).toBe('3');
 	});
 });
