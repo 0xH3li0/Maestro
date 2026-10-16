@@ -6,6 +6,7 @@ import {
 	type IdleWatchdog,
 } from '../../shared/maestro-lib/control/idle-watchdog';
 import type { ParsedEvent } from '../../shared/maestro-lib/parsers/agent-output-parser';
+import type { UsageReporting } from '../../shared/maestro-lib/run/turn-capture';
 import type { HeadlessIdleProfile } from '../../shared/plugins/headless-agent-timeouts';
 import {
 	stopProcess,
@@ -19,6 +20,7 @@ export function superviseAgentProcess(
 	options: {
 		timeoutMs?: number;
 		idle?: HeadlessIdleProfile;
+		usageReporting?: UsageReporting;
 		onStatus?: (text: string) => void;
 		startupMs?: number;
 		signal?: AbortSignal;
@@ -41,6 +43,7 @@ export function superviseAgentProcess(
 	// proves correlation, not job progress: one fixed allowance per model epoch.
 	let toolDeadline: number | undefined;
 	let lastToolCompletion: number | undefined;
+	let anonymousTool = false;
 	const tools = new Map<string, boolean>();
 	const seenText = new Set<string>();
 	const usage = new Map<string, number[]>();
@@ -75,7 +78,6 @@ export function superviseAgentProcess(
 		warning?.disarm();
 		exitDrain?.disarm();
 		options.onStop(reason);
-		options.onStatus?.(reason);
 		// Arm before killing: close can be delivered during kill in a harness.
 		closeDeadline = setTimeout(
 			forceStop,
@@ -87,13 +89,14 @@ export function superviseAgentProcess(
 			{ child },
 			{ from: 'terminate', graceMs: BACKGROUND_STOP_GRACE_MS, label: 'headless agent' }
 		);
+		options.onStatus?.(reason);
 	};
 	const abort = (): void => stop('Agent run cancelled');
 	const armSilence = (): void => {
 		if (!profile || disposed || stopping) return;
 		silence?.disarm();
 		const modelDeadline = lastProgress + profile.idleMs;
-		const hasOpenTool = [...tools.values()].some(Boolean);
+		const hasOpenTool = anonymousTool || [...tools.values()].some(Boolean);
 		const toolReturnDeadline =
 			lastToolCompletion !== undefined && toolDeadline !== undefined
 				? Math.min(lastToolCompletion + profile.idleMs, toolDeadline)
@@ -130,6 +133,7 @@ export function superviseAgentProcess(
 		startup?.disarm();
 		toolDeadline = undefined;
 		lastToolCompletion = undefined;
+		anonymousTool = false;
 		// New model work may renew the bounded allowance of an existing tool.
 		if (profile && [...tools.values()].some(Boolean)) toolDeadline = lastProgress + profile.toolMs;
 		if (warned) options.onStatus?.('Agent run recovered: new model progress observed');
@@ -163,14 +167,25 @@ export function superviseAgentProcess(
 				event.usage.cacheCreationTokens ?? 0,
 				event.usage.reasoningTokens ?? 0,
 			];
-			const previous = usage.get(parent) ?? next.map(() => 0);
-			fresh ||= next.some((value, i) => Number.isFinite(value) && value > previous[i]);
-			usage.set(
-				parent,
-				next.map((value, i) =>
-					Number.isFinite(value) ? Math.max(value, previous[i]) : previous[i]
-				)
-			);
+			const stepId =
+				options.usageReporting === 'per-step' &&
+				typeof event.usageEventId === 'string' &&
+				event.usageEventId.length <= 256
+					? event.usageEventId
+					: '';
+			const key = `${parent}\0${stepId}`;
+			const previous = usage.get(key) ?? next.map(() => 0);
+			fresh ||=
+				(usage.has(key) || !!stepId) &&
+				(usage.has(key) || usage.size < 65536) &&
+				next.some((value, i) => Number.isFinite(value) && value > previous[i]);
+			if (usage.has(key) || usage.size < 65536)
+				usage.set(
+					key,
+					next.map((value, i) =>
+						Number.isFinite(value) ? Math.max(value, previous[i]) : previous[i]
+					)
+				);
 		}
 		if (fresh) modelProgress();
 		const toolEvents = [
@@ -184,10 +199,20 @@ export function superviseAgentProcess(
 		];
 		for (const tool of toolEvents) {
 			const id = tool.toolCallId;
-			if (!id || id.length > 256 || (tool.parentToolUseId && !tools.get(tool.parentToolUseId)))
-				continue;
+			if (tool.parentToolUseId && !tools.get(tool.parentToolUseId)) continue;
 			const state = tool.toolState as { status?: unknown } | undefined;
 			const status = state?.status;
+			if (!id) {
+				// No ID means no trustworthy completion or replay correlation. A
+				// running declaration gets only the original finite opaque allowance.
+				if (['running', 'pending', 'in_progress'].includes(String(status))) {
+					anonymousTool = true;
+					startup?.disarm();
+					if (profile && toolDeadline === undefined) toolDeadline = Date.now() + profile.toolMs;
+				}
+				continue;
+			}
+			if (id.length > 256) continue;
 			if (status === 'running' || status === 'pending' || status === 'in_progress') {
 				if (!tools.has(id) && tools.size < 4096) {
 					tools.set(id, true);

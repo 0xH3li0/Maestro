@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import * as termination from '../../../shared/maestro-lib/control/termination';
+import { createOutputParser } from '../../../shared/maestro-lib/parsers/parser-factory';
 import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
@@ -198,6 +199,71 @@ describe('semantic inactivity policy', () => {
 		});
 	});
 	afterEach(() => supervision.dispose());
+
+	it('treats the first cumulative usage snapshot as a baseline, not fresh work', async () => {
+		await vi.advanceTimersByTimeAsync(19 * 60_000);
+		supervision.observe({ type: 'usage', usage: { inputTokens: 100, outputTokens: 20 }, raw: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('signals before publishing a timeout status', async () => {
+		await vi.advanceTimersByTimeAsync(1_200_000);
+		const signalOrder = vi.mocked(child.kill).mock.invocationCallOrder[0];
+		const stoppedOrder = onStatus.mock.invocationCallOrder.at(-1)!;
+		expect(signalOrder).toBeLessThan(stoppedOrder);
+	});
+
+	it.each(['opencode', 'codex'] as const)(
+		'gives real %s ID-less tools a finite allowance',
+		async (provider) => {
+			const parser = createOutputParser(provider)!;
+			const raw =
+				provider === 'opencode'
+					? { type: 'tool_use', part: { tool: 'bash', state: { status: 'running' } } }
+					: { type: 'item.completed', item: { type: 'tool_call', tool: 'shell', args: {} } };
+			const event = parser.parseJsonLine(JSON.stringify(raw))!;
+			expect(event.type).toBe('tool_use');
+			expect(event.toolCallId).toBeUndefined();
+			supervision.observe(event);
+			await vi.advanceTimersByTimeAsync(1_200_000);
+			expect(onStop).not.toHaveBeenCalled();
+			supervision.observe(event);
+			await vi.advanceTimersByTimeAsync(2_400_000);
+			expect(onStop).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('counts distinct Copilot model steps with equal usage but ignores their replays', async () => {
+		supervision.dispose();
+		supervision = superviseAgentProcess(child, {
+			timeoutMs: 21_600_000,
+			usageReporting: 'per-step',
+			idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+			onStop,
+			onStatus,
+			onForcedStop: vi.fn(),
+		});
+		const parser = createOutputParser('copilot-cli')!;
+		let lastEvent;
+		for (let n = 0; n < 14; n++) {
+			lastEvent = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant.message',
+					id: `step-${n}`,
+					data: { content: '', outputTokens: 10 },
+				})
+			)!;
+			supervision.observe(lastEvent);
+			await vi.advanceTimersByTimeAsync(300_000);
+		}
+		expect(onStop).not.toHaveBeenCalled();
+		for (let n = 0; n < 4; n++) {
+			supervision.observe(lastEvent!);
+			await vi.advanceTimersByTimeAsync(300_000);
+		}
+		expect(onStop).toHaveBeenCalledOnce();
+	});
 
 	it('bounds provider exit with inherited stdio instead of waiting for the idle budget', async () => {
 		supervision.observe({ type: 'text', text: 'initial work', raw: {} });

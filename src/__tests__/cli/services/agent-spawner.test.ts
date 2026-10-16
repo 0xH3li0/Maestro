@@ -1923,8 +1923,8 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-1');
 		});
 
-		it.each(['claude-code', 'codex', 'opencode', 'copilot'] as const)(
-			'keeps %s normalized private model work alive for seventy minutes',
+		it.each(['claude-code', 'codex', 'opencode', 'copilot-cli'] as const)(
+			'keeps %s normalized model work alive for seventy minutes',
 			async (type) => {
 				vi.useFakeTimers();
 				try {
@@ -1935,6 +1935,7 @@ Some text with [x] in it that's not a checkbox
 						onProgress,
 					});
 					await vi.advanceTimersByTimeAsync(0);
+					expect(mockSpawn).toHaveBeenCalledOnce();
 					for (let n = 0; n < 14; n++) {
 						const text = `PRIVATE_REASONING_${n}`;
 						const message =
@@ -1945,15 +1946,34 @@ Some text with [x] in it that's not a checkbox
 											type: 'assistant',
 											message: { content: [{ type: 'thinking', thinking: text }] },
 										}
-									: type === 'copilot'
+									: type === 'copilot-cli'
 										? { type: 'assistant.reasoning_delta', data: { deltaContent: text } }
-										: { type: 'text', part: { type: 'text', text } };
+										: {
+												type: 'step_finish',
+												part: {
+													id: `step-${n}`,
+													reason: 'tool-calls',
+													tokens: { input: 10, output: 10 },
+												},
+											};
 						mockStdout.emit('data', Buffer.from(JSON.stringify(message) + '\n'));
 						await vi.advanceTimersByTimeAsync(300_000);
 					}
 					expect(mockChild.kill).not.toHaveBeenCalled();
+					const answer =
+						type === 'claude-code'
+							? { type: 'result', result: 'verified' }
+							: type === 'codex'
+								? {
+										type: 'item.completed',
+										item: { type: 'agent_message', phase: 'final', text: 'verified' },
+									}
+								: type === 'copilot-cli'
+									? { type: 'assistant.message', data: { content: 'verified', toolRequests: [] } }
+									: { type: 'text', part: { text: 'verified' } };
+					mockStdout.emit('data', Buffer.from(JSON.stringify(answer) + '\n'));
 					mockChild.emit('close', 0);
-					await pending;
+					expect(await pending).toMatchObject({ success: true, response: 'verified' });
 					expect(
 						onProgress.mock.calls.some(
 							([event]) => event.type === 'activity' && event.text.includes('PRIVATE_REASONING')

@@ -35,7 +35,7 @@ import {
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
-import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
+import { TurnCapture, usageReportingFor } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
@@ -1070,6 +1070,7 @@ async function spawnClaudeAgent(
 				? overrides.timeoutMs
 				: Math.max(1, overrides.deadlineAt - Date.now()),
 		idle: overrides.idle,
+		usageReporting: usageReportingFor('claude-code'),
 		onStatus: (text) =>
 			emitAgentProgress(overrides.onProgress, {
 				type: 'activity',
@@ -1471,6 +1472,7 @@ async function spawnJsonLineAgent(
 				? overrides.timeoutMs
 				: Math.max(1, overrides.deadlineAt - Date.now()),
 		idle: overrides.idle,
+		usageReporting: usageReportingFor(toolType),
 		onStatus: (text) =>
 			emitAgentProgress(overrides.onProgress, {
 				type: 'activity',
