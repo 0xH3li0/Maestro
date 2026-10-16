@@ -126,3 +126,38 @@ A focused JSON run of `fileRoutes.test.ts` confirmed 20 passed / 1 skipped / 0 f
 The resume checkbox remains unchecked. Human approval is needed to replace the supplied pattern with the newline-safe equivalent `^(?![\s\S]*does not overwrite a preexisting attachment file symlink)[\s\S]*$` and accept the capability-driven baseline change. With those two formerly skipped tests passing, the expected breakdown would be **45524 passed / 0 failed / 119 skipped** out of the unchanged 45643 tests; that corrected-pattern full-suite result has not been run. Do not force additional skips to reproduce historical counts.
 
 Profile: `C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working/vt-fu-resume-filtered-a-test-env-2026-10-16.json`; SHA-256 `36f331bef0503b7d7f454267525b6f1c870923da7aebafce8fda57d60c6a7f77`. Companion log: `vt-fu-resume-filtered-a-profile-2026-10-16.log`. Focused assertion evidence: `vt-fu-resume-file-routes-2026-10-16.json` in the same Working directory.
+
+### Approved newline-safe resume gate
+
+The human approval checkbox in [[01 - Tier A Small-Average Directories]] is now checked, approving the newline-safe filter and capability-driven count changes described above. This approval supersedes the historical pattern/count mismatch, not the single-test-only exclusion boundary.
+
+Ran the following with command-scoped `NODE_ENV=test`, invoking the installed Vitest entry point directly with an argument array:
+
+```bash
+NODE_ENV=test node node_modules/vitest/vitest.mjs run --config vitest.config.mts --testNamePattern '^(?![\s\S]*does not overwrite a preexisting attachment file symlink)[\s\S]*$' --reporter=default --reporter=json --outputFile='C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working/vt-fu-resume-approved-a-verified-2026-10-16.json'
+```
+
+| Result                          | Observed                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| Exit                            | 0                                                                         |
+| Files passed / failed / skipped | 1705 / 0 / 1 (1706 total)                                                 |
+| Tests passed / failed / skipped | 45524 / 0 / 119 (45643 total)                                             |
+| Vitest wall                     | 281.87s                                                                   |
+| Command wall                    | 283.165s                                                                  |
+| Exact-directory invariants      | All 20 unchanged: 347 files, 8282 tests, 8277 passed, 0 failed, 5 skipped |
+
+Compared every file and ordered assertion name/status against the original Stage 0 JSON profile. No file, assertion-count, or assertion-name changes were found. Exactly three statuses changed:
+
+- The authorized `fileRoutes.test.ts` symlink assertion changed from failed to skipped.
+- The two existing capability-gated `messageHandlers.test.ts` assertions listed above changed from skipped to passed.
+
+Applying the approved regex to all 45643 recorded assertion names excludes exactly the authorized symlink assertion. The SSH-host assertion containing `host\nother` ran and passed. The two newly available capability-gated assertions account for the revised pass/skip baseline; no additional test was excluded to force historical counts.
+
+Evidence in `C:/Users/Administrator/Software/Maestro/.maestro/playbooks/Working`:
+
+- `vt-fu-resume-approved-a-verified-2026-10-16.log`, summary lines 73792-73797.
+- `vt-fu-resume-approved-a-verified-2026-10-16.json`, SHA-256 `dbf630c2d97478735919c4f76355e5ae8210032045c1319d780e53c83dc69dd8`.
+
+An earlier capture, `vt-fu-resume-approved-a-2026-10-16.log` / `.json`, is invalid: shell command substitution corrupted the regex argument and all 45643 tests were skipped despite exit 0. It is retained only as rejected execution evidence, not a passing baseline. The verified invocation above used shell-safe quoting and printed its exact argument array before execution.
+
+The resume gate is satisfied with the approved counts and filter. Use this newline-safe filter and command-scoped `NODE_ENV=test` for subsequent playbook Vitest invocations; repository push hooks remain unchanged and unfiltered. No application code, tests, shared configuration, hooks, or machine permissions changed. No directory merges were started; the next checkbox belongs to a later task instance.
