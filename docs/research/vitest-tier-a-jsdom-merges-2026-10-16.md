@@ -27,6 +27,7 @@ Every playbook run uses command-scoped `NODE_ENV=test` and the approved newline-
 | 4     | `renderer/hooks/batch`                         | 21 → 6               | 273 / 273      | 10.43s      | Remote processor mocked real kill/document/worktree hooks: 25 initial failures, resolved by restoring its source as an isolated file; 1,760-line worktree suite stays unmerged. Descendants add 21 tests (294 total).                          |
 | 5     | `renderer/hooks/cue`                           | 16 → 7               | 273 / 273      | 2.29s       | Viewport pipelineGraph mock omitted resolvePipelineOffset required by real layout: 14 initial failures / 17 unhandled errors; both original files retained separately. Other persistence/selection/state factory conflicts remain isolated.    |
 | 6     | `renderer/hooks/tabs/internal`                 | 10 → 2               | 102 / 102      | 2.60s       | Helper/AI/terminal and browser/file/unified-handler domains separated; no mock conflict failures.                                                                                                                                              |
+| 7     | `renderer/hooks/remote`                        | 9 → 3                | 86 / 86        | 10.04s      | Identical capture-free event-listener factories deduplicated; goal-run settings/selector factories and group store/ID factories remain isolated.                                                                                               |
 
 Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook folder. Warnings are retained; green assertions do not imply warning-free execution.
 
@@ -34,6 +35,7 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 
 - After stages 1–2: **45,524 passed / 0 failed / 119 skipped; 1,675 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint2.log` and `.json`.
 - After stages 3–4: **45,524 passed / 0 failed / 119 skipped; 1,649 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint4.log` and `.json`.
+- After stages 5–6: **45,524 passed / 0 failed / 119 skipped; 1,632 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint6.log` and `.json`.
 
 ## File mapping
 
@@ -78,3 +80,9 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 
 - `helpers.merged.test.tsx` ← `browserTabHelpers.test.ts`, `filePreviewTabHelpers.test.ts`, `unifiedCloseHelpers.test.ts`, `useAITabHandlers.test.ts`, `useScrollLogHandlers.test.ts`, `useTabDerivedState.test.ts`, `useTerminalTabHandlers.test.ts`
 - `handlers.merged.test.tsx` ← `useBrowserTabHandlers.test.ts`, `useFilePreviewTabHandlers.test.ts`, `useUnifiedTabHandlers.test.ts`
+
+### renderer/hooks/remote
+
+- `events.merged.test.tsx` ← `goalRunLaunch.test.ts`, `useAppRemoteEventListenersAutoRunRefresh.test.ts`, `useAppRemoteEventListenersBrowserTabs.test.ts`, `useAppRemoteEventListenersOpenFile.test.ts`, `useAppRemoteEventListenersSessionConfig.test.ts`, `useAppRemoteEventListenersSessionCwd.test.ts`, `useLiveOverlay.test.ts`
+- Unmerged `useAppRemoteEventListenersGoalRun.test.ts`
+- Unmerged `useAppRemoteEventListenersGroups.test.ts`
