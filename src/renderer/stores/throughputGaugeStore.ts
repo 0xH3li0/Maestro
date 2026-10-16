@@ -13,7 +13,8 @@
  * same single write.
  *
  * `peak` and `history` only compare readings taken under one rule. The capture
- * hook calls `restartReadings()` when the scope or the rolling window changes.
+ * hook calls `restartReadings()` when the scope or the rolling window changes,
+ * and when it stops (the feature turned off), so a later start begins clean.
  *
  * `visible` is the user's close/open latch and is remembered across launches.
  * It is separate from the Encore flag: the flag decides whether the gauge

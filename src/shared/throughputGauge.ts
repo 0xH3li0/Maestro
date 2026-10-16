@@ -212,17 +212,3 @@ export function throughputScopeCaption(
 	if (scope === 'all') return 'all agents';
 	return activeAgentName || 'no active agent';
 }
-
-/**
- * The gauge's caption, naming what it measures: the metric, then whose output
- * ("Out, all agents", "Combined, Backend"). `activeAgentName` is the active
- * agent's name; pass null when there is none.
- */
-export function throughputGaugeCaption(
-	metric: ThroughputMetric,
-	scope: ThroughputScope,
-	activeAgentName: string | null
-): string {
-	const metricLabel = throughputOptionLabel(THROUGHPUT_METRICS, metric);
-	return `${metricLabel}, ${throughputScopeCaption(scope, activeAgentName)}`;
-}

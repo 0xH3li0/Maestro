@@ -2,12 +2,21 @@
  * Tests for ThroughputGaugeHost: nothing exists while the `throughputGauge`
  * Encore Feature is off, a mid-session flip on subscribes and pops the card up,
  * the close latch survives a remount, live process events move the published
- * needle, the capture loop honors the scope, window, and metric settings, and
- * the card's position and size persist on drag or resize end, come back on
- * remount, and are pulled into a smaller window.
+ * needle, the capture loop honors the scope, window, and metric settings and
+ * the window's agent ownership, and the card's position and size persist on
+ * drag or resize end, come back on remount, and are pulled into a smaller
+ * window.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Window ownership. Unset permits every agent (no WindowProvider, like the
+// primary window's catch-all); a predicate scopes the window like a secondary.
+let mockOwnsSession: ((agentId: string) => boolean) | undefined;
+vi.mock('../../../../renderer/contexts/WindowContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/contexts/WindowContext')>()),
+	useWindowContextOptional: () => (mockOwnsSession ? { ownsSession: mockOwnsSession } : null),
+}));
 
 import { ThroughputGaugeHost } from '../../../../renderer/components/ThroughputGauge';
 import {
@@ -98,6 +107,7 @@ describe('ThroughputGaugeHost', () => {
 	};
 
 	beforeEach(() => {
+		mockOwnsSession = undefined;
 		storage = installLocalStorageMock();
 		listeners = makeProcessListeners();
 		Object.assign(processApi, {
@@ -190,11 +200,17 @@ describe('ThroughputGaugeHost', () => {
 		expect(screen.queryByTestId('floating-throughput-gauge')).toBeNull();
 	});
 
-	it('turning the flag off unsubscribes every listener and drops the needle', () => {
+	it('turning the flag off unsubscribes every listener and drops every reading', () => {
 		vi.useFakeTimers();
 		setFlag(true);
 		render(<ThroughputGaugeHost theme={mockTheme} />);
-		useThroughputGaugeStore.setState({ rates: { in: 5, out: 5, combined: 10 } });
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+		// A real reading, so the peak and the sparkline trace hold something.
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().peak.combined).toBeGreaterThan(0);
 		// The test setup's ResizeObserver mock reports on a setTimeout; let the
 		// card's toast avoid zone take its first report so only the gauge's own
 		// timers are left to count.
@@ -206,8 +222,15 @@ describe('ThroughputGaugeHost', () => {
 		expect(listeners.unsubscribes.onThinkingChunk).toHaveBeenCalledTimes(1);
 		expect(listeners.unsubscribes.onUsage).toHaveBeenCalledTimes(1);
 		expect(listeners.unsubscribes.onExit).toHaveBeenCalledTimes(1);
-		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
 		expect(vi.getTimerCount()).toBe(0);
+		// Regression: the peak and the trace used to survive, so turning the
+		// feature back on showed the old peak mark and sparkline.
+		const { rates, peak, history } = useThroughputGaugeStore.getState();
+		expect(rates).toEqual(ZERO);
+		expect(peak).toEqual(ZERO);
+		for (const metric of ['in', 'out', 'combined'] as const) {
+			expect(history[metric].every((reading) => reading === 0)).toBe(true);
+		}
 	});
 
 	it('live output and usage move the published rate above zero and record a peak', () => {
@@ -348,6 +371,106 @@ describe('ThroughputGaugeHost', () => {
 
 		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
 		expect(throughputTracker.sampleCount()).toBe(0);
+	});
+
+	it('ignores group chat processes, whatever the participant is called', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+		const chatId = '550e8400-e29b-41d4-a716-446655440000';
+
+		act(() => {
+			// Regression: a participant's name is user-supplied, and these two used
+			// to parse as agent turns (`-ai-` as an AI tab, `-batch-{n}` as Auto Run).
+			for (const processId of [
+				`group-chat-${chatId}-participant-my-ai-agent-1702934567890`,
+				`group-chat-${chatId}-participant-batch-1702934567890`,
+				`group-chat-${chatId}-moderator-1702934567890`,
+			]) {
+				onUsage(processId, usage({ inputTokens: 1000, outputTokens: 300 }));
+			}
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
+		expect(throughputTracker.sampleCount()).toBe(0);
+	});
+
+	it('ignores agents a secondary window does not own', () => {
+		vi.useFakeTimers();
+		mockOwnsSession = (agentId) => agentId === 'agent-1';
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage('agent-2-ai-tab-1', usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
+	});
+
+	it('counts a reply re-sent after its usage report once, and reopens the source on exit', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onThinkingChunk = listeners.onThinkingChunk.mock.calls[0][0];
+		const onData = listeners.onData.mock.calls[0][0];
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+		const onExit = listeners.onExit.mock.calls[0][0];
+
+		act(() => {
+			// 100 tokens stream, the report says 300 (tool calls never stream), then
+			// the finished reply arrives again as process:data.
+			onThinkingChunk(AI_TAB_ID, 'x'.repeat(400));
+			onUsage(AI_TAB_ID, usage({ outputTokens: 300 }));
+			onData(AI_TAB_ID, 'x'.repeat(400));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		// 300 output tokens over the default 10s window, not 400.
+		expect(useThroughputGaugeStore.getState().rates.out).toBeCloseTo(30);
+
+		act(() => {
+			onExit(AI_TAB_ID, 0);
+			// The tab's next turn runs under the same process id.
+			onData(AI_TAB_ID, 'x'.repeat(400));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates.out).toBeCloseTo(40);
+		expect(throughputTracker.sourceCount()).toBe(1);
+	});
+
+	it('with scope active, follows an agent switch within one tick', () => {
+		vi.useFakeTimers();
+		setGaugeSettings({ scope: 'active' });
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			onUsage('agent-2-ai-tab-1', usage({ inputTokens: 500 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'agent-2' });
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		// One tick later the reading is agent-2's alone, and agent-1's peak is gone.
+		const { rates, peak } = useThroughputGaugeStore.getState();
+		expect(rates.combined).toBeCloseTo(50);
+		expect(peak.combined).toBeCloseTo(50);
+		expect(screen.getByTestId('throughput-gauge-caption').textContent).toBe('Frontend');
 	});
 
 	describe('remembered geometry', () => {

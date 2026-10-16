@@ -10,6 +10,7 @@
  */
 
 import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import { parseThroughputGaugeCommandRequest } from '../../../../shared/throughputGaugeCommands';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -48,6 +49,13 @@ export function handleThroughputGaugeCommand(
 		.throughputGaugeCommand(request)
 		.then((result) => sendResult({ ...result }))
 		.catch((error) => {
+			// The renderer round trip resolves every expected failure (timeout, no
+			// answer, a malformed reply) to a result, so a rejection is a defect.
+			void captureException(error, {
+				area: 'web-server',
+				handler: 'throughput_gauge_command',
+				action: request.action,
+			});
 			const detail = error instanceof Error ? error.message : String(error);
 			sendResult({ success: false, error: `Throughput Gauge ${request.action} failed: ${detail}` });
 		});

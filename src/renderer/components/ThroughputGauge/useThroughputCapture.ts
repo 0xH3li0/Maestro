@@ -21,8 +21,10 @@
  * Only agent turns count: `ai-tab`, `legacy-ai`, `batch` (Auto Run) and
  * `synopsis` are real model throughput. `regular` covers the command terminal
  * (`{id}-terminal`) and bare-id shell output, which are not tokens. Group chat
- * (`group-chat-*`) also parses as `regular` and is left out for now: only its
- * usage reaches the renderer, and it belongs to no single agent to scope on.
+ * (`group-chat-*`) is left out for now: only its usage reaches the renderer,
+ * and it belongs to no single agent to scope on. It is refused by its prefix,
+ * not by the parse: a participant's name is user-supplied, so
+ * `group-chat-{id}-participant-my-ai-agent-{ts}` parses as an AI tab.
  *
  * Each tick reads `throughputGaugeSettings` and the active agent from their
  * stores at tick time, never through the effect's dependencies, so changing a
@@ -37,6 +39,7 @@
  */
 
 import { useEffect } from 'react';
+import { GROUP_CHAT_PREFIX } from '../../../shared/maestro-lib/groupchat/session-ids';
 import {
 	createThroughputTracker,
 	type ThroughputRates,
@@ -67,6 +70,7 @@ export function useThroughputCapture(): void {
 
 		/** The agent id a raw process id counts toward, or null when it does not count. */
 		const agentTurnOf = (rawSessionId: string): string | null => {
+			if (rawSessionId.startsWith(GROUP_CHAT_PREFIX)) return null;
 			if (!ownedGate.current?.(rawSessionId)) return null;
 			const parsed = parseSessionId(rawSessionId);
 			return parsed.type === 'regular' ? null : parsed.baseSessionId;
@@ -123,9 +127,11 @@ export function useThroughputCapture(): void {
 			for (const unsubscribe of unsubscribers) unsubscribe?.();
 			clearInterval(timer);
 			throughputTracker.clear();
-			// Drop the needle: a gauge switched off mid-stream must not come back
-			// showing the rate it had when it left.
-			useThroughputGaugeStore.getState().publish(ZERO_RATES);
+			// Drop every reading: a gauge switched off mid-stream must not come back
+			// showing the rate, the peak, or the sparkline trace it had when it left.
+			const gauge = useThroughputGaugeStore.getState();
+			gauge.restartReadings();
+			gauge.publish(ZERO_RATES);
 		};
 	}, [ownedGate]);
 }

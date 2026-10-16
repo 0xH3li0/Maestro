@@ -1425,7 +1425,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const reply = (result: ThroughputGaugeCommandResult) =>
 					window.maestro.process.sendRemoteThroughputGaugeCommandResponse(responseChannel, result);
 				runRemoteThroughputGaugeCommand(request).then(reply, (error: unknown) => {
+					// Expected failures (feature off, bad patch, disk refused the write)
+					// come back as a result; a rejection is a defect, so Sentry sees it.
 					logger.error('[useRemoteIntegration] Throughput Gauge command failed', undefined, error);
+					captureException(error, {
+						extra: { context: 'remoteThroughputGaugeCommand', action: request.action },
+					});
 					reply({
 						success: false,
 						error: error instanceof Error ? error.message : String(error),

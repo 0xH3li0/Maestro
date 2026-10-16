@@ -30,6 +30,7 @@ import {
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
+import { captureException } from '../../../renderer/utils/sentry';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
@@ -47,6 +48,12 @@ vi.mock('../../../renderer/services/crossAgentAsk', () => ({
 // only forwards the request and relays the result on the response channel.
 vi.mock('../../../renderer/services/chatSteering', () => ({
 	steerQueuedItem: vi.fn(),
+}));
+
+// A remote verb that rejects is a defect the CLI's error reply alone would hide.
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
 }));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -2472,6 +2479,38 @@ describe('useRemoteIntegration', () => {
 					})
 				)
 			);
+		});
+
+		it('reports a verb that rejects to Sentry and still answers the caller', async () => {
+			const failure = new Error('settings bridge gone');
+			const { encoreFeatures, setThroughputGaugeSettings } = useSettingsStore.getState();
+			useSettingsStore.setState({
+				encoreFeatures: { ...encoreFeatures, throughputGauge: true },
+				setThroughputGaugeSettings: vi.fn().mockRejectedValue(failure),
+			});
+			try {
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+				act(() => {
+					onRemoteThroughputGaugeCommandHandler?.(
+						{ action: 'set', patch: { style: 'lcd' } },
+						'gauge-response'
+					);
+				});
+
+				await waitFor(() =>
+					expect(sent()).toHaveBeenCalledWith('gauge-response', {
+						success: false,
+						error: 'settings bridge gone',
+					})
+				);
+				expect(captureException).toHaveBeenCalledWith(
+					failure,
+					expect.objectContaining({ extra: expect.objectContaining({ action: 'set' }) })
+				);
+			} finally {
+				useSettingsStore.setState({ encoreFeatures, setThroughputGaugeSettings });
+			}
 		});
 	});
 

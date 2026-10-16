@@ -17,8 +17,13 @@ vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 	isPluginsFeatureEnabled: () => false,
 }));
 
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import { captureException } from '../../../../main/utils/sentry';
 
 function createMockClient(): WebClient {
 	return {
@@ -106,8 +111,9 @@ describe('throughput_gauge_command handler', () => {
 		expect(typeof reply.error).toBe('string');
 	});
 
-	it('answers a failure when the callback rejects', async () => {
-		throughputGaugeCommand.mockRejectedValue(new Error('window closed'));
+	it('answers a failure when the callback rejects, and reports it to Sentry', async () => {
+		const failure = new Error('window closed');
+		throughputGaugeCommand.mockRejectedValue(failure);
 		handler.handleMessage(client, {
 			type: 'throughput_gauge_command',
 			requestId: 'req-3',
@@ -121,5 +127,10 @@ describe('throughput_gauge_command handler', () => {
 			error: 'Throughput Gauge status failed: window closed',
 			requestId: 'req-3',
 		});
+		// Every expected failure resolves to a result, so a rejection is a defect.
+		expect(captureException).toHaveBeenCalledWith(
+			failure,
+			expect.objectContaining({ handler: 'throughput_gauge_command', action: 'status' })
+		);
 	});
 });

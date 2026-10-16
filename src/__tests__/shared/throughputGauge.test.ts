@@ -14,7 +14,6 @@ import {
 	THROUGHPUT_SCOPES,
 	THROUGHPUT_STYLES,
 	THROUGHPUT_WINDOW_OPTIONS,
-	throughputGaugeCaption,
 	throughputOptionLabel,
 	throughputScopeCaption,
 	throughputWindowLabel,
@@ -220,12 +219,6 @@ describe('throughputGauge settings model', () => {
 		it('looks up an option label, falling back to the raw value', () => {
 			expect(throughputOptionLabel(THROUGHPUT_METRICS, 'out')).toBe('Out');
 			expect(throughputOptionLabel(THROUGHPUT_STYLES, 'nixie' as ThroughputStyle)).toBe('nixie');
-		});
-
-		it('captions the metric and scope', () => {
-			expect(throughputGaugeCaption('out', 'all', 'Backend')).toBe('Out, all agents');
-			expect(throughputGaugeCaption('combined', 'active', 'Backend')).toBe('Combined, Backend');
-			expect(throughputGaugeCaption('in', 'active', null)).toBe('In, no active agent');
 		});
 
 		it('captions the scope alone', () => {
