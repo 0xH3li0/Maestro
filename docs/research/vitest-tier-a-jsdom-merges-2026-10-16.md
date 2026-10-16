@@ -28,6 +28,7 @@ Every playbook run uses command-scoped `NODE_ENV=test` and the approved newline-
 | 5     | `renderer/hooks/cue`                           | 16 → 7               | 273 / 273      | 2.29s       | Viewport pipelineGraph mock omitted resolvePipelineOffset required by real layout: 14 initial failures / 17 unhandled errors; both original files retained separately. Other persistence/selection/state factory conflicts remain isolated.    |
 | 6     | `renderer/hooks/tabs/internal`                 | 10 → 2               | 102 / 102      | 2.60s       | Helper/AI/terminal and browser/file/unified-handler domains separated; no mock conflict failures.                                                                                                                                              |
 | 7     | `renderer/hooks/remote`                        | 9 → 3                | 86 / 86        | 10.04s      | Identical capture-free event-listener factories deduplicated; goal-run settings/selector factories and group store/ID factories remain isolated.                                                                                               |
+| 8     | `renderer/hooks/utils`                         | 9 → 2                | 183 / 183      | 2.62s       | Interaction/callback/gesture suites combined; existing 2,753-line debounced-persistence suite remains unmerged.                                                                                                                                |
 
 Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook folder. Warnings are retained; green assertions do not imply warning-free execution.
 
@@ -86,3 +87,8 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 - `events.merged.test.tsx` ← `goalRunLaunch.test.ts`, `useAppRemoteEventListenersAutoRunRefresh.test.ts`, `useAppRemoteEventListenersBrowserTabs.test.ts`, `useAppRemoteEventListenersOpenFile.test.ts`, `useAppRemoteEventListenersSessionConfig.test.ts`, `useAppRemoteEventListenersSessionCwd.test.ts`, `useLiveOverlay.test.ts`
 - Unmerged `useAppRemoteEventListenersGoalRun.test.ts`
 - Unmerged `useAppRemoteEventListenersGroups.test.ts`
+
+### renderer/hooks/utils
+
+- `interaction.merged.test.tsx` ← `useBracketTabCycle.test.ts`, `useEdgeSwipeHandlers.test.ts`, `useEventListener.test.ts`, `useLongPress.test.ts`, `usePointerDrag.test.ts`, `useProgressiveRenderWindow.test.ts`, `useStableCallback.test.tsx`, `useSwipeGestures.test.ts`
+- Unmerged `useDebouncedPersistence.test.ts`
