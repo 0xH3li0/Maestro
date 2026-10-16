@@ -218,6 +218,96 @@ describe('semantic inactivity policy', () => {
 		expect(onStop).toHaveBeenCalledOnce();
 	});
 
+	it('keeps the anonymous deadline when model work renews a simultaneous correlated tool', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'new model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		// The identified handoff ends at minute 50. Only the anonymous allowance
+		// may keep this quiet run alive until its original minute-60 deadline.
+		await vi.advanceTimersByTimeAsync(30 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('tool or wait budget'));
+	});
+
+	it.each(['anonymous', 'correlated'] as const)(
+		'keeps separate tool start deadlines when %s starts first',
+		async (first) => {
+			const anonymous = { type: 'tool_use' as const, toolState: { status: 'running' }, raw: {} };
+			const correlated = { ...anonymous, toolCallId: 'build' };
+			supervision.observe(first === 'anonymous' ? anonymous : correlated);
+			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			supervision.observe(first === 'anonymous' ? correlated : anonymous);
+			await vi.advanceTimersByTimeAsync(20 * 60_000);
+			supervision.observe({
+				type: 'tool_use',
+				toolCallId: 'build',
+				toolState: { status: 'completed' },
+				raw: {},
+			});
+			await vi.advanceTimersByTimeAsync((first === 'anonymous' ? 30 : 40) * 60_000 - 1);
+			expect(onStop).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(onStop).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('lets a valid correlated allowance outlive an expired anonymous allowance', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'new model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(55 * 60_000);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
+	it('keeps fresh model work alive on its own idle budget after both tool allowances end', async () => {
+		supervision.observe({ type: 'tool_use', toolState: { status: 'running' }, raw: {} });
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'running' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		supervision.observe({ type: 'text', text: 'first model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({
+			type: 'tool_use',
+			toolCallId: 'build',
+			toolState: { status: 'completed' },
+			raw: {},
+		});
+		await vi.advanceTimersByTimeAsync(25 * 60_000);
+		supervision.observe({ type: 'text', text: 'fresh model work', raw: {} });
+		await vi.advanceTimersByTimeAsync(20 * 60_000 - 1);
+		expect(onStop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(onStop).toHaveBeenCalledOnce();
+	});
+
 	it('signals before publishing a timeout status', async () => {
 		await vi.advanceTimersByTimeAsync(1_200_000);
 		const signalOrder = vi.mocked(child.kill).mock.invocationCallOrder[0];

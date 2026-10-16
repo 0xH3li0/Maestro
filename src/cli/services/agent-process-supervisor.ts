@@ -39,11 +39,11 @@ export function superviseAgentProcess(
 	let forced = false;
 	let warned = false;
 	let lastProgress = Date.now();
-	// Opaque tools include waits, shell commands and delegations. Their lifecycle
-	// proves correlation, not job progress: one fixed allowance per model epoch.
-	let toolDeadline: number | undefined;
+	// A correlated tool allowance may follow new model work; an ID-less
+	// declaration has its own original fixed deadline. Neither owns the other.
+	let correlatedToolDeadline: number | undefined;
+	let anonymousToolDeadline: number | undefined;
 	let lastToolCompletion: number | undefined;
-	let anonymousTool = false;
 	const tools = new Map<string, boolean>();
 	const seenText = new Set<string>();
 	const usage = new Map<string, number[]>();
@@ -96,14 +96,18 @@ export function superviseAgentProcess(
 		if (!profile || disposed || stopping) return;
 		silence?.disarm();
 		const modelDeadline = lastProgress + profile.idleMs;
-		const hasOpenTool = anonymousTool || [...tools.values()].some(Boolean);
+		const hasOpenCorrelatedTool = [...tools.values()].some(Boolean);
+		const hasOpenTool = anonymousToolDeadline !== undefined || hasOpenCorrelatedTool;
 		const toolReturnDeadline =
-			lastToolCompletion !== undefined && toolDeadline !== undefined
-				? Math.min(lastToolCompletion + profile.idleMs, toolDeadline)
+			lastToolCompletion !== undefined && correlatedToolDeadline !== undefined
+				? Math.min(lastToolCompletion + profile.idleMs, correlatedToolDeadline)
 				: modelDeadline;
 		const deadline = Math.max(
 			modelDeadline,
-			hasOpenTool && toolDeadline !== undefined ? toolDeadline : toolReturnDeadline
+			anonymousToolDeadline ?? modelDeadline,
+			hasOpenCorrelatedTool && correlatedToolDeadline !== undefined
+				? correlatedToolDeadline
+				: toolReturnDeadline
 		);
 		silence = createIdleWatchdog({
 			idleMs: Math.max(1, deadline - Date.now()),
@@ -131,12 +135,13 @@ export function superviseAgentProcess(
 	const modelProgress = (): void => {
 		lastProgress = Date.now();
 		startup?.disarm();
-		// A delayed model event cannot revoke an ID-less tool's original
-		// allowance. Without correlation, neither it nor a poll renews that lease.
-		if (!anonymousTool) toolDeadline = undefined;
+		// Only the correlated allowance follows new model work. The anonymous
+		// declaration retains its original deadline even when both are open.
+		correlatedToolDeadline = undefined;
 		lastToolCompletion = undefined;
 		// New model work may renew the bounded allowance of an existing tool.
-		if (profile && [...tools.values()].some(Boolean)) toolDeadline = lastProgress + profile.toolMs;
+		if (profile && [...tools.values()].some(Boolean))
+			correlatedToolDeadline = lastProgress + profile.toolMs;
 		if (warned) options.onStatus?.('Agent run recovered: new model progress observed');
 		warned = false;
 		armWarning();
@@ -207,9 +212,9 @@ export function superviseAgentProcess(
 				// No ID means no trustworthy completion or replay correlation. A
 				// running declaration gets only the original finite opaque allowance.
 				if (['running', 'pending', 'in_progress'].includes(String(status))) {
-					anonymousTool = true;
 					startup?.disarm();
-					if (profile && toolDeadline === undefined) toolDeadline = Date.now() + profile.toolMs;
+					if (profile && anonymousToolDeadline === undefined)
+						anonymousToolDeadline = Date.now() + profile.toolMs;
 				}
 				continue;
 			}
@@ -218,7 +223,8 @@ export function superviseAgentProcess(
 				if (!tools.has(id) && tools.size < 4096) {
 					tools.set(id, true);
 					startup?.disarm();
-					if (profile && toolDeadline === undefined) toolDeadline = Date.now() + profile.toolMs;
+					if (profile && correlatedToolDeadline === undefined)
+						correlatedToolDeadline = Date.now() + profile.toolMs;
 				}
 			} else if (
 				['completed', 'success', 'failed', 'error'].includes(String(status)) &&
