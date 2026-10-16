@@ -19,7 +19,7 @@ Every playbook run uses command-scoped `NODE_ENV=test` and the approved newline-
 
 ## Directory gates
 
-| Stage | Directory under src/**tests**                  | Files before → after | Passed / total | Vitest wall | Mock conflicts / notes                                                                                                                                                                                                                                                           |
+| Stage | Directory under `src/__tests__`                | Files before → after | Passed / total | Vitest wall | Mock conflicts / notes                                                                                                                                                                                                                                                           |
 | ----- | ---------------------------------------------- | -------------------- | -------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | `renderer/hooks/ui`                            | 22 → 3               | 182 / 182      | 6.83s       | runtimeContext false/true factories split between layout and gestures; Original file-level hooks scoped to existing describes; local collisions renamed.                                                                                                                         |
 | 2     | `renderer/components/FilePreview/markdownFast` | 14 → 2               | 229 / 229      | 1.73s       | No same-module factory conflicts; Highlighter/preview and parser/pipeline domains separated.                                                                                                                                                                                     |
@@ -39,6 +39,7 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 - After stages 3–4: **45,524 passed / 0 failed / 119 skipped; 1,649 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint4.log` and `.json`.
 - After stages 5–6: **45,524 passed / 0 failed / 119 skipped; 1,632 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint6.log` and `.json`.
 - After stages 7–8: **45,524 passed / 0 failed / 119 skipped; 1,619 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-checkpoint8.log` and `.json`.
+- After all nine jsdom directories: **45,524 passed / 0 failed / 119 skipped out of 45,643 tests; 1,608 files**, filtered full suite passed. Receipt: `Working/vt-fu-a-jsdom-final.log` and `.json`.
 
 ## File mapping
 
@@ -108,3 +109,13 @@ Directory JSON receipts: `Working/vt-fu-a-stage<N>.json` in the shared playbook 
 - Unmerged `graph-screenshot.test.tsx`
 - Unmerged `graph-drag-zoom.test.ts`
 - Unmerged `reactflow-performance.test.ts`
+
+## Review and static verification
+
+- All nine exact-parent directory JSON results were compared with the Stage 0 baseline as sorted multisets of assertion full names and statuses. All 2,255 assertions are unchanged; descendant helper tests are not included in those invariants.
+- The nine directories now contain **40 files instead of 138**, removing **98 jsdom file floors**. Of those 40, 23 are merged files; 17 original files remain for factory isolation, size, or intentionally untouched documentation-only fixtures. No new merged file exceeds 1,500 lines.
+- Focused ESLint passed over all nine directories with `-c eslint.dashes.config.mjs --no-ignore`; Prettier passed over all 23 new merged files.
+- All configured TypeScript checks passed directly: `tsc -p tsconfig.lint.json`, `tsc -p tsconfig.main.json --noEmit`, and `tsc -p tsconfig.cli.json --noEmit`. A generic `npm run lint` tool invocation instead produced repo-root ESLint output (seven issues in an unrelated `main.js`); it is not counted as the TypeScript check.
+- Editor-only test diagnostics (for example, the existing fake IntersectionObserver missing the newer DOM scrollMargin member and existing incomplete fixture types) remain outside these production TypeScript configurations. Test bodies were not rewritten to silence them.
+- Review covered module-local binding renames, preserved suite names, original-suite lifecycle-hook scoping, factory splits, snapshots/path-sensitive references, and application/configuration boundaries. No blocking review finding remains in the merge changes.
+- These are suite-layout changes, not application behavior changes. Directory execution and filtered full-suite checkpoints exercise the changed Vitest surface. No desktop UI run or performance-speedup claim is implied. Final Tier A timing/calibration remains a later playbook task.
