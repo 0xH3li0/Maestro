@@ -1838,6 +1838,10 @@ export interface EncoreFeatureFlags {
 	// for scheduled scripts. macOS only, off by default. Optional so older
 	// fixtures and persisted settings remain valid.
 	maestroRun?: boolean;
+	// Throughput Gauge - a floating dial showing live tokens per second across
+	// agents. Off by default. Optional so older fixtures and persisted settings
+	// remain valid.
+	throughputGauge?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

@@ -2096,7 +2096,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, throughputGauge)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));

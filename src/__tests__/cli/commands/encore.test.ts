@@ -69,7 +69,8 @@ describe('encore commands', () => {
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 		// rc's CLI also exposes Pianola and Computer History, which have not
-		// graduated and ship off, and Quick Chat, which ships on. MaestroRun is
+		// graduated and ship off, Quick Chat, which ships on, and Throughput Gauge,
+		// which ships off. MaestroRun is
 		// macOS only, so it is covered by its own platform tests below.
 		const { maestroRun: _maestroRun, ...everywhere } = parsed.features;
 		expect(everywhere).toEqual({
@@ -80,6 +81,7 @@ describe('encore commands', () => {
 			pianola: false,
 			computerHistory: false,
 			quickChat: true,
+			throughputGauge: false,
 		});
 	});
 
@@ -193,6 +195,15 @@ describe('encore commands', () => {
 		await encoreSet('manager', true, {});
 		expect((getPayload2().value as Record<string, boolean>).pianola).toBe(true);
 	});
+
+	it.each(['throughput-gauge', 'throughput', 'gauge', 'tps'])(
+		'resolves the "%s" alias to throughputGauge',
+		async (alias) => {
+			const getPayload = mockSend({ success: true });
+			await encoreSet(alias, true, {});
+			expect((getPayload().value as Record<string, boolean>).throughputGauge).toBe(true);
+		}
+	);
 
 	it('rejects an unknown feature without connecting', async () => {
 		await expect(encoreSet('telepathy', true, {})).rejects.toThrow('__exit__');

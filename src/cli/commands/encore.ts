@@ -26,6 +26,7 @@ const FEATURES: Record<string, string> = {
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun (macOS)',
+	throughputGauge: 'Throughput Gauge',
 };
 
 const ALIASES: Record<string, string> = {
@@ -52,6 +53,11 @@ const ALIASES: Record<string, string> = {
 	quickchat: 'quickChat',
 	'maestro-run': 'maestroRun',
 	maestrorun: 'maestroRun',
+	'throughput-gauge': 'throughputGauge',
+	throughputgauge: 'throughputGauge',
+	throughput: 'throughputGauge',
+	gauge: 'throughputGauge',
+	tps: 'throughputGauge',
 };
 
 interface EncoreOptions {

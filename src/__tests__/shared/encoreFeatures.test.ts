@@ -16,6 +16,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 			quickChat: true,
 		});
 	});
+
+	it('ships the Throughput Gauge off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.throughputGauge).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {
