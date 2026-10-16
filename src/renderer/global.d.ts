@@ -442,6 +442,12 @@ interface MaestroAPI {
 		}) => Promise<{ exitCode: number }>;
 		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
 		cancelCommand: (sessionId: string) => Promise<boolean>;
+		getHeadlessActivity: () => Promise<
+			import('../shared/headlessAgentActivity').HeadlessAgentActivity
+		>;
+		onHeadlessActivity: (
+			handler: (activity: import('../shared/headlessAgentActivity').HeadlessAgentActivity) => void
+		) => () => void;
 		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;

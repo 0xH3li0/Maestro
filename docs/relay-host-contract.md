@@ -72,6 +72,28 @@ Relay and that exact Maestro agent; ordinary CLI sessions remain unattributed.
 This backfill adds origin metadata, not historical turn entries. Existing History
 filter selections gain `RELAY` on upgrade; a later explicit deselection persists.
 
+## Live activity and conversation provenance
+
+Relay origin remains durable conversation metadata. Reopening a conversation in
+History or Quick Chat carries its origin into the tab, whose Relay badge remains
+visible while idle, running, and after reload. This does not create a desktop tab
+for a headless conversation.
+
+The host separately counts started headless provider processes per target agent.
+Preparation, plugin queues, and waiting for the next message do not count. Each
+run releases only its own activity on completion, failure, timeout, or cancellation;
+plugin shutdown uses the existing cancellation path. Duplicate or late start
+callbacks cannot revive a settled run. Sidebar indicators combine this transient
+signal with desktop activity without changing the active desktop tab or persisting
+a synthetic busy state. The existing host busy probe, web agent status, and plugin
+session metadata also include headless work; desktop tab status remains tab-scoped.
+Renderer reloads fetch a versioned snapshot, so an older snapshot cannot overwrite
+a newer activity event.
+
+No plugin-supplied status mutation or additional SDK method is needed: the target
+continues to come from authorized `agents.send(agentId, ...)`. Existing dispatch,
+unattended consent, trusted Relay identity, and provider ownership checks apply.
+
 ## First-message thread title (Host API 1.25.0)
 
 ```ts
