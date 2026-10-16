@@ -31,6 +31,15 @@ import {
 	snoozeWake,
 } from './commands/snooze';
 import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
+import {
+	throughputGaugeFlagChoices,
+	throughputGaugeHide,
+	throughputGaugeResetPeak,
+	throughputGaugeSet,
+	throughputGaugeShow,
+	throughputGaugeStatus,
+	throughputGaugeToggle,
+} from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -742,6 +751,59 @@ program
 	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
 	.option('--json', 'Output as JSON')
 	.action(snoozeWake);
+
+// Throughput Gauge commands - the CLI half of the floating tokens/sec gauge (an
+// Encore Feature): show and hide, the gear's five settings, Reset peak, and a
+// status read. Every verb answers with the gauge's status after it ran.
+const throughputGauge = program
+	.command('throughput-gauge')
+	.description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
+
+const gaugeFlagHelp = (label: string, field: Parameters<typeof throughputGaugeFlagChoices>[0]) =>
+	`${label}: ${throughputGaugeFlagChoices(field).join(' | ')}`;
+
+throughputGauge
+	.command('show')
+	.description('Put the gauge on screen (does not move focus)')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeShow);
+
+throughputGauge
+	.command('hide')
+	.description('Take the gauge off screen')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeHide);
+
+throughputGauge
+	.command('toggle')
+	.description(
+		'Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)'
+	)
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeToggle);
+
+throughputGauge
+	.command('set')
+	.description('Change one or more gauge settings, like the gear on the gauge')
+	.option('--scope <scope>', gaugeFlagHelp('Whose output to count', 'scope'))
+	.option('--metric <metric>', gaugeFlagHelp('Which reading to show', 'metric'))
+	.option('--layout <layout>', gaugeFlagHelp('One gauge or all three', 'layout'))
+	.option('--style <style>', gaugeFlagHelp('How the reading is drawn', 'style'))
+	.option('--window <seconds>', gaugeFlagHelp('Rolling-average window in seconds', 'windowMs'))
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeSet);
+
+throughputGauge
+	.command('reset-peak')
+	.description('Start the peak mark again from the current reading')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeResetPeak);
+
+throughputGauge
+	.command('status')
+	.description('Read visibility, settings, live rates, and peaks')
+	.option('--json', 'Output as JSON (enabled, visible, settings, rates, peak, windowMs)')
+	.action(throughputGaugeStatus);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro

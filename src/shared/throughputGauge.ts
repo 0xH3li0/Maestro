@@ -9,6 +9,7 @@
  * default and leaves a good `scope` alone.
  */
 
+import { formatNumber } from './formatters';
 import {
 	DEFAULT_THROUGHPUT_WINDOW_MS,
 	THROUGHPUT_WINDOWS_MS,
@@ -57,6 +58,14 @@ export const THROUGHPUT_STYLES = [
 ] as const satisfies ReadonlyArray<ThroughputGaugeOption<string>>;
 
 export type ThroughputStyle = (typeof THROUGHPUT_STYLES)[number]['value'];
+
+/** The unit every surface prints beside a reading: each gauge style and the CLI. */
+export const GAUGE_UNIT = 'tok/s';
+
+/** A rate as the gauges print it: rounded, compact above a thousand (`1.2K`). */
+export function formatGaugeRate(rate: number): string {
+	return formatNumber(Math.max(0, Math.round(Number.isFinite(rate) ? rate : 0)));
+}
 
 /** Short label for a rolling-average window: `10000` -> `10s`. */
 export function throughputWindowLabel(windowMs: number): string {

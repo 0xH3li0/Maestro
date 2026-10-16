@@ -8,7 +8,6 @@
  * same scale.
  */
 
-import { formatNumber } from '../../../../shared/formatters';
 import type { Theme } from '../../../types';
 
 export interface GaugeStyleProps {
@@ -29,10 +28,6 @@ export interface GaugeStyleProps {
 	compact: boolean;
 }
 
-/** The unit every style prints under or beside its reading. */
-export const GAUGE_UNIT = 'tok/s';
-
-/** A rate as the gauges print it: rounded, compact above a thousand (`1.2K`). */
-export function formatGaugeRate(rate: number): string {
-	return formatNumber(Math.max(0, Math.round(Number.isFinite(rate) ? rate : 0)));
-}
+// The unit and the rate formatter live in shared/ so `maestro-cli
+// throughput-gauge status` prints a reading exactly as the gauge does.
+export { GAUGE_UNIT, formatGaugeRate } from '../../../../shared/throughputGauge';

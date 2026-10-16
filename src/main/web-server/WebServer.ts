@@ -113,6 +113,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -221,6 +222,7 @@ import type {
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -623,6 +625,10 @@ export class WebServer {
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
+	}
+
+	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {
+		this.callbackRegistry.setThroughputGaugeCommandCallback(callback);
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {
@@ -1338,6 +1344,8 @@ export class WebServer {
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
+			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
+				this.callbackRegistry.throughputGaugeCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),

@@ -603,6 +603,63 @@ Bring a snoozed tab back right now (alias for "snooze wake")
 | `--focus`      | Accepted and ignored: a wake restores the tab without focusing it | -       |
 | `--json`       | Output as JSON                                                    | -       |
 
+## `maestro-cli throughput-gauge`
+
+Show, hide, configure, or read the Throughput Gauge (tokens per second)
+
+## `maestro-cli throughput-gauge show`
+
+Put the gauge on screen (does not move focus)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge hide`
+
+Take the gauge off screen
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge toggle`
+
+Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge set`
+
+Change one or more gauge settings, like the gear on the gauge
+
+| Option               | Description                                              | Default |
+| -------------------- | -------------------------------------------------------- | ------- |
+| `--scope <scope>`    | Whose output to count: all \| active                     | -       |
+| `--metric <metric>`  | Which reading to show: combined \| in \| out             | -       |
+| `--layout <layout>`  | One gauge or all three: single \| all                    | -       |
+| `--style <style>`    | How the reading is drawn: dial \| vu \| lcd \| sparkline | -       |
+| `--window <seconds>` | Rolling-average window in seconds: 5 \| 10 \| 30 \| 60   | -       |
+| `--json`             | Output the gauge status as JSON                          | -       |
+
+## `maestro-cli throughput-gauge reset-peak`
+
+Start the peak mark again from the current reading
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge status`
+
+Read visibility, settings, live rates, and peaks
+
+| Option   | Description                                                        | Default |
+| -------- | ------------------------------------------------------------------ | ------- |
+| `--json` | Output as JSON (enabled, visible, settings, rates, peak, windowMs) | -       |
+
 ## `maestro-cli session`
 
 Inspect open desktop tabs and their conversation history

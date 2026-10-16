@@ -498,7 +498,7 @@ export interface UseSettingsReturn {
 
 	// Throughput Gauge settings (scope, metric, layout, style, rate window)
 	throughputGaugeSettings: ThroughputGaugeSettings;
-	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => void;
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;

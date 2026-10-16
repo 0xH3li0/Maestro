@@ -231,6 +231,10 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../shared/throughputGaugeCommands';
+import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../shared/autoRunSteeringCommands';
@@ -587,6 +591,14 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
+		onRemoteThroughputGaugeCommand: (
+			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteThroughputGaugeCommandResponse: (
+			responseChannel: string,
+			result: ThroughputGaugeCommandResult
+		) => void;
 		onRemoteReorderTab: (
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;

@@ -31,6 +31,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -175,6 +176,10 @@ import type {
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../../../shared/throughputGaugeCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -211,6 +216,7 @@ export interface WebServerCallbacks {
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
+	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
@@ -327,6 +333,7 @@ export class CallbackRegistry {
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
+		throughputGaugeCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
@@ -538,6 +545,15 @@ export class CallbackRegistry {
 			return { success: false, error: 'Window commands are not configured' };
 		}
 		return this.callbacks.windowCommand(request);
+	}
+
+	async throughputGaugeCommand(
+		request: ThroughputGaugeCommandRequest
+	): Promise<ThroughputGaugeCommandResult> {
+		if (!this.callbacks.throughputGaugeCommand) {
+			return { success: false, error: 'Throughput Gauge commands are not configured' };
+		}
+		return this.callbacks.throughputGaugeCommand(request);
 	}
 
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
@@ -1301,6 +1317,10 @@ export class CallbackRegistry {
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
+	}
+
+	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {
+		this.callbacks.throughputGaugeCommand = callback;
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {

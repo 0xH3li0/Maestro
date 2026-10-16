@@ -594,7 +594,8 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setQuickChatSettings: (value: QuickChatSettings) => void;
-	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => void;
+	/** Resolves once the write lands on disk (`false` when it failed), for `maestro-cli throughput-gauge set`. */
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
@@ -1422,7 +1423,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 
 		setThroughputGaugeSettings: (value) => {
 			set({ throughputGaugeSettings: value });
-			window.maestro.settings.set(THROUGHPUT_GAUGE_SETTINGS_KEY, value);
+			return window.maestro.settings.set(THROUGHPUT_GAUGE_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {

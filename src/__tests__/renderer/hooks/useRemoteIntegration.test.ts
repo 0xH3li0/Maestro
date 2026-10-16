@@ -119,6 +119,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteThroughputGaugeCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteAutoRunSteeringCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
@@ -239,6 +242,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteThroughputGaugeCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteThroughputGaugeCommandResponse: vi.fn(),
 		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteAutoRunSteeringCommandHandler = handler;
 			return () => {};
@@ -2419,6 +2427,50 @@ describe('useRemoteIntegration', () => {
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
 				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote Throughput Gauge command', () => {
+		// Same contract as snooze: the CLI blocks on the reply, so every outcome
+		// answers on the response channel. The service itself is covered in
+		// throughputGaugeCommands.test.ts.
+		const sent = () =>
+			window.maestro.process.sendRemoteThroughputGaugeCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a status read on its response channel', async () => {
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			act(() => {
+				onRemoteThroughputGaugeCommandHandler?.({ action: 'status' }, 'gauge-response');
+			});
+
+			await waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'gauge-response',
+					expect.objectContaining({ success: true, status: expect.any(Object) })
+				)
+			);
+		});
+
+		it('answers a write with the enable hint while the feature is off', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, throughputGauge: false },
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			act(() => {
+				onRemoteThroughputGaugeCommandHandler?.({ action: 'show' }, 'gauge-response');
+			});
+
+			await waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'gauge-response',
+					expect.objectContaining({
+						success: false,
+						error: expect.stringContaining('maestro-cli encore enable throughput-gauge'),
+					})
+				)
 			);
 		});
 	});

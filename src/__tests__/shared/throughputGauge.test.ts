@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	applyThroughputGaugeSettingsPatch,
 	DEFAULT_THROUGHPUT_GAUGE_SETTINGS,
+	formatGaugeRate,
+	GAUGE_UNIT,
 	resolveThroughputGaugeSettings,
 	THROUGHPUT_GAUGE_SETTING_CONTROLS,
 	THROUGHPUT_GAUGE_SETTING_FIELDS,
@@ -232,5 +234,15 @@ describe('throughputGauge settings model', () => {
 			expect(throughputScopeCaption('active', null)).toBe('no active agent');
 			expect(throughputScopeCaption('active', '')).toBe('no active agent');
 		});
+	});
+});
+
+describe('formatGaugeRate', () => {
+	it('rounds, clamps at zero, and compacts above a thousand', () => {
+		expect(formatGaugeRate(181.6)).toBe('182');
+		expect(formatGaugeRate(-4)).toBe('0');
+		expect(formatGaugeRate(Number.NaN)).toBe('0');
+		expect(formatGaugeRate(1234)).toBe('1.2K');
+		expect(GAUGE_UNIT).toBe('tok/s');
 	});
 });

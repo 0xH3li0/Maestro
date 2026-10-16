@@ -1358,6 +1358,14 @@ export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				menu: 'Reset peak, under the gear on the gauge',
 			},
 		],
+		agentCommands: [
+			{
+				label: 'Read the live rate, peak, and settings',
+				command: 'maestro-cli throughput-gauge status --json',
+			},
+			{ label: 'Show or hide the gauge', command: 'maestro-cli throughput-gauge show' },
+			{ label: 'Change the style', command: 'maestro-cli throughput-gauge set --style lcd' },
+		],
 		notes: [
 			'The live reading estimates tokens written from the text as it streams, then corrects itself when the provider reports the real counts at the end of each turn.',
 			'Tokens read count new input and cache writes. Cache reads are left out, because they re-read context the agent already sent.',
