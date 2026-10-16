@@ -10,6 +10,7 @@ import {
 	DirectorNotesSection,
 	QuickChatSection,
 	SymphonyRegistrySection,
+	ThroughputGaugeSection,
 	UsageStatsSection,
 } from './components';
 import {
@@ -99,6 +100,13 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				theme={theme}
 				quickChatSettings={settings.quickChatSettings}
 				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
+		),
+		throughputGauge: (
+			<ThroughputGaugeSection
+				theme={theme}
+				throughputGaugeSettings={settings.throughputGaugeSettings}
+				setThroughputGaugeSettings={settings.setThroughputGaugeSettings}
 			/>
 		),
 	};

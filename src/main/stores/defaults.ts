@@ -11,6 +11,7 @@ import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
+import { DEFAULT_THROUGHPUT_GAUGE_SETTINGS } from '../../shared/throughputGauge';
 
 import type {
 	MaestroSettings,
@@ -148,6 +149,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 		...DEFAULT_QUICK_CHAT_SETTINGS,
 		hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey],
 	},
+	// Throughput Gauge: scope, metric, layout, style, and rate window
+	throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
 	utilityAgentId: null,
 	utilityModelId: null,

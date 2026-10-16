@@ -45,6 +45,11 @@ import {
 	type QuickChatSettings,
 } from '../../shared/quickChat';
 import {
+	THROUGHPUT_GAUGE_SETTINGS_KEY,
+	resolveThroughputGaugeSettings,
+	type ThroughputGaugeSettings,
+} from '../../shared/throughputGauge';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -466,6 +471,7 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
 	quickChatSettings: QuickChatSettings;
+	throughputGaugeSettings: ThroughputGaugeSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
@@ -588,6 +594,7 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setQuickChatSettings: (value: QuickChatSettings) => void;
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => void;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
@@ -846,6 +853,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		quickChatSettings: resolveQuickChatSettings(undefined),
+		throughputGaugeSettings: resolveThroughputGaugeSettings(undefined),
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
@@ -1410,6 +1418,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setQuickChatSettings: (value) => {
 			set({ quickChatSettings: value });
 			window.maestro.settings.set(QUICK_CHAT_SETTINGS_KEY, value);
+		},
+
+		setThroughputGaugeSettings: (value) => {
+			set({ throughputGaugeSettings: value });
+			window.maestro.settings.set(THROUGHPUT_GAUGE_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {
@@ -2636,6 +2649,13 @@ export async function loadAllSettings(): Promise<void> {
 			patch.quickChatSettings = resolveQuickChatSettings(allSettings[QUICK_CHAT_SETTINGS_KEY]);
 		}
 
+		// Throughput Gauge settings (each field validated on its own, see resolveThroughputGaugeSettings)
+		if (allSettings[THROUGHPUT_GAUGE_SETTINGS_KEY] !== undefined) {
+			patch.throughputGaugeSettings = resolveThroughputGaugeSettings(
+				allSettings[THROUGHPUT_GAUGE_SETTINGS_KEY]
+			);
+		}
+
 		hydrateWakatimeSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
@@ -2964,6 +2984,7 @@ export function getSettingsActions() {
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setQuickChatSettings: state.setQuickChatSettings,
+		setThroughputGaugeSettings: state.setThroughputGaugeSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,

@@ -7,19 +7,23 @@
  * writes here per chunk, so a fast stream costs the gauge four renders a
  * second, not one per token.
  *
+ * `peak` and `history` only compare readings taken under one rule. The capture
+ * hook calls `restartReadings()` when the scope or the rolling window changes,
+ * and `history` restarts by itself when the metric it records changes.
+ *
  * `visible` is the user's close/open latch and is remembered across launches.
  * It is separate from the Encore flag: the flag decides whether the gauge
  * exists at all, `visible` whether its card is on screen.
  */
 
 import { create } from 'zustand';
-import type { ThroughputRates } from '../../shared/throughputRate';
+import type { ThroughputMetric, ThroughputRates } from '../../shared/throughputRate';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 /** localStorage key for the card's open/closed latch. */
 export const THROUGHPUT_GAUGE_VISIBLE_KEY = 'throughputGauge.visible';
 
-/** How many published combined readings `history` keeps (for a sparkline). */
+/** How many published readings `history` keeps (for a sparkline). */
 export const THROUGHPUT_HISTORY_LENGTH = 60;
 
 const ZERO_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
@@ -40,17 +44,26 @@ export interface ThroughputGaugeState {
 	rates: ThroughputRates;
 	/** Highest reading per metric since the last `resetPeak()`. */
 	peak: ThroughputRates;
-	/** The last {@link THROUGHPUT_HISTORY_LENGTH} combined readings, oldest first. */
+	/** The last {@link THROUGHPUT_HISTORY_LENGTH} readings of `historyMetric`, oldest first. */
 	history: number[];
+	/** The metric `history` records. */
+	historyMetric: ThroughputMetric;
 }
 
 export interface ThroughputGaugeActions {
 	show: () => void;
 	hide: () => void;
 	toggle: () => void;
+	/** Start the peak again from the current reading (the user's Reset peak). */
 	resetPeak: () => void;
-	/** Take one timer reading: set `rates`, raise `peak`, append to `history`. */
-	publish: (rates: ThroughputRates) => void;
+	/** Zero `peak` and empty `history`: the reading rule (scope or window) changed. */
+	restartReadings: () => void;
+	/**
+	 * Take one timer reading: set `rates`, raise `peak`, and append
+	 * `rates[historyMetric]` to `history`, which starts over when `historyMetric`
+	 * differs from the last call's.
+	 */
+	publish: (rates: ThroughputRates, historyMetric?: ThroughputMetric) => void;
 }
 
 export type ThroughputGaugeStore = ThroughputGaugeState & ThroughputGaugeActions;
@@ -66,6 +79,7 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 		rates: ZERO_RATES,
 		peak: ZERO_RATES,
 		history: [],
+		historyMetric: 'combined',
 
 		show: () => setVisible(true),
 		hide: () => setVisible(false),
@@ -73,19 +87,29 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 
 		resetPeak: () => set({ peak: get().rates }),
 
-		publish: (rates) => {
+		restartReadings: () => set({ peak: ZERO_RATES, history: [] }),
+
+		publish: (rates, historyMetric = 'combined') => {
 			const state = get();
+			const sameMetric = historyMetric === state.historyMetric;
 			// An idle app publishes zeros four times a second. Once the history has
 			// drained to zeros too there is nothing left to change, so skip the write
 			// and keep an idle gauge at zero renders.
-			if (isIdle(rates) && isIdle(state.rates) && !state.history.some((value) => value > 0)) {
+			if (
+				sameMetric &&
+				isIdle(rates) &&
+				isIdle(state.rates) &&
+				!state.history.some((value) => value > 0)
+			) {
 				return;
 			}
+			// A history of another metric is not this one's past: start it over.
+			const previous = sameMetric ? state.history : [];
 			const history =
-				state.history.length >= THROUGHPUT_HISTORY_LENGTH
-					? state.history.slice(state.history.length - THROUGHPUT_HISTORY_LENGTH + 1)
-					: state.history.slice();
-			history.push(rates.combined);
+				previous.length >= THROUGHPUT_HISTORY_LENGTH
+					? previous.slice(previous.length - THROUGHPUT_HISTORY_LENGTH + 1)
+					: previous.slice();
+			history.push(rates[historyMetric]);
 			set({
 				rates,
 				peak: {
@@ -94,6 +118,7 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 					combined: Math.max(state.peak.combined, rates.combined),
 				},
 				history,
+				historyMetric,
 			});
 		},
 	};

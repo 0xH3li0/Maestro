@@ -24,6 +24,13 @@
  * (`group-chat-*`) also parses as `regular` and is left out for now: only its
  * usage reaches the renderer, and it belongs to no single agent to scope on.
  *
+ * Each tick reads `throughputGaugeSettings` and the active agent from their
+ * stores at tick time, never through the effect's dependencies, so changing a
+ * setting or switching agents never tears down and resubscribes the listeners.
+ * Scope `active` counts only the active agent's samples; the rolling window is
+ * the user's. A peak or history measured under another scope, agent, or window
+ * is not comparable, so a change of any of them restarts both.
+ *
  * Publishing runs on a `setInterval`, not `requestAnimationFrame`, for the
  * reason `useThoughtStreamCaptureListener` gives: rAF stops while the window is
  * hidden, and a timer keeps the reading honest for an unattended run.
@@ -32,11 +39,12 @@
 import { useEffect } from 'react';
 import {
 	createThroughputTracker,
-	DEFAULT_THROUGHPUT_WINDOW_MS,
 	type ThroughputRates,
+	type ThroughputSample,
 } from '../../../shared/throughputRate';
 import { useOwnedSessionGate } from '../../hooks/agent/internal/useOwnedSessionGate';
-import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { parseSessionId } from '../../utils/sessionIdParser';
 
@@ -87,12 +95,28 @@ export function useThroughputCapture(): void {
 			}),
 		];
 
+		// Scope, agent, and window of the last tick. `null` until the first tick,
+		// which has nothing earlier to be incomparable with.
+		let readingRule: string | null = null;
+
 		const timer = setInterval(() => {
 			const now = performance.now();
 			throughputTracker.prune(now);
-			useThroughputGaugeStore
-				.getState()
-				.publish(throughputTracker.rates(now, DEFAULT_THROUGHPUT_WINDOW_MS));
+			const { scope, metric, windowMs } = useSettingsStore.getState().throughputGaugeSettings;
+			const activeAgentId =
+				scope === 'active' ? (selectActiveSession(useSessionStore.getState())?.id ?? null) : null;
+			const gauge = useThroughputGaugeStore.getState();
+
+			const rule = `${scope}:${activeAgentId ?? ''}:${windowMs}`;
+			if (readingRule !== null && rule !== readingRule) gauge.restartReadings();
+			readingRule = rule;
+
+			// Active scope with no agent at all reads zero rather than everything.
+			const filter =
+				scope === 'active'
+					? (sample: ThroughputSample) => sample.agentId === activeAgentId
+					: undefined;
+			gauge.publish(throughputTracker.rates(now, windowMs, filter), metric);
 		}, THROUGHPUT_PUBLISH_MS);
 
 		return () => {

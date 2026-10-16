@@ -1,7 +1,8 @@
 /**
  * Tests for throughputGaugeStore: the persisted open/closed latch, the peak
- * that only rises until reset, the bounded combined history, and the idle
- * short-circuit that keeps an idle gauge at zero store writes.
+ * that only rises until reset, the bounded history of the displayed metric,
+ * the restart a new reading rule triggers, and the idle short-circuit that
+ * keeps an idle gauge at zero store writes.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
@@ -22,7 +23,13 @@ describe('throughputGaugeStore', () => {
 
 	beforeEach(() => {
 		storage = installLocalStorageMock();
-		useThroughputGaugeStore.setState({ visible: true, rates: ZERO, peak: ZERO, history: [] });
+		useThroughputGaugeStore.setState({
+			visible: true,
+			rates: ZERO,
+			peak: ZERO,
+			history: [],
+			historyMetric: 'combined',
+		});
 	});
 
 	describe('visible latch', () => {
@@ -108,5 +115,42 @@ describe('throughputGaugeStore', () => {
 		publish(rates(4, 1));
 		resetPeak();
 		expect(useThroughputGaugeStore.getState().peak).toEqual(rates(4, 1));
+	});
+
+	it('restartReadings zeroes the peak and empties the history', () => {
+		const { publish, restartReadings } = useThroughputGaugeStore.getState();
+		publish(rates(100, 50));
+		restartReadings();
+		const state = useThroughputGaugeStore.getState();
+		expect(state.peak).toEqual(ZERO);
+		expect(state.history).toEqual([]);
+		expect(state.rates).toEqual(rates(100, 50));
+	});
+
+	describe('history metric', () => {
+		it('records the reading of the metric it is given', () => {
+			const { publish } = useThroughputGaugeStore.getState();
+			publish(rates(10, 4), 'out');
+			publish(rates(20, 6), 'out');
+			const state = useThroughputGaugeStore.getState();
+			expect(state.history).toEqual([4, 6]);
+			expect(state.historyMetric).toBe('out');
+		});
+
+		it('starts the history over when the metric changes', () => {
+			const { publish } = useThroughputGaugeStore.getState();
+			publish(rates(10, 4));
+			publish(rates(10, 4));
+			publish(rates(10, 4), 'in');
+			expect(useThroughputGaugeStore.getState().history).toEqual([10]);
+		});
+
+		it('writes a metric change even while idle', () => {
+			const { publish } = useThroughputGaugeStore.getState();
+			publish(ZERO, 'in');
+			const state = useThroughputGaugeStore.getState();
+			expect(state.historyMetric).toBe('in');
+			expect(state.history).toEqual([0]);
+		});
 	});
 });

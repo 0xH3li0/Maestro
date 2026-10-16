@@ -34,6 +34,7 @@ import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import type { QuickChatSettings } from '../../../shared/quickChat';
+import type { ThroughputGaugeSettings } from '../../../shared/throughputGauge';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -494,6 +495,10 @@ export interface UseSettingsReturn {
 	// Quick Chat settings (hotkey, agent, ephemeral/persistent defaults)
 	quickChatSettings: QuickChatSettings;
 	setQuickChatSettings: (value: QuickChatSettings) => void;
+
+	// Throughput Gauge settings (scope, metric, layout, style, rate window)
+	throughputGaugeSettings: ThroughputGaugeSettings;
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => void;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;

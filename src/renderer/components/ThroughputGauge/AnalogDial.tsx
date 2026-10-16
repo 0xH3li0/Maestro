@@ -81,8 +81,14 @@ export interface AnalogDialProps {
 	value: number;
 	/** Highest reading since the last reset, tokens per second. */
 	peak: number;
-	/** Caption under the number, naming what is measured. */
+	/** Unit under the number. */
 	label?: string;
+	/**
+	 * Small line under the dial naming the metric and scope ("Out, all agents").
+	 * HTML rather than SVG text, so a long agent name truncates instead of
+	 * running off the card.
+	 */
+	caption?: string;
 }
 
 export const AnalogDial = memo(function AnalogDial({
@@ -90,6 +96,7 @@ export const AnalogDial = memo(function AnalogDial({
 	value,
 	peak,
 	label = 'tok/s',
+	caption,
 }: AnalogDialProps) {
 	const { colors } = theme;
 	const max = niceGaugeMax(value, peak);
@@ -125,7 +132,7 @@ export const AnalogDial = memo(function AnalogDial({
 
 	const reading = formatNumber(Math.round(value));
 
-	return (
+	const dial = (
 		<svg
 			viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
 			className="block w-full h-auto"
@@ -245,5 +252,20 @@ export const AnalogDial = memo(function AnalogDial({
 				{label}
 			</text>
 		</svg>
+	);
+
+	if (!caption) return dial;
+	return (
+		<div className="w-full min-w-0 flex flex-col items-center">
+			{dial}
+			<div
+				className="max-w-full truncate text-2xs leading-tight"
+				style={{ color: colors.textDim }}
+				title={caption}
+				data-testid="throughput-dial-caption"
+			>
+				{caption}
+			</div>
+		</div>
 	);
 });

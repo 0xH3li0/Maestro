@@ -1,8 +1,8 @@
 /**
  * Tests for ThroughputGaugeHost: nothing exists while the `throughputGauge`
  * Encore Feature is off, a mid-session flip on subscribes and pops the card up,
- * the close latch survives a remount, and live process events move the
- * published needle.
+ * the close latch survives a remount, live process events move the published
+ * needle, and the capture loop honors the scope, window, and metric settings.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,14 +12,20 @@ import {
 	THROUGHPUT_PUBLISH_MS,
 	throughputTracker,
 } from '../../../../renderer/components/ThroughputGauge/useThroughputCapture';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	THROUGHPUT_GAUGE_VISIBLE_KEY,
 	useThroughputGaugeStore,
 } from '../../../../renderer/stores/throughputGaugeStore';
 import { ENCORE_FEATURE_DEFAULTS } from '../../../../shared/encoreFeatureDefaults';
+import {
+	DEFAULT_THROUGHPUT_GAUGE_SETTINGS,
+	type ThroughputGaugeSettings,
+} from '../../../../shared/throughputGauge';
 import type { UsageStats } from '../../../../shared/types';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const ZERO = { in: 0, out: 0, combined: 0 };
@@ -58,6 +64,12 @@ function usage(overrides: Partial<UsageStats> = {}): UsageStats {
 	};
 }
 
+function setGaugeSettings(patch: Partial<ThroughputGaugeSettings>) {
+	useSettingsStore.setState({
+		throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS, ...patch },
+	});
+}
+
 function setFlag(enabled: boolean, settingsLoaded = true) {
 	useSettingsStore.setState({
 		settingsLoaded,
@@ -86,7 +98,21 @@ describe('ThroughputGaugeHost', () => {
 			onExit: listeners.onExit,
 		});
 		throughputTracker.clear();
-		useThroughputGaugeStore.setState({ visible: true, rates: ZERO, peak: ZERO, history: [] });
+		useThroughputGaugeStore.setState({
+			visible: true,
+			rates: ZERO,
+			peak: ZERO,
+			history: [],
+			historyMetric: 'combined',
+		});
+		setGaugeSettings({});
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'agent-1', name: 'Backend' }),
+				createMockSession({ id: 'agent-2', name: 'Frontend' }),
+			],
+			activeSessionId: 'agent-1',
+		});
 		setFlag(false);
 	});
 
@@ -191,6 +217,108 @@ describe('ThroughputGaugeHost', () => {
 		expect(peak.combined).toBe(rates.combined);
 		expect(history[history.length - 1]).toBe(rates.combined);
 		expect(screen.getByTestId('throughput-dial-reading').textContent).not.toBe('0');
+	});
+
+	it('with scope active, output from another agent does not move the rate', () => {
+		vi.useFakeTimers();
+		setGaugeSettings({ scope: 'active' });
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage('agent-2-ai-tab-1', usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates).toEqual(ZERO);
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		// 1300 tokens from the active agent over the default 10s window.
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
+		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Combined, Backend');
+	});
+
+	it('with scope all, every agent counts', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage('agent-2-ai-tab-1', usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
+		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Combined, all agents');
+	});
+
+	it('averages over the chosen window and resets the peak when the window changes', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 500 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().peak.combined).toBeCloseTo(150);
+
+		act(() => {
+			setGaugeSettings({ windowMs: 30000 });
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		// Same 1500 tokens over 30s; the 10s peak is gone, not carried over.
+		const { rates, peak, history } = useThroughputGaugeStore.getState();
+		expect(rates.combined).toBeCloseTo(50);
+		expect(peak.combined).toBeCloseTo(50);
+		expect(history).toEqual([rates.combined]);
+	});
+
+	it('changing the scope also resets the peak, keeping the same listeners', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage('agent-2-ai-tab-1', usage({ inputTokens: 1000 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().peak.combined).toBeCloseTo(100);
+
+		act(() => {
+			setGaugeSettings({ scope: 'active' });
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		expect(useThroughputGaugeStore.getState().peak).toEqual(ZERO);
+		expect(listeners.onUsage).toHaveBeenCalledTimes(1);
+		expect(listeners.unsubscribes.onUsage).not.toHaveBeenCalled();
+	});
+
+	it('shows the chosen metric and records its history', () => {
+		vi.useFakeTimers();
+		setGaugeSettings({ metric: 'out' });
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+
+		const { rates, history, historyMetric } = useThroughputGaugeStore.getState();
+		expect(historyMetric).toBe('out');
+		expect(history).toEqual([rates.out]);
+		expect(screen.getByTestId('throughput-dial-reading').textContent).toBe('30');
+		expect(screen.getByTestId('throughput-dial-caption').textContent).toBe('Out, all agents');
 	});
 
 	it('ignores command-terminal output', () => {

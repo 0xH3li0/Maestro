@@ -9,18 +9,25 @@
  * The card is clamped inside the viewport on every drag step and on window
  * resize, and kept below the custom title strip when one is drawn: that strip
  * is an OS drag region, so a card pushed under it would stop taking clicks.
+ *
+ * The gear beside close opens the settings popover. The dial shows the chosen
+ * metric. Until the other styles and the three-gauge layout exist, every style
+ * and layout draws the dial; the choice is still saved.
  */
 
 import { memo, useCallback, useRef, useState, type CSSProperties } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Gauge, GripVertical, X } from 'lucide-react';
+import { Gauge, GripVertical, Settings, X } from 'lucide-react';
 
+import { throughputGaugeCaption } from '../../../shared/throughputGauge';
 import { AnalogDial } from './AnalogDial';
+import { ThroughputGaugeSettingsPopover } from './ThroughputGaugeSettingsPopover';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useMobileLandscape } from '../../hooks/remote/useMobileLandscape';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
+import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { APP_TITLE_STRIP_HEIGHT, shouldShowAppTitleStrip } from '../../utils/appTitleStrip';
@@ -77,9 +84,17 @@ interface FloatingThroughputGaugeProps {
 export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 	theme,
 }: FloatingThroughputGaugeProps) {
-	const combined = useThroughputGaugeStore((s) => s.rates.combined);
-	const peak = useThroughputGaugeStore((s) => s.peak.combined);
+	const { metric, scope } = useSettingsStore((s) => s.throughputGaugeSettings);
+	const value = useThroughputGaugeStore((s) => s.rates[metric]);
+	const peak = useThroughputGaugeStore((s) => s.peak[metric]);
 	const hide = useThroughputGaugeStore((s) => s.hide);
+	const activeAgentName = useSessionStore((s) =>
+		scope === 'active' ? (selectActiveSession(s)?.name ?? null) : null
+	);
+
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const gearRef = useRef<HTMLButtonElement>(null);
+	const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
 	// Asked through the same predicate AppShell uses to draw the strip, so the
 	// two cannot disagree about where the drag region is.
@@ -169,6 +184,17 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 					Throughput
 				</span>
 				<GhostIconButton
+					ref={gearRef}
+					onClick={() => setSettingsOpen((open) => !open)}
+					title="Gauge settings"
+					ariaLabel="Throughput gauge settings"
+					pressed={settingsOpen}
+					color={settingsOpen ? theme.colors.accent : theme.colors.textDim}
+					testId="throughput-gauge-settings-button"
+				>
+					<Settings className="w-3.5 h-3.5" />
+				</GhostIconButton>
+				<GhostIconButton
 					onClick={hide}
 					title="Close gauge"
 					ariaLabel="Close throughput gauge"
@@ -180,8 +206,18 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 			</div>
 
 			<div className="flex-1 min-h-0 flex items-center justify-center px-2 pb-1">
-				<AnalogDial theme={theme} value={combined} peak={peak} label="tok/s, all agents" />
+				<AnalogDial
+					theme={theme}
+					value={value}
+					peak={peak}
+					label="tok/s"
+					caption={throughputGaugeCaption(metric, scope, activeAgentName)}
+				/>
 			</div>
+
+			{settingsOpen && (
+				<ThroughputGaugeSettingsPopover theme={theme} anchorRef={gearRef} onClose={closeSettings} />
+			)}
 		</div>
 	);
 });

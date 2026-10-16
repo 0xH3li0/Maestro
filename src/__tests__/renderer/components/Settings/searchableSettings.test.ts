@@ -143,6 +143,19 @@ describe('searchableSettings', () => {
 			);
 		});
 
+		it('hides the Throughput Gauge display settings while the gauge is off, but keeps its tile', () => {
+			const off = searchSettings('throughput gauge', [], { throughputGauge: false }).map(
+				(s) => s.id
+			);
+			expect(off).toContain('encore-throughput-gauge');
+			expect(off).not.toContain('encore-throughput-gauge-display');
+
+			const on = searchSettings('throughput gauge', [], { throughputGauge: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining(['encore-throughput-gauge', 'encore-throughput-gauge-display'])
+			);
+		});
+
 		it('never gates an Encore tile entry on its own flag', () => {
 			const tiles = ALL_SEARCHABLE_SETTINGS.filter(
 				(s) => s.tab === 'encore' && s.requiresEncore && !s.jumpToId
@@ -162,6 +175,7 @@ describe('searchableSettings', () => {
 				'encore-web-login',
 				'encore-maestro-run',
 				'encore-quick-chat',
+				'encore-throughput-gauge',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
@@ -294,6 +308,18 @@ describe('searchableSettings', () => {
 			['synopsis provider', 'encore-director-notes'],
 			['computer history', 'encore-computer-history'],
 			['digest agent', 'encore-computer-history'],
+			['throughput gauge', 'encore-throughput-gauge'],
+			['tokens per second', 'encore-throughput-gauge'],
+			['tps', 'encore-throughput-gauge'],
+			['speedometer', 'encore-throughput-gauge'],
+			['show gauge now', 'encore-throughput-gauge'],
+			['active agent', 'encore-throughput-gauge-display'],
+			['all three', 'encore-throughput-gauge-display'],
+			['vu meter', 'encore-throughput-gauge-display'],
+			['lcd', 'encore-throughput-gauge-display'],
+			['sparkline', 'encore-throughput-gauge-display'],
+			['rate window', 'encore-throughput-gauge-display'],
+			['reset peak', 'encore-throughput-gauge-display'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],
