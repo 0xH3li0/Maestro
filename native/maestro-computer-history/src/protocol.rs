@@ -212,6 +212,10 @@ pub struct ConfigureCommand {
     /// empty list records nothing. Absent = record every app not blocked.
     #[serde(default)]
     pub allow_apps: Option<Vec<String>>,
+    /// Hide private / incognito browser windows (nothing read, not even the
+    /// title). Absent = true, so an older service never turns it off.
+    #[serde(default = "default_true")]
+    pub skip_private_windows: bool,
     #[serde(default = "default_true")]
     pub snapshots: bool,
     #[serde(default = "default_max_text")]
@@ -227,6 +231,7 @@ impl Default for ConfigureCommand {
             block_pids: Vec::new(),
             block_domains: Vec::new(),
             allow_apps: None,
+            skip_private_windows: true,
             snapshots: true,
             max_text_bytes: DEFAULT_MAX_TEXT_BYTES,
             max_snapshot_bytes: DEFAULT_MAX_SNAPSHOT_BYTES,

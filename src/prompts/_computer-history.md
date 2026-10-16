@@ -81,7 +81,7 @@ maestro-cli computer-history clear --since 1h     # or --all
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
 ```
 
-`--app` takes an app id or its display name; quote a name with spaces (`--app "Google Chrome"`). These need the Maestro app running and Computer History enabled. Password managers, private browser windows, password fields, and Maestro itself are always excluded and cannot be re-enabled. In include mode (`rules list` shows the mode), apps off the record-only list are never recorded, so missing activity is not evidence the user was idle. To show the user their history, `maestro-cli open computer-history` opens the viewer.
+`--app` takes an app id or its display name; quote a name with spaces (`--app "Google Chrome"`). These need the Maestro app running and Computer History enabled. Password fields and the built-in apps (password managers, authenticators, crypto wallets, system password prompts, Maestro; `rules list` names them) are always excluded and cannot be re-enabled. Private browser windows are excluded unless the user switched that off (`config --skip-private-windows off`). In include mode (`rules list` shows the mode), apps off the record-only list are never recorded, so missing activity is not evidence the user was idle. To show the user their history, `maestro-cli open computer-history` opens the viewer.
 
 ## Permissions
 

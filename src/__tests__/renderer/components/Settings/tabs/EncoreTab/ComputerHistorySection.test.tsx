@@ -33,7 +33,11 @@ function makeApi(
 		setConfig: vi.fn(async (patch: Record<string, unknown>) => ({ ...config, ...patch })),
 		pause: vi.fn(async () => ({})),
 		resume: vi.fn(async () => ({})),
-		listRules: vi.fn(async () => ({ rules: [], builtIn: ['com.maestro.app'] })),
+		listRules: vi.fn(async () => ({
+			rules: [],
+			builtIn: ['com.maestro.app'],
+			builtInApps: [{ label: 'Maestro', category: 'maestro' }],
+		})),
 		addRule: vi.fn(async () => ({
 			rule: { id: 'r', match: 'app', value: 'com.apple.mobilesms' },
 			matches: [] as Array<{ id: string; name?: string }>,

@@ -60,7 +60,7 @@ function makeApi() {
 		digests: vi.fn(async () => []),
 		getConfig: vi.fn(async () => defaultComputerHistoryConfig()),
 		knownApps: vi.fn(async () => []),
-		listRules: vi.fn(async () => ({ rules: [], builtIn: [] })),
+		listRules: vi.fn(async () => ({ rules: [], builtIn: [], builtInApps: [] })),
 	};
 }
 

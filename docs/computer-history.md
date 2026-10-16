@@ -24,9 +24,15 @@ A small helper program, `maestro-computer-history`, reads the operating system a
 
 - **Keystrokes.** Typed text comes from a field's settled value, never from a key log. Maestro asks for no Input Monitoring permission and installs no keyboard hook. A password typed into a remote-desktop window is never seen, because the viewer exposes no text.
 - **Password and secure fields** in any app.
-- **Private and incognito browser windows** (Incognito, Private Browsing, InPrivate, Private Window).
-- **Password managers:** 1Password (including its browser helpers), Bitwarden, Dashlane, LastPass, KeePassXC, Keychain Access and the Passwords app, Windows Credential Manager, GNOME Passwords and Keys (Seahorse), and KDE Wallet.
+- **Private and incognito browser windows** (Incognito, Private Browsing, InPrivate, Private Window). On by default; switch off **Don't record private browser windows** in the Capture tab to record them.
+- **Password managers:** 1Password (including its browser helpers), Bitwarden, Dashlane, LastPass, Proton Pass, NordPass, Keeper, Enpass, RoboForm, KeePassXC, KeePass, KeePassium, Strongbox, MacPass, Secrets, Apple Passwords, Keychain Access, Windows Credential Manager, GNOME Passwords and Keys (Seahorse), and KDE Wallet.
+- **Authenticators:** Authy, Yubico Authenticator, Ente Auth, 2FAS, Step Two, OTP Auth, and Raivo OTP.
+- **Crypto wallets:** Ledger Live, Trezor Suite, Exodus, Electrum, Sparrow Wallet, and Wasabi Wallet.
+- **System password prompts:** the macOS Touch ID and password dialogs, Windows sign-in and UAC prompts, and Linux polkit agents.
 - **Maestro itself.**
+
+These apps are matched by app id and by display name, so a build with an unfamiliar id is still caught. The Capture tab lists them under **Always excluded**, and `maestro-cli computer-history rules list` prints them.
+
 - **Apps and domains you exclude**, or every app you did not include (see [Choosing which apps are recorded](#choosing-which-apps-are-recorded)).
 - **Screenshots.** There is no screen capture and no OCR.
 
@@ -78,7 +84,7 @@ Pick one of two modes, in the viewer's **Capture** tab or the tile's Settings ta
 | **All apps except...** (exclude, the default) | Every app, except the ones you switch off.                                                                       |
 | **Only these apps** (include)                 | Nothing, except the apps you switch on. An app that is not on the list is never read, not even its window title. |
 
-Both show the same app list: every app recorded in the last 30 days plus the apps seen since Maestro started, each with one switch. Flip a switch and Maestro writes the matching rule. Both lists are kept when you change mode, so you can try include mode and switch back without losing anything. Password managers, private browser windows, password fields, and Maestro itself are excluded in both modes.
+Both show the same app list: every app recorded in the last 30 days plus the apps seen since Maestro started, each with one switch. Flip a switch and Maestro writes the matching rule. Both lists are kept when you change mode, so you can try include mode and switch back without losing anything. The apps under **Always excluded**, password fields, and (unless you switch it off) private browser windows are excluded in both modes.
 
 Domains (which also cover their subdomains) are excluded in both modes. A browser window on an excluded domain records nothing, not even its title.
 
@@ -163,6 +169,7 @@ maestro-cli computer-history pause --for 1h
 maestro-cli computer-history resume
 maestro-cli computer-history clear --since 1h
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
+maestro-cli computer-history config --skip-private-windows off   # record private windows too
 maestro-cli computer-history config --digests on --digest-agent <agent-id>
 maestro-cli computer-history config --digest-rollup off
 maestro-cli computer-history digests --since 1d --kind 6h

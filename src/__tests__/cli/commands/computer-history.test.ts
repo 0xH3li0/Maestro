@@ -300,8 +300,18 @@ describe('writes (over WS)', () => {
 		expect(lastJson()).toMatchObject({
 			success: true,
 			appMode: 'include',
+			skipPrivateWindows: true,
 			rules: [expect.objectContaining({ action: 'record', value: 'slack' })],
+			builtInApps: expect.arrayContaining([{ label: 'Bitwarden', category: 'password-manager' }]),
 		});
+	});
+
+	it('rules list names the built-in apps by category', async () => {
+		fs.mkdirSync(store(), { recursive: true });
+		fs.writeFileSync(store('config.json'), JSON.stringify({ skipPrivateWindows: false }));
+		await computerHistoryRulesList({});
+		expect(output()).toMatch(/Password managers: .*Bitwarden/);
+		expect(output()).toContain('Private browser windows: recorded');
 	});
 
 	it('clear needs --since or --all, and resolves --since to an instant', async () => {
@@ -366,6 +376,19 @@ describe('writes (over WS)', () => {
 		await computerHistoryRulesAdd({ app: 'NoSuchApp' });
 		expect(errSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
 			/matches no app seen recently/
+		);
+	});
+
+	it('config --skip-private-windows off patches only that flag', async () => {
+		vi.mocked(sendSimpleCommand).mockResolvedValue({ success: true, config: {} });
+		await computerHistoryConfig({ skipPrivateWindows: 'off', json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'config-set',
+				patch: { skipPrivateWindows: false },
+			},
+			'computer_history_command_result'
 		);
 	});
 

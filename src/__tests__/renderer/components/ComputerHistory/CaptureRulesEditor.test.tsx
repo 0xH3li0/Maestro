@@ -76,7 +76,14 @@ describe('CaptureRulesEditor', () => {
 				return config;
 			}),
 			knownApps: vi.fn(async () => [slack, notes]),
-			listRules: vi.fn(async () => ({ rules: config.rules, builtIn: ['com.maestro.app'] })),
+			listRules: vi.fn(async () => ({
+				rules: config.rules,
+				builtIn: ['com.maestro.app', 'com.1password.1password'],
+				builtInApps: [
+					{ label: '1Password', category: 'password-manager' },
+					{ label: 'Maestro', category: 'maestro' },
+				],
+			})),
 			addRule: vi.fn(async (match: 'app' | 'domain', value: string, action = 'ignore') => {
 				const r = {
 					id: `${action}-${value}`,
@@ -129,6 +136,30 @@ describe('CaptureRulesEditor', () => {
 			expect(api.addRule).toHaveBeenCalledWith('app', 'com.apple.Notes', 'record')
 		);
 		await waitFor(() => expect(screen.queryByTestId('computer-history-include-empty')).toBeNull());
+	});
+
+	it('private browser windows are skipped by default, and the switch turns that off', async () => {
+		render(<CaptureRulesEditor theme={mockTheme} />);
+		const row = await screen.findByTestId('computer-history-private-windows');
+		const toggle = within(row).getByRole('switch');
+		expect(toggle.getAttribute('aria-checked')).toBe('true');
+		fireEvent.click(toggle);
+		await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ skipPrivateWindows: false }));
+		await waitFor(() =>
+			expect(
+				within(screen.getByTestId('computer-history-private-windows'))
+					.getByRole('switch')
+					.getAttribute('aria-checked')
+			).toBe('false')
+		);
+	});
+
+	it('lists the built-in exclusions by category', async () => {
+		render(<CaptureRulesEditor theme={mockTheme} />);
+		const builtIn = await screen.findByTestId('computer-history-built-in');
+		expect(builtIn.textContent).toContain('Always excluded (2 apps)');
+		expect(within(builtIn).getByText('Password managers')).toBeTruthy();
+		expect(within(builtIn).getByText('1Password')).toBeTruthy();
 	});
 
 	it('switches the app mode through setConfig', async () => {
