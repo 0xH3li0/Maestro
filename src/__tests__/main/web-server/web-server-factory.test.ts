@@ -56,6 +56,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSnoozeCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
+			setThroughputGaugeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
@@ -99,6 +100,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Added with `maestro-cli open`: the factory wires this on every build,
 			// so omitting it makes every test in this file throw.
 			setOpenModalCallback = vi.fn();
+			setNotificationInboxCallback = vi.fn();
 			// Network-roam handling: the factory subscribes so it can push the new
 			// LAN URL to every window when the machine changes networks.
 			setOnLocalAddressChanged = vi.fn();
@@ -126,6 +128,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
+			setSteerGroupChatCallback = vi.fn();
 			setMergeContextCallback = vi.fn();
 			setTransferContextCallback = vi.fn();
 			setSummarizeContextCallback = vi.fn();
@@ -220,6 +223,11 @@ vi.mock('../../../shared/cli-activity', () => ({
 	getSessionIdsBusyWithCli: vi.fn(() => new Set<string>()),
 }));
 
+vi.mock('../../../main/group-chat/group-chat-queue', () => ({
+	steerQueuedItem: vi.fn().mockResolvedValue({ outcome: 'delivered', targets: ['Moderator'] }),
+	steerNewMessage: vi.fn().mockResolvedValue({ outcome: 'refused', verdict: 'refused' }),
+}));
+
 import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
@@ -237,6 +245,7 @@ import {
 	getConcertoHtmlDocumentRevision,
 } from '../../../main/concerto-html';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
+import { steerNewMessage, steerQueuedItem } from '../../../main/group-chat/group-chat-queue';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -2210,6 +2219,31 @@ describe('web-server/web-server-factory', () => {
 				'hello',
 				expect.any(String)
 			);
+		});
+
+		it('setSteerGroupChatCallback answers in main: an item id steers the queued item', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSteerGroupChatCallback.mock.calls[0][0];
+
+			await expect(callback('chat-1', { itemId: 'item-1' })).resolves.toMatchObject({
+				outcome: 'delivered',
+			});
+			expect(steerQueuedItem).toHaveBeenCalledWith('chat-1', 'item-1');
+			expect(steerNewMessage).not.toHaveBeenCalled();
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+
+		it('setSteerGroupChatCallback steers new text, read-only when asked', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSteerGroupChatCallback.mock.calls[0][0];
+
+			await expect(
+				callback('chat-1', { message: 'also docs', readOnly: true })
+			).resolves.toMatchObject({ outcome: 'refused' });
+			expect(steerNewMessage).toHaveBeenCalledWith('chat-1', 'also docs', true);
+			expect(steerQueuedItem).not.toHaveBeenCalled();
 		});
 	});
 

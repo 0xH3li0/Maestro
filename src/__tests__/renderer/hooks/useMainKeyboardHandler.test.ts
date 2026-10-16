@@ -6,6 +6,7 @@ import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
@@ -3459,6 +3460,51 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(mockToggle).toHaveBeenCalled();
+		});
+	});
+
+	describe('toggleThroughputGauge shortcut', () => {
+		const pressGaugeChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'T',
+						code: 'KeyT',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		beforeEach(() => {
+			useThroughputGaugeStore.setState({ visible: false });
+		});
+
+		it('toggles the gauge on Opt+Cmd+Shift+T while the Encore Feature is on', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: true },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+
+		it('does nothing while the Encore Feature is off', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: false },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
 		});
 	});
 

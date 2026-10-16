@@ -18,7 +18,7 @@
  * closed in the last two weeks (reopened for it), or to a new tab. Every later
  * message goes to that same tab, queued behind the reply it follows. The chat
  * moves only when the user says so (picks another tab or a new one for the next
- * message, or moves a queued message to a new tab), or when its tab is closed
+ * message, or moves a message to a new tab), or when its tab is closed
  * (the next message is routed again). Each message carries a
  * {@link QuickChatRoute} saying where it went. See src/shared/quickChatRouting.ts
  * for how the first message's tab is chosen.
@@ -40,6 +40,15 @@ export const QUICK_CHAT_ENCORE_FLAG = 'quickChat' as const;
 /** Settings key holding {@link QuickChatSettings}. */
 export const QUICK_CHAT_SETTINGS_KEY = 'quickChatSettings' as const;
 
+/**
+ * Where a message goes when the chat has no tab for it: a new chat's first
+ * message, or the next one after the chat's tab was closed.
+ * - `auto` ("Choose tab"): Maestro finds the tab (see src/shared/quickChatRouting.ts).
+ * - `new`: always a new tab; nothing is searched.
+ * The user can still pick a tab, a new tab, or `auto` for any one message.
+ */
+export type QuickChatDefaultTab = 'auto' | 'new';
+
 export interface QuickChatSettings {
 	/** System-wide hotkey as a key array (same format as in-app shortcuts). Empty disables it. */
 	hotkey: string[];
@@ -47,6 +56,8 @@ export interface QuickChatSettings {
 	agentId: string;
 	/** Default mode for a new chat: true keeps it as a visible tab, false is ephemeral. */
 	persistent: boolean;
+	/** Where a message goes when it has no tab to follow (see {@link QuickChatDefaultTab}). */
+	defaultTab: QuickChatDefaultTab;
 	/** Whether turns in an ephemeral chat write History entries. */
 	ephemeralHistory: boolean;
 	/**
@@ -61,6 +72,7 @@ export const DEFAULT_QUICK_CHAT_SETTINGS: Readonly<QuickChatSettings> = {
 	hotkey: ['Alt', 'Space'],
 	agentId: '',
 	persistent: false,
+	defaultTab: 'auto',
 	ephemeralHistory: true,
 	thinking: 'off',
 };
@@ -83,6 +95,10 @@ export function resolveQuickChatSettings(raw: unknown): QuickChatSettings {
 			typeof stored.persistent === 'boolean'
 				? stored.persistent
 				: DEFAULT_QUICK_CHAT_SETTINGS.persistent,
+		defaultTab:
+			stored.defaultTab === 'auto' || stored.defaultTab === 'new'
+				? stored.defaultTab
+				: DEFAULT_QUICK_CHAT_SETTINGS.defaultTab,
 		ephemeralHistory:
 			typeof stored.ephemeralHistory === 'boolean'
 				? stored.ephemeralHistory
@@ -152,6 +168,12 @@ export interface QuickChatMessage {
 	timestamp: number;
 	/** On a message the user sent from Quick Chat: where it went. */
 	route?: QuickChatRoute;
+	/**
+	 * On a message the user sent with images: small previews of them, in order.
+	 * The full images went to the tab; snapshots stream on every reply update,
+	 * so they carry previews (see QUICK_CHAT_IMAGE_PREVIEW_EDGE).
+	 */
+	images?: string[];
 }
 
 export interface QuickChatAgentOption {
@@ -205,6 +227,8 @@ export function parseQuickChatTabChoice(raw: unknown): QuickChatTabChoice | null
 
 /** What the quick window renders. Produced by the engine, relayed by main. */
 export interface QuickChatSnapshot {
+	/** The chat's id in the recent chats list; null before its first message. */
+	chatId: string | null;
 	/** Agent the chat runs on, or null when no agent could be resolved. */
 	agentId: string | null;
 	agentName: string | null;
@@ -229,6 +253,7 @@ export interface QuickChatSnapshot {
 }
 
 export const EMPTY_QUICK_CHAT_SNAPSHOT: Readonly<QuickChatSnapshot> = {
+	chatId: null,
 	agentId: null,
 	agentName: null,
 	tabId: null,
@@ -245,7 +270,8 @@ export const EMPTY_QUICK_CHAT_SNAPSHOT: Readonly<QuickChatSnapshot> = {
 
 /** Actions the quick window (and `maestro-cli quick-chat`) can ask the engine for. */
 export type QuickChatCommand =
-	| { type: 'send'; text: string }
+	/** `images`: data URLs sent with the text, like images pasted in the main composer. */
+	| { type: 'send'; text: string; images?: string[] }
 	| { type: 'new' }
 	| { type: 'setPersistent'; persistent: boolean }
 	/** Send the next message to another tab, a new tab, or wherever Maestro finds. */
@@ -258,12 +284,244 @@ export type QuickChatCommand =
 	/** Stop every reply in progress and withdraw every message still queued. */
 	| { type: 'stop' }
 	/**
-	 * Take a QUEUED message out of the queue and send it to a new tab instead, so
-	 * it stops waiting on the tab it was routed to. `messageId` defaults to the
+	 * Send a message to a new tab instead of the tab it went to. A QUEUED message
+	 * leaves the queue; one that already ran (or is running) is stopped there and
+	 * sent again. The chat moves to the new tab. `messageId` defaults to the
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
+	/**
+	 * Bring back a chat from the recent chats list: its agent, its tab (reopened
+	 * when it was closed), and its thread. The chat in progress ends as `new` ends it.
+	 */
+	| { type: 'recall'; chatId: string }
 	| { type: 'sync' };
+
+/** Longest edge, in pixels, of the image previews a snapshot carries. */
+export const QUICK_CHAT_IMAGE_PREVIEW_EDGE = 320;
+
+/**
+ * The images of a `send` from outside the window (the WebSocket, so the CLI):
+ * an array of `data:image/...` URLs. Null when any entry is not one, so a bad
+ * payload fails the send instead of dropping an image the user meant to send.
+ */
+export function parseQuickChatImages(raw: unknown): string[] | null {
+	if (raw === undefined || raw === null) return [];
+	if (!Array.isArray(raw)) return null;
+	const images: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== 'string' || !/^data:image\/[\w.+-]+;base64,/.test(entry)) return null;
+		images.push(entry);
+	}
+	return images;
+}
+
+// --- Recent chats ------------------------------------------------------------
+
+/**
+ * One message of a remembered chat: what was sent, where it went, and the reply
+ * as last read. A reply is read live from its tab while the tab still holds it;
+ * this copy is what shows once the tab is gone.
+ */
+export interface QuickChatRecentTurn {
+	id: string;
+	text: string;
+	timestamp: number;
+	/** How it ended. A message still in motion when it was saved is `delivered`. */
+	phase: 'delivered' | 'cancelled' | 'failed';
+	error: string | null;
+	tabId: string | null;
+	/** That tab's provider conversation, so the tab can be reopened once closed. */
+	agentSessionId: string | null;
+	tabName: string | null;
+	origin: QuickChatRouteOrigin | null;
+	queuedItemId: string | null;
+	/** The reply (answer and error messages; never the reasoning). */
+	reply: QuickChatMessage[];
+}
+
+/**
+ * A chat in the recent chats list, enough to bring it back: the agent, the tab
+ * the conversation lives in, and the thread. Images are not kept; they went to
+ * the tab with their message.
+ */
+export interface QuickChatRecent {
+	id: string;
+	agentId: string;
+	agentName: string;
+	persistent: boolean;
+	createdAt: number;
+	/** The latest message or reply, which orders the list. */
+	updatedAt: number;
+	/** The tab the conversation lives in, and its provider conversation. */
+	homeTabId: string | null;
+	homeAgentSessionId: string | null;
+	homeTabName: string | null;
+	/** Tabs the chat created (see the file header on which tabs a chat owns). */
+	ownedTabIds: string[];
+	turns: QuickChatRecentTurn[];
+}
+
+/** A row of the recent chats list: a {@link QuickChatRecent} without its thread. */
+export interface QuickChatRecentSummary {
+	id: string;
+	agentId: string;
+	agentName: string;
+	/** The chat's first message (its first line). */
+	title: string;
+	tabName: string | null;
+	persistent: boolean;
+	createdAt: number;
+	updatedAt: number;
+	/** Messages the user sent. */
+	messageCount: number;
+	/** Everything the user sent, for the picker's filter. */
+	searchText: string;
+}
+
+/** Most chats the list keeps. The oldest goes first. */
+export const QUICK_CHAT_MAX_RECENTS = 30;
+/** Most messages a remembered chat keeps. Older ones stay in the tab. */
+export const QUICK_CHAT_RECENT_MAX_TURNS = 50;
+/** Longest text a remembered message keeps. */
+export const QUICK_CHAT_RECENT_MAX_TEXT = 20_000;
+/** Longest `searchText` and `title` in a summary. */
+const RECENT_SEARCH_TEXT_MAX = 2_000;
+const RECENT_TITLE_MAX = 120;
+
+function str(value: unknown): string | null {
+	return typeof value === 'string' ? value : null;
+}
+
+function num(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function parseRecentMessage(raw: unknown): QuickChatMessage | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const text = str(r.text);
+	const timestamp = num(r.timestamp);
+	if (!id || text === null || timestamp === null) return null;
+	if (r.role !== 'assistant' && r.role !== 'error') return null;
+	return { id, role: r.role, text: clip(text, QUICK_CHAT_RECENT_MAX_TEXT), timestamp };
+}
+
+function parseRecentTurn(raw: unknown): QuickChatRecentTurn | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const text = str(r.text);
+	const timestamp = num(r.timestamp);
+	if (!id || text === null || timestamp === null) return null;
+	const origin =
+		r.origin === 'open' || r.origin === 'reopened' || r.origin === 'new' ? r.origin : null;
+	return {
+		id,
+		text: clip(text, QUICK_CHAT_RECENT_MAX_TEXT),
+		timestamp,
+		phase: r.phase === 'cancelled' || r.phase === 'failed' ? r.phase : 'delivered',
+		error: str(r.error),
+		tabId: str(r.tabId),
+		agentSessionId: str(r.agentSessionId),
+		tabName: str(r.tabName),
+		origin,
+		queuedItemId: str(r.queuedItemId),
+		reply: Array.isArray(r.reply)
+			? r.reply.map(parseRecentMessage).filter((m): m is QuickChatMessage => m !== null)
+			: [],
+	};
+}
+
+/**
+ * Read a remembered chat off the wire or out of the store, or null when it is
+ * not one. Texts are clipped and the thread capped, so one huge reply cannot
+ * bloat the list; a chat with no message is not worth remembering.
+ */
+export function parseQuickChatRecent(raw: unknown): QuickChatRecent | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const id = str(r.id);
+	const agentId = str(r.agentId);
+	const createdAt = num(r.createdAt);
+	const updatedAt = num(r.updatedAt);
+	if (!id || !agentId || createdAt === null || updatedAt === null) return null;
+	const turns = (Array.isArray(r.turns) ? r.turns : [])
+		.map(parseRecentTurn)
+		.filter((t): t is QuickChatRecentTurn => t !== null)
+		.slice(-QUICK_CHAT_RECENT_MAX_TURNS);
+	if (turns.length === 0) return null;
+	return {
+		id,
+		agentId,
+		agentName: str(r.agentName) ?? '',
+		persistent: r.persistent === true,
+		createdAt,
+		updatedAt,
+		homeTabId: str(r.homeTabId),
+		homeAgentSessionId: str(r.homeAgentSessionId),
+		homeTabName: str(r.homeTabName),
+		ownedTabIds: Array.isArray(r.ownedTabIds)
+			? r.ownedTabIds.filter((t): t is string => typeof t === 'string')
+			: [],
+		turns,
+	};
+}
+
+/** Put a chat at its place in the list (newest activity first), replacing its old copy. */
+export function upsertQuickChatRecent(
+	list: readonly QuickChatRecent[],
+	recent: QuickChatRecent
+): QuickChatRecent[] {
+	return [recent, ...list.filter((r) => r.id !== recent.id)]
+		.sort((a, b) => b.updatedAt - a.updatedAt)
+		.slice(0, QUICK_CHAT_MAX_RECENTS);
+}
+
+/** The list row for a remembered chat. */
+export function summarizeQuickChatRecent(recent: QuickChatRecent): QuickChatRecentSummary {
+	const first = recent.turns[0]?.text.trim().split('\n')[0]?.trim() ?? '';
+	return {
+		id: recent.id,
+		agentId: recent.agentId,
+		agentName: recent.agentName,
+		title: clip(first || 'Image', RECENT_TITLE_MAX),
+		tabName: recent.homeTabName,
+		persistent: recent.persistent,
+		createdAt: recent.createdAt,
+		updatedAt: recent.updatedAt,
+		messageCount: recent.turns.length,
+		searchText: clip(recent.turns.map((t) => t.text).join('\n'), RECENT_SEARCH_TEXT_MAX),
+	};
+}
+
+/**
+ * The chat a `maestro-cli quick-chat recall` argument names: its id, a prefix
+ * of one id, or its 1-based place in the list (1 is the most recent).
+ */
+export function resolveQuickChatRecentRef(
+	list: readonly Pick<QuickChatRecent, 'id'>[],
+	ref: string
+): { id: string } | { error: string } {
+	const value = ref.trim();
+	if (!value) return { error: 'Give a chat id or its number in `quick-chat history`' };
+	const exact = list.find((r) => r.id === value);
+	if (exact) return { id: exact.id };
+	if (/^\d+$/.test(value)) {
+		const index = Number(value) - 1;
+		if (index >= 0 && index < list.length) return { id: list[index].id };
+		return { error: `There are ${list.length} recent chats; no chat ${value}` };
+	}
+	const prefixed = list.filter((r) => r.id.startsWith(value));
+	if (prefixed.length === 1) return { id: prefixed[0].id };
+	if (prefixed.length > 1) return { error: `"${value}" matches more than one chat` };
+	return { error: `No recent chat ${value}` };
+}
 
 /** The engine's answer to a command. `snapshot` is the state after it ran. */
 export interface QuickChatCommandResult {
@@ -320,7 +578,7 @@ export function parseQuickChatFontScaleRequest(raw: unknown): QuickChatFontScale
 export const QUICK_CHAT_MIN_WIDTH = 380;
 /** The shortest the conversation shape can be dragged. */
 export const QUICK_CHAT_MIN_EXPANDED_HEIGHT = 320;
-/** The composer-only shape at rest: an empty two-line draft. */
+/** The composer-only shape at rest: one draft line centered between header and buttons. */
 export const QUICK_CHAT_COMPACT_HEIGHT = 148;
 /**
  * The tallest the composer-only shape grows as the draft gets longer. Past it

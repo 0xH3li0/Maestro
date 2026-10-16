@@ -17,7 +17,22 @@ import {
 	QUEUE_STEER_RENDERER_TIMEOUT_MS,
 	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
 	STEERING_REPLY_TIMEOUT_MS,
+	startsWithTuiCommandPrefix,
 } from '../../shared/chatSteering';
+
+describe('startsWithTuiCommandPrefix', () => {
+	it('flags text a TUI reads as a slash command or bash mode, after leading whitespace', () => {
+		for (const text of ['/compact', '!commit', '  /clear', '\n\t!ls']) {
+			expect(startsWithTuiCommandPrefix(text)).toBe(true);
+		}
+	});
+
+	it('leaves a message with a slash or bang later on alone', () => {
+		for (const text of ['see a/b', 'done!', '', '   ']) {
+			expect(startsWithTuiCommandPrefix(text)).toBe(false);
+		}
+	});
+});
 
 describe('parseQueueSteerResult', () => {
 	it('keeps a known outcome and its known fields', () => {

@@ -43,12 +43,12 @@
 		"build:maestro-lib": "node scripts/build-maestro-lib.mjs",
 		"build:maestro-lib-run": "node scripts/build-maestro-lib-run.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
-		"build:observer": "node scripts/build-maestro-observer.mjs",
+		"build:computer-history": "node scripts/build-maestro-computer-history.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
-		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
-		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
-		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
+		"package": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac --win --linux",
+		"package:mac": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --mac",
+		"package:win": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --win",
+		"package:linux": "node scripts/set-version.mjs npm run build && npm run build:computer-history && node scripts/set-version.mjs electron-builder --linux",
 		"start": "electron .",
 		"start:lite": "electron . --lite",
 		"clean": "rm -rf dist release node_modules/.vite",
@@ -190,11 +190,12 @@
 					"from": "dist/native/darwin-${arch}",
 					"to": "native",
 					"filter": [
-						"maestro-observer"
+						"maestro-computer-history"
 					]
 				}
 			]
 		},
+		"afterPack": "scripts/verify-computer-history-helper.js",
 		"afterSign": "scripts/notarize.js",
 		"win": {
 			"target": [
@@ -252,7 +253,7 @@
 					"from": "dist/native/win32-${arch}",
 					"to": "native",
 					"filter": [
-						"maestro-observer.exe"
+						"maestro-computer-history.exe"
 					]
 				}
 			]
@@ -311,7 +312,7 @@
 					"from": "dist/native/linux-${arch}",
 					"to": "native",
 					"filter": [
-						"maestro-observer"
+						"maestro-computer-history"
 					]
 				}
 			]

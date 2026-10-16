@@ -296,7 +296,7 @@ export class ComputerHistoryService {
 			if (waiting) {
 				this.deps.log?.(
 					'warn',
-					'maestro-observer still reports Accessibility as denied after restarts; not retrying'
+					'maestro-computer-history still reports Accessibility as denied after restarts; not retrying'
 				);
 			}
 			if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
@@ -315,7 +315,10 @@ export class ComputerHistoryService {
 		if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
 		this.accessRecheckTimer = undefined;
 		this.accessRestarts += 1;
-		this.deps.log?.('info', 'Accessibility was granted; restarting maestro-observer to pick it up');
+		this.deps.log?.(
+			'info',
+			'Accessibility was granted; restarting maestro-computer-history to pick it up'
+		);
 		this.helperStatus = null;
 		this.supervisor.restart();
 		this.notify(true);
@@ -346,7 +349,7 @@ export class ComputerHistoryService {
 			return false;
 		}
 		if (event.kind === 'helper.error') {
-			this.deps.log?.('warn', `maestro-observer: ${event.text ?? ''}`);
+			this.deps.log?.('warn', `maestro-computer-history: ${event.text ?? ''}`);
 			return false;
 		}
 		this.noteSeenApp(event.app);

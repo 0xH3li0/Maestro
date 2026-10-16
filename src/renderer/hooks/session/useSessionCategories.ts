@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import { useCallback, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import {
@@ -66,6 +67,7 @@ export function useSessionCategories(
 		[allSessions, scopeSessions]
 	);
 	const groups = useSessionStore((s) => s.groups);
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 
 	// PR-A 1.3: collapse what used to be four chained `useMemo`s
 	// (worktreeChildrenByParentId → sortedWorktreeChildrenByParentId →
@@ -184,6 +186,7 @@ export function useSessionCategories(
 					worktreeChildren: worktreeChildrenByParentId.get(s.id) ?? [],
 					batchSessionIds,
 					stuckOutageIds: stuckOutageSessionIds,
+					headlessCounts,
 				})
 			) {
 				continue;
@@ -282,6 +285,7 @@ export function useSessionCategories(
 		groupIds,
 		hiddenGroupIds,
 		stuckOutageSessionIds,
+		headlessCounts,
 	]);
 
 	const sortedGroups = useMemo(

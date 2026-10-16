@@ -5,6 +5,7 @@ import type { Theme } from '../types';
 import { ToggleSwitch } from './ui/ToggleSwitch';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useSettingsStore } from '../stores/settingsStore';
 
 interface NotificationPopoverProps {
@@ -50,15 +51,23 @@ export const NotificationPopover = memo(function NotificationPopover({
 		{ target: document }
 	);
 
-	// Position relative to anchor
-	const anchorRect = anchorRef.current?.getBoundingClientRect();
-	if (!anchorRect) return null;
+	// Beside the bell, bottom edges aligned so it grows UP from the composer
+	// (anchoring the top edge pushed it off the bottom of the window), and
+	// clamped into the viewport when the window is short.
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(popoverRef, anchorRef, {
+		placement: 'left',
+		align: 'end',
+		gap: 8,
+		flip: true,
+	});
 
 	const style: React.CSSProperties = {
 		position: 'fixed',
-		// Appear to the left of the button, vertically centered
-		top: anchorRect.top - 4,
-		right: window.innerWidth - anchorRect.left + 8,
+		left,
+		top,
+		maxHeight,
+		overflowY: 'auto',
+		opacity: ready ? 1 : 0,
 		zIndex: 9999,
 		backgroundColor: theme.colors.bgMain,
 		borderColor: theme.colors.border,

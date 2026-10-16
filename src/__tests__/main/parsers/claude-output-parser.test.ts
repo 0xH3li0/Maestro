@@ -1319,6 +1319,18 @@ describe('ClaudeOutputParser', () => {
 			expect(error?.type).toBe('rate_limited');
 		});
 
+		// Stream-json events were classified line by line as they arrived. Matched
+		// again at exit as one blob, an answer that discussed rate limits turned a
+		// dropped connection into a "Rate limited" error.
+		it('does not classify a non-zero exit from the stream-json events on stdout', () => {
+			const stdout = JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'text', text: 'I added backoff for the rate limit.' }] },
+			});
+			const error = parser.detectErrorFromExit(255, '', stdout);
+			expect(error?.type).toBe('agent_crashed');
+		});
+
 		it('should extract detailed token counts from embedded JSON in stderr', () => {
 			const stderr =
 				'Error streaming, falling back to non-streaming mode: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 206491 tokens > 200000 maximum"}}';

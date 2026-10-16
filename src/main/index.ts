@@ -121,6 +121,12 @@ import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-execut
 import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
+import { getSessionIdsBusyWithCli } from '../shared/cli-activity';
+import { isAgentBusy } from './utils/agent-busy';
+import {
+	getHeadlessAgentActivity,
+	onHeadlessAgentActivityChange,
+} from './utils/headless-agent-activity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
 import { generateTabName } from './ipc/handlers/tabNaming';
 import type { SessionInfo } from '../shared/types';
@@ -1810,6 +1816,7 @@ app
 		const pluginSettingsDeleteNamespace = (prefix: string): void =>
 			pluginSettingsStore.delete(prefix.replace(/\.$/, ''));
 		const pluginSessionsList = (): PluginSessionMetadata[] => {
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			const sessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
 			return sessions
 				.filter((s) => typeof s?.id === 'string')
@@ -1817,7 +1824,21 @@ app
 					id: s.id as string,
 					...(typeof s.name === 'string' ? { title: s.name } : {}),
 					...(typeof s.toolType === 'string' ? { agentId: s.toolType } : {}),
-					...(typeof s.status === 'string' ? { status: s.status } : {}),
+					status: isAgentBusy(
+						{
+							id: s.id as string,
+							activeTabId: s.activeTabId as string | undefined,
+							aiTabs: s.aiTabs as Array<{ id?: string }> | undefined,
+						},
+						processManager,
+						cliBusySessionIds
+					)
+						? 'busy'
+						: typeof s.state === 'string'
+							? s.state
+							: typeof s.status === 'string'
+								? s.status
+								: 'idle',
 					...(typeof s.createdAt === 'number' ? { createdAt: s.createdAt } : {}),
 					...(typeof s.updatedAt === 'number' ? { updatedAt: s.updatedAt } : {}),
 					...(typeof s.cwd === 'string' ? { projectPath: s.cwd } : {}),
@@ -2335,6 +2356,7 @@ app
 			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
+			recordRelayOrigin: markRelaySession,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
 			issueRunToken: (agentId, ttlMs, receiptToolId) =>
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
@@ -2347,6 +2369,9 @@ app
 					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
 					'[PluginAudit]'
 				),
+		});
+		onHeadlessAgentActivityChange(() => {
+			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
 		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({

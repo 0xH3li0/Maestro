@@ -6,7 +6,7 @@
  */
 
 import { useRef, type RefObject } from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotificationPopover } from '../../../renderer/components/NotificationPopover';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -98,5 +98,34 @@ describe('NotificationPopover', () => {
 			// next test in this worker.
 			spies.restore();
 		}
+	});
+	it('grows up from the anchor so it stays on screen near the bottom of the window', async () => {
+		// The bell sits in the composer at the bottom-right of the window. Pinning
+		// the popover's TOP to the anchor pushed most of it off the bottom edge.
+		const rect = (left: number, top: number, width: number, height: number) => ({
+			left,
+			top,
+			right: left + width,
+			bottom: top + height,
+			width,
+			height,
+			x: left,
+			y: top,
+			toJSON: () => ({}),
+		});
+		const anchorBottom = window.innerHeight - 20;
+		HTMLElement.prototype.getBoundingClientRect = vi.fn(function (this: HTMLElement) {
+			if (this.dataset.testid === 'anchor') return rect(900, anchorBottom - 40, 40, 40);
+			return rect(0, 0, 220, 110);
+		}) as never;
+
+		render(<Harness onClose={onClose} />);
+		const popover = document.body.querySelector<HTMLElement>('[tabindex="-1"]')!;
+		await waitFor(() => expect(popover.style.opacity).toBe('1'));
+
+		const top = parseFloat(popover.style.top);
+		expect(top + 110).toBe(anchorBottom);
+		expect(top + 110).toBeLessThanOrEqual(window.innerHeight);
+		expect(parseFloat(popover.style.left)).toBe(900 - 8 - 220);
 	});
 });

@@ -49,6 +49,7 @@ export function sessionMatchesFilter(
 }
 
 export interface UnreadFilterContext {
+	headlessCounts?: AttentionContext['headlessCounts'];
 	showUnreadAgentsOnly: boolean;
 	activeSessionId?: string | null;
 	/** This agent's worktree children, whose activity keeps the parent visible. */
@@ -81,6 +82,7 @@ export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): 
 	if (isActiveOrParentOfActive) return true;
 
 	const attentionCtx: AttentionContext = {
+		headlessCounts: ctx.headlessCounts,
 		batchSessionIds: ctx.batchSessionIds ?? NO_IDS,
 		stuckOutageIds: ctx.stuckOutageIds ?? NO_IDS,
 	};

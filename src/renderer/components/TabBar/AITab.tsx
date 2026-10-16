@@ -606,6 +606,16 @@ export const AITab = memo(function AITab({
 				{displayName}
 			</span>
 
+			{tab.origin === 'relay' && (
+				<span
+					className="text-3xs px-1 py-0.5 rounded shrink-0"
+					style={{ color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }}
+					title="Conversation started through Relay"
+				>
+					Relay
+				</span>
+			)}
+
 			{/* Close button - visible on hover or when active, takes space of busy indicator when not busy */}
 			{canClose && (isHovered || isActive) && (
 				<button

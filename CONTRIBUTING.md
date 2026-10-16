@@ -109,6 +109,7 @@ npm run build:main     # Build main process + preload only (clears stale output 
 npm run build:renderer # Build renderer only
 npm run build:web-desktop # Build browser (web-desktop) bundle only
 npm run build:cli      # Build CLI tool only
+npm run build:computer-history # Build the Computer History helper (needs the Rust toolchain)
 npm start              # Start built application
 npm run clean          # Clean build artifacts
 npm run lint           # Run TypeScript type checking
@@ -1106,6 +1107,8 @@ npm run package:linux     # Linux (.AppImage, .deb, .rpm)
 ```
 
 Output in `release/` directory.
+
+The `package*` scripts also build the Computer History helper (`native/maestro-computer-history`), so they need the Rust toolchain. Packaging fails when the helper is missing from the package. To package without it anyway, set `MAESTRO_ALLOW_MISSING_COMPUTER_HISTORY_HELPER=1` and run `electron-builder` directly.
 
 ### GitHub Actions
 

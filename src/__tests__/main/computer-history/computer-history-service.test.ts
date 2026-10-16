@@ -49,7 +49,7 @@ function fakeSupervisor(deps: ObserverSupervisorDeps): ObserverSupervisorLike {
 		status: () => ({
 			state: running ? 'running' : 'stopped',
 			restarts: 0,
-			binaryPath: '/bin/maestro-observer',
+			binaryPath: '/bin/maestro-computer-history',
 			recentStderr: [],
 		}),
 	};
@@ -60,7 +60,7 @@ function makeService(extra: Partial<ConstructorParameters<typeof ComputerHistory
 		userDataDir: userData,
 		isEnabled: () => enabled,
 		createSupervisor: fakeSupervisor,
-		resolveBinary: () => '/bin/maestro-observer',
+		resolveBinary: () => '/bin/maestro-computer-history',
 		platform: 'darwin',
 		now: () => now,
 		getBlockPids: () => [999],

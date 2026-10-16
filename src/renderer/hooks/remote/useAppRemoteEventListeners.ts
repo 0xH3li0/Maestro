@@ -41,6 +41,7 @@ import {
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
 import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
@@ -282,13 +283,20 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(filePath, sshRemoteId),
-				window.maestro.fs.stat(filePath, sshRemoteId).catch(() => null),
-			]);
-			if (content !== null) {
+			const target = await readPathForOpen(filePath, sshRemoteId);
+			if (target?.kind === 'directory') {
+				// `maestro-cli open-file <folder>` reveals it in the Files panel, the
+				// same thing clicking a folder link in the chat does. Focus follows
+				// the agent switch: a background or --no-switch open stays put.
+				const focus = !background && switchToAgent !== false;
+				if (!revealPathInFileTree(sessionId, filePath, { focus })) {
+					logger.error('[Remote] Folder is outside the agent file tree:', undefined, filePath);
+				}
+				return;
+			}
+			if (target) {
+				const { content, lastModified } = target;
 				const filename = filePath.split(/[\\/]/).pop() || filePath;
-				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
 				handleOpenFileTab(
 					{
 						path: filePath,

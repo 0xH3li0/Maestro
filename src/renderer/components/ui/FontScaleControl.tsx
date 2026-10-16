@@ -18,6 +18,7 @@ import { AArrowDown, AArrowUp, ALargeSmall } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseFontScaleReturn } from '../../hooks/ui/useFontScale';
 import { ScaleControl } from './ScaleControl';
+import type { ShortcutChords } from './ShortcutHint';
 
 export interface FontScaleControlProps {
 	theme: Theme;
@@ -28,7 +29,11 @@ export interface FontScaleControlProps {
 	/** `native` titles (the default) or `overlay` hover tooltips; see `ScaleControl`. */
 	tooltips?: 'native' | 'overlay';
 	/** Keys the surface binds to this control, named in the tooltips. */
-	shortcutHint?: { decrease?: string; increase?: string; reset?: string };
+	shortcutHint?: {
+		decrease?: string | ShortcutChords;
+		increase?: string | ShortcutChords;
+		reset?: string | ShortcutChords;
+	};
 	/** Button size - `sm` for a dense `text-xs` button row. Defaults to `md`. */
 	size?: 'sm' | 'md';
 	/**

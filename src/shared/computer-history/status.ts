@@ -5,7 +5,7 @@
 
 import type { CaptureRule, HelperStatus, ObservedPlatform, StoredEventKind } from './types';
 
-/** Supervisor-level state of the `maestro-observer` child process. */
+/** Supervisor-level state of the `maestro-computer-history` child process. */
 export type ObserverProcessState =
 	| 'stopped'
 	| 'running'

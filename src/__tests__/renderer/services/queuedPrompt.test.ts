@@ -21,6 +21,8 @@ import {
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
 	sendQueuedItemNow,
+	setQueuedItemPaused,
+	toggleQueuedItemPaused,
 } from '../../../renderer/services/queuedPrompt';
 import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -266,6 +268,35 @@ describe('removeQueuedItem', () => {
 		removeQueuedItem('session-1', item.id);
 		expect(removeQueuedItem('session-1', item.id)).toBe(false);
 		expect(removeQueuedItem('missing-session', item.id)).toBe(false);
+	});
+});
+
+describe('setQueuedItemPaused / toggleQueuedItemPaused', () => {
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+	});
+
+	it('holds and resumes, the card toggle and the CLI writing the same flag', () => {
+		seed();
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+
+		expect(toggleQueuedItemPaused('session-1', item.id)).toBe(true);
+		expect(currentQueue()[0].paused).toBe(true);
+		expect(toggleQueuedItemPaused('session-1', item.id)).toBe(true);
+		expect(currentQueue()[0].paused).toBeUndefined();
+
+		expect(setQueuedItemPaused('session-1', item.id, true)).toBe(true);
+		expect(setQueuedItemPaused('session-1', item.id, true)).toBe(true);
+		expect(currentQueue()[0].paused).toBe(true);
+		expect(setQueuedItemPaused('session-1', item.id, false)).toBe(true);
+		expect(currentQueue()[0].paused).toBeUndefined();
+	});
+
+	it('says no for an item that is not queued', () => {
+		seed();
+		expect(toggleQueuedItemPaused('session-1', 'ghost')).toBe(false);
+		expect(setQueuedItemPaused('missing-session', 'ghost', true)).toBe(false);
 	});
 });
 

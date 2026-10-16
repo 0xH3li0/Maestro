@@ -10,7 +10,7 @@ It is a Beta Encore Feature and starts **off**. Turn it on from **Settings > Plu
 
 ## What it records
 
-A small helper program, `maestro-observer`, reads the operating system accessibility tree (the same interface screen readers use) for the app in front:
+A small helper program, `maestro-computer-history`, reads the operating system accessibility tree (the same interface screen readers use) for the app in front:
 
 | Event                | When                                                                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -67,7 +67,7 @@ Everything below is in the tile's Settings tab, and each control has a `maestro-
 - **Record visible window text:** turn snapshots off to keep only app switches, typed text, and selections. Snapshots make recall much better and use most of the space.
 - **Clear history:** the last hour, or everything. Settings and app rules are kept.
 
-A small dot on the Left Bar menu button shows while Computer History is recording (red) or is on but waiting for a permission (amber).
+The top of the tile's Settings tab shows the recorder state and what to do about it: green while recording, amber while it waits for a permission or restarts, red when the recorder is missing or has stopped. Release builds include the recorder (`maestro-computer-history`), so turning the feature on is all it needs. A build from source must run `npm run build:computer-history` (needs the Rust toolchain) before packaging; packaging fails without it.
 
 ### Choosing which apps are recorded
 

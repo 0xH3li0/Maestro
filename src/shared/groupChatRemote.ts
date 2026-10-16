@@ -8,6 +8,7 @@
 import {
 	type GroupChat,
 	type GroupChatMessage,
+	type GroupChatQueueState,
 	type GroupChatState,
 	extractAllMentions,
 	mentionMatches,
@@ -22,6 +23,19 @@ export interface RemoteGroupChatMessage {
 	content: string;
 	timestamp: number;
 	role: 'user' | 'assistant';
+	/** Set on a user message steered into a running round: the turns that took it. */
+	steeredTo?: string[];
+}
+
+/** One message waiting in a chat's queue, as the bridge reports it. */
+export interface RemoteGroupChatQueueItem {
+	id: string;
+	text: string;
+	timestamp: number;
+	hasImages?: boolean;
+	failed?: boolean;
+	failureReason?: string;
+	sending?: boolean;
 }
 
 /** A group chat as the bridge reports it. `topic` is the chat's name. */
@@ -37,12 +51,17 @@ export interface RemoteGroupChatState {
 	moderatorAgentId?: string;
 	archived?: boolean;
 	currentTurn?: string;
+	/** Messages waiting for the room. Present on a single-chat state read. */
+	queue?: RemoteGroupChatQueueItem[];
+	/** Whether the queue is holding (Stop All, a failed send, a restart). */
+	queuePaused?: boolean;
 }
 
 export function toRemoteGroupChatState(
 	chat: GroupChat,
 	state: GroupChatState,
-	messages: GroupChatMessage[] = []
+	messages: GroupChatMessage[] = [],
+	queue?: GroupChatQueueState
 ): RemoteGroupChatState {
 	return {
 		id: chat.id,
@@ -59,11 +78,24 @@ export function toRemoteGroupChatState(
 			content: m.content,
 			timestamp: Date.parse(m.timestamp) || 0,
 			role: m.from === 'user' ? 'user' : 'assistant',
+			...(m.steeredTo && m.steeredTo.length > 0 && { steeredTo: m.steeredTo }),
 		})),
 		isActive: state !== 'idle',
 		state,
 		moderatorAgentId: chat.moderatorAgentId,
 		archived: chat.archived,
+		...(queue && {
+			queue: queue.items.map((item) => ({
+				id: item.id,
+				text: item.text,
+				timestamp: item.timestamp,
+				...(item.images && item.images.length > 0 && { hasImages: true }),
+				...(item.failed && { failed: true }),
+				...(item.failureReason && { failureReason: item.failureReason }),
+				...(item.sending && { sending: true }),
+			})),
+			queuePaused: queue.paused,
+		}),
 	};
 }
 

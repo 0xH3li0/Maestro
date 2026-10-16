@@ -1,3 +1,7 @@
+import { dispatchToastClickAction } from '../../services/toastClickActions';
+import { jumpToAgent } from '../../services/agentNavigation';
+import { startNotificationHistorySync } from '../../stores/notificationStore';
+import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
@@ -26,8 +30,10 @@ import {
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
@@ -1410,6 +1416,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		defaultShowThinking,
 	]);
 
+	// Handle a remote Throughput Gauge verb (`maestro-cli throughput-gauge`). Main
+	// sends it to the primary window, which owns the live rates; the service
+	// calls the same store actions as the hotkey, palette, menu, and popover.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteThroughputGaugeCommand(
+			(request, responseChannel) => {
+				const reply = (result: ThroughputGaugeCommandResult) =>
+					window.maestro.process.sendRemoteThroughputGaugeCommandResponse(responseChannel, result);
+				runRemoteThroughputGaugeCommand(request).then(reply, (error: unknown) => {
+					// Expected failures (feature off, bad patch, disk refused the write)
+					// come back as a result; a rejection is a defect, so Sentry sees it.
+					logger.error('[useRemoteIntegration] Throughput Gauge command failed', undefined, error);
+					captureException(error, {
+						extra: { context: 'remoteThroughputGaugeCommand', action: request.action },
+					});
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote open file tab from web/CLI interface
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
 	useEffect(() => {
@@ -1436,6 +1469,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	useEffect(() => startNotificationHistorySync(), []);
+	useEffect(
+		() =>
+			window.maestro.notification.onActivateAction?.((action) => {
+				return dispatchToastClickAction(action, {
+					onSessionClick: (sessionId, tabId) => jumpToAgent(sessionId, { tabId }),
+				});
+			}),
+		[]
+	);
+
+	useEffect(
+		() => window.maestro.process.onRemoteNotificationInbox?.(performNotificationInboxAction),
+		[]
+	);
 
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
 	// The main process has already validated the surface and tab, so this is a
@@ -1535,7 +1584,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				color,
 				title,
 				message,
-				duration: duration !== undefined ? duration * 1000 : undefined,
+				duration,
 				dismissible,
 				sessionId,
 				tabId,

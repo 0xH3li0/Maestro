@@ -21,7 +21,11 @@ import type {
 	SessionState,
 } from '../types';
 import { generateId } from './ids';
-import { STEERING_TOO_LONG_DETAIL, steeringTextTooLong } from '../../shared/chatSteering';
+import {
+	STEERING_TOO_LONG_DETAIL,
+	startsWithTuiCommandPrefix,
+	steeringTextTooLong,
+} from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -781,7 +785,7 @@ export function getSteerEligibility(
 	// leading `!` switches the editor to bash mode. Neither is the message the user
 	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
 	// plain input, so it is unaffected.
-	if (session.toolType === 'claude-code' && /^[/!]/.test(item.text.trimStart())) {
+	if (session.toolType === 'claude-code' && startsWithTuiCommandPrefix(item.text)) {
 		return { canSteer: false, blockedReason: 'tui-command-prefix' };
 	}
 	if (item.waitingForConnection) {

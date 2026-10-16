@@ -11,6 +11,7 @@
  * - runCommand: Execute a single command and capture output
  */
 
+import { trackHeadlessAgentActivity } from '../../../../main/utils/headless-agent-activity';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -418,6 +419,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:getHeadlessActivity',
 				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
@@ -430,6 +432,28 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('process:getHeadlessActivity', () => {
+		it('reads independent live run counts without creating a desktop process', async () => {
+			const query = handlers.get('process:getHeadlessActivity')!;
+			const first = trackHeadlessAgentActivity('relay-target');
+			const second = trackHeadlessAgentActivity('relay-target');
+			try {
+				const snapshot = await query({});
+				expect(snapshot.counts['relay-target']).toBe(2);
+				first();
+				first();
+				const next = await query({});
+				expect(next.counts['relay-target']).toBe(1);
+				expect(next.revision).toBeGreaterThan(snapshot.revision);
+				second();
+				expect((await query({})).counts['relay-target']).toBeUndefined();
+			} finally {
+				first();
+				second();
+			}
 		});
 	});
 
@@ -1227,14 +1251,12 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
 			});
 
-			// Regression: desktop Auto Run spawns each task as
-			// `{agentId}-batch-{timestamp}`. The handler must strip that suffix
-			// before the persisted lookup, or the run misses the agent's TUI
-			// setting and silently falls back to `claude --print` (API).
-			it('honors the persisted TUI token source for a -batch- Auto Run spawn', async () => {
+			// Auto Run (and goal iterations) spawn as `{agentId}-batch-{ts}` and send no
+			// token fields inline, so the TUI setting has to resolve from the id alone.
+			it('runs an Auto Run batch spawn through maestro-p with its idle budget', async () => {
 				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
-				mockProcessManager.spawn.mockReturnValue({ pid: 4251, success: true });
+				mockProcessManager.spawn.mockReturnValue({ pid: 4245, success: true });
 				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
 					if (key === 'sessions') {
 						return [
@@ -1251,17 +1273,21 @@ describe('process IPC handlers', () => {
 
 				const handler = handlers.get('process:spawn');
 				await handler!({} as any, {
-					sessionId: 'session-tui-batch-1739000000000',
+					sessionId: 'session-tui-batch-1760000000000',
 					toolType: 'claude-code',
 					cwd: '/test',
 					command: '/usr/local/bin/claude',
 					args: claudeCodeAgent.args,
-					prompt: 'hi',
+					prompt: 'task',
+					maestroPMaxWaitSeconds: 14400,
 				});
 
 				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 				expect(spawnCall.command).toBe(process.execPath);
 				expect(spawnCall.args[0]).toBe(maestroPPath);
+				const maxWaitAt = spawnCall.args.indexOf('--max-wait');
+				expect(maxWaitAt).toBeGreaterThan(-1);
+				expect(spawnCall.args[maxWaitAt + 1]).toBe('14400');
 			});
 
 			// The TUI announces no slash commands, so a maestro-p turn probes for

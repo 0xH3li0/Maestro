@@ -100,6 +100,8 @@ Every output widget extends `WidgetProps` (`{ theme: Theme }`) unless noted.
 
 - `data: number[]` - sequential values (oldest to newest). Empty or all-zero data renders a flat collapsed baseline rather than crashing.
 - `color: string` (required), `width?` (80), `height?` (24), `fillOpacity?` (0.15), `showEndDot?` (true), `strokeWidth?` (1.5).
+- `domain?: { min; max }` - plot against a fixed scale instead of the data's own range (several charts sharing one scale). With a domain, all-zero data draws as a flat line on the floor, not the empty baseline.
+- `reference?: { value; color; label? }` - a dashed horizontal mark at `value` on the same scale (a peak, a limit).
 
 **`ChartTooltip`** (portaled primitive):
 

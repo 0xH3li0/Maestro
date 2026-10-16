@@ -268,6 +268,16 @@ export function steeringTextTooLong(text: string): boolean {
 	return steeringTextBytes(text) > STEERING_MAX_TEXT_BYTES;
 }
 
+/**
+ * Whether `text` would be read as a command by Claude's TUI rather than typed as
+ * a message: a leading `/` opens the slash-command menu (Enter would run `/clear`
+ * or `/compact` mid-turn) and a leading `!` switches the editor to bash mode.
+ * Such a message is never steered into a Claude turn; it waits and sends normally.
+ */
+export function startsWithTuiCommandPrefix(text: string): boolean {
+	return /^[/!]/.test(text.trimStart());
+}
+
 /** The detail every layer reports for an over-cap steer, so the wording cannot drift. */
 export const STEERING_TOO_LONG_DETAIL = `the message is over the ${STEERING_MAX_TEXT_BYTES / 1024} KB steering limit`;
 

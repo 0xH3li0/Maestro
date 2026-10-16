@@ -102,6 +102,7 @@ When you open the annotator from the **File Preview** pane, saving opens a desti
 | `Delete` / `Backspace`            | Delete the selected shape or text label                                  |
 | `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor                                |
 | `D` `E` `P` `S` `C` `A` `T` `R`   | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text / Crop |
+| `1` - `8`                         | Pick that color from the palette (the number is shown on each swatch)    |
 | `0`                               | Reset zoom and pan                                                       |
 | `f`                               | Fit image to viewport                                                    |
 | `+` / `-`                         | Grow / shrink the size of the current tool (text size for Text)          |

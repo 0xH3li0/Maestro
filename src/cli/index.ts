@@ -31,6 +31,15 @@ import {
 	snoozeWake,
 } from './commands/snooze';
 import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
+import {
+	throughputGaugeFlagChoices,
+	throughputGaugeHide,
+	throughputGaugeResetPeak,
+	throughputGaugeSet,
+	throughputGaugeShow,
+	throughputGaugeStatus,
+	throughputGaugeToggle,
+} from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -47,6 +56,7 @@ import {
 	groupChatList,
 	groupChatSend,
 	groupChatStart,
+	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
 } from './commands/group-chat';
@@ -114,6 +124,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { quickChat } from './commands/quick-chat';
 import { maestroRun } from './commands/maestro-run';
@@ -743,6 +754,59 @@ program
 	.option('--json', 'Output as JSON')
 	.action(snoozeWake);
 
+// Throughput Gauge commands - the CLI half of the floating tokens/sec gauge (an
+// Encore Feature): show and hide, the gear's five settings, Reset peak, and a
+// status read. Every verb answers with the gauge's status after it ran.
+const throughputGauge = program
+	.command('throughput-gauge')
+	.description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
+
+const gaugeFlagHelp = (label: string, field: Parameters<typeof throughputGaugeFlagChoices>[0]) =>
+	`${label}: ${throughputGaugeFlagChoices(field).join(' | ')}`;
+
+throughputGauge
+	.command('show')
+	.description('Put the gauge on screen (does not move focus)')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeShow);
+
+throughputGauge
+	.command('hide')
+	.description('Take the gauge off screen')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeHide);
+
+throughputGauge
+	.command('toggle')
+	.description(
+		'Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)'
+	)
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeToggle);
+
+throughputGauge
+	.command('set')
+	.description('Change one or more gauge settings, like the gear on the gauge')
+	.option('--scope <scope>', gaugeFlagHelp('Whose output to count', 'scope'))
+	.option('--metric <metric>', gaugeFlagHelp('Which reading to show', 'metric'))
+	.option('--layout <layout>', gaugeFlagHelp('One gauge or all three', 'layout'))
+	.option('--style <style>', gaugeFlagHelp('How the reading is drawn', 'style'))
+	.option('--window <seconds>', gaugeFlagHelp('Rolling-average window in seconds', 'windowMs'))
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeSet);
+
+throughputGauge
+	.command('reset-peak')
+	.description('Start the peak mark again from the current reading')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeResetPeak);
+
+throughputGauge
+	.command('status')
+	.description('Read visibility, settings, live rates, and peaks')
+	.option('--json', 'Output as JSON (enabled, visible, settings, rates, peak, windowMs)')
+	.action(throughputGaugeStatus);
+
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
 // left off without owning a persistent channel - pair with `dispatch` to write
@@ -801,6 +865,17 @@ groupChat
 	.action(groupChatSend);
 
 groupChat
+	.command('steer <chat> [message]')
+	.description(
+		'Type a message into the round running in a group chat instead of waiting for it to end'
+	)
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--item <queued-id>', 'Steer a message already in the chat queue (ids are in status)')
+	.option('--read-only', 'Only steer new text when the running round is read-only')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSteer);
+
+groupChat
 	.command('status <chat>')
 	.description("Show a group chat's state, participants, and latest messages")
 	.option('--tail <n>', 'How many recent messages to print (default 5; 0 for none)')
@@ -829,7 +904,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -2241,7 +2316,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, throughputGauge)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -2649,6 +2724,51 @@ notify
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
 
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				collapse: 'Collapse expanded notification details',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
+
 notify
 	.command('flash <message>')
 	.description('Show a center-screen flash (momentary, exclusive - replaces any active flash)')
@@ -2748,8 +2868,11 @@ quickChatCmd
 	.action((options) => quickChat('status', {}, options));
 
 quickChatCmd
-	.command('send <message...>')
-	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.command('send [message...]')
+	.description(
+		'Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images'
+	)
+	.option('--image <path...>', 'Image file(s) to send with the message (PNG, JPG, GIF, WebP)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
 
@@ -2812,10 +2935,24 @@ quickChatCmd
 quickChatCmd
 	.command('new-tab [message-id]')
 	.description(
-		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+		'Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
+
+quickChatCmd
+	.command('history')
+	.description("List the recent chats, newest first (what the window's History button shows)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('history', {}, options));
+
+quickChatCmd
+	.command('recall <chat>')
+	.description(
+		'Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options) => quickChat('recall', { chatId: chat }, options));
 
 quickChatCmd
 	.command('stop')

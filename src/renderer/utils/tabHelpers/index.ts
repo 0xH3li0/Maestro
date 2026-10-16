@@ -971,6 +971,7 @@ export function settleTabThinkingState(session: Session, tabId: string): Session
  * Options for creating a new AI tab.
  */
 export interface CreateTabOptions {
+	origin?: AITab['origin'];
 	agentSessionId?: string | null; // Claude Code session UUID (null for new tabs)
 	logs?: LogEntry[]; // Initial conversation history
 	name?: string | null; // User-defined name (null = show UUID octet)
@@ -1033,6 +1034,7 @@ export function createTab(
 	}
 
 	const {
+		origin,
 		agentSessionId = null,
 		logs = [],
 		name = null,
@@ -1049,6 +1051,7 @@ export function createTab(
 	// Create the new tab with default values
 	const newTab: AITab = {
 		id: id ?? generateId(),
+		...(origin ? { origin } : {}),
 		agentSessionId,
 		name,
 		starred,

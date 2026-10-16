@@ -6,6 +6,7 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type {
@@ -13,6 +14,10 @@ import type {
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../../shared/throughputGaugeCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -425,6 +430,14 @@ export type AutoRunSteeringCommandCallback = (
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
  */
 export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
+/**
+ * `maestro-cli throughput-gauge` - show, hide, configure, or read the gauge.
+ * Answered by the primary window, which owns the live rates. Resolves rather
+ * than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ThroughputGaugeCommandCallback = (
+	request: ThroughputGaugeCommandRequest
+) => Promise<ThroughputGaugeCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
@@ -826,7 +839,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
@@ -1414,6 +1427,16 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
+/** What to steer into a chat's running round: a queued message by id, or new text. */
+export interface SteerGroupChatRequest {
+	itemId?: string;
+	message?: string;
+	readOnly?: boolean;
+}
+export type SteerGroupChatCallback = (
+	chatId: string,
+	request: SteerGroupChatRequest
+) => Promise<GroupChatSteerResult>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 
 // =============================================================================

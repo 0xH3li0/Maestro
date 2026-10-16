@@ -23,6 +23,8 @@ import {
 	desktopLauncherFor,
 } from './desktop-engine';
 import type { IProcessManager } from './group-chat-moderator';
+import type { SteeringResultFrame } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 
 export {
 	extractMentions,
@@ -107,6 +109,38 @@ export function clearActiveParticipantTaskSession(
  */
 export function markParticipantResponded(groupChatId: string, participantName: string): boolean {
 	return engine.markParticipantResponded(groupChatId, participantName);
+}
+
+/** The one process-manager call steering needs. */
+export interface GroupChatSteeringChannel {
+	steer(processId: string, text: string): Promise<SteeringResultFrame>;
+}
+
+/**
+ * Types a user message into the round running in a chat (the moderator's turn,
+ * or the working participants) and records it in the room when a turn takes it.
+ */
+export function steerRunningRound(
+	groupChatId: string,
+	message: { text: string; readOnly?: boolean },
+	channel: GroupChatSteeringChannel
+): Promise<GroupChatSteerResult> {
+	return engine.steerRunningRound(groupChatId, message, (processId, text) =>
+		channel.steer(processId, text)
+	);
+}
+
+/**
+ * Settles a steered message with its turn's transcript verdict. Returns the message
+ * when no turn it went to took it, so the caller can queue it again.
+ */
+export function groupChatSteeringVerdict(processId: string, verdict: SteeringResultFrame) {
+	return engine.steeringVerdict(processId, verdict);
+}
+
+/** The steered messages a turn exited without settling, so the caller can hold them. */
+export function unsettledGroupChatSteersOnExit(processId: string) {
+	return engine.unsettledSteersOnExit(processId);
 }
 
 /**

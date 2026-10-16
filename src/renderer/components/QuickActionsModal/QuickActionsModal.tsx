@@ -7,13 +7,20 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
-import { notifyToast, useNotificationStore } from '../../stores/notificationStore';
+import {
+	notifyToast,
+	selectUnreadNotificationCount,
+	useNotificationStore,
+} from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
 import { buildConcertoCommands } from './commands/concertoCommands';
+import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
+import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
+import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -276,6 +283,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
 	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const throughputGaugeEnabled = useSettingsStore((s) => s.encoreFeatures.throughputGauge === true);
+	const throughputGaugeVisible = useThroughputGaugeStore((s) => s.visible);
+	const throughputGaugeSettings = useSettingsStore((s) => s.throughputGaugeSettings);
+	const setThroughputGaugeSettings = useSettingsStore((s) => s.setThroughputGaugeSettings);
+	const applyThroughputGaugeSettings = useCallback(
+		(patch: Partial<typeof throughputGaugeSettings>) => {
+			const result = applyThroughputGaugeSettingsPatch(throughputGaugeSettings, patch);
+			if (result.ok) setThroughputGaugeSettings(result.settings);
+		},
+		[throughputGaugeSettings, setThroughputGaugeSettings]
+	);
 	const computerHistoryAvailable = useSettingsStore((s) =>
 		canOpenComputerHistory(s.encoreFeatures)
 	);
@@ -291,6 +309,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -577,10 +596,24 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleCadenzas: shortcuts.toggleCadenzas,
 			},
 		}),
+		...buildThroughputGaugeCommands({
+			gaugeEnabled: throughputGaugeEnabled,
+			gaugeVisible: throughputGaugeVisible,
+			settings: throughputGaugeSettings,
+			toggleGauge: () => useThroughputGaugeStore.getState().toggle(),
+			showGauge: () => useThroughputGaugeStore.getState().show(),
+			resetPeak: () => useThroughputGaugeStore.getState().resetPeak(),
+			applySettings: applyThroughputGaugeSettings,
+			setQuickActionOpen,
+			toggleShortcut: shortcuts.toggleThroughputGauge,
+		}),
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			unreadNotificationCount,
+			openNotificationCenter: () => useNotificationStore.getState().setNotificationCenterOpen(true),
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
+			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,

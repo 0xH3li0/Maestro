@@ -41,6 +41,7 @@ export interface LoadResumableSessionOptions {
 
 /** Everything `createTab` needs to bring a conversation back. */
 export interface ResumableSession {
+	origin?: 'user' | 'auto' | 'relay';
 	messages: LogEntry[];
 	/** Null when the conversation was never named, so the tab can still be auto-named. */
 	name: string | null;
@@ -96,26 +97,25 @@ export async function loadResumableSession(
 	let storedContextUsage: number | undefined;
 	let usageStats = options.usageStats;
 
-	// Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
-	if (toolType === 'claude-code') {
-		try {
-			// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-			const origins = await window.maestro.claude.getSessionOrigins(projectRoot);
-			const originData = origins[agentSessionId];
-			if (originData && typeof originData === 'object') {
-				if (sessionName === undefined && originData.sessionName) {
-					name = originData.sessionName;
-				}
-				if (options.starred === undefined && originData.starred !== undefined) {
-					isStarred = originData.starred;
-				}
-				if (originData.contextUsage !== undefined) {
-					storedContextUsage = originData.contextUsage;
-				}
-			}
-		} catch (error) {
-			logger.warn('[handleResumeSession] Failed to lookup session metadata:', undefined, error);
+	let origin: ResumableSession['origin'];
+	try {
+		// Claude and Codex origins share the legacy store; other providers use
+		// the generic store. Supplied transcript/name/star fields must not skip provenance.
+		const origins =
+			!toolType || toolType === 'claude-code' || toolType === 'codex'
+				? await window.maestro.claude.getSessionOrigins(projectRoot)
+				: await window.maestro.agentSessions.getOrigins(toolType, projectRoot);
+		const originData = origins[agentSessionId];
+		origin = typeof originData === 'string' ? originData : originData?.origin;
+		if (originData && typeof originData === 'object') {
+			if (sessionName === undefined && originData.sessionName) name = originData.sessionName;
+			if (options.starred === undefined && originData.starred !== undefined)
+				isStarred = originData.starred;
+			if ('contextUsage' in originData && typeof originData.contextUsage === 'number')
+				storedContextUsage = originData.contextUsage;
 		}
+	} catch (error) {
+		logger.warn('[handleResumeSession] Failed to lookup session metadata:', undefined, error);
 	}
 
 	// If we have stored contextUsage, set token values to reproduce that percentage
@@ -134,5 +134,5 @@ export async function loadResumableSession(
 		};
 	}
 
-	return { messages, name, starred: isStarred, usageStats };
+	return { messages, name, starred: isStarred, usageStats, origin };
 }

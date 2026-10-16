@@ -269,7 +269,7 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 		lines.push(`Permission:       ${live.appAccessibility} (Maestro's macOS Accessibility access)`);
 	}
 	if (live?.helper.state === 'binary-missing') {
-		lines.push('Helper:           maestro-observer is not installed for this platform');
+		lines.push('Helper:           maestro-computer-history is not installed for this platform');
 	}
 	if (config.pausedUntil) {
 		lines.push(

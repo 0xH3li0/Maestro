@@ -21,6 +21,7 @@ import { resolveClaudeSpawnMode } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { prepareGroupChatSpawn } from '../../shared/maestro-lib/groupchat/spawn';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
+import { steeringSocketPathFor } from '../process-manager/steering-client';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -140,6 +141,7 @@ export async function spawnGroupChatAgent(
 			probeRemoteMaestroP: ensureRemoteMaestroPProbed,
 			windowsSpawnConfig: getWindowsSpawnConfig,
 			beginTurn: beginGroupChatTurn,
+			steeringSocketPath: steeringSocketPathFor,
 		}
 	);
 

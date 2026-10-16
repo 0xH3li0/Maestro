@@ -165,6 +165,8 @@ type SpawnOverrides = Pick<
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
 	| 'onProgress'
+	| 'onProcessStarted'
+	| 'maestroPMaxWaitSeconds'
 >;
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
@@ -834,6 +836,7 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -866,6 +869,7 @@ async function spawnClaudeAgent(
 			customEnvVars: {},
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1049,6 +1053,7 @@ async function spawnClaudeAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onLine: processLine,
 			onOversizedLine: warnOversizedLineBuffer,
@@ -1369,6 +1374,7 @@ async function spawnJsonLineAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onEvent: (event) => {
 				if (stopped || overrides.signal?.aborted) {
@@ -1520,6 +1526,8 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
+	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
@@ -1579,6 +1587,12 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * maestro-p idle cap (`--max-wait`) when the turn runs through the TUI.
+	 * Unset keeps maestro-p's 300s default; Auto Run passes its own inactivity
+	 * budget (see autoRunMaestroPMaxWaitSeconds) so a silent test run survives.
+	 */
+	maestroPMaxWaitSeconds?: number;
 	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
@@ -1646,6 +1660,7 @@ async function spawnAgentOnce(
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
 		onProgress: options?.onProgress,
+		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
@@ -1657,6 +1672,7 @@ async function spawnAgentOnce(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

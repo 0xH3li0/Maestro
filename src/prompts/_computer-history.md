@@ -4,7 +4,7 @@ Full Computer History guide for agents. Referenced from the computer-history-sys
 
 # Computer History - agent guide
 
-Computer History is a Maestro feature the user turns on. A small native helper (`maestro-observer`) reads the operating system accessibility tree (macOS AX, Windows UI Automation, Linux AT-SPI2) and Maestro stores what it sees as JSONL under the store directory named in your system prompt. It never logs keystrokes, never reads password fields, never takes screenshots, and never uploads anything.
+Computer History is a Maestro feature the user turns on. A small native helper (`maestro-computer-history`) reads the operating system accessibility tree (macOS AX, Windows UI Automation, Linux AT-SPI2) and Maestro stores what it sees as JSONL under the store directory named in your system prompt. It never logs keystrokes, never reads password fields, never takes screenshots, and never uploads anything.
 
 ## When to use it
 

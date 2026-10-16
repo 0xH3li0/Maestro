@@ -44,6 +44,7 @@ const mockGroupChat = {
 	list: vi.fn(),
 	load: vi.fn(),
 	getMessages: vi.fn(),
+	getQueue: vi.fn(),
 	sendToModerator: vi.fn(),
 	stopAll: vi.fn(),
 };
@@ -63,6 +64,7 @@ beforeEach(() => {
 	mockGroupChat.list.mockResolvedValue([createdChat]);
 	mockGroupChat.load.mockResolvedValue(createdChat);
 	mockGroupChat.getMessages.mockResolvedValue([]);
+	mockGroupChat.getQueue.mockResolvedValue({ items: [], paused: false });
 	mockGroupChat.sendToModerator.mockResolvedValue(undefined);
 	mockGroupChat.stopAll.mockResolvedValue(undefined);
 	(window.maestro as any).groupChat = { ...(window.maestro as any).groupChat, ...mockGroupChat };
@@ -191,6 +193,17 @@ describe('list and state', () => {
 
 		mockGroupChat.load.mockResolvedValue(null);
 		expect(await getRemoteGroupChatState('gone')).toBeNull();
+	});
+
+	it('includes the chat queue in a single chat state', async () => {
+		mockGroupChat.getQueue.mockResolvedValue({
+			items: [{ id: 'q1', text: 'waiting', timestamp: 5 }],
+			paused: true,
+		});
+		const state = await getRemoteGroupChatState('gc-new');
+		expect(mockGroupChat.getQueue).toHaveBeenCalledWith('gc-new');
+		expect(state?.queue).toEqual([{ id: 'q1', text: 'waiting', timestamp: 5 }]);
+		expect(state?.queuePaused).toBe(true);
 	});
 });
 

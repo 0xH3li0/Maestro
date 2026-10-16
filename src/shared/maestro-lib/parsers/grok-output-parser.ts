@@ -59,7 +59,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 
 /** Cap for user-facing unmatched error bodies in UI/logs. */
 const MAX_ERROR_MESSAGE_CHARS = 500;
@@ -447,7 +447,8 @@ export class GrokOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		const combined = `${stderr}\n${stdout}`;
+		// JSON event lines were classified as they streamed; see stripJsonEventLines.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
 		const raw = { exitCode, stderr, stdout };
 		const matched = this.matchPattern(combined, raw);
 		if (matched) {

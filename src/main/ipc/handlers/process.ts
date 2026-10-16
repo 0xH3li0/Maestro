@@ -1,3 +1,4 @@
+import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
@@ -104,6 +105,7 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
+	ipcMain.handle('process:getHeadlessActivity', () => getHeadlessAgentActivity());
 	const {
 		getProcessManager,
 		getAgentDetector,

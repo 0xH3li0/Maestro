@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import React, {
 	useState,
 	useEffect,
@@ -26,7 +27,6 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
-import { ComputerHistoryRecordingDot } from './ComputerHistoryRecordingDot';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import {
 	subscribeSidebarReveal,
@@ -662,12 +662,13 @@ function SessionListInner(props: SessionListProps) {
 	// Derive whether any session is busy or in auto-run (for wand sparkle
 	// animation). A running group chat counts too: the room burns real agent
 	// time, and the wand is the app-wide "something is working" tell.
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const isAnyBusy = useMemo(
 		() =>
-			sessions.some((s) => s.state === 'busy') ||
+			sessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
 			activeBatchSessionIds.length > 0 ||
 			isAnyGroupChatBusy,
-		[sessions, activeBatchSessionIds, isAnyGroupChatBusy]
+		[sessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -696,9 +697,10 @@ function SessionListInner(props: SessionListProps) {
 	const attentionCtx = useMemo<AttentionContext>(
 		() => ({
 			batchSessionIds: new Set(activeBatchSessionIds),
+			headlessCounts,
 			stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
 		}),
-		[activeBatchSessionIds, stuckOutageSignature]
+		[activeBatchSessionIds, stuckOutageSignature, headlessCounts]
 	);
 	// Drives the Bell button's dot. It must agree with what the unread filter
 	// would actually reveal, and that filter keeps unread group chats too - a
@@ -1558,7 +1560,6 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<Menu className="w-4 h-4" />
 								</GhostIconButton>
-								<ComputerHistoryRecordingDot theme={theme} />
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<HamburgerDropdown

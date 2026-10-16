@@ -151,6 +151,7 @@ describe('first-party plugin registry', () => {
 			['computerHistory', 'com.maestro.computer-history'],
 			['quickChat', 'com.maestro.quick-chat'],
 			['maestroRun', 'com.maestro.maestro-run'],
+			['throughputGauge', 'com.maestro.throughput-gauge'],
 		]);
 	});
 

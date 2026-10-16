@@ -603,6 +603,63 @@ Bring a snoozed tab back right now (alias for "snooze wake")
 | `--focus`      | Accepted and ignored: a wake restores the tab without focusing it | -       |
 | `--json`       | Output as JSON                                                    | -       |
 
+## `maestro-cli throughput-gauge`
+
+Show, hide, configure, or read the Throughput Gauge (tokens per second)
+
+## `maestro-cli throughput-gauge show`
+
+Put the gauge on screen (does not move focus)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge hide`
+
+Take the gauge off screen
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge toggle`
+
+Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge set`
+
+Change one or more gauge settings, like the gear on the gauge
+
+| Option               | Description                                              | Default |
+| -------------------- | -------------------------------------------------------- | ------- |
+| `--scope <scope>`    | Whose output to count: all \| active                     | -       |
+| `--metric <metric>`  | Which reading to show: combined \| in \| out             | -       |
+| `--layout <layout>`  | One gauge or all three: single \| all                    | -       |
+| `--style <style>`    | How the reading is drawn: dial \| vu \| lcd \| sparkline | -       |
+| `--window <seconds>` | Rolling-average window in seconds: 5 \| 10 \| 30 \| 60   | -       |
+| `--json`             | Output the gauge status as JSON                          | -       |
+
+## `maestro-cli throughput-gauge reset-peak`
+
+Start the peak mark again from the current reading
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge status`
+
+Read visibility, settings, live rates, and peaks
+
+| Option   | Description                                                        | Default |
+| -------- | ------------------------------------------------------------------ | ------- |
+| `--json` | Output as JSON (enabled, visible, settings, rates, peak, windowMs) | -       |
+
 ## `maestro-cli session`
 
 Inspect open desktop tabs and their conversation history
@@ -650,6 +707,17 @@ Send a message to a group chat (ID, ID prefix, or name); refused while busy
 | `--message-file <path>` | Read the message from a file   | -       |
 | `--json`                | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat steer <chat> [message]`
+
+Type a message into the round running in a group chat instead of waiting for it to end
+
+| Option                  | Description                                                   | Default |
+| ----------------------- | ------------------------------------------------------------- | ------- |
+| `--message-file <path>` | Read the message from a file                                  | -       |
+| `--item <queued-id>`    | Steer a message already in the chat queue (ids are in status) | -       |
+| `--read-only`           | Only steer new text when the running round is read-only       | -       |
+| `--json`                | Output as JSON (for scripting)                                | -       |
+
 ## `maestro-cli group-chat status <chat>`
 
 Show a group chat's state, participants, and latest messages
@@ -678,7 +746,7 @@ Stop a group chat's moderator and participants
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -2343,6 +2411,99 @@ Show a toast notification (queued, click X or icon to dismiss)
 | `--open-url <url>`        | On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)                                                                                                                    | -       |
 | `--json`                  | Output as JSON (for scripting)                                                                                                                                                                                                 | -       |
 
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox collapse`
+
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
 ## `maestro-cli notify flash <message>`
 
 Show a center-screen flash (momentary, exclusive - replaces any active flash)
@@ -2449,13 +2610,14 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send <message>`
+## `maestro-cli quick-chat send [message...]`
 
-Send a message in the current Quick Chat (starts a chat if none is open)
+Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                  | Default |
+| ------------------- | ------------------------------------------------------------ | ------- |
+| `--image <path...>` | Image file(s) to send with the message (PNG, JPG, GIF, WebP) | -       |
+| `--json`            | Output as JSON (for scripting)                               | -       |
 
 ## `maestro-cli quick-chat new`
 
@@ -2523,7 +2685,23 @@ Open a tab of the chat in the main Maestro window: the tab a message went to, or
 
 ## `maestro-cli quick-chat new-tab [message-id]`
 
-Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
+Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat history`
+
+List the recent chats, newest first (what the window's History button shows)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat recall <chat>`
+
+Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

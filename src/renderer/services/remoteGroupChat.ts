@@ -51,8 +51,11 @@ export async function getRemoteGroupChatState(
 ): Promise<RemoteGroupChatState | null> {
 	const chat = await window.maestro.groupChat.load(chatId);
 	if (!chat) return null;
-	const messages = await window.maestro.groupChat.getMessages(chatId);
-	return toRemoteGroupChatState(chat, chatState(chatId), messages);
+	const [messages, queue] = await Promise.all([
+		window.maestro.groupChat.getMessages(chatId),
+		window.maestro.groupChat.getQueue(chatId),
+	]);
+	return toRemoteGroupChatState(chat, chatState(chatId), messages, queue);
 }
 
 /**

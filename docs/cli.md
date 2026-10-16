@@ -1212,17 +1212,20 @@ Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a sys
 ```bash
 maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
 maestro-cli quick-chat send "summarize the last commit"
+maestro-cli quick-chat send "what broke?" --image shot.png   # attach images, like a paste in the window
 maestro-cli quick-chat status --json         # window state, agent, mode, and each message with the tab it went to
 maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
 maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
 maestro-cli quick-chat thinking on           # show the agent's reasoning until the answer arrives (sticky keeps it, off hides it)
 maestro-cli quick-chat tab new               # next message to a new tab; or a tab id from status, or auto
 maestro-cli quick-chat reveal [message-id]   # open a message's tab in Maestro (default: the latest)
-maestro-cli quick-chat new-tab [message-id]  # send a queued message to a new tab instead of waiting
+maestro-cli quick-chat new-tab [message-id]  # send a message to a new tab instead (queued, or wrong tab)
 maestro-cli quick-chat font in               # bigger conversation text (out, reset, or a size such as 120%)
 maestro-cli quick-chat new                   # start over; hidden tabs an ephemeral chat created are deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
 maestro-cli quick-chat stop                  # stop replies in progress and withdraw queued messages
+maestro-cli quick-chat history               # recent chats, numbered, newest first
+maestro-cli quick-chat recall 2              # bring one back: its agent, tab, and messages (number, id, or id prefix)
 maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
 ```
 
@@ -1503,6 +1506,8 @@ maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queu
 | `--focus`          | Switch to the file after opening it (default)                                                 |
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
 | `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
+
+A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
 
 This is also the verb that plays media. A local audio or video file does not become a tab at all: it goes to the [floating media player](/media-player), so `open-file ~/Music/track.mp3 --agent <id>` is how you or an agent starts playback without handing the file to your system's default player. There is no separate `play` command. `--background` has nothing to suppress in that case, since playback is audible either way, and a file on an SSH remote has no stream to play, so it falls back to the ordinary binary-file path.
 

@@ -4,7 +4,7 @@ import type { StoredSession } from '../../stores/types';
 import type { Group } from '../../../shared/types';
 import { asThinkingMode } from '../../../shared/types';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
-import { isAiTabProcessActive } from '../../utils/agent-busy';
+import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
 
 export function registerSessionCallbacks(
@@ -17,6 +17,8 @@ export function registerSessionCallbacks(
 	server.setGetSessionsCallback(() => {
 		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 		const groups = groupsStore.get<Group[]>('groups', []);
+		const cliBusySessionIds = getSessionIdsBusyWithCli();
+		const processManager = getProcessManager();
 		return sessions.map((s) => {
 			// Find the group for this session
 			const group = s.groupId ? groups.find((g) => g.id === s.groupId) : null;
@@ -57,6 +59,7 @@ export function registerSessionCallbacks(
 					id: tab.id,
 					agentSessionId: tab.agentSessionId || null,
 					name: tab.name || null,
+					origin: tab.origin,
 					starred: tab.starred || false,
 					inputValue: tab.inputValue || '',
 					usageStats: tab.usageStats || null,
@@ -70,7 +73,7 @@ export function registerSessionCallbacks(
 				id: s.id,
 				name: s.name,
 				toolType: s.toolType,
-				state: s.state,
+				state: isAgentBusy(s, processManager, cliBusySessionIds) ? 'busy' : s.state,
 				inputMode: s.inputMode,
 				cwd: s.cwd,
 				// Claude token-source selection, so web-initiated group chat
@@ -277,7 +280,7 @@ export function registerSessionCallbacks(
 			id: session.id,
 			name: session.name,
 			toolType: session.toolType,
-			state: session.state,
+			state: isAgentBusy(session, getProcessManager()) ? 'busy' : session.state,
 			inputMode: session.inputMode,
 			cwd: session.cwd,
 			aiLogs,

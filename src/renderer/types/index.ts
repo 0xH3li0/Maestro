@@ -781,6 +781,8 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	/** Durable conversation provenance, independent of whether a turn is running. */
+	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
 	agentSessionId: string | null; // Agent session UUID (null for new tabs)
 	name: string | null; // User-defined name (null = show UUID octet)
@@ -1840,6 +1842,10 @@ export interface EncoreFeatureFlags {
 	// for scheduled scripts. macOS only, off by default. Optional so older
 	// fixtures and persisted settings remain valid.
 	maestroRun?: boolean;
+	// Throughput Gauge - a floating dial showing live tokens per second across
+	// agents. Off by default. Optional so older fixtures and persisted settings
+	// remain valid.
+	throughputGauge?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

@@ -52,6 +52,13 @@ describe('resolveUiSurface', () => {
 		expect(resolveUiSurface('bug-report')?.id).toBe('feedback');
 	});
 
+	it('resolves the Throughput Gauge by id and by every alias', () => {
+		for (const name of ['throughput-gauge', 'gauge', 'tokens-per-second', 'tps']) {
+			expect(resolveUiSurface(name)?.id, name).toBe('throughput-gauge');
+		}
+		expect(resolveUiSurface('gauge')?.encore).toBe('throughputGauge');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

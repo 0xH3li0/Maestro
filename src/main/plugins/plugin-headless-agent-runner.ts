@@ -6,7 +6,9 @@ import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-too
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
 import { checkCustomPath } from '../agents/path-prober';
 
 import {
@@ -34,6 +36,7 @@ export interface PluginHeadlessRunnerDeps {
 	revokeRunToken: (token: string) => void;
 	cliScriptPath: () => string;
 	audit: (agentId: string, resumed: boolean) => void;
+	recordRelayOrigin?: (agent: SessionInfo, providerSessionId: string) => void;
 }
 
 /** Build a cancellable host turn using live desktop provider settings and execution mode.
@@ -93,6 +96,9 @@ export function createPluginHeadlessAgentRunner(
 				? deps.issueRunToken(agent.id, HEADLESS_RUN_COMPLETION_TIMEOUT_MS, receiptToolId)
 				: undefined;
 		let pluginRunProofFile: string | undefined;
+		let releaseActivity: (() => void) | undefined;
+		let settled = false;
+		let conversationId = providerSessionId;
 		try {
 			pluginRunProofFile = runToken
 				? createPluginRunProofFile(runToken, HEADLESS_RUN_COMPLETION_TIMEOUT_MS)
@@ -125,8 +131,15 @@ export function createPluginHeadlessAgentRunner(
 				mcpCliScriptPath: deps.cliScriptPath(),
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
 				signal,
+				onProcessStarted: (pid) => {
+					if (pid && !signal?.aborted && !settled && !releaseActivity) {
+						releaseActivity = trackHeadlessAgentActivity(agent.id);
+					}
+				},
 				onProgress,
 			});
+			conversationId = result.agentSessionId || providerSessionId;
+
 			const receiptsOverflowed =
 				!!receiptToolId && !!runToken && deps.hasRunReceiptOverflow!(runToken);
 			const success =
@@ -150,6 +163,19 @@ export function createPluginHeadlessAgentRunner(
 						}),
 			};
 		} finally {
+			settled = true;
+			releaseActivity?.();
+			// Provenance belongs to the conversation even when delivery is cancelled.
+			// The broker deliberately refuses late results/bindings on plugin stop;
+			// recording here preserves origin without granting resume authority.
+			if (origin === 'relay' && conversationId) {
+				try {
+					deps.recordRelayOrigin?.(agent, conversationId);
+				} catch (error) {
+					// Keep the original exception; reporting must not delay authority cleanup.
+					void captureException(error, { operation: 'plugin-headless.recordRelayOrigin' });
+				}
+			}
 			// Revoke authority even if removing the on-disk proof fails.
 			if (runToken) deps.revokeRunToken(runToken);
 			if (pluginRunProofFile) {

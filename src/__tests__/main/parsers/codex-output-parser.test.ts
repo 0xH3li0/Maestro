@@ -864,6 +864,46 @@ describe('CodexOutputParser', () => {
 				stdout: 'output stdout',
 			});
 		});
+
+		// A JSON event line is one physical line, so `/token.*limit/` matched
+		// across ordinary turn content and an SSH turn that exited non-zero at
+		// 25% context was reported as "Context length exceeded".
+		it('does not match patterns inside JSON event lines on stdout', () => {
+			const stdout = [
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						type: 'agent_message',
+						text: '## Token Efficiency Rules ... stay under the limit',
+					},
+				}),
+				JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'command_execution', aggregated_output: 'context window length: 258400' },
+				}),
+			].join('\n');
+
+			const error = parser.detectErrorFromExit(255, '', stdout);
+			expect(error?.type).toBe('agent_crashed');
+			expect(error?.message).toBe('Agent exited with code 255');
+		});
+
+		it('still matches plain text that sits between JSON event lines', () => {
+			const stdout = `${JSON.stringify({ type: 'turn.started' })}\nrate limit exceeded\n`;
+			expect(parser.detectErrorFromExit(1, '', stdout)?.type).toBe('rate_limited');
+		});
+
+		// `codex exec resume` while another Codex process still owns the thread.
+		it('names a thread that already has an active writer, without starting fresh', () => {
+			const stderr = [
+				'2026-10-15T18:00:34.812986Z ERROR codex_core::session::session: failed to initialize thread persistence: thread-store conflict: thread 01a140b8-ea06-7423-8559-145b4d936f32 already has an active writer',
+				'Error: thread/resume: thread/resume failed: thread 01a140b8-ea06-7423-8559-145b4d936f32 already has an active writer (code -32600)',
+			].join('\n');
+
+			const error = parser.detectErrorFromExit(1, stderr, '');
+			expect(error?.type).toBe('agent_crashed');
+			expect(error?.message).toContain('still running in another process');
+		});
 	});
 
 	// ================================================================
