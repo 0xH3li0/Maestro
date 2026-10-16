@@ -23,15 +23,28 @@ import type { CueActivityEntry } from '../web-server/types';
  */
 export const CUE_ACTIVITY_LOG_MAX = 1000;
 
+/** How {@link cueEventRecordToRunResult} reads a row still marked `running`. */
+export interface CueEventRecordMappingOptions {
+	/**
+	 * `true` when a live engine owns the database, so a `running` row is a run
+	 * still in flight and stays `running`. Default `false`: the row is orphaned
+	 * (the process ended before the run could finalize) and is reported as
+	 * `failed`, which is always true for the engine's own start-up restore.
+	 */
+	keepRunning?: boolean;
+}
+
 /**
  * Rebuild a run result from its `cue_events` row. A row carries no stdout,
- * stderr or exit code, so those come back empty. An orphaned `running` row
- * (the process ended before the run could finalize) is reported as `failed`,
- * so the activity view does not paint it as a zero-duration success.
+ * stderr or exit code, so those come back empty. A `running` row is reported
+ * as `failed` unless `keepRunning` says a live engine is still running it (see
+ * {@link CueEventRecordMappingOptions}), so the activity view never paints an
+ * orphan as a zero-duration success.
  */
 export function cueEventRecordToRunResult(
 	record: CueEventRecord,
-	sessionNamesById: Map<string, string>
+	sessionNamesById: Map<string, string>,
+	options: CueEventRecordMappingOptions = {}
 ): CueRunResult {
 	let payload: Record<string, unknown> = {};
 	if (record.payload) {
@@ -48,7 +61,9 @@ export function cueEventRecordToRunResult(
 	const endedAt = record.completedAt ? new Date(record.completedAt).toISOString() : '';
 	const durationMs = record.completedAt ? Math.max(0, record.completedAt - record.createdAt) : 0;
 	const status: CueRunStatus =
-		record.status === 'running' ? 'failed' : (record.status as CueRunStatus);
+		record.status === 'running' && !options.keepRunning
+			? 'failed'
+			: (record.status as CueRunStatus);
 	return {
 		runId: record.id,
 		sessionId: record.sessionId,
@@ -78,12 +93,13 @@ export function cueEventRecordToRunResult(
  */
 export function cueEventRecordsToRunResults(
 	records: CueEventRecord[],
-	sessionNamesById: Map<string, string>
+	sessionNamesById: Map<string, string>,
+	options: CueEventRecordMappingOptions = {}
 ): CueRunResult[] {
 	return records
 		.slice()
 		.reverse()
-		.map((record) => cueEventRecordToRunResult(record, sessionNamesById));
+		.map((record) => cueEventRecordToRunResult(record, sessionNamesById, options));
 }
 
 /** Collapse the engine's run status onto the four states the activity view shows. */
@@ -130,6 +146,8 @@ export function toCueActivityEntries(
 		timestamp: Date.parse(r.startedAt) || 0,
 		status: activityStatus(r.status),
 		result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
-		duration: r.durationMs,
+		// A run still in flight has no duration yet; its `durationMs` is a
+		// placeholder 0, which would read as a finished zero-length run.
+		duration: r.status === 'running' ? undefined : r.durationMs,
 	}));
 }

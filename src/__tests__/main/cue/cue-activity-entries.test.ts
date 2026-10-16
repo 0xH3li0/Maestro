@@ -148,6 +148,32 @@ describe('cueEventRecordToRunResult', () => {
 		expect(result.event.payload).toEqual({});
 	});
 
+	it('keeps a running row running when a live engine owns the database', () => {
+		const result = cueEventRecordToRunResult(
+			record({ status: 'running', completedAt: null }),
+			new Map(),
+			{ keepRunning: true }
+		);
+		expect(result).toMatchObject({ status: 'running', durationMs: 0, endedAt: '' });
+		const [entry] = toCueActivityEntries([result]);
+		expect(entry.status).toBe('running');
+		// No duration yet, rather than a finished-looking 0.
+		expect(entry.duration).toBeUndefined();
+		expect(JSON.parse(JSON.stringify(entry))).not.toHaveProperty('duration');
+	});
+
+	it('keepRunning: false is the default, and leaves finished rows alone', () => {
+		const running = record({ status: 'running', completedAt: null });
+		expect(cueEventRecordToRunResult(running, new Map(), { keepRunning: false }).status).toBe(
+			'failed'
+		);
+		expect(cueEventRecordToRunResult(running, new Map()).status).toBe('failed');
+		expect(cueEventRecordToRunResult(record({}), new Map(), { keepRunning: true })).toMatchObject({
+			status: 'completed',
+			durationMs: 2000,
+		});
+	});
+
 	it('keeps timeout and stopped rows, which the entry mapping then folds into failed', () => {
 		const runs = ['timeout', 'stopped'].map((status) =>
 			cueEventRecordToRunResult(record({ status }), new Map())

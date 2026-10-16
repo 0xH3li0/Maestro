@@ -20,6 +20,10 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	readRecentCueEventsReadOnly: vi.fn(),
 	initCueDb: vi.fn(),
 }));
+// The real lock would read the developer's own data directory.
+vi.mock('../../../main/cue/cue-engine-lock', () => ({
+	readCueEngineLock: vi.fn(() => null),
+}));
 
 import {
 	cueActivity,
@@ -32,6 +36,7 @@ import { MaestroNotRunningError } from '../../../cli/services/maestro-not-runnin
 import { SqliteUnavailableError } from '../../../cli/utils/native-sqlite';
 import { initCueDb, readRecentCueEventsReadOnly } from '../../../main/cue/cue-db';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
+import { readCueEngineLock } from '../../../main/cue/cue-engine-lock';
 import { resolveCliPath } from '../../../cli/utils/parse';
 
 const subs = [
@@ -213,6 +218,84 @@ describe('cue enable/disable/activity', () => {
 			expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Read from cue.db'));
 		});
 
+		describe('a row still marked running', () => {
+			function liveEngine() {
+				vi.mocked(readCueEngineLock).mockReturnValueOnce({
+					pid: 4242,
+					mode: 'standalone',
+					startedAt: new Date(at(0)).toISOString(),
+				});
+			}
+
+			it('stays running beside a live engine, with no duration in --json', async () => {
+				appNotRunning();
+				liveEngine();
+				vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+					ok: true,
+					records,
+					source: 'live',
+				});
+
+				await cueActivity({ json: true });
+
+				const r1 = JSON.parse(printed()).find((e: { id: string }) => e.id === 'r1');
+				expect(r1).toEqual({
+					id: 'r1',
+					subscriptionId: 'a1::sub-r1::sub-r1',
+					subscriptionName: 'sub-r1',
+					eventType: 'time.scheduled',
+					sessionId: 'a1',
+					timestamp: at(1),
+					status: 'running',
+				});
+			});
+
+			it('prints how long it has run so far beside a live engine', async () => {
+				appNotRunning();
+				liveEngine();
+				vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+					ok: true,
+					records,
+					source: 'live',
+				});
+				vi.spyOn(Date, 'now').mockReturnValue(at(13.5));
+
+				await cueActivity({});
+
+				const lines = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+				expect(lines[3]).toContain('running    sub-r1  [time.scheduled]  12.5s so far');
+			});
+
+			it('reads as failed with no live engine, even when the sidecars are there', async () => {
+				appNotRunning();
+				vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+					ok: true,
+					records,
+					source: 'live',
+				});
+
+				await cueActivity({ json: true });
+
+				const r1 = JSON.parse(printed()).find((e: { id: string }) => e.id === 'r1');
+				expect(r1).toMatchObject({ status: 'failed', duration: 0 });
+			});
+
+			it('reads the lock before the database', async () => {
+				appNotRunning();
+				vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
+					ok: true,
+					records,
+					source: 'live',
+				});
+
+				await cueActivity({ json: true });
+
+				const lockCall = vi.mocked(readCueEngineLock).mock.invocationCallOrder.at(-1)!;
+				const dbCall = vi.mocked(readRecentCueEventsReadOnly).mock.invocationCallOrder.at(-1)!;
+				expect(lockCall).toBeLessThan(dbCall);
+			});
+		});
+
 		it('fails non-zero with the reason when cue.db cannot be read', async () => {
 			appNotRunning();
 			vi.mocked(readRecentCueEventsReadOnly).mockReturnValue({
@@ -258,9 +341,17 @@ describe('cue enable/disable/activity', () => {
 				expect(process.env.MAESTRO_USER_DATA).toBe(resolveCliPath('/var/lib/maestro/data'));
 				return { ok: true, records: [], source: 'snapshot' };
 			});
+			// The engine lock resolves from the same variable, so "is an engine
+			// live?" is asked of the directory whose cue.db is read.
+			vi.mocked(readCueEngineLock).mockImplementationOnce((dataDir?: string) => {
+				expect(dataDir).toBeUndefined();
+				expect(process.env.MAESTRO_USER_DATA).toBe(resolveCliPath('/var/lib/maestro/data'));
+				return null;
+			});
 			try {
 				await cueActivity({ dataDir: '/var/lib/maestro/data' });
 				expect(readRecentCueEventsReadOnly).toHaveBeenCalledTimes(1);
+				expect(readCueEngineLock).toHaveBeenCalledTimes(1);
 			} finally {
 				if (saved === undefined) delete process.env.MAESTRO_USER_DATA;
 				else process.env.MAESTRO_USER_DATA = saved;

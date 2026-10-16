@@ -29,6 +29,7 @@ import {
 	toCueActivityEntries,
 } from '../../main/cue/cue-activity-entries';
 import type { CueActivityEntry } from '../../main/web-server/types';
+import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
 
 interface CueSubscriptionSummary {
 	id: string;
@@ -131,6 +132,17 @@ async function readActivityFromCueDb(
 	json?: boolean
 ): Promise<CueActivityEntry[]> {
 	const { readRecentCueEventsReadOnly } = await import('../../main/cue/cue-db');
+	// A `running` row is a run in flight only while a live engine owns this
+	// data directory (the lock and cue.db both resolve from MAESTRO_USER_DATA,
+	// which --data-dir sets). Without one it is an orphan and reads as failed.
+	// The lock is read BEFORE the database, so "running" always rests on an
+	// engine that was live no later than the rows were read. Read the other
+	// way, an engine that drained and released the lock between the two reads
+	// would turn runs it had just finished into "failed", which is the
+	// misleading answer this exists to avoid. The remaining window (an engine
+	// killed between the reads) shows a run as running that was running a
+	// moment ago, and the next read reports it failed.
+	const engineLive = readCueEngineLock() !== null;
 	let read: ReturnType<typeof readRecentCueEventsReadOnly>;
 	try {
 		read = readRecentCueEventsReadOnly(CUE_ACTIVITY_LOG_MAX);
@@ -145,7 +157,9 @@ async function readActivityFromCueDb(
 		);
 	}
 	const sessionNamesById = new Map(readSessions().map((s) => [s.id, s.name]));
-	const runs = cueEventRecordsToRunResults(read.records, sessionNamesById);
+	const runs = cueEventRecordsToRunResults(read.records, sessionNamesById, {
+		keepRunning: engineLive,
+	});
 	return toCueActivityEntries(runs, { sessionId, limit });
 }
 
@@ -202,8 +216,13 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 	}
 	for (const entry of entries) {
 		const when = new Date(entry.timestamp).toLocaleString();
+		// A run in flight has no duration yet: show how long it has run so far.
 		const took =
-			typeof entry.duration === 'number' ? `  ${(entry.duration / 1000).toFixed(1)}s` : '';
+			typeof entry.duration === 'number'
+				? `  ${(entry.duration / 1000).toFixed(1)}s`
+				: entry.status === 'running'
+					? `  ${(Math.max(0, Date.now() - entry.timestamp) / 1000).toFixed(1)}s so far`
+					: '';
 		console.log(
 			`${when}  ${entry.status.padEnd(9)}  ${entry.subscriptionName}  [${entry.eventType}]${took}`
 		);
