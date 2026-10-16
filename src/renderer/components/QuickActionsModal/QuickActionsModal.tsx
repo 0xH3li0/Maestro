@@ -310,6 +310,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -611,7 +612,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			visibleToastCount,
 			clearToasts,
 			unreadNotificationCount,
-			openNotificationCenter: () => useNotificationStore.getState().setNotificationCenterOpen(true),
+			openNotificationCenter: notificationCenterEnabled
+				? () => useNotificationStore.getState().setNotificationCenterOpen(true)
+				: undefined,
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
 			toastPosition,

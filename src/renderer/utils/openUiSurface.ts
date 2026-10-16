@@ -51,9 +51,18 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const actions = getModalActions();
 
 	switch (surface.id) {
-		case 'notification-center':
+		case 'notification-center': {
+			// Switched off, there is no inbox to open. Say so rather than opening
+			// nothing, and never flip the setting on the user's behalf.
+			if (!useSettingsStore.getState().notificationCenterEnabled) {
+				const message =
+					'The notification center is off. Turn it on in Settings → Notifications → Notification center.';
+				notifyToast({ color: 'yellow', title: 'Notification Center is off', message });
+				return { ok: false, error: message };
+			}
 			useNotificationStore.getState().setNotificationCenterOpen(true);
 			return { ok: true };
+		}
 		case 'settings':
 			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
 			return { ok: true };

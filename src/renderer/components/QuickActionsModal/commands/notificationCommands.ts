@@ -12,7 +12,8 @@ interface BuildNotificationCommandsArgs {
 	clearToasts: () => void;
 	/** Unread entries in the notification center. */
 	unreadNotificationCount: number;
-	openNotificationCenter: () => void;
+	/** Absent while the Notification Center Encore Feature is off, which drops its command. */
+	openNotificationCenter?: () => void;
 	clearAllNotificationsShortcut?: QuickAction['shortcut'];
 	openNotificationCenterShortcut?: QuickAction['shortcut'];
 	/** Corner the toast stack is pinned to right now. */
@@ -60,19 +61,23 @@ export function buildNotificationCommands({
 				setQuickActionOpen(false);
 			},
 		},
-		{
-			id: 'open-notification-center',
-			label: 'Open Notification Center',
-			shortcut: openNotificationCenterShortcut,
-			subtext:
-				unreadNotificationCount > 0
-					? `${unreadNotificationCount} unread notification${unreadNotificationCount === 1 ? '' : 's'}`
-					: 'No unread notifications',
-			action: () => {
-				openNotificationCenter();
-				setQuickActionOpen(false);
-			},
-		},
+		...(openNotificationCenter
+			? [
+					{
+						id: 'open-notification-center',
+						label: 'Open Notification Center',
+						shortcut: openNotificationCenterShortcut,
+						subtext:
+							unreadNotificationCount > 0
+								? `${unreadNotificationCount} unread notification${unreadNotificationCount === 1 ? '' : 's'}`
+								: 'No unread notifications',
+						action: () => {
+							openNotificationCenter();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		// One command per corner, all four always listed so a search for any corner
 		// name finds it. The current corner stays in the list (marked in the
 		// subtext) rather than vanishing, which would read as a missing option.

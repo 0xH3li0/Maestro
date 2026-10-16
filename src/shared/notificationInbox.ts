@@ -2,6 +2,10 @@
 export const NOTIFICATION_HISTORY_PERSISTENCE_ERROR =
 	'Notification history could not be saved. Changes may be lost after restart.';
 
+/** Inbox verbs fail with this while the notification center is switched off. */
+export const NOTIFICATION_CENTER_DISABLED_ERROR =
+	'Notification Center is off. Enable it with: maestro-cli settings set notificationCenterEnabled true';
+
 /** Operations on the desktop client's notification history, shared across the CLI bridge. */
 export const NOTIFICATION_INBOX_ACTIONS = [
 	'list',

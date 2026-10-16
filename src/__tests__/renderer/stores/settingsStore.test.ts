@@ -126,6 +126,7 @@ function resetStore() {
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		notificationCenterEnabled: false,
 		notificationCenterLarge: false,
 		notificationCenterDetails: false,
 		notificationCenterKeyboardNavigation: false,
@@ -183,6 +184,7 @@ function resetStore() {
 
 describe('settingsStore', () => {
 	it.each([
+		['notificationCenterEnabled', 'setNotificationCenterEnabled'],
 		['notificationCenterLarge', 'setNotificationCenterLarge'],
 		['notificationCenterDetails', 'setNotificationCenterDetails'],
 		['notificationCenterKeyboardNavigation', 'setNotificationCenterKeyboardNavigation'],

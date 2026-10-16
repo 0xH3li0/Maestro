@@ -73,7 +73,7 @@ export const UI_SURFACES: UiSurface[] = [
 		modal: 'notificationCenter',
 		description: 'Persistent notification history and unread entries.',
 		commandPalette: 'Open Notification Center',
-		click: 'the bell in the Main Panel header',
+		click: 'the bell in the Left Bar header (Settings → Notifications → Notification center)',
 	},
 	{
 		id: 'concerto',

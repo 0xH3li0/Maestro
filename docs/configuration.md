@@ -502,7 +502,9 @@ If the target tab was closed since the toast appeared, the click still switches 
 
 #### Notification Center
 
-A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell, choose **Notification Center** from the hamburger menu, or run **Open Notification Center** from the command palette to see them newest first.
+The notification center is off by default. Turn it on with **Enable notification center** in **Settings → Notifications → Notification center**, or run `maestro-cli settings set notificationCenterEnabled true`. While it is off, nothing is recorded, the bell, its menu item, and its command palette entry are hidden, its shortcut does nothing, and the inbox options below are greyed out. History recorded earlier is kept for when you turn it back on.
+
+A toast is only on screen for a moment, so while the feature is on every one is also kept in the notification center: the bell icon in the Left Bar header, beside the LIVE toggle, which shows a badge with the number of unread notifications. Click the bell, choose **Notification Center** from the hamburger menu, or run **Open Notification Center** from the command palette to see them newest first.
 
 - **Unread / All** switches between what still needs attention and the full history.
 - Clicking an entry marks it read and does what clicking the toast would have done, such as jumping to the agent and tab it came from.
@@ -511,7 +513,7 @@ A toast is only on screen for a moment, so every one is also kept in the notific
 
 The history keeps the most recent 200 notifications and survives a restart. Desktop windows share the same history and read state, saved in `maestro-notification-history.json` in the app data directory. Changes are committed by the main process, so independent windows cannot overwrite each other. Existing localStorage history is imported once. If you find the popups intrusive, set the toast duration to **Off**: in-app floating toasts are suppressed and history is still recorded. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
 
-The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in:
+The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in and only take effect while the notification center is enabled:
 
 | Setting                                                       | Default | Behavior when enabled                                                                                                                                                                                                                              |
 | ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -64,6 +64,8 @@ beforeEach(() => {
 	useSettingsStore.setState(useSettingsStore.getInitialState(), true);
 	useNotificationStore.setState(useNotificationStore.getInitialState(), true);
 	useNotificationStore.getState().setOsNotifications(false);
+	// Completions are asserted in the inbox, which exists only with the Notification Center on.
+	useNotificationStore.getState().setHistoryEnabled(true);
 	handler = undefined;
 	mockIsWebDesktop = false;
 	useRetryStore.setState({ retries: {}, outages: {} } as any);

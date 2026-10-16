@@ -59,6 +59,13 @@ describe('resolveUiSurface', () => {
 		expect(resolveUiSurface('gauge')?.encore).toBe('throughputGauge');
 	});
 
+	it('points the Notification Center at the Left Bar bell, with no Encore gate', () => {
+		const surface = resolveUiSurface('inbox');
+		expect(surface?.id).toBe('notification-center');
+		expect(surface?.encore).toBeUndefined();
+		expect(surface?.click).toContain('the bell in the Left Bar header');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

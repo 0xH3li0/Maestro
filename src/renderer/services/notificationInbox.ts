@@ -1,5 +1,8 @@
 /** Shared entry activation and CLI history operations over the live notification store. */
-import { NOTIFICATION_HISTORY_PERSISTENCE_ERROR } from '../../shared/notificationInbox';
+import {
+	NOTIFICATION_CENTER_DISABLED_ERROR,
+	NOTIFICATION_HISTORY_PERSISTENCE_ERROR,
+} from '../../shared/notificationInbox';
 import type {
 	NotificationInboxRequest,
 	NotificationInboxResult,
@@ -90,6 +93,11 @@ export function openNotificationLink(record: NotificationRecord): void {
 export async function performNotificationInboxAction(
 	request: NotificationInboxRequest
 ): Promise<NotificationInboxResult> {
+	// Dismissing every visible toast is a toast operation, not an inbox one, so
+	// it still works with the inbox off. Everything else needs the inbox.
+	const toastOnly = request.action === 'dismiss' && request.id === undefined;
+	if (!toastOnly && !useSettingsStore.getState().notificationCenterEnabled)
+		return { success: false, error: NOTIFICATION_CENTER_DISABLED_ERROR };
 	const store = useNotificationStore.getState();
 	const record = request.id ? store.history.find((n) => n.id === request.id) : undefined;
 	if (

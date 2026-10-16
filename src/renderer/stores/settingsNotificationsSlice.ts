@@ -59,6 +59,7 @@ export interface NotificationsState {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
 	notificationCenterLarge: boolean;
 	notificationCenterDetails: boolean;
 	notificationCenterKeyboardNavigation: boolean;
@@ -75,6 +76,7 @@ export interface NotificationsActions {
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
 	setToastDuration: (value: number) => void;
+	setNotificationCenterEnabled: (value: boolean) => void;
 	setNotificationCenterLarge: (value: boolean) => void;
 	setNotificationCenterDetails: (value: boolean) => void;
 	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
@@ -96,6 +98,7 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: 'say',
 	toastDuration: 20,
+	notificationCenterEnabled: false,
 	notificationCenterLarge: false,
 	notificationCenterDetails: false,
 	notificationCenterKeyboardNavigation: false,
@@ -141,6 +144,11 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	setToastDuration: (value) => {
 		set({ toastDuration: value });
 		window.maestro.settings.set('toastDuration', value);
+	},
+
+	setNotificationCenterEnabled: (value) => {
+		set({ notificationCenterEnabled: value });
+		window.maestro.settings.set('notificationCenterEnabled', value);
 	},
 
 	setNotificationCenterLarge: (value) => {
@@ -207,6 +215,9 @@ export function hydrateNotificationsSettings(
 
 	if (allSettings['toastDuration'] !== undefined)
 		patch.toastDuration = allSettings['toastDuration'] as number;
+
+	if (typeof allSettings['notificationCenterEnabled'] === 'boolean')
+		patch.notificationCenterEnabled = allSettings['notificationCenterEnabled'] as boolean;
 
 	if (typeof allSettings['notificationCenterLarge'] === 'boolean')
 		patch.notificationCenterLarge = allSettings['notificationCenterLarge'] as boolean;

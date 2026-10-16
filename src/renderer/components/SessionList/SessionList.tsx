@@ -28,6 +28,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { NotificationCenter } from '../NotificationCenter';
 import {
 	subscribeSidebarReveal,
 	getSidebarRevealToken,
@@ -125,6 +126,12 @@ const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
  * label thresholds out by the same amount. Shared so the two cannot drift.
  */
 const HEADER_BADGE_WIDTH = 39;
+/**
+ * Room the Notification Center bell takes while that Encore Feature is on: the
+ * icon button plus the band's gap. Charged like the badge, against the
+ * wordmark first.
+ */
+const HEADER_BELL_WIDTH = 30;
 /**
  * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
  * the wand, the wordmark itself, the hamburger, and the row's own padding.
@@ -301,6 +308,7 @@ function SessionListInner(props: SessionListProps) {
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
@@ -311,13 +319,13 @@ function SessionListInner(props: SessionListProps) {
 	// than in the one the thresholds below were measured against. Zero when the
 	// user is on the original monospace face.
 	const headerTextDelta = useHeaderTextDelta();
-	// The badge pill occupies part of the header's left cluster, so both label
-	// thresholds below shift by the same amount when it is showing. Its box is
-	// rem-built, so it grows with the root size.
+	// The badge pill and the notification bell occupy part of the indicator
+	// band, so both label thresholds below shift by the same amount when either
+	// is showing. Their boxes are rem-built, so they grow with the root size.
 	const headerBadgeWidth =
-		autoRunStats && autoRunStats.currentBadgeLevel > 0
-			? HEADER_BADGE_WIDTH * headerTextDelta.remScale
-			: 0;
+		(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0) *
+			headerTextDelta.remScale +
+		(notificationCenterEnabled ? HEADER_BELL_WIDTH * headerTextDelta.remScale : 0);
 	// Whether the now-playing pill is on screen, and in which form. Read from the
 	// store's own selector rather than re-derived here, so the reserve below
 	// cannot end up describing a header nobody is looking at.
@@ -1548,6 +1556,9 @@ function SessionListInner(props: SessionListProps) {
 									)}
 								</div>
 							)}
+							{/* Notification Center bell (Encore Feature). App-wide history, so it
+							    lives with the other global indicators, not in an agent's header. */}
+							{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						</div>
 						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
@@ -1606,6 +1617,7 @@ function SessionListInner(props: SessionListProps) {
 						{/* Renders nothing unless the player is actually minimized, so
 						    the rail is unchanged for anyone not playing anything. */}
 						<NowPlayingIndicator theme={theme} compact />
+						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>

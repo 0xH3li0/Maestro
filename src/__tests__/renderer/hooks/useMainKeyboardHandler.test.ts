@@ -7,6 +7,7 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
@@ -3505,6 +3506,45 @@ describe('useMainKeyboardHandler', () => {
 
 			pressGaugeChord();
 			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+	});
+
+	describe('openNotificationCenter shortcut', () => {
+		// Unbound by default, so the test binds it through isShortcut.
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+			});
+
+		beforeEach(() => {
+			useNotificationStore.getState().setNotificationCenterOpen(false);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+		});
+
+		it('opens the inbox while the notification center is enabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: true });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(true);
+		});
+
+		it('does nothing while the notification center is disabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(false);
 		});
 	});
 

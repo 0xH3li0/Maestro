@@ -35,6 +35,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 20,
 		category: 'notifications',
 	},
+	notificationCenterEnabled: {
+		description:
+			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
 	notificationCenterLarge: {
 		description: 'Use a wider, taller inbox while keeping it within the window.',
 		type: 'boolean',

@@ -762,7 +762,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
 				trackShortcut('openLeaderboard');
-			} else if (ctx.isShortcut(e, 'openNotificationCenter')) {
+			} else if (
+				ctx.isShortcut(e, 'openNotificationCenter') &&
+				useSettingsStore.getState().notificationCenterEnabled
+			) {
 				e.preventDefault();
 				useNotificationStore.getState().setNotificationCenterOpen(true);
 				trackShortcut('openNotificationCenter');

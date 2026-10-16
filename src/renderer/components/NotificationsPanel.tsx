@@ -72,6 +72,8 @@ export function NotificationsPanel({
 }: NotificationsPanelProps) {
 	const settings = useSettingsStore(
 		useShallow((s) => ({
+			notificationCenterEnabled: s.notificationCenterEnabled,
+			setNotificationCenterEnabled: s.setNotificationCenterEnabled,
 			notificationCenterLarge: s.notificationCenterLarge,
 			setNotificationCenterLarge: s.setNotificationCenterLarge,
 			notificationCenterDetails: s.notificationCenterDetails,
@@ -85,6 +87,11 @@ export function NotificationsPanel({
 			shortcuts: s.shortcuts,
 		}))
 	);
+	// The inbox options only mean anything while the inbox exists: ghosted and
+	// inert until the master toggle is on, but their values are kept.
+	const inboxEnabled = settings.notificationCenterEnabled;
+	const inboxOptionProps = { theme, disabled: !inboxEnabled, clickableRow: inboxEnabled };
+
 	// Custom notification test state
 	const [testNotificationId, setTestNotificationId] = useState<number | null>(null);
 	const [testStatus, setTestStatus] = useState<TestStatus>('idle');
@@ -148,77 +155,6 @@ export function NotificationsPanel({
 
 	return (
 		<div className="space-y-6">
-			<div data-setting-id="notifications-center">
-				<SettingsSectionHeading
-					icon={Bell}
-					description="Optional inbox enhancements. All are off by default."
-				>
-					Notification center
-				</SettingsSectionHeading>
-				<SectionCard theme={theme}>
-					<ToggleSettingRow
-						theme={theme}
-						title="Use a larger notification center"
-						description="Use a wider, taller inbox while keeping it within the window."
-						checked={settings.notificationCenterLarge}
-						onChange={settings.setNotificationCenterLarge}
-						ariaLabel="Use a larger notification center"
-						clickableRow
-					/>
-					<ToggleSettingRow
-						theme={theme}
-						title="Expand notification details"
-						description="Read full source names, titles, and messages inside the inbox."
-						checked={settings.notificationCenterDetails}
-						onChange={settings.setNotificationCenterDetails}
-						ariaLabel="Expand notification details"
-						clickableRow
-					/>
-					<ToggleSettingRow
-						theme={theme}
-						title="Keyboard navigation in the notification center"
-						description="Focus the inbox when it opens and navigate entries with arrow keys."
-						checked={settings.notificationCenterKeyboardNavigation}
-						onChange={settings.setNotificationCenterKeyboardNavigation}
-						ariaLabel="Keyboard navigation in the notification center"
-						clickableRow
-					/>
-					<ToggleSettingRow
-						theme={theme}
-						title="Record each queued reply"
-						description="Keep every completed queued reply in notification history. By default, only the final reply is recorded."
-						checked={settings.notificationHistoryQueuedReplies}
-						onChange={settings.setNotificationHistoryQueuedReplies}
-						ariaLabel="Record each queued reply"
-						clickableRow
-					/>
-					<ToggleSettingRow
-						theme={theme}
-						title="Record each Auto Run task"
-						description="Keep each completed Auto Run task in notification history. By default, run outcomes, warnings, and errors are recorded."
-						checked={settings.notificationHistoryAutoRunTasks}
-						onChange={settings.setNotificationHistoryAutoRunTasks}
-						ariaLabel="Record each Auto Run task"
-						clickableRow
-					/>
-					<p className="text-xs opacity-70">
-						Configure Open Notification Center in Shortcuts. It starts unbound; your existing
-						binding is preserved.
-					</p>
-					{onConfigureNotificationShortcut && (
-						<button
-							type="button"
-							className="text-xs hover:underline"
-							style={{ color: theme.colors.accent }}
-							onClick={onConfigureNotificationShortcut}
-						>
-							Configure notification shortcut
-							{shortcutSuffix(settings.shortcuts.openNotificationCenter?.keys)}
-						</button>
-					)}
-				</SectionCard>
-			</div>
-
 			{/* OS Notifications */}
 			<div data-setting-id="notifications-os">
 				<SettingCheckbox
@@ -647,6 +583,90 @@ export function NotificationsPanel({
 					leverage any notification stack you prefer. Chain commands together with pipes to mix and
 					match - for example, log to a file while also speaking aloud.
 				</div>
+			</div>
+
+			{/* Notification center - last: an opt-in inbox layered on the toasts above */}
+			<div data-setting-id="notifications-center">
+				<SettingsSectionHeading
+					icon={Bell}
+					description="Keep every toast in an inbox after it leaves the screen. Off by default."
+				>
+					Notification center
+				</SettingsSectionHeading>
+				<SectionCard theme={theme}>
+					<ToggleSettingRow
+						theme={theme}
+						title="Enable notification center"
+						description="Record every toast and show a bell with the unread count in the Left Bar header. Off records nothing; earlier history is kept."
+						checked={inboxEnabled}
+						onChange={settings.setNotificationCenterEnabled}
+						ariaLabel="Enable notification center"
+						clickableRow
+					/>
+					<div
+						className={`space-y-3 pl-3 border-l ${inboxEnabled ? '' : 'opacity-50'}`}
+						style={{ borderColor: theme.colors.border }}
+						aria-disabled={!inboxEnabled}
+						data-testid="notification-center-options"
+					>
+						<ToggleSettingRow
+							{...inboxOptionProps}
+							title="Use a larger notification center"
+							description="Use a wider, taller inbox while keeping it within the window."
+							checked={settings.notificationCenterLarge}
+							onChange={settings.setNotificationCenterLarge}
+							ariaLabel="Use a larger notification center"
+						/>
+						<ToggleSettingRow
+							{...inboxOptionProps}
+							title="Expand notification details"
+							description="Read full source names, titles, and messages inside the inbox."
+							checked={settings.notificationCenterDetails}
+							onChange={settings.setNotificationCenterDetails}
+							ariaLabel="Expand notification details"
+						/>
+						<ToggleSettingRow
+							{...inboxOptionProps}
+							title="Keyboard navigation in the notification center"
+							description="Focus the inbox when it opens and navigate entries with arrow keys."
+							checked={settings.notificationCenterKeyboardNavigation}
+							onChange={settings.setNotificationCenterKeyboardNavigation}
+							ariaLabel="Keyboard navigation in the notification center"
+						/>
+						<ToggleSettingRow
+							{...inboxOptionProps}
+							title="Record each queued reply"
+							description="Keep every completed queued reply in notification history. By default, only the final reply is recorded."
+							checked={settings.notificationHistoryQueuedReplies}
+							onChange={settings.setNotificationHistoryQueuedReplies}
+							ariaLabel="Record each queued reply"
+						/>
+						<ToggleSettingRow
+							{...inboxOptionProps}
+							title="Record each Auto Run task"
+							description="Keep each completed Auto Run task in notification history. By default, run outcomes, warnings, and errors are recorded."
+							checked={settings.notificationHistoryAutoRunTasks}
+							onChange={settings.setNotificationHistoryAutoRunTasks}
+							ariaLabel="Record each Auto Run task"
+						/>
+						<p className="text-xs opacity-70">
+							Configure Open Notification Center in Shortcuts. It starts unbound; your existing
+							binding is preserved.
+						</p>
+						{onConfigureNotificationShortcut && (
+							<button
+								type="button"
+								className="text-xs hover:underline disabled:no-underline disabled:cursor-default"
+								style={{ color: theme.colors.accent }}
+								onClick={onConfigureNotificationShortcut}
+								disabled={!inboxEnabled}
+							>
+								Configure notification shortcut
+								{shortcutSuffix(settings.shortcuts.openNotificationCenter?.keys)}
+							</button>
+						)}
+					</div>
+				</SectionCard>
 			</div>
 		</div>
 	);
