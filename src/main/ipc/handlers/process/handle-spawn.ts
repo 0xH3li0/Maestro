@@ -793,6 +793,7 @@ async function handleProcessSpawnImpl(
 		useShell,
 		shellToUse,
 		settingsStore,
+		codexTransport,
 	});
 	const sshStdinScript = sshWrap.sshStdinScript;
 	const sshRemoteCommand = sshWrap.sshRemoteCommand;
@@ -1006,6 +1007,8 @@ async function handleProcessSpawnImpl(
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		codexTransport,
+		// SSH app-server launch, when this Codex turn wants app-server.
+		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
 	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
 	if (result.success) proofCleanup.release = undefined;
