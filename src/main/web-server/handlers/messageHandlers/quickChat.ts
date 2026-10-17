@@ -91,9 +91,9 @@ export function handleQuickChat(
 		reply({ success: true, status: controller.getStatus() });
 		return;
 	}
-	if (action === 'show' || action === 'hide' || action === 'toggle') {
+	if (action === 'show' || action === 'hide' || action === 'toggle' || action === 'return') {
 		const status = controller.windowAction(action);
-		if (!status.enabled && action !== 'hide') {
+		if (!status.enabled && action !== 'hide' && action !== 'return') {
 			reply({ success: false, error: 'Quick Chat is turned off in Encore Features', status });
 			return;
 		}

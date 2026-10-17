@@ -4179,6 +4179,12 @@ quickChatCmd
 	.action((options) => quickChat('hide', {}, options));
 
 quickChatCmd
+	.command('return')
+	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('return', {}, options));
+
+quickChatCmd
 	.command('toggle')
 	.description('Open the window, focus it, or close it (exactly what the hotkey does)')
 	.option('--json', 'Output as JSON (for scripting)')

@@ -47,6 +47,7 @@ export type QuickChatAction =
 	| 'show'
 	| 'hide'
 	| 'toggle'
+	| 'return'
 	| 'status'
 	| 'send'
 	| 'new'
