@@ -1,5 +1,6 @@
 import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
+import { formatTranslationRecordCounts } from '../../../shared/maestro-lib/translation/context-window';
 import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
@@ -1292,6 +1293,11 @@ export function EditAgentModal({
 													{migrationPlan.status === 'deferred'
 														? 'Migration waits for the current turn to finish.'
 														: ''}
+													{migrationPlan.tabs.map((tab, index) => (
+														<div key={tab.tabId}>
+															Conversation {index + 1}: {formatTranslationRecordCounts(tab)}
+														</div>
+													))}
 												</div>
 											)}
 											{migrationPlan?.limitations

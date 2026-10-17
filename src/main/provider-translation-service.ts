@@ -40,6 +40,7 @@ import {
 	type TranslationJournal,
 } from '../shared/maestro-lib/translation/archive';
 import { planTranslation } from '../shared/maestro-lib/translation/registry';
+import { activeContextRecords } from '../shared/maestro-lib/translation/context-window';
 import { limitationsNeedingAcceptance } from '../shared/maestro-lib/translation/limitations';
 import {
 	reconcileConversation,
@@ -529,12 +530,16 @@ export class ProviderTranslationService {
 			capabilitySnapshots.get(destination.provider)
 		);
 		for (const conversation of conversations) {
-			if (estimateTokenCount(canonicalJson(conversation.records.map((r) => r.blocks))) > capacity)
+			if (
+				estimateTokenCount(
+					canonicalJson(activeContextRecords(conversation.records).map((r) => r.blocks))
+				) > capacity
+			)
 				limitations.push({
 					code: 'context-capacity',
 					severity: 'block',
 					tabId: conversation.tabId,
-					message: `Ordered conversation exceeds the destination context capacity (${capacity} tokens). No history is truncated or summarized.`,
+					message: `Active conversation window exceeds the destination context capacity (${capacity} tokens). No history is truncated or summarized.`,
 				});
 		}
 		const plan = planTranslation({

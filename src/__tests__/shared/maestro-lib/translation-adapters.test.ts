@@ -9,7 +9,13 @@ import {
 	projectConversation,
 	createTranslationRegistry,
 	codexTranslationAdapter,
+	projectedOriginKeys,
 } from '../../../shared/maestro-lib/translation/adapters';
+import {
+	activeContextRecords,
+	formatTranslationRecordCounts,
+} from '../../../shared/maestro-lib/translation/context-window';
+import { recordKey } from '../../../shared/maestro-lib/translation/identity';
 import {
 	importSelectedCodexResources,
 	readCodexThreadItems,
@@ -28,6 +34,95 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('destination native projections', () => {
+	it.each(['claude-code', 'codex-replacement', 'codex-message'] as const)(
+		'projects only the active %s window to both destinations and reports retained counts',
+		(source) => {
+			const sourceIdentity =
+				source === 'claude-code'
+					? identity
+					: { ...identity, provider: 'codex' as const, version: '0.162.1' };
+			const rows =
+				source === 'claude-code'
+					? [
+							{ type: 'user', uuid: 'old', message: { role: 'user', content: 'Old context' } },
+							{ type: 'system', uuid: 'boundary', subtype: 'compact_boundary' },
+							{
+								type: 'user',
+								uuid: 'summary',
+								isCompactSummary: true,
+								message: { role: 'user', content: 'Provider summary' },
+							},
+							{
+								type: 'assistant',
+								uuid: 'later',
+								message: { role: 'assistant', content: 'Continue' },
+							},
+						]
+					: [
+							{
+								type: 'response_item',
+								payload: { type: 'message', id: 'old', role: 'user', content: 'Old context' },
+							},
+							{
+								type: 'compacted',
+								payload:
+									source === 'codex-message'
+										? { message: 'Provider summary' }
+										: {
+												message: '',
+												replacement_history: [
+													{ type: 'message', role: 'user', content: 'Provider summary' },
+												],
+											},
+							},
+							{
+								type: 'response_item',
+								payload: { type: 'message', id: 'later', role: 'assistant', content: 'Continue' },
+							},
+						];
+			const bytes = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'));
+			const conversation = extractNativeConversation(sourceIdentity, 'tab', 'source', bytes);
+			const active = activeContextRecords(conversation.records);
+			expect(active).toHaveLength(2);
+			for (const destination of ['claude-code', 'codex'] as const) {
+				const projected = projectConversation(conversation, destination, 'destination');
+				expect(projected).toHaveLength(2);
+				expect(projectedOriginKeys(projected)).toEqual(active.map((r) => recordKey(r.origin)));
+				expect(JSON.stringify(projected)).not.toContain('Old context');
+				expect(JSON.stringify(projected[0].item)).toContain('Provider summary');
+				if (destination === 'claude-code') {
+					expect(projected[0].item.parentUuid).toBeNull();
+					expect(projected[1].item.parentUuid).toBe(projected[0].id);
+				}
+			}
+			const plan = planTranslation({
+				agentId: 'agent',
+				source: sourceIdentity,
+				destination: identity,
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+				conversations: [conversation],
+				registry: createTranslationRegistry(),
+			});
+			expect(plan.tabs[0]).toMatchObject({ records: 4, activeRecords: 2, archivedRecords: 2 });
+			expect(plan.counts.records).toBe(4);
+			expect(Buffer.from(conversation.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+		}
+	);
+	it('keeps legacy records active and renders both new and saved plan counts', () => {
+		const conversation = extractNativeConversation(
+			identity,
+			'tab',
+			'source',
+			Buffer.from(JSON.stringify({ type: 'user', uuid: 'old', message: { content: 'Legacy' } }))
+		);
+		delete conversation.records[0].window;
+		for (const destination of ['claude-code', 'codex'] as const)
+			expect(projectConversation(conversation, destination, 'destination')).toHaveLength(1);
+		expect(
+			formatTranslationRecordCounts({ records: 4492, activeRecords: 312, archivedRecords: 4180 })
+		).toBe('312 records carried, 4,180 archived before the last compaction');
+		expect(formatTranslationRecordCounts({ records: 12 })).toBe('12 records carried');
+	});
 	it('uses the picker declarations for native direction and version registration', () => {
 		const registry = createTranslationRegistry();
 		for (const direction of TRANSLATION_DIRECTIONS) {

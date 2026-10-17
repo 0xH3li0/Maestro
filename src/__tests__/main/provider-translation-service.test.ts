@@ -19,6 +19,8 @@ import { openCodexTranslationConnection } from '../../shared/maestro-lib/codex/c
 import { applyTranslation } from '../../shared/maestro-lib/translation/transaction';
 import * as translationResources from '../../shared/maestro-lib/translation/resources';
 import { captureMessage } from '../../main/utils/sentry';
+import { capabilitySnapshots } from '../../main/agents/capability-snapshot';
+import { extractNativeConversation } from '../../shared/maestro-lib/translation/native-records';
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -117,6 +119,88 @@ describe('provider translation plan telemetry', () => {
 				'verification',
 				'limitationCounts',
 			]);
+		}
+	);
+});
+
+describe('provider translation context capacity', () => {
+	it.each(['compacted', 'active-overflow', 'legacy'] as const)(
+		'estimates only the active context for %s history',
+		async (variant) => {
+			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [],
+				limitations: [],
+			});
+			vi.spyOn(capabilitySnapshots, 'get').mockReturnValue({ contextWindow: 256 } as any);
+			const source = {
+				provider: 'claude-code' as const,
+				version: '2.1.296',
+				accountRoot: '/isolated/claude',
+				projectRoot: '/isolated/project',
+			};
+			const rows = [
+				{
+					type: 'user',
+					uuid: 'old',
+					message: { role: 'user', content: 'Old context '.repeat(2048) },
+				},
+				...(variant === 'legacy'
+					? []
+					: [{ type: 'system', uuid: 'boundary', subtype: 'compact_boundary' }]),
+				{
+					type: 'user',
+					uuid: 'summary',
+					isCompactSummary: variant !== 'legacy',
+					message: {
+						role: 'user',
+						content:
+							variant === 'active-overflow'
+								? 'Large active context '.repeat(2048)
+								: 'Provider summary',
+					},
+				},
+			];
+			const conversation = extractNativeConversation(
+				source,
+				'tab',
+				'native',
+				Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'))
+			);
+			if (variant === 'legacy') for (const record of conversation.records) delete record.window;
+			const session = createMockSession({
+				id: 'agent',
+				toolType: 'claude-code',
+				aiTabs: [{ id: 'tab', agentSessionId: 'native' }] as any,
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: { get: vi.fn(() => [session]) },
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			vi.spyOn(service as any, 'identity').mockImplementation(
+				async (_session: unknown, provider: unknown) => ({
+					...source,
+					provider,
+					version: provider === 'codex' ? '0.162.1' : source.version,
+				})
+			);
+			vi.spyOn(service as any, 'conversation').mockResolvedValue(conversation);
+			const journal: TranslationJournal = await (service as any).prepare({
+				agentId: session.id,
+				destination: 'codex',
+				action: 'plan',
+			});
+			expect(journal.plan.status).toBe(variant === 'compacted' ? 'ready' : 'blocked');
+			expect(journal.plan.limitations.some((limit) => limit.code === 'context-capacity')).toBe(
+				variant !== 'compacted'
+			);
+			expect(journal.plan.tabs[0]).toMatchObject({
+				records: variant === 'legacy' ? 2 : 3,
+				activeRecords: variant === 'legacy' ? 2 : 1,
+				archivedRecords: variant === 'legacy' ? 0 : 2,
+			});
+			expect(journal.conversations[0].records[0].blocks).toEqual(conversation.records[0].blocks);
 		}
 	);
 });

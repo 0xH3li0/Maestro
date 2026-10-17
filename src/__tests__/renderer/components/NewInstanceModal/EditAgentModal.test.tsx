@@ -581,6 +581,48 @@ describe('EditAgentModal', () => {
 		).toBeInTheDocument();
 	});
 
+	it('shows carried and archived counts for each conversation, including legacy plans', async () => {
+		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			...report,
+			plan: {
+				...report.plan!,
+				tabs: [
+					{
+						tabId: 'compacted',
+						sourceSessionId: 'native',
+						records: 4492,
+						activeRecords: 312,
+						archivedRecords: 4180,
+						newRecords: 0,
+					},
+					{ tabId: 'legacy', sourceSessionId: 'older', records: 12, newRecords: 0 },
+				],
+				counts: { records: 4504, artifacts: 2, bytes: 0 },
+			},
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={vi.fn()}
+				onSave={vi.fn()}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
+			target: { value: 'codex' },
+		});
+		expect(
+			await screen.findByText(
+				'Conversation 1: 312 records carried, 4,180 archived before the last compaction'
+			)
+		).toBeInTheDocument();
+		expect(screen.getByText('Conversation 2: 12 records carried')).toBeInTheDocument();
+	});
+
 	it('clears the reading indicator and disables save if preflight rejects', async () => {
 		vi.mocked(requestProviderTranslation).mockRejectedValueOnce(new Error('Cannot read history'));
 		render(

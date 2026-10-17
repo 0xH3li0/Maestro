@@ -181,7 +181,11 @@ export interface TranslationPlan {
 	tabs: Array<{
 		tabId: string;
 		sourceSessionId: string | null;
+		/** Total retained records, including archive-only evidence. */
 		records: number;
+		/** Optional only for plans saved before compaction-aware projection. */
+		activeRecords?: number;
+		archivedRecords?: number;
 		newRecords: number;
 	}>;
 	counts: { records: number; artifacts: number; bytes: number };

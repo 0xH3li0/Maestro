@@ -1,4 +1,5 @@
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
+import { formatTranslationRecordCounts } from '../../shared/maestro-lib/translation/context-window';
 // Update agent command - mutate fields on an existing agent in the Maestro
 // desktop app (group assignment, working directory, and SSH execution config).
 //
@@ -466,6 +467,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 						console.log(
 							`  ${report.plan.tabs.length} conversations; ${report.plan.counts.records} records; ${report.plan.counts.artifacts} artifacts`
 						);
+						for (const tab of report.plan.tabs)
+							console.log(`  ${tab.tabId}: ${formatTranslationRecordCounts(tab)}`);
 						for (const limitation of report.plan.limitations.filter((l) => l.severity !== 'info'))
 							console.log(`  [${limitation.severity}] ${limitation.code}: ${limitation.message}`);
 						const notes = report.plan.limitations.filter((l) => l.severity === 'info');

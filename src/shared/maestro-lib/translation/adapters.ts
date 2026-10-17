@@ -4,6 +4,7 @@ import { generateUUID } from '../../uuid';
 import { encodeClaudeProjectPath } from '../../pathUtils';
 import { canonicalJson } from '../../canonicalJson';
 import { extractNativeConversation } from './native-records';
+import { activeContextRecords } from './context-window';
 import { nativeRecordKey, recordKey, translationHash } from './identity';
 import { TranslationRegistry } from './registry';
 import { TRANSLATION_DIRECTIONS, TRANSLATION_PROVIDER_VERSIONS } from './support';
@@ -30,7 +31,7 @@ export function projectConversation(
 ): ProjectedNativeRecord[] {
 	const projected: ProjectedNativeRecord[] = [];
 	let parentUuid: string | null = null;
-	for (const record of conversation.records) {
+	for (const record of activeContextRecords(conversation.records)) {
 		if (
 			record.native &&
 			typeof record.native === 'object' &&

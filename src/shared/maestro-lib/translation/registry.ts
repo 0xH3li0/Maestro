@@ -2,6 +2,7 @@ import { generateUUID } from '../../uuid';
 import { canonicalJson } from '../../canonicalJson';
 import { translationHash } from './identity';
 import { translationVersionLimitation } from './support';
+import { activeContextRecords } from './context-window';
 import type {
 	TranslationAdapter,
 	TranslationIdentity,
@@ -195,12 +196,17 @@ export function planTranslation(options: {
 		verification:
 			direction?.verification === 'verified' && unique.length === 0 ? 'verified' : 'unverified',
 		limitations: unique,
-		tabs: conversations.map((c) => ({
-			tabId: c.tabId,
-			sourceSessionId: c.nativeSessionId,
-			records: c.records.length,
-			newRecords: options.newRecords?.[c.tabId] ?? c.records.length,
-		})),
+		tabs: conversations.map((c) => {
+			const activeRecords = activeContextRecords(c.records).length;
+			return {
+				tabId: c.tabId,
+				sourceSessionId: c.nativeSessionId,
+				records: c.records.length,
+				activeRecords,
+				archivedRecords: c.records.length - activeRecords,
+				newRecords: options.newRecords?.[c.tabId] ?? c.records.length,
+			};
+		}),
 		counts: {
 			records: conversations.reduce((n, c) => n + c.records.length, 0),
 			artifacts: artifacts.length,

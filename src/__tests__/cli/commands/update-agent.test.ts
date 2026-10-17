@@ -1515,7 +1515,7 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 	it.each([false, true])(
-		'prints info under Notes separately from warnings=%s',
+		'prints carried/archive counts and separates Notes from warnings=%s',
 		async (withWarning) => {
 			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 			vi.mocked(getSessionById).mockReturnValue({
@@ -1529,8 +1529,11 @@ describe('update-agent command', () => {
 					destination: { provider: 'codex' },
 					status: 'ready',
 					verification: 'unverified',
-					tabs: [],
-					counts: { records: 0, artifacts: 0 },
+					tabs: [
+						{ tabId: 'compacted', records: 4492, activeRecords: 312, archivedRecords: 4180 },
+						{ tabId: 'legacy', records: 12 },
+					],
+					counts: { records: 4504, artifacts: 0 },
 					limitations: [
 						{
 							code: 'native-cwd-drift',
@@ -1551,6 +1554,10 @@ describe('update-agent command', () => {
 				acceptTranslationLimitations: withWarning,
 			});
 			const lines = consoleSpy.mock.calls.map(([line]) => line);
+			expect(lines).toContain(
+				'  compacted: 312 records carried, 4,180 archived before the last compaction'
+			);
+			expect(lines).toContain('  legacy: 12 records carried');
 			expect(lines).toContain('Notes:');
 			expect(lines[lines.indexOf('Notes:') + 1]).toBe(
 				'  native-cwd-drift: Original directories stay archived'
