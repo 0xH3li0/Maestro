@@ -41,6 +41,13 @@ export interface RemoteStatResult {
 	mtime: number;
 }
 
+/** Metadata for the path itself, without following its final symbolic link. */
+export interface RemoteLstatResult extends RemoteStatResult {
+	type: 'file' | 'directory' | 'symlink' | 'other';
+	/** Full POSIX mode, including file type and permission bits. */
+	mode: number;
+}
+
 /**
  * Result wrapper for remote fs operations.
  * Includes success/failure status and optional error message.
@@ -52,6 +59,8 @@ export interface RemoteFsResult<T> {
 	data?: T;
 	/** Error message (if success is false) */
 	error?: string;
+	/** An exclusive create refused an existing path, including a dangling link. */
+	code?: 'EEXIST';
 }
 
 /**
@@ -227,9 +236,13 @@ async function execRemoteCommand(
 	config: SshRemoteConfig,
 	remoteCommand: string,
 	deps: RemoteFsDeps = defaultDeps,
-	input?: string
+	input?: string,
+	retry: boolean = true
 ): Promise<ExecResult> {
-	const { maxRetries, baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
+	const { baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
+	// A lost write acknowledgement leaves ownership uncertain. Replaying a
+	// mutation could overwrite newer work or turn our own create into EEXIST.
+	const maxRetries = retry ? DEFAULT_RETRY_CONFIG.maxRetries : 0;
 	let lastResult: ExecResult | null = null;
 
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
@@ -944,6 +957,124 @@ export async function statRemote(
 	};
 }
 
+/** Read GNU/BSD stat metadata without dereferencing a symlink. */
+export async function lstatRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteLstatResult>> {
+	// GNU %f is hexadecimal; BSD %p is octal. Neither invocation uses -L.
+	// A single-line format avoids ANSI-C quoting, which POSIX sh need not support.
+	const script =
+		`if stat --version >/dev/null 2>&1; then ` +
+		`stat --printf='G|%s|%f|%Y\\n' -- "$1"; ` +
+		`else stat -f 'B|%z|%p|%m' -- "$1"; fi`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)}`,
+		deps
+	);
+	if (result.exitCode !== 0) {
+		return { success: false, error: result.stderr || `Failed to lstat: ${filePath}` };
+	}
+
+	const match = /^(G|B)\|(\d+)\|([0-9a-fA-F]+)\|(-?\d+)\n?$/.exec(result.stdout);
+	if (!match || (match[1] === 'B' && !/^[0-7]+$/.test(match[3]))) {
+		return { success: false, error: `Invalid lstat output for: ${filePath}` };
+	}
+	const size = Number(match[2]);
+	const mode = parseInt(match[3], match[1] === 'G' ? 16 : 8);
+	const mtime = Number(match[4]) * 1000;
+	if (!Number.isSafeInteger(size) || !Number.isSafeInteger(mtime) || mode > 0xffff) {
+		return { success: false, error: `Invalid lstat output for: ${filePath}` };
+	}
+	const fileType = mode & 0xf000;
+	const type =
+		fileType === 0xa000
+			? 'symlink'
+			: fileType === 0x4000
+				? 'directory'
+				: fileType === 0x8000
+					? 'file'
+					: 'other';
+	return { success: true, data: { size, mode, mtime, type, isDirectory: type === 'directory' } };
+}
+
+/** Resolve a physical path on the remote host, never against the local home. */
+export async function realpathRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	const script =
+		`if command -v realpath >/dev/null 2>&1; then realpath -- "$1"; ` +
+		`elif command -v readlink >/dev/null 2>&1 && readlink -f / >/dev/null 2>&1; then ` +
+		`readlink -f -- "$1"; else ` +
+		`printf '%s\\n' 'Remote path resolution requires realpath or readlink with -f support' >&2; ` +
+		`exit 127; fi`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)}`,
+		deps
+	);
+	if (result.exitCode !== 0) {
+		return { success: false, error: result.stderr || `Failed to resolve remote path: ${filePath}` };
+	}
+	// Remove only the tool's terminator: whitespace can belong to a filename.
+	const resolved = result.stdout.replace(/\n$/, '');
+	if (!resolved.startsWith('/')) {
+		return { success: false, error: `Invalid realpath output for: ${filePath}` };
+	}
+	return { success: true, data: resolved };
+}
+
+/** Read the link's stored target, including a relative or dangling target. */
+export async function readlinkRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	const result = await execRemoteCommand(
+		sshRemote,
+		`readlink -- ${shellEscapeRemotePath(filePath)}`,
+		deps
+	);
+	if (result.exitCode !== 0) {
+		return { success: false, error: result.stderr || `Failed to read symbolic link: ${filePath}` };
+	}
+	const target = result.stdout.replace(/\n$/, '');
+	return target
+		? { success: true, data: target }
+		: { success: false, error: `Invalid readlink output for: ${filePath}` };
+}
+
+/** Create a link without replacing an existing file, directory or link. */
+export async function symlinkRemote(
+	targetPath: string,
+	linkPath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+	const script =
+		`if [ -e "$2" ] || [ -L "$2" ]; then exit 73; fi; ` +
+		// GNU -T and BSD -h prevent following a destination symlink to a directory.
+		`if ln --version >/dev/null 2>&1; then ln -sT -- "$1" "$2"; ` +
+		`else ln -sh -- "$1" "$2"; fi`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(targetPath)} ${shellEscapeRemotePath(linkPath)}`,
+		deps,
+		undefined,
+		false
+	);
+	if (result.exitCode === 73) {
+		return { success: false, code: 'EEXIST', error: `Path already exists: ${linkPath}` };
+	}
+	return result.exitCode === 0
+		? { success: true }
+		: { success: false, error: result.stderr || `Failed to create symbolic link: ${linkPath}` };
+}
+
 /**
  * Get total size of a directory from a remote host via SSH.
  *
@@ -1064,6 +1195,87 @@ export async function writeFileRemote(
 	}
 
 	return { success: true };
+}
+
+/**
+ * Replace a remote file through a private temporary file in the same directory.
+ * Payload bytes travel as base64 on stdin. Optional sync flushes before and
+ * after rename using the portable, system-wide sync command. New files are 0600.
+ * A transport failure is ambiguous and must be reconciled before another write.
+ */
+export async function writeFileAtomicRemote(
+	filePath: string,
+	content: string | Buffer,
+	sshRemote: SshRemoteConfig,
+	options: { sync?: boolean } = {},
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+	const script =
+		`umask 077; target=$1; ` +
+		`if [ -d "$target" ]; then printf '%s\\n' 'Atomic write target is a directory' >&2; exit 1; fi; ` +
+		`tmp=$(mktemp -- "$target.maestro-XXXXXX") || exit 1; ` +
+		`trap 'rm -f -- "$tmp"' 0; trap 'exit 1' HUP INT TERM; ` +
+		`base64 -d > "$tmp" || exit 1; ` +
+		// A dropped SSH stdin can end on a valid base64 boundary. Never install
+		// that truncated prefix just because the decoder exited successfully.
+		`byte_count=$(wc -c < "$tmp") || exit 1; ` +
+		`[ "$byte_count" -eq "$2" ] || { ` +
+		`printf '%s\\n' 'Incomplete atomic write payload' >&2; exit 1; }; ` +
+		(options.sync ? `sync || exit 1; ` : '') +
+		// BSD mv follows directory symlinks unless -h is set; GNU uses -T.
+		`if mv --version >/dev/null 2>&1; then mv -fT -- "$tmp" "$target"; ` +
+		`else mv -fh -- "$tmp" "$target"; fi || exit 1; ` +
+		(options.sync ? `sync || exit 1; ` : '') +
+		`exit 0`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)} ${Buffer.byteLength(content)}`,
+		deps,
+		Buffer.from(content).toString('base64'),
+		false
+	);
+	return result.exitCode === 0
+		? { success: true }
+		: { success: false, error: result.stderr || `Failed to write file atomically: ${filePath}` };
+}
+
+/**
+ * Create a private remote file using noclobber on the writing descriptor.
+ * A collision is EEXIST; decode/transport failures are not collisions. A failed
+ * write may leave a partial file for recovery, so neither retry nor unlink it.
+ */
+export async function createExclusiveRemote(
+	filePath: string,
+	content: string | Buffer,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+	const script =
+		`umask 077; target=$1; ` +
+		`if [ -e "$target" ] || [ -L "$target" ]; then exit 73; fi; ` +
+		// Keep the acquired descriptor open; never reopen the path after claiming it.
+		`if (set -C; { base64 -d >&3 || exit 74; } 3> "$target"); then ` +
+		`byte_count=$(wc -c < "$target") || exit 1; ` +
+		`[ "$byte_count" -eq "$2" ] || { ` +
+		`printf '%s\\n' 'Incomplete exclusive create payload' >&2; exit 1; }; exit 0; ` +
+		`else status=$?; ` +
+		// Decode failed AFTER the open: the file's existence is not a collision.
+		`if [ "$status" -eq 74 ]; then exit 1; fi; ` +
+		`if [ -e "$target" ] || [ -L "$target" ]; then exit 73; fi; ` +
+		`exit 1; fi`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(filePath)} ${Buffer.byteLength(content)}`,
+		deps,
+		Buffer.from(content).toString('base64'),
+		false
+	);
+	if (result.exitCode === 73) {
+		return { success: false, code: 'EEXIST', error: `Path already exists: ${filePath}` };
+	}
+	return result.exitCode === 0
+		? { success: true }
+		: { success: false, error: result.stderr || `Failed to create file exclusively: ${filePath}` };
 }
 
 /**

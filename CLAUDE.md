@@ -89,6 +89,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
+- **Safe remote file writes and links:** `writeFileAtomicRemote()`, `createExclusiveRemote()`, `lstatRemote()`, `realpathRemote()`, `readlinkRemote()`, `symlinkRemote()` in `src/main/utils/remote-fs.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **Reading standard input in a CLI verb:** `readStdinText()`, `readStdinIfReady(timeoutMs?)`, `isStdinTerminal()` in `src/cli/services/stdin.ts` (never a bare `fs.readFileSync(0)` for input nobody was told to pipe)
 - **The per-agent setting flags of a CLI verb (`--model`, `--env`, `--tier`, ...):** `buildConfigPatch()`, `buildSshPatch()`, `hasSshFlags()` in `src/cli/services/agent-setting-flags.ts`; peers in `peer-flags.ts`
