@@ -1,6 +1,7 @@
 import { generateUUID } from '../../uuid';
 import { canonicalJson } from '../../canonicalJson';
 import { translationHash } from './identity';
+import { translationVersionLimitation } from './support';
 import type {
 	TranslationAdapter,
 	TranslationIdentity,
@@ -40,13 +41,23 @@ export class TranslationRegistry {
 		source: TranslationIdentity,
 		destination: TranslationIdentity
 	): TranslationDirection | undefined {
-		return this.directions.find(
-			(d) =>
-				d.source === source.provider &&
-				d.destination === destination.provider &&
-				d.sourceVersions.includes(source.version) &&
-				d.destinationVersions.includes(destination.version)
-		);
+		for (const direction of this.directions) {
+			if (direction.source !== source.provider || direction.destination !== destination.provider)
+				continue;
+			const limitations = [
+				translationVersionLimitation(source.provider, source.version, {
+					minVersion: direction.sourceMinVersion,
+					testedVersions: direction.sourceTestedVersions,
+				}),
+				translationVersionLimitation(destination.provider, destination.version, {
+					minVersion: direction.destinationMinVersion,
+					testedVersions: direction.destinationTestedVersions,
+				}),
+			];
+			if (limitations.some((limitation) => limitation?.severity === 'block')) continue;
+			return limitations.some(Boolean) ? { ...direction, verification: 'unverified' } : direction;
+		}
+		return undefined;
 	}
 }
 
@@ -107,12 +118,39 @@ export function planTranslation(options: {
 					severity: 'block',
 					message: `No translation adapter for ${identity.provider}. Native resume support is separate.`,
 				});
-			else if (!adapter.versions.includes(identity.version))
-				limitations.push({
-					code: 'unknown-version',
-					severity: 'block',
-					message: `${identity.provider} ${identity.version || 'unknown'} has no declared schema mapping.`,
-				});
+			else {
+				const limitation = translationVersionLimitation(
+					identity.provider,
+					identity.version,
+					adapter
+				);
+				if (limitation) limitations.push(limitation);
+			}
+		}
+		if (direction) {
+			for (const [identity, support] of [
+				[
+					source,
+					{
+						minVersion: direction.sourceMinVersion,
+						testedVersions: direction.sourceTestedVersions,
+					},
+				],
+				[
+					destination,
+					{
+						minVersion: direction.destinationMinVersion,
+						testedVersions: direction.destinationTestedVersions,
+					},
+				],
+			] as const) {
+				const limitation = translationVersionLimitation(
+					identity.provider,
+					identity.version,
+					support
+				);
+				if (limitation) limitations.push(limitation);
+			}
 		}
 		if (!direction)
 			limitations.push({

@@ -83,8 +83,10 @@ describe('reversible translation planning', () => {
 			registry.declareDirection({
 				source: 'claude-code',
 				destination: 'codex',
-				sourceVersions: ['2.1.296'],
-				destinationVersions: ['0.162.1'],
+				sourceMinVersion: '2.1.296',
+				destinationMinVersion: '0.162.1',
+				sourceTestedVersions: ['2.1.296'],
+				destinationTestedVersions: ['0.162.1'],
 				verification: 'verified',
 			})
 		).toThrow('certification requires');

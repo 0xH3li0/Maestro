@@ -27,6 +27,8 @@ import {
 	collectTranslationResources,
 	reconcileConversation,
 	planResourceProjections,
+	TRANSLATION_PROVIDER_VERSIONS,
+	translationVersionLimitation,
 	type TranslationIdentity,
 	type TranslationJournal,
 } from '../../src/shared/maestro-lib/translation';
@@ -35,6 +37,24 @@ export const GUINEA_PIG = {
 	agentId: '92eb2f16-433d-4ecd-bb87-885c8a64b2f7',
 	tabId: 'a77c0b6c-83c5-4275-baa9-9098994993f1',
 };
+
+export function acceptanceProviderVersion(
+	provider: keyof typeof TRANSLATION_PROVIDER_VERSIONS,
+	output: string
+): string {
+	// Preserve prerelease/build tags so a prerelease never becomes a tested release.
+	const version =
+		/(?:^|\s)(v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|$)/.exec(
+			output
+		)?.[1] ?? '';
+	const limitation = translationVersionLimitation(
+		provider,
+		version,
+		TRANSLATION_PROVIDER_VERSIONS[provider]
+	);
+	if (limitation?.severity === 'block') throw new Error(limitation.message);
+	return version;
+}
 
 export function validateAcceptanceInputs(
 	workspace: string,
@@ -200,9 +220,12 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 		wrappers[provider] = wrapper;
 	}
 	const versions: Record<string, string> = {};
-	for (const provider of ['claude-code', 'codex']) {
+	for (const provider of ['claude-code', 'codex'] as const) {
 		const probe = await execFileNoThrow(wrappers[provider], ['--version'], undefined, { env });
-		versions[provider] = /\d+\.\d+\.\d+/.exec(probe.stdout)?.[0] ?? '';
+		versions[provider] = acceptanceProviderVersion(
+			provider,
+			probe.exitCode === 0 ? probe.stdout : ''
+		);
 	}
 	const originalIdentity: TranslationIdentity = {
 		provider: 'claude-code',

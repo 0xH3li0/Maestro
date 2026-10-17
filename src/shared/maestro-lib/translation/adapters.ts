@@ -315,13 +315,13 @@ async function stageCodex(
 
 export const claudeTranslationAdapter: TranslationAdapter = {
 	provider: 'claude-code',
-	versions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+	...TRANSLATION_PROVIDER_VERSIONS['claude-code'],
 	extract: extractNativeConversation,
 	stage: stageClaude,
 };
 export const codexTranslationAdapter: TranslationAdapter = {
 	provider: 'codex',
-	versions: TRANSLATION_PROVIDER_VERSIONS.codex,
+	...TRANSLATION_PROVIDER_VERSIONS.codex,
 	extract: extractNativeConversation,
 	stage: stageCodex,
 };

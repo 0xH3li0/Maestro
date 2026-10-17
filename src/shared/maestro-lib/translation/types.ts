@@ -135,11 +135,19 @@ export interface ResourceProjection extends OwnedTranslationWrite {
 	expectedHash: string | null;
 }
 
+export interface TranslationVersionSupport {
+	minVersion: string;
+	/** Schema versions exercised by synthetic cases, not native resume certification. */
+	testedVersions: readonly string[];
+}
+
 export interface TranslationDirection {
 	source: TranslationIdentity['provider'];
 	destination: TranslationIdentity['provider'];
-	sourceVersions: readonly string[];
-	destinationVersions: readonly string[];
+	sourceMinVersion: string;
+	destinationMinVersion: string;
+	sourceTestedVersions: readonly string[];
+	destinationTestedVersions: readonly string[];
 	verification: 'unverified' | 'verified';
 	/** Verified declarations require recorded native reload, round-trip and capability evidence. */
 	evidence?: {
@@ -224,10 +232,8 @@ export class TranslationSourceBusyError extends Error {
 	}
 }
 
-export interface TranslationAdapter {
+export interface TranslationAdapter extends TranslationVersionSupport {
 	provider: ToolType;
-	/** Schema versions exercised by synthetic cases, not native resume certification. */
-	versions: readonly string[];
 	extract(
 		identity: TranslationIdentity,
 		tabId: string,

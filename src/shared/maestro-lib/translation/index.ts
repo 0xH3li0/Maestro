@@ -4,6 +4,7 @@ export {
 	TRANSLATION_DIRECTIONS,
 	TRANSLATION_PROVIDER_VERSIONS,
 	getDeclaredTranslationDirection,
+	translationVersionLimitation,
 } from './support';
 export { TranslationRegistry, planTranslation } from './registry';
 export {

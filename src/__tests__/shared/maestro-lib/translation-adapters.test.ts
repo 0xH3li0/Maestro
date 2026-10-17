@@ -33,21 +33,76 @@ describe('destination native projections', () => {
 		for (const direction of TRANSLATION_DIRECTIONS) {
 			expect(
 				registry.direction(
-					{ ...identity, provider: direction.source, version: direction.sourceVersions[0] },
+					{ ...identity, provider: direction.source, version: direction.sourceTestedVersions[0] },
 					{
 						...identity,
 						provider: direction.destination,
-						version: direction.destinationVersions[0],
+						version: direction.destinationTestedVersions[0],
 					}
 				)
 			).toEqual(getDeclaredTranslationDirection(direction.source, direction.destination));
-			expect(registry.get(direction.source)?.versions).toEqual(direction.sourceVersions);
+			expect(registry.get(direction.source)?.minVersion).toBe(direction.sourceMinVersion);
+			expect(registry.get(direction.source)?.testedVersions).toEqual(
+				direction.sourceTestedVersions
+			);
 			expect(direction.verification).toBe('unverified');
 		}
 		expect(getDeclaredTranslationDirection('opencode', 'codex')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('claude-code', 'opencode')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('codex', 'codex')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('unknown-provider', 'codex')).toBeUndefined();
+	});
+	it.each([
+		['claude-code', '2.1.295', 'block'],
+		['claude-code', '2.1.296', undefined],
+		['claude-code', '2.1.297', 'warning'],
+		['claude-code', '2.1.301', 'warning'],
+		['claude-code', '3.0.0', 'warning'],
+		['claude-code', 'garbage', 'block'],
+		['claude-code', '', 'block'],
+		['codex', '0.162.0', 'block'],
+		['codex', '0.162.1', undefined],
+		['codex', '0.162.2', 'warning'],
+		['codex', '0.163.0', 'warning'],
+		['codex', 'garbage', 'block'],
+	] as const)('checks %s %s as source and destination', (provider, version, severity) => {
+		const registry = createTranslationRegistry();
+		const selected = { ...identity, provider, version };
+		const other = {
+			...identity,
+			provider: provider === 'codex' ? ('claude-code' as const) : ('codex' as const),
+			version: provider === 'codex' ? '2.1.296' : '0.162.1',
+		};
+		for (const [source, destination] of [
+			[selected, other],
+			[other, selected],
+		]) {
+			const plan = planTranslation({
+				agentId: 'a',
+				source,
+				destination,
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+				conversations: [],
+				registry,
+			});
+			const versionLimits = plan.limitations.filter((limit) => limit.code.endsWith('-version'));
+			expect(plan.status).toBe(severity === 'block' ? 'blocked' : 'ready');
+			expect(Boolean(registry.direction(source, destination))).toBe(severity !== 'block');
+			if (severity) {
+				expect(versionLimits).toHaveLength(1);
+				expect(versionLimits[0]).toMatchObject({
+					code: severity === 'block' ? 'unknown-version' : 'untested-version',
+					severity,
+				});
+				expect(versionLimits[0].message).toContain(version || 'unknown');
+				if (severity === 'warning') {
+					expect(versionLimits[0].message).toContain(registry.get(provider)!.testedVersions[0]);
+					expect(plan.limitations.some((limit) => limit.code === 'unsupported-direction')).toBe(
+						false
+					);
+				}
+			} else expect(versionLimits).toEqual([]);
+		}
 	});
 	it('refuses a Codex rollout parent symlink before injecting history', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-codex-target-'));
