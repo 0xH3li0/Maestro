@@ -358,7 +358,8 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		if (sshConfig) return [];
 
-		const refs: Array<SessionFileRef & { row: SummaryRow; workspace: string }> = [];
+		const refs: Array<SessionFileRef & { row: SummaryRow; workspace: string; sizeBytes: number }> =
+			[];
 		const lastFolders = readLastConversationFolders();
 		for (const row of readSummaries()) {
 			if (!ANTIGRAVITY_CONVERSATION_ID.test(row.conversation_id)) continue;
@@ -380,6 +381,7 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 				fingerprint: `${row.last_modified_time}|${row.step_count}|${fileFingerprint(stat.size, stat.mtimeMs)}`,
 				row,
 				workspace,
+				sizeBytes: stat.size,
 			});
 		}
 
@@ -387,7 +389,7 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 			normalizePath(projectPath),
 			refs,
 			async (ref) => {
-				const { row, workspace } = ref as (typeof refs)[number];
+				const { row, workspace, sizeBytes } = ref as (typeof refs)[number];
 				// Each read is synchronous SQLite on the main process: yield first, so a
 				// cold listing over hundreds of stores never blocks IPC for its whole run.
 				await new Promise((resolve) => setImmediate(resolve));
@@ -404,7 +406,9 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 					modifiedAt: new Date(modifiedMs).toISOString(),
 					firstMessage: preview.slice(0, FIRST_MESSAGE_PREVIEW_LENGTH),
 					messageCount: parsed.messages.length,
-					sizeBytes: fs.statSync(ref.key).size,
+					// Sized from the stat taken while listing: a store deleted since then
+					// would make a second stat throw out of the whole listing.
+					sizeBytes,
 					inputTokens: parsed.inputTokens,
 					outputTokens: parsed.outputTokens,
 					cacheReadTokens: parsed.cacheReadTokens,

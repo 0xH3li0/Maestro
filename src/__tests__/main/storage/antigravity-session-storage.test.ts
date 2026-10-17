@@ -302,6 +302,12 @@ describe.skipIf(!canLoadNodeSqlite())('AntigravitySessionStorage', () => {
 			cacheCreationTokens: 0,
 			timestamp: '2026-10-06T14:05:05.500Z',
 		});
+		// Sized from the stat taken while listing, not a second stat per store.
+		expect(indexed.sizeBytes).toBe(
+			fs.statSync(
+				path.join(home.dir, '.gemini', 'antigravity-cli', 'conversations', `${INDEXED}.db`)
+			).size
+		);
 		expect(sessions.find((s) => s.sessionId === BY_COMMAND_CWD)?.projectPath).toBe(
 			`${PROJECT}/sub`
 		);
