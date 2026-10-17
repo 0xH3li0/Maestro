@@ -14,6 +14,58 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('native-preserving extraction', () => {
+	it.each([
+		['claude-compactions', 'claude-code', 7, 2],
+		['codex-compacted-replacement', 'codex', 4, 4],
+		['codex-compacted-message', 'codex', 4, 2],
+	] as const)(
+		'extracts the latest window from %s without losing source bytes',
+		(fixture, provider, archived, active) => {
+			const bytes = readFileSync(
+				path.resolve('src/__tests__/fixtures/provider-translation', `${fixture}.jsonl`)
+			);
+			const bundle = extractNativeConversation(
+				{ ...identity, provider, version: provider === 'codex' ? '0.162.1' : identity.version },
+				't',
+				'synthetic-compacted',
+				bytes
+			);
+			const window = bundle.records.filter((record) => record.window === 'active');
+			expect(window).toHaveLength(active);
+			expect(window[0]).toMatchObject({
+				role: 'user',
+				blocks: [
+					{ kind: 'text', text: 'Latest provider summary: archived lookup resolved to alpha.' },
+				],
+			});
+			expect(window.at(-1)?.blocks).toEqual([
+				{ kind: 'text', text: 'Continue from the compacted context.' },
+			]);
+			expect(bundle.records.filter((record) => record.window === 'archived')).toHaveLength(
+				archived
+			);
+			expect(bundle.records.find((record) => record.nativeId === 'old-call')).toMatchObject({
+				window: 'archived',
+				blocks: [{ kind: 'tool-call', callId: 'archived-call' }],
+			});
+			// The unanswered call was resolved inside the provider summary, not by an invented result.
+			expect(bundle.limitations.filter((limit) => limit.severity !== 'info')).toEqual([]);
+			expect(bundle.limitations).toContainEqual({
+				code: 'compaction-window',
+				severity: 'info',
+				tabId: 't',
+				message: `Source compaction window: ${active} active records, ${archived} archived records before the latest compaction summary.`,
+			});
+			for (const { entry } of parseNativeLines(bytes.toString('utf8')))
+				expect(bundle.records.map((record) => record.native)).toContainEqual(entry);
+			expect(Buffer.from(bundle.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+			if (fixture === 'codex-compacted-replacement') {
+				expect(window[1].blocks).toMatchObject([{ kind: 'tool-call', callId: 'active-call' }]);
+				expect(window[2].blocks).toMatchObject([{ kind: 'tool-result', callId: 'active-call' }]);
+				expect(window[0].nativeId).not.toBe('old-user');
+			}
+		}
+	);
 	it('classifies recurring native evidence as info while keeping behavior loss as a warning', () => {
 		const rows = [
 			{

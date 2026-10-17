@@ -16,6 +16,7 @@ import {
 	formatTranslationRecordCounts,
 } from '../../../shared/maestro-lib/translation/context-window';
 import { recordKey } from '../../../shared/maestro-lib/translation/identity';
+import { TranslationArchive } from '../../../shared/maestro-lib/translation/archive';
 import {
 	importSelectedCodexResources,
 	readCodexThreadItems,
@@ -34,78 +35,118 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('destination native projections', () => {
-	it.each(['claude-code', 'codex-replacement', 'codex-message'] as const)(
+	it.each([
+		['claude-compactions', 'claude-code', 7, 2],
+		['codex-compacted-replacement', 'codex', 4, 4],
+		['codex-compacted-message', 'codex', 4, 2],
+	] as const)(
 		'projects only the active %s window to both destinations and reports retained counts',
-		(source) => {
+		async (fixture, source, archivedCount, activeCount) => {
 			const sourceIdentity =
 				source === 'claude-code'
 					? identity
 					: { ...identity, provider: 'codex' as const, version: '0.162.1' };
-			const rows =
-				source === 'claude-code'
-					? [
-							{ type: 'user', uuid: 'old', message: { role: 'user', content: 'Old context' } },
-							{ type: 'system', uuid: 'boundary', subtype: 'compact_boundary' },
-							{
-								type: 'user',
-								uuid: 'summary',
-								isCompactSummary: true,
-								message: { role: 'user', content: 'Provider summary' },
-							},
-							{
-								type: 'assistant',
-								uuid: 'later',
-								message: { role: 'assistant', content: 'Continue' },
-							},
-						]
-					: [
-							{
-								type: 'response_item',
-								payload: { type: 'message', id: 'old', role: 'user', content: 'Old context' },
-							},
-							{
-								type: 'compacted',
-								payload:
-									source === 'codex-message'
-										? { message: 'Provider summary' }
-										: {
-												message: '',
-												replacement_history: [
-													{ type: 'message', role: 'user', content: 'Provider summary' },
-												],
-											},
-							},
-							{
-								type: 'response_item',
-								payload: { type: 'message', id: 'later', role: 'assistant', content: 'Continue' },
-							},
-						];
-			const bytes = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'));
-			const conversation = extractNativeConversation(sourceIdentity, 'tab', 'source', bytes);
+			const bytes = await fs.readFile(
+				path.resolve('src/__tests__/fixtures/provider-translation', `${fixture}.jsonl`)
+			);
+			const conversation = extractNativeConversation(
+				sourceIdentity,
+				'tab',
+				'synthetic-compacted',
+				bytes
+			);
 			const active = activeContextRecords(conversation.records);
-			expect(active).toHaveLength(2);
+			expect(active).toHaveLength(activeCount);
 			for (const destination of ['claude-code', 'codex'] as const) {
 				const projected = projectConversation(conversation, destination, 'destination');
-				expect(projected).toHaveLength(2);
+				expect(projected).toHaveLength(activeCount);
 				expect(projectedOriginKeys(projected)).toEqual(active.map((r) => recordKey(r.origin)));
-				expect(JSON.stringify(projected)).not.toContain('Old context');
-				expect(JSON.stringify(projected[0].item)).toContain('Provider summary');
-				if (destination === 'claude-code') {
-					expect(projected[0].item.parentUuid).toBeNull();
-					expect(projected[1].item.parentUuid).toBe(projected[0].id);
+				expect(JSON.stringify(projected)).not.toMatch(
+					/Archived request|Earlier provider summary|archived-call|Fallback summary/
+				);
+				expect(JSON.stringify(projected[0].item)).toContain(
+					'Latest provider summary: archived lookup resolved to alpha.'
+				);
+				if (destination === 'claude-code')
+					for (const [index, row] of projected.entries())
+						expect(row.item.parentUuid).toBe(index ? projected[index - 1].id : null);
+				const readback = extractNativeConversation(
+					{
+						...sourceIdentity,
+						provider: destination,
+						version: destination === 'codex' ? '0.162.1' : identity.version,
+					},
+					'tab',
+					'destination',
+					Buffer.from(
+						projected
+							.map((row) =>
+								JSON.stringify(
+									destination === 'codex' ? { type: 'response_item', payload: row.item } : row.item
+								)
+							)
+							.join('\n')
+					)
+				);
+				expect(readback.limitations.filter((limit) => limit.severity === 'block')).toEqual([]);
+				expect(readback.records[0].blocks).toEqual(active[0].blocks);
+				expect(readback.records.at(-1)?.blocks).toEqual(active.at(-1)?.blocks);
+				if (fixture === 'codex-compacted-replacement') {
+					expect(readback.records[1].blocks).toMatchObject([
+						{
+							kind: 'tool-call',
+							callId: 'active-call',
+							name: 'Read',
+							input: destination === 'codex' ? '{"path":"next.txt"}' : { path: 'next.txt' },
+						},
+					]);
+					expect(readback.records[2].blocks).toMatchObject([
+						{ kind: 'tool-result', callId: 'active-call', output: 'Synthetic next result.' },
+					]);
 				}
 			}
 			const plan = planTranslation({
 				agentId: 'agent',
 				source: sourceIdentity,
-				destination: identity,
+				destination:
+					source === 'codex' ? identity : { ...identity, provider: 'codex', version: '0.162.1' },
 				scope: { projectKnowledge: true, selectedUserResources: [] },
 				conversations: [conversation],
 				registry: createTranslationRegistry(),
 			});
-			expect(plan.tabs[0]).toMatchObject({ records: 4, activeRecords: 2, archivedRecords: 2 });
-			expect(plan.counts.records).toBe(4);
-			expect(Buffer.from(conversation.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+			expect(plan.tabs[0]).toMatchObject({
+				records: activeCount + archivedCount,
+				activeRecords: activeCount,
+				archivedRecords: archivedCount,
+			});
+			expect(plan.counts.records).toBe(activeCount + archivedCount);
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-compaction-'));
+			try {
+				const archive = new TranslationArchive(root);
+				await archive.write({
+					schemaVersion: 1,
+					plan,
+					state: 'planned',
+					conversations: [conversation],
+					resources: [],
+					mappings: [],
+					resourceWrites: [],
+				});
+				const saved = await archive.read(plan.agentId, plan.id);
+				expect(saved.conversations[0].records).toEqual(conversation.records);
+				const artifact = saved.conversations[0].artifacts[0];
+				expect(Buffer.from(artifact.bytesBase64, 'base64')).toEqual(bytes);
+				expect(
+					await fs.readFile(
+						path.join(
+							path.dirname(archive.operationPath(plan.agentId, plan.id)),
+							`${artifact.sha256}.bytes`
+						)
+					)
+				).toEqual(bytes);
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
 		}
 	);
 	it('keeps legacy records active and renders both new and saved plan counts', () => {

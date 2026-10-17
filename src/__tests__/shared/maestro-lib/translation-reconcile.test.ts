@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import {
 	reconcileConversation,
 	reconcileResource,
@@ -37,6 +39,108 @@ const empty = (): TranslationCheckpoint => ({
 	providerRoots: {},
 });
 describe('reversible translation planning', () => {
+	it.each([
+		['claude-compactions', 'claude-code'],
+		['codex-compacted-replacement', 'codex'],
+		['codex-compacted-message', 'codex'],
+	] as const)(
+		'preserves %s evidence and new work across repeated A to B to A hops',
+		(fixture, provider) => {
+			const source = {
+				...identity,
+				provider,
+				version: provider === 'codex' ? '0.162.1' : identity.version,
+				accountRoot: `/isolated/${provider}`,
+				projectRoot: '/isolated/project',
+			};
+			const bytes = readFileSync(
+				path.resolve('src/__tests__/fixtures/provider-translation', `${fixture}.jsonl`)
+			);
+			const original = extractNativeConversation(source, 't', 'synthetic-compacted', bytes);
+			const originalSnapshot = structuredClone(original);
+			const checkpoint = empty();
+			checkpoint.conversations = [original];
+			for (const record of original.records)
+				checkpoint.observed[nativeRecordKey(source, 'synthetic-compacted', record.nativeId)] =
+					record.semanticHash;
+			const otherProvider = provider === 'codex' ? 'claude-code' : 'codex';
+			for (const [hop, destination] of (
+				[otherProvider, provider, otherProvider, provider] as const
+			).entries()) {
+				const target = {
+					...source,
+					provider: destination,
+					version: destination === 'codex' ? '0.162.1' : identity.version,
+					accountRoot: `/isolated/${destination}`,
+				};
+				const sessionId = `hop-${hop}`;
+				const projected = projectConversation(checkpoint.conversations[0], destination, sessionId);
+				for (const row of projected)
+					checkpoint.lineage[nativeRecordKey(target, sessionId, row.id)] = row.origin;
+				const rows: unknown[] = projected.map((row) =>
+					destination === 'codex' ? { type: 'response_item', payload: row.item } : row.item
+				);
+				if (hop === 0)
+					rows.push(
+						destination === 'codex'
+							? {
+									type: 'response_item',
+									payload: {
+										type: 'message',
+										id: 'new-on-b',
+										role: 'user',
+										content: 'New work after the switch.',
+									},
+								}
+							: {
+									type: 'user',
+									uuid: 'new-on-b',
+									parentUuid: projected.at(-1)!.id,
+									message: { role: 'user', content: 'New work after the switch.' },
+								}
+					);
+				const incoming = extractNativeConversation(
+					target,
+					't',
+					sessionId,
+					Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'))
+				);
+				const result = reconcileConversation(incoming, checkpoint);
+				expect(result.limitations.filter((limit) => limit.severity === 'block')).toEqual([]);
+				expect(result.newRecords).toBe(hop === 0 ? 1 : 0);
+				expect(result.conversation.records).toHaveLength(original.records.length + 1);
+				expect(
+					new Set(result.conversation.records.map((record) => recordKey(record.origin))).size
+				).toBe(original.records.length + 1);
+				expect(result.conversation.records.slice(0, original.records.length)).toEqual(
+					originalSnapshot.records
+				);
+				expect(result.conversation.records.at(-1)?.blocks).toEqual([
+					{ kind: 'text', text: 'New work after the switch.' },
+				]);
+				expect(activeContextRecords(result.conversation.records)).toHaveLength(
+					activeContextRecords(original.records).length + 1
+				);
+				expect(result.conversation.artifacts).toEqual(
+					expect.arrayContaining(originalSnapshot.artifacts)
+				);
+				expect(
+					Buffer.from(
+						result.conversation.artifacts.find(
+							(artifact) => artifact.id === original.artifacts[0].id
+						)!.bytesBase64,
+						'base64'
+					)
+				).toEqual(bytes);
+				checkpoint.conversations = [result.conversation];
+				for (const record of incoming.records)
+					checkpoint.observed[nativeRecordKey(target, sessionId, record.nativeId)] =
+						record.semanticHash;
+				expect(reconcileConversation(incoming, checkpoint).newRecords).toBe(0);
+			}
+			expect(original).toEqual(originalSnapshot);
+		}
+	);
 	it('refreshes known window membership after compaction without changing checkpoint evidence', () => {
 		const previous = read('one');
 		previous.records.push(...read('checkpoint-only').records);

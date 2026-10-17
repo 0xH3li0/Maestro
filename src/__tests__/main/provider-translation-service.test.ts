@@ -21,6 +21,8 @@ import * as translationResources from '../../shared/maestro-lib/translation/reso
 import { captureMessage } from '../../main/utils/sentry';
 import { capabilitySnapshots } from '../../main/agents/capability-snapshot';
 import { extractNativeConversation } from '../../shared/maestro-lib/translation/native-records';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { estimateTokenCount } from '../../shared/formatters';
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -124,6 +126,75 @@ describe('provider translation plan telemetry', () => {
 });
 
 describe('provider translation context capacity', () => {
+	it.each([
+		['claude-compactions', 'claude-code', 7],
+		['codex-compacted-replacement', 'codex', 4],
+		['codex-compacted-message', 'codex', 4],
+	] as const)(
+		'accepts the %s window at capacity and blocks it one token below',
+		async (fixture, provider, archivedCount) => {
+			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [],
+				limitations: [],
+			});
+			const source = {
+				provider,
+				version: provider === 'codex' ? '0.162.1' : '2.1.296',
+				accountRoot: `/isolated/${provider}`,
+				projectRoot: '/isolated/project',
+			};
+			const bytes = await fs.readFile(
+				path.resolve('src/__tests__/fixtures/provider-translation', `${fixture}.jsonl`)
+			);
+			const conversation = extractNativeConversation(source, 'tab', 'synthetic-compacted', bytes);
+			// Fixture positions define the expected window independently of its window flags.
+			const activeTokens = estimateTokenCount(
+				canonicalJson(conversation.records.slice(archivedCount).map((record) => record.blocks))
+			);
+			const allTokens = estimateTokenCount(
+				canonicalJson(conversation.records.map((record) => record.blocks))
+			);
+			expect(allTokens).toBeGreaterThan(activeTokens);
+			const capacity = vi.spyOn(capabilitySnapshots, 'get');
+			const session = createMockSession({
+				id: 'agent',
+				toolType: provider,
+				aiTabs: [{ id: 'tab', agentSessionId: 'synthetic-compacted' }] as any,
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: { get: vi.fn(() => [session]) },
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			vi.spyOn(service as any, 'identity').mockImplementation(
+				async (_session: unknown, selected: unknown) => ({
+					...source,
+					provider: selected,
+					version: selected === 'codex' ? '0.162.1' : '2.1.296',
+				})
+			);
+			vi.spyOn(service as any, 'conversation').mockResolvedValue(conversation);
+			for (const contextWindow of [activeTokens, activeTokens - 1]) {
+				capacity.mockReturnValue({ contextWindow } as any);
+				const journal: TranslationJournal = await (service as any).prepare({
+					agentId: session.id,
+					destination: provider === 'codex' ? 'claude-code' : 'codex',
+					action: 'plan',
+				});
+				expect(journal.plan.status).toBe(contextWindow === activeTokens ? 'ready' : 'blocked');
+				expect(
+					journal.plan.limitations
+						.filter((limit) => limit.severity === 'block')
+						.map((limit) => limit.code)
+				).toEqual(contextWindow === activeTokens ? [] : ['context-capacity']);
+				expect(journal.conversations[0].records).toEqual(conversation.records);
+				expect(Buffer.from(journal.conversations[0].artifacts[0].bytesBase64, 'base64')).toEqual(
+					bytes
+				);
+			}
+		}
+	);
 	it.each(['compacted', 'active-overflow', 'legacy'] as const)(
 		'estimates only the active context for %s history',
 		async (variant) => {
