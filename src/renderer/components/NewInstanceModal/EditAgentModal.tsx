@@ -232,6 +232,7 @@ export function EditAgentModal({
 	const [migrationSaving, setMigrationSaving] = useState(false);
 	const [acceptTranslationLimitations, setAcceptTranslationLimitations] = useState(false);
 	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
+	const [projectResourcesIntoRepo, setProjectResourcesIntoRepo] = useState(false);
 	const [selectionRevision, setSelectionRevision] = useState(0);
 	const carryDestinations = SUPPORTED_AGENTS.filter((provider) =>
 		getDeclaredTranslationDirection(session?.toolType ?? selectedToolType, provider)
@@ -263,6 +264,7 @@ export function EditAgentModal({
 			agentId: session.id,
 			destination: selectedToolType,
 			action: 'plan',
+			projectResourcesIntoRepo,
 			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
 		})
 			.then((report) => {
@@ -281,7 +283,14 @@ export function EditAgentModal({
 			disposed = true;
 		};
 		// Resource edits are reviewed explicitly, so typing does not repeatedly scan native history.
-	}, [isOpen, session?.id, providerChanged, selectedToolType, selectionRevision]);
+	}, [
+		isOpen,
+		session?.id,
+		providerChanged,
+		selectedToolType,
+		selectionRevision,
+		projectResourcesIntoRepo,
+	]);
 
 	// Resolve the auto-detected maestro-p path so the Batch Mode toggle can show
 	// it as helper text in the path-override input.
@@ -528,6 +537,7 @@ export function EditAgentModal({
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 			setSelectedUserResources(['']);
+			setProjectResourcesIntoRepo(false);
 			setAcceptTranslationLimitations(false);
 			setSelectionRevision((v) => v + 1);
 		}
@@ -808,6 +818,7 @@ export function EditAgentModal({
 				saveArguments[27] = acceptTranslationLimitations;
 				saveArguments[28] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
 				saveArguments[29] = migrationPlan?.id;
+				saveArguments[30] = projectResourcesIntoRepo;
 			}
 			const saved = onSave(...saveArguments);
 			if (saved) await saved;
@@ -823,6 +834,7 @@ export function EditAgentModal({
 		migrationLoading,
 		acceptTranslationLimitations,
 		selectedUserResources,
+		projectResourcesIntoRepo,
 		session,
 		instanceName,
 		workingDirChanged,
@@ -1219,7 +1231,10 @@ export function EditAgentModal({
 											? `→ ${getAgentDisplayName(agentId)} · Memory + history (${direction.verification === 'verified' ? 'verified' : 'preview'})`
 											: getAgentDisplayName(agentId);
 									}}
-									onChange={(providerId) => setSelectedToolType(providerId as ToolType)}
+									onChange={(providerId) => {
+										setProjectResourcesIntoRepo(false);
+										setSelectedToolType(providerId as ToolType);
+									}}
 								>
 									<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
 										{carryDestinations.length > 0
@@ -1253,6 +1268,15 @@ export function EditAgentModal({
 													proved.
 												</span>
 											</div>
+											<label className="flex items-center gap-2">
+												<input
+													type="checkbox"
+													checked={projectResourcesIntoRepo}
+													disabled={migrationSaving}
+													onChange={(e) => setProjectResourcesIntoRepo(e.target.checked)}
+												/>
+												Also install skills and subagents into the project (git-excluded)
+											</label>
 											{selectedUserResources.map((resource, index) => (
 												<FormInput
 													key={index}

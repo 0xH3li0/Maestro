@@ -2377,6 +2377,10 @@ program
 		'--provider <type>',
 		'Translate owned conversations and selected project knowledge to another provider'
 	)
+	.option(
+		'--project-resources',
+		'Install native project resources and add local git exclude entries'
+	)
 	.option('--force', 'Alias for --accept-translation-limitations')
 	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
 	.option(

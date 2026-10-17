@@ -84,6 +84,7 @@ interface UpdateAgentOptions extends PeerFlagOptions, AgentSettingFlagOptions, S
 	migration?: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
 	migrationPlan?: string;
 	translationResource?: string[];
+	projectResources?: boolean;
 	json?: boolean;
 }
 
@@ -442,6 +443,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 						configPatch: {
 							...(providerType && { toolType: providerType }),
 							migrationAction: action,
+							...(options.projectResources && { projectResourcesIntoRepo: true }),
 							acceptTranslationLimitations:
 								options.acceptTranslationLimitations || options.force || false,
 							...(options.migrationPlan && { migrationPlanId: options.migrationPlan.trim() }),

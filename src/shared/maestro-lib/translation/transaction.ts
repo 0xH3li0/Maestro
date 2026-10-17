@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { canonicalJson } from '../../canonicalJson';
-import { translationHash, nativeRecordKey } from './identity';
+import { translationHash, nativeRecordKey, translationArtifact } from './identity';
 import { extractNativeConversation } from './native-records';
 import { TranslationArchive, type TranslationJournal } from './archive';
 import { TranslationRegistry } from './registry';
@@ -24,6 +24,10 @@ import { isPathAtOrUnderRoot } from '../../worktreePaths';
 export interface TranslationTransactionHost {
 	/** Host-owned app-local directory, never a provider home or the user's project. */
 	knowledgeRoot: string;
+	/** Resolve git metadata without coupling the library to the desktop host. */
+	resolveProjectGit?(
+		projectRoot: string
+	): Promise<{ root: string; commonDirectory: string } | undefined>;
 	/** Called again before every mutation and commit, not just when planning. */
 	assertSourceUnchanged(journal: TranslationJournal): Promise<void>;
 	setMigration(state: ProviderMigrationState): Promise<void>;
@@ -36,13 +40,20 @@ export interface TranslationTransactionHost {
 const operations = createKeyedWriteQueue();
 
 /** A journal never gets to choose an arbitrary root for its writes or rollback. */
-function translationWriteRoot(
+async function translationWriteRoot(
 	journal: TranslationJournal,
 	write: OwnedTranslationWrite,
 	knowledgeRoot: string,
-	allowLegacyKnowledge = false
-): string {
+	allowLegacyKnowledge = false,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
+): Promise<string> {
 	if (!journal.resourceWrites.includes(write)) return journal.plan.destination.accountRoot;
+	if (write.gitExcludeBlock) {
+		const git = await resolveProjectGit?.(journal.plan.destination.projectRoot);
+		if (!git || path.resolve(write.path) !== path.join(git.commonDirectory, 'info', 'exclude'))
+			throw new Error('Unsafe journal git exclude path');
+		return git.commonDirectory;
+	}
 	const directory = journal.knowledgeDirectory;
 	if (directory) {
 		const suffix = path.join(translationHash(journal.plan.agentId), journal.plan.id);
@@ -73,12 +84,13 @@ async function stageResourceWrite(
 	journal: TranslationJournal,
 	write: OwnedTranslationWrite,
 	bytes: Buffer,
-	knowledgeRoot: string
+	knowledgeRoot: string,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
 ): Promise<void> {
 	const owned = { ...write, created: false };
 	journal.resourceWrites.push(owned);
 	await archive.write(journal);
-	const root = translationWriteRoot(journal, owned, knowledgeRoot);
+	const root = await translationWriteRoot(journal, owned, knowledgeRoot, false, resolveProjectGit);
 	await assertTranslationTarget(write.path, root);
 	await fs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
 	await assertTranslationTarget(write.path, root);
@@ -118,6 +130,7 @@ async function deferTranslation(
 		verification: plan.verification,
 		acceptLimitations,
 		selectedUserResources: plan.scope.selectedUserResources,
+		projectResourcesIntoRepo: plan.scope.projectResourcesIntoRepo,
 		acceptedLimitationCodes: limitationsNeedingAcceptance(plan.limitations).map(canonicalJson),
 	});
 	return {
@@ -176,6 +189,7 @@ export async function applyTranslation(
 		}
 		const release = await archive.lock(plan.agentId);
 		let releaseProject: (() => Promise<void>) | undefined;
+		let releaseGit: (() => Promise<void>) | undefined;
 		try {
 			releaseProject = await archive.lock(`project:${plan.destination.projectRoot}`);
 			await host.assertSourceUnchanged(journal);
@@ -188,6 +202,24 @@ export async function applyTranslation(
 				state: 'staging',
 				verification: plan.verification,
 			});
+			const projections = plan.scope.projectResourcesIntoRepo ? (journal.projections ?? []) : [];
+			if (projections.some((p) => !p.deleted) && !host.resolveProjectGit)
+				throw new Error('Project resource installation requires a host git resolver');
+			const git = projections.some((p) => !p.deleted)
+				? await host.resolveProjectGit?.(plan.destination.projectRoot)
+				: undefined;
+			if (
+				projections.some((p) => !p.deleted) &&
+				!git &&
+				!plan.limitations.some((l) => l.code === 'resource-git-exclude-unavailable')
+			)
+				plan.limitations.push({
+					code: 'resource-git-exclude-unavailable',
+					severity: 'info',
+					message:
+						'This project is not a git repository. Native resources will be installed without a local git exclude entry.',
+				});
+			if (git) releaseGit = await archive.lock(`git:${git.commonDirectory}`);
 			const adapter = registry.get(plan.destination.provider);
 			if (!adapter) throw new Error('Destination translation adapter unavailable');
 			for (const conversation of journal.conversations) {
@@ -215,7 +247,55 @@ export async function applyTranslation(
 					},
 				});
 			}
-			for (const projection of journal.projections ?? []) {
+			if (git) {
+				const file = path.join(git.commonDirectory, 'info', 'exclude');
+				await assertTranslationTarget(file, git.commonDirectory);
+				let current: Buffer | undefined;
+				try {
+					current = await fs.readFile(file);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				}
+				const paths = projections
+					.filter((p) => !p.deleted)
+					.map((p) => {
+						const relative = path.relative(git.root, p.path).replace(/\\/g, '/');
+						if (
+							!relative ||
+							relative === '..' ||
+							relative.startsWith('../') ||
+							path.isAbsolute(relative) ||
+							/[\r\n]/.test(relative)
+						)
+							throw new Error('Unsafe git exclude resource path');
+						// Anchored literal patterns, including names with gitignore metacharacters.
+						return '/' + relative.replace(/([\\*?\[\] ])/g, '\\$1');
+					});
+				const block = `${current?.length && current[current.length - 1] !== 10 ? '\n' : ''}# Maestro provider resources ${plan.id} begin\n${[...new Set(paths)].join('\n')}\n# Maestro provider resources ${plan.id} end\n`;
+				const bytes = Buffer.concat([current ?? Buffer.alloc(0), Buffer.from(block)]);
+				const backup = current
+					? {
+							...translationArtifact('instruction', file, 'git-info-exclude', current),
+							mode: (await fs.stat(file)).mode & 0o777,
+						}
+					: undefined;
+				await stageResourceWrite(
+					archive,
+					journal,
+					{
+						path: file,
+						sha256: translationHash(bytes),
+						created: !current,
+						gitExcludeBlock: block,
+						backup,
+						mode: backup?.mode,
+					},
+					bytes,
+					host.knowledgeRoot,
+					host.resolveProjectGit
+				);
+			}
+			for (const projection of projections) {
 				await host.assertSourceUnchanged(journal);
 				await assertTranslationTarget(projection.path, plan.destination.projectRoot);
 				let current: Buffer | undefined;
@@ -231,7 +311,8 @@ export async function applyTranslation(
 					journal,
 					projection,
 					Buffer.from(projection.bytesBase64, 'base64'),
-					host.knowledgeRoot
+					host.knowledgeRoot,
+					host.resolveProjectGit
 				);
 			}
 			if (journal.plan.scope.projectKnowledge) {
@@ -254,7 +335,8 @@ export async function applyTranslation(
 						journal,
 						{ path: file, sha256: artifact.sha256, created: true, mode: artifact.mode },
 						bytes,
-						host.knowledgeRoot
+						host.knowledgeRoot,
+						host.resolveProjectGit
 					);
 				}
 				const indexPath = path.join(directory, 'knowledge-index.md');
@@ -264,10 +346,11 @@ export async function applyTranslation(
 					journal,
 					{ path: indexPath, sha256: translationHash(index), created: true },
 					Buffer.from(index),
-					host.knowledgeRoot
+					host.knowledgeRoot,
+					host.resolveProjectGit
 				);
 			}
-			await verifyTranslationWrites(journal, host.knowledgeRoot);
+			await verifyTranslationWrites(journal, host.knowledgeRoot, false, host.resolveProjectGit);
 			journal.state = 'staged';
 			await archive.write(journal);
 			await host.assertSourceUnchanged(journal);
@@ -311,6 +394,7 @@ export async function applyTranslation(
 			});
 			return journal.result;
 		} finally {
+			await releaseGit?.();
 			await releaseProject?.();
 			await release();
 		}
@@ -320,7 +404,8 @@ export async function applyTranslation(
 export async function verifyTranslationWrites(
 	journal: TranslationJournal,
 	knowledgeRoot: string,
-	allowLegacyKnowledge = false
+	allowLegacyKnowledge = false,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
 ): Promise<void> {
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
@@ -331,7 +416,13 @@ export async function verifyTranslationWrites(
 	]) {
 		await assertTranslationTarget(
 			write.path,
-			translationWriteRoot(journal, write, knowledgeRoot, allowLegacyKnowledge)
+			await translationWriteRoot(
+				journal,
+				write,
+				knowledgeRoot,
+				allowLegacyKnowledge,
+				resolveProjectGit
+			)
 		);
 		if (write.deleted) {
 			try {
@@ -345,7 +436,11 @@ export async function verifyTranslationWrites(
 		if (write.symlinkTarget && (await fs.readlink(write.path)) !== write.symlinkTarget)
 			throw new Error('Native discovery alias changed before commit');
 		const bytes = await fs.readFile(write.path);
-		if (!write.sha256 || translationHash(bytes) !== write.sha256)
+		if (
+			write.gitExcludeBlock
+				? !bytes.includes(Buffer.from(write.gitExcludeBlock))
+				: !write.sha256 || translationHash(bytes) !== write.sha256
+		)
 			throw new Error(`Destination readback changed: ${write.path}`);
 		const mapping = journal.mappings.find((m) => m.artifacts.includes(write));
 		if (mapping) {
@@ -421,8 +516,15 @@ export async function recoverTranslation(
 	await archive.recoverLock(`project:${journal.plan.destination.projectRoot}`);
 	const release = await archive.lock(journal.plan.agentId);
 	let releaseProject: (() => Promise<void>) | undefined;
+	let releaseGit: (() => Promise<void>) | undefined;
 	try {
 		releaseProject = await archive.lock(`project:${journal.plan.destination.projectRoot}`);
+		if (journal.resourceWrites.some((w) => w.gitExcludeBlock)) {
+			const git = await host.resolveProjectGit?.(journal.plan.destination.projectRoot);
+			if (!git) throw new Error('Cannot resolve journal git exclude directory');
+			await archive.recoverLock(`git:${git.commonDirectory}`);
+			releaseGit = await archive.lock(`git:${git.commonDirectory}`);
+		}
 		if (await host.isCommitted(journal.plan.id)) {
 			if (rollback)
 				throw new Error(
@@ -440,6 +542,7 @@ export async function recoverTranslation(
 		}
 		if (rollback) {
 			const writes = [...journal.resourceWrites, ...journal.mappings.flatMap((m) => m.artifacts)];
+			const excludeRollbacks = new Map<OwnedTranslationWrite, Buffer>();
 			for (const write of writes) {
 				if (
 					write.backup &&
@@ -449,8 +552,62 @@ export async function recoverTranslation(
 				// Missing files still need root validation before a backup can be restored.
 				await assertTranslationTarget(
 					write.path,
-					translationWriteRoot(journal, write, host.knowledgeRoot, true)
+					await translationWriteRoot(
+						journal,
+						write,
+						host.knowledgeRoot,
+						true,
+						host.resolveProjectGit
+					)
 				);
+				if (write.gitExcludeBlock) {
+					let bytes: Buffer;
+					try {
+						bytes = await fs.readFile(write.path);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+						throw error;
+					}
+					if (!write.created && !write.backup)
+						throw new Error('Rollback refused: git exclude creation ownership is unproved');
+					if (write.created && !bytes.length) {
+						excludeRollbacks.set(write, bytes);
+						continue;
+					}
+					// Latin1 gives a reversible byte-to-character mapping for unrelated user data.
+					const current = bytes.toString('latin1');
+					const block = Buffer.from(write.gitExcludeBlock).toString('latin1');
+					if (current.includes(block)) {
+						excludeRollbacks.set(write, Buffer.from(current.replace(block, ''), 'latin1'));
+						continue;
+					}
+					const begin = `# Maestro provider resources ${journal.plan.id} begin\n`;
+					const end = `# Maestro provider resources ${journal.plan.id} end\n`;
+					const start = current.indexOf(begin);
+					const finish = current.indexOf(end, start + begin.length);
+					if (start < 0 && finish < 0) continue;
+					if (start < 0 || finish < 0)
+						throw new Error('Rollback refused: git exclude markers changed');
+					const owned = new Set(
+						block
+							.slice(block.indexOf(begin) + begin.length, block.indexOf(end))
+							.split('\n')
+							.filter(Boolean)
+					);
+					const retained = current
+						.slice(start + begin.length, finish)
+						.split('\n')
+						.filter((line) => !owned.delete(line))
+						.join('\n');
+					let prefix = current.slice(0, start);
+					if (!retained && block.startsWith('\n') && prefix.endsWith('\n'))
+						prefix = prefix.slice(0, -1);
+					excludeRollbacks.set(
+						write,
+						Buffer.from(prefix + retained + current.slice(finish + end.length), 'latin1')
+					);
+					continue;
+				}
 				try {
 					await fs.lstat(write.path);
 					if (!write.created && !write.backup)
@@ -474,6 +631,17 @@ export async function recoverTranslation(
 				}
 			}
 			for (const write of writes) {
+				if (write.gitExcludeBlock) {
+					const remaining = excludeRollbacks.get(write);
+					if (!remaining) continue;
+					if (!remaining.length && write.created) await fs.unlink(write.path);
+					else
+						await atomicWriteFile(write.path, remaining, {
+							mode: (await fs.stat(write.path)).mode & 0o777,
+							durable: true,
+						});
+					continue;
+				}
 				if (write.cleanup === 'retain' || (!write.created && !write.backup)) continue;
 				if (write.backup)
 					await atomicWriteFile(write.path, Buffer.from(write.backup.bytesBase64, 'base64'), {
@@ -499,7 +667,7 @@ export async function recoverTranslation(
 					'Incomplete native staging requires inspection/rollback; uncertain writes are not retried'
 				);
 			await host.assertSourceUnchanged(journal);
-			await verifyTranslationWrites(journal, host.knowledgeRoot, true);
+			await verifyTranslationWrites(journal, host.knowledgeRoot, true, host.resolveProjectGit);
 			await host.commit(journal);
 			await finalizeTranslation(archive, journal);
 		}
@@ -518,6 +686,7 @@ export async function recoverTranslation(
 		});
 		return journal.result;
 	} finally {
+		await releaseGit?.();
 		await releaseProject?.();
 		await release();
 	}

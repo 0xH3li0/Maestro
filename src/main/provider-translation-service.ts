@@ -233,6 +233,7 @@ export class ProviderTranslationService {
 		const scope = {
 			projectKnowledge: true as const,
 			selectedUserResources: request.selectedUserResources ?? [],
+			projectResourcesIntoRepo: request.projectResourcesIntoRepo === true,
 		};
 		const busy = isAgentBusy(
 			{ ...session, aiTabs: translationSessionTabs(session) },
@@ -518,9 +519,17 @@ export class ProviderTranslationService {
 		const resourceProjections = await planResourceProjections(
 			[...resources.values()],
 			destination,
-			checkpoint
+			checkpoint,
+			scope.projectResourcesIntoRepo
 		);
 		limitations.push(...resourceProjections.limitations);
+		if (scope.projectResourcesIntoRepo && !(await this.resolveProjectGit(destination.projectRoot)))
+			limitations.push({
+				code: 'resource-git-exclude-unavailable',
+				severity: 'info',
+				message:
+					'This project is not a git repository. Native resources will be installed without a local git exclude entry.',
+			});
 
 		if (destination.provider === 'codex')
 			limitations.push({
@@ -596,9 +605,23 @@ export class ProviderTranslationService {
 			projections: resourceProjections.projections,
 		};
 	}
+	private async resolveProjectGit(projectRoot: string) {
+		const common = await execGitReadOnly(['rev-parse', '--git-common-dir'], projectRoot);
+		if (common.exitCode !== 0) {
+			if (/not a git repository/i.test(common.stderr)) return undefined;
+			throw new Error('Cannot resolve the project git directory');
+		}
+		const top = await execGitReadOnly(['rev-parse', '--show-toplevel'], projectRoot);
+		if (top.exitCode !== 0) throw new Error('Cannot resolve the repository root');
+		return {
+			root: path.resolve(top.stdout.trim()),
+			commonDirectory: path.resolve(projectRoot, common.stdout.trim()),
+		};
+	}
 	private host(journal: TranslationJournal, recovering = false): TranslationTransactionHost {
 		return {
 			knowledgeRoot: this.knowledgeRoot,
+			resolveProjectGit: (root) => this.resolveProjectGit(root),
 			assertSourceUnchanged: async (operation) => {
 				const session = this.session(operation.plan.agentId);
 				if (session.toolType !== operation.plan.source.provider)
@@ -703,6 +726,8 @@ export class ProviderTranslationService {
 			typeof request.agentId !== 'string' ||
 			!(AGENT_IDS as readonly string[]).includes(request.destination) ||
 			!['plan', 'apply', 'status', 'recover', 'rollback'].includes(request.action) ||
+			(request.projectResourcesIntoRepo !== undefined &&
+				typeof request.projectResourcesIntoRepo !== 'boolean') ||
 			(request.acceptLimitations !== undefined && typeof request.acceptLimitations !== 'boolean') ||
 			(request.selectedUserResources !== undefined &&
 				(!Array.isArray(request.selectedUserResources) ||

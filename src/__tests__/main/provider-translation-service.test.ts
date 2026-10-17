@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { execGitReadOnly } from '../../main/utils/remote-git';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -54,78 +55,125 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('app-local managed knowledge', () => {
-	it('supplies the app data root, writes selected memory there and binds the committed session', async () => {
-		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-app-data-'));
-		try {
-			const userData = path.join(root, 'data');
-			vi.spyOn(app, 'getPath').mockReturnValue(userData);
-			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
-			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
-			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
-				artifacts: [
-					translationArtifact(
-						'memory',
-						'synthetic',
-						'memory/MEMORY.md',
-						Buffer.from('Selected fact')
-					),
-				],
-				limitations: [],
-			});
-			let session = createMockSession({
-				id: 'agent',
-				toolType: 'codex',
-				aiTabs: [{ id: 'tab', agentSessionId: null }] as any,
-			});
-			const service = new ProviderTranslationService({
-				sessionsStore: {
-					get: () => [session],
-					set: (_key: string, sessions: (typeof session)[]) => {
-						session = sessions[0];
+	it.each(['default', 'git', 'non-git'] as const)(
+		'keeps knowledge app-local and installs resources only by consent (%s)',
+		async (mode) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-app-data-'));
+			try {
+				const userData = path.join(root, 'data');
+				vi.mocked(execGitReadOnly).mockImplementation(async (args) =>
+					mode === 'git'
+						? {
+								exitCode: 0,
+								stdout: args.includes('--git-common-dir') ? '../git-common' : root,
+								stderr: '',
+							}
+						: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }
+				);
+				vi.spyOn(app, 'getPath').mockReturnValue(userData);
+				vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+				vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+				vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+					artifacts: [
+						translationArtifact(
+							'memory',
+							'synthetic',
+							'memory/MEMORY.md',
+							Buffer.from('Selected fact')
+						),
+						translationArtifact(
+							'instruction',
+							'synthetic',
+							'AGENTS.md',
+							Buffer.from('Project instructions')
+						),
+					],
+					limitations: [],
+				});
+				let session = createMockSession({
+					id: 'agent',
+					toolType: 'codex',
+					aiTabs: [{ id: 'tab', agentSessionId: null }] as any,
+				});
+				const service = new ProviderTranslationService({
+					sessionsStore: {
+						get: () => [session],
+						set: (_key: string, sessions: (typeof session)[]) => {
+							session = sessions[0];
+						},
 					},
-				},
-				agentConfigsStore: { get: () => ({}) },
-				getProcessManager: () => ({ get: () => undefined }),
-			} as unknown as ProviderTranslationDependencies);
-			vi.spyOn(service as any, 'identity').mockImplementation(
-				async (_session: unknown, provider: unknown) => ({
-					provider,
-					version: provider === 'codex' ? '0.162.1' : '2.1.296',
-					accountRoot: path.join(root, String(provider)),
-					projectRoot: path.join(root, 'project'),
-				})
-			);
-			const journal: TranslationJournal = await (service as any).prepare({
-				agentId: 'agent',
-				destination: 'claude-code',
-				action: 'plan',
-			});
-			const host = (service as any).host(journal);
-			expect(host.knowledgeRoot).toBe(path.join(userData, 'provider-knowledge'));
-			const { applyTranslation: apply } = await vi.importActual<
-				typeof import('../../shared/maestro-lib/translation/transaction')
-			>('../../shared/maestro-lib/translation/transaction');
-			const result = await apply(
-				(service as any).archive,
-				(service as any).registry,
-				journal,
-				host,
-				true
-			);
-			expect(result.state).toBe('committed');
-			const directory = path.join(host.knowledgeRoot, translationHash('agent'), journal.plan.id);
-			expect(session.providerTranslationKnowledgeDirectory).toBe(directory);
-			expect(session.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR]).toBe(directory);
-			expect(await fs.readFile(path.join(directory, 'memory/MEMORY.md'), 'utf8')).toBe(
-				'Selected fact'
-			);
-			await expect(fs.readdir(path.join(root, 'project'))).rejects.toMatchObject({
-				code: 'ENOENT',
-			});
-		} finally {
-			await fs.rm(root, { recursive: true, force: true });
+					agentConfigsStore: { get: () => ({}) },
+					getProcessManager: () => ({ get: () => undefined }),
+				} as unknown as ProviderTranslationDependencies);
+				vi.spyOn(service as any, 'identity').mockImplementation(
+					async (_session: unknown, provider: unknown) => ({
+						provider,
+						version: provider === 'codex' ? '0.162.1' : '2.1.296',
+						accountRoot: path.join(root, String(provider)),
+						projectRoot: path.join(root, 'project'),
+					})
+				);
+				const journal: TranslationJournal = await (service as any).prepare({
+					agentId: 'agent',
+					destination: 'claude-code',
+					action: 'plan',
+					...(mode !== 'default' && { projectResourcesIntoRepo: true }),
+				});
+				const host = (service as any).host(journal);
+				expect(host.knowledgeRoot).toBe(path.join(userData, 'provider-knowledge'));
+				const { applyTranslation: apply } = await vi.importActual<
+					typeof import('../../shared/maestro-lib/translation/transaction')
+				>('../../shared/maestro-lib/translation/transaction');
+				const result = await apply(
+					(service as any).archive,
+					(service as any).registry,
+					journal,
+					host,
+					true
+				);
+				expect(result.state).toBe('committed');
+				const directory = path.join(host.knowledgeRoot, translationHash('agent'), journal.plan.id);
+				expect(session.providerTranslationKnowledgeDirectory).toBe(directory);
+				expect(session.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR]).toBe(directory);
+				expect(await fs.readFile(path.join(directory, 'memory/MEMORY.md'), 'utf8')).toBe(
+					'Selected fact'
+				);
+				if (mode === 'default') {
+					expect(journal.plan.limitations).toContainEqual(
+						expect.objectContaining({ code: 'resource-not-projected', severity: 'info' })
+					);
+					await expect(fs.readdir(path.join(root, 'project'))).rejects.toMatchObject({
+						code: 'ENOENT',
+					});
+				} else {
+					expect(await fs.readFile(path.join(root, 'project/CLAUDE.md'), 'utf8')).toBe(
+						'Project instructions'
+					);
+					if (mode === 'git') {
+						expect(execGitReadOnly).toHaveBeenCalledWith(
+							['rev-parse', '--git-common-dir'],
+							path.join(root, 'project')
+						);
+						expect(await fs.readFile(path.join(root, 'git-common/info/exclude'), 'utf8')).toContain(
+							'/project/CLAUDE.md'
+						);
+					} else {
+						expect(journal.plan.limitations).toContainEqual(
+							expect.objectContaining({
+								code: 'resource-git-exclude-unavailable',
+								severity: 'info',
+							})
+						);
+						await expect(fs.stat(path.join(root, 'git-common'))).rejects.toMatchObject({
+							code: 'ENOENT',
+						});
+					}
+				}
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
 		}
-	});
+	);
 });
 
 describe('provider translation plan telemetry', () => {

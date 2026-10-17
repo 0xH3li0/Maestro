@@ -172,7 +172,8 @@ export interface EditAgentModalProps {
 		peerGrants?: PeerGrants,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
-		migrationPlanId?: string
+		migrationPlanId?: string,
+		projectResourcesIntoRepo?: boolean
 	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;

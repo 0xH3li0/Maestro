@@ -88,6 +88,9 @@ async function scenario() {
 	let committed = false;
 	const host = {
 		knowledgeRoot: path.join(root, 'data', 'provider-knowledge'),
+		resolveProjectGit: vi.fn(
+			async (): Promise<{ root: string; commonDirectory: string } | undefined> => undefined
+		),
 		assertSourceUnchanged: vi.fn(async () => {}),
 		setMigration: vi.fn(async () => {}),
 		commit: vi.fn(async () => {
@@ -105,6 +108,183 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it.each([false, true])('writes native files only with opt-in (enabled: %s)', async (enabled) => {
+		const s = await scenario();
+		try {
+			const file = path.join(
+				s.journal.plan.destination.projectRoot,
+				'.claude/skills/test/SKILL.md'
+			);
+			const bytes = Buffer.from('Synthetic skill');
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			s.journal.plan.scope.projectResourcesIntoRepo = enabled;
+			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+			expect(result.state).toBe('committed');
+			if (enabled) {
+				expect(await readFile(file, 'utf8')).toBe('Synthetic skill');
+				expect(result.plan.limitations).toContainEqual(
+					expect.objectContaining({ code: 'resource-git-exclude-unavailable', severity: 'info' })
+				);
+			} else
+				await expect(readdir(s.journal.plan.destination.projectRoot)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each([
+		{ existing: false, inside: false },
+		{ existing: true, inside: false },
+		{ existing: true, inside: true },
+	])(
+		'journals and rolls back only its git exclude lines ($existing, $inside)',
+		async ({ existing, inside }) => {
+			const s = await scenario();
+			try {
+				const project = s.journal.plan.destination.projectRoot;
+				const repo = path.dirname(project);
+				const commonDirectory = path.join(s.root, 'git-common');
+				const file = path.join(project, '.claude/skills/test [one]/SKILL.md');
+				const bytes = Buffer.from('Synthetic skill');
+				const exclude = path.join(commonDirectory, 'info/exclude');
+				await mkdir(path.dirname(exclude), { recursive: true });
+				const original = existing ? '# User rules\n/user-cache' : '';
+				if (existing) await writeFile(exclude, original);
+				s.journal.projections = [
+					{
+						path: file,
+						sha256: translationHash(bytes),
+						created: true,
+						expectedHash: null,
+						bytesBase64: bytes.toString('base64'),
+					},
+				];
+				s.journal.plan.scope.projectResourcesIntoRepo = true;
+				const host = {
+					...s.host,
+					resolveProjectGit: vi.fn(async () => ({ root: repo, commonDirectory })),
+				};
+				host.commit.mockRejectedValueOnce(new Error('Synthetic commit failure'));
+				const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+				expect(result.state).toBe('failed');
+				expect(await readFile(file, 'utf8')).toBe('Synthetic skill');
+				const written = await readFile(exclude, 'utf8');
+				expect(written).toContain(`/project/.claude/skills/test\\ \\[one\\]/SKILL.md`);
+				expect(written).toContain(`# Maestro provider resources ${s.journal.plan.id} begin`);
+				const edited = inside
+					? written.replace(
+							`# Maestro provider resources ${s.journal.plan.id} end`,
+							`/inside-user-rule\n# Maestro provider resources ${s.journal.plan.id} end`
+						)
+					: written;
+				await writeFile(
+					exclude,
+					Buffer.concat([Buffer.from(edited + '/later-user-rule\n'), Buffer.from([0xff])])
+				);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				expect(
+					durable.resourceWrites.find((w) => w.path === exclude)?.gitExcludeBlock
+				).toBeTruthy();
+				expect((await recoverTranslation(s.archive, durable, host, true)).state).toBe(
+					'rolled-back'
+				);
+				expect(await readFile(exclude)).toEqual(
+					Buffer.concat([
+						Buffer.from(original + (inside ? '\n/inside-user-rule\n' : '') + '/later-user-rule\n'),
+						Buffer.from([0xff]),
+					])
+				);
+				await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('never removes an unowned exclude file that collides after the journal records intent', async () => {
+		const s = await scenario();
+		try {
+			const commonDirectory = path.join(s.root, 'git-common');
+			await mkdir(path.join(commonDirectory, 'info'), { recursive: true });
+			const exclude = path.join(commonDirectory, 'info/exclude');
+			const file = path.join(s.journal.plan.destination.projectRoot, 'CLAUDE.md');
+			const bytes = Buffer.from('Synthetic instructions');
+			s.journal.plan.scope.projectResourcesIntoRepo = true;
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			const host = {
+				...s.host,
+				resolveProjectGit: vi.fn(async () => ({ root: s.root, commonDirectory })),
+			};
+			const persist = s.archive.write.bind(s.archive);
+			let collision = '';
+			vi.spyOn(s.archive, 'write').mockImplementation(async (journal) => {
+				await persist(journal);
+				const intent = journal.resourceWrites.find((w) => w.gitExcludeBlock);
+				if (intent && !collision) {
+					collision = intent.gitExcludeBlock!;
+					await writeFile(exclude, collision, { flag: 'wx' });
+				}
+			});
+			expect((await applyTranslation(s.archive, s.registry, s.journal, host, true)).state).toBe(
+				'failed'
+			);
+			await expect(
+				recoverTranslation(s.archive, await s.archive.read('agent', s.journal.plan.id), host, true)
+			).rejects.toThrow('ownership is unproved');
+			expect(await readFile(exclude, 'utf8')).toBe(collision);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('refuses an exclude symlink outside git metadata before writing project resources', async () => {
+		const s = await scenario();
+		try {
+			const commonDirectory = path.join(s.root, 'git-common');
+			await mkdir(path.join(commonDirectory, 'info'), { recursive: true });
+			const external = path.join(s.root, 'user-exclude');
+			await writeFile(external, '/user-rule\n');
+			await symlink(external, path.join(commonDirectory, 'info/exclude'));
+			const file = path.join(s.journal.plan.destination.projectRoot, 'CLAUDE.md');
+			const bytes = Buffer.from('Synthetic instructions');
+			s.journal.plan.scope.projectResourcesIntoRepo = true;
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			const host = {
+				...s.host,
+				resolveProjectGit: vi.fn(async () => ({ root: s.root, commonDirectory })),
+			};
+			const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+			expect(result.error).toContain('symlink');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(await readFile(external, 'utf8')).toBe('/user-rule\n');
+			await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
 	it.each(['info', 'warning', 'block'] as const)(
 		'applies info without acceptance, while preserving the %s tier gate',
 		async (severity) => {
@@ -506,6 +686,7 @@ describe('all-tabs migration journal', () => {
 								directory,
 								kind === 'managed resource' ? 'memory/MEMORY.md' : 'knowledge-index.md'
 							);
+				if (kind === 'native projection') s.journal.plan.scope.projectResourcesIntoRepo = true;
 				if (kind === 'native projection')
 					s.journal.projections = [
 						{

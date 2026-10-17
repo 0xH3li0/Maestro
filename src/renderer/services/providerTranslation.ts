@@ -167,6 +167,7 @@ export async function requestProviderTranslation(
 					verification: report.plan!.verification,
 					acceptLimitations: request.acceptLimitations === true,
 					selectedUserResources: request.selectedUserResources,
+					projectResourcesIntoRepo: request.projectResourcesIntoRepo,
 					acceptedLimitationCodes,
 				},
 			}));
@@ -191,6 +192,7 @@ export function resumeDeferredProviderTranslations(sessions: Session[]): void {
 			action: 'apply',
 			acceptLimitations: state.acceptLimitations === true,
 			selectedUserResources: state.selectedUserResources,
+			projectResourcesIntoRepo: state.projectResourcesIntoRepo,
 		};
 		// Legacy code/artifact keys cannot prove acceptance of the completed source's exact warning.
 		pending.set(session.id, finishDeferred(request, state.acceptedLimitationCodes ?? []));

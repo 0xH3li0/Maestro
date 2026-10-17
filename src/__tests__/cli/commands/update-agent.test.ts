@@ -1626,7 +1626,7 @@ describe('update-agent command', () => {
 			);
 		}
 	);
-	it('carries a reviewed operation ID through the dedicated translation request', async () => {
+	it('carries project resource opt-in and a reviewed operation ID through the dedicated translation request', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		const sendCommand = vi.fn().mockResolvedValue({ success: true });
 		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
@@ -1635,6 +1635,7 @@ describe('update-agent command', () => {
 		await updateAgent('agent-1', {
 			provider: 'codex',
 			migrationPlan: ' reviewed-plan ',
+			projectResources: true,
 			acceptTranslationLimitations: true,
 		});
 		expect(sendCommand).toHaveBeenCalledWith(
@@ -1645,6 +1646,7 @@ describe('update-agent command', () => {
 					toolType: 'codex',
 					migrationAction: 'apply',
 					migrationPlanId: 'reviewed-plan',
+					projectResourcesIntoRepo: true,
 					acceptTranslationLimitations: true,
 				},
 			},

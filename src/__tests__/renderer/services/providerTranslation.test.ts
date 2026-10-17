@@ -38,7 +38,12 @@ const plan: TranslationPlan = {
 	counts: { records: 2, artifacts: 1, bytes: 100 },
 	fingerprint: 'synthetic-fingerprint',
 };
-const request: TranslationRequest = { agentId: 'agent', destination: 'codex', action: 'apply' };
+const request: TranslationRequest = {
+	agentId: 'agent',
+	destination: 'codex',
+	action: 'apply',
+	projectResourcesIntoRepo: true,
+};
 const translateProvider = vi.fn<(input: TranslationRequest) => Promise<TranslationReport>>();
 let originalMaestro: typeof window.maestro;
 
@@ -188,6 +193,7 @@ describe('deferred provider translation client', () => {
 				state: 'deferred',
 				verification: 'verified',
 				acceptLimitations: acceptLimitations === true,
+				projectResourcesIntoRepo: true,
 			});
 			const completion = requestProviderTranslation(request, { waitForDeferred: true });
 			await vi.runAllTimersAsync();
@@ -207,7 +213,7 @@ describe('deferred provider translation client', () => {
 		}
 	);
 
-	it('resumes a saved clean deferral without granting warning acceptance', async () => {
+	it('resumes saved project resource consent without granting warning acceptance', async () => {
 		const session = useSessionStore.getState().sessions[0];
 		session.providerMigration = {
 			operationId: plan.id,
@@ -216,6 +222,7 @@ describe('deferred provider translation client', () => {
 			verification: 'verified',
 			acceptLimitations: false,
 			acceptedLimitationCodes: [],
+			projectResourcesIntoRepo: true,
 		};
 		translateProvider
 			.mockResolvedValueOnce({ success: true, plan: { ...plan, status: 'ready' } })
@@ -228,6 +235,7 @@ describe('deferred provider translation client', () => {
 			...request,
 			acceptLimitations: false,
 			selectedUserResources: undefined,
+			projectResourcesIntoRepo: true,
 			planId: plan.id,
 		});
 		expect(useSessionStore.getState().sessions[0].toolType).toBe('claude-code');

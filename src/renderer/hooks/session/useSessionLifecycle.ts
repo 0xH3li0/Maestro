@@ -117,7 +117,8 @@ export interface SessionLifecycleReturn {
 		peerGrants?: PeerGrants,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
-		migrationPlanId?: string
+		migrationPlanId?: string,
+		projectResourcesIntoRepo?: boolean
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -221,7 +222,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			peerGrants?: PeerGrants,
 			acceptTranslationLimitations?: boolean,
 			selectedUserResources?: string[],
-			migrationPlanId?: string
+			migrationPlanId?: string,
+			projectResourcesIntoRepo?: boolean
 		) => {
 			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			if (toolType && before && toolType !== before.toolType) {
@@ -238,6 +240,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						action: 'apply',
 						acceptLimitations: acceptTranslationLimitations,
 						selectedUserResources,
+						projectResourcesIntoRepo,
 						planId: migrationPlanId,
 					},
 					{ waitForDeferred: true }

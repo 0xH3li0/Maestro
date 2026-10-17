@@ -92,6 +92,8 @@ export interface TranslationScope {
 	/** Exact paths selected by the user; never an implicit account-wide import. */
 	selectedUserResources: string[];
 	projectKnowledge: true;
+	/** Explicit per-switch consent for native files in the project. Defaults to false. */
+	projectResourcesIntoRepo?: boolean;
 }
 
 export interface TranslationCheckpoint {
@@ -132,6 +134,8 @@ export interface OwnedTranslationWrite {
 	created: boolean;
 	/** Provider-owned indexes cannot be undone by unlinking a rollout. */
 	cleanup?: 'retain';
+	/** Exact operation-owned addition to the local git exclude file. */
+	gitExcludeBlock?: string;
 	backup?: TranslationArtifact;
 	resourceKey?: string;
 	format?: 'markdown' | 'toml' | 'binary';
@@ -211,6 +215,7 @@ export interface ProviderMigrationState {
 	error?: string;
 	acceptLimitations?: boolean;
 	selectedUserResources?: string[];
+	projectResourcesIntoRepo?: boolean;
 	/** Canonical complete limitations; legacy code/artifact keys require renewed review. */
 	acceptedLimitationCodes?: string[];
 }
@@ -230,6 +235,7 @@ export interface TranslationRequest {
 	acceptLimitations?: boolean;
 	planId?: string;
 	selectedUserResources?: string[];
+	projectResourcesIntoRepo?: boolean;
 }
 
 export interface TranslationReport {

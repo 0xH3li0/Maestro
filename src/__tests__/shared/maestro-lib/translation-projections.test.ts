@@ -19,6 +19,56 @@ import {
 import { buildAgentLaunchPlan } from '../../../shared/maestro-lib/launch/launch-plan';
 
 describe('native project discovery and shared launch binding', () => {
+	it('reports native resources without staging them by default, even when a native file conflicts', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-opt-in-'));
+		try {
+			await fs.writeFile(path.join(root, 'AGENTS.md'), 'User-owned instructions');
+			const resources = [
+				translationArtifact(
+					'instruction',
+					'/source/CLAUDE.md',
+					'CLAUDE.md',
+					Buffer.from('Source instructions')
+				),
+				translationArtifact(
+					'skill',
+					'/source/SKILL.md',
+					'.claude/skills/test/SKILL.md',
+					Buffer.from('---\nname: test\n---\nSkill body')
+				),
+				translationArtifact(
+					'subagent',
+					'/source/reviewer.md',
+					'.claude/agents/reviewer.md',
+					Buffer.from('---\nname: reviewer\n---\nReview code')
+				),
+			];
+			const result = await planResourceProjections(resources, {
+				provider: 'codex',
+				version: '0.162.1',
+				accountRoot: '/isolated/codex',
+				projectRoot: root,
+			});
+			expect(result.projections).toEqual([]);
+			expect(result.limitations).toHaveLength(1);
+			expect(result.limitations[0]).toMatchObject({
+				code: 'resource-not-projected',
+				severity: 'info',
+			});
+			for (const file of [
+				'AGENTS.md',
+				'.agents/skills/test/SKILL.md',
+				'.codex/agents/reviewer.toml',
+			])
+				expect(result.limitations[0].message).toContain(file);
+			expect(await fs.readdir(root)).toEqual(['AGENTS.md']);
+			expect(await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8')).toBe(
+				'User-owned instructions'
+			);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 	it('rejects a file alias outside the selected root while permitting canonical aliases inside it', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-leaf-alias-'));
 		try {
@@ -65,11 +115,11 @@ describe('native project discovery and shared launch binding', () => {
 				projectRoot: root,
 			};
 			expect(
-				(await planResourceProjections([script, header], destination)).projections
+				(await planResourceProjections([script, header], destination, undefined, true)).projections
 			).toHaveLength(0);
-			expect((await planResourceProjections([script], destination)).projections[0].mode).toBe(
-				0o700
-			);
+			expect(
+				(await planResourceProjections([script], destination, undefined, true)).projections[0].mode
+			).toBe(0o700);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}
@@ -89,7 +139,7 @@ describe('native project discovery and shared launch binding', () => {
 				accountRoot: path.join(root, 'codex'),
 				projectRoot: root,
 			};
-			const planned = await planResourceProjections([resource], destination);
+			const planned = await planResourceProjections([resource], destination, undefined, true);
 			expect(planned.projections[0].path).toBe(path.join(root, '.codex/agents/reviewer.toml'));
 			expect(Buffer.from(planned.projections[0].bytesBase64, 'base64').toString()).toContain(
 				'developer_instructions'
@@ -101,9 +151,9 @@ describe('native project discovery and shared launch binding', () => {
 				resource.relativePath,
 				Buffer.from('---\nname: reviewer\ntools: Read\n---\nRead only.')
 			);
-			expect((await planResourceProjections([restricted], destination)).projections).toHaveLength(
-				0
-			);
+			expect(
+				(await planResourceProjections([restricted], destination, undefined, true)).projections
+			).toHaveLength(0);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}
@@ -120,12 +170,17 @@ describe('native project discovery and shared launch binding', () => {
 				'.claude/skills/test/SKILL.md',
 				Buffer.from('---\nname: test\ndescription: Test\n---\nImported body.')
 			);
-			const plan = await planResourceProjections([resource], {
-				provider: 'codex',
-				version: '0.162.1',
-				accountRoot: '/isolated/codex',
-				projectRoot: root,
-			});
+			const plan = await planResourceProjections(
+				[resource],
+				{
+					provider: 'codex',
+					version: '0.162.1',
+					accountRoot: '/isolated/codex',
+					projectRoot: root,
+				},
+				undefined,
+				true
+			);
 			expect(plan.limitations).toMatchObject([
 				{ code: 'native-resource-conflict', severity: 'block' },
 			]);
@@ -149,12 +204,17 @@ describe('native project discovery and shared launch binding', () => {
 				Buffer.from('---\nname: test\n---\nBody.')
 			);
 			await expect(
-				planResourceProjections([resource], {
-					provider: 'codex',
-					version: '0.162.1',
-					accountRoot: '/isolated/codex',
-					projectRoot: project,
-				})
+				planResourceProjections(
+					[resource],
+					{
+						provider: 'codex',
+						version: '0.162.1',
+						accountRoot: '/isolated/codex',
+						projectRoot: project,
+					},
+					undefined,
+					true
+				)
 			).rejects.toThrow('symlink');
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });

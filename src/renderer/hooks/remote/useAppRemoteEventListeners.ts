@@ -1840,6 +1840,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
 				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',
 				acceptLimitations: patchObj.acceptTranslationLimitations === true,
+				projectResourcesIntoRepo: patchObj.projectResourcesIntoRepo === true,
 				planId: typeof patchObj.migrationPlanId === 'string' ? patchObj.migrationPlanId : undefined,
 				selectedUserResources: Array.isArray(patchObj.selectedUserResources)
 					? (patchObj.selectedUserResources as string[])

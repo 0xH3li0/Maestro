@@ -645,6 +645,44 @@ describe('EditAgentModal', () => {
 		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
 	});
 
+	it('requires per-switch consent to install project resources and forwards it with the reviewed plan', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		const picker = screen.getByRole('combobox', { name: 'Agent Provider' });
+		fireEvent.change(picker, { target: { value: 'codex' } });
+		await screen.findByText('Native resume remains unverified');
+		const checkbox = screen.getByLabelText(
+			'Also install skills and subagents into the project (git-excluded)'
+		);
+		expect(checkbox).not.toBeChecked();
+		expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+			expect.objectContaining({ action: 'plan', projectResourcesIntoRepo: false })
+		);
+		fireEvent.click(checkbox);
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+				expect.objectContaining({ action: 'plan', projectResourcesIntoRepo: true })
+			)
+		);
+		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
+		fireEvent.click(screen.getByText('Save Changes'));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][30]).toBe(true);
+		fireEvent.change(picker, { target: { value: 'claude-code' } });
+		fireEvent.change(picker, { target: { value: 'codex' } });
+		expect(
+			screen.getByLabelText('Also install skills and subagents into the project (git-excluded)')
+		).not.toBeChecked();
+	});
 	it('shows translation activity and locks the provider picker until save completes', async () => {
 		let finishSave!: () => void;
 		onSave.mockImplementation(

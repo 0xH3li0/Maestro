@@ -881,12 +881,23 @@ describe('useSessionLifecycle', () => {
 				error: 'missing attachment',
 			});
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-			await expect(
-				result.current.handleSaveEditAgent(session.id, 'My Agent', 'codex')
-			).rejects.toThrow('missing attachment');
+			const args: Parameters<typeof result.current.handleSaveEditAgent> = [
+				session.id,
+				'My Agent',
+				'codex',
+			];
+			args[30] = true;
+			await expect(result.current.handleSaveEditAgent(...args)).rejects.toThrow(
+				'missing attachment'
+			);
 			expect(useSessionStore.getState().sessions[0]).toBe(session);
 			expect(requestProviderTranslation).toHaveBeenCalledWith(
-				expect.objectContaining({ agentId: session.id, destination: 'codex', action: 'apply' }),
+				expect.objectContaining({
+					agentId: session.id,
+					destination: 'codex',
+					action: 'apply',
+					projectResourcesIntoRepo: true,
+				}),
 				{ waitForDeferred: true }
 			);
 		});

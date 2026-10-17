@@ -16,6 +16,10 @@ Commander tree by `npm run gen:cli-reference`.
 
 Provider translation (`update-agent --provider`) uses `provider_translation`, which forwards to the same migration callback as Edit Agent. Its dedicated transport prevents a newer CLI's preflight/apply from falling through to an older desktop's destructive provider settings patch. `--migration-plan` targets a reviewed operation; `--dry-run --json` supplies its ID for a Cue shell Command node. This operation changes the active provider; it is not an independent replica sync API.
 
+| UI action                                                                     | CLI path                                                  | Shared operation                                                                                                                                   |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Edit Agent: Also install skills and subagents into the project (git-excluded) | `update-agent <id> --provider <type> --project-resources` | `requestProviderTranslation` forwards `projectResourcesIntoRepo` to `ProviderTranslationService.run`; off by default, including deferred switches. |
+
 An agent may create a surface. It may not decide the human should be looking at
 it. Every verb that can move the Maestro view or raise a notice carries a
 `background` bit so a caller that wants to stay out of the way has a way to say

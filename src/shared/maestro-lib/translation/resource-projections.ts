@@ -61,10 +61,12 @@ export async function assertTranslationTarget(file: string, root: string): Promi
 export async function planResourceProjections(
 	resources: TranslationArtifact[],
 	destination: TranslationIdentity,
-	checkpoint?: TranslationCheckpoint
+	checkpoint?: TranslationCheckpoint,
+	projectResourcesIntoRepo = false
 ): Promise<{ projections: ResourceProjection[]; limitations: TranslationLimitation[] }> {
 	const projections: ResourceProjection[] = [];
 	const limitations: TranslationLimitation[] = [];
+	const omitted = new Set<string>();
 	const incompatibleSkills = new Set(
 		resources
 			.filter(
@@ -176,6 +178,10 @@ export async function planResourceProjections(
 			)
 				bytes = Buffer.from(artifact.bytesBase64, 'base64');
 		} else continue;
+		if (!projectResourcesIntoRepo) {
+			omitted.add(path.relative(destination.projectRoot, file).replace(/\\/g, '/'));
+			continue;
+		}
 		await assertTranslationTarget(file, destination.projectRoot);
 		const hash = translationHash(bytes);
 		let existing: Buffer | undefined;
@@ -240,6 +246,15 @@ export async function planResourceProjections(
 			...(symlinkTarget && !existing && { symlinkTarget }),
 			...(backup && { backup }),
 		});
+	}
+	if (!projectResourcesIntoRepo) {
+		if (omitted.size)
+			limitations.push({
+				code: 'resource-not-projected',
+				severity: 'info',
+				message: `Native project resources were not installed: ${[...omitted].join(', ')}. Enable project resource installation for this switch to make them natively discoverable. Their original bytes remain in managed knowledge.`,
+			});
+		return { projections, limitations };
 	}
 	const selected = new Set(resources.map((a) => a.relativePath));
 	for (const [file, owned] of Object.entries(checkpoint?.ownedResources ?? {})) {

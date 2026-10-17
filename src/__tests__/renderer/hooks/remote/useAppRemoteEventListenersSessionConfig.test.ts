@@ -354,22 +354,34 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 });
 
 describe('provider migration parity', () => {
-	it('passes the library report through and never resets tabs or kills source work', async () => {
-		const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
-		const { setSessions } = setup([session]);
-		const report = {
-			success: false,
-			error: 'unverified native resume',
-			plan: { id: 'plan', status: 'ready' },
-		} as any;
-		vi.mocked(requestProviderTranslation).mockResolvedValue(report);
-		dispatchPatch(session.id, { toolType: 'codex', migrationAction: 'plan' });
-		await flush();
-		expect(requestProviderTranslation).toHaveBeenCalledWith(
-			expect.objectContaining({ action: 'plan', agentId: session.id, destination: 'codex' })
-		);
-		expect(ack).toHaveBeenCalledWith('ch', report);
-		expect(setSessions).not.toHaveBeenCalled();
-		expect(setMany).not.toHaveBeenCalled();
-	});
+	it.each([undefined, true])(
+		'passes resource consent and the library report through without resetting source work (%s)',
+		async (projectResourcesIntoRepo) => {
+			const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
+			const { setSessions } = setup([session]);
+			const report = {
+				success: false,
+				error: 'unverified native resume',
+				plan: { id: 'plan', status: 'ready' },
+			} as any;
+			vi.mocked(requestProviderTranslation).mockResolvedValue(report);
+			dispatchPatch(session.id, {
+				toolType: 'codex',
+				migrationAction: 'plan',
+				projectResourcesIntoRepo,
+			});
+			await flush();
+			expect(requestProviderTranslation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					action: 'plan',
+					agentId: session.id,
+					destination: 'codex',
+					projectResourcesIntoRepo: projectResourcesIntoRepo === true,
+				})
+			);
+			expect(ack).toHaveBeenCalledWith('ch', report);
+			expect(setSessions).not.toHaveBeenCalled();
+			expect(setMany).not.toHaveBeenCalled();
+		}
+	);
 });
