@@ -9,6 +9,7 @@ import { withMaestroClient, resolveSessionId } from '../services/maestro-client'
 import { resolveAgentId } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenBrowserOptions {
 	agent?: string;
@@ -108,6 +109,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
@@ -144,6 +146,7 @@ export async function closeBrowser(tabId: string, options: CloseBrowserOptions):
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

@@ -8,7 +8,13 @@ import type {
 	BatchRunState,
 	AITab,
 } from '../../types';
-import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	getBusyTabs,
+	getTabDisplayName,
+	settleAgentStateFromTabs,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -29,6 +35,7 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import {
+	queuedMentionFields,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 	type CrossAgentMentionPlan,
@@ -898,7 +905,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									? activeTab.agentSessionId.split('-')[0].toUpperCase()
 									: 'New'),
 							readOnlyMode: activeTab?.readOnlyMode === true,
-							crossAgentMention: true,
+							...queuedMentionFields(crossAgentMentionPlan),
 							crossAgentOnly: true,
 							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
@@ -1158,7 +1165,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
-						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...queuedMentionFields(crossAgentMentionPlan),
 						...((processState.probeFailed || connectionHold) && {
 							waitingForConnection: true,
 						}),
@@ -1545,7 +1552,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
-				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				...queuedMentionFields(crossAgentMentionPlan),
 				turnSettings: captureQueuedTurnSettings(tab, session, route),
 			});
 
@@ -1742,28 +1749,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s, sentRoute);
 								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
-							// Reset target tab's state to 'idle' and add error log
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) =>
-											tab.id === errorTabId
-												? {
-														...tab,
-														state: 'idle' as const,
-														thinkingStartTime: undefined,
-														logs: [...tab.logs, errorLog],
-													}
-												: tab
-										)
-									: s.aiTabs;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-								executionQueue,
-							};
+							// Settle the target tab and add the error log; another tab
+							// mid-turn keeps the agent busy.
+							return settleTabThinkingState(
+								{
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === errorTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+									),
+									executionQueue,
+								},
+								errorTabId
+							);
 						});
 					}
 				})();
@@ -1772,10 +1769,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const trimmedCommand = capturedInputValue.trim();
 				if (trimmedCommand === 'clear') {
 					updateSessionWith(resolvedSessionId, (s) => ({
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
+						...settleAgentStateFromTabs(s),
 						shellLogs: [],
 					}));
 					return;
@@ -1803,10 +1797,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					.catch((error) => {
 						logger.error('Failed to run command:', undefined, error);
 						updateSessionWith(resolvedSessionId, (s) => ({
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
+							...settleAgentStateFromTabs(s),
 							// TODO: Remove shellLogs once terminal tabs migration is complete
 							...(!s.terminalTabs?.length && {
 								shellLogs: [
@@ -1831,29 +1822,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						source: 'system',
 						text: `Error: Failed to write to process - ${(error as Error).message}`,
 					};
-					updateSessionWith(resolvedSessionId, (s) => {
-						// Reset active tab's state to 'idle' and add error log
-						const updatedAiTabs =
-							s.aiTabs?.length > 0
-								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
-											? {
-													...tab,
-													state: 'idle' as const,
-													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLog],
-												}
-											: tab
-									)
-								: s.aiTabs;
-						return {
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs,
-						};
-					});
+					// Settle the active tab and add the error log; another tab mid-turn
+					// keeps the agent busy.
+					updateSessionWith(resolvedSessionId, (s) =>
+						settleTabThinkingState(
+							{
+								...s,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === s.activeTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+								),
+							},
+							s.activeTabId
+						)
+					);
 				});
 			}
 		},

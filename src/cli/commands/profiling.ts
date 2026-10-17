@@ -8,6 +8,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveCliPath } from '../utils/parse';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 /**
  * Stopping a capture compresses the raw trace (can be hundreds of MB) into the
@@ -65,6 +66,7 @@ export async function profilingStart(options: StartOptions): Promise<void> {
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));
@@ -139,6 +141,7 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));
@@ -188,6 +191,7 @@ export async function profilingStatus(options: StatusOptions): Promise<void> {
 			console.log('Profiling is not active');
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));

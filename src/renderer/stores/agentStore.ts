@@ -41,7 +41,13 @@ import { isAutoModel } from '../../shared/autoModel';
 import { settleAutoTurn, turnSpawnSettings } from '../services/autoTurn';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
+import {
+	useSessionStore,
+	selectSessionById,
+	takePendingMergedContext,
+	updateSessionWith,
+} from './sessionStore';
+import { probeSessionAiProcesses } from '../services/process';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
@@ -57,10 +63,12 @@ import {
 } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
 import {
+	applyQueuedItemAbort,
 	applyQueuedItemDispatchFailure,
 	applyQueuedItemRelease,
 	clearSpawnCollision,
 	noteSpawnCollision,
+	queuedItemOwnerTabId,
 	SPAWN_COLLISION_MAX_ATTEMPTS,
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
@@ -183,6 +191,12 @@ export interface ProcessQueuedItemDeps {
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
 	bmadCommands?: BmadCommand[];
+	/**
+	 * Checked right before the spawn, after every await that prepares it. An
+	 * auto-retry resend passes "Stop has not ended me": Stop can land while the
+	 * agent and system prompt load, when there is no process yet to interrupt.
+	 */
+	isCancelled?: () => boolean;
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -347,12 +361,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// Turns run per tab (`{id}-ai-{tabId}`), so the bare `{id}-ai` this used to
+		// kill matched nothing and a hung turn survived the restart. Restart the
+		// tab that failed; another tab's healthy turn is left alone. Read before
+		// clearing the error, which drops `agentErrorTabId`.
+		const errorTabId = session.agentErrorTabId;
+
 		// Clear the error state
 		get().clearAgentError(sessionId);
 
 		// Kill any existing AI process
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await window.maestro.process.kill(
+				errorTabId ? `${sessionId}-ai-${errorTabId}` : `${sessionId}-ai`
+			);
 		} catch {
 			// Process may not exist
 		}
@@ -394,17 +416,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			// Reset session to idle since we're aborting this queued item
-			useSessionStore.getState().setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					return {
-						...s,
-						state: 'idle' as SessionState,
-						busySource: undefined,
-						thinkingStartTime: undefined,
-					};
-				})
+			// Release the tab the dequeue marked, unless a live turn owns it (a
+			// read-only or forced-parallel item can land beside one).
+			const ownerTabId = queuedItemOwnerTabId(session, item);
+			const ownerRunning = ownerTabId
+				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
+				: false;
+			updateSessionWith(sessionId, (s) =>
+				applyQueuedItemAbort(s, item, ownerRunning ? undefined : ownerTabId)
 			);
 			return false;
 		}
@@ -457,7 +476,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.images,
 				// Set only when another agent's `maestro-cli dispatch` queued the item:
 				// the mentions in it are then that agent's consults, and spend its chain.
-				item.consultChain
+				item.consultChain,
+				item.mentionRouting
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
@@ -580,6 +600,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 				});
 
+				if (deps.isCancelled?.()) {
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+					return false;
+				}
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -682,6 +706,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}));
 
 					// Spawn agent with the prompt
+					if (deps.isCancelled?.()) {
+						updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+						return false;
+					}
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
 						toolType: session.toolType,
@@ -718,29 +746,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						},
 						item.tabId
 					);
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const updatedAiTabs = s.aiTabs?.map((tab) =>
-								tab.id === item.tabId
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										}
-									: tab
-							);
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						})
-					);
 					// Nothing spawned and nothing will: the command does not exist, so
-					// no exit is coming to settle this turn.
+					// no exit is coming to settle this turn. Release the tab it was
+					// marked on and keep the agent busy if another tab is mid-turn.
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
 			}
@@ -788,7 +797,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					const recovered = applyQueuedItemDispatchFailure(s, item, {
-						hold: !isTransientCollision,
+						collision: isTransientCollision,
 					});
 					if (isTransientCollision) return recovered;
 

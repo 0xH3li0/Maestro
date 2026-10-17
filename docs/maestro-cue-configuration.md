@@ -62,7 +62,7 @@ subscriptions:
     gate_on_unavailable: string # Optional. "run" (default) or "skip": what the gate does when its model cannot answer
     screen_injection: boolean # Optional. Score untrusted text for prompt injection before a run starts
     injection_threshold: number # Optional. Block at or above this score, above 0 and at most 1 (default 0.8)
-    repo: string # Optional for github.* (auto-detected if omitted)
+    repo: string # Required for github.* (never detected; the trigger does not run without it)
     poll_minutes: number # Optional for github.*, task.pending
     gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
     gh_labels: list # Optional for github.label. Labels to watch (omit to fire on any label)
@@ -158,7 +158,7 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `gate_on_unavailable`      | string            | `run`    | What a `gate` does when its model cannot answer: `run` starts the run and warns you, `skip` records a gated event instead                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `screen_injection`         | boolean           | see note | Whether a local classifier scores the untrusted text this subscription uses before a run starts. Not set: screened when it is an `action: command` subscription that uses an untrusted variable (see [Screening for prompt injection](./maestro-cue-advanced#screening-for-prompt-injection))                                                                                                                                                                                                                                   |
 | `injection_threshold`      | number            | `0.8`    | The score, above 0 and at most 1, at or above which a screened value blocks the run                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Required for `github.*`: without it the trigger never runs (it is not detected from the git remote)                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -233,6 +233,7 @@ By default a subscription runs on the agent's own configured model and effort. S
 subscriptions:
   - name: triage-issues
     event: github.issue
+    repo: owner/name
     tier: low # cheap, fast model for sorting
     effort: low
     prompt: Label and prioritize {{CUE_GH_URL}}.
@@ -351,6 +352,7 @@ subscriptions:
   - name: pr-review
     label: 'PR Review Bot'
     event: github.pull_request
+    repo: owner/name
     prompt: Review the PR at {{CUE_GH_URL}}.
 ```
 
@@ -420,6 +422,8 @@ settings:
   queue_size: 1024 # Buffer up to 1024 events
 ```
 
+Saving `cue.yaml` while events wait (by hand, from the Pipeline Graph, or with `maestro-cli cue model`) keeps every queued event whose subscription is still in the file and switched on. It runs with the prompt and settings it was fired with. A queued event for a subscription the save removed, renamed or switched off is dropped, logged, and shown in the activity log as never run. A save that fails to parse keeps the queue until the next good save. A heartbeat whose timing changed fires on load, so its waiting tick is dropped the same way.
+
 ## Validation
 
 The engine validates your YAML on every load. Common validation errors:
@@ -485,6 +489,7 @@ subscriptions:
   - name: DevOps-chain-2
     label: PR Review
     event: github.pull_request
+    repo: owner/name
     poll_minutes: 3
     filter:
       draft: false

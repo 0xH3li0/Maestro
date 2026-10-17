@@ -3,6 +3,7 @@
 import { resolveTargetSessionId } from '../services/maestro-client';
 import { refreshFileTreeFor } from '../services/file-tree-refresh';
 import { ExitCode, exitWith } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface RefreshFilesOptions {
 	agent?: string;
@@ -35,6 +36,7 @@ export async function refreshFiles(options: RefreshFilesOptions): Promise<void> 
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

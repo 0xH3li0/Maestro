@@ -43,6 +43,7 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customEnvVars: session.customEnvVars,
 		gatewayUrl: session.gatewayUrl,
 		runOn: session.runOn,
+		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 		// This is Auto Run, not someone typing. Marks the turn so delegation
 		// reporting downstream of the spawn does not count it as hands-on work.
@@ -60,6 +61,7 @@ function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customEnvVars: session.customEnvVars,
 		gatewayUrl: session.gatewayUrl,
 		runOn: session.runOn,
+		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 	};
 }

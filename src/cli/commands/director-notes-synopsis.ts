@@ -4,6 +4,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { failCommand } from '../services/session-command';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readSettings } from '../services/storage';
 import {
 	parseDirectorNotesNarrative,
@@ -191,6 +192,7 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 			}
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: format === 'json', stderrJson: true });
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		failCommand(message, format === 'json');
 	}

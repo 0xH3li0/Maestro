@@ -19,6 +19,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { admitCliConsult } from '../services/consult-budget-guard';
 import { ExitCode, exitWith } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 export interface AskOptions {
 	/**
@@ -185,6 +186,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			console.error(`Note: ${result.targetAgentName ?? 'The agent'} answered with nothing`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error));
 	}
 }

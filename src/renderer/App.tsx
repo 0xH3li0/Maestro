@@ -149,6 +149,7 @@ import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -1065,6 +1066,8 @@ function MaestroConsoleInner() {
 	// Forwards document visibility to the main-process Cue scanner
 	// subsystem so it pauses background work when the window is hidden.
 	useCueVisibilityWiring();
+	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
+	useCueBundleAgentSync();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
@@ -1909,7 +1912,10 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			// The base opener, not openWizardModal: the resume handlers call this
+			// after the resume prompt, and openWizardModal would find the saved
+			// state still on disk and raise the same prompt again (#1835).
+			openWizard: _baseOpenWizardModal,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,

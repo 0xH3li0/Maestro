@@ -2,6 +2,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface NotifyFlashOptions {
 	color?: string;
@@ -80,6 +81,7 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));

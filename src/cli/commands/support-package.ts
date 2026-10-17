@@ -14,7 +14,8 @@
  */
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failFromError } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
 import { formatSize } from '../../shared/formatters';
 import type { DebugPackageOptions } from '../../shared/debugPackage';
@@ -66,10 +67,7 @@ export async function supportPackage(options: SupportPackageOptions): Promise<vo
 			)
 		);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
-		else console.error(`Error: ${message}`);
-		exitWith(exitCodeForError(error));
+		failFromError(error, options.json);
 	}
 
 	if (isSecretScreenRefusal(result)) {

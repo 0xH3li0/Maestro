@@ -129,6 +129,19 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(openUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
 	});
 
+	it('hands a routing-hinted link to openUrl unstripped, so openUrl decides', () => {
+		const el = renderLink(chat(), { href: 'maestro+http://localhost:5173/x', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).toHaveBeenCalledWith('maestro+http://localhost:5173/x', { ctrlKey: false });
+	});
+
+	it('opens nothing for a hint in front of a non-http scheme', () => {
+		const el = renderLink(chat(), { href: 'maestro+javascript:void(0)', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).not.toHaveBeenCalled();
+		expect((window as any).maestro.shell.openExternal).not.toHaveBeenCalled();
+	});
+
 	it('opens file:// links via the shell', () => {
 		const el = renderLink(chat(), { href: 'file:///tmp/x.txt', children: 'x' });
 		el.props.onClick(makeEvent());
@@ -265,6 +278,20 @@ describe('createMarkdownLink - document behavior (anchors, relativeAsFile, callb
 		});
 		el.props.onClick(makeEvent());
 		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+
+	it('routes a routing-hinted link through onExternalLinkClick, not as a relative file', () => {
+		const onExternalLinkClick = vi.fn();
+		const onFileClick = vi.fn();
+		const el = renderLink(doc({ onExternalLinkClick, onFileClick }), {
+			href: 'system+https://example.com',
+			children: 'x',
+		});
+		el.props.onClick(makeEvent());
+		expect(onExternalLinkClick).toHaveBeenCalledWith('system+https://example.com', {
+			ctrlKey: false,
+		});
+		expect(onFileClick).not.toHaveBeenCalled();
 	});
 
 	it('routes relative paths to onFileClick with options', () => {

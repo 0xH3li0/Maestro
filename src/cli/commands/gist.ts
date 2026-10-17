@@ -21,6 +21,7 @@ import {
 } from '../../shared/secretScan';
 import type { CreateGistResult } from '../../shared/gitUtils';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface GistCreateOptions {
 	description?: string;
@@ -107,20 +108,9 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 		};
 		console.log(JSON.stringify(response, null, 2));
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const msg = error instanceof Error ? error.message : String(error);
-		const lower = msg.toLowerCase();
-		if (
-			lower.includes('econnrefused') ||
-			lower.includes('connection refused') ||
-			lower.includes('websocket') ||
-			lower.includes('enotfound') ||
-			lower.includes('etimedout') ||
-			lower.includes('not running')
-		) {
-			emitErrorJson('Maestro desktop is not running or not reachable', 'MAESTRO_NOT_RUNNING');
-		} else {
-			emitErrorJson(`Gist creation failed: ${msg}`, 'GIST_CREATE_FAILED');
-		}
+		emitErrorJson(`Gist creation failed: ${msg}`, 'GIST_CREATE_FAILED');
 		exitWith(exitCodeForError(error));
 	}
 }

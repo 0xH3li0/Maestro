@@ -7,8 +7,8 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveGroupId, getSessionsByGroup, readGroups } from '../services/storage';
-import { formatSuccess } from '../output/formatter';
 import { failCommand, failFromError } from '../services/session-command';
+import { formatSuccess } from '../output/formatter';
 
 interface RemoveGroupOptions {
 	force?: boolean;

@@ -12,8 +12,13 @@ export {
 	withBridgeConnection as withMaestroClient,
 	UnsupportedCommandError,
 	CommandTimeoutError,
-	MaestroNotRunningError,
 } from '../../shared/maestro-lib/client/bridge-connection';
+export {
+	MAESTRO_NOT_RUNNING_CODE,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+	MaestroNotRunningError,
+	type MaestroNotRunningReason,
+} from './maestro-not-running';
 
 /**
  * Resolve session ID from CLI options.

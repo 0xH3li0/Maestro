@@ -15,7 +15,9 @@ import { SIGINT_EXIT_CODE } from '../../cli/utils/interrupt';
 
 describe('exitCodeForError', () => {
 	it('names a closed app, an old build and a hung renderer', () => {
-		expect(exitCodeForError(new MaestroNotRunningError('not running'))).toBe(ExitCode.NotRunning);
+		expect(exitCodeForError(new MaestroNotRunningError('no-discovery-file'))).toBe(
+			ExitCode.NotRunning
+		);
 		expect(exitCodeForError(new UnsupportedCommandError('some_command'))).toBe(
 			ExitCode.Unsupported
 		);

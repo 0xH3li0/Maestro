@@ -55,6 +55,12 @@ import type {
 	OpenFileTabOptions,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
+import type {
+	CueBundleExportOutcome,
+	CueBundleExportRequest,
+	CueBundleImportOutcome,
+	CueBundleImportRequest,
+} from '../../../cue-bundle-service';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import type { GroupSeededCreateReport } from '../../../../shared/groupAgentDefaults';
 import type { OpenUiSurfaceRequest } from '../../../../shared/uiSurfaces';
@@ -446,6 +452,10 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+	/** Same function as the Cue modal's Bundles tab. */
+	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
+	/** Same function as the Cue modal's Bundles tab; agents land in the running app. */
+	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (

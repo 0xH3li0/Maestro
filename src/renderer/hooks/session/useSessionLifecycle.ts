@@ -47,6 +47,7 @@ import type { PeerGrants } from '../../../shared/peerAgents';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { flushAgentToStore, OFF_TOKEN_PROXY_FIELDS } from '../../services/agentGateway';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -518,7 +519,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			// Kill all processes for this session (AI + legacy terminal + terminal tabs)
 			try {
-				await window.maestro.process.kill(`${id}-ai`);
+				await killAgentAiProcesses(id);
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'kill-ai' },

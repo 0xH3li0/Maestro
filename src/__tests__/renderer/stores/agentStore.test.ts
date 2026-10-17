@@ -668,6 +668,23 @@ describe('agentStore', () => {
 			expect(mockKill).toHaveBeenCalledWith('session-1-ai');
 		});
 
+		// Turns run per tab, so the bare `-ai` id matched nothing and a hung turn
+		// survived the restart. Only the tab that failed is restarted.
+		it('kills the process of the tab that failed', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				agentErrorTabId: 'tab-7',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore.getState().restartAgentAfterError('session-1');
+
+			expect(mockKill).toHaveBeenCalledWith('session-1-ai-tab-7');
+			expect(mockKill).toHaveBeenCalledTimes(1);
+		});
+
 		it('does nothing if session not found', async () => {
 			await useAgentStore.getState().restartAgentAfterError('nonexistent');
 			expect(mockKill).not.toHaveBeenCalled();
@@ -1562,6 +1579,7 @@ describe('agentStore', () => {
 				'tab-1',
 				undefined,
 				// The user queued it, so the mention is in no consult chain.
+				undefined,
 				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
@@ -1570,7 +1588,7 @@ describe('agentStore', () => {
 
 		// An item another agent's `maestro-cli dispatch` queued is in that agent's
 		// consult chain, and so is a mention inside it: main spends from the chain.
-		it('hands the chain of a dispatched item to the mentions in it', async () => {
+		it('hands the consult chain and picked routing to queued mentions', async () => {
 			const session = createMockSession({
 				id: 'session-1',
 				toolType: 'claude-code',
@@ -1596,6 +1614,7 @@ describe('agentStore', () => {
 				text: 'now ask @Backend to review',
 				crossAgentMention: true,
 				consultChain: { chainId: 'chain-a', depth: 1 },
+				mentionRouting: 'parallel',
 			});
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
@@ -1605,7 +1624,8 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
-				{ chainId: 'chain-a', depth: 1 }
+				{ chainId: 'chain-a', depth: 1 },
+				'parallel'
 			);
 		});
 

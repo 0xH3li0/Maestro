@@ -286,6 +286,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 	// Non-reactive store handles for the change handler below.
 	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const setMentionRoutingOverride = useMemo(
+		() => useComposerInputStore.getState().setMentionRoutingOverride,
+		[]
+	);
 	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
 
 	// Reordering the strip reorders what the agent receives, so any `Screenshot N`
@@ -705,7 +709,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							<MentionRoutingBar
 								theme={theme}
 								routing={mentionRouting.routing}
+								inferredRouting={mentionRouting.inferredRouting}
+								explicit={mentionRouting.explicit}
 								agentNames={mentionRouting.agentNames}
+								onRoutingChange={setMentionRoutingOverride}
 							/>
 						)}
 

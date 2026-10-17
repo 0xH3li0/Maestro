@@ -7,16 +7,19 @@ import {
 	type CliServerInfo,
 } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
+import {
+	MAESTRO_NOT_RUNNING_HINT,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../services/maestro-not-running';
 import { ExitCode } from '../exit-codes';
 import { failCommand } from '../services/session-command';
 
 /**
- * Said when no discovery file exists. `session`, `dispatch`, and `queue` match
- * on the first sentence, so it stays as it was; the second says what to do on a
- * machine that has no desktop app at all.
+ * Said when no host is reachable: the one message every app-dependent verb
+ * prints (`MAESTRO_NOT_RUNNING_MESSAGE`), then what to do on a machine that has
+ * no desktop app at all.
  */
-export const NOT_RUNNING_MESSAGE =
-	'Maestro desktop app is not running. Start it, or run `maestro-cli host start` for a headless host.';
+export const NOT_RUNNING_MESSAGE = `${MAESTRO_NOT_RUNNING_MESSAGE}. ${MAESTRO_NOT_RUNNING_HINT}`;
 
 /** The peer the discovery file names, as a person reads it. */
 export function describeHost(info: Pick<CliServerInfo, 'hostKind' | 'pid'>): string {

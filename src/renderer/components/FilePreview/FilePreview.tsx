@@ -65,6 +65,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
+import { isWebUrl } from '../../../shared/urlRoutingHint';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
@@ -853,7 +854,7 @@ export const FilePreview = React.memo(
 				// A file:// target Maestro can render stays inside the app (preview
 				// tab or player); only OS-owned types go to the default app.
 				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
-				if (/^https?:\/\/|^mailto:/.test(href)) {
+				if (isWebUrl(href) || /^mailto:/.test(href)) {
 					openUrl(href, opts);
 				}
 			},

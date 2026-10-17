@@ -6,6 +6,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import {
+	MAESTRO_NOT_RUNNING_CODE,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../../../cli/services/maestro-not-running';
 import { ExitCode } from '../../../cli/exit-codes';
 import {
 	CommandTimeoutError,
@@ -44,8 +48,19 @@ describe('failCommand and failFromError', () => {
 		expect(errorSpy).not.toHaveBeenCalled();
 	});
 
+	it('uses the same not-running class through both CLI error modules', () => {
+		expect(() => failFromError(new MaestroNotRunningError('connect-failed'), true)).toThrow(
+			`exit:${ExitCode.NotRunning}`
+		);
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: false,
+			error: MAESTRO_NOT_RUNNING_MESSAGE,
+			code: MAESTRO_NOT_RUNNING_CODE,
+		});
+	});
+
 	it('exits with the code the failure names', () => {
-		expect(() => failFromError(new MaestroNotRunningError('closed'), true)).toThrow(
+		expect(() => failFromError(new MaestroNotRunningError('no-discovery-file'), true)).toThrow(
 			`exit:${ExitCode.NotRunning}`
 		);
 		expect(() => failFromError(new UnsupportedCommandError('x'), true)).toThrow(

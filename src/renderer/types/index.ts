@@ -80,6 +80,7 @@ export type {
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { AutoRouteStamp, AutoTurnStamp } from '../../shared/autoTurn';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { ConsultChain } from '../../shared/consultBudget';
 import type { BackgroundRequests } from '../../shared/local-models/background-requests';
@@ -589,6 +590,11 @@ export interface QueuedItem {
 	// queue slot, because its POSITION is what the user is expressing ("finish
 	// that, then ask them"). Always paired with `crossAgentMention`.
 	crossAgentOnly?: boolean;
+	// How the `@mention` runs, when the user PICKED it in the composer's routing
+	// menu instead of leaving it to the wording. The drain re-plans from the text,
+	// so without this the pick would be lost the moment the message queued.
+	// Absent: the wording decides (`inferMentionTiming`).
+	mentionRouting?: MentionRouting;
 	// Maestro-generated continuation of a turn that @mentioned other agents
 	// mid-message. The local agent answers in parallel with the consult but must
 	// not FINISH before the reply arrives, so this item sits at the head of the
@@ -1669,6 +1675,8 @@ export interface Session {
 	// it stays on for the others. Absent means the agent follows "Let agents use
 	// System One". See isSystemOneOptedOut in shared/local-models/system-one-agent.ts.
 	systemOneOptOut?: boolean;
+	// Secret NAMES from bundle import, resolved by the CLI and Cue at launch. Carried, never read here. See shared/types.ts.
+	requiredSecrets?: string[];
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

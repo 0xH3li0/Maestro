@@ -34,6 +34,7 @@ import {
 } from '../../shared/mediaTypes';
 import { resolveOwningAgent } from '../utils/owning-agent';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenFileOptions {
 	agent?: string;
@@ -114,6 +115,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

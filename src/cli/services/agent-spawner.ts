@@ -21,6 +21,7 @@ import {
 } from '../../shared/maestro-lib/providers/capabilities';
 import {
 	buildAgentLaunchPlan,
+	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import {
@@ -157,6 +158,7 @@ type SpawnOverrides = Pick<
 	| 'customEnvVars'
 	| 'gatewayUrl'
 	| 'runOn'
+	| 'requiredSecrets'
 	| 'globalEnvVars'
 	| 'agentConfigValues'
 	| 'agentCommand'
@@ -353,6 +355,7 @@ function planCliLaunch(
 		sshRemoteConfig?: AgentSshRemoteConfig;
 		gatewayUrl?: string;
 		runOn?: ResolvedRunOn;
+		requiredSecrets?: string[];
 	}
 ): AgentLaunchPlanResult {
 	const result = buildAgentLaunchPlan({
@@ -375,7 +378,14 @@ function planCliLaunch(
 		runOn: input.runOn,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
+		requiredSecrets: input.requiredSecrets,
 	});
+	// Names only, on stderr: stdout is the command's result. The turn still
+	// runs, and the agent reports its own auth error if it needed the secret.
+	if (result.ok) {
+		const warning = describeUndeliveredSecrets(def?.name ?? toolType, result.plan.secrets);
+		if (warning) console.error(`[maestro-cli] ${warning}`);
+	}
 	// Desktop-backed local turns use the same blank-unset, path expansion and
 	// environment layering as desktop spawns. The prompt still follows the CLI
 	// wire format, and standalone/remote launches keep their existing rules.
@@ -784,6 +794,7 @@ async function spawnClaudeAgent(
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
 		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1326,6 +1337,7 @@ async function spawnJsonLineAgent(
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
 		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1377,6 +1389,13 @@ async function spawnJsonLineAgent(
 	const parser = createOutputParser(toolType);
 	if (!parser) {
 		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+	}
+	if (toolType === 'antigravity') {
+		// Registers agy's conversation-store reader with maestro-lib (see host.ts),
+		// so the run keeps its thinking text and command status. Loaded on demand:
+		// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
+		// reach through a static import (plain-node-imports.test.ts).
+		await import('../../main/parsers/antigravity-step-store');
 	}
 
 	// The shared capture applies the provider's usage rule (Codex reports a
@@ -1601,6 +1620,12 @@ export interface SpawnAgentOptions {
 	 */
 	runOn?: unknown;
 	/**
+	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
+	 * import). Resolved from systemd credentials, `/run/secrets` or the
+	 * environment and put in this agent's environment only.
+	 */
+	requiredSecrets?: string[];
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1722,6 +1747,7 @@ async function spawnAgentOnce(
 		customEnvVars: options?.customEnvVars,
 		gatewayUrl: options?.gatewayUrl,
 		runOn: options?.runOn,
+		requiredSecrets: options?.requiredSecrets,
 		globalEnvVars: options?.globalEnvVars,
 		agentConfigValues: options?.agentConfigValues,
 		agentCommand: options?.agentCommand,

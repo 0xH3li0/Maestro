@@ -14,6 +14,7 @@ import {
 	type CadenzaDecisionOption,
 } from '../../shared/cadenza-types';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface ViewOpenOptions {
 	type?: string;
@@ -130,6 +131,7 @@ async function sendCadenza(
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

@@ -91,6 +91,7 @@ export async function requestCliSynopsis(
 					// one, else the agent's own. On the provider's model it would send
 					// a conversation held on a source to the provider's cloud.
 					runOn: request.runOn ?? session.runOn,
+					requiredSecrets: session.requiredSecrets,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',

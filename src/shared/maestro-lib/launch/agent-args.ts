@@ -12,7 +12,7 @@ type AgentConfigOverridable = Pick<
 
 const LOG_CONTEXT = '[AgentArgs]';
 
-type BuildAgentArgsOptions = {
+export type BuildAgentArgsOptions = {
 	baseArgs: string[];
 	prompt?: string;
 	cwd?: string;

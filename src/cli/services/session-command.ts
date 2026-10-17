@@ -6,6 +6,7 @@
 // and the behavior consistent across the whole CLI surface.
 
 import { withMaestroClient } from './maestro-client';
+import { MaestroNotRunningError } from './maestro-not-running';
 import { resolveAgentId, readActiveAgentId } from './storage';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 
@@ -68,6 +69,7 @@ export function failCommand(
  * `catch (error) { failCommand(...) }` so no verb reports 1 for all of them.
  */
 export function failFromError(error: unknown, json?: boolean): never {
+	exitIfMaestroNotRunning(error, { json });
 	return failCommand(
 		error instanceof Error ? error.message : String(error),
 		json,
@@ -99,6 +101,47 @@ export async function sendBridgeCommand<T extends { success: boolean; error?: st
 	if (!reply.success)
 		failCommand(reply.error || errorFrameMessage(reply) || 'Request failed', json);
 	return reply;
+}
+
+export interface NotRunningReportOptions {
+	/** Report as JSON. Verbs that only speak JSON pass `true`. */
+	json?: boolean;
+	/** Fields a verb's error envelope always carries (e.g. `{ type: 'error' }`). */
+	jsonExtra?: Record<string, unknown>;
+	/** Write the JSON to stderr, for verbs whose JSON errors already go there. */
+	stderrJson?: boolean;
+	/** Pretty-print the JSON, for verbs that already indent their output. */
+	indent?: number;
+}
+
+/**
+ * If `error` says the desktop app is absent, report it the ONE way every
+ * app-dependent verb does - the fixed message, `code: MAESTRO_NOT_RUNNING`,
+ * exit 3 - and exit. Otherwise return, so the caller's own handling runs
+ * exactly as before.
+ *
+ * Put it first in any catch that wraps a bridge call. The point is that a
+ * catch which re-words the error (`Failed to X: ${msg}`) or flattens it to a
+ * string loses the type, and then nothing downstream can map it to exit 3.
+ */
+export function exitIfMaestroNotRunning(
+	error: unknown,
+	options: NotRunningReportOptions = {}
+): void {
+	if (!(error instanceof MaestroNotRunningError)) return;
+	if (options.json) {
+		const payload = JSON.stringify(
+			{ ...options.jsonExtra, success: false, error: error.message, code: error.code },
+			null,
+			options.indent
+		);
+		if (options.stderrJson) console.error(payload);
+		else console.log(payload);
+	} else {
+		console.error(formatError(error.message));
+		console.error(error.hint);
+	}
+	exitWith(ExitCode.NotRunning);
 }
 
 /** Report a `{ success }` result: success line, or error + exit(1) on failure. */

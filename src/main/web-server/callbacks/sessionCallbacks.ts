@@ -6,6 +6,7 @@ import { asThinkingMode } from '../../../shared/types';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
+import { findStoredAiTab } from '../../stores/deferred-session-content';
 
 export function registerSessionCallbacks(
 	server: WebServer,
@@ -174,8 +175,9 @@ export function registerSessionCallbacks(
 	server.setGetSessionHistoryCallback((tabId, options) => {
 		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 		for (const s of sessions) {
-			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
-			const tab = aiTabs.find((t) => t && t.id === tabId);
+			// A snoozed tab is out of `aiTabs` but still exists: answering
+			// TAB_NOT_FOUND for it would make a Pianola watcher retire the target.
+			const tab = findStoredAiTab(s, tabId) as Record<string, any> | undefined;
 			if (!tab) continue;
 			const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
 			let logs = rawLogs;

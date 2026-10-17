@@ -40,6 +40,7 @@ import {
 import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 import { ExitCode, exitWith } from '../exit-codes';
 import { failCommand, failFromError } from '../services/session-command';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -433,6 +434,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: msg }));

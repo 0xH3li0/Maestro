@@ -551,6 +551,7 @@ export async function send(
 					gatewayUrl: agent.gatewayUrl,
 					// The tier's target when Auto decided the place, else the agent's own.
 					runOn: turnRunOnTarget(autoTurn ?? {}, agent.runOn),
+					requiredSecrets: agent.requiredSecrets,
 					sshRemoteConfig: agent.sessionSshRemoteConfig,
 					appendSystemPrompt,
 					// Honor the agent's Claude token source for `maestro-cli send` turns.

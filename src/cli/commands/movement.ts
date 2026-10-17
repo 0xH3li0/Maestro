@@ -28,6 +28,7 @@ import type {
 } from '../../shared/concerto-html';
 import { ExitCode, exitWith } from '../exit-codes';
 import { failCommand, failFromError } from '../services/session-command';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface MovementAddOptions {
 	type?: string;
@@ -202,6 +203,7 @@ async function sendMovement(
 			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
@@ -371,6 +373,7 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height} z${it.z}${title}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		exitWith(ExitCode.GeneralError);
 	}
@@ -481,6 +484,7 @@ export async function movementInteract(
 		if (options.json) console.log(JSON.stringify({ success: true, result }));
 		else console.log(`${result.message}: ${result.selector}`);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(`Error: ${message}`);

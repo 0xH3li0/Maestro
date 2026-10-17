@@ -1,11 +1,6 @@
 import type { CliServerInfo } from './discovery';
 
-export class MaestroNotRunningError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = 'MaestroNotRunningError';
-	}
-}
+export { MaestroNotRunningError } from './not-running';
 
 /**
  * Thrown when the running app echoes a command back unhandled - i.e. it does
