@@ -342,3 +342,31 @@ Selecting one reads a conversion plan; **Save Changes** applies it after any
 listed warnings are accepted. Blocking limitations prevent the switch. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
 for the steps, scope, CLI examples and activity indicator.
+
+Carried knowledge stays outside your project in Maestro's local data directory:
+`<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. Maestro connects its
+knowledge index to each turn, including resumed sessions. Claude also receives
+access to that directory and a memory setting for it. These bindings do not yet
+certify native recall or repeated round-trip continuity.
+
+Installing native project resources is **off by default for each switch**. The
+plan's Notes list instruction aliases, skills and subagents that were not
+installed. Their original files remain in managed knowledge, but that does not
+make them available as native skills or subagents.
+
+To install them, select **Also install skills and subagents into the project
+(git-excluded)** in Edit Agent, or add `--project-resources` to
+`maestro-cli update-agent <id> --provider <type>`. This can create a compatible
+`AGENTS.md` or `CLAUDE.md` alias, skills under `.agents/skills` or `.claude/skills`,
+and supported subagents under `.codex/agents` or `.claude/agents`. Unsupported
+definitions remain listed as limitations.
+
+Maestro adds each installed path to a marked block in Git's local
+`info/exclude`, using the shared Git directory for worktrees. It does not change
+your committed `.gitignore` or untrack files already in Git. Rollback before
+commit removes its own exclude entries while preserving entries you add later;
+changed ownership or markers require inspection. Outside a Git repository,
+installation still works, but Notes report that local Git exclusions are
+unavailable. Older operations that stored knowledge under
+`.maestro/provider-knowledge` remain recoverable or reversible; new switches
+and launch bindings use the local data directory.
