@@ -29,6 +29,7 @@ import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
 import { notifyToast } from '../../../stores/notificationStore';
+import { isWebUrl } from '../../../../shared/urlRoutingHint';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -195,7 +196,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				// it to the same ctrlKey inversion openUrl expects (#1060).
 				if (openFileUrl(href, onFileClick)) return;
 
-				if (/^https?:\/\//.test(href)) {
+				if (isWebUrl(href)) {
 					openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				} else {
 					// gitToHttps is a pure string transform (no throw); convert and open
@@ -209,7 +210,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 			}
 
 			// Doc: route external links through the caller's callback.
-			if (onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
+			if (onExternalLinkClick && (isWebUrl(href) || /^mailto:/.test(href))) {
 				onExternalLinkClick(href, { ctrlKey: e.metaKey || e.ctrlKey });
 				return;
 			}
@@ -219,7 +220,7 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 				behavior.relativeAsFile &&
 				onFileClick &&
 				!href.startsWith('mailto:') &&
-				!/^https?:\/\//.test(href)
+				!isWebUrl(href)
 			) {
 				onFileClick(href, { openInNewTab });
 			}
