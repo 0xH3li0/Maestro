@@ -372,3 +372,40 @@ Neither provider emitted a block code, including `native-project-root-mismatch` 
 All always-on codes now appear as info; warnings remain separate for interrupted calls and native boundaries. Counts are files per code and can overlap. This probe measures extraction only: it does not establish native resume, context continuity, resource discovery, or Sentry delivery. No provider homes were modified. No code or tests changed, and test cases were not run, per the standing conductor instruction. No task images were supplied.
 
 Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify` (1,397 asserted paths, 455 index entries, zero findings), focused Prettier and `command git diff --check` passed.
+
+### 2026-10-17: Ensemble 03 compaction-window recheck
+
+Updated [[provider-translation-native-formats]], [[PROVIDER-SUPPORT]], [[CLAUDE-AGENTS]] and [[docs/agent-guides/AGENT-INFRA]] for [[ENSEMBLE-03]]. The destination receives the source provider's own latest compaction summary/replacement history plus later records; Maestro never writes a summary itself. Pre-compaction records and original transcript bytes remain archived. Projection, capacity and plan counts use the active window, tool-link checks exclude archived calls, and return-hop reconciliation retains archived identities.
+
+Re-ran the existing read-only extractor probe after the implementation and synthetic fixtures in `c63add9f8f`:
+
+```bash
+node scripts/provider-translation-probe.mjs
+```
+
+| Provider    | Sampled | Clean | Blocked | Blocked fraction |
+| ----------- | ------- | ----- | ------- | ---------------- |
+| Claude Code | 300     | 300   | 0       | 0%               |
+| Codex       | 300     | 300   | 0       | 0%               |
+
+| Provider    | Severity | Code                            | Files |
+| ----------- | -------- | ------------------------------- | ----- |
+| Claude Code | info     | `opaque-runtime-state`          | 300   |
+| Claude Code | info     | `native-attachment-state`       | 300   |
+| Claude Code | info     | `native-cwd-drift`              | 54    |
+| Claude Code | warning  | `interrupted-tool-call-dropped` | 18    |
+| Codex       | info     | `historical-instructions`       | 300   |
+| Codex       | info     | `opaque-runtime-state`          | 300   |
+| Codex       | info     | `compaction-window`             | 12    |
+| Codex       | info     | `native-cwd-drift`              | 1     |
+| Codex       | warning  | `interrupted-tool-call-dropped` | 1     |
+
+Neither provider emitted a block code or a `native-boundary` warning. Twelve Codex files reported `compaction-window` as info. This Claude sample contained no compaction windows; it does not provide live Claude compaction evidence. Counts are files per code and can overlap; clean means no blocks, not no warnings. Samples are fresh, mutable transcripts, not a replay of earlier probe files. The probe reads provider homes without modifying them and reports no message content. It measures extraction only, not native resume, context continuity or resource discovery; both translation directions remain unverified.
+
+The task explicitly requested the translation suite. It passed **11 test files / 244 tests, with no failures or skips**, including the synthetic Claude two-compaction and Codex replacement-history/message fixtures, projection/archive preservation, active-window capacity and repeated return-hop coverage:
+
+```bash
+env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE_CODE_SESSION_ID TMPDIR="$PWD/.maestro/scratch/ensemble-03-tests" npx vitest run src/__tests__/shared/maestro-lib/translation-*.test.ts src/__tests__/main/provider-translation-service.test.ts src/__tests__/renderer/services/providerTranslation.test.ts
+```
+
+`rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` exited 0. `npm run docs:verify` checked 1,399 asserted paths and 456 index entries with zero findings. Focused Prettier and `command git diff --check` passed. Vitest printed the existing advisory about `__dirname` compatibility with Vite's future native config loader; no test failed. This task changed documentation only, reused the existing probe and tests, and executed no native provider import or resume. No task images were supplied.
