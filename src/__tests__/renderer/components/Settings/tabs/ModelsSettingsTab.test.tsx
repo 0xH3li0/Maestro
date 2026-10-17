@@ -317,7 +317,7 @@ describe('ModelsSettingsTab', () => {
 		expect(screen.queryByTestId('local-models-assignments-columns')).toBeNull();
 	});
 
-	it('lists only System Two tasks on System Two, with the Utility Agent under them', () => {
+	it('lists only System Two tasks on System Two, with the Utility Agent above them', () => {
 		render(<Harness />);
 		openPanel('System Two');
 
@@ -332,10 +332,11 @@ describe('ModelsSettingsTab', () => {
 		const assignments = screen.getByTestId('local-models-assignments-section-two');
 		const utility = document.querySelector('[data-setting-id="local-models-utility-agent"]');
 		expect(utility).not.toBeNull();
-		// Under the table, not above it.
+		// Configure the shared agent before choosing which tasks use it.
 		expect(
-			assignments.compareDocumentPosition(utility!) & Node.DOCUMENT_POSITION_FOLLOWING
+			utility!.compareDocumentPosition(assignments) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
+		expect(utility).toHaveTextContent('What a task set to Utility Agent below runs on.');
 	});
 
 	it('shows the tier defaults table on System Two, and on no other inner tab', () => {
@@ -350,7 +351,7 @@ describe('ModelsSettingsTab', () => {
 		const tiers = document.querySelector('[data-setting-id="models-tier-defaults"]');
 		expect(tiers).not.toBeNull();
 		expect(screen.getByTestId('tier-defaults-section')).toBeInTheDocument();
-		// Under the Utility Agent, which belongs with the assignments above it.
+		// Tier defaults follow both the Utility Agent and the task assignments.
 		const utility = document.querySelector('[data-setting-id="local-models-utility-agent"]');
 		expect(
 			utility!.compareDocumentPosition(tiers!) & Node.DOCUMENT_POSITION_FOLLOWING

@@ -294,8 +294,7 @@ function LocalModelRowInner({
 }
 
 /**
- * The fit verdict under a model's description. "Fits" stands alone, with its
- * reason on hover; a verdict the user has to weigh carries its reason in line.
+ * A visible hardware-fit verdict and reason, read before downloading a model.
  */
 function FitLine({ theme, fit, modelId }: { theme: Theme; fit: ModelFit; modelId: string }) {
 	const colors: Record<ModelFitLevel, string> = {
@@ -303,18 +302,23 @@ function FitLine({ theme, fit, modelId }: { theme: Theme; fit: ModelFit; modelId
 		tight: theme.colors.warning,
 		'too-large': theme.colors.error,
 	};
+	const Icon = fit.fit === 'fits' ? CheckCircle2 : AlertTriangle;
 	return (
-		<p
-			className="text-xs-plus mt-0.5 select-text"
-			title={fit.fit === 'fits' ? fit.reason : undefined}
+		<div
+			className="mt-2 rounded border px-3 py-2 select-text"
+			style={{ borderColor: colors[fit.fit], backgroundColor: theme.colors.bgMain }}
 			data-testid={`local-model-fit-${modelId}`}
 			data-fit={fit.fit}
 		>
-			<span className="font-medium" style={{ color: colors[fit.fit] }}>
-				{MODEL_FIT_LABELS[fit.fit]}
-			</span>
-			{fit.fit !== 'fits' && <span className="opacity-70">: {fit.reason}</span>}
-		</p>
+			<div
+				className="flex items-center gap-2 text-sm font-semibold"
+				style={{ color: colors[fit.fit] }}
+			>
+				<Icon className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+				{MODEL_FIT_LABELS[fit.fit]} on this computer
+			</div>
+			<p className="text-xs opacity-70 mt-1">{fit.reason}</p>
+		</div>
 	);
 }
 

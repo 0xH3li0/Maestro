@@ -83,8 +83,8 @@ export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
 				{/* Opacity alone, no textDim override: stacking the two multiplies the
 				    dimming and drops contrast below 3:1 in most themes
 				    (CLAUDE-SETTINGS.md rule 1). Descriptions inherit textMain. */}
-				<div className="text-xs opacity-50">
-					What a task set to Utility Agent above runs on. Route auxiliary tasks (tab naming, context
+				<div className="text-xs opacity-70">
+					What a task set to Utility Agent below runs on. Route auxiliary tasks (tab naming, context
 					grooming) to a cheaper or faster agent instead of the session agent, or leave as Default
 					to keep using each tab's own agent.
 				</div>

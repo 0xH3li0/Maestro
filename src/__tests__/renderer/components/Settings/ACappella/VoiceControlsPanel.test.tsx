@@ -18,8 +18,8 @@
  * entry with an empty key array is a decision, not an absence.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { VoiceControlsPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceControlsPanel';
 import type { Shortcut } from '../../../../../renderer/types';
@@ -117,6 +117,10 @@ describe('VoiceControlsPanel hotkey rows', () => {
 });
 
 describe('VoiceControlsPanel wake word Test', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockShortcuts = {};
@@ -147,6 +151,72 @@ describe('VoiceControlsPanel wake word Test', () => {
 
 		expect(await screen.findByRole('button', { name: 'Stop test' })).toBeTruthy();
 		expect(screen.getByText('Listening. Say the phrase.')).toBeTruthy();
+	});
+
+	it('lights up and counts every detection, including identical repeated hits', async () => {
+		vi.mocked(voice().wakeTest).mockResolvedValue({ started: true });
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+		await screen.findByRole('button', { name: 'Stop test' });
+		vi.useFakeTimers();
+		const hit = vi.mocked(voice().onWakeTest).mock.calls.at(-1)![0];
+		const detection = { phraseId: 'global', phrase: 'hey jarvis', score: 0.9, at: 1 };
+
+		act(() => hit(detection));
+		expect(screen.getByTestId('wake-detection-light')).toHaveAttribute('data-active', 'true');
+		expect(screen.getByRole('status')).toHaveTextContent('Heard "hey jarvis" (0.90) · 1 detection');
+		act(() => vi.advanceTimersByTime(1_000));
+		expect(screen.getByTestId('wake-detection-light')).toHaveAttribute('data-active', 'false');
+		act(() => hit(detection));
+		expect(screen.getByTestId('wake-detection-light')).toHaveAttribute('data-active', 'true');
+		expect(screen.getByRole('status')).toHaveTextContent('2 detections');
+	});
+
+	it('also lights up for a hands-free wake without starting a test', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			controls: { wakeWordEnabled: true, wakePhrase: 'hey jarvis' },
+		});
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await screen.findByText('Say "hey jarvis" and watch for a detection.');
+		const event = vi.mocked(voice().onEvent).mock.calls.at(-1)![0];
+		const wake = {
+			type: 'wake' as const,
+			source: 'wake-word' as const,
+			sessionId: 'voice-1',
+			seq: 1,
+			ts: 1,
+			scope: { kind: 'conductor' as const },
+		};
+
+		act(() => event({ ...wake, source: 'hotkey' }));
+		expect(screen.getByTestId('wake-detection-light')).toHaveAttribute('data-active', 'false');
+		act(() => event(wake));
+		expect(screen.getByTestId('wake-detection-light')).toHaveAttribute('data-active', 'true');
+		expect(screen.getByRole('status')).toHaveTextContent('Wake phrase detected · 1 detection');
+		expect(voice().wakeTest).not.toHaveBeenCalled();
+	});
+
+	it('unsubscribes and stops the test when the panel closes', async () => {
+		const cleanupTest = vi.fn();
+		const cleanupEvents = vi.fn();
+		vi.mocked(voice().onWakeTest).mockReturnValueOnce(cleanupTest);
+		vi.mocked(voice().onEvent).mockReturnValueOnce(cleanupEvents);
+		const { unmount } = render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await screen.findByDisplayValue('hey jarvis');
+
+		unmount();
+
+		expect(cleanupTest).toHaveBeenCalled();
+		expect(cleanupEvents).toHaveBeenCalled();
+		expect(voice().wakeTestStop).toHaveBeenCalled();
+	});
+
+	it('does not subscribe to wake events when disabled', () => {
+		render(<VoiceControlsPanel theme={mockTheme} enabled={false} />);
+
+		expect(voice().onWakeTest).not.toHaveBeenCalled();
+		expect(voice().onEvent).not.toHaveBeenCalled();
+		expect(screen.getByRole('button', { name: 'Test' })).toBeDisabled();
 	});
 });
 

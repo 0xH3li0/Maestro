@@ -3,12 +3,8 @@
  *
  * The panel's defining property: **opening it downloads nothing.**
  *
- * A Cappella asks the user for up to 1.4 GB of disk and bandwidth, and the whole
- * consent story rests on the bill of materials being visible BEFORE anything is
- * fetched. So this suite asserts that mounting the panel issues zero network
- * calls (no `fetch`, no download channel), that it still renders the full
- * catalog detail, and that the Download button is the only thing that starts a
- * transfer.
+ * Voice setup keeps microphone and provider choices here and sends model file
+ * management to the global Models library.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -16,10 +12,9 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 
 import { VoiceSetupPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceSetupPanel';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import {
-	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
-	OPENWAKEWORD_BASE_ID,
 	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
 	LOCAL_MODEL_CATALOG,
@@ -67,6 +62,7 @@ describe('VoiceSetupPanel', () => {
 		});
 		vi.mocked(window.maestro.settings.get).mockResolvedValue({});
 		useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
+		useModalStore.getState().closeModal('settings');
 	});
 
 	it('issues zero network calls when mounted', async () => {
@@ -88,23 +84,20 @@ describe('VoiceSetupPanel', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('renders the bill of materials from the frozen catalog', async () => {
+	it('names the selected models without embedding model download panels', async () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
 		const parakeet = getLocalModel(PARAKEET_TDT_V2_ID)!;
 		await screen.findByText(parakeet.displayName);
 
-		// Name, license, and install path are all on screen before anything is
-		// downloaded. That is the consent surface.
-		expect(screen.getAllByText(parakeet.license.spdx).length).toBeGreaterThan(0);
 		expect(
-			screen.getByText(`/tmp/models/${parakeet.id}/${parakeet.files[0].path}`)
-		).toBeInTheDocument();
+			screen.queryByText(`/tmp/models/${parakeet.id}/${parakeet.files[0].path}`)
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /^Download/ })).not.toBeInTheDocument();
 		// Whisper is selectable, but not the default, so it is not offered here.
 		expect(
 			screen.queryByText(getLocalModel(WHISPER_BASE_EN_ID)!.displayName)
 		).not.toBeInTheDocument();
-		expect(screen.getByText(getLocalModel(OPENWAKEWORD_BASE_ID)!.displayName)).toBeInTheDocument();
 		// The voice and the router download nothing, so their slots say so instead
 		// of showing a model row - and the two models nothing can read are not
 		// offered here at all.
@@ -155,14 +148,14 @@ describe('VoiceSetupPanel', () => {
 		expect(window.maestro.localModels.endpoints.listModels).not.toHaveBeenCalled();
 	});
 
-	it('shows the model row for a local model assigned to voice routing', async () => {
+	it('names a local model assigned to voice routing', async () => {
 		useSettingsStore.setState({
 			localModelAssignments: { 'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID } },
 		});
 
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
-		await screen.findByText(getLocalModel(QWEN3_1_7B_ID)!.displayName);
+		await screen.findByText(/Routes with Qwen3/);
 	});
 
 	it('keeps an assigned Brain when the pill that is already lit is clicked', async () => {
@@ -202,66 +195,28 @@ describe('VoiceSetupPanel', () => {
 		});
 	});
 
-	it('starts a download only when the Download button is pressed', async () => {
-		const { container } = render(<VoiceSetupPanel theme={mockTheme} enabled />);
+	it('opens the global Speech library for model management', async () => {
+		render(<VoiceSetupPanel theme={mockTheme} enabled />);
+		await screen.findByText(getLocalModel(PARAKEET_TDT_V2_ID)!.displayName);
 
-		// The set button, not one of the per-model rows: this is the primary
-		// "Download (~N MB)" affordance for the whole selection.
-		const button = await waitFor(() => {
-			const found = container.querySelector<HTMLButtonElement>(
-				'[data-setting-id="encore-a-cappella-download-set"]'
-			);
-			if (!found || found.disabled) throw new Error('download button not ready');
-			return found;
+		fireEvent.click(screen.getByRole('button', { name: 'Manage voice models' }));
+
+		expect(useModalStore.getState().getData('settings')).toEqual({
+			tab: 'models',
+			settingId: undefined,
+			subTab: 'library/speech',
 		});
 		expect(voiceModels().download).not.toHaveBeenCalled();
-
-		fireEvent.click(button);
-
-		await waitFor(() => {
-			expect(voiceModels().download).toHaveBeenCalled();
-		});
-		// The whole bundle is missing, so the whole bundle is requested - and
-		// nothing outside it, however much of the catalog is on offer elsewhere.
-		const requested = vi
-			.mocked(voiceModels().download)
-			.mock.calls.map((call: unknown[]) => call[0]);
-		expect([...requested].sort()).toEqual(
-			[PARAKEET_TDT_V2_ID, OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID].sort()
-		);
 	});
 
-	it('offers Re-verify and Re-download for a corrupt model', async () => {
-		const listings = notInstalledListings().map((listing) =>
-			listing.entry.id === PARAKEET_TDT_V2_ID
-				? {
-						...listing,
-						status: {
-							...listing.status,
-							status: 'corrupt' as const,
-							detail: 'encoder-model.int8.onnx is 10 bytes, expected 652184014',
-							manifest: {
-								id: PARAKEET_TDT_V2_ID,
-								revision: 'abc',
-								sha256: 'abc',
-								bytes: 1,
-								sourceUrl: '',
-								license: 'MIT',
-								files: [],
-								installedAt: 1,
-								verifiedAt: 1,
-							},
-							bytesOnDisk: 10,
-						},
-					}
-				: listing
-		);
-		vi.mocked(voiceModels().list).mockResolvedValue(listings);
-
+	it('keeps model verification and removal in the global library', async () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
+		await screen.findByText(getLocalModel(PARAKEET_TDT_V2_ID)!.displayName);
 
-		await screen.findByText(/Re-verify to confirm/);
-		expect(screen.getByRole('button', { name: /Re-verify/ })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /^Re-download/ })).toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: /Re-verify|Re-download|Remove|Reclaim/ })
+		).not.toBeInTheDocument();
+		expect(voiceModels().verify).not.toHaveBeenCalled();
+		expect(voiceModels().removeAll).not.toHaveBeenCalled();
 	});
 });

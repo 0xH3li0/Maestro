@@ -350,7 +350,9 @@ describe('training', () => {
 
 		const result = await service.train(PHRASE);
 		expect(result).toMatchObject({ ok: false });
-		expect((result as { reason: string }).reason).toMatch(/Voice Setup/);
+		expect((result as { reason: string }).reason).toBe(
+			'The wake word model is not installed. Download it in Settings > Models > Library > Speech.'
+		);
 	});
 
 	it('reports recordings it cannot learn from and leaves nothing half trained', async () => {

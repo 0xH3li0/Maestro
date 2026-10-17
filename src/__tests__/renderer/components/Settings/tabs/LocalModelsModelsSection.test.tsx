@@ -268,7 +268,7 @@ describe('LocalModelsModelsSection', () => {
 		);
 	});
 
-	it('labels each model Fits, Tight with its reason, or Too large', async () => {
+	it('shows a prominent hardware-fit verdict and visible reason for every model', async () => {
 		// 32 GB of unified memory: 24 GB for the GPU by default, 28.8 GB at most.
 		api().hardware.mockResolvedValue(mac(32));
 		window.localStorage.setItem(SHOW_TOO_LARGE_MODELS_STORAGE_KEY, 'true');
@@ -278,7 +278,8 @@ describe('LocalModelsModelsSection', () => {
 		);
 		const tooLarge = await screen.findByTestId(`local-model-fit-${GPT_OSS_120B_ID}`);
 		expect(tooLarge).toHaveAttribute('data-fit', 'too-large');
-		expect(tooLarge).toHaveTextContent(/^Too large: Needs /);
+		expect(within(tooLarge).getByText('Too large on this computer')).toBeVisible();
+		expect(within(tooLarge).getByText(/^Needs /)).toBeVisible();
 
 		const lines: HTMLElement[] = [];
 		for (const label of ['Agent Models', 'Housekeeping', 'Speech', 'Search & Safety']) {
@@ -288,9 +289,15 @@ describe('LocalModelsModelsSection', () => {
 		expect(lines).toHaveLength(LOCAL_MODEL_CATALOG.length);
 		const fits = lines.find((line) => line.dataset.testid === `local-model-fit-${QWEN3_5_9B_ID}`);
 		expect(fits).toHaveAttribute('data-fit', 'fits');
-		expect(fits).toHaveTextContent(/^Fits$/);
+		expect(within(fits!).getByText('Fits on this computer')).toBeVisible();
+		expect(within(fits!).getByText(/^Needs /)).toBeVisible();
+		// The screenshot's small embedding model gets the same treatment.
+		const embedding = screen.getByTestId(`local-model-fit-${BGE_SMALL_EN_ID}`);
+		expect(within(embedding).getByText('Fits on this computer')).toBeVisible();
+		expect(within(embedding).getByText(/runs on the CPU/)).toBeVisible();
 		for (const line of lines.filter((line) => line.getAttribute('data-fit') === 'tight')) {
-			expect(line).toHaveTextContent(/^Tight: Needs /);
+			expect(within(line).getByText('Tight on this computer')).toBeVisible();
+			expect(within(line).getByText(/^Needs /)).toBeVisible();
 		}
 	});
 

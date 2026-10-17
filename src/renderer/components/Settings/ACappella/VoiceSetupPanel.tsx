@@ -1,36 +1,12 @@
-/**
- * Voice Setup - the panel that has to earn a download before it takes one.
- *
- * The rule this component exists to honour: **mounting it issues zero network
- * calls.** Every number on screen (size, hash, revision, license, install path)
- * comes from the frozen catalog in `src/shared/local-models/model-catalog.ts` plus
- * one disk stat. The only thing that opens a connection is the Download button,
- * and `VoiceSetupPanel.test.tsx` asserts exactly that.
- *
- * Three independent slots, each defaulting to Local, plus a wake-word row that
- * is always local and always required for hands-free. Independent matters: a
- * user who wants local speech recognition but an API model for routing should
- * not have to download 1 GB to get it, and a user who wants everything local
- * should not have their microphone quietly routed to a service because one file
- * is missing. The capability gate refuses instead of substituting; this panel is
- * where the refusal is explained and fixed.
- */
+/** Voice input and provider choices. Model files are managed in Settings > Models. */
 
-import { useCallback, useMemo, useState } from 'react';
-import { Mic, ShieldCheck } from 'lucide-react';
+import { Mic } from 'lucide-react';
 
-import {
-	HEY_JARVIS_WAKE_ID,
-	OPENWAKEWORD_BASE_ID,
-} from '../../../../shared/local-models/model-catalog';
-import { MODEL_SETS, type VoiceModelSetId } from '../../../../shared/acappella/voice-models';
-import { formatSize } from '../../../../shared/formatters';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
 import type { Theme } from '../../../types';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
-import { LocalModelRow } from '../tabs/LocalModelsTab/LocalModelRow';
 import { useVoiceModels } from './useVoiceModels';
 import { VoiceInputPicker, useVoiceInputDevices } from '../../ACappella';
 import {
@@ -39,7 +15,12 @@ import {
 	useVoiceProviderSelection,
 	type VoiceSlotMode,
 } from './useVoiceProviderSelection';
-import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
+import {
+	modelsSettingsLocation,
+	modelsSettingsSubTab,
+	taskAssignmentLocation,
+} from '../../../../shared/local-models/settings-location';
+import { getModalActions } from '../../../stores/modalStore';
 
 export interface VoiceSetupPanelProps {
 	theme: Theme;
@@ -58,59 +39,19 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	// so the two can never disagree about which microphone is chosen.
 	const inputDevices = useVoiceInputDevices(enabled);
 	const { modes, setMode, loaded, providerIds, brainSource } = useVoiceProviderSelection(enabled);
-	const [pendingSet, setPendingSet] = useState(false);
-
-	// One bundle: the recogniser and the wake word. The voice and the router
-	// download nothing, so the slot choices no longer change what is fetched.
-	const setId: VoiceModelSetId = 'hands-free-local';
-
-	const listingsById = useMemo(
-		() => new Map(models.listings.map((listing) => [listing.entry.id, listing])),
-		[models.listings]
-	);
-
-	/** Models the current slot choices need but that are not installed yet. */
-	const missingForSet = useMemo(() => {
-		return MODEL_SETS[setId].modelIds.filter((id) => {
-			const listing = listingsById.get(id);
-			if (!listing) return false;
-			// A model with a live job is already being fetched; counting it again
-			// would inflate the button's number and re-issue its download.
-			if (models.progress[id]?.phase === 'downloading') return false;
-			return listing.status.status !== 'installed';
-		});
-	}, [setId, listingsById, models.progress]);
-
-	const missingBytes = useMemo(
-		() => missingForSet.reduce((total, id) => total + (listingsById.get(id)?.entry.bytes ?? 0), 0),
-		[missingForSet, listingsById]
-	);
-
-	const handleDownloadSet = useCallback(async () => {
-		setPendingSet(true);
-		try {
-			await models.downloadMany([...missingForSet]);
-		} finally {
-			setPendingSet(false);
-		}
-	}, [models, missingForSet]);
-
-	const wakeModels = [OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID]
-		.map((id) => listingsById.get(id))
-		.filter((listing): listing is NonNullable<typeof listing> => listing !== undefined);
-
-	/** One provider slot: the Local/Cloud choice plus its model row. */
+	/** One provider slot: the Local/Cloud choice and its selected model. */
 	const renderSlot = (role: VoiceProviderRole) => {
 		const slot = SLOT_DEFINITIONS.find((candidate) => candidate.slot === role)!;
-		// A Brain on the Local Models `voice-routing` assignment is whatever that
-		// assignment names, so its row comes from there rather than the catalog.
+		// A Brain on the `voice-routing` assignment uses that model's label.
 		const assigned = role === 'brain' ? brainSource : null;
 		const modelId = assigned
 			? assigned.assignment.type === 'local'
 				? assigned.assignment.modelId
 				: undefined
 			: localModelIdForSlot(slot, providerIds[role]);
-		const listing = modelId ? listingsById.get(modelId) : undefined;
+		const listing = modelId
+			? models.listings.find((candidate) => candidate.entry.id === modelId)
+			: undefined;
 		const Icon = slot.icon;
 		return (
 			<>
@@ -137,17 +78,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 					</div>
 
 					{modes[role] === 'local' && listing && (
-						<LocalModelRow
-							theme={theme}
-							listing={listing}
-							progress={models.progress[listing.entry.id]}
-							verifyResult={models.verifyResults[listing.entry.id]}
-							onDownload={(id) => void models.download(id)}
-							onPause={(id) => void models.pause(id)}
-							onResume={(id) => void models.resume(id)}
-							onCancel={(id) => void models.cancel(id)}
-							onVerify={(id) => void models.verify(id)}
-						/>
+						<p className="text-xs opacity-70">{listing.entry.displayName}</p>
 					)}
 					{modes[role] === 'local' && assigned && (
 						<p className="text-xs-plus opacity-55 select-text">
@@ -170,13 +101,11 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 				<SettingsSectionHeading icon={Mic}>Voice Setup</SettingsSectionHeading>
 				<SectionCard theme={theme}>
 					<p className="text-xs opacity-70">
-						Nothing is downloaded until you press Download. Every model below is listed with its
-						exact size, its license, and where it lands on disk.
+						Download, verify, and remove voice models in{' '}
+						{modelsSettingsLocation('library', 'speech')}.
 					</p>
 
-					{/* Above the models on purpose: which microphone is open decides whether
-					    ANY of them will hear you, and it is the one thing on this panel that
-					    costs nothing to get right. */}
+					{/* The microphone picker shares its setting with the HUD. */}
 					<VoiceInputPicker theme={theme} devices={inputDevices} />
 
 					{!loaded && <p className="text-xs opacity-55">Loading your selection...</p>}
@@ -197,25 +126,21 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 						</div>
 					)}
 
-					<div className="flex flex-wrap items-center gap-3">
-						<button
-							type="button"
-							data-setting-id="encore-a-cappella-download-set"
-							disabled={missingForSet.length === 0 || pendingSet || !enabled}
-							onClick={handleDownloadSet}
-							className="px-3 py-2 rounded border text-sm font-medium disabled:opacity-55"
-							style={{
-								borderColor: theme.colors.accent,
-								backgroundColor: theme.colors.accentDim,
-								color: theme.colors.textMain,
-							}}
-						>
-							{missingForSet.length === 0
-								? `${MODEL_SETS[setId].displayName} is installed`
-								: `Download (${formatSize(missingBytes)})`}
-						</button>
-						<span className="text-xs-plus opacity-55">{MODEL_SETS[setId].description}</span>
-					</div>
+					<button
+						type="button"
+						data-setting-id="encore-a-cappella-models"
+						onClick={() =>
+							getModalActions().openSettings(
+								'models',
+								undefined,
+								modelsSettingsSubTab('library', 'speech')
+							)
+						}
+						className="px-3 py-2 rounded border text-sm font-medium"
+						style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+					>
+						Manage voice models
+					</button>
 				</SectionCard>
 			</div>
 
@@ -229,37 +154,6 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 			<div data-setting-id="encore-a-cappella-stt">{renderSlot('stt')}</div>
 			<div data-setting-id="encore-a-cappella-tts">{renderSlot('tts')}</div>
 			<div data-setting-id="encore-a-cappella-brain">{renderSlot('brain')}</div>
-
-			<div data-setting-id="encore-a-cappella-wake-word">
-				<SettingsSectionHeading icon={ShieldCheck}>Wake word</SettingsSectionHeading>
-				<SectionCard theme={theme}>
-					<div>
-						<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-							Always local, always required for hands-free
-						</div>
-						<p className="text-xs opacity-70 mt-0.5">
-							Hands-free means something is listening all the time. That something runs on this
-							machine and there is no cloud option for it, by design.
-						</p>
-					</div>
-					{/* The shared front end, then the default phrase's own detector: both
-					    are downloaded, so both are listed. */}
-					{wakeModels.map((listing) => (
-						<LocalModelRow
-							key={listing.entry.id}
-							theme={theme}
-							listing={listing}
-							progress={models.progress[listing.entry.id]}
-							verifyResult={models.verifyResults[listing.entry.id]}
-							onDownload={(id) => void models.download(id)}
-							onPause={(id) => void models.pause(id)}
-							onResume={(id) => void models.resume(id)}
-							onCancel={(id) => void models.cancel(id)}
-							onVerify={(id) => void models.verify(id)}
-						/>
-					))}
-				</SectionCard>
-			</div>
 		</div>
 	);
 }

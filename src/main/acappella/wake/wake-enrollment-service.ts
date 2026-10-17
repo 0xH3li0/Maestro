@@ -22,6 +22,7 @@
  */
 
 import { int16ToFloat32, resampleLinear, SPEECH_SAMPLE_RATE } from '../../../shared/audio/pcm';
+import { modelsSettingsLocation } from '../../../shared/local-models/settings-location';
 import {
 	WAKE_ENROLLMENT_BACKGROUND_MAX_MS,
 	WAKE_ENROLLMENT_BACKGROUND_MIN_MS,
@@ -384,8 +385,7 @@ export class WakeEnrollmentService {
 		if (!featurizer) {
 			return {
 				ok: false,
-				reason:
-					'The wake word model is not installed. Download it in Settings > Plugins > A Cappella > Voice Setup.',
+				reason: `The wake word model is not installed. Download it in ${modelsSettingsLocation('library', 'speech')}.`,
 			};
 		}
 

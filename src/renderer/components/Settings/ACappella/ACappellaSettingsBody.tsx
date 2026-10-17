@@ -1,20 +1,16 @@
 /**
  * The A Cappella config body for the extension detail pane's Settings sub-tab.
  *
- * Stacked in the order a user meets them: acquire the models (Voice Setup),
- * choose the engines and say where audio goes (Voice Providers), decide how to
- * open the floor (Voice Controls), tune what it sounds like and how the HUD
- * behaves (Voice and Speed), let a phone in (Paired Devices), then own the files
- * (Models). The Models page is
- * rendered whether or not the Encore Feature is on, which is deliberate - the
- * reclaim-disk offer only makes sense after the feature has been switched off.
+ * Voice input, providers, controls, output, devices, and diagnostics live here.
+ * Model files are managed in the global Models settings.
  */
 
 import type { Theme } from '../../../types';
 import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { VoiceControlsPanel } from './VoiceControlsPanel';
 import { VoiceDiagnosticsCard } from './VoiceDiagnosticsCard';
-import { VoiceModelsPage } from './VoiceModelsPage';
+import { VoiceLatencyCard } from './VoiceLatencyCard';
+import { VoiceSelfTestCard } from './VoiceSelfTestCard';
 import { VoiceOutputPanel } from './VoiceOutputPanel';
 import { VoiceProvidersPanel } from './VoiceProvidersPanel';
 import { VoiceSetupPanel } from './VoiceSetupPanel';
@@ -34,7 +30,8 @@ export function ACappellaSettingsBody({ theme, enabled }: ACappellaSettingsBodyP
 			{enabled && <VoiceOutputPanel theme={theme} enabled={enabled} />}
 			{enabled && <PairedDevicesPanel theme={theme} enabled={enabled} />}
 			{enabled && <VoiceDiagnosticsCard theme={theme} />}
-			<VoiceModelsPage theme={theme} enabled={enabled} />
+			{enabled && <VoiceSelfTestCard theme={theme} />}
+			{enabled && <VoiceLatencyCard theme={theme} />}
 		</div>
 	);
 }

@@ -66,6 +66,8 @@ const HOTKEY_IDS = [VOICE_CONDUCTOR_HOTKEY_ID, VOICE_AGENT_HOTKEY_ID] as const;
 /** How long a Test run listens before closing the microphone on its own. */
 const WAKE_TEST_TIMEOUT_MS = 15_000;
 
+const WAKE_HIT_FLASH_MS = 900;
+
 /** The shipped phrases, shown in an emptied field so the format is never a guess. */
 const SEND_PHRASES_PLACEHOLDER = formatSendPhrases(DEFAULT_SEND_PHRASES);
 
@@ -85,6 +87,8 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 	const [agents, setAgents] = useState<RosterAgent[]>([]);
 	const [testing, setTesting] = useState(false);
 	const [testHit, setTestHit] = useState<string | null>(null);
+	const [wakeHits, setWakeHits] = useState(0);
+	const [wakeLit, setWakeLit] = useState(false);
 
 	const refreshStatuses = useCallback(async () => {
 		const result = await window.maestro.voice.hotkeyStatus().catch(() => null);
@@ -114,16 +118,36 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 	}, []);
 
 	useEffect(() => {
-		if (!testing) return;
-		const cleanup = window.maestro.voice.onWakeTest((hit) => {
+		if (!enabled) return;
+		const cleanupTest = window.maestro.voice.onWakeTest((hit) => {
 			setTestHit(`Heard "${hit.phrase}" (${hit.score.toFixed(2)})`);
+			setWakeHits((count) => count + 1);
 		});
+		const cleanupEvents = window.maestro.voice.onEvent((event) => {
+			if (event.type !== 'wake' || event.source !== 'wake-word') return;
+			setTestHit('Wake phrase detected');
+			setWakeHits((count) => count + 1);
+		});
+		return () => {
+			cleanupTest();
+			cleanupEvents();
+		};
+	}, [enabled]);
+
+	useEffect(() => {
+		if (wakeHits === 0) return;
+		setWakeLit(true);
+		const timer = setTimeout(() => setWakeLit(false), WAKE_HIT_FLASH_MS);
+		return () => clearTimeout(timer);
+	}, [wakeHits]);
+
+	useEffect(() => {
+		if (!testing) return;
 		const timer = setTimeout(() => {
 			setTesting(false);
 			void window.maestro.voice.wakeTestStop().catch(() => undefined);
 		}, WAKE_TEST_TIMEOUT_MS);
 		return () => {
-			cleanup();
 			clearTimeout(timer);
 		};
 	}, [testing]);
@@ -274,9 +298,25 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						>
 							{testing ? 'Stop test' : 'Test'}
 						</button>
-						<span className="text-xs opacity-70">
+						<span
+							aria-hidden="true"
+							data-testid="wake-detection-light"
+							data-active={wakeLit}
+							className="h-3 w-3 shrink-0 rounded-full border"
+							style={{
+								borderColor: wakeLit ? theme.colors.success : theme.colors.border,
+								backgroundColor: wakeLit ? theme.colors.success : theme.colors.bgActivity,
+								boxShadow: wakeLit ? `0 0 8px ${theme.colors.success}` : undefined,
+							}}
+						/>
+						<span className="text-xs opacity-70" role="status" aria-live="polite">
 							{testHit ??
-								(testing ? 'Listening. Say the phrase.' : 'Say the phrase and watch it light up.')}
+								(testing
+									? 'Listening. Say the phrase.'
+									: controls.wakeWordEnabled
+										? `Say "${controls.wakePhrase}" and watch for a detection.`
+										: 'Enable Wake word for hands-free use, or press Test to try the phrase.')}
+							{wakeHits > 0 && ` · ${wakeHits} detection${wakeHits === 1 ? '' : 's'}`}
 						</span>
 					</div>
 				</SectionCard>

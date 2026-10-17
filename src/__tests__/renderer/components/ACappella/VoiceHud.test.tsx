@@ -28,6 +28,7 @@ import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { createMockSession } from '../../../helpers/mockSession';
 import { createMockAITab } from '../../../helpers/mockTab';
+import { PARAKEET_TDT_V2_ID, getLocalModel } from '../../../../shared/local-models/model-catalog';
 
 const SESSION = 'voice-1';
 
@@ -572,6 +573,61 @@ describe('VoiceHud rendering', () => {
 		);
 		expect(screen.getByTestId('voice-indicator-error')).toBeTruthy();
 		expect(screen.getByTestId('voice-hud-error')).toBeTruthy();
+	});
+
+	it('offers setup in the HUD when a missing speech engine blocks a start', async () => {
+		const entry = getLocalModel(PARAKEET_TDT_V2_ID)!;
+		vi.mocked(window.maestro.localModels.list).mockResolvedValueOnce([
+			{
+				entry,
+				installPaths: [],
+				status: {
+					id: entry.id,
+					status: 'installed',
+					bytesOnDisk: entry.bytes,
+					manifest: null,
+					detail: '',
+				},
+			},
+		]);
+		vi.mocked(window.maestro.localModels.runtimes.list).mockResolvedValueOnce([
+			{
+				id: 'onnx',
+				label: 'ONNX Runtime',
+				installed: false,
+				stale: false,
+				downloadable: true,
+				bytes: 1_000,
+				models: [entry.id],
+			},
+		]);
+		vi.mocked(window.maestro.voice.models.readiness).mockResolvedValueOnce({
+			canStartSession: false,
+			canRunHandsFree: false,
+			slots: [],
+			blocking: [
+				{
+					slot: 'stt',
+					providerId: 'parakeet-local',
+					satisfied: false,
+					reason: 'runtime-unavailable',
+					requiredModelId: entry.id,
+				},
+			],
+		});
+		renderHud();
+		startSession();
+		emit(
+			event('session-error', {
+				code: 'provider-unavailable',
+				message: 'Speech engine is missing.',
+				recoverable: false,
+			})
+		);
+
+		expect(await screen.findByRole('button', { name: /Set up voice/ })).toBeEnabled();
+		expect(screen.getByTestId('voice-hud-error')).toHaveTextContent('Voice setup needed');
+		expect(window.maestro.localModels.runtimes.install).not.toHaveBeenCalled();
 	});
 
 	it('surfaces a provider substitution rather than running the mock quietly', async () => {

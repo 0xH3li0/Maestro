@@ -56,6 +56,14 @@ describe('searchableSettings', () => {
 	});
 
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
+		it.each([
+			['hey jarvis', 'encore-a-cappella-wake-word'],
+			['detection light', 'encore-a-cappella-wake-word'],
+			['manage voice models', 'encore-a-cappella-models'],
+		])('finds voice controls for %s', (query, id) => {
+			expect(searchSettings(query).some((setting) => setting.id === id)).toBe(true);
+		});
+
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));
 			expect(tabs).toContain('general');

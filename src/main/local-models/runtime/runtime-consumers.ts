@@ -20,7 +20,7 @@ export interface NativeRuntimeConsumer {
 	readonly id: string;
 	/** Whether anything this consumer offers in this build runs on the runtime. */
 	usesRuntime(runtimeId: NativeRuntimeId): boolean;
-	/** Where the user downloads the runtime, e.g. `Settings > Plugins > A Cappella > Voice Setup`. */
+	/** Where the user downloads the runtime, e.g. `Settings > Models > Library > Engines`. */
 	readonly downloadLocation: string;
 	/** Where the user runs the runtime self-test. */
 	readonly selfTestLocation: string;

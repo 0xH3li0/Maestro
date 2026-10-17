@@ -14,6 +14,7 @@ import { describeProxyListener } from '../../../../../renderer/components/Settin
 import {
 	describeAddedLatency,
 	describeTokensSaved,
+	type StoredTokenProxyMode,
 	type TokenProxyReport,
 } from '../../../../../shared/local-models/token-proxy';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
@@ -87,6 +88,106 @@ beforeEach(() => {
 });
 
 describe('LocalModelsGatewaySection', () => {
+	it.each<StoredTokenProxyMode>(['passthrough', 'compress', 'compress-early'])(
+		'applies %s to all eligible agents, skipping SSH, unsupported providers, and terminals',
+		async (mode) => {
+			seed(
+				agent({ id: 'a', name: 'Alpha' }),
+				agent({ id: 'b', name: 'Beta', gatewayUrl: 'https://old.example.com' }),
+				agent({
+					id: 'r',
+					name: 'Remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				}),
+				agent({ id: 'c', name: 'Copilot', toolType: 'copilot-cli' }),
+				agent({ id: 't', name: 'Shell', toolType: 'terminal' })
+			);
+			render(<LocalModelsGatewaySection theme={theme} />);
+			await waitFor(() => expect(window.maestro.localModels.proxy.report).toHaveBeenCalled());
+			vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
+				runningProxy(['a', 'b'])
+			);
+
+			fireEvent.click(screen.getByTestId(`gateway-proxy-all-${mode}`));
+
+			await waitFor(() =>
+				expect(screen.getByRole('status')).toHaveTextContent('to 2 agents. Skipped 2')
+			);
+			const sessions = useSessionStore.getState().sessions;
+			for (const id of ['a', 'b']) {
+				expect(sessions.find((s) => s.id === id)).toMatchObject({
+					gatewayUrl: proxyUrl('/anthropic'),
+					tokenProxyMode: mode,
+				});
+				await waitFor(() => expect(modeSelect(id)).toHaveValue(mode));
+			}
+			for (const id of ['r', 'c', 't']) {
+				expect(sessions.find((s) => s.id === id)?.gatewayUrl).toBeUndefined();
+			}
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(2);
+			expect(window.maestro.localModels.proxy.report).toHaveBeenCalledTimes(2);
+		}
+	);
+
+	it('turns all proxy agents off while preserving external gateways', async () => {
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
+		seed(
+			agent({ id: 'a', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' }),
+			agent({ id: 'b', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress-early' }),
+			agent({ id: 'e', gatewayUrl: 'https://external.example.com' })
+		);
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		fireEvent.click(screen.getByTestId('gateway-proxy-all-off'));
+
+		await waitFor(() =>
+			expect(screen.getByRole('status')).toHaveTextContent('Applied Off to 3 agents.')
+		);
+		const sessions = useSessionStore.getState().sessions;
+		for (const id of ['a', 'b']) {
+			expect(sessions.find((s) => s.id === id)?.gatewayUrl).toBeUndefined();
+			expect(sessions.find((s) => s.id === id)?.tokenProxyMode).toBeUndefined();
+		}
+		expect(sessions.find((s) => s.id === 'e')?.gatewayUrl).toBe('https://external.example.com');
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(2);
+	});
+
+	it('reports a failed agent, continues with the rest, and unlocks the controls', async () => {
+		vi.mocked(window.maestro.localModels.proxy.ensurePort).mockRejectedValueOnce(
+			new Error('Port unavailable')
+		);
+		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
+		expect(screen.getByTestId('gateway-proxy-all-off')).toBeDisabled();
+		expect(modeSelect('a')).toBeDisabled();
+		expect(within(row('a')).getByRole('textbox')).toBeDisabled();
+
+		await waitFor(() =>
+			expect(screen.getByRole('alert')).toHaveTextContent('Alpha: Port unavailable')
+		);
+		expect(screen.getByRole('status')).toHaveTextContent('to 1 agent.');
+		expect(
+			useSessionStore.getState().sessions.find((s) => s.id === 'a')?.gatewayUrl
+		).toBeUndefined();
+		expect(useSessionStore.getState().sessions.find((s) => s.id === 'b')?.tokenProxyMode).toBe(
+			'compress'
+		);
+		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
+		expect(modeSelect('a')).toBeEnabled();
+	});
+
+	it('disables bulk enabling when no agents can use the local proxy', () => {
+		seed(agent({ id: 'c', toolType: 'copilot-cli' }));
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		for (const mode of ['passthrough', 'compress', 'compress-early']) {
+			expect(screen.getByTestId(`gateway-proxy-all-${mode}`)).toBeDisabled();
+		}
+		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
+	});
+
 	it('lists every agent by name with its gateway, and leaves terminals out', () => {
 		seed(
 			agent({ id: 'z', name: 'Zed', toolType: 'codex', gatewayUrl: 'http://localhost:4000' }),

@@ -209,6 +209,7 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 
 			{panel === 'system-two' && (
 				<>
+					<UtilityAgentSettings theme={theme} />
 					<div data-setting-id="local-models-system-two">
 						<SettingsSectionHeading
 							icon={Sparkles}
@@ -223,7 +224,6 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 							endpoints={endpoints}
 						/>
 					</div>
-					<UtilityAgentSettings theme={theme} />
 					<div data-setting-id="models-tier-defaults">
 						<SettingsSectionHeading
 							icon={Layers}

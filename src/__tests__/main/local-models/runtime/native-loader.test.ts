@@ -139,8 +139,10 @@ import {
 } from '../../../../main/local-models/runtime/native-loader';
 import {
 	__resetNativeRuntimeConsumers,
+	nativeRuntimeConsumerFor,
 	registerNativeRuntimeConsumer,
 } from '../../../../main/local-models/runtime/runtime-consumers';
+import { registerACappellaRuntimeConsumer } from '../../../../main/acappella/runtime-consumer';
 
 const REAL_PLATFORM = process.platform;
 const REAL_ARCH = process.arch;
@@ -537,6 +539,19 @@ describe('native-loader', () => {
 	 * consumer uses is merely not downloaded yet, and the consumer names where.
 	 */
 	describe('runtime consumers', () => {
+		it('routes voice runtime recovery to the global Engines library and current self-test', () => {
+			const unregister = registerACappellaRuntimeConsumer();
+			try {
+				const consumer = nativeRuntimeConsumerFor('onnx');
+				expect(consumer?.downloadLocation).toBe('Settings > Models > Library > Engines');
+				expect(consumer?.selfTestLocation).toBe(
+					'Settings > Plugins > A Cappella > Voice self-test'
+				);
+			} finally {
+				unregister();
+			}
+		});
+
 		const voice = {
 			id: 'voice',
 			usesRuntime: (id: string) => id === 'whisper' || id === 'llama',

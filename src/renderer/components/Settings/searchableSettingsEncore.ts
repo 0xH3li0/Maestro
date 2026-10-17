@@ -378,7 +378,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Voice Setup',
 		description:
-			'Pick where speech recognition, speech synthesis, and routing run, and download the local models. Nothing is downloaded until you press Download; every model is listed with its exact size, license, and install path',
+			'Pick the microphone and where speech recognition, speech synthesis, and routing run. Manage model files in Settings > Models > Library > Speech',
 		keywords: [
 			'voice setup',
 			'a cappella',
@@ -540,15 +540,6 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
-		id: 'encore-a-cappella-download-set',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Download voice models',
-		description:
-			'One button that downloads everything the current slot choices need. The size shown is the total of what is still missing, computed from the catalog',
-		keywords: ['download', 'voice models', 'hands-free', 'fully local', 'set', 'bundle'],
-	},
-	{
 		id: 'encore-a-cappella-stt',
 		tab: 'encore',
 		tabLabel: 'Plugins',
@@ -589,8 +580,18 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Wake word',
 		description:
-			'The always-on listener for the wake and stop words. Always local and always required for hands-free; there is no cloud option, by design',
-		keywords: ['wake word', 'stop word', 'hands free', 'always on', 'openwakeword', 'hey maestro'],
+			'The local hands-free listener. Say Hey Jarvis to wake the assistant, or press Test to tune detection. The indicator lights up and counts each detection',
+		keywords: [
+			'wake word',
+			'stop word',
+			'hands free',
+			'always on',
+			'openwakeword',
+			'hey maestro',
+			'hey jarvis',
+			'detection light',
+			'trigger word',
+		],
 	},
 	{
 		id: 'encore-a-cappella-wake-phrase-training',
@@ -820,9 +821,9 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-a-cappella-models',
 		tab: 'encore',
 		tabLabel: 'Plugins',
-		label: 'Models on disk',
+		label: 'Manage voice models',
 		description:
-			'What A Cappella is holding on disk: size, install date, last verified date, plus Remove and Re-verify for each model',
+			'Open Settings > Models > Library > Speech to download, verify, and remove voice and wake word models',
 		keywords: [
 			'models',
 			'disk',
@@ -1001,15 +1002,6 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		description:
 			'Stored in the OS keychain, never in settings.json and never in plain text on disk. Lets a user with a Claude key route without adding an OpenAI one',
 		keywords: ['anthropic key', 'claude key', 'api key', 'credential', 'keychain', 'secret'],
-	},
-	{
-		id: 'encore-a-cappella-reclaim-disk',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Reclaim disk',
-		description:
-			'Delete every A Cappella model. Offered when the feature is switched off so a feature you have stopped using does not keep gigabytes without saying so',
-		keywords: ['reclaim', 'disk space', 'delete models', 'free space', 'cleanup', 'uninstall'],
 	},
 	{
 		id: 'encore-web-login',

@@ -205,7 +205,7 @@ describe('capability-gate', () => {
 			expect(stt.reason).toBe('model-not-installed');
 			expect(stt.requiredModelId).toBe(PARAKEET_TDT_V2_ID);
 			expect(stt.detail).toContain('is not installed');
-			expect(stt.suggestedAction).toContain('Download');
+			expect(stt.suggestedAction).toBe('Download it in Settings > Models > Library > Speech.');
 			expect(readiness.canStartSession).toBe(false);
 		});
 
@@ -219,7 +219,9 @@ describe('capability-gate', () => {
 			expect(stt.reason).toBe('model-corrupt');
 			expect(stt.detail).toContain('failed verification');
 			expect(stt.detail).toContain('hash mismatch');
-			expect(stt.suggestedAction).toContain('Re-verify');
+			expect(stt.suggestedAction).toBe(
+				'Re-verify or re-download it in Settings > Models > Library > Speech.'
+			);
 		});
 
 		it('reports the system voice as unavailable when the machine has no speech engine', async () => {
@@ -302,6 +304,7 @@ describe('capability-gate', () => {
 			const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
 			expect(stt.reason).toBe('runtime-unavailable');
 			expect(stt.detail).toContain('failed to load');
+			expect(stt.requiredModelId).toBe(PARAKEET_TDT_V2_ID);
 			expect(stt.suggestedAction).toContain('self-test');
 			expect(readiness.canStartSession).toBe(false);
 		});
@@ -573,7 +576,7 @@ describe('capability-gate', () => {
 			expect(readiness.canStartSession).toBe(false);
 		});
 
-		it('does not offer a download for a runtime that will not load', async () => {
+		it('identifies the assigned model so recovery can inspect its runtime', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: LOCAL_BRAIN,
 				readModelStatus: statusReader(),
@@ -587,7 +590,7 @@ describe('capability-gate', () => {
 
 			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
 			expect(brain.reason).toBe('runtime-unavailable');
-			expect(brain.requiredModelId).toBeUndefined();
+			expect(brain.requiredModelId).toBe(QWEN3_1_7B_ID);
 		});
 
 		it.each([

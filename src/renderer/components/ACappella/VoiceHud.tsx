@@ -72,6 +72,7 @@ import { VoiceDevHarness } from './VoiceDevHarness';
 import { VoiceHudControls } from './VoiceHudControls';
 import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
+import { VoiceSetupRecovery } from './VoiceSetupRecovery';
 import { VoiceHeldNotice } from './VoiceHeldNotice';
 import { VoiceModeSwitch } from './VoiceModeSwitch';
 import { VoiceWaitPicker } from './VoiceWaitPicker';
@@ -619,7 +620,15 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 						className="px-3 py-1.5 text-2xs border-b select-text"
 						style={{ borderColor: theme.colors.border, color: errorText }}
 					>
-						{error.message}
+						{error.code === 'provider-unavailable' ? (
+							<VoiceSetupRecovery
+								theme={theme}
+								fallback={error.message}
+								onReady={() => openVoiceMic()}
+							/>
+						) : (
+							error.message
+						)}
 					</div>
 				)}
 

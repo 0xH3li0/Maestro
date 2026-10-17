@@ -24,13 +24,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Power, Router } from 'lucide-react';
 
 import { resolveAgentEnvironment } from '../../../../../shared/agentEnvironment';
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
 import { gatewayEnvVarsFor } from '../../../../../shared/local-models/gateway';
 import {
 	resolveTokenProxyMode,
+	TOKEN_PROXY_MODE_LABELS,
+	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_NAME,
+	type TokenProxyMode,
 } from '../../../../../shared/local-models/token-proxy';
 import { effectiveAgentCustomEnvVars } from '../../../../../shared/providerProfiles';
 import {
@@ -39,7 +43,7 @@ import {
 } from '../../../../hooks/stats/useProviderProfiles';
 import { useTokenProxyModeChoice } from '../../../../hooks/localModels/useTokenProxyModeChoice';
 import { useTokenProxyReport } from '../../../../hooks/localModels/useTokenProxyReport';
-import { setAgentGatewayUrl } from '../../../../services/agentGateway';
+import { setAgentGatewayUrl, setAgentTokenProxyMode } from '../../../../services/agentGateway';
 import { useSessionStore } from '../../../../stores/sessionStore';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Session, Theme } from '../../../../types';
@@ -48,6 +52,7 @@ import { TokenProxyModeField, tokenProxyModeBlocker } from '../../../shared/Toke
 import { EnvVarList } from '../../../ui/EnvVarList';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelsProxyUsage } from './LocalModelsProxyUsage';
+import { CardButton } from './CardButton';
 
 export interface LocalModelsGatewaySectionProps {
 	theme: Theme;
@@ -78,6 +83,58 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 		() => Object.fromEntries(sessions.map((s) => [s.id, s.name])),
 		[sessions]
 	);
+	const [bulkBusy, setBulkBusy] = useState(false);
+	const [bulkStatus, setBulkStatus] = useState('');
+	const [bulkErrors, setBulkErrors] = useState<string[]>([]);
+	const eligibleAgents = useMemo(
+		() =>
+			agents.filter(
+				(agent) =>
+					!tokenProxyModeBlocker(
+						agent.toolType,
+						agent.sessionSshRemoteConfig?.enabled
+							? (agentRemoteId(agent) ?? 'remote host')
+							: undefined
+					)
+			),
+		[agents]
+	);
+	const chooseAll = useCallback(
+		async (mode: TokenProxyMode) => {
+			setBulkBusy(true);
+			setBulkStatus('');
+			setBulkErrors([]);
+			// Off can also clear stale proxy settings on an unsupported or remote
+			// agent. The shared writer preserves gateways to other proxies.
+			const targets = mode === 'off' ? agents : eligibleAgents;
+			const errors: string[] = [];
+			let applied = 0;
+			try {
+				for (const agent of targets) {
+					try {
+						const result = await setAgentTokenProxyMode(agent.id, mode);
+						if (result.ok) applied++;
+						else errors.push(`${agent.name}: ${result.error}`);
+					} catch (err: unknown) {
+						errors.push(`${agent.name}: ${err instanceof Error ? err.message : String(err)}`);
+					}
+				}
+				const skipped = agents.length - targets.length;
+				setBulkStatus(
+					`Applied ${TOKEN_PROXY_MODE_LABELS[mode]} to ${applied} agent${applied === 1 ? '' : 's'}.${
+						skipped
+							? ` Skipped ${skipped} remote or unsupported agent${skipped === 1 ? '' : 's'}.`
+							: ''
+					}`
+				);
+				setBulkErrors(errors);
+			} finally {
+				setBulkBusy(false);
+				proxy.refresh();
+			}
+		},
+		[agents, eligibleAgents, proxy.refresh]
+	);
 
 	return (
 		<div className="space-y-3" data-testid="local-models-gateway-section">
@@ -105,34 +162,72 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 						No agents yet.
 					</p>
 				) : (
-					<table className="w-full text-xs" data-testid="local-models-gateway-table">
-						<thead>
-							<tr>
-								<th className="text-left font-medium opacity-70 pb-2 pr-3">Agent</th>
-								<th className="text-left font-medium opacity-70 pb-2 pr-3">Provider</th>
-								<th className="text-left font-medium opacity-70 pb-2 pr-3">Maestro proxy</th>
-								<th className="text-left font-medium opacity-70 pb-2 w-2/5">Gateway URL</th>
-							</tr>
-						</thead>
-						<tbody>
-							{agents.map((agent) => {
-								const remoteId = agentRemoteId(agent);
-								return (
-									<GatewayRow
-										key={agent.id}
+					<>
+						<div>
+							<div className="text-sm font-medium">Set Maestro proxy for all agents</div>
+							<p className="text-xs opacity-70 mt-0.5 mb-2">
+								Enabling applies to {eligibleAgents.length} local agents with gateway support and
+								replaces their gateway URLs. Off preserves gateways to other proxies.
+							</p>
+							<div className="flex flex-wrap gap-2" role="group" aria-label="All agents proxy mode">
+								{TOKEN_PROXY_MODES.map((mode) => (
+									<CardButton
+										key={mode}
 										theme={theme}
-										agent={agent}
-										providerEnvVars={envByToolType[agent.toolType]}
-										// The id stands in until the name loads: the row must
-										// know the agent is remote either way.
-										sshRemoteName={remoteId ? (remoteNames[remoteId] ?? remoteId) : undefined}
-										proxyPort={proxyPort}
-										onProxyModeChanged={proxy.refresh}
+										icon={mode === 'off' ? Power : Router}
+										label={`All: ${TOKEN_PROXY_MODE_LABELS[mode]}`}
+										onClick={() => void chooseAll(mode)}
+										disabled={bulkBusy || (mode !== 'off' && eligibleAgents.length === 0)}
+										testId={`gateway-proxy-all-${mode}`}
 									/>
-								);
-							})}
-						</tbody>
-					</table>
+								))}
+							</div>
+							<p className="text-xs opacity-70 mt-1" role="status">
+								{bulkBusy ? 'Applying proxy mode...' : bulkStatus}
+							</p>
+							{bulkErrors.length > 0 && (
+								<div
+									className="text-xs select-text"
+									style={{ color: theme.colors.error }}
+									role="alert"
+								>
+									{bulkErrors.map((error, index) => (
+										<p key={index}>{error}</p>
+									))}
+								</div>
+							)}
+						</div>
+						<fieldset disabled={bulkBusy}>
+							<table className="w-full text-xs" data-testid="local-models-gateway-table">
+								<thead>
+									<tr>
+										<th className="text-left font-medium opacity-70 pb-2 pr-3">Agent</th>
+										<th className="text-left font-medium opacity-70 pb-2 pr-3">Provider</th>
+										<th className="text-left font-medium opacity-70 pb-2 pr-3">Maestro proxy</th>
+										<th className="text-left font-medium opacity-70 pb-2 w-2/5">Gateway URL</th>
+									</tr>
+								</thead>
+								<tbody>
+									{agents.map((agent) => {
+										const remoteId = agentRemoteId(agent);
+										return (
+											<GatewayRow
+												key={agent.id}
+												theme={theme}
+												agent={agent}
+												providerEnvVars={envByToolType[agent.toolType]}
+												// The id stands in until the name loads: the row must
+												// know the agent is remote either way.
+												sshRemoteName={remoteId ? (remoteNames[remoteId] ?? remoteId) : undefined}
+												proxyPort={proxyPort}
+												onProxyModeChanged={proxy.refresh}
+											/>
+										);
+									})}
+								</tbody>
+							</table>
+						</fieldset>
+					</>
 				)}
 			</SectionCard>
 			<LocalModelsProxyUsage

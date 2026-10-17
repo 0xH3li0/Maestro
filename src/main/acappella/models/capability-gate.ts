@@ -42,7 +42,10 @@ import type {
 	LocalModelTaskUnreadyReason,
 } from '../../../shared/local-models/task-readiness';
 import type { LocalModelTaskId } from '../../../shared/local-models/tasks';
-import { taskAssignmentLocation } from '../../../shared/local-models/settings-location';
+import {
+	modelsSettingsLocation,
+	taskAssignmentLocation,
+} from '../../../shared/local-models/settings-location';
 import { resolveTaskReadiness } from '../../local-models/task-readiness';
 import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
@@ -381,7 +384,7 @@ async function resolveSlot(
 				requirement.runtimeId,
 				options
 			);
-			if (runtimeVerdict) return runtimeVerdict;
+			if (runtimeVerdict) return { ...runtimeVerdict, requiredModelId: requirement.modelId };
 		}
 
 		const model = getLocalModel(requirement.modelId);
@@ -415,7 +418,7 @@ async function resolveSlot(
 				detail: `${label}: ${modelName} is installed but failed verification${
 					status.detail ? ` (${status.detail})` : ''
 				}.`,
-				suggestedAction: 'Re-verify or re-download it in Settings > Plugins > A Cappella > Models.',
+				suggestedAction: `Re-verify or re-download it in ${modelsSettingsLocation('library', 'speech')}.`,
 			};
 		}
 		return {
@@ -425,7 +428,7 @@ async function resolveSlot(
 			reason: 'model-not-installed',
 			requiredModelId: requirement.modelId,
 			detail: `${label}: ${modelName} is not installed.`,
-			suggestedAction: 'Download it in Settings > Plugins > A Cappella > Voice Setup.',
+			suggestedAction: `Download it in ${modelsSettingsLocation('library', 'speech')}.`,
 		};
 	}
 
@@ -524,10 +527,13 @@ async function resolveAssignedSource(
 
 	if (readiness.state === 'unavailable' && readiness.reason) {
 		const reason = TASK_REASON_TO_SLOT_REASON[readiness.reason];
-		// Only a reason a download fixes carries the model id: the slot draws a
-		// Download button from it, and offering one for a runtime that will not
-		// load is the wrong instruction.
-		const downloadable = reason === 'model-not-installed' || reason === 'model-corrupt';
+		// Recovery needs the model id to find its engine too. The installer must
+		// check the engine's install state before offering a runtime download:
+		// an installed binary that cannot load needs a different recovery.
+		const downloadable =
+			reason === 'model-not-installed' ||
+			reason === 'model-corrupt' ||
+			reason === 'runtime-unavailable';
 		return {
 			slot,
 			providerId,
@@ -598,7 +604,7 @@ async function resolveWakeClassifier(
 			detail: `${label}: ${modelName} is installed but failed verification${
 				status.detail ? ` (${status.detail})` : ''
 			}.`,
-			suggestedAction: 'Re-verify or re-download it in Settings > Plugins > A Cappella > Models.',
+			suggestedAction: `Re-verify or re-download it in ${modelsSettingsLocation('library', 'speech')}.`,
 		};
 	}
 	return {
@@ -608,7 +614,7 @@ async function resolveWakeClassifier(
 		reason: 'model-not-installed',
 		requiredModelId: pretrained.modelId,
 		detail: `${label}: ${modelName} is not installed.`,
-		suggestedAction: 'Download it in Settings > Plugins > A Cappella > Voice Setup.',
+		suggestedAction: `Download it in ${modelsSettingsLocation('library', 'speech')}.`,
 	};
 }
 

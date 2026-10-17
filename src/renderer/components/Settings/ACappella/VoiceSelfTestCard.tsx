@@ -17,6 +17,7 @@ import { Stethoscope } from 'lucide-react';
 
 import type { VoiceSelfTestReport } from '../../../../main/acappella/voice-self-test';
 import { selfTestVerdict } from '../../../../shared/local-models/native-runtimes';
+import { modelsSettingsLocation } from '../../../../shared/local-models/settings-location';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
@@ -133,7 +134,7 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 								? 'All runtimes responded'
 								: verdict === 'FAIL'
 									? 'One or more runtimes failed'
-									: 'A runtime is not downloaded yet, so local voice cannot run. Download it in Voice Setup'}{' '}
+									: `A runtime is not downloaded yet, so local voice cannot run. Download it in ${modelsSettingsLocation('library', 'engines')}.`}{' '}
 							on {report.platform}-{report.arch}
 						</div>
 						{report.entries.map((entry) => (
