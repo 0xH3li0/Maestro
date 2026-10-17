@@ -1836,6 +1836,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			const report = await requestProviderTranslation({
 				agentId: sessionId,
+				tabId: typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined,
 				destination:
 					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
 				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',

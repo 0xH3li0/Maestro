@@ -30,6 +30,8 @@ export interface TranslationJournal {
 	failurePhase?: TranslationOperationState;
 	/** App-local for new operations; legacy in-repo paths remain intact for recovery/rollback. */
 	knowledgeDirectory?: string;
+	/** Content-addressed resource lineage, independent of the selected conversation. */
+	resourceImport?: { key: string; operationId: string };
 	/** Native hashes captured at staged readback, never reconstructed from later destination work. */
 	destinationObserved?: Record<string, string>;
 }

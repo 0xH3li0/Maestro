@@ -64,6 +64,7 @@ export class TranslationRegistry {
 
 export function planTranslation(options: {
 	agentId: string;
+	tabId?: string;
 	source: TranslationIdentity;
 	destination: TranslationIdentity;
 	scope: TranslationScope;
@@ -74,7 +75,13 @@ export function planTranslation(options: {
 	newRecords?: Record<string, number>;
 	resources?: TranslationArtifact[];
 }): TranslationPlan {
-	const { source, destination, registry, conversations } = options;
+	const { source, destination, registry } = options;
+	const conversations =
+		options.tabId === undefined
+			? options.conversations
+			: options.conversations.filter((c) => c.tabId === options.tabId);
+	if (options.tabId !== undefined && (!options.tabId || conversations.length !== 1))
+		throw new Error('Single-tab translation requires exactly one matching conversation');
 	const noop =
 		source.provider === destination.provider && source.accountRoot === destination.accountRoot;
 	const direction = registry.direction(source, destination);
@@ -92,7 +99,15 @@ export function planTranslation(options: {
 	for (const resource of options.resources ?? []) payloadClasses.add(resource.kind);
 	const limitations: TranslationLimitation[] = noop
 		? []
-		: [...(options.limitations ?? []), ...conversations.flatMap((c) => c.limitations)];
+		: [
+				...(options.limitations ?? []).filter(
+					(limitation) =>
+						options.tabId === undefined ||
+						limitation.tabId === undefined ||
+						limitation.tabId === options.tabId
+				),
+				...conversations.flatMap((c) => c.limitations),
+			];
 	if (!noop) {
 		if (destination.provider === 'codex')
 			for (const conversation of conversations) {
@@ -183,6 +198,7 @@ export function planTranslation(options: {
 		schemaVersion: 1,
 		id: generateUUID(),
 		agentId: options.agentId,
+		...(options.tabId !== undefined && { tabId: options.tabId }),
 		source,
 		destination,
 		scope: options.scope,
@@ -216,6 +232,7 @@ export function planTranslation(options: {
 			canonicalJson({
 				source,
 				destination,
+				tabId: options.tabId,
 				scope: options.scope,
 				conversations,
 				resources: options.resources ?? [],
@@ -223,4 +240,11 @@ export function planTranslation(options: {
 			})
 		),
 	};
+}
+
+/** The same planner and acceptance gates, scoped to one native conversation. */
+export function planTabTranslation(
+	options: Parameters<typeof planTranslation>[0] & { tabId: string }
+): TranslationPlan {
+	return planTranslation(options);
 }

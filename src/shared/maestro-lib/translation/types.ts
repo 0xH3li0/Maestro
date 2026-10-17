@@ -97,6 +97,10 @@ export interface TranslationScope {
 }
 
 export interface TranslationCheckpoint {
+	/** Last committed journal; prevents a stale tab plan from replacing newer lineage. */
+	operationId?: string;
+	/** Agent-wide resource import, reused by successive tabs with the same payload. */
+	resourceImport?: { key: string; operationId: string };
 	/** Every observed native record, including display projections and opaque rows. */
 	observed: Record<string, string>;
 	/** Written native IDs -> original lineage; repeated text is not an identity. */
@@ -176,6 +180,8 @@ export interface TranslationPlan {
 	schemaVersion: 1;
 	id: string;
 	agentId: string;
+	/** Absent for an agent-wide switch. A scoped operation never changes other tabs. */
+	tabId?: string;
 	source: TranslationIdentity;
 	destination: TranslationIdentity;
 	scope: TranslationScope;
@@ -209,6 +215,7 @@ export type TranslationOperationState =
 /** Persist this reference, not private native content, on the Maestro agent. */
 export interface ProviderMigrationState {
 	operationId: string;
+	tabId?: string;
 	destination: ToolType;
 	state: TranslationOperationState | 'deferred';
 	verification: 'unverified' | 'verified';
@@ -230,6 +237,7 @@ export interface TranslationResult {
 
 export interface TranslationRequest {
 	agentId: string;
+	tabId?: string;
 	destination: ToolType;
 	action: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
 	acceptLimitations?: boolean;

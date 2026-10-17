@@ -1,6 +1,6 @@
 import { atomicWriteFile } from '../storage/atomic-json-store';
 import { assertTranslationTarget } from './resource-projections';
-import { translationKnowledgePrompt } from './resources';
+import { translationKnowledgePrompt, resourceBindingHash } from './resources';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
@@ -31,7 +31,7 @@ export interface TranslationTransactionHost {
 	/** Called again before every mutation and commit, not just when planning. */
 	assertSourceUnchanged(journal: TranslationJournal): Promise<void>;
 	setMigration(state: ProviderMigrationState): Promise<void>;
-	/** Must commit the agent provider, all tab mappings, and operation ID atomically. */
+	/** Atomically commit the selected mappings and operation ID; only an unscoped plan switches the agent. */
 	commit(journal: TranslationJournal): Promise<void>;
 	isCommitted(operationId: string): Promise<boolean>;
 	codex?: TranslationRpc;
@@ -125,6 +125,7 @@ async function deferTranslation(
 	await archive.markLatest(plan.agentId, plan.id);
 	await host.setMigration({
 		operationId: plan.id,
+		tabId: plan.tabId,
 		destination: plan.destination.provider,
 		state: 'deferred',
 		verification: plan.verification,
@@ -152,6 +153,7 @@ export async function applyTranslation(
 ): Promise<TranslationResult> {
 	return operations.enqueue(journal.plan.agentId, async () => {
 		const plan = journal.plan;
+		assertTabScope(journal);
 		// Reapplying a durable operation must never replay an uncertain native import.
 		if (journal.state === 'committed' && journal.result?.state === 'committed')
 			return journal.result;
@@ -192,12 +194,22 @@ export async function applyTranslation(
 		let releaseGit: (() => Promise<void>) | undefined;
 		try {
 			releaseProject = await archive.lock(`project:${plan.destination.projectRoot}`);
+			const currentCheckpoint = await archive.checkpoint(plan.agentId);
+			if (currentCheckpoint?.operationId !== journal.checkpoint?.operationId)
+				return {
+					success: false,
+					state: 'refused',
+					plan,
+					mappings: [],
+					error: 'Agent checkpoint changed since preflight; plan translation again',
+				};
 			await host.assertSourceUnchanged(journal);
 			journal.state = 'staging';
 			await archive.write(journal);
 			await archive.markLatest(plan.agentId, plan.id);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: 'staging',
 				verification: plan.verification,
@@ -315,7 +327,33 @@ export async function applyTranslation(
 					host.resolveProjectGit
 				);
 			}
-			if (journal.plan.scope.projectKnowledge) {
+			journal.resources.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+			const resourceKey = translationHash(
+				canonicalJson({
+					source: plan.source,
+					destination: plan.destination,
+					scope: plan.scope,
+					binding: resourceBindingHash(journal.resources),
+					resources: journal.resources.map((resource) => ({
+						path: resource.relativePath,
+						kind: resource.kind,
+						mode: resource.mode,
+						symlinkTarget: resource.symlinkTarget,
+					})),
+				})
+			);
+			const previousImport = currentCheckpoint?.resourceImport;
+			journal.resourceImport =
+				previousImport?.key === resourceKey
+					? previousImport
+					: { key: resourceKey, operationId: plan.id };
+			if (journal.resourceImport.operationId !== plan.id) {
+				journal.knowledgeDirectory = path.resolve(
+					host.knowledgeRoot,
+					translationHash(plan.agentId),
+					journal.resourceImport.operationId
+				);
+			} else if (journal.plan.scope.projectKnowledge) {
 				const directory = path.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
 				journal.knowledgeDirectory = directory;
 				assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot);
@@ -360,6 +398,7 @@ export async function applyTranslation(
 			await finalizeTranslation(archive, journal);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: 'committed',
 				verification: plan.verification,
@@ -387,6 +426,7 @@ export async function applyTranslation(
 			await archive.write(journal);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: journal.state,
 				verification: plan.verification,
@@ -401,14 +441,60 @@ export async function applyTranslation(
 	});
 }
 
+/** Select the existing transaction engine, including its recovery and rollback journal. */
+export async function applyTabTranslation(
+	...args: Parameters<typeof applyTranslation>
+): Promise<TranslationResult> {
+	if (!args[2].plan.tabId) throw new Error('Single-tab apply requires a tab-scoped plan');
+	return applyTranslation(...args);
+}
+
+function assertTabScope(journal: TranslationJournal): void {
+	const tabId = journal.plan.tabId;
+	if (
+		tabId !== undefined &&
+		(!tabId ||
+			journal.plan.tabs.length !== 1 ||
+			journal.plan.tabs[0].tabId !== tabId ||
+			journal.conversations.length !== 1 ||
+			journal.conversations[0].tabId !== tabId ||
+			journal.mappings.some((mapping) => mapping.tabId !== tabId))
+	)
+		throw new Error('Single-tab journal contains an unrelated conversation or mapping');
+}
+
 export async function verifyTranslationWrites(
 	journal: TranslationJournal,
 	knowledgeRoot: string,
 	allowLegacyKnowledge = false,
 	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
 ): Promise<void> {
+	assertTabScope(journal);
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
+	if (journal.resourceImport && journal.resourceImport.operationId !== journal.plan.id) {
+		const directory = path.resolve(
+			knowledgeRoot,
+			translationHash(journal.plan.agentId),
+			journal.resourceImport.operationId
+		);
+		if (journal.knowledgeDirectory !== directory)
+			throw new Error('Invalid reused knowledge directory');
+		assertTranslationKnowledgeDirectory(directory, knowledgeRoot);
+		for (const resource of journal.resources) {
+			const file = path.join(directory, resource.relativePath);
+			await assertTranslationTarget(file, directory);
+			if (translationHash(await fs.readFile(file)) !== resource.sha256)
+				throw new Error('Previously imported resource changed since preflight');
+		}
+		const index = path.join(directory, 'knowledge-index.md');
+		await assertTranslationTarget(index, directory);
+		if (
+			(await fs.readFile(index, 'utf8')) !==
+			translationKnowledgePrompt(directory, journal.resources)
+		)
+			throw new Error('Previously imported knowledge index changed since preflight');
+	}
 	const destinationObserved: Record<string, string> = {};
 	for (const write of [
 		...journal.resourceWrites,
@@ -465,15 +551,27 @@ async function finalizeTranslation(
 ): Promise<void> {
 	if (!journal.destinationObserved)
 		throw new Error('Staged native checkpoint is missing; recovery requires inspection');
-	const checkpoint: TranslationCheckpoint = journal.checkpoint ?? {
-		observed: {},
-		lineage: {},
-		conversations: [],
-		resources: [],
-		resourceBases: {},
-		providerRoots: {},
-	};
-	checkpoint.conversations = journal.conversations;
+	const checkpoint: TranslationCheckpoint = journal.checkpoint
+		? structuredClone(journal.checkpoint)
+		: {
+				observed: {},
+				lineage: {},
+				conversations: [],
+				resources: [],
+				resourceBases: {},
+				providerRoots: {},
+			};
+	checkpoint.operationId = journal.plan.id;
+	checkpoint.resourceImport = journal.resourceImport;
+	checkpoint.conversations =
+		journal.plan.tabId === undefined
+			? journal.conversations
+			: [
+					...checkpoint.conversations.filter(
+						(conversation) => conversation.tabId !== journal.plan.tabId
+					),
+					...journal.conversations,
+				];
 	checkpoint.resources = journal.resources;
 	checkpoint.ownedResources ??= {};
 	for (const write of journal.resourceWrites)
@@ -509,6 +607,7 @@ export async function recoverTranslation(
 	host: TranslationTransactionHost,
 	rollback = false
 ): Promise<TranslationResult> {
+	assertTabScope(journal);
 	// A later switch may replace the host's active operation ID, but it does not undo this commit.
 	if (rollback && journal.state === 'committed')
 		throw new Error('Committed migration cannot be deleted; switch back through a new translation');
@@ -534,6 +633,7 @@ export async function recoverTranslation(
 			if (journal.state !== 'committed') await finalizeTranslation(archive, journal);
 			await host.setMigration({
 				operationId: journal.plan.id,
+				tabId: journal.plan.tabId,
 				destination: journal.plan.destination.provider,
 				state: 'committed',
 				verification: journal.plan.verification,
@@ -680,6 +780,7 @@ export async function recoverTranslation(
 		await archive.write(journal);
 		await host.setMigration({
 			operationId: journal.plan.id,
+			tabId: journal.plan.tabId,
 			destination: journal.plan.destination.provider,
 			state: journal.state,
 			verification: journal.plan.verification,

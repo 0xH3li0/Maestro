@@ -91,6 +91,25 @@ beforeEach(() => {
 });
 
 describe('maestro:remoteUpdateSessionConfig', () => {
+	it('forwards a tab-scoped translation to the shared client', async () => {
+		setup([createMockSession({ id: 'session-1' })]);
+		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
+		dispatchPatch('session-1', {
+			toolType: 'codex',
+			tabId: 'selected-tab',
+			migrationAction: 'plan',
+		});
+		await flush();
+		expect(requestProviderTranslation).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'session-1',
+				tabId: 'selected-tab',
+				destination: 'codex',
+				action: 'plan',
+			})
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
 	it('writes the bookmark flag so the CLI can pin an agent in the Left Bar', async () => {
 		const sessions = [createMockSession({ id: 'session-1', bookmarked: false })];
 		const { setSessions } = setup(sessions);

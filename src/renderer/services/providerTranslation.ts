@@ -67,7 +67,8 @@ async function applyReport(agentId: string, report: TranslationReport): Promise<
 			report.plan!.id,
 			result.mappings,
 			stored?.providerTranslationKnowledgeDirectory,
-			report.plan!.source.provider
+			report.plan!.source.provider,
+			report.plan!.tabId
 		);
 		return {
 			...updated,
@@ -162,6 +163,7 @@ export async function requestProviderTranslation(
 				...s,
 				providerMigration: {
 					operationId: report.plan!.id,
+					tabId: request.tabId,
 					destination: request.destination,
 					state: 'deferred',
 					verification: report.plan!.verification,
@@ -188,6 +190,7 @@ export function resumeDeferredProviderTranslations(sessions: Session[]): void {
 		if (state?.state !== 'deferred' || pending.has(session.id)) continue;
 		const request: TranslationRequest = {
 			agentId: session.id,
+			tabId: state.tabId,
 			destination: state.destination,
 			action: 'apply',
 			acceptLimitations: state.acceptLimitations === true,

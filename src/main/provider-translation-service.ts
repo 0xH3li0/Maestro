@@ -38,6 +38,7 @@ import { canonicalJson } from '../shared/canonicalJson';
 import { isPathAtOrUnderRoot } from '../shared/worktreePaths';
 import { createKeyedWriteQueue } from '../shared/keyedWriteQueue';
 import { createTranslationRegistry } from '../shared/maestro-lib/translation/adapters';
+import { providerOverridesFor } from '../shared/maestro-lib/agents/providerSwap';
 import {
 	TranslationArchive,
 	type TranslationJournal,
@@ -122,14 +123,21 @@ export class ProviderTranslationService {
 		if (!detector) throw new Error('Agent detector unavailable');
 		const detected = await detector.getAgent(provider);
 		const providerConfig = this.deps.agentConfigsStore.get('configs', {})[provider] ?? {};
+		const overrides = providerOverridesFor(
+			{ ...session, toolType: session.toolType as ToolType },
+			provider
+		);
 		const env = buildAgentEnvironment({
 			surface: 'desktop',
 			globalShellEnvVars: this.deps.settingsStore.get('shellEnvVars', {}) as Record<string, string>,
 			defaultEnvVars: detected?.defaultEnvVars,
-			sessionCustomEnvVars: source ? session.customEnvVars : undefined,
+			sessionCustomEnvVars: source ? overrides.customEnvVars : undefined,
 			agentCustomEnvVars: providerConfig.customEnvVars as Record<string, string> | undefined,
 		});
-		const selectedRoot = !source ? checkpoint?.providerRoots[provider]?.accountRoot : undefined;
+		const selectedRoot =
+			!source || provider !== session.toolType
+				? checkpoint?.providerRoots[provider]?.accountRoot
+				: undefined;
 		const accountRoot =
 			selectedRoot ?? resolveAgentAccountKey(provider, env as Record<string, string>, os.homedir());
 		if (!accountRoot && this.registry.get(provider))
@@ -140,7 +148,7 @@ export class ProviderTranslationService {
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		}
-		const customBinary = source ? session.customPath : undefined;
+		const customBinary = source ? overrides.customPath : undefined;
 		const binary = customBinary || detected?.path;
 		let version = '';
 		if (binary) {
@@ -228,7 +236,21 @@ export class ProviderTranslationService {
 				'Live process ownership is unavailable; native migration cannot be planned safely'
 			);
 		const checkpoint = await this.archive.checkpoint(session.id);
-		const source = await this.identity(session, session.toolType, true, checkpoint);
+		const tabs = translationSessionTabs(session, request.tabId);
+		let sourceProvider = session.toolType;
+		if (
+			request.tabId !== undefined &&
+			!tabs[0].agentSessionId &&
+			request.destination === session.toolType
+		) {
+			const parked = Object.entries(tabs[0].providerSessions ?? {}).filter(
+				([provider, slot]) => provider !== request.destination && slot?.agentSessionId
+			);
+			if (parked.length > 1)
+				throw new Error('Multiple parked source providers; select the source before translation');
+			if (parked.length === 1) sourceProvider = parked[0][0] as ToolType;
+		}
+		const source = await this.identity(session, sourceProvider, true, checkpoint);
 		const destination = await this.identity(session, request.destination, false, checkpoint);
 		const scope = {
 			projectKnowledge: true as const,
@@ -247,7 +269,6 @@ export class ProviderTranslationService {
 				message:
 					'Remote native translation requires an SSH adapter; local roots cannot stand in for remote accounts.',
 			});
-		const tabs = translationSessionTabs(session);
 		const conversations: PortableConversation[] = [];
 		const newRecords: Record<string, number> = {};
 		const nextCheckpoint: TranslationCheckpoint = checkpoint
@@ -263,9 +284,13 @@ export class ProviderTranslationService {
 		// Do not snapshot a partial source tail while a turn is running.
 		if (!busy && source.provider !== destination.provider) {
 			for (const tab of tabs) {
-				const native = await this.conversation(source, tab.id, tab.agentSessionId);
+				const sourceId =
+					sourceProvider === session.toolType
+						? tab.agentSessionId
+						: (tab.providerSessions?.[sourceProvider]?.agentSessionId ?? null);
+				const native = await this.conversation(source, tab.id, sourceId);
 				if (
-					!tab.agentSessionId &&
+					!sourceId &&
 					(tab as any).logs?.some((l: any) => l.source === 'user' || l.source === 'ai')
 				)
 					native.limitations.push({
@@ -277,7 +302,10 @@ export class ProviderTranslationService {
 					});
 				const reconciled = reconcileConversation(native, checkpoint);
 				// A parked destination with independently authored deltas is a real fork, not an overwrite warrant.
-				const parkedId = tab.providerSessions?.[destination.provider]?.agentSessionId;
+				const parkedId =
+					destination.provider === session.toolType
+						? tab.agentSessionId
+						: tab.providerSessions?.[destination.provider]?.agentSessionId;
 				if (parkedId) {
 					const parked = await this.conversation(destination, tab.id, parkedId);
 					const parkedResult = reconcileConversation(parked, checkpoint);
@@ -295,11 +323,12 @@ export class ProviderTranslationService {
 				conversations.push(reconciled.conversation);
 				newRecords[tab.id] = reconciled.newRecords;
 				for (const record of native.records)
-					nextCheckpoint.observed[nativeRecordKey(source, tab.agentSessionId!, record.nativeId)] =
+					nextCheckpoint.observed[nativeRecordKey(source, sourceId!, record.nativeId)] =
 						record.semanticHash;
 			}
 			// Closed native histories are selected by this agent's History, never by scanning the project wholesale.
-			const history = await getHistoryManager().getEntries(session.id);
+			const history =
+				request.tabId === undefined ? await getHistoryManager().getEntries(session.id) : [];
 			const selectedIds = new Set(tabs.map((t) => t.agentSessionId).filter(Boolean));
 			for (const entry of history) {
 				if (!entry.agentSessionId || selectedIds.has(entry.agentSessionId)) continue;
@@ -336,7 +365,10 @@ export class ProviderTranslationService {
 			for (const tab of tabs)
 				conversations.push({
 					tabId: tab.id,
-					nativeSessionId: tab.agentSessionId,
+					nativeSessionId:
+						sourceProvider === session.toolType
+							? tab.agentSessionId
+							: (tab.providerSessions?.[sourceProvider]?.agentSessionId ?? null),
 					identity: source,
 					records: [],
 					artifacts: [],
@@ -557,6 +589,7 @@ export class ProviderTranslationService {
 		}
 		const plan = planTranslation({
 			agentId: session.id,
+			tabId: request.tabId,
 			source,
 			destination,
 			scope,
@@ -624,8 +657,20 @@ export class ProviderTranslationService {
 			resolveProjectGit: (root) => this.resolveProjectGit(root),
 			assertSourceUnchanged: async (operation) => {
 				const session = this.session(operation.plan.agentId);
-				if (session.toolType !== operation.plan.source.provider)
+				if (
+					operation.plan.tabId === undefined &&
+					session.toolType !== operation.plan.source.provider
+				)
 					throw new Error('Source provider changed since preflight');
+				if (operation.plan.tabId !== undefined) {
+					const [tab] = translationSessionTabs(session, operation.plan.tabId);
+					const sourceId =
+						session.toolType === operation.plan.source.provider
+							? tab.agentSessionId
+							: tab.providerSessions?.[operation.plan.source.provider]?.agentSessionId;
+					if (sourceId !== operation.plan.tabs[0].sourceSessionId)
+						throw new Error('Native source identity changed since preflight');
+				}
 				if (
 					isAgentBusy(
 						{ ...session, aiTabs: translationSessionTabs(session) },
@@ -633,7 +678,12 @@ export class ProviderTranslationService {
 					)
 				)
 					throw new TranslationSourceBusyError();
-				const actual = await this.identity(session, session.toolType, true, operation.checkpoint);
+				const actual = await this.identity(
+					session,
+					operation.plan.source.provider,
+					true,
+					operation.checkpoint
+				);
 				if (canonicalJson(actual) !== canonicalJson(operation.plan.source))
 					throw new Error('Source account, project root or provider version changed');
 				if (session.providerTranslationKnowledgeDirectory) {
@@ -691,7 +741,11 @@ export class ProviderTranslationService {
 			},
 			isCommitted: async (id) =>
 				this.session(journal.plan.agentId).providerMigration?.operationId === id &&
-				this.session(journal.plan.agentId).toolType === journal.plan.destination.provider,
+				['committing', 'committed', 'recovery-required'].includes(
+					this.session(journal.plan.agentId).providerMigration?.state ?? ''
+				) &&
+				(journal.plan.tabId !== undefined ||
+					this.session(journal.plan.agentId).toolType === journal.plan.destination.provider),
 			commit: async (operation) => {
 				this.persist(operation.plan.agentId, (session) => {
 					const result = commitTranslationSession(
@@ -699,7 +753,9 @@ export class ProviderTranslationService {
 						operation.plan.destination.provider,
 						operation.plan.id,
 						operation.mappings,
-						operation.knowledgeDirectory
+						operation.knowledgeDirectory,
+						operation.plan.source.provider,
+						operation.plan.tabId
 					);
 					const envKey =
 						operation.plan.destination.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';
@@ -707,10 +763,18 @@ export class ProviderTranslationService {
 						...result,
 						providerMigration: { ...result.providerMigration!, state: 'committing' },
 						customEnvVars: {
-							...(this.deps.agentConfigsStore.get('configs', {})[
-								operation.plan.destination.provider
-							]?.customEnvVars ?? {}),
-							[envKey]: operation.plan.destination.accountRoot,
+							...(operation.plan.tabId !== undefined
+								? session.customEnvVars
+								: {
+										...(this.deps.agentConfigsStore.get('configs', {})[
+											operation.plan.destination.provider
+										]?.customEnvVars ?? {}),
+										[envKey]: operation.plan.destination.accountRoot,
+									}),
+							...(operation.plan.tabId !== undefined &&
+								session.toolType === operation.plan.destination.provider && {
+									[envKey]: operation.plan.destination.accountRoot,
+								}),
 							...(operation.knowledgeDirectory && {
 								[TRANSLATION_KNOWLEDGE_ENV_VAR]: operation.knowledgeDirectory,
 							}),
@@ -726,6 +790,8 @@ export class ProviderTranslationService {
 			typeof request.agentId !== 'string' ||
 			!(AGENT_IDS as readonly string[]).includes(request.destination) ||
 			!['plan', 'apply', 'status', 'recover', 'rollback'].includes(request.action) ||
+			(request.tabId !== undefined &&
+				(typeof request.tabId !== 'string' || !request.tabId.trim())) ||
 			(request.projectResourcesIntoRepo !== undefined &&
 				typeof request.projectResourcesIntoRepo !== 'boolean') ||
 			(request.acceptLimitations !== undefined && typeof request.acceptLimitations !== 'boolean') ||
@@ -754,6 +820,8 @@ export class ProviderTranslationService {
 								'Only the current provider migration can be recovered or rolled back. Inspect historical operations with status.',
 						};
 					const journal = await this.archive.read(request.agentId, id);
+					if (request.tabId !== undefined && request.tabId !== journal.plan.tabId)
+						return { success: false, error: 'Journal tab does not match the request.' };
 					if (request.action === 'status')
 						return {
 							success: true,
@@ -780,6 +848,8 @@ export class ProviderTranslationService {
 						? await this.archive.read(request.agentId, request.planId)
 						: undefined;
 				if (previous) {
+					if (previous.plan.tabId !== request.tabId)
+						return { success: false, error: 'Preflight tab does not match the request.' };
 					if (previous.plan.destination.provider !== request.destination)
 						return { success: false, error: 'Preflight destination does not match the request.' };
 					if (previous.state === 'committed' && previous.result?.state === 'committed') {

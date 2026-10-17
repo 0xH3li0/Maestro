@@ -7,7 +7,7 @@ export {
 	getDeclaredTranslationDirection,
 	translationVersionLimitation,
 } from './support';
-export { TranslationRegistry, planTranslation } from './registry';
+export { TranslationRegistry, planTranslation, planTabTranslation } from './registry';
 export {
 	createTranslationRegistry,
 	claudeTranslationAdapter,
@@ -18,6 +18,7 @@ export { extractNativeConversation, parseNativeLines } from './native-records';
 export { TranslationArchive, type TranslationJournal } from './archive';
 export {
 	applyTranslation,
+	applyTabTranslation,
 	recoverTranslation,
 	verifyTranslationWrites,
 	type TranslationTransactionHost,

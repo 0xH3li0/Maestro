@@ -66,7 +66,10 @@ export interface TranslatableSession {
 	[key: string]: any;
 }
 
-export function translationSessionTabs(session: TranslatableSession): TranslationTab[] {
+export function translationSessionTabs(
+	session: TranslatableSession,
+	tabId?: string
+): TranslationTab[] {
 	const tabs = [
 		...(session.providerTranslationTabInventory ?? []),
 		...(session.closedTabHistory ?? []).map((c) => c.tab),
@@ -82,7 +85,13 @@ export function translationSessionTabs(session: TranslatableSession): Translatio
 		...(session.aiTabs ?? []),
 	];
 
-	return [...new Map(tabs.filter(Boolean).map((t) => [t.id, t])).values()];
+	const unique: TranslationTab[] = [
+		...new Map(tabs.filter(Boolean).map((t) => [t.id, t])).values(),
+	];
+	if (tabId === undefined) return unique;
+	const selected = unique.filter((tab) => tab.id === tabId);
+	if (selected.length !== 1) throw new Error(`Translation tab not found: ${tabId}`);
+	return selected;
 }
 
 export function commitTranslationSession<T extends TranslatableSession>(
@@ -91,12 +100,43 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	operationId: string,
 	mappings: TranslationTabMapping[],
 	knowledgeDirectory?: string,
-	sourceProvider: ToolType = session.toolType
+	sourceProvider: ToolType = session.toolType,
+	tabId?: string
 ): T {
+	if (
+		tabId !== undefined &&
+		(mappings.length !== 1 ||
+			mappings[0].tabId !== tabId ||
+			!translationSessionTabs(session).some((tab) => tab.id === tabId))
+	)
+		throw new Error('Single-tab commit requires exactly one existing tab mapping');
 	const map = new Map(mappings.map((m) => [m.tabId, m]));
 	const translate = (tab: TranslationTab): TranslationTab => {
+		if (tabId !== undefined && tab.id !== tabId) return tab;
 		const mapping = map.get(tab.id);
 		if (!mapping) throw new Error(`Missing native translation mapping for tab ${tab.id}`);
+		if (tabId !== undefined) {
+			const sourceId =
+				sourceProvider === session.toolType
+					? tab.agentSessionId
+					: tab.providerSessions?.[sourceProvider]?.agentSessionId;
+			const destinationId =
+				destination === session.toolType
+					? tab.agentSessionId
+					: tab.providerSessions?.[destination]?.agentSessionId;
+			if (sourceId !== mapping.sourceSessionId)
+				throw new Error(
+					`Native source identity changed before translation commit for tab ${tab.id}`
+				);
+			if (destinationId === mapping.destinationSessionId) return tab;
+			const sourceTab = switchTabProvider(tab, session.toolType, sourceProvider);
+			const translated = {
+				...switchTabProvider(sourceTab, sourceProvider, destination),
+				agentSessionId: mapping.destinationSessionId,
+			};
+			// Until a caller selects the destination, keep its new native ID parked.
+			return switchTabProvider(translated, destination, session.toolType);
+		}
 		if (
 			session.toolType === destination &&
 			tab.agentSessionId === mapping.destinationSessionId &&
@@ -122,7 +162,9 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			previous.tabId,
 			next
 				? { ...previous, destinationSessionId: next.destinationSessionId }
-				: { ...previous, destinationSessionId: null }
+				: tabId !== undefined
+					? previous
+					: { ...previous, destinationSessionId: null }
 		);
 	}
 	for (const mapping of mappings) {
@@ -140,13 +182,15 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	}
 	return {
 		...session,
-		toolType: destination,
-		providerTranslationQueuedOrigins: Object.fromEntries(
-			(session.executionQueue ?? []).map((item: { id: string }) => [
-				item.id,
-				session.providerTranslationQueuedOrigins?.[item.id] ?? sourceProvider,
-			])
-		),
+		toolType: tabId === undefined ? destination : session.toolType,
+		...(tabId === undefined && {
+			providerTranslationQueuedOrigins: Object.fromEntries(
+				(session.executionQueue ?? []).map((item: { id: string }) => [
+					item.id,
+					session.providerTranslationQueuedOrigins?.[item.id] ?? sourceProvider,
+				])
+			),
+		}),
 		aiTabs: session.aiTabs.map(translate),
 		...(session.orphanedThinkingTabs && {
 			orphanedThinkingTabs: session.orphanedThinkingTabs.map(translate),
@@ -173,9 +217,18 @@ export function commitTranslationSession<T extends TranslatableSession>(
 						: c
 			),
 		}),
-		providerMigration: { operationId, destination, state: 'committed', verification: 'unverified' },
+		providerMigration: {
+			operationId,
+			destination,
+			tabId,
+			state: 'committed',
+			verification: 'unverified',
+		},
 		providerTranslationKnowledgeDirectory: knowledgeDirectory,
-		providerTranslationHistoryMappings: [...historyMappings.values()],
+		providerTranslationHistoryMappings:
+			tabId !== undefined && destination !== session.toolType
+				? session.providerTranslationHistoryMappings
+				: [...historyMappings.values()],
 		providerTranslationTabInventory: translationSessionTabs(session)
 			.map(translate)
 			.map((tab) => ({
@@ -185,22 +238,24 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			})),
 		// Model names and API gateways belong to the source provider. A source
 		// target survives only when the destination has a recipe for it.
-		gatewayUrl: undefined,
-		...OFF_TOKEN_PROXY_FIELDS,
-		tierTargets: undefined,
-		...(agentRunOnSupport(destination).supported ? {} : { runOn: undefined }),
-		customPath: undefined,
-		customArgs: undefined,
-		customEnvVars: undefined,
-		customEnvVarsDisabled: undefined,
-		customModel: undefined,
-		customEffort: undefined,
-		customContextWindow: undefined,
-		contextWindowSource: undefined,
-		enableMaestroP: undefined,
-		maestroPPath: undefined,
-		maestroPMode: undefined,
-		codexTransport: undefined,
+		...(tabId === undefined && {
+			gatewayUrl: undefined,
+			...OFF_TOKEN_PROXY_FIELDS,
+			tierTargets: undefined,
+			...(agentRunOnSupport(destination).supported ? {} : { runOn: undefined }),
+			customPath: undefined,
+			customArgs: undefined,
+			customEnvVars: undefined,
+			customEnvVarsDisabled: undefined,
+			customModel: undefined,
+			customEffort: undefined,
+			customContextWindow: undefined,
+			contextWindowSource: undefined,
+			enableMaestroP: undefined,
+			maestroPPath: undefined,
+			maestroPMode: undefined,
+			codexTransport: undefined,
+		}),
 	};
 }
 

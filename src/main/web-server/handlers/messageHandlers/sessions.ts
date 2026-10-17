@@ -434,10 +434,12 @@ export function handleProviderTranslation(
 	}
 	const allowedKeys = [
 		'toolType',
+		'tabId',
 		'migrationAction',
 		'acceptTranslationLimitations',
 		'selectedUserResources',
 		'migrationPlanId',
+		'projectResourcesIntoRepo',
 	];
 	if (Object.keys(patch).some((key) => !allowedKeys.includes(key))) {
 		ctx.sendError(client, 'Provider translation cannot include unrelated settings edits');
@@ -458,6 +460,9 @@ export function handleProviderTranslation(
 		return;
 	}
 	if (
+		(patch.tabId !== undefined && (typeof patch.tabId !== 'string' || !patch.tabId.trim())) ||
+		(patch.projectResourcesIntoRepo !== undefined &&
+			typeof patch.projectResourcesIntoRepo !== 'boolean') ||
 		(patch.acceptTranslationLimitations !== undefined &&
 			typeof patch.acceptTranslationLimitations !== 'boolean') ||
 		(patch.migrationPlanId !== undefined &&

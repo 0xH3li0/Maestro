@@ -21,11 +21,15 @@ import {
 } from '../../../shared/maestro-lib/translation/archive';
 import {
 	applyTranslation,
+	applyTabTranslation,
 	recoverTranslation,
 } from '../../../shared/maestro-lib/translation/transaction';
 import { createTranslationRegistry } from '../../../shared/maestro-lib/translation/adapters';
 import { extractNativeConversation } from '../../../shared/maestro-lib/translation/native-records';
-import { planTranslation } from '../../../shared/maestro-lib/translation/registry';
+import {
+	planTranslation,
+	planTabTranslation,
+} from '../../../shared/maestro-lib/translation/registry';
 import { reconcileConversation } from '../../../shared/maestro-lib/translation/reconcile';
 import {
 	nativeRecordKey,
@@ -108,6 +112,203 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it('translates sequential tabs with one resource import and retains both native lineages', async () => {
+		const s = await scenario();
+		try {
+			const conversations = s.journal.conversations;
+			const resources = [
+				translationArtifact(
+					'memory',
+					'synthetic',
+					'memory/MEMORY.md',
+					Buffer.from('Remember exactly this')
+				),
+			];
+			const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
+			for (const conversation of conversations) {
+				const checkpoint = await s.archive.checkpoint('agent');
+				const plan = planTabTranslation({
+					...s.journal.plan,
+					tabId: conversation.tabId,
+					conversations,
+					registry: s.registry,
+					resources,
+				});
+				s.journal = {
+					schemaVersion: 1,
+					plan,
+					state: 'planned',
+					conversations: [conversation],
+					resources,
+					checkpoint,
+					mappings: [],
+					resourceWrites: [],
+				};
+				const result = await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true);
+				expect(result.state).toBe('committed');
+				expect(result.mappings.map((mapping) => mapping.tabId)).toEqual([conversation.tabId]);
+				if (checkpoint) {
+					expect(s.journal.resourceWrites).toEqual([]);
+					expect(s.journal.resourceImport).toEqual(checkpoint.resourceImport);
+					const merged = (await s.archive.checkpoint('agent'))!;
+					expect(merged.conversations.map((c) => c.tabId)).toEqual(['one', 'two']);
+					expect(merged.lineage).toMatchObject(checkpoint.lineage);
+					const imported = extractNativeConversation(
+						plan.destination,
+						conversation.tabId,
+						s.journal.mappings[0].destinationSessionId!,
+						await readFile(s.journal.mappings[0].artifacts[0].path)
+					);
+					// Native lineage identities, not repeated text, prevent re-imported records.
+					expect(reconcileConversation(imported, merged).newRecords).toBe(0);
+				} else expect(s.journal.resourceWrites).toHaveLength(2);
+			}
+			expect(stage).toHaveBeenCalledTimes(2);
+			expect(await readdir(path.join(s.host.knowledgeRoot, translationHash('agent')))).toHaveLength(
+				1
+			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('recovers a single-tab commit without restaging and refuses committed rollback', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan = planTabTranslation({
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			});
+			s.journal.conversations = s.journal.conversations.filter((c) => c.tabId === 'one');
+			vi.spyOn(s.archive, 'saveCheckpoint').mockRejectedValueOnce(
+				new Error('crash after host commit')
+			);
+			const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
+			expect(
+				(await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)).state
+			).toBe('recovery-required');
+			const recovered = await recoverTranslation(
+				s.archive,
+				await s.archive.read('agent', s.journal.plan.id),
+				s.host
+			);
+			expect(recovered.state).toBe('committed');
+			expect(recovered.mappings.map((m) => m.tabId)).toEqual(['one']);
+			expect(stage).toHaveBeenCalledTimes(1);
+			await expect(recoverTranslation(s.archive, s.journal, s.host, true)).rejects.toThrow(
+				'Committed migration'
+			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('refuses a scoped journal containing an unrelated conversation before mutation', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan = planTabTranslation({
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			});
+			await expect(
+				applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)
+			).rejects.toThrow('unrelated conversation');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(s.host.setMigration).not.toHaveBeenCalled();
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('rejects stale tab plans and rolls back a failed tab without deleting shared memory', async () => {
+		const s = await scenario();
+		try {
+			s.journal.resources = [
+				translationArtifact(
+					'memory',
+					'synthetic',
+					'memory/MEMORY.md',
+					Buffer.from('Shared memory survives rollback')
+				),
+			];
+			const all = s.journal.conversations;
+			const makePlan = (tabId: string) =>
+				planTabTranslation({ ...s.journal.plan, tabId, conversations: all, registry: s.registry });
+			const stale: TranslationJournal = {
+				...structuredClone(s.journal),
+				plan: makePlan('two'),
+				conversations: [all[1]],
+			};
+			s.journal.plan = makePlan('one');
+			s.journal.conversations = [all[0]];
+			expect(
+				(await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)).state
+			).toBe('committed');
+			const first = await s.archive.checkpoint('agent');
+			s.host.setMigration.mockClear();
+			expect((await applyTabTranslation(s.archive, s.registry, stale, s.host, true)).state).toBe(
+				'refused'
+			);
+			expect(s.host.setMigration).not.toHaveBeenCalled();
+			expect(await s.archive.checkpoint('agent')).toEqual(first);
+			stale.checkpoint = first;
+			s.host.commit.mockRejectedValueOnce(new Error('stop before commit'));
+			s.host.isCommitted.mockImplementation(async (id?: string) => id === s.journal.plan.id);
+			expect((await applyTabTranslation(s.archive, s.registry, stale, s.host, true)).state).toBe(
+				'failed'
+			);
+			expect(stale.resourceWrites).toEqual([]);
+			const rolledBack = await recoverTranslation(
+				s.archive,
+				await s.archive.read('agent', stale.plan.id),
+				s.host,
+				true
+			);
+			expect(rolledBack.state).toBe('rolled-back');
+			expect(
+				await readFile(path.join(s.journal.knowledgeDirectory!, 'memory/MEMORY.md'), 'utf8')
+			).toBe('Shared memory survives rollback');
+			await expect(readFile(stale.mappings[0].artifacts[0].path)).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
+			expect(await readFile(s.journal.mappings[0].artifacts[0].path, 'utf8')).toContain(
+				'synthetic'
+			);
+			expect(await s.archive.checkpoint('agent')).toEqual(first);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('ignores another tab block but retains agent-wide limitations in a scoped plan', async () => {
+		const s = await scenario();
+		try {
+			const options = {
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			};
+			expect(
+				planTabTranslation({
+					...options,
+					limitations: [
+						{ code: 'blocked-tab', tabId: 'two', severity: 'block', message: 'Unrelated' },
+					],
+				}).status
+			).toBe('ready');
+			expect(
+				planTabTranslation({
+					...options,
+					limitations: [
+						{ code: 'blocked-resource', severity: 'block', message: 'Shared resource conflict' },
+					],
+				}).status
+			).toBe('blocked');
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
 	it.each([false, true])('writes native files only with opt-in (enabled: %s)', async (enabled) => {
 		const s = await scenario();
 		try {

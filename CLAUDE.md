@@ -182,6 +182,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Providers, accounts, and auth
 
+- **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
+
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
 - **Provider translation acceptance:** `limitationsNeedingAcceptance()` in `src/shared/maestro-lib/translation/limitations.ts`

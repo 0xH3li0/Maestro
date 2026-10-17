@@ -99,6 +99,52 @@ afterEach(async () => {
 });
 
 describe('deferred provider translation client', () => {
+	it('applies one tab mapping without switching the agent or touching another tab', async () => {
+		const original = useSessionStore.getState().sessions[0];
+		const other = createMockAITab({ id: 'other', agentSessionId: 'untouched' });
+		const session = {
+			...original,
+			aiTabs: [...original.aiTabs, other],
+			customModel: 'agent-model',
+		};
+		useSessionStore.setState({ sessions: [session] });
+		const scopedPlan = { ...plan, tabId: 'tab', status: 'ready' as const };
+		const result = {
+			success: true,
+			state: 'committed' as const,
+			plan: scopedPlan,
+			mappings: [
+				{
+					tabId: 'tab',
+					sourceSessionId: 'source-final',
+					destinationSessionId: 'translated-tab',
+					artifacts: [],
+					lineage: {},
+				},
+			],
+		};
+		vi.mocked(window.maestro.sessions.getAll).mockResolvedValue([
+			{
+				...session,
+				providerMigration: {
+					operationId: plan.id,
+					tabId: 'tab',
+					destination: 'codex',
+					state: 'committed',
+					verification: 'unverified',
+				},
+			},
+		] as any);
+		translateProvider.mockResolvedValue({ success: true, plan: scopedPlan, result });
+		await requestProviderTranslation({ ...request, tabId: 'tab' });
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.toolType).toBe(session.toolType);
+		expect(updated.customModel).toBe('agent-model');
+		expect(updated.aiTabs[1]).toBe(other);
+		expect(updated.aiTabs[0].providerSessions?.codex?.agentSessionId).toBe('translated-tab');
+		expect(updated.aiTabs[0].agentSessionId).toBe('source-final');
+		expect(translateProvider).toHaveBeenCalledWith(expect.objectContaining({ tabId: 'tab' }));
+	});
 	it.each([false, true])(
 		'ignores changed and new notes after deferral with warnings=%s',
 		async (withWarning) => {
@@ -213,10 +259,11 @@ describe('deferred provider translation client', () => {
 		}
 	);
 
-	it('resumes saved project resource consent without granting warning acceptance', async () => {
+	it('resumes saved tab scope and resource consent without granting warning acceptance', async () => {
 		const session = useSessionStore.getState().sessions[0];
 		session.providerMigration = {
 			operationId: plan.id,
+			tabId: 'tab',
 			destination: 'codex',
 			state: 'deferred',
 			verification: 'verified',
@@ -233,6 +280,7 @@ describe('deferred provider translation client', () => {
 		expect((await completion).error).toBe('Synthetic staging refusal');
 		expect(translateProvider).toHaveBeenLastCalledWith({
 			...request,
+			tabId: 'tab',
 			acceptLimitations: false,
 			selectedUserResources: undefined,
 			projectResourcesIntoRepo: true,

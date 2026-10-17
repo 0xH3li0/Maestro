@@ -8,6 +8,103 @@ import {
 } from '../../../shared/maestro-lib/translation/session';
 
 describe('one provider mapping commit', () => {
+	it.each(['claude-code', 'codex'] as const)(
+		'commits one tab with %s live, preserving every other slot',
+		(live) => {
+			const source = { agentSessionId: 'claude-one', customModel: 'source-model' };
+			const other = {
+				id: 'other',
+				agentSessionId: 'other-native',
+				providerSessions: { codex: { agentSessionId: 'parked-other' } },
+			};
+			const session: TranslatableSession = {
+				id: 'agent',
+				toolType: live,
+				aiTabs: [
+					{
+						id: 'one',
+						...(live === 'claude-code'
+							? source
+							: { agentSessionId: null, providerSessions: { 'claude-code': source } }),
+					},
+					other,
+				],
+				closedTabHistory: [{ tab: other }],
+				unifiedClosedTabHistory: [{ type: 'ai', tab: other }],
+				snoozedTabs: [{ type: 'group', members: [{ type: 'ai', tab: other }] }],
+				customModel: 'agent-model',
+				customEnvVars: { CUSTOM: 'preserved' },
+				executionQueue: [
+					{ id: 'q', tabId: 'other', turnSettings: { provider: live, model: 'queued' } },
+				],
+				providerTranslationHistoryMappings: [
+					{
+						tabId: 'history:other',
+						sourceSessionId: 'old-other',
+						destinationSessionId: 'other-native',
+					},
+				],
+			};
+			const mapping = {
+				tabId: 'one',
+				sourceSessionId: 'claude-one',
+				destinationSessionId: 'codex-one',
+				artifacts: [],
+				lineage: {},
+			};
+			const result = commitTranslationSession(
+				session,
+				'codex',
+				'op',
+				[mapping],
+				'/knowledge',
+				'claude-code',
+				'one'
+			);
+			expect(result.toolType).toBe(live);
+			expect(result.customModel).toBe(session.customModel);
+			expect(result.customEnvVars).toBe(session.customEnvVars);
+			expect(result.executionQueue).toBe(session.executionQueue);
+			expect(result.aiTabs[1]).toBe(other);
+			expect(result.closedTabHistory?.[0].tab).toBe(other);
+			expect(result.unifiedClosedTabHistory?.[0].tab).toBe(other);
+			expect(result.snoozedTabs?.[0].members?.[0].tab).toBe(other);
+			expect(result.providerTranslationHistoryMappings?.[0]).toEqual(
+				session.providerTranslationHistoryMappings?.[0]
+			);
+			const translated = result.aiTabs[0];
+			expect(
+				live === 'codex'
+					? translated.agentSessionId
+					: translated.providerSessions?.codex?.agentSessionId
+			).toBe('codex-one');
+			expect(
+				live === 'codex' ? translated.providerSessions?.['claude-code'] : translated
+			).toMatchObject(source);
+			expect(
+				commitTranslationSession(
+					result,
+					'codex',
+					'op',
+					[mapping],
+					'/knowledge',
+					'claude-code',
+					'one'
+				)
+			).toEqual(result);
+			expect(() =>
+				commitTranslationSession(
+					session,
+					'codex',
+					'op',
+					[mapping, { ...mapping, tabId: 'other' }],
+					undefined,
+					'claude-code',
+					'one'
+				)
+			).toThrow('exactly one');
+		}
+	);
 	it.each(['open', 'closed', 'inventory'] as const)(
 		'refuses a stale source mapping for a %s tab without mutating the agent',
 		(location) => {

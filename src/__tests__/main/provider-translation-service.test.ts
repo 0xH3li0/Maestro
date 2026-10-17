@@ -54,6 +54,186 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 
 afterEach(() => vi.restoreAllMocks());
 
+describe('single-tab provider translation service', () => {
+	it.each([false, true])(
+		'shares resources and lineage across tabs (source already parked: %s)',
+		async (parked) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-single-tab-'));
+			try {
+				vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+				vi.mocked(execGitReadOnly).mockResolvedValue({
+					exitCode: 128,
+					stdout: '',
+					stderr: 'fatal: not a git repository',
+				});
+				const history = vi.fn(async () => []);
+				vi.mocked(getHistoryManager).mockReturnValue({ getEntries: history } as any);
+				const source = {
+					provider: 'codex' as const,
+					version: '0.162.1',
+					accountRoot: path.join(root, 'codex'),
+					projectRoot: path.join(root, 'project'),
+				};
+				const destination = {
+					...source,
+					provider: 'claude-code' as const,
+					version: '2.1.296',
+					accountRoot: path.join(root, 'claude'),
+				};
+				const resources = [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('One retained memory')
+					),
+					translationArtifact(
+						'skill',
+						'synthetic-skill',
+						'skills/sample/SKILL.md',
+						Buffer.from('---\nname: sample\ndescription: Sample\n---\nRetained skill')
+					),
+				];
+				vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+					artifacts: resources,
+					limitations: [],
+				});
+				let session = createMockSession({
+					id: 'agent',
+					toolType: parked ? 'claude-code' : 'codex',
+					customModel: 'preserved',
+					customEnvVars: { CUSTOM: 'retained' },
+					aiTabs: ['one', 'two', 'blocked'].map((id) => ({
+						id,
+						agentSessionId: parked ? null : id,
+						...(parked && { providerSessions: { codex: { agentSessionId: id } } }),
+					})) as any,
+				});
+				const service = new ProviderTranslationService({
+					sessionsStore: {
+						get: () => [session],
+						set: (_key: string, sessions: (typeof session)[]) => {
+							session = sessions[0];
+						},
+					},
+					agentConfigsStore: { get: () => ({}) },
+					getProcessManager: () => ({ get: () => undefined }),
+				} as unknown as ProviderTranslationDependencies);
+				vi.spyOn(service as any, 'identity').mockImplementation(
+					async (_session: unknown, provider: unknown) =>
+						provider === 'codex' ? source : destination
+				);
+				const read = vi
+					.spyOn(service as any, 'conversation')
+					.mockImplementation(async (identity: any, tabId: any, nativeId: any) => {
+						const conversation = extractNativeConversation(
+							identity,
+							tabId,
+							nativeId,
+							Buffer.from(
+								JSON.stringify({
+									type: 'response_item',
+									payload: {
+										type: 'message',
+										id: nativeId,
+										role: 'user',
+										content: [{ type: 'input_text', text: `Raw ${tabId}` }],
+									},
+								})
+							)
+						);
+						if (tabId === 'blocked')
+							conversation.limitations.push({
+								code: 'synthetic-block',
+								severity: 'block',
+								tabId,
+								message: 'Cannot translate this tab',
+							});
+						return conversation;
+					});
+				const actual = await vi.importActual<
+					typeof import('../../shared/maestro-lib/translation/transaction')
+				>('../../shared/maestro-lib/translation/transaction');
+				vi.mocked(applyTranslation).mockImplementation(actual.applyTranslation);
+				const before = structuredClone(session);
+				const journals: TranslationJournal[] = [];
+				for (const tabId of ['one', 'two']) {
+					const request = {
+						agentId: 'agent',
+						tabId,
+						destination: 'claude-code' as const,
+						projectResourcesIntoRepo: true,
+					};
+					const preflight = await service.run({ ...request, action: 'plan' });
+					expect(preflight.plan?.tabs.map((tab) => tab.tabId)).toEqual([tabId]);
+					expect(preflight.plan?.status).toBe('ready');
+					const result = await service.run({
+						...request,
+						action: 'apply',
+						planId: preflight.plan?.id,
+						acceptLimitations: true,
+					});
+					expect(result.error).toBeUndefined();
+					expect(result.result?.state).toBe('committed');
+					journals.push(await (service as any).archive.read('agent', result.plan!.id));
+					const repeated = await service.run({
+						...request,
+						action: 'apply',
+						planId: result.plan!.id,
+						acceptLimitations: true,
+					});
+					expect(repeated.result).toEqual(result.result);
+				}
+				expect(history).not.toHaveBeenCalled();
+				expect(read.mock.calls.every(([, tabId]) => tabId !== 'blocked')).toBe(true);
+				expect(journals[1].resourceWrites).toEqual([]);
+				expect(journals[1].knowledgeDirectory).toBe(journals[0].knowledgeDirectory);
+				expect(
+					journals[0].resourceWrites.some((write) => write.resourceKey === 'skills/sample/SKILL.md')
+				).toBe(true);
+				const checkpoint = await (service as any).archive.checkpoint('agent');
+				expect(checkpoint.conversations.map((c: any) => c.tabId)).toEqual(['one', 'two']);
+				expect(checkpoint.lineage).toMatchObject(journals[0].mappings[0].lineage);
+				expect(session.aiTabs![2]).toEqual(before.aiTabs![2]);
+				expect(session.toolType).toBe(before.toolType);
+				expect(session.customModel).toBe('preserved');
+				expect(session.customEnvVars?.CUSTOM).toBe('retained');
+				expect(session.customEnvVars?.CLAUDE_CONFIG_DIR).toBe(
+					parked ? destination.accountRoot : undefined
+				);
+				const beforeBlock = structuredClone(session);
+				const blocked = await service.run({
+					agentId: 'agent',
+					tabId: 'blocked',
+					destination: 'claude-code',
+					action: 'apply',
+					acceptLimitations: true,
+					projectResourcesIntoRepo: true,
+				});
+				expect(blocked.result?.state).toBe('refused');
+				expect(session).toEqual(beforeBlock);
+				const missing = await service.run({
+					agentId: 'agent',
+					tabId: 'missing',
+					destination: 'claude-code',
+					action: 'plan',
+				});
+				expect(missing.error).toContain('tab not found');
+				const wrong = await service.run({
+					agentId: 'agent',
+					tabId: 'two',
+					destination: 'claude-code',
+					action: 'apply',
+					planId: journals[0].plan.id,
+				});
+				expect(wrong.error).toContain('tab does not match');
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
+});
+
 describe('app-local managed knowledge', () => {
 	it.each(['default', 'git', 'non-git'] as const)(
 		'keeps knowledge app-local and installs resources only by consent (%s)',
