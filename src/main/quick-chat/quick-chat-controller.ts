@@ -7,8 +7,7 @@
  * exactly the path a click in the window does.
  */
 
-import { app, ipcMain, type BrowserWindow } from 'electron';
-import { isMacOS } from '../../shared/platformDetection';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
@@ -27,7 +26,7 @@ import {
 	type QuickChatStatus,
 	type QuickChatWindowAction,
 } from '../../shared/quickChat';
-import { setNamedGlobalHotkey } from '../global-hotkey-manager';
+import { setNamedGlobalHotkey, summonAppWindow } from '../global-hotkey-manager';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
@@ -148,19 +147,21 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		pushSnapshotToWindow();
 		// "Open in Maestro" is a deliberate trip to the main window: put the
 		// floating window away and bring the window showing the tab forward.
-		if (command.type === 'reveal' && result.ok && !win.isDestroyed()) {
-			hideQuickChatWindow();
-			if (win.isMinimized()) win.restore();
-			win.show();
-			if (isMacOS()) app.focus({ steal: true });
-			win.focus();
-		}
+		if (command.type === 'reveal' && result.ok) summonAppWindow(win);
 		return result;
 	};
 
 	const windowAction = (action: QuickChatWindowAction): QuickChatStatus => {
 		if (action === 'hide') {
 			hideQuickChatWindow();
+			return getStatus();
+		}
+		// Cmd+` in the window: back to Maestro, the way it cycles between an
+		// app's windows. Works with the feature off too, like hide.
+		if (action === 'return') {
+			const main = deps.getMainWindow();
+			if (main) summonAppWindow(main);
+			else hideQuickChatWindow();
 			return getStatus();
 		}
 		if (!isEnabled()) return getStatus();

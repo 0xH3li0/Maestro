@@ -16,6 +16,7 @@
 import { app, BrowserWindow, globalShortcut } from 'electron';
 import { logger } from './utils/logger';
 import { isMacOS } from '../shared/platformDetection';
+import { hideQuickChatWindow } from './quick-chat/quick-chat-window';
 
 /**
  * Translate a key array (e.g. ['Meta','Shift','M']) into an Electron
@@ -66,14 +67,25 @@ export function keysToAccelerator(keys: string[]): string | null {
 	return [...modifiers, mainKey].join('+');
 }
 
-/** Bring the Maestro window to the foreground from any app. */
-function summonMainWindow(window: BrowserWindow): void {
+/**
+ * Bring a Maestro app window to the foreground from any app, and put the
+ * Quick Chat window away: going to Maestro proper means leaving the floating
+ * chat, which otherwise stays pinned over the window just summoned. The show
+ * hotkey, Quick Chat's "Open in Maestro", and its Cmd+` all land here.
+ */
+export function summonAppWindow(window: BrowserWindow): void {
 	if (window.isDestroyed()) return;
+	hideQuickChatWindow();
 	if (window.isMinimized()) window.restore();
 	if (!window.isVisible()) window.show();
-	// On macOS the app process can be hidden (Cmd+H) even when the window has
-	// state - `app.show()` brings it back to the foreground.
-	if (isMacOS()) app.show();
+	if (isMacOS()) {
+		// The app process can be hidden (Cmd+H) even when the window has state:
+		// `app.show()` brings it back. `window.focus()` alone does not activate
+		// the app while another app is frontmost, which is the case after the
+		// non-activating Quick Chat panel had the keyboard.
+		app.show();
+		app.focus({ steal: true });
+	}
 	window.focus();
 }
 
@@ -169,7 +181,7 @@ export function setNamedGlobalHotkey(id: string, keys: string[], onPress: () => 
 export function setGlobalShowHotkey(keys: string[]): boolean {
 	return setNamedGlobalHotkey(SHOW_BINDING_ID, keys, () => {
 		const win = getWindowFn?.();
-		if (win) summonMainWindow(win);
+		if (win) summonAppWindow(win);
 	});
 }
 

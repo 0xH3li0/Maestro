@@ -632,8 +632,11 @@ export interface QuickChatStatus {
 	snapshot: QuickChatSnapshot;
 }
 
-/** Window actions that stay in the main process. */
-export type QuickChatWindowAction = 'show' | 'hide' | 'toggle';
+/**
+ * Window actions that stay in the main process. `return` hides the window and
+ * brings the Maestro window forward (Cmd+` in the window).
+ */
+export type QuickChatWindowAction = 'show' | 'hide' | 'toggle' | 'return';
 
 /** The window's two heights: composer only, or composer plus conversation. */
 export type QuickChatLayout = 'compact' | 'expanded';

@@ -2522,6 +2522,14 @@ Close the Quick Chat window; the conversation is kept
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat return`
+
+Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat toggle`
 
 Open the window, focus it, or close it (exactly what the hotkey does)
