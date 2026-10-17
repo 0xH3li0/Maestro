@@ -175,6 +175,19 @@ describe('single-tab provider translation service', () => {
 					});
 					expect(result.error).toBeUndefined();
 					expect(result.result?.state).toBe('committed');
+					expect(session.providerMigration?.acceptedDirections).toEqual([
+						expect.objectContaining({
+							source: 'codex',
+							destination: 'claude-code',
+							sourceVersion: source.version,
+							destinationVersion: destination.version,
+							warnings: expect.arrayContaining(
+								preflight
+									.plan!.limitations.filter((l) => l.severity === 'warning')
+									.map(canonicalJson)
+							),
+						}),
+					]);
 					journals.push(await (service as any).archive.read('agent', result.plan!.id));
 					const repeated = await service.run({
 						...request,
@@ -197,6 +210,11 @@ describe('single-tab provider translation service', () => {
 				expect(session.aiTabs![2]).toEqual(before.aiTabs![2]);
 				expect(session.toolType).toBe(before.toolType);
 				expect(session.customModel).toBe('preserved');
+				if (!parked)
+					expect(session.providerOverrides?.['claude-code']?.customEnvVars).toMatchObject({
+						CLAUDE_CONFIG_DIR: destination.accountRoot,
+						[TRANSLATION_KNOWLEDGE_ENV_VAR]: journals[0].knowledgeDirectory,
+					});
 				expect(session.customEnvVars?.CUSTOM).toBe('retained');
 				expect(session.customEnvVars?.CLAUDE_CONFIG_DIR).toBe(
 					parked ? destination.accountRoot : undefined

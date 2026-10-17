@@ -5,8 +5,8 @@
  * provider swap.
  *
  * Parking and turn attribution come from `maestro-lib/agents/providerSwap.ts`.
- * Desktop provider changes use the native translation flow; the headless
- * runtime parks provider state without translating native conversations.
+ * Desktop and headless sends translate missing native context through the
+ * same library gate before launching the captured provider.
  * Re-exports keep existing renderer import sites on the shared helpers.
  */
 
@@ -33,6 +33,10 @@ import {
 } from '../../shared/local-models/run-on';
 import type { TierRouting } from '../../shared/modelTiers';
 import { useSettingsStore } from '../stores/settingsStore';
+import {
+	switchAgentProvider,
+	switchTabProvider,
+} from '../../shared/maestro-lib/agents/providerSwap';
 
 export {
 	providerOverridesFor,
@@ -274,7 +278,12 @@ export function captureQueuedTurnSettings(
 	// snapshot of a turn that was just settled); it means nothing on a named model.
 	const model = tab?.customModel ?? session.customModel;
 	const effort = tab?.customEffort ?? session.customEffort;
-	return { model, effort, ...(route && isAutoModel(model) ? { route } : {}) };
+	return {
+		provider: session.toolType,
+		model,
+		effort,
+		...(route && isAutoModel(model) ? { route } : {}),
+	};
 }
 
 /**
@@ -306,10 +315,9 @@ export function queuedTurnPills(settings: QueuedTurnSettings | undefined): {
  * when the user queued, and substituting the current selection there is exactly
  * the bug this exists to prevent.
  *
- * The provider always comes from the live session: a queued turn spawns on
- * whatever provider the agent is on now, since its resume token and agent
- * binary belong to that provider. So does the Run on label: the launch reads
- * the agent's target when the turn spawns, not when it was queued. An item
+ * Provider-scoped captures project that provider's parked state for launch.
+ * Legacy items follow the live provider. The Run on label reads that provider's
+ * current target when the turn spawns, not when it was queued. An item
  * queued on Auto follows the same split: the router's answer was frozen when it
  * was queued, and the tier's target is read when the turn spawns.
  */
@@ -318,10 +326,15 @@ export function codifyQueuedTurnSettings(
 	tab: AITab | undefined,
 	session: Session
 ): CodifiedTurn {
+	if (item.turnSettings?.provider && item.turnSettings.provider !== session.toolType) {
+		if (tab) tab = switchTabProvider(tab, session.toolType, item.turnSettings.provider);
+		session = switchAgentProvider(session, item.turnSettings.provider).agent;
+	}
 	const live = codifyTurnSettings(tab, session);
 	if (
 		!item.turnSettings ||
-		(item.id &&
+		(!item.turnSettings.provider &&
+			item.id &&
 			session.providerTranslationQueuedOrigins?.[item.id] &&
 			session.providerTranslationQueuedOrigins[item.id] !== session.toolType)
 	)

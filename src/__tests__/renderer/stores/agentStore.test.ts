@@ -1269,6 +1269,79 @@ describe('agentStore', () => {
 			mockGetAgent.mockResolvedValue(mockAgent);
 		});
 
+		it('holds a pending translation message with its exact settings and a review toast', async () => {
+			const { useNotificationStore } = await import('../../../renderer/stores/notificationStore');
+			useNotificationStore.setState({ toasts: [] });
+			const session = createMockSession({ id: 'session-1', toolType: 'codex' });
+			session.aiTabs[0].providerSessions = { 'claude-code': { agentSessionId: 'source' } };
+			session.aiTabs[0].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+			window.maestro.process.getActiveProcesses = vi.fn().mockResolvedValue([]);
+			window.maestro.sessions = {
+				...window.maestro.sessions,
+				setMany: vi.fn().mockResolvedValue(undefined),
+			};
+			window.maestro.agents.translateProvider = vi.fn().mockResolvedValue({
+				success: true,
+				plan: {
+					status: 'ready',
+					source: { provider: 'claude-code', version: '2.1.296' },
+					destination: { provider: 'codex', version: '0.162.1' },
+					limitations: [
+						{ code: 'new-warning', severity: 'warning', message: 'Review this change' },
+					],
+				},
+			});
+			const settings = { provider: 'codex' as const, model: 'frozen', effort: 'high' };
+			const item: QueuedItem = {
+				id: 'held',
+				tabId: 'default-tab',
+				type: 'message',
+				text: 'Do not lose this message',
+				timestamp: 1,
+				turnSettings: settings,
+			};
+			expect(await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)).toBe(
+				false
+			);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(updated.executionQueue[0].turnSettings).toBe(settings);
+			expect(updated.aiTabs[0].agentSessionId).toBeNull();
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts.at(-1)?.clickAction).toEqual({
+				kind: 'review-translation',
+				sessionId: 'session-1',
+				tabId: 'default-tab',
+				provider: 'codex',
+			});
+		});
+
+		it('keeps a busy source alive and requeues the captured send until it settles', async () => {
+			const session = createMockSession({ id: 'session-1', toolType: 'codex' });
+			session.aiTabs[0].providerSessions = { 'claude-code': { agentSessionId: 'source' } };
+			session.aiTabs[0].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+			window.maestro.process.getActiveProcesses = vi
+				.fn()
+				.mockResolvedValue([{ sessionId: 'session-1-ai-default-tab' }]);
+			const translate = vi.fn();
+			window.maestro.agents.translateProvider = translate;
+			const item = createQueuedItem({
+				turnSettings: { provider: 'codex', model: 'frozen', effort: 'high' },
+			});
+			expect(await useAgentStore.getState().processQueuedItem(session.id, item, defaultDeps)).toBe(
+				false
+			);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue).toEqual([item]);
+			expect(updated.aiTabs[0].state).toBe('busy');
+			expect(translate).not.toHaveBeenCalled();
+			expect(mockKill).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
 		it('spawns agent with queued message text', async () => {
 			const session = createMockSession({
 				id: 'session-1',

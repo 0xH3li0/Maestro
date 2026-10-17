@@ -1,4 +1,6 @@
-import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
+import { prepareProviderTranslationForSend } from '../services/providerTranslation';
+import { TranslationSendHeldError } from '../../shared/maestro-lib/translation/send';
+import { switchAgentProvider } from '../../shared/maestro-lib/agents/providerSwap';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
  *
@@ -393,13 +395,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
-		const session = getSession(sessionId);
+		let session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
 		}
-
-		if (migrationHoldsTurns(session.providerMigration)) return false;
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
@@ -428,7 +428,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return false;
 		}
 
-		const targetTab = tabByItemId || getActiveTab(session);
+		let targetTab = tabByItemId || getActiveTab(session);
 
 		if (!targetTab) {
 			logger.error(
@@ -436,6 +436,37 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
+			return false;
+		}
+
+		const provider = item.turnSettings?.provider ?? session.toolType;
+		const translationTabId = targetTab.id;
+		try {
+			if (!item.crossAgentOnly)
+				await prepareProviderTranslationForSend(sessionId, targetTab.id, provider);
+			const fresh = getSession(sessionId);
+			if (!fresh) throw new Error('Agent removed before sending');
+			// Project the captured provider for launch only. Live defaults stay unchanged.
+			session = switchAgentProvider(fresh, provider).agent;
+			targetTab =
+				session.aiTabs.find((tab) => tab.id === translationTabId) ??
+				session.orphanedThinkingTabs?.find((tab) => tab.id === translationTabId);
+			if (!targetTab) throw new Error('Target tab removed before sending');
+		} catch (error) {
+			const deferred = error instanceof TranslationSendHeldError && error.deferred;
+			const targetRunning =
+				deferred && (await probeSessionAiProcesses(sessionId, translationTabId)).targetTabActive;
+			updateSessionWith(sessionId, (s) => {
+				const recovered = applyQueuedItemDispatchFailure(s, item, { collision: targetRunning });
+				return deferred
+					? {
+							...recovered,
+							executionQueue: recovered.executionQueue.map((queued) =>
+								queued.id === item.id ? { ...queued, paused: item.paused } : queued
+							),
+						}
+					: recovered;
+			});
 			return false;
 		}
 
@@ -501,7 +532,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// it, so a queue that drains after the user switched models still spawns
 		// each item on what it was queued with. Falls back to the live values only
 		// for items queued before the capture existed.
-		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
+		const settings = codifyQueuedTurnSettings(item, targetTab, session);
+		const { turnModel, turnEffort } = settings;
+		updateSessionWith(sessionId, (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((tab) => (tab.id === translationTabId ? { ...tab, ...settings } : tab)),
+			orphanedThinkingTabs: s.orphanedThinkingTabs?.map((tab) =>
+				tab.id === translationTabId ? { ...tab, ...settings } : tab
+			),
+		}));
 		// An item on the Auto model (queued on it, or sent on it by an agent that
 		// is) is settled below, inside the `try`: the tab took the turn with a
 		// stamp, and the router's answer decides what this spawn launches with.

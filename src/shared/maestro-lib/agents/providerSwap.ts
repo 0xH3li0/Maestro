@@ -122,7 +122,7 @@ export interface ProviderSwitchQueuedItem {
 	id: string;
 	tabId: string;
 	/** The model and effort the item was queued with (`QueuedItem.turnSettings`). */
-	turnSettings?: { model?: string; effort?: string };
+	turnSettings?: { provider?: ToolType; model?: string; effort?: string };
 }
 
 /** The agent fields a provider switch reads and writes. */
@@ -316,7 +316,7 @@ export function switchAgentProvider<A extends ProviderSwitchAgent>(
 
 	const unparked: UnparkedProviderState[] = [];
 	const executionQueue = agent.executionQueue?.map((item) => {
-		if (!item.turnSettings) return item;
+		if (!item.turnSettings || item.turnSettings.provider) return item;
 		const { model, effort } = item.turnSettings;
 		// An item queued on the agent's default named no setting of its own, so
 		// following the incoming provider's configuration loses nothing.

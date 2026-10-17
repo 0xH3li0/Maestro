@@ -3,6 +3,7 @@ import { createMockAITab, createMockSession } from '../../helpers';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
+	prepareProviderTranslationForSend,
 	requestProviderTranslation,
 	resumeDeferredProviderTranslations,
 } from '../../../renderer/services/providerTranslation';
@@ -99,6 +100,51 @@ afterEach(async () => {
 });
 
 describe('deferred provider translation client', () => {
+	it('prepares a pending destination and returns the translated resume ID', async () => {
+		const original = useSessionStore.getState().sessions[0];
+		const session = {
+			...original,
+			toolType: 'codex' as const,
+			aiTabs: original.aiTabs.map((tab) => ({
+				...tab,
+				agentSessionId: null,
+				providerSessions: { 'claude-code': { agentSessionId: 'source-final' } },
+				state: 'busy' as const,
+			})),
+		};
+		useSessionStore.setState({ sessions: [session] });
+		const scoped = { ...plan, tabId: 'tab', status: 'ready' as const };
+		translateProvider.mockImplementation(async (request) => {
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].translatingFrom).toBe('claude-code');
+			expect(
+				vi.mocked(window.maestro.sessions.setMany).mock.calls.at(-1)?.[0][0].aiTabs?.[0]
+					.translatingFrom
+			).toBeUndefined();
+			return request.action === 'plan'
+				? { success: true, plan: scoped }
+				: {
+						success: true,
+						plan: scoped,
+						result: {
+							success: true,
+							state: 'committed',
+							plan: scoped,
+							mappings: [
+								{
+									tabId: 'tab',
+									sourceSessionId: 'source-final',
+									destinationSessionId: 'resumed',
+									artifacts: [],
+									lineage: {},
+								},
+							],
+						},
+					};
+		});
+		expect(await prepareProviderTranslationForSend('agent', 'tab', 'codex')).toBe('resumed');
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].inputValue).toBe('draft stays');
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].translatingFrom).toBeUndefined();
+	});
 	it('applies one tab mapping without switching the agent or touching another tab', async () => {
 		const original = useSessionStore.getState().sessions[0];
 		const other = createMockAITab({ id: 'other', agentSessionId: 'untouched' });

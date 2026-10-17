@@ -64,6 +64,7 @@ vi.mock('../../../renderer/utils/tabHelpers', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>();
 	return {
 		// The real state transitions: failure paths settle through them.
+		getTabDisplayName: actual.getTabDisplayName,
 		settleTabThinkingState: actual.settleTabThinkingState,
 		settleAgentStateFromTabs: actual.settleAgentStateFromTabs,
 		getActiveTab: vi.fn((session: Session) => {
@@ -476,6 +477,43 @@ describe('useRemoteHandlers', () => {
 					sessionId: 'session-1',
 					command: 'ls -la',
 				})
+			);
+		});
+
+		it('routes a pending tab through the translation queue with its settings and images', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				customModel: 'opus',
+				customEffort: 'high',
+			});
+			session.aiTabs[0].providerSessions = { codex: { agentSessionId: 'parked-source' } };
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			await act(async () => {
+				await getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							command: 'keep context',
+							images: ['data:image/png;base64,eA=='],
+							receiptChannel: 'receipt',
+						},
+					})
+				);
+			});
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([
+				expect.objectContaining({
+					text: 'keep context',
+					tabId: 'tab-1',
+					images: ['data:image/png;base64,eA=='],
+					turnSettings: { provider: 'claude-code', model: 'opus', effort: 'high' },
+				}),
+			]);
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt',
+				true,
+				undefined
 			);
 		});
 

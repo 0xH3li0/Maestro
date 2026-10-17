@@ -45,6 +45,9 @@ import {
 	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
 import { noteDirectDispatch } from '../../stores/retryStore';
+import { enqueuePromptForTab } from '../../services/queuedPrompt';
+import { pendingTranslationSource } from '../../../shared/maestro-lib/translation/send';
+import { migrationHoldsTurns } from '../../../shared/maestro-lib/translation/session';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
 import type { ConsultChain } from '../../../shared/consultBudget';
@@ -535,6 +538,24 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// arg, mirroring the desktop input path in useInputProcessing.
 			if (!promptToSend.trim() && images && images.length > 0) {
 				promptToSend = DEFAULT_IMAGE_ONLY_PROMPT;
+			}
+
+			// Pending native context uses the queue's shared send gate. A warning
+			// can then hold the original message and its captured settings safely.
+			if (
+				targetTab &&
+				(pendingTranslationSource(session, targetTab.id, session.toolType) ||
+					migrationHoldsTurns(session.providerMigration))
+			) {
+				const queued = enqueuePromptForTab({
+					sessionId,
+					tabId: targetTab.id,
+					text: promptToSend,
+					images,
+					consultChain,
+				});
+				reportDelivery(!!queued, queued ? undefined : 'translation-queue-unavailable');
+				return;
 			}
 
 			try {

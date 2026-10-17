@@ -95,6 +95,7 @@ export interface NewInstanceModalData {
 
 /** Edit agent modal data */
 export interface EditAgentModalData {
+	translationReview?: { tabId: string; provider: Session['toolType'] };
 	session: Session;
 	/** The tab to open on. Absent, the form opens on the tab it was last on. */
 	initialTab?: AgentSettingsTabId;

@@ -147,6 +147,7 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
 		thinkingStartTime: undefined,
+		translatingFrom: undefined,
 		// Keep the paused tab's limit-pause error so it round-trips a restart;
 		// every other tab error is transient and stripped. Gate on the paused tab
 		// id so a stale limit error on a non-paused tab can't revive error UI.

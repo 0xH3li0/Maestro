@@ -529,7 +529,19 @@ describe('switchAgentProvider', () => {
 		expect(backOnClaude.aiTabs[0].agentSessionId).toBe('claude-late');
 	});
 
-	it('clears and reports the settings a queued message was frozen with', () => {
+	it('preserves provider-scoped queued settings when agent defaults change', () => {
+		const settings = { provider: 'claude-code' as const, model: 'opus', effort: 'high' };
+		const agent = makeAgent('claude-code', {
+			executionQueue: [
+				{ id: 'frozen', tabId: 'tab-1', text: 'keep my provider', turnSettings: settings },
+			],
+		});
+		const { agent: onCodex, unparked } = switchAgentProvider(agent, 'codex');
+		expect(onCodex.executionQueue[0].turnSettings).toBe(settings);
+		expect(unparked).toEqual([]);
+	});
+
+	it('clears and reports legacy queued settings with no provider snapshot', () => {
 		const agent = makeAgent('claude-code', {
 			executionQueue: [
 				{

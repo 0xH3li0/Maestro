@@ -1,3 +1,8 @@
+import { prepareProviderTranslationForSend } from '../../services/providerTranslation';
+import { switchAgentProvider } from '../../../shared/maestro-lib/agents/providerSwap';
+import { TranslationSendHeldError } from '../../../shared/maestro-lib/translation/send';
+import { applyQueuedItemDispatchFailure } from '../../utils/executionQueue';
+import { pendingTranslationSource } from '../../../shared/maestro-lib/translation/send';
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type {
 	Session,
@@ -1118,6 +1123,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 
 				const shouldQueue =
+					(liveTab &&
+						Boolean(pendingTranslationSource(liveSession, liveTab.id, liveSession.toolType))) ||
 					options?.hold ||
 					connectionHold ||
 					retryHoldsTab ||
@@ -1556,6 +1563,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				turnSettings: captureQueuedTurnSettings(tab, session, route),
 			});
 
+			const directQueuedItem = buildComposerQueuedItem(
+				targetTabId || activeSession.activeTabId,
+				activeTabForEntry ?? undefined,
+				activeSession
+			);
+
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
 				(async () => {
@@ -1568,7 +1581,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
 
 						// Read mutable session fields from the ref, but keep the submitted tab pinned.
-						const freshSession = sessionsRef.current.find((s) => s.id === resolvedSessionId);
+						await prepareProviderTranslationForSend(
+							resolvedSessionId,
+							directQueuedItem.tabId!,
+							directQueuedItem.turnSettings!.provider!
+						);
+						const currentSession = useSessionStore
+							.getState()
+							.sessions.find((s) => s.id === resolvedSessionId);
+						const freshSession = currentSession
+							? switchAgentProvider(currentSession, directQueuedItem.turnSettings!.provider!).agent
+							: undefined;
 						if (!freshSession) throw new Error('Session not found');
 
 						const freshActiveTab = resolveTargetTab(freshSession);
@@ -1716,6 +1739,35 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 						});
 					} catch (error) {
+						if (error instanceof TranslationSendHeldError) {
+							const targetRunning =
+								error.deferred &&
+								(await probeSessionAiProcesses(resolvedSessionId, directQueuedItem.tabId))
+									.targetTabActive;
+							updateSessionWith(resolvedSessionId, (s) => {
+								const recovered = applyQueuedItemDispatchFailure(
+									{
+										...s,
+										aiTabs: s.aiTabs.map((tab) =>
+											tab.id === directQueuedItem.tabId
+												? { ...tab, logs: tab.logs.filter((log) => log.id !== newEntry.id) }
+												: tab
+										),
+									},
+									directQueuedItem,
+									{ collision: targetRunning }
+								);
+								return error.deferred
+									? {
+											...recovered,
+											executionQueue: recovered.executionQueue.map((item) =>
+												item.id === directQueuedItem.id ? { ...item, paused: false } : item
+											),
+										}
+									: recovered;
+							});
+							return;
+						}
 						logger.error('Failed to spawn agent batch process:', undefined, error);
 						// "Agent process already running" is a COLLISION, not an outcome:
 						// this dispatch arrived while the tab was already mid-turn. The

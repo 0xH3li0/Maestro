@@ -703,8 +703,8 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].aiTabs[0].state).toBe('idle');
 			});
 
-			it('should clear tab thinkingStartTime', () => {
-				const tab = makeTab({ id: 't', thinkingStartTime: 123456 });
+			it('should clear tab thinkingStartTime and translation progress', () => {
+				const tab = makeTab({ id: 't', thinkingStartTime: 123456, translatingFrom: 'codex' });
 				const session = makeSession({
 					aiTabs: [tab],
 					activeTabId: 't',
@@ -720,6 +720,7 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].aiTabs[0].thinkingStartTime).toBeUndefined();
+				expect(persisted[0].aiTabs[0].translatingFrom).toBeUndefined();
 			});
 
 			it('should clear tab agentError', () => {

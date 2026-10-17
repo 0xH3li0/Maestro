@@ -479,6 +479,7 @@ export type QueuedItemType = 'message' | 'command';
  * model the user picked afterwards.
  */
 export interface QueuedTurnSettings {
+	provider?: ToolType;
 	/**
 	 * Model in force when the item was queued, or undefined for the default.
 	 * `auto` (`AUTO_MODEL`) is a value like any other: the item was queued on the
@@ -837,6 +838,8 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	/** Transient native translation progress, shown in the existing busy pill. */
+	translatingFrom?: ToolType;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)

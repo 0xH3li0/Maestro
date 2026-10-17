@@ -190,6 +190,9 @@ export function EditAgentModal({
 	// The one piece of form state the tabs own. Reopening shows the last tab used.
 	// A caller can send the user to one tab (`openAgentSettings(session, { tab })`).
 	const requestedTab = useModalStore((state) => selectModalData('editAgent')(state)?.initialTab);
+	const translationReview = useModalStore(
+		(state) => selectModalData('editAgent')(state)?.translationReview
+	);
 	// The Audit Log tab exists only where the desktop app offers the feature.
 	const tabIds = isCotExportAvailable() ? EDIT_AGENT_TAB_IDS : AGENT_FORM_TAB_IDS;
 	const { activeTab, setActiveTab } = useModalTabs({
@@ -224,6 +227,8 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+	const translationRequested = providerChanged || !!translationReview;
+	const translationDestination = translationReview?.provider ?? selectedToolType;
 	/** Live store entry for this agent; the form's session prop is an opening snapshot. */
 	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
 	const [migrationPlan, setMigrationPlan] = useState<TranslationPlan | null>(null);
@@ -252,7 +257,7 @@ export function EditAgentModal({
 			? 'Reading memory and session history...'
 			: null;
 	useEffect(() => {
-		if (!isOpen || !session || !providerChanged) {
+		if (!isOpen || !session || !translationRequested) {
 			setMigrationPlan(null);
 			return;
 		}
@@ -262,7 +267,8 @@ export function EditAgentModal({
 		setMigrationError('');
 		void requestProviderTranslation({
 			agentId: session.id,
-			destination: selectedToolType,
+			destination: translationDestination,
+			tabId: translationReview?.tabId,
 			action: 'plan',
 			projectResourcesIntoRepo,
 			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
@@ -286,8 +292,9 @@ export function EditAgentModal({
 	}, [
 		isOpen,
 		session?.id,
-		providerChanged,
-		selectedToolType,
+		translationRequested,
+		translationDestination,
+		translationReview?.tabId,
 		selectionRevision,
 		projectResourcesIntoRepo,
 	]);
@@ -684,7 +691,7 @@ export function EditAgentModal({
 	const handleSave = useCallback(async () => {
 		if (!session || migrationSaving) return;
 		if (
-			providerChanged &&
+			translationRequested &&
 			(!migrationPlan ||
 				migrationLoading ||
 				migrationPlan.status === 'blocked' ||
@@ -692,6 +699,33 @@ export function EditAgentModal({
 					!acceptTranslationLimitations))
 		)
 			return;
+		if (translationReview && migrationPlan) {
+			setMigrationSaving(true);
+			try {
+				const report = await requestProviderTranslation(
+					{
+						agentId: session.id,
+						tabId: translationReview.tabId,
+						destination: translationReview.provider,
+						action: 'apply',
+						planId: migrationPlan.id,
+						acceptLimitations: acceptTranslationLimitations,
+						projectResourcesIntoRepo,
+						selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
+					},
+					{ waitForDeferred: true }
+				);
+				if (!report.success)
+					throw new Error(report.error ?? report.result?.error ?? 'Context translation failed');
+				onClose();
+			} catch (error) {
+				setMigrationError(error instanceof Error ? error.message : String(error));
+			} finally {
+				setMigrationSaving(false);
+			}
+			return;
+		}
+
 		const name = instanceName.trim();
 		if (!name) return;
 
@@ -829,6 +863,8 @@ export function EditAgentModal({
 			setMigrationSaving(false);
 		}
 	}, [
+		translationReview,
+		translationRequested,
 		migrationSaving,
 		migrationPlan,
 		migrationLoading,
@@ -912,7 +948,7 @@ export function EditAgentModal({
 			!workingDirError &&
 			!newWorkingDirUnverified &&
 			!migrationSaving &&
-			(!providerChanged ||
+			(!translationRequested ||
 				(!!migrationPlan &&
 					!migrationLoading &&
 					migrationPlan.status !== 'blocked' &&
@@ -925,7 +961,7 @@ export function EditAgentModal({
 		workingDirError,
 		newWorkingDirUnverified,
 		migrationSaving,
-		providerChanged,
+		translationRequested,
 		migrationPlan,
 		migrationLoading,
 		acceptTranslationLimitations,
@@ -1223,8 +1259,8 @@ export function EditAgentModal({
 							<>
 								<AgentProviderSelect
 									theme={theme}
-									value={selectedToolType}
-									disabled={migrationSaving}
+									value={translationReview ? translationDestination : selectedToolType}
+									disabled={migrationSaving || !!translationReview}
 									optionLabel={(agentId) => {
 										const direction = getDeclaredTranslationDirection(session.toolType, agentId);
 										return direction
@@ -1241,7 +1277,7 @@ export function EditAgentModal({
 											? '→ Memory + session carry. Preview conversions are unverified; installed versions and content are checked before saving.'
 											: 'Memory + session carry is not available from this provider.'}
 									</div>
-									{providerChanged && migrationActivity && (
+									{translationRequested && migrationActivity && (
 										<div
 											role="status"
 											aria-live="polite"
@@ -1251,7 +1287,7 @@ export function EditAgentModal({
 											<span>{migrationActivity}</span>
 										</div>
 									)}
-									{providerChanged && (
+									{translationRequested && (
 										<div
 											className="mt-2 p-2 rounded border text-xs space-y-2"
 											style={{

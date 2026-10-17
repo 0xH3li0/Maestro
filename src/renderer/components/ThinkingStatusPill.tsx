@@ -1,3 +1,4 @@
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 /**
  * ThinkingStatusPill - Displays status when AI is actively processing/thinking.
  * Shows session name, bytes received, elapsed time, and Claude session ID.
@@ -806,7 +807,9 @@ function ThinkingStatusPillInner({
 					style={{ color: theme.colors.textMain }}
 					title={`Jump to this tab · ${fullTooltip}`}
 				>
-					{maestroSessionName}
+					{primaryTab?.translatingFrom
+						? `Translating context from ${getAgentDisplayName(primaryTab.translatingFrom)}`
+						: maestroSessionName}
 				</button>
 
 				{/* Token info / Thinking placeholder - carries its own divider so hiding the
@@ -816,7 +819,9 @@ function ThinkingStatusPillInner({
 					style={{ color: theme.colors.textDim }}
 				>
 					<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
-					{primaryTokens > 0 ? (
+					{primaryTab?.translatingFrom ? (
+						<span>Connecting...</span>
+					) : primaryTokens > 0 ? (
 						<div className="flex items-center gap-1">
 							<span>Tokens:</span>
 							<span className="font-medium" style={{ color: theme.colors.textMain }}>
@@ -887,7 +892,7 @@ function ThinkingStatusPillInner({
 				)}
 
 				{/* Stop/Interrupt button */}
-				{onInterrupt && (
+				{onInterrupt && !primaryTab?.translatingFrom && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<StopTurnButton theme={theme} onClick={onInterrupt} />
@@ -999,6 +1004,7 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 				prev.session.currentCycleTokens !== next.session.currentCycleTokens ||
 				prev.tab?.id !== next.tab?.id ||
 				prev.tab?.name !== next.tab?.name ||
+				prev.tab?.translatingFrom !== next.tab?.translatingFrom ||
 				prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime
 			) {
 				return false;
@@ -1039,6 +1045,7 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prev.tab?.id !== next.tab?.id ||
 			prev.tab?.name !== next.tab?.name ||
 			prev.tab?.agentSessionId !== next.tab?.agentSessionId ||
+			prev.tab?.translatingFrom !== next.tab?.translatingFrom ||
 			prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime
 		) {
 			return false;

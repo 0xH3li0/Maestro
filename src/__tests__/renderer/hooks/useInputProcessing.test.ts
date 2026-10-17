@@ -1808,6 +1808,32 @@ describe('useInputProcessing', () => {
 	});
 
 	describe('Queue Held (hold option)', () => {
+		it('queues an idle pending tab before consuming its native context', async () => {
+			const session = createMockSession({
+				state: 'idle',
+				customModel: 'opus',
+				customEffort: 'high',
+				aiTabs: [
+					createMockTab({
+						agentSessionId: null,
+						providerSessions: { codex: { agentSessionId: 'source' } },
+					}),
+				],
+			});
+			const { result } = renderHook(() =>
+				useInputProcessing(createDeps({ activeSession: session, inputValue: 'keep context' }))
+			);
+			await act(async () => {
+				await result.current.processInput();
+			});
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				text: 'keep context',
+				turnSettings: { provider: 'claude-code', model: 'opus', effort: 'high' },
+			});
+		});
+
 		it('queues a message paused even when the agent is idle', async () => {
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({ activeSession: session, inputValue: 'later please' });
@@ -3769,6 +3795,7 @@ describe('useInputProcessing', () => {
 			expect(routeTurn().mock.calls[0][0]).toMatchObject({ prompt: 'then rename formatDate' });
 			await vi.waitFor(() =>
 				expect(liveSession().executionQueue[0].turnSettings).toEqual({
+					provider: 'claude-code',
 					model: 'auto',
 					effort: 'high',
 					route: STAMP,

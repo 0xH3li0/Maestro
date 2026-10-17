@@ -1,3 +1,10 @@
+import {
+	prepareTabForSend,
+	TranslationSendHeldError,
+} from '../../shared/maestro-lib/translation/send';
+import type { ToolType } from '../../shared/types';
+import { notifyToast } from '../stores/notificationStore';
+import { probeSessionAiProcesses } from './process';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { limitationsNeedingAcceptance } from '../../shared/maestro-lib/translation/limitations';
@@ -49,7 +56,17 @@ async function snapshotAgent(agentId: string): Promise<void> {
 	}));
 	updateSessionWith(agentId, (s) => ({ ...s, providerTranslationTabInventory: inventory }));
 	await window.maestro.sessions.setMany(
-		[{ ...session, providerTranslationTabInventory: inventory } as any],
+		[
+			{
+				...session,
+				aiTabs: session.aiTabs.map((tab) => ({ ...tab, translatingFrom: undefined })),
+				orphanedThinkingTabs: session.orphanedThinkingTabs?.map((tab) => ({
+					...tab,
+					translatingFrom: undefined,
+				})),
+				providerTranslationTabInventory: inventory,
+			} as any,
+		],
 		[]
 	);
 }
@@ -73,6 +90,7 @@ async function applyReport(agentId: string, report: TranslationReport): Promise<
 		return {
 			...updated,
 			customEnvVars: stored?.customEnvVars,
+			providerOverrides: stored?.providerOverrides ?? updated.providerOverrides,
 			providerTranslationTabInventory: stored?.providerTranslationTabInventory,
 			providerMigration: stored?.providerMigration,
 			providerTranslationQueuedOrigins: stored?.providerTranslationQueuedOrigins,
@@ -139,7 +157,7 @@ async function finishDeferred(
 /** Edit Agent and update_session_config share this client and the same main/library operation. */
 export async function requestProviderTranslation(
 	request: TranslationRequest,
-	options: { waitForDeferred?: boolean } = {}
+	options: { waitForDeferred?: boolean; deferAutomatically?: boolean } = {}
 ): Promise<TranslationReport> {
 	if (request.action === 'apply' && pending.has(request.agentId))
 		return options.waitForDeferred
@@ -151,6 +169,7 @@ export async function requestProviderTranslation(
 		const report = await window.maestro.agents.translateProvider(request);
 		await applyReport(request.agentId, report);
 		if (
+			options.deferAutomatically !== false &&
 			report.result?.state === 'deferred' &&
 			report.plan &&
 			(request.acceptLimitations ||
@@ -163,6 +182,7 @@ export async function requestProviderTranslation(
 				...s,
 				providerMigration: {
 					operationId: report.plan!.id,
+					acceptedDirections: s.providerMigration?.acceptedDirections,
 					tabId: request.tabId,
 					destination: request.destination,
 					state: 'deferred',
@@ -203,3 +223,52 @@ export function resumeDeferredProviderTranslations(sessions: Session[]): void {
 }
 
 export { migrationHoldsTurns };
+
+/** Both desktop send paths use the library gate before building resume arguments. */
+export async function prepareProviderTranslationForSend(
+	agentId: string,
+	tabId: string,
+	provider: ToolType
+): Promise<string | undefined> {
+	const getSession = () => {
+		const session = useSessionStore.getState().sessions.find((s) => s.id === agentId);
+		if (!session) throw new Error('Agent removed before sending');
+		return session;
+	};
+	try {
+		return await prepareTabForSend(tabId, provider, {
+			getSession,
+			translate: (request) => requestProviderTranslation(request, { deferAutomatically: false }),
+			isBusy: async () => {
+				const probe = await probeSessionAiProcesses(agentId, tabId);
+				if (probe.probeFailed) throw new Error('Cannot verify the source turn has finished');
+				return probe.anyActive;
+			},
+			onProgress: (source) =>
+				updateSessionWith(agentId, (s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === tabId ? { ...tab, translatingFrom: source } : tab
+					),
+					orphanedThinkingTabs: s.orphanedThinkingTabs?.map((tab) =>
+						tab.id === tabId ? { ...tab, translatingFrom: source } : tab
+					),
+				})),
+		});
+	} catch (error) {
+		const held =
+			error instanceof TranslationSendHeldError
+				? error
+				: new TranslationSendHeldError(error instanceof Error ? error.message : String(error));
+		if (!held.deferred)
+			notifyToast({
+				color: 'yellow',
+				title: 'Context translation needs review',
+				message: held.message,
+				sessionId: agentId,
+				tabId,
+				clickAction: { kind: 'review-translation', sessionId: agentId, tabId, provider },
+			});
+		throw held;
+	}
+}

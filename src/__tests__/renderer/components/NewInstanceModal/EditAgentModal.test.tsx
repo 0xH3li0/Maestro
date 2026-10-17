@@ -581,6 +581,46 @@ describe('EditAgentModal', () => {
 		).toBeInTheDocument();
 	});
 
+	it('reviews and applies only the requested pending tab without saving agent defaults', async () => {
+		const session = createSession({ toolType: 'codex' });
+		useModalStore.getState().openModal('editAgent', {
+			session,
+			initialTab: 'provider',
+			translationReview: { tabId: 'pending-tab', provider: 'codex' },
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={session}
+				existingSessions={[]}
+			/>
+		);
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenCalledWith(
+				expect.objectContaining({ action: 'plan', tabId: 'pending-tab', destination: 'codex' })
+			)
+		);
+		fireEvent.click(await screen.findByLabelText('Accept the listed conversion limitations'));
+		expect(screen.getByRole('combobox', { name: 'Agent Provider' })).toBeDisabled();
+		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
+		fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					action: 'apply',
+					tabId: 'pending-tab',
+					destination: 'codex',
+					acceptLimitations: true,
+				}),
+				{ waitForDeferred: true }
+			)
+		);
+		expect(onSave).not.toHaveBeenCalled();
+		expect(onClose).toHaveBeenCalled();
+	});
 	it('shows carried and archived counts for each conversation, including legacy plans', async () => {
 		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
 		vi.mocked(requestProviderTranslation).mockResolvedValue({

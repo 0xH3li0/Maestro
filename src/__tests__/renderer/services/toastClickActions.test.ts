@@ -1,3 +1,4 @@
+import { selectModalData, useModalStore } from '../../../renderer/stores/modalStore';
 /**
  * Tests for renderer/services/toastClickActions.ts
  *
@@ -72,6 +73,24 @@ describe('dispatchToastClickAction', () => {
 		return match?.[0] as CustomEvent | undefined;
 	}
 
+	it('opens the exact tab translation review in Edit Agent', () => {
+		const session = createMockSession({ id: 's1' });
+		seedSessions([session]);
+		expect(
+			dispatchToastClickAction({
+				kind: 'review-translation',
+				sessionId: 's1',
+				tabId: 't1',
+				provider: 'codex',
+			})
+		).toBe(true);
+		expect(selectModalData('editAgent')(useModalStore.getState())).toEqual({
+			session,
+			initialTab: 'provider',
+			translationReview: { tabId: 't1', provider: 'codex' },
+		});
+		useModalStore.getState().closeModal('editAgent');
+	});
 	it('jump-session delegates to the App-provided handler', () => {
 		const onSessionClick = vi.fn();
 		dispatchToastClickAction(

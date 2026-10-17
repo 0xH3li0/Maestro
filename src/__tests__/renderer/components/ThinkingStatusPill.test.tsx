@@ -99,6 +99,21 @@ describe('ThinkingStatusPill', () => {
 		vi.useRealTimers();
 	});
 
+	it('shows translation progress and updates when the same busy tab finishes translation', () => {
+		const item = createThinkingItemWithTab({}, { translatingFrom: 'claude-code' });
+		const { rerender } = render(
+			<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={vi.fn()} />
+		);
+		expect(screen.getByText('Translating context from Claude Code')).toBeInTheDocument();
+		expect(screen.getByText('Connecting...')).toBeInTheDocument();
+		rerender(
+			<ThinkingStatusPill
+				thinkingItems={[{ ...item, tab: { ...item.tab!, translatingFrom: undefined } }]}
+				theme={mockTheme}
+			/>
+		);
+		expect(screen.queryByText('Translating context from Claude Code')).not.toBeInTheDocument();
+	});
 	describe('render conditions', () => {
 		it('renders null when no thinking items are provided', () => {
 			const { container } = render(<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} />);

@@ -225,6 +225,14 @@ export interface ProviderMigrationState {
 	projectResourcesIntoRepo?: boolean;
 	/** Canonical complete limitations; legacy code/artifact keys require renewed review. */
 	acceptedLimitationCodes?: string[];
+	/** Reviewed warnings scoped to this agent, provider direction and exact CLI versions. */
+	acceptedDirections?: Array<{
+		source: ToolType;
+		destination: ToolType;
+		sourceVersion: string;
+		destinationVersion: string;
+		warnings: string[];
+	}>;
 }
 
 export interface TranslationResult {

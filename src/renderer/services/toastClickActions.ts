@@ -1,3 +1,4 @@
+import { useModalStore } from '../stores/modalStore';
 /**
  * toastClickActions - the single place that turns a toast's data-driven
  * `clickAction` into navigation.
@@ -66,6 +67,20 @@ export function dispatchToastClickAction(
 	handlers: ToastClickActionHandlers = {}
 ): boolean {
 	switch (action.kind) {
+		case 'review-translation': {
+			const session = useSessionStore.getState().sessions.find((s) => s.id === action.sessionId);
+			if (!session) {
+				reportMiss('Agent not found', 'The agent this notification points at is gone.');
+				return false;
+			}
+			switchToSession(session.id);
+			useModalStore.getState().openModal('editAgent', {
+				session,
+				initialTab: 'provider',
+				translationReview: { tabId: action.tabId, provider: action.provider },
+			});
+			return true;
+		}
 		case 'jump-session': {
 			if (!handlers.onSessionClick) return false;
 			const jumped = handlers.onSessionClick(action.sessionId, action.tabId);

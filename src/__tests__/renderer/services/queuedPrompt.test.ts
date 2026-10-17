@@ -214,7 +214,11 @@ describe('enqueuePromptForTab', () => {
 
 		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'tidy up' });
 
-		expect(item!.turnSettings).toEqual({ model: 'auto', effort: undefined });
+		expect(item!.turnSettings).toEqual({
+			provider: 'claude-code',
+			model: 'auto',
+			effort: undefined,
+		});
 		expect(routeTurn).toHaveBeenCalledWith(
 			expect.objectContaining({ prompt: 'tidy up', agentId: 'session-1', tabId: 'b' })
 		);

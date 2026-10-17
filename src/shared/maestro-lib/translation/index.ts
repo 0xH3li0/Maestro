@@ -1,6 +1,17 @@
 /** Node translation API. Renderer clients import types/session/support directly, never this barrel. */
 export * from './types';
-export { limitationsNeedingAcceptance } from './limitations';
+export { limitationsNeedingAcceptance, translationWarningsAccepted } from './limitations';
+export {
+	prepareTabForSend,
+	pendingTranslationSource,
+	TranslationSendHeldError,
+	type TranslationSendHost,
+} from './send';
+export {
+	NativeTranslationService,
+	type TranslationServiceHost,
+	type TranslationServiceSession,
+} from './service';
 export {
 	TRANSLATION_DIRECTIONS,
 	TRANSLATION_PROVIDER_VERSIONS,

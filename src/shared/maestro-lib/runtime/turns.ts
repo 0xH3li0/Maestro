@@ -1,3 +1,11 @@
+import { prepareTabForSend, TranslationSendHeldError } from '../translation/send';
+import type { TranslationServiceSession, NativeTranslationService } from '../translation/service';
+import {
+	switchAgentProvider,
+	switchTabProvider,
+	type ProviderSwitchAgent,
+} from '../agents/providerSwap';
+import { createRuntimeTranslationService } from './translation';
 /**
  * The runtime's turns: send, queue, stop, and the per-tab event stream (CH-2 to CH-5, gap L10).
  *
@@ -102,6 +110,7 @@ export interface RuntimeTurnOptions {
 
 /** Seams for tests: the provider launch and the probes `loadTurnContext` makes. */
 export interface RuntimeTurnDeps {
+	translation?: Pick<NativeTranslationService, 'run'>;
 	runAgentTurn: typeof runAgentTurn;
 	probeBinary?(binaryName: string, customPath?: string): Promise<BinaryDetectionResult>;
 	readGitBranch?(cwd: string): Promise<string | undefined>;
@@ -140,8 +149,7 @@ interface TurnItem extends QueueItem {
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
 	turnSettings: { model?: string; effort?: string };
 	/**
-	 * The provider those settings were chosen on. A model name means nothing to another provider,
-	 * so a message still queued when the agent switches runs with the new provider's settings.
+	 * The provider captured when queued. Later agent edits cannot reroute this message.
 	 */
 	settingsProvider: string;
 }
@@ -186,6 +194,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const sshStore = createSshRemoteStore(paths);
+	const translation =
+		deps.translation ?? createRuntimeTranslationService(paths, repository, registry);
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
@@ -205,15 +215,54 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// -----------------------------------------------------------------------
 
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
-		const record = repository.getAgent(agentId);
+		let record = repository.getAgent(agentId);
 		if (!record) throw new Error(`No agent ${agentId}.`);
-		const tabRecord = repository.getTab(agentId, item.tabId);
+		let tabRecord = repository.getTab(agentId, item.tabId);
 		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
 		// The tab's previous process has not gone yet: a timing collision, not a verdict on the item.
 		if (registry.isBusy(agentId, item.tabId)) throw new TurnCollisionError();
 
-		const agent = toTurnAgent(record);
-		if (!agent) throw new Error('The agent has no working directory to run in.');
+		const getTranslationSession = () => {
+			const current = repository.getAgent(agentId);
+			if (!current) throw new Error(`No agent ${agentId}.`);
+			return {
+				...current,
+				aiTabs: (current.aiTabs ?? []).map((tab) => ({
+					...tab,
+					agentSessionId: tab.agentSessionId ?? null,
+				})),
+			} as unknown as TranslationServiceSession;
+		};
+		try {
+			await prepareTabForSend(item.tabId, item.settingsProvider as ToolType, {
+				getSession: getTranslationSession,
+				translate: (request) => translation.run(request),
+				isBusy: () => registry.isBusy(agentId),
+			});
+		} catch (error) {
+			if (error instanceof TranslationSendHeldError && error.deferred)
+				throw new TurnCollisionError();
+			throw error;
+		}
+		record = repository.getAgent(agentId);
+		if (!record) throw new Error(`No agent ${agentId}.`);
+		tabRecord = repository.getTab(agentId, item.tabId);
+		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
+		const turnAgent = toTurnAgent(record);
+		if (!turnAgent) throw new Error('The agent has no working directory to run in.');
+		const agent = switchAgentProvider(
+			{
+				...turnAgent,
+				toolType: record.toolType as ToolType,
+				providerOverrides: record.providerOverrides as ProviderSwitchAgent['providerOverrides'],
+			},
+			item.settingsProvider as ToolType
+		).agent;
+		tabRecord = switchTabProvider(
+			{ ...tabRecord, agentSessionId: tabRecord.agentSessionId ?? null },
+			record.toolType as ToolType,
+			item.settingsProvider as ToolType
+		);
 
 		const loaded = await loadTurnContext(agent, {
 			paths,
@@ -230,8 +279,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
-			// Frozen settings only hold on the provider they were frozen on (see `settingsProvider`).
-			...(item.settingsProvider === agent.toolType ? { turnSettings: item.turnSettings } : {}),
+			// Queuing is sending: provider, model and effort remain the captured choice.
+			turnSettings: item.turnSettings,
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 		};

@@ -115,6 +115,7 @@ describe('captureQueuedTurnSettings', () => {
 		const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'low' });
 
 		expect(captureQueuedTurnSettings(tab, session)).toEqual({
+			provider: 'claude-code',
 			model: 'opus',
 			effort: 'xhigh',
 		});
@@ -126,11 +127,21 @@ describe('captureQueuedTurnSettings', () => {
 		// values and the item inherits a model the user picked afterwards.
 		const captured = captureQueuedTurnSettings(makeTab(), makeSession('codex'));
 
-		expect(captured).toEqual({ model: undefined, effort: undefined });
+		expect(captured).toEqual({ provider: 'codex', model: undefined, effort: undefined });
 	});
 });
 
 describe('codifyQueuedTurnSettings', () => {
+	it('keeps the captured provider when agent defaults changed', () => {
+		const item = {
+			turnSettings: { provider: 'claude-code' as const, model: 'opus', effort: 'high' },
+		};
+		expect(codifyQueuedTurnSettings(item, makeTab(), makeSession('codex'))).toMatchObject({
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+			turnEffort: 'high',
+		});
+	});
 	it('uses destination settings for migrated queued items while keeping their saved settings intact', () => {
 		const item = { id: 'queued', turnSettings: { model: 'haiku', effort: 'low' } };
 		const session = makeSession('codex', {
@@ -570,8 +581,13 @@ describe('a turn sent on the Auto model', () => {
 
 	describe('a queued item', () => {
 		it('keeps the word, and the answer when the caller has one', () => {
-			expect(captureQueuedTurnSettings(makeTab(), AUTO)).toEqual({ model: 'auto', effort: 'high' });
+			expect(captureQueuedTurnSettings(makeTab(), AUTO)).toEqual({
+				provider: 'claude-code',
+				model: 'auto',
+				effort: 'high',
+			});
 			expect(captureQueuedTurnSettings(makeTab(), AUTO, route('low', 'low'))).toEqual({
+				provider: 'claude-code',
 				model: 'auto',
 				effort: 'high',
 				route: route('low', 'low'),
@@ -581,6 +597,7 @@ describe('a turn sent on the Auto model', () => {
 		it('carries no answer on a named model', () => {
 			const session = makeSession('claude-code', { customModel: 'opus' });
 			expect(captureQueuedTurnSettings(makeTab(), session, route('low', 'low'))).toEqual({
+				provider: 'claude-code',
 				model: 'opus',
 				effort: undefined,
 			});

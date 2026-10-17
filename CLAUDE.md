@@ -183,10 +183,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Providers, accounts, and auth
 
 - **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
+- **Translating context before a send:** `prepareTabForSend()`, `pendingTranslationSource()`, `TranslationSendHeldError` in `src/shared/maestro-lib/translation/send.ts`; `NativeTranslationService` in `translation/service.ts`
+- **Finding a Codex native transcript:** `findCodexSessionFile()`, `listCodexSessionFiles()`, `extractSessionIdFromFilename()` in `src/shared/maestro-lib/codex/session-files.ts`
 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
-- **Provider translation acceptance:** `limitationsNeedingAcceptance()` in `src/shared/maestro-lib/translation/limitations.ts`
+- **Provider translation acceptance:** `limitationsNeedingAcceptance()`, `translationWarningsAccepted()` in `src/shared/maestro-lib/translation/limitations.ts`
 - **Provider translation knowledge scope:** `assertTranslationKnowledgeDirectory()`, `bindTranslationKnowledge()` in `src/shared/maestro-lib/translation/knowledge-binding.ts`; `translationWriteRoot()` in `src/shared/maestro-lib/translation/transaction.ts`
 - **Provider translation context window:** `activeContextRecords()`, `formatTranslationRecordCounts()` in `src/shared/maestro-lib/translation/context-window.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`

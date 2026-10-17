@@ -1,3 +1,5 @@
+import { isValidAgentId } from './agentIds';
+import type { ToolType } from './types';
 /**
  * toastClickAction - the canonical "what happens when a toast is clicked" type.
  *
@@ -30,6 +32,7 @@
  *                        (`renderer/services/groupDefaultsPublish.ts`).
  */
 export type ToastClickAction =
+	| { kind: 'review-translation'; sessionId: string; tabId: string; provider: ToolType }
 	| { kind: 'jump-session'; sessionId: string; tabId?: string }
 	| { kind: 'open-file'; sessionId: string; path: string }
 	| {
@@ -58,6 +61,7 @@ export type ToastClickAction =
 
 /** Every valid `kind`, for validation messages and CLI help. */
 export const TOAST_CLICK_ACTION_KINDS = [
+	'review-translation',
 	'jump-session',
 	'open-file',
 	'open-terminal',
@@ -92,6 +96,17 @@ export function parseToastClickAction(raw: unknown): {
 	const kind = obj.kind;
 
 	switch (kind) {
+		case 'review-translation': {
+			const sessionId = str(obj, 'sessionId');
+			const tabId = str(obj, 'tabId');
+			const provider = str(obj, 'provider');
+			if (!sessionId || !tabId || !provider || !isValidAgentId(provider))
+				return {
+					error:
+						"clickAction kind 'review-translation' requires sessionId, tabId and a valid provider",
+				};
+			return { action: { kind, sessionId, tabId, provider } };
+		}
 		case 'jump-session': {
 			const sessionId = str(obj, 'sessionId');
 			if (!sessionId) return { error: "clickAction kind 'jump-session' requires sessionId" };
