@@ -343,7 +343,7 @@ describe('process IPC handlers', () => {
 			interrupt: vi.fn(),
 			kill: vi.fn(),
 			resize: vi.fn(),
-			getAll: vi.fn(),
+			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
