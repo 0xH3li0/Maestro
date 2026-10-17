@@ -49,6 +49,8 @@ export interface PortableRecord {
 	timestamp?: string;
 	phase?: string;
 	boundary?: 'compaction' | 'fork';
+	/** Source context after its latest compaction. Older checkpoints without this field are active. */
+	window?: 'archived' | 'active';
 	/** Native record is evidence. It must never become a foreign system instruction. */
 	native: unknown;
 }

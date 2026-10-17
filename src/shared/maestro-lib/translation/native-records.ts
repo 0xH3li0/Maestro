@@ -59,10 +59,79 @@ export function extractNativeConversation(
 		limitations: [],
 	};
 	const rows = parseNativeLines(bytes.toString('utf8'));
+	const lastBoundaryIndex = rows.reduce(
+		(last, row) =>
+			(
+				identity.provider === 'claude-code'
+					? row.entry?.type === 'system' && row.entry.subtype === 'compact_boundary'
+					: identity.provider === 'codex' && row.entry?.type === 'compacted'
+			)
+				? row.index
+				: last,
+		-1
+	);
+	const claudeSummaryIndex =
+		identity.provider === 'claude-code' && lastBoundaryIndex >= 0
+			? rows.find(
+					(row) =>
+						row.index > lastBoundaryIndex &&
+						row.entry?.type === 'user' &&
+						row.entry.isCompactSummary === true
+				)?.index
+			: undefined;
+	// Feed compacted Responses items through the ordinary mapper. Keep earlier
+	// replacement items too, so their identities survive a later compaction.
+	const extractionRows: Array<NativeLine & { compactionItemId?: string }> = [];
+	for (const row of rows) {
+		extractionRows.push(row);
+		if (identity.provider !== 'codex' || row.entry?.type !== 'compacted') continue;
+		const payload = row.entry.payload;
+		const replacement = payload?.replacement_history;
+		const items: unknown[] =
+			Array.isArray(replacement) && replacement.length
+				? replacement
+				: typeof payload?.message === 'string' && payload.message.length
+					? [{ type: 'message', role: 'user', content: payload.message }]
+					: [];
+		if (row.index === lastBoundaryIndex && !items.length)
+			conversation.limitations.push({
+				code: 'missing-compaction-history',
+				severity: 'block',
+				tabId,
+				message: 'The latest Codex compaction has no replacement history or summary to carry.',
+			});
+		for (const [index, item] of items.entries()) {
+			if (!item || typeof item !== 'object' || Array.isArray(item))
+				conversation.limitations.push({
+					code: 'invalid-compaction-history',
+					severity: 'block',
+					tabId,
+					message: `Compaction item ${index} at native record ${row.index} is not a Responses item.`,
+				});
+			extractionRows.push({
+				...row,
+				entry: { type: 'response_item', timestamp: row.entry.timestamp, payload: item },
+				// Retained items can reuse an earlier native ID. Scope identity to the
+				// boundary and position without changing the provider's original item.
+				compactionItemId: `line:${row.index}:compaction:${index}`,
+			});
+		}
+	}
+	if (
+		identity.provider === 'claude-code' &&
+		lastBoundaryIndex >= 0 &&
+		claudeSummaryIndex === undefined
+	)
+		conversation.limitations.push({
+			code: 'missing-compaction-history',
+			severity: 'block',
+			tabId,
+			message: 'The latest Claude compaction has no subsequent compact summary to carry.',
+		});
 	const nativeIds = new Set<string>();
 	let originCwd: string | undefined;
 	let hasCwdDrift = false;
-	for (const row of rows) {
+	for (const row of extractionRows) {
 		const entry = row.entry ?? { type: 'malformed', raw: row.line };
 		if (row.malformed)
 			conversation.limitations.push({
@@ -124,7 +193,8 @@ export function extractNativeConversation(
 			});
 		const candidateId = identity.provider === 'claude-code' ? entry.uuid : (payload.id ?? entry.id);
 		// Legacy Codex rows often have no ID. Position is stable only while the source is append-only.
-		const nativeId = typeof candidateId === 'string' ? candidateId : `line:${row.index}`;
+		const nativeId =
+			row.compactionItemId ?? (typeof candidateId === 'string' ? candidateId : `line:${row.index}`);
 		if (nativeIds.has(nativeId))
 			conversation.limitations.push({
 				code: 'duplicate-native-id',
@@ -294,6 +364,14 @@ export function extractNativeConversation(
 			timestamp: entry.timestamp,
 			phase: message.phase,
 			boundary,
+			window:
+				lastBoundaryIndex < 0 ||
+				(identity.provider === 'claude-code'
+					? row.index >= (claudeSummaryIndex ?? Infinity)
+					: row.index > lastBoundaryIndex ||
+						(row.index === lastBoundaryIndex && row.compactionItemId !== undefined))
+					? 'active'
+					: 'archived',
 		};
 		conversation.records.push(record);
 		if (entry.type === 'attachment')
@@ -330,15 +408,23 @@ export function extractNativeConversation(
 				tabId,
 				message: `Historical ${role} record ${nativeId} is archived, not installed as destination instructions.`,
 			});
-		if (boundary || record.branchId || entry.isSidechain)
+		if (boundary === 'fork' || record.branchId || entry.isSidechain)
 			conversation.limitations.push({
 				code: 'native-boundary',
 				severity: 'warning',
 				tabId,
-				message: `Branch/compaction state at ${nativeId} is preserved; foreign runtime equivalence is unverified.`,
+				message: `Branch state at ${nativeId} is preserved; foreign runtime equivalence is unverified.`,
 			});
 	}
-	if (!conversation.records.some((r) => r.role === 'user' || r.role === 'assistant'))
+	const activeRecords = conversation.records.filter((record) => record.window === 'active');
+	if (lastBoundaryIndex >= 0)
+		conversation.limitations.push({
+			code: 'compaction-window',
+			severity: 'info',
+			tabId,
+			message: `Source compaction window: ${activeRecords.length} active records, ${conversation.records.length - activeRecords.length} archived records before the latest compaction summary.`,
+		});
+	if (!activeRecords.some((r) => r.role === 'user' || r.role === 'assistant'))
 		conversation.limitations.push({
 			code: 'missing-model-history',
 			severity: 'block',
@@ -347,18 +433,18 @@ export function extractNativeConversation(
 				'Native data contains no mapped model-visible conversation. UI/event projections alone cannot supply context continuity.',
 		});
 	const calls = new Set(
-		conversation.records.flatMap((r) =>
+		activeRecords.flatMap((r) =>
 			r.blocks.filter((b) => b.kind === 'tool-call').map((b) => b.callId)
 		)
 	);
 	const results = new Set(
-		conversation.records.flatMap((r) =>
+		activeRecords.flatMap((r) =>
 			r.blocks.filter((b) => b.kind === 'tool-result').map((b) => b.callId)
 		)
 	);
 	// Tool-only rows (including partial parallel results) and runtime metadata do not
 	// advance the conversation past a stopped turn. Mixed text/tool rows still do.
-	const lastConversationalIndex = conversation.records.reduce(
+	const lastConversationalIndex = activeRecords.reduce(
 		(last, record, index) =>
 			(record.role === 'user' || record.role === 'assistant') &&
 			record.blocks.some((block) => block.kind !== 'tool-call' && block.kind !== 'tool-result')
@@ -369,7 +455,7 @@ export function extractNativeConversation(
 	const interruptedCalls = new Set<string>();
 	const seenCalls = new Set<string>();
 	const seenResults = new Set<string>();
-	for (const [index, record] of conversation.records.entries())
+	for (const [index, record] of activeRecords.entries())
 		for (const block of record.blocks) {
 			if (
 				(block.kind === 'tool-call' || block.kind === 'tool-result') &&
