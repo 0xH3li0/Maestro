@@ -445,6 +445,7 @@ export function useBatchRunner({
 					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: initialTotalTasks,
 					completedTasksAcrossAllDocs: initialCheckedTasks,
+					initialCompletedTasks: initialCheckedTasks,
 					loopEnabled,
 					loopIteration: 0,
 					maxLoops,
