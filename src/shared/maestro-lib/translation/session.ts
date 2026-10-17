@@ -1,3 +1,4 @@
+import { canonicalJson } from '../../canonicalJson';
 import { agentRunOnSupport } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
@@ -14,6 +15,8 @@ export interface TranslationTab {
 	customModel?: string;
 	customEffort?: string;
 	awaitingSessionId?: boolean;
+	/** Native owner whose latest context must be imported before the next destination send. */
+	pendingTranslation?: ToolType;
 	providerSessions?: Partial<
 		Record<
 			ToolType,
@@ -101,7 +104,8 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	mappings: TranslationTabMapping[],
 	knowledgeDirectory?: string,
 	sourceProvider: ToolType = session.toolType,
-	tabId?: string
+	tabId?: string,
+	deferredTabs: TranslationTab[] = []
 ): T {
 	if (
 		tabId !== undefined &&
@@ -114,7 +118,26 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	const translate = (tab: TranslationTab): TranslationTab => {
 		if (tabId !== undefined && tab.id !== tabId) return tab;
 		const mapping = map.get(tab.id);
-		if (!mapping) throw new Error(`Missing native translation mapping for tab ${tab.id}`);
+		if (!mapping) {
+			if (session.aiTabs.some((open) => open.id === tab.id))
+				throw new Error(`Missing native translation mapping for tab ${tab.id}`);
+			const pending = deferredTabs.find((candidate) => candidate.id === tab.id);
+			// Renderer lifecycle updates can arrive before the IPC response. Only
+			// park a stale local copy if it still matches the reviewed source slot.
+			const stillSource =
+				session.toolType !== destination ||
+				(pending &&
+					tab.agentSessionId === pending.agentSessionId &&
+					canonicalJson(tab.providerSessions ?? {}) ===
+						canonicalJson(pending.providerSessions ?? {}));
+			if (!stillSource) return tab;
+			const pendingSource =
+				tab.pendingTranslation ?? (tab.agentSessionId ? sourceProvider : undefined);
+			return {
+				...switchTabProvider(tab, sourceProvider, destination),
+				pendingTranslation: pendingSource === destination ? undefined : pendingSource,
+			};
+		}
 		if (tabId !== undefined) {
 			const sourceId =
 				sourceProvider === session.toolType
@@ -128,11 +151,13 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				throw new Error(
 					`Native source identity changed before translation commit for tab ${tab.id}`
 				);
-			if (destinationId === mapping.destinationSessionId) return tab;
+			if (destinationId === mapping.destinationSessionId)
+				return { ...tab, pendingTranslation: undefined };
 			const sourceTab = switchTabProvider(tab, session.toolType, sourceProvider);
 			const translated = {
 				...switchTabProvider(sourceTab, sourceProvider, destination),
 				agentSessionId: mapping.destinationSessionId,
+				pendingTranslation: undefined,
 			};
 			// Until a caller selects the destination, keep its new native ID parked.
 			return switchTabProvider(translated, destination, session.toolType);
@@ -146,7 +171,11 @@ export function commitTranslationSession<T extends TranslatableSession>(
 		if (tab.agentSessionId !== mapping.sourceSessionId)
 			throw new Error(`Native source identity changed before translation commit for tab ${tab.id}`);
 		const switched = switchTabProvider(tab, sourceProvider, destination);
-		return { ...switched, agentSessionId: mapping.destinationSessionId };
+		return {
+			...switched,
+			agentSessionId: mapping.destinationSessionId,
+			pendingTranslation: undefined,
+		};
 	};
 	const historyMappings = new Map<string, HistoryTranslationMapping>();
 	for (const previous of session.providerTranslationHistoryMappings ?? []) {
@@ -229,12 +258,19 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			tabId !== undefined && destination !== session.toolType
 				? session.providerTranslationHistoryMappings
 				: [...historyMappings.values()],
-		providerTranslationTabInventory: translationSessionTabs(session)
+		providerTranslationTabInventory: translationSessionTabs({
+			...session,
+			providerTranslationTabInventory: [
+				...deferredTabs,
+				...(session.providerTranslationTabInventory ?? []),
+			],
+		})
 			.map(translate)
 			.map((tab) => ({
 				id: tab.id,
 				agentSessionId: tab.agentSessionId,
 				providerSessions: tab.providerSessions,
+				pendingTranslation: tab.pendingTranslation,
 			})),
 		// Model names and API gateways belong to the source provider. A source
 		// target survives only when the destination has a recipe for it.
@@ -281,4 +317,63 @@ export function translatedHistorySessionId(
 			'This History entry has no native mapping for the active provider. Its original record remains available; migration did not create a resumable counterpart.'
 		);
 	return mapping?.destinationSessionId ?? originalSessionId;
+}
+
+/** Resolve a History identity without importing it. Pending conversations keep their native owner. */
+export function resolveHistorySession(
+	session: TranslatableSession,
+	originalSessionId: string
+): {
+	provider: ToolType;
+	agentSessionId: string;
+	providerSessions?: TranslationTab['providerSessions'];
+} {
+	const mapping = session.providerTranslationHistoryMappings?.find(
+		(entry) => entry.tabId === `history:${originalSessionId}`
+	);
+	const ids = new Set([originalSessionId, mapping?.destinationSessionId].filter(Boolean));
+	// Prefer a live tab over its older inventory copy or a synthetic History alias.
+	const tab = [...session.aiTabs, ...translationSessionTabs(session).reverse()].find(
+		(candidate) =>
+			candidate.id === `history:${originalSessionId}` ||
+			ids.has(candidate.agentSessionId) ||
+			Object.values(candidate.providerSessions ?? {}).some((slot) => ids.has(slot?.agentSessionId))
+	);
+	if (tab?.pendingTranslation && tab.pendingTranslation !== session.toolType) {
+		const sourceId = tab.providerSessions?.[tab.pendingTranslation]?.agentSessionId;
+		if (!sourceId) throw new Error('Pending History conversation has no native source identity');
+		return {
+			provider: tab.pendingTranslation,
+			agentSessionId: sourceId,
+			providerSessions: {
+				...switchTabProvider(tab, session.toolType, tab.pendingTranslation).providerSessions,
+				[tab.pendingTranslation]: tab.providerSessions?.[tab.pendingTranslation],
+			},
+		};
+	}
+	if (tab?.agentSessionId)
+		return {
+			provider: session.toolType,
+			agentSessionId: tab.agentSessionId,
+			providerSessions: tab.providerSessions,
+		};
+	if (tab) {
+		const sources = Object.entries(tab.providerSessions ?? {}).filter(
+			([, slot]) => slot?.agentSessionId
+		);
+		const source =
+			sources.find(([, slot]) => ids.has(slot?.agentSessionId)) ??
+			(sources.length === 1 ? sources[0] : undefined);
+		if (source)
+			return {
+				provider: source[0] as ToolType,
+				agentSessionId: source[1]!.agentSessionId!,
+				providerSessions: tab.providerSessions,
+			};
+		throw new Error('This History conversation has no unambiguous native source identity');
+	}
+	return {
+		provider: session.toolType,
+		agentSessionId: translatedHistorySessionId(session, originalSessionId),
+	};
 }

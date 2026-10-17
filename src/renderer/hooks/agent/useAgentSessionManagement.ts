@@ -1,4 +1,4 @@
-import { translatedHistorySessionId } from '../../../shared/maestro-lib/translation/session';
+import { resolveHistorySession } from '../../../shared/maestro-lib/translation/session';
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
@@ -298,8 +298,10 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
+			let native: ReturnType<typeof resolveHistorySession>;
 			try {
-				agentSessionId = translatedHistorySessionId(targetSession, agentSessionId);
+				native = resolveHistorySession(targetSession, agentSessionId);
+				agentSessionId = native.agentSessionId;
 			} catch (error) {
 				if (!opts?.suppressUnavailableFlash)
 					showFlash?.(error instanceof Error ? error.message : String(error));
@@ -325,7 +327,10 @@ export function useAgentSessionManagement(
 
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = targetSession.aiTabs?.find(
-				(tab) => tab.agentSessionId === agentSessionId
+				(tab) =>
+					(native.provider === targetSession.toolType
+						? tab.agentSessionId
+						: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
 			);
 
 			try {
@@ -333,7 +338,7 @@ export function useAgentSessionManagement(
 				// context lookup are shared with every other way a conversation is
 				// reopened (see loadResumableSession).
 				const resumable = await loadResumableSession({
-					toolType: targetSession.toolType,
+					toolType: native.provider,
 					projectRoot: resolvedProjectRoot,
 					sshRemoteId,
 					agentSessionId,
@@ -372,7 +377,12 @@ export function useAgentSessionManagement(
 						// the pre-await dedup with no tab present. Re-checking here means the
 						// second update sees the first's committed tab and focuses it instead
 						// of creating a duplicate. There must never be two tabs for one session.
-						const freshExistingTab = s.aiTabs?.find((tab) => tab.agentSessionId === agentSessionId);
+						const freshExistingTab = s.aiTabs?.find(
+							(tab) =>
+								(native.provider === s.toolType
+									? tab.agentSessionId
+									: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
+						);
 
 						// If a tab already exists for this session, repopulate (if needed) and
 						// focus it instead of creating a duplicate.
@@ -396,6 +406,8 @@ export function useAgentSessionManagement(
 						// Create tab from the CURRENT session state (not stale closure value)
 						const result = createTab(s, {
 							agentSessionId,
+							sourceProvider: native.provider,
+							providerSessions: native.providerSessions,
 							logs: messages,
 							name,
 							origin,

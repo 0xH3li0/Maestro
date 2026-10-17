@@ -1,4 +1,5 @@
 import type { ToolType } from '../../types';
+import type { TranslationTab } from './session';
 
 export interface TranslationIdentity {
 	provider: ToolType;
@@ -198,6 +199,8 @@ export interface TranslationPlan {
 		archivedRecords?: number;
 		newRecords: number;
 	}>;
+	/** Native identities only; these conversations are translated on their next send. */
+	deferredTabs?: TranslationTab[];
 	counts: { records: number; artifacts: number; bytes: number };
 	fingerprint: string;
 }

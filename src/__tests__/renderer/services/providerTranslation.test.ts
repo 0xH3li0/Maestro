@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockAITab, createMockSession } from '../../helpers';
+import { useTabStore } from '../../../renderer/stores/tabStore';
+import { commitTranslationSession } from '../../../shared/maestro-lib/translation/session';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
@@ -100,6 +102,99 @@ afterEach(async () => {
 });
 
 describe('deferred provider translation client', () => {
+	it.each([false, true])(
+		'reopens and wakes parked tabs, translating on first send (older destination: %s)',
+		async (olderDestination) => {
+			const original = useSessionStore.getState().sessions[0];
+			const closed = createMockAITab({
+				id: 'closed',
+				agentSessionId: 'closed-source',
+				inputValue: 'closed draft',
+				providerSessions: olderDestination
+					? { codex: { agentSessionId: 'older-codex' } }
+					: undefined,
+			});
+			const sleeping = createMockAITab({ id: 'sleeping', agentSessionId: 'sleep-source' });
+			const source = {
+				...original,
+				unifiedClosedTabHistory: [
+					{ type: 'ai' as const, tab: closed, unifiedIndex: 1, closedAt: 1 },
+				],
+				snoozedTabs: [
+					{
+						id: 'snooze',
+						type: 'ai' as const,
+						tab: sleeping,
+						unifiedIndex: 2,
+						snoozedAt: 1,
+						wakeAt: 999999,
+					},
+				],
+			};
+			const switched = commitTranslationSession(source, 'codex', plan.id, [
+				{
+					tabId: 'tab',
+					sourceSessionId: 'source-final',
+					destinationSessionId: 'open-codex',
+					artifacts: [],
+					lineage: {},
+				},
+			]);
+			useSessionStore.setState({ sessions: [switched] });
+			useTabStore.getState().reopenClosedTab();
+			useTabStore.getState().unsnoozeTab('agent', 'snooze');
+			expect(translateProvider).not.toHaveBeenCalled();
+			const reopened = useSessionStore.getState().sessions[0];
+			expect(reopened.aiTabs.find((tab) => tab.id === 'closed')?.agentSessionId).toBe(
+				olderDestination ? 'older-codex' : null
+			);
+			expect(reopened.aiTabs.find((tab) => tab.id === 'closed')?.pendingTranslation).toBe(
+				'claude-code'
+			);
+			expect(
+				reopened.aiTabs.find((tab) => tab.id === 'sleeping')?.providerSessions?.['claude-code']
+					?.agentSessionId
+			).toBe('sleep-source');
+			const scoped = {
+				...plan,
+				status: 'ready' as const,
+				tabId: 'closed',
+				tabs: [{ tabId: 'closed', sourceSessionId: 'closed-source', records: 2, newRecords: 2 }],
+			};
+			translateProvider.mockImplementation(async (request) =>
+				request.action === 'plan'
+					? { success: true, plan: scoped }
+					: {
+							success: true,
+							plan: scoped,
+							result: {
+								success: true,
+								state: 'committed',
+								plan: scoped,
+								mappings: [
+									{
+										tabId: 'closed',
+										sourceSessionId: 'closed-source',
+										destinationSessionId: 'closed-codex',
+										artifacts: [],
+										lineage: {},
+									},
+								],
+							},
+						}
+			);
+			expect(await prepareProviderTranslationForSend('agent', 'closed', 'codex')).toBe(
+				'closed-codex'
+			);
+			expect(translateProvider.mock.calls.map(([request]) => request.action)).toEqual([
+				'plan',
+				'apply',
+			]);
+			expect(
+				useSessionStore.getState().sessions[0].aiTabs.find((tab) => tab.id === 'closed')?.inputValue
+			).toBe('closed draft');
+		}
+	);
 	it('prepares a pending destination and returns the translated resume ID', async () => {
 		const original = useSessionStore.getState().sessions[0];
 		const session = {

@@ -469,8 +469,11 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 						console.log(
 							`  ${report.plan.tabs.length} conversations; ${report.plan.counts.records} records; ${report.plan.counts.artifacts} artifacts`
 						);
+						console.log(`  Translated now: ${report.plan.tabs.length}`);
 						for (const tab of report.plan.tabs)
 							console.log(`  ${tab.tabId}: ${formatTranslationRecordCounts(tab)}`);
+						console.log(`  Translated on next use: ${report.plan.deferredTabs?.length ?? 0}`);
+						for (const tab of report.plan.deferredTabs ?? []) console.log(`  ${tab.id}`);
 						for (const limitation of report.plan.limitations.filter((l) => l.severity !== 'info'))
 							console.log(`  [${limitation.severity}] ${limitation.code}: ${limitation.message}`);
 						const notes = report.plan.limitations.filter((l) => l.severity === 'info');

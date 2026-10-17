@@ -103,6 +103,15 @@ function scenario() {
 }
 
 describe('translate at send', () => {
+	it('imports a marked source even when an older destination session exists', async () => {
+		const s = scenario();
+		s.session.aiTabs[0].agentSessionId = 'older-codex';
+		s.session.aiTabs[0].pendingTranslation = 'claude-code';
+		expect(await prepareTabForSend('tab', 'codex', s.host)).toBe('translated');
+		expect(s.host.translate).toHaveBeenCalledTimes(2);
+		expect(s.host.getSession().aiTabs[0].pendingTranslation).toBeUndefined();
+	});
+
 	it('translates a pending tab, parks its source and returns the native resume ID', async () => {
 		const { host, plan } = scenario();
 		plan.limitations = [{ code: 'note', severity: 'info', message: 'A note needs no consent' }];

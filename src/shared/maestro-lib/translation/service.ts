@@ -226,7 +226,48 @@ export class NativeTranslationService {
 	private async prepare(request: TranslationRequest): Promise<TranslationJournal> {
 		const session = this.session(request.agentId);
 		const checkpoint = await this.archive.checkpoint(session.id);
-		const tabs = translationSessionTabs(session, request.tabId);
+		const inventory = translationSessionTabs(session);
+		const tabs =
+			request.tabId === undefined ? session.aiTabs : translationSessionTabs(session, request.tabId);
+		const deferredTabs =
+			request.tabId === undefined
+				? inventory
+						.filter((tab) => !tabs.some((open) => open.id === tab.id))
+						.map((tab) => ({
+							id: tab.id,
+							agentSessionId: tab.agentSessionId,
+							providerSessions: tab.providerSessions,
+							pendingTranslation: tab.pendingTranslation,
+						}))
+				: undefined;
+		// History contributes identities, never native extraction during an agent-wide switch.
+		if (deferredTabs) {
+			for (const entry of await this.deps.history(session.id)) {
+				if (!entry.agentSessionId) continue;
+				const key = `history:${entry.agentSessionId}`;
+				const mapping = session.providerTranslationHistoryMappings?.find((m) => m.tabId === key);
+				const nativeId = mapping?.destinationSessionId ?? entry.agentSessionId;
+				if (
+					[...inventory, ...deferredTabs].some(
+						(tab) =>
+							tab.id === key ||
+							tab.agentSessionId === nativeId ||
+							Object.values(tab.providerSessions ?? {}).some(
+								(slot) => slot?.agentSessionId === nativeId
+							)
+					)
+				)
+					continue;
+				// Legacy failed mappings have no trustworthy provider ownership.
+				if (mapping && !mapping.destinationSessionId) continue;
+				deferredTabs.push({
+					id: key,
+					agentSessionId: nativeId,
+					providerSessions: undefined,
+					pendingTranslation: undefined,
+				});
+			}
+		}
 		const pendingSource =
 			request.tabId !== undefined
 				? pendingTranslationSource(session, request.tabId, request.destination)
@@ -291,7 +332,16 @@ export class NativeTranslationService {
 					const parked = await this.conversation(destination, tab.id, parkedId);
 					const parkedResult = reconcileConversation(parked, checkpoint);
 					limitations.push(...parkedResult.limitations);
-					if (parkedResult.newRecords > 0)
+					// History can reopen under a new tab ID. Known native events are
+					// still the same branch even without that tab's prior conversation.
+					if (
+						parkedResult.newRecords > 0 &&
+						parked.records.some(
+							(record) =>
+								checkpoint?.observed[nativeRecordKey(destination, parkedId, record.nativeId)] ===
+								undefined
+						)
+					)
 						limitations.push({
 							code: 'destination-divergence',
 							severity: 'block',
@@ -306,40 +356,6 @@ export class NativeTranslationService {
 				for (const record of native.records)
 					nextCheckpoint.observed[nativeRecordKey(source, sourceId!, record.nativeId)] =
 						record.semanticHash;
-			}
-			// Closed native histories are selected by this agent's History, never by scanning the project wholesale.
-			const history = request.tabId === undefined ? await this.deps.history(session.id) : [];
-			const selectedIds = new Set(tabs.map((t) => t.agentSessionId).filter(Boolean));
-			for (const entry of history) {
-				if (!entry.agentSessionId || selectedIds.has(entry.agentSessionId)) continue;
-				selectedIds.add(entry.agentSessionId);
-				const key = `history:${entry.agentSessionId}`;
-				try {
-					const mapped = session.providerTranslationHistoryMappings?.find(
-						(m: any) => m.tabId === key
-					)?.destinationSessionId;
-					const nativeId = mapped ?? entry.agentSessionId;
-					if (mapped && tabs.some((tab) => tab.agentSessionId === mapped)) continue;
-					const native = await this.conversation(source, key, nativeId);
-					conversations.push(reconcileConversation(native, checkpoint).conversation);
-					for (const record of native.records)
-						nextCheckpoint.observed[nativeRecordKey(source, nativeId, record.nativeId)] =
-							record.semanticHash;
-				} catch {
-					conversations.push({
-						tabId: key,
-						nativeSessionId: entry.agentSessionId,
-						identity: source,
-						records: [],
-						artifacts: [],
-						limitations: [],
-					});
-					limitations.push({
-						code: 'history-provider-ownership',
-						severity: 'warning',
-						message: `History ${entry.agentSessionId} has no current-provider ownership proof. Its Maestro record remains intact; it is not imported under a guessed provider.`,
-					});
-				}
 			}
 		} else
 			for (const tab of tabs)
@@ -578,9 +594,12 @@ export class NativeTranslationService {
 			resources: [...resources.values()],
 		});
 
+		if (deferredTabs) plan.deferredTabs = deferredTabs;
+
 		plan.fingerprint = translationHash(
 			canonicalJson({
 				fingerprint: plan.fingerprint,
+				deferredTabs,
 				resources: [...resources.values()],
 				projections: resourceProjections.projections,
 			})
@@ -631,6 +650,12 @@ export class NativeTranslationService {
 					if (sourceId !== operation.plan.tabs[0].sourceSessionId)
 						throw new Error('Native source identity changed since preflight');
 				}
+				if (
+					operation.plan.deferredTabs !== undefined &&
+					canonicalJson(session.aiTabs.map((tab) => tab.id).sort()) !==
+						canonicalJson(operation.plan.tabs.map((tab) => tab.tabId).sort())
+				)
+					throw new Error('Open tabs changed since preflight');
 				if (this.deps.isBusy(session)) throw new TranslationSourceBusyError();
 				const actual = await this.identity(
 					session,
@@ -735,7 +760,8 @@ export class NativeTranslationService {
 						operation.mappings,
 						operation.knowledgeDirectory,
 						operation.plan.source.provider,
-						operation.plan.tabId
+						operation.plan.tabId,
+						operation.plan.deferredTabs
 					);
 					const envKey =
 						operation.plan.destination.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';

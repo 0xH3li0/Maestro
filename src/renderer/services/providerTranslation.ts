@@ -53,6 +53,7 @@ async function snapshotAgent(agentId: string): Promise<void> {
 		id: tab.id,
 		agentSessionId: tab.agentSessionId,
 		providerSessions: tab.providerSessions,
+		pendingTranslation: tab.pendingTranslation,
 	}));
 	updateSessionWith(agentId, (s) => ({ ...s, providerTranslationTabInventory: inventory }));
 	await window.maestro.sessions.setMany(
@@ -85,7 +86,8 @@ async function applyReport(agentId: string, report: TranslationReport): Promise<
 			result.mappings,
 			stored?.providerTranslationKnowledgeDirectory,
 			report.plan!.source.provider,
-			report.plan!.tabId
+			report.plan!.tabId,
+			report.plan!.deferredTabs
 		);
 		return {
 			...updated,

@@ -172,6 +172,23 @@ describe('tabHelpers', () => {
 			useSettingsStore.setState({ newTabPlacement: 'after-current' });
 		});
 
+		it('parks a foreign History identity until the first send', () => {
+			const session = createMockSession({ toolType: 'codex' });
+			const result = createTab(session, {
+				agentSessionId: 'claude-history',
+				sourceProvider: 'claude-code',
+				providerSessions: {
+					'claude-code': { agentSessionId: 'claude-history', customModel: 'opus' },
+				},
+			})!;
+			expect(result.tab.agentSessionId).toBeNull();
+			expect(result.tab.providerSessions?.['claude-code']).toMatchObject({
+				agentSessionId: 'claude-history',
+				customModel: 'opus',
+			});
+			expect(result.tab.providerSessions?.codex).toBeUndefined();
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: result.tab.id });
+		});
 		it('creates a new tab with default options', () => {
 			const session = createMockSession({ aiTabs: [] });
 

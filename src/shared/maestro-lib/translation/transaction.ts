@@ -563,15 +563,13 @@ async function finalizeTranslation(
 			};
 	checkpoint.operationId = journal.plan.id;
 	checkpoint.resourceImport = journal.resourceImport;
-	checkpoint.conversations =
-		journal.plan.tabId === undefined
-			? journal.conversations
-			: [
-					...checkpoint.conversations.filter(
-						(conversation) => conversation.tabId !== journal.plan.tabId
-					),
-					...journal.conversations,
-				];
+	checkpoint.conversations = [
+		...checkpoint.conversations.filter(
+			(conversation) =>
+				!journal.conversations.some((current) => current.tabId === conversation.tabId)
+		),
+		...journal.conversations,
+	];
 	checkpoint.resources = journal.resources;
 	checkpoint.ownedResources ??= {};
 	for (const write of journal.resourceWrites)

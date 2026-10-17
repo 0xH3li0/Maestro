@@ -55,6 +55,137 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('single-tab provider translation service', () => {
+	it('translates only open tabs, leaving blocked closed and missing History sources for next use', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-open-tabs-'));
+		try {
+			vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+			vi.mocked(getHistoryManager).mockReturnValue({
+				getEntries: async () => [{ agentSessionId: 'missing-history' }],
+			} as any);
+			vi.mocked(execGitReadOnly).mockResolvedValue({
+				exitCode: 128,
+				stdout: '',
+				stderr: 'fatal: not a git repository',
+			});
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [],
+				limitations: [],
+			});
+			const source = {
+				provider: 'codex' as const,
+				version: '0.162.1',
+				accountRoot: path.join(root, 'codex'),
+				projectRoot: path.join(root, 'project'),
+			};
+			const destination = {
+				...source,
+				provider: 'claude-code' as const,
+				version: '2.1.296',
+				accountRoot: path.join(root, 'claude'),
+			};
+			let session = createMockSession({
+				id: 'agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'open', agentSessionId: 'open-native' }] as any,
+				closedTabHistory: [
+					{ tab: { id: 'blocked', agentSessionId: 'missing-closed' }, index: 1, closedAt: 1 },
+				] as any,
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: {
+					get: () => [session],
+					set: (_key: string, sessions: (typeof session)[]) => {
+						session = sessions[0];
+					},
+				},
+				agentConfigsStore: { get: () => ({}) },
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			vi.spyOn(service as any, 'identity').mockImplementation(
+				async (_session: unknown, provider: unknown) =>
+					provider === 'codex' ? source : destination
+			);
+			const readNative = (service as any).conversation.bind(service);
+			const read = vi
+				.spyOn(service as any, 'conversation')
+				.mockImplementation(async (identity: any, tabId: any, nativeId: any) => {
+					if (identity.provider === 'claude-code') return readNative(identity, tabId, nativeId);
+					if (tabId !== 'open' && tabId !== 'reopened')
+						throw new Error('Unusable closed native transcript');
+					return extractNativeConversation(
+						identity,
+						tabId,
+						nativeId,
+						Buffer.from(
+							JSON.stringify({
+								type: 'response_item',
+								payload: {
+									type: 'message',
+									id: 'message',
+									role: 'user',
+									content: [{ type: 'input_text', text: 'Keep this verbatim' }],
+								},
+							})
+						)
+					);
+				});
+			const actual = await vi.importActual<
+				typeof import('../../shared/maestro-lib/translation/transaction')
+			>('../../shared/maestro-lib/translation/transaction');
+			vi.mocked(applyTranslation).mockImplementation(actual.applyTranslation);
+			const preflight = await service.run({
+				agentId: 'agent',
+				destination: 'claude-code',
+				action: 'plan',
+			});
+			expect(preflight.plan?.status).toBe('ready');
+			expect(preflight.plan?.tabs.map((tab) => tab.tabId)).toEqual(['open']);
+			expect(preflight.plan?.deferredTabs?.map((tab) => tab.id)).toEqual([
+				'blocked',
+				'history:missing-history',
+			]);
+			const applied = await service.run({
+				agentId: 'agent',
+				destination: 'claude-code',
+				action: 'apply',
+				planId: preflight.plan!.id,
+				acceptLimitations: true,
+			});
+			expect(applied.error).toBeUndefined();
+			expect(applied.result?.state).toBe('committed');
+			expect(read.mock.calls.every(([, tabId]) => tabId === 'open')).toBe(true);
+			expect(session.closedTabHistory[0].tab).toMatchObject({
+				agentSessionId: null,
+				providerSessions: { codex: { agentSessionId: 'missing-closed' } },
+			});
+			expect(session.providerTranslationTabInventory).toContainEqual(
+				expect.objectContaining({
+					id: 'history:missing-history',
+					agentSessionId: null,
+					providerSessions: expect.objectContaining({
+						codex: expect.objectContaining({ agentSessionId: 'missing-history' }),
+					}),
+				})
+			);
+			// History makes a new tab ID for an already checkpointed conversation.
+			session.aiTabs = [{ ...session.aiTabs[0], id: 'reopened', pendingTranslation: 'codex' }];
+			const reopened = await service.run({
+				agentId: 'agent',
+				tabId: 'reopened',
+				destination: 'claude-code',
+				action: 'plan',
+			});
+			expect(reopened.error).toBeUndefined();
+			expect(reopened.plan?.status).toBe('ready');
+			expect(
+				reopened.plan?.limitations.some(
+					(limitation) => limitation.code === 'destination-divergence'
+				)
+			).toBe(false);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 	it.each([false, true])(
 		'shares resources and lineage across tabs (source already parked: %s)',
 		async (parked) => {

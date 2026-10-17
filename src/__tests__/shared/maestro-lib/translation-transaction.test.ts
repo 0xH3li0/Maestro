@@ -112,65 +112,80 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
-	it('translates sequential tabs with one resource import and retains both native lineages', async () => {
-		const s = await scenario();
-		try {
-			const conversations = s.journal.conversations;
-			const resources = [
-				translationArtifact(
-					'memory',
-					'synthetic',
-					'memory/MEMORY.md',
-					Buffer.from('Remember exactly this')
-				),
-			];
-			const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
-			for (const conversation of conversations) {
-				const checkpoint = await s.archive.checkpoint('agent');
-				const plan = planTabTranslation({
-					...s.journal.plan,
-					tabId: conversation.tabId,
-					conversations,
-					registry: s.registry,
-					resources,
-				});
-				s.journal = {
-					schemaVersion: 1,
-					plan,
-					state: 'planned',
-					conversations: [conversation],
-					resources,
-					checkpoint,
-					mappings: [],
-					resourceWrites: [],
-				};
-				const result = await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true);
-				expect(result.state).toBe('committed');
-				expect(result.mappings.map((mapping) => mapping.tabId)).toEqual([conversation.tabId]);
-				if (checkpoint) {
-					expect(s.journal.resourceWrites).toEqual([]);
-					expect(s.journal.resourceImport).toEqual(checkpoint.resourceImport);
-					const merged = (await s.archive.checkpoint('agent'))!;
-					expect(merged.conversations.map((c) => c.tabId)).toEqual(['one', 'two']);
-					expect(merged.lineage).toMatchObject(checkpoint.lineage);
-					const imported = extractNativeConversation(
-						plan.destination,
-						conversation.tabId,
-						s.journal.mappings[0].destinationSessionId!,
-						await readFile(s.journal.mappings[0].artifacts[0].path)
+	it.each([false, true])(
+		'retains deferred checkpoints and resources across sequential scopes (agent-wide: %s)',
+		async (agentWide) => {
+			const s = await scenario();
+			try {
+				const conversations = s.journal.conversations;
+				const resources = [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Remember exactly this')
+					),
+				];
+				const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
+				for (const conversation of conversations) {
+					const checkpoint = await s.archive.checkpoint('agent');
+					const plan = planTabTranslation({
+						...s.journal.plan,
+						tabId: conversation.tabId,
+						conversations,
+						registry: s.registry,
+						resources,
+					});
+					if (agentWide) {
+						delete plan.tabId;
+						plan.deferredTabs = conversations
+							.filter((c) => c.tabId !== conversation.tabId)
+							.map((c) => ({ id: c.tabId, agentSessionId: c.nativeSessionId }));
+					}
+					s.journal = {
+						schemaVersion: 1,
+						plan,
+						state: 'planned',
+						conversations: [conversation],
+						resources,
+						checkpoint,
+						mappings: [],
+						resourceWrites: [],
+					};
+					const result = await (agentWide ? applyTranslation : applyTabTranslation)(
+						s.archive,
+						s.registry,
+						s.journal,
+						s.host,
+						true
 					);
-					// Native lineage identities, not repeated text, prevent re-imported records.
-					expect(reconcileConversation(imported, merged).newRecords).toBe(0);
-				} else expect(s.journal.resourceWrites).toHaveLength(2);
+					expect(result.state).toBe('committed');
+					expect(result.mappings.map((mapping) => mapping.tabId)).toEqual([conversation.tabId]);
+					if (checkpoint) {
+						expect(s.journal.resourceWrites).toEqual([]);
+						expect(s.journal.resourceImport).toEqual(checkpoint.resourceImport);
+						const merged = (await s.archive.checkpoint('agent'))!;
+						expect(merged.conversations.map((c) => c.tabId)).toEqual(['one', 'two']);
+						expect(merged.lineage).toMatchObject(checkpoint.lineage);
+						const imported = extractNativeConversation(
+							plan.destination,
+							conversation.tabId,
+							s.journal.mappings[0].destinationSessionId!,
+							await readFile(s.journal.mappings[0].artifacts[0].path)
+						);
+						// Native lineage identities, not repeated text, prevent re-imported records.
+						expect(reconcileConversation(imported, merged).newRecords).toBe(0);
+					} else expect(s.journal.resourceWrites).toHaveLength(2);
+				}
+				expect(stage).toHaveBeenCalledTimes(2);
+				expect(
+					await readdir(path.join(s.host.knowledgeRoot, translationHash('agent')))
+				).toHaveLength(1);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
 			}
-			expect(stage).toHaveBeenCalledTimes(2);
-			expect(await readdir(path.join(s.host.knowledgeRoot, translationHash('agent')))).toHaveLength(
-				1
-			);
-		} finally {
-			await rm(s.root, { recursive: true, force: true });
 		}
-	});
+	);
 	it('recovers a single-tab commit without restaging and refuses committed rollback', async () => {
 		const s = await scenario();
 		try {

@@ -269,6 +269,43 @@ describe('routeQuickChatMessage', () => {
 });
 
 describe('reopenClosedConversation', () => {
+	it('reads and deduplicates a deferred History conversation without native translation', async () => {
+		const session = agentWith([], {
+			toolType: 'codex',
+			projectRoot: '/test/project',
+			providerTranslationTabInventory: [
+				{
+					id: 'history:closed-source',
+					agentSessionId: null,
+					providerSessions: { 'claude-code': { agentSessionId: 'closed-source' } },
+				},
+			],
+		});
+		vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+			messages: [{ type: 'user', content: 'preserved' }],
+		} as any);
+		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({});
+		const id = await reopenClosedConversation(session.id, {
+			agentSessionId: 'closed-source',
+			name: 'Past conversation',
+		});
+		expect(id).toBeTruthy();
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/test/project',
+			'closed-source',
+			expect.any(Object),
+			undefined
+		);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+			agentSessionId: null,
+			providerSessions: { 'claude-code': { agentSessionId: 'closed-source' } },
+		});
+		expect(
+			await reopenClosedConversation(session.id, { agentSessionId: 'closed-source', name: null })
+		).toBe(id);
+		expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
+	});
 	const transcript = {
 		messages: [
 			{

@@ -347,6 +347,48 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 });
 
 describe('useAgentSessionManagement - translated History ownership', () => {
+	it('reads a pending History conversation from its original provider and leaves it parked', async () => {
+		const session = createMockSession({
+			id: 'pending-agent',
+			toolType: 'codex',
+			projectRoot: '/test/project',
+			aiTabs: [],
+			providerTranslationTabInventory: [
+				{
+					id: 'history:old-claude',
+					agentSessionId: null,
+					providerSessions: { 'claude-code': { agentSessionId: 'old-claude' } },
+				},
+			],
+		});
+		window.maestro.agentSessions.read = vi
+			.fn()
+			.mockResolvedValue({ messages: [{ type: 'user', content: 'kept history' }] });
+		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
+		seedActiveSession(session);
+		const deps = makeDeps(session);
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		await act(async () => {
+			expect(await result.current.handleResumeSession('old-claude')).toBe(true);
+		});
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/test/project',
+			'old-claude',
+			expect.any(Object),
+			undefined
+		);
+		const updater = vi.mocked(deps.setSessions).mock.calls.at(-1)![0] as (
+			sessions: Session[]
+		) => Session[];
+		const resumed = updater([session])[0];
+		expect(resumed.aiTabs[0]).toMatchObject({
+			agentSessionId: null,
+			providerSessions: { 'claude-code': { agentSessionId: 'old-claude' } },
+		});
+		// A second click reuses the pending tab, even though its live destination is empty.
+		expect(updater([resumed])[0].aiTabs).toHaveLength(1);
+	});
 	it('refuses a History entry without a destination native mapping before creating a tab', async () => {
 		const session = createMockSession({
 			id: 'translated-agent',

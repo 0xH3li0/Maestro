@@ -10,6 +10,14 @@ export function pendingTranslationSource(
 	destination: ToolType
 ): ToolType | 'ambiguous' | undefined {
 	const [tab] = translationSessionTabs(session, tabId);
+	if (tab.pendingTranslation && tab.pendingTranslation !== destination) {
+		const sourceId =
+			tab.pendingTranslation === session.toolType
+				? tab.agentSessionId
+				: tab.providerSessions?.[tab.pendingTranslation]?.agentSessionId;
+		if (!sourceId) throw new Error('Pending translation has no native source identity');
+		return tab.pendingTranslation;
+	}
 	const destinationId =
 		destination === session.toolType
 			? tab.agentSessionId

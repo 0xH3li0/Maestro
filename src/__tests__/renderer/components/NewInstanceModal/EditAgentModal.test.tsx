@@ -638,6 +638,7 @@ describe('EditAgentModal', () => {
 					},
 					{ tabId: 'legacy', sourceSessionId: 'older', records: 12, newRecords: 0 },
 				],
+				deferredTabs: [{ id: 'closed-tab', agentSessionId: 'closed-native' }],
 				counts: { records: 4504, artifacts: 2, bytes: 0 },
 			},
 		});
@@ -661,6 +662,9 @@ describe('EditAgentModal', () => {
 			)
 		).toBeInTheDocument();
 		expect(screen.getByText('Conversation 2: 12 records carried')).toBeInTheDocument();
+		expect(screen.getByText('Translated now: 2')).toBeInTheDocument();
+		expect(screen.getByText('Translated on next use: 1')).toBeInTheDocument();
+		expect(screen.getByText('closed-tab')).toBeInTheDocument();
 	});
 
 	it('clears the reading indicator and disables save if preflight rejects', async () => {

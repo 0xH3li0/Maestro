@@ -4,6 +4,7 @@ import {
 	migrationHoldsTurns,
 	translationSessionTabs,
 	translatedHistorySessionId,
+	resolveHistorySession,
 	type TranslatableSession,
 } from '../../../shared/maestro-lib/translation/session';
 
@@ -321,6 +322,110 @@ describe('one provider mapping commit', () => {
 		expect(result.filePreviewTabs).toBe(session.filePreviewTabs);
 		expect(result.closedTabHistory![0].tab.agentSessionId).toBe('new-codex-closed');
 		expect(translationSessionTabs(session)).toHaveLength(2);
+	});
+	it('parks closed, unified, snoozed and History identities without native mappings', () => {
+		const closed = { id: 'closed', agentSessionId: 'closed-source', customModel: 'source-model' };
+		const sleeping = { id: 'sleeping', agentSessionId: 'sleeping-source' };
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [],
+			closedTabHistory: [{ tab: closed }],
+			unifiedClosedTabHistory: [
+				{ type: 'ai', tab: closed },
+				{ type: 'file', tab: { id: 'file' } },
+			],
+			snoozedTabs: [
+				{ type: 'ai', tab: sleeping },
+				{ type: 'group', members: [{ type: 'ai', tab: sleeping }] },
+			],
+		};
+		const deferred = [
+			...translationSessionTabs(session),
+			{ id: 'history:older', agentSessionId: 'older' },
+		];
+		const result = commitTranslationSession(
+			session,
+			'codex',
+			'op',
+			[],
+			undefined,
+			'claude-code',
+			undefined,
+			deferred
+		);
+		for (const tab of translationSessionTabs(result)) {
+			expect(tab.agentSessionId).toBeNull();
+			expect(tab.providerSessions?.['claude-code']?.agentSessionId).toBeTruthy();
+		}
+		expect(result.closedTabHistory?.[0].tab.providerSessions?.['claude-code']?.customModel).toBe(
+			'source-model'
+		);
+		expect(result.unifiedClosedTabHistory?.[1]).toBe(session.unifiedClosedTabHistory?.[1]);
+		expect(resolveHistorySession(result, 'older')).toMatchObject({
+			provider: 'claude-code',
+			agentSessionId: 'older',
+		});
+		expect(resolveHistorySession(result, 'closed-source')).toMatchObject({
+			provider: 'claude-code',
+			agentSessionId: 'closed-source',
+		});
+		expect(
+			commitTranslationSession(
+				result,
+				'codex',
+				'op',
+				[],
+				undefined,
+				'claude-code',
+				undefined,
+				deferred
+			)
+		).toEqual(result);
+		const returned = commitTranslationSession(
+			result,
+			'claude-code',
+			'back',
+			[],
+			undefined,
+			'codex',
+			undefined,
+			translationSessionTabs(result)
+		);
+		expect(returned.closedTabHistory?.[0].tab.agentSessionId).toBe('closed-source');
+	});
+	it('resolves pending History from the latest source while retaining the older destination', () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'codex',
+			aiTabs: [],
+			providerTranslationTabInventory: [
+				{
+					id: 'history:source',
+					agentSessionId: 'older-codex',
+					pendingTranslation: 'claude-code',
+					providerSessions: { 'claude-code': { agentSessionId: 'source', customModel: 'opus' } },
+				},
+			],
+		};
+		expect(resolveHistorySession(session, 'source')).toMatchObject({
+			provider: 'claude-code',
+			agentSessionId: 'source',
+			providerSessions: {
+				codex: { agentSessionId: 'older-codex' },
+				'claude-code': { agentSessionId: 'source', customModel: 'opus' },
+			},
+		});
+	});
+	it('rejects an open tab that was not part of native staging', () => {
+		expect(() =>
+			commitTranslationSession(
+				{ id: 'a', toolType: 'claude-code', aiTabs: [{ id: 'new', agentSessionId: null }] },
+				'codex',
+				'op',
+				[]
+			)
+		).toThrow('Missing native translation mapping');
 	});
 	it('holds next turns until deferred/staged migrations settle', () => {
 		const base = {

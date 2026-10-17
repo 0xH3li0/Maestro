@@ -38,7 +38,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
-import { codifyQueuedTurnSettings } from '../providerTabSessions';
+import { codifyQueuedTurnSettings, switchTabProvider } from '../providerTabSessions';
 import {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -1076,7 +1076,10 @@ export function syncAgentStateToTabs(session: Session): Session {
  */
 export interface CreateTabOptions {
 	origin?: AITab['origin'];
-	agentSessionId?: string | null; // Claude Code session UUID (null for new tabs)
+	agentSessionId?: string | null; // Native provider session UUID (null for new tabs)
+	/** Reopening foreign History parks its native ID; translation waits for a send. */
+	sourceProvider?: ToolType;
+	providerSessions?: AITab['providerSessions'];
 	logs?: LogEntry[]; // Initial conversation history
 	name?: string | null; // User-defined name (null = show UUID octet)
 	starred?: boolean; // Whether session is starred
@@ -1153,22 +1156,36 @@ export function createTab(
 	const activate = activateOption && !hidden;
 
 	// Create the new tab with default values
-	const newTab: AITab = {
-		id: id ?? generateId(),
-		...(origin ? { origin } : {}),
-		agentSessionId,
-		name,
-		starred,
-		logs,
-		inputValue: '',
-		stagedImages: [],
-		usageStats,
-		createdAt: Date.now(),
-		state: 'idle',
-		saveToHistory,
-		showThinking,
-		...(hidden ? { hidden: true } : {}),
-	};
+	const newTab: AITab = switchTabProvider(
+		{
+			id: id ?? generateId(),
+			...(origin ? { origin } : {}),
+			agentSessionId,
+			name,
+			starred,
+			logs,
+			inputValue: '',
+			stagedImages: [],
+			usageStats,
+			createdAt: Date.now(),
+			state: 'idle',
+			saveToHistory,
+			showThinking,
+			...(hidden ? { hidden: true } : {}),
+			...(options.sourceProvider && options.sourceProvider !== session.toolType && agentSessionId
+				? { pendingTranslation: options.sourceProvider }
+				: {}),
+			...(options.providerSessions && {
+				providerSessions: options.providerSessions,
+				customModel:
+					options.providerSessions[options.sourceProvider ?? session.toolType]?.customModel,
+				customEffort:
+					options.providerSessions[options.sourceProvider ?? session.toolType]?.customEffort,
+			}),
+		},
+		options.sourceProvider ?? session.toolType,
+		session.toolType
+	);
 
 	// Update the session with the new tab added. When `activate` is true (the
 	// default) the new tab becomes the visible one via aiTabFocusFields, which

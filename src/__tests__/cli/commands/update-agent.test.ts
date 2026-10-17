@@ -1533,6 +1533,7 @@ describe('update-agent command', () => {
 						{ tabId: 'compacted', records: 4492, activeRecords: 312, archivedRecords: 4180 },
 						{ tabId: 'legacy', records: 12 },
 					],
+					deferredTabs: [{ id: 'closed-tab', agentSessionId: 'closed-native' }],
 					counts: { records: 4504, artifacts: 0 },
 					limitations: [
 						{
@@ -1551,6 +1552,7 @@ describe('update-agent command', () => {
 			);
 			await updateAgent('agent-1', {
 				provider: 'codex',
+				dryRun: true,
 				acceptTranslationLimitations: withWarning,
 			});
 			const lines = consoleSpy.mock.calls.map(([line]) => line);
@@ -1558,6 +1560,9 @@ describe('update-agent command', () => {
 				'  compacted: 312 records carried, 4,180 archived before the last compaction'
 			);
 			expect(lines).toContain('  legacy: 12 records carried');
+			expect(lines).toContain('  Translated now: 2');
+			expect(lines).toContain('  Translated on next use: 1');
+			expect(lines).toContain('  closed-tab');
 			expect(lines).toContain('Notes:');
 			expect(lines[lines.indexOf('Notes:') + 1]).toBe(
 				'  native-cwd-drift: Original directories stay archived'
@@ -1568,7 +1573,10 @@ describe('update-agent command', () => {
 				);
 			expect(sendCommand).toHaveBeenCalledWith(
 				expect.objectContaining({
-					configPatch: expect.objectContaining({ acceptTranslationLimitations: withWarning }),
+					configPatch: expect.objectContaining({
+						migrationAction: 'plan',
+						acceptTranslationLimitations: withWarning,
+					}),
 				}),
 				'provider_translation_result',
 				120000

@@ -869,6 +869,31 @@ describe('useSessionLifecycle', () => {
 			expect(updated.projectRoot).toBe('/projects/myapp');
 		});
 
+		it('switches open tabs while preserving an unreadable closed native session for later', async () => {
+			const closed = createMockAITab({
+				id: 'closed',
+				agentSessionId: 'missing-native',
+				inputValue: 'kept draft',
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				closedTabHistory: [{ tab: closed, index: 1, closedAt: 1 }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			await act(async () => {
+				await result.current.handleSaveEditAgent(session.id, 'Agent', 'codex');
+			});
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.toolType).toBe('codex');
+			expect(updated.closedTabHistory[0].tab).toMatchObject({
+				agentSessionId: null,
+				inputValue: 'kept draft',
+				providerSessions: { 'claude-code': { agentSessionId: 'missing-native' } },
+			});
+			expect(requestProviderTranslation).toHaveBeenCalledTimes(1);
+		});
 		it('keeps the source and every tab intact when the shared migration refuses', async () => {
 			const session = createMockSession({
 				id: 'session-1',

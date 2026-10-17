@@ -957,6 +957,8 @@ export interface AITab {
 	 * live values with this map's entry rather than clearing them.
 	 */
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
+	/** Latest native owner awaiting lazy translation, even if the destination has an older slot. */
+	pendingTranslation?: ToolType;
 	/**
 	 * The provider that owns the turn most recently sent from this tab, captured
 	 * at send time. Settings are codified when the user hits send, so a provider
@@ -1394,7 +1396,7 @@ export interface Session {
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions' | 'pendingTranslation'>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */

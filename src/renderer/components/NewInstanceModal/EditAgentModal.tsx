@@ -1353,10 +1353,17 @@ export function EditAgentModal({
 													{migrationPlan.status === 'deferred'
 														? 'Migration waits for the current turn to finish.'
 														: ''}
+													<div>Translated now: {migrationPlan.tabs.length}</div>
 													{migrationPlan.tabs.map((tab, index) => (
 														<div key={tab.tabId}>
 															Conversation {index + 1}: {formatTranslationRecordCounts(tab)}
 														</div>
+													))}
+													<div>
+														Translated on next use: {migrationPlan.deferredTabs?.length ?? 0}
+													</div>
+													{migrationPlan.deferredTabs?.map((tab) => (
+														<div key={tab.id}>{tab.id}</div>
 													))}
 												</div>
 											)}

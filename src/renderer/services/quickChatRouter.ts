@@ -1,4 +1,4 @@
-import { translatedHistorySessionId } from '../../shared/maestro-lib/translation/session';
+import { resolveHistorySession } from '../../shared/maestro-lib/translation/session';
 /**
  * Quick Chat router - finds the conversation a Quick Chat message belongs in.
  *
@@ -256,20 +256,21 @@ export async function reopenClosedConversation(
 	const find = () => useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const session = find();
 	if (!session) return null;
-	let agentSessionId: string;
+	let native: ReturnType<typeof resolveHistorySession>;
 	try {
-		agentSessionId = translatedHistorySessionId(session, conversation.agentSessionId);
+		native = resolveHistorySession(session, conversation.agentSessionId);
 	} catch (error) {
 		logger.warn('[QuickChat] History native translation is unavailable', undefined, error);
 		return null;
 	}
+	const agentSessionId = native.agentSessionId;
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
 	if (!projectPathForSessions) return null;
 
 	let resumable;
 	try {
 		resumable = await loadResumableSession({
-			toolType: session.toolType,
+			toolType: native.provider,
 			projectRoot: projectPathForSessions,
 			sshRemoteId,
 			agentSessionId,
@@ -286,7 +287,12 @@ export async function reopenClosedConversation(
 	updateSessionWith(sessionId, (s) => {
 		// Re-checked on fresh state: the read above was awaited, and there must
 		// never be two tabs for one conversation.
-		const existing = s.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
+		const existing = s.aiTabs.find(
+			(tab) =>
+				(native.provider === s.toolType
+					? tab.agentSessionId
+					: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
+		);
 		if (existing) {
 			tabId = existing.id;
 			return s;
@@ -294,11 +300,20 @@ export async function reopenClosedConversation(
 		// Reopened, used, and closed mid-reply while we were reading: it is still
 		// answering in the background, and a second tab would send a second turn
 		// into the same conversation at once. The caller starts a new tab instead.
-		if (s.orphanedThinkingTabs?.some((tab) => tab.agentSessionId === agentSessionId)) {
+		if (
+			s.orphanedThinkingTabs?.some(
+				(tab) =>
+					(native.provider === s.toolType
+						? tab.agentSessionId
+						: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
+			)
+		) {
 			return s;
 		}
 		const created = createTab(s, {
 			agentSessionId,
+			sourceProvider: native.provider,
+			providerSessions: native.providerSessions,
 			logs: resumable.messages,
 			origin: resumable.origin,
 			name: resumable.name,
