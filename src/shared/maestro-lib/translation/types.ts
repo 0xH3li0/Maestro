@@ -72,7 +72,7 @@ export interface TranslationArtifact {
 export interface TranslationLimitation {
 	code: string;
 	message: string;
-	severity: 'warning' | 'block';
+	severity: 'info' | 'warning' | 'block';
 	artifactId?: string;
 	tabId?: string;
 }

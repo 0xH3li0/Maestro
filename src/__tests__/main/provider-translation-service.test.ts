@@ -366,6 +366,14 @@ describe('provider translation operation ownership', () => {
 	it.each([
 		{ name: 'accepted warnings', status: 'ready', warnings: true, accept: true, opens: true },
 		{ name: 'complete plan', status: 'ready', warnings: false, accept: undefined, opens: true },
+		{
+			name: 'info-only plan',
+			status: 'ready',
+			warnings: false,
+			info: true,
+			accept: undefined,
+			opens: true,
+		},
 		{ name: 'unaccepted warnings', status: 'ready', warnings: true, accept: false, opens: false },
 		{ name: 'deferred source', status: 'deferred', warnings: true, accept: true, opens: false },
 		{ name: 'blocked preflight', status: 'blocked', warnings: true, accept: true, opens: false },
@@ -388,7 +396,9 @@ describe('provider translation operation ownership', () => {
 								message: 'Synthetic limitation',
 							},
 						]
-					: [],
+					: scenario.info
+						? [{ code: 'native-cwd-drift', severity: 'info', message: 'Archived cwd' }]
+						: [],
 				verification: scenario.warnings ? 'unverified' : 'verified',
 				destination: {
 					provider: 'codex',

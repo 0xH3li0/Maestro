@@ -706,6 +706,56 @@ describe('EditAgentModal', () => {
 		}
 	});
 
+	it.each([false, true])(
+		'shows collapsed notes without acceptance while warnings=%s',
+		async (withWarning) => {
+			const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!(
+				{} as any
+			);
+			vi.mocked(requestProviderTranslation).mockResolvedValue({
+				...report,
+				plan: {
+					...report.plan!,
+					limitations: [
+						...(withWarning ? report.plan!.limitations : []),
+						{
+							code: 'native-cwd-drift',
+							severity: 'info',
+							message: 'Original directories stay archived',
+						},
+					],
+				},
+			});
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession()}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Provider');
+			fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
+				target: { value: 'codex' },
+			});
+			const summary = await screen.findByText('Notes');
+			expect(summary.closest('details')).not.toHaveAttribute('open');
+			expect(summary.closest('details')).toHaveTextContent('Original directories stay archived');
+			const accept = screen.queryByLabelText('Accept the listed conversion limitations');
+			if (withWarning) {
+				expect(accept).toBeInTheDocument();
+				expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+				fireEvent.click(accept!);
+			} else expect(accept).not.toBeInTheDocument();
+			expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
+			fireEvent.click(screen.getByText('Save Changes'));
+			await waitFor(() => expect(onSave).toHaveBeenCalled());
+			expect(onSave.mock.calls[0][27]).toBe(withWarning);
+		}
+	);
+
 	it('blocks an unverified conversion until its listed limitations are accepted', async () => {
 		render(
 			<EditAgentModal

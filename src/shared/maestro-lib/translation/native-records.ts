@@ -106,7 +106,7 @@ export function extractNativeConversation(
 				hasCwdDrift = true;
 				conversation.limitations.push({
 					code: 'native-cwd-drift',
-					severity: 'warning',
+					severity: 'info',
 					tabId,
 					message:
 						'Native records change working directory after the session origin; original directories are preserved as source evidence.',
@@ -172,7 +172,7 @@ export function extractNativeConversation(
 							blocks.push({ kind: 'opaque', native: { type: 'historical-system-envelope', text } });
 							conversation.limitations.push({
 								code: 'historical-instructions',
-								severity: 'warning',
+								severity: 'info',
 								tabId,
 								message: `Embedded system instructions at ${nativeId} are archived separately from the user's own request.`,
 							});
@@ -299,7 +299,7 @@ export function extractNativeConversation(
 		if (entry.type === 'attachment')
 			conversation.limitations.push({
 				code: 'native-attachment-state',
-				severity: 'warning',
+				severity: 'info',
 				tabId,
 				message: `Native attachment record ${nativeId} is archived; provider-specific runtime attachment discovery is unverified.`,
 			});
@@ -319,14 +319,14 @@ export function extractNativeConversation(
 		)
 			conversation.limitations.push({
 				code: 'opaque-runtime-state',
-				severity: 'warning',
+				severity: 'info',
 				tabId,
 				message: `Opaque content at ${nativeId} is archived but cannot be resumed as foreign reasoning.`,
 			});
 		if (role === 'system' || role === 'developer')
 			conversation.limitations.push({
 				code: 'historical-instructions',
-				severity: 'warning',
+				severity: 'info',
 				tabId,
 				message: `Historical ${role} record ${nativeId} is archived, not installed as destination instructions.`,
 			});

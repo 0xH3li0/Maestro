@@ -39,6 +39,7 @@ import {
 	type TranslationJournal,
 } from '../shared/maestro-lib/translation/archive';
 import { planTranslation } from '../shared/maestro-lib/translation/registry';
+import { limitationsNeedingAcceptance } from '../shared/maestro-lib/translation/limitations';
 import {
 	reconcileConversation,
 	reconcileResource,
@@ -783,7 +784,8 @@ export class ProviderTranslationService {
 					if (
 						journal.plan.status === 'ready' &&
 						journal.plan.destination.provider === 'codex' &&
-						(journal.plan.limitations.length === 0 || request.acceptLimitations)
+						(limitationsNeedingAcceptance(journal.plan.limitations).length === 0 ||
+							request.acceptLimitations)
 					) {
 						const detected = await this.deps.getAgentDetector()!.getAgent('codex');
 						const binary = detected?.path;

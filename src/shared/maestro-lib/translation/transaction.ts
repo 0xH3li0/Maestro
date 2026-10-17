@@ -17,6 +17,7 @@ import type {
 	OwnedTranslationWrite,
 } from './types';
 import { TranslationSourceBusyError } from './types';
+import { limitationsNeedingAcceptance } from './limitations';
 
 export interface TranslationTransactionHost {
 	/** Called again before every mutation and commit, not just when planning. */
@@ -79,7 +80,7 @@ async function deferTranslation(
 		verification: plan.verification,
 		acceptLimitations,
 		selectedUserResources: plan.scope.selectedUserResources,
-		acceptedLimitationCodes: plan.limitations.map(canonicalJson),
+		acceptedLimitationCodes: limitationsNeedingAcceptance(plan.limitations).map(canonicalJson),
 	});
 	return {
 		success: false,
@@ -117,7 +118,10 @@ export async function applyTranslation(
 					'Existing provider migration requires recovery or rollback; native staging is not replayed.',
 			};
 		if (plan.status === 'noop') return { success: true, state: 'noop', plan, mappings: [] };
-		if (plan.status === 'blocked' || (!acceptLimitations && plan.limitations.length)) {
+		if (
+			plan.status === 'blocked' ||
+			(!acceptLimitations && limitationsNeedingAcceptance(plan.limitations).length)
+		) {
 			journal.result = {
 				success: false,
 				state: 'refused',

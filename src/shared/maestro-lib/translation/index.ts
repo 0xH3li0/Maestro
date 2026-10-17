@@ -1,5 +1,6 @@
 /** Node translation API. Renderer clients import types/session/support directly, never this barrel. */
 export * from './types';
+export { limitationsNeedingAcceptance } from './limitations';
 export {
 	TRANSLATION_DIRECTIONS,
 	TRANSLATION_PROVIDER_VERSIONS,

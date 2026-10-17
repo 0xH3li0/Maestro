@@ -1,5 +1,6 @@
 import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
+import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X } from 'lucide-react';
@@ -676,7 +677,8 @@ export function EditAgentModal({
 			(!migrationPlan ||
 				migrationLoading ||
 				migrationPlan.status === 'blocked' ||
-				(migrationPlan.limitations.length > 0 && !acceptTranslationLimitations))
+				(limitationsNeedingAcceptance(migrationPlan.limitations).length > 0 &&
+					!acceptTranslationLimitations))
 		)
 			return;
 		const name = instanceName.trim();
@@ -901,7 +903,8 @@ export function EditAgentModal({
 				(!!migrationPlan &&
 					!migrationLoading &&
 					migrationPlan.status !== 'blocked' &&
-					(migrationPlan.limitations.length === 0 || acceptTranslationLimitations)))
+					(limitationsNeedingAcceptance(migrationPlan.limitations).length === 0 ||
+						acceptTranslationLimitations)))
 		);
 	}, [
 		instanceName,
@@ -1291,22 +1294,36 @@ export function EditAgentModal({
 														: ''}
 												</div>
 											)}
-											{migrationPlan?.limitations.map((limit, index) => (
-												<div
-													key={`${limit.code}-${index}`}
-													style={{
-														color:
-															limit.severity === 'block'
-																? theme.colors.error
-																: theme.colors.textDim,
-													}}
-												>
-													{limit.message}
-												</div>
-											))}
+											{migrationPlan?.limitations
+												.filter((limit) => limit.severity !== 'info')
+												.map((limit, index) => (
+													<div
+														key={`${limit.code}-${index}`}
+														style={{
+															color:
+																limit.severity === 'block'
+																	? theme.colors.error
+																	: theme.colors.textDim,
+														}}
+													>
+														{limit.message}
+													</div>
+												))}
+											{migrationPlan?.limitations.some((limit) => limit.severity === 'info') && (
+												<details style={{ color: theme.colors.textDim }}>
+													<summary className="cursor-pointer">Notes</summary>
+													<ul className="list-disc pl-4">
+														{migrationPlan.limitations
+															.filter((limit) => limit.severity === 'info')
+															.map((limit, index) => (
+																<li key={`${limit.code}-${index}`}>{limit.message}</li>
+															))}
+													</ul>
+												</details>
+											)}
 											{migrationPlan &&
 												migrationPlan.status !== 'blocked' &&
-												migrationPlan.limitations.length > 0 && (
+												limitationsNeedingAcceptance(migrationPlan.limitations).length > 0 && (
 													<label className="flex items-center gap-2">
 														<input
 															type="checkbox"

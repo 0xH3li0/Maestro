@@ -1,5 +1,6 @@
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { limitationsNeedingAcceptance } from '../../shared/maestro-lib/translation/limitations';
 import {
 	commitTranslationSession,
 	translationSessionTabs,
@@ -95,8 +96,10 @@ async function finishDeferred(
 		if (!preflight.plan) throw new Error(preflight.error ?? 'Deferred preflight unavailable');
 		const accepted = new Set(acceptedLimitationCodes);
 		if (
-			preflight.plan.limitations.some(
-				(l) => l.severity === 'block' || !accepted.has(canonicalJson(l))
+			preflight.plan.status === 'blocked' ||
+			preflight.plan.limitations.some((l) => l.severity === 'block') ||
+			limitationsNeedingAcceptance(preflight.plan.limitations).some(
+				(l) => !accepted.has(canonicalJson(l))
 			)
 		)
 			throw new Error(
@@ -149,8 +152,12 @@ export async function requestProviderTranslation(
 		if (
 			report.result?.state === 'deferred' &&
 			report.plan &&
-			(request.acceptLimitations || report.plan.limitations.length === 0)
+			(request.acceptLimitations ||
+				limitationsNeedingAcceptance(report.plan.limitations).length === 0)
 		) {
+			const acceptedLimitationCodes = limitationsNeedingAcceptance(report.plan.limitations).map(
+				canonicalJson
+			);
 			updateSessionWith(request.agentId, (s) => ({
 				...s,
 				providerMigration: {
@@ -160,10 +167,10 @@ export async function requestProviderTranslation(
 					verification: report.plan!.verification,
 					acceptLimitations: request.acceptLimitations === true,
 					selectedUserResources: request.selectedUserResources,
-					acceptedLimitationCodes: report.plan!.limitations.map(canonicalJson),
+					acceptedLimitationCodes,
 				},
 			}));
-			const completion = finishDeferred(request, report.plan.limitations.map(canonicalJson));
+			const completion = finishDeferred(request, acceptedLimitationCodes);
 			pending.set(request.agentId, completion);
 			if (options.waitForDeferred) return completion;
 		}

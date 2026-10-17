@@ -1514,6 +1514,62 @@ describe('update-agent command', () => {
 		expect(parsed).toMatchObject({ success: false, error: 'Connection lost' });
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
+	it.each([false, true])(
+		'prints info under Notes separately from warnings=%s',
+		async (withWarning) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				success: true,
+				plan: {
+					source: { provider: 'claude-code' },
+					destination: { provider: 'codex' },
+					status: 'ready',
+					verification: 'unverified',
+					tabs: [],
+					counts: { records: 0, artifacts: 0 },
+					limitations: [
+						{
+							code: 'native-cwd-drift',
+							severity: 'info',
+							message: 'Original directories stay archived',
+						},
+						...(withWarning
+							? [{ code: 'unverified-native-resume', severity: 'warning', message: 'Unverified' }]
+							: []),
+					],
+				},
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			await updateAgent('agent-1', {
+				provider: 'codex',
+				acceptTranslationLimitations: withWarning,
+			});
+			const lines = consoleSpy.mock.calls.map(([line]) => line);
+			expect(lines).toContain('Notes:');
+			expect(lines[lines.indexOf('Notes:') + 1]).toBe(
+				'  native-cwd-drift: Original directories stay archived'
+			);
+			if (withWarning)
+				expect(lines.indexOf('  [warning] unverified-native-resume: Unverified')).toBeLessThan(
+					lines.indexOf('Notes:')
+				);
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					configPatch: expect.objectContaining({ acceptTranslationLimitations: withWarning }),
+				}),
+				'provider_translation_result',
+				120000
+			);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		}
+	);
+
 	it('uses the same provider route for dry-run and status without forcing acceptance', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({

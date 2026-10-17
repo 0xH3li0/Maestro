@@ -14,6 +14,46 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('native-preserving extraction', () => {
+	it('classifies recurring native evidence as info while keeping behavior loss as a warning', () => {
+		const rows = [
+			{
+				type: 'user',
+				uuid: 'user',
+				cwd: identity.projectRoot,
+				message: {
+					role: 'user',
+					content: embedSystemPromptInPrompt('Historical system rules', 'User request'),
+				},
+			},
+			{
+				type: 'assistant',
+				uuid: 'assistant',
+				cwd: '/later-directory',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'thinking', thinking: 'Opaque reasoning', signature: 'native-only' }],
+				},
+			},
+			{ type: 'attachment', uuid: 'attachment' },
+			{ type: 'system', uuid: 'boundary', subtype: 'compact_boundary' },
+		];
+		const bytes = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'));
+		const bundle = extractNativeConversation(identity, 'tab', 'session', bytes);
+		for (const code of [
+			'opaque-runtime-state',
+			'native-attachment-state',
+			'historical-instructions',
+			'native-cwd-drift',
+		]) {
+			expect(bundle.limitations).toContainEqual(
+				expect.objectContaining({ code, severity: 'info' })
+			);
+		}
+		expect(bundle.limitations).toContainEqual(
+			expect.objectContaining({ code: 'native-boundary', severity: 'warning' })
+		);
+		expect(Buffer.from(bundle.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+	});
 	it('reads the synthetic native fixtures without collapsing identical user events', () => {
 		for (const provider of ['claude-code', 'codex'] as const) {
 			const fixture = path.resolve(
@@ -315,7 +355,7 @@ describe('native-preserving extraction', () => {
 				blocked ? [expect.objectContaining({ severity: 'block', tabId: 't' })] : []
 			);
 			expect(bundle.limitations.filter((l) => l.code === 'native-cwd-drift')).toEqual(
-				drift ? [expect.objectContaining({ severity: 'warning', tabId: 't' })] : []
+				drift ? [expect.objectContaining({ severity: 'info', tabId: 't' })] : []
 			);
 			expect(bundle.limitations.filter((l) => l.severity === 'block')).toHaveLength(
 				blocked ? 1 : 0

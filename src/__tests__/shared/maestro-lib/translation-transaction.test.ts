@@ -13,6 +13,7 @@ import {
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import {
 	TranslationArchive,
 	type TranslationJournal,
@@ -102,6 +103,49 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it.each(['info', 'warning', 'block'] as const)(
+		'applies info without acceptance, while preserving the %s tier gate',
+		async (severity) => {
+			const s = await scenario();
+			try {
+				s.journal.plan.limitations = [
+					{ code: 'synthetic', severity, message: 'Synthetic limitation' },
+				];
+				s.journal.plan.status = severity === 'block' ? 'blocked' : 'ready';
+				expect(limitationsNeedingAcceptance(s.journal.plan.limitations)).toHaveLength(
+					severity === 'warning' ? 1 : 0
+				);
+				const result = await applyTranslation(s.archive, s.registry, s.journal, s.host);
+				expect(result.state).toBe(severity === 'info' ? 'committed' : 'refused');
+				expect(s.host.commit).toHaveBeenCalledTimes(severity === 'info' ? 1 : 0);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('stores only warnings when a mixed-tier plan is deferred', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan.status = 'deferred';
+			const warning = {
+				code: 'unverified-native-resume',
+				severity: 'warning' as const,
+				message: 'Unverified',
+			};
+			s.journal.plan.limitations = [
+				{ code: 'native-cwd-drift', severity: 'info', message: 'Source evidence' },
+				warning,
+			];
+			expect((await applyTranslation(s.archive, s.registry, s.journal, s.host, true)).state).toBe(
+				'deferred'
+			);
+			expect(s.host.setMigration).toHaveBeenCalledWith(
+				expect.objectContaining({ acceptedLimitationCodes: [canonicalJson(warning)] })
+			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
 	it('returns a committed apply retry without changing mappings or later native work', async () => {
 		const s = await scenario();
 		try {

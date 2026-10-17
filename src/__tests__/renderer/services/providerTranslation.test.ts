@@ -94,6 +94,66 @@ afterEach(async () => {
 });
 
 describe('deferred provider translation client', () => {
+	it.each([false, true])(
+		'ignores changed and new notes after deferral with warnings=%s',
+		async (withWarning) => {
+			const warning: TranslationLimitation = {
+				code: 'unverified-native-resume',
+				severity: 'warning',
+				message: 'Unverified',
+			};
+			const warnings = withWarning ? [warning] : [];
+			const deferredPlan: TranslationPlan = {
+				...plan,
+				limitations: [
+					...warnings,
+					{ code: 'native-cwd-drift', severity: 'info', message: 'Original note' },
+				],
+			};
+			const readyPlan: TranslationPlan = {
+				...deferredPlan,
+				status: 'ready',
+				limitations: [
+					...warnings,
+					{ code: 'native-cwd-drift', severity: 'info', message: 'Changed note' },
+					{ code: 'historical-instructions', severity: 'info', message: 'New note' },
+				],
+			};
+			translateProvider
+				.mockResolvedValueOnce({
+					success: false,
+					plan: deferredPlan,
+					result: { success: false, state: 'deferred', plan: deferredPlan, mappings: [] },
+				})
+				.mockResolvedValueOnce({ success: true, plan: readyPlan })
+				.mockResolvedValueOnce({
+					success: true,
+					plan: readyPlan,
+					result: {
+						success: true,
+						state: 'committed',
+						plan: readyPlan,
+						mappings: [
+							{
+								tabId: 'tab',
+								sourceSessionId: 'source-final',
+								destinationSessionId: 'destination-native',
+								artifacts: [],
+								lineage: {},
+							},
+						],
+					},
+				});
+			await requestProviderTranslation({ ...request, acceptLimitations: withWarning });
+			expect(
+				useSessionStore.getState().sessions[0].providerMigration?.acceptedLimitationCodes
+			).toEqual(warnings.map(canonicalJson));
+			const completion = requestProviderTranslation(request, { waitForDeferred: true });
+			await vi.runAllTimersAsync();
+			expect((await completion).result?.state).toBe('committed');
+			expect(translateProvider).toHaveBeenCalledTimes(3);
+		}
+	);
 	it.each([undefined, false, true])(
 		'finishes a clean deferral with acceptance=%s and keeps the final source identity',
 		async (acceptLimitations) => {
