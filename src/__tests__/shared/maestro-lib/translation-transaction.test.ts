@@ -4,6 +4,7 @@ import {
 	mkdtemp,
 	readFile,
 	readlink,
+	rename,
 	rm,
 	writeFile,
 	mkdir,
@@ -86,6 +87,7 @@ async function scenario() {
 	};
 	let committed = false;
 	const host = {
+		knowledgeRoot: path.join(root, 'data', 'provider-knowledge'),
 		assertSourceUnchanged: vi.fn(async () => {}),
 		setMigration: vi.fn(async () => {}),
 		commit: vi.fn(async () => {
@@ -259,6 +261,9 @@ describe('all-tabs migration journal', () => {
 	it('stages and reads back every tab before committing one mapping update', async () => {
 		const s = await scenario();
 		try {
+			s.journal.resources.push(
+				translationArtifact('memory', 'synthetic', 'memory/MEMORY.md', Buffer.from('Selected fact'))
+			);
 			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
 			expect(result.state).toBe('committed');
 			expect(result.mappings).toHaveLength(2);
@@ -274,9 +279,84 @@ describe('all-tabs migration journal', () => {
 				})
 			);
 			expect((await s.archive.checkpoint('agent'))?.lineage).toBeDefined();
+			const directory = path.join(s.host.knowledgeRoot, translationHash('agent'), result.plan.id);
+			expect(s.journal.knowledgeDirectory).toBe(directory);
+			expect(await readFile(path.join(directory, 'memory/MEMORY.md'), 'utf8')).toBe(
+				'Selected fact'
+			);
+			await expect(readdir(s.journal.plan.destination.projectRoot)).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
 			expect(s.host.setMigration).toHaveBeenLastCalledWith(
 				expect.objectContaining({ state: 'committed' })
 			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each(['recover', 'rollback', 'rollback-symlink'] as const)(
+		'can %s an archived legacy in-repo knowledge journal',
+		async (action) => {
+			const s = await scenario();
+			try {
+				s.host.commit.mockRejectedValueOnce(new Error('interrupted commit'));
+				await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+				const oldDirectory = s.journal.knowledgeDirectory!;
+				const legacyDirectory = path.join(
+					s.journal.plan.destination.projectRoot,
+					'.maestro/provider-knowledge',
+					translationHash('agent'),
+					s.journal.plan.id
+				);
+				await mkdir(legacyDirectory, { recursive: true });
+				for (const write of s.journal.resourceWrites) {
+					const bytes = await readFile(write.path);
+					await rm(write.path);
+					write.path = path.join(legacyDirectory, path.relative(oldDirectory, write.path));
+					await writeFile(write.path, bytes);
+				}
+				s.journal.knowledgeDirectory = legacyDirectory;
+				await s.archive.write(s.journal);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				expect(durable.knowledgeDirectory).toBe(legacyDirectory);
+				if (action === 'rollback-symlink') {
+					const legacyRoot = path.join(
+						s.journal.plan.destination.projectRoot,
+						'.maestro/provider-knowledge'
+					);
+					const external = path.join(s.root, 'external');
+					await rename(legacyRoot, external);
+					await symlink(external, legacyRoot, 'dir');
+					await expect(recoverTranslation(s.archive, durable, s.host, true)).rejects.toThrow(
+						'symlink'
+					);
+					expect(await readFile(path.join(legacyDirectory, 'knowledge-index.md'), 'utf8')).toBe('');
+					return;
+				}
+				const result = await recoverTranslation(s.archive, durable, s.host, action === 'rollback');
+				expect(result.state).toBe(action === 'rollback' ? 'rolled-back' : 'committed');
+				if (action === 'rollback')
+					await expect(
+						readFile(path.join(legacyDirectory, 'knowledge-index.md'))
+					).rejects.toMatchObject({ code: 'ENOENT' });
+				else expect(s.host.commit).toHaveBeenLastCalledWith(durable);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('refuses managed writes through a redirected agent directory', async () => {
+		const s = await scenario();
+		try {
+			const external = path.join(s.root, 'external');
+			await mkdir(s.host.knowledgeRoot, { recursive: true });
+			await mkdir(external);
+			await symlink(external, path.join(s.host.knowledgeRoot, translationHash('agent')), 'dir');
+			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+			expect(result.state).toBe('failed');
+			expect(result.error).toContain('symlink');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(await readdir(external)).toEqual([]);
 		} finally {
 			await rm(s.root, { recursive: true, force: true });
 		}
@@ -414,9 +494,7 @@ describe('all-tabs migration journal', () => {
 			const s = await scenario();
 			try {
 				const directory = path.join(
-					s.journal.plan.destination.projectRoot,
-					'.maestro',
-					'provider-knowledge',
+					s.host.knowledgeRoot,
 					translationHash(s.journal.plan.agentId),
 					s.journal.plan.id
 				);

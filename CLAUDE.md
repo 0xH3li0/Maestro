@@ -185,6 +185,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
 - **Provider translation acceptance:** `limitationsNeedingAcceptance()` in `src/shared/maestro-lib/translation/limitations.ts`
+- **Provider translation knowledge scope:** `assertTranslationKnowledgeDirectory()`, `bindTranslationKnowledge()` in `src/shared/maestro-lib/translation/knowledge-binding.ts`; `translationWriteRoot()` in `src/shared/maestro-lib/translation/transaction.ts`
 - **Provider translation context window:** `activeContextRecords()`, `formatTranslationRecordCounts()` in `src/shared/maestro-lib/translation/context-window.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`

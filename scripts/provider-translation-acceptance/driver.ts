@@ -175,6 +175,7 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 	);
 	const env = {
 		...process.env,
+		MAESTRO_USER_DATA: path.join(root, 'maestro-data'),
 		HOME: home,
 		CLAUDE_CONFIG_DIR: claudeHome,
 		CODEX_HOME: codexHome,
@@ -338,6 +339,7 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 					registry,
 					journal,
 					{
+						knowledgeRoot: path.join(env.MAESTRO_USER_DATA, 'provider-knowledge'),
 						codex: connection,
 						assertSourceUnchanged: async () => {
 							await assertOriginal();

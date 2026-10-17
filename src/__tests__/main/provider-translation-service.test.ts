@@ -3,9 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { app } from 'electron';
 import { createMockSession } from '../helpers/mockSession';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
-import { translationArtifact } from '../../shared/maestro-lib/translation/identity';
+import {
+	translationArtifact,
+	translationHash,
+} from '../../shared/maestro-lib/translation/identity';
+import { generateUUID } from '../../shared/uuid';
+import { TRANSLATION_KNOWLEDGE_ENV_VAR } from '../../shared/maestro-lib/translation/knowledge-binding';
 import { getHistoryManager } from '../../main/history-manager';
 import {
 	ProviderTranslationService,
@@ -46,6 +52,81 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 }));
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('app-local managed knowledge', () => {
+	it('supplies the app data root, writes selected memory there and binds the committed session', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-app-data-'));
+		try {
+			const userData = path.join(root, 'data');
+			vi.spyOn(app, 'getPath').mockReturnValue(userData);
+			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Selected fact')
+					),
+				],
+				limitations: [],
+			});
+			let session = createMockSession({
+				id: 'agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'tab', agentSessionId: null }] as any,
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: {
+					get: () => [session],
+					set: (_key: string, sessions: (typeof session)[]) => {
+						session = sessions[0];
+					},
+				},
+				agentConfigsStore: { get: () => ({}) },
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			vi.spyOn(service as any, 'identity').mockImplementation(
+				async (_session: unknown, provider: unknown) => ({
+					provider,
+					version: provider === 'codex' ? '0.162.1' : '2.1.296',
+					accountRoot: path.join(root, String(provider)),
+					projectRoot: path.join(root, 'project'),
+				})
+			);
+			const journal: TranslationJournal = await (service as any).prepare({
+				agentId: 'agent',
+				destination: 'claude-code',
+				action: 'plan',
+			});
+			const host = (service as any).host(journal);
+			expect(host.knowledgeRoot).toBe(path.join(userData, 'provider-knowledge'));
+			const { applyTranslation: apply } = await vi.importActual<
+				typeof import('../../shared/maestro-lib/translation/transaction')
+			>('../../shared/maestro-lib/translation/transaction');
+			const result = await apply(
+				(service as any).archive,
+				(service as any).registry,
+				journal,
+				host,
+				true
+			);
+			expect(result.state).toBe('committed');
+			const directory = path.join(host.knowledgeRoot, translationHash('agent'), journal.plan.id);
+			expect(session.providerTranslationKnowledgeDirectory).toBe(directory);
+			expect(session.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR]).toBe(directory);
+			expect(await fs.readFile(path.join(directory, 'memory/MEMORY.md'), 'utf8')).toBe(
+				'Selected fact'
+			);
+			await expect(fs.readdir(path.join(root, 'project'))).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+});
 
 describe('provider translation plan telemetry', () => {
 	it.each(['ready', 'blocked', 'deferred', 'noop'] as const)(
@@ -312,7 +393,7 @@ describe('provider translation read scope', () => {
 			}
 		}
 	);
-	it.each(['transcript', 'memory', 'knowledge-directory'] as const)(
+	it.each(['transcript', 'memory', 'knowledge-directory', 'legacy-knowledge-directory'] as const)(
 		'rejects a source %s link retargeted after preflight even when its bytes match',
 		async (variant) => {
 			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-source-retarget-'));
@@ -324,7 +405,14 @@ describe('provider translation read scope', () => {
 					projectRoot: path.join(root, 'project'),
 				};
 				const kind = variant === 'transcript' ? 'transcript' : 'memory';
-				const knowledge = path.join(source.projectRoot, '.maestro/knowledge');
+				vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+				const knowledge = path.join(
+					variant === 'legacy-knowledge-directory'
+						? path.join(source.projectRoot, '.maestro/provider-knowledge')
+						: path.join(root, 'data/provider-knowledge'),
+					translationHash('agent'),
+					generateUUID()
+				);
 				const file =
 					kind === 'transcript'
 						? path.join(source.accountRoot, 'native.jsonl')
@@ -347,10 +435,14 @@ describe('provider translation read scope', () => {
 					getProcessManager: () => ({ get: () => undefined }),
 				} as unknown as ProviderTranslationDependencies);
 				vi.spyOn(service as any, 'identity').mockResolvedValue(source);
-				const host = (service as any).host(journal);
+				if (variant === 'legacy-knowledge-directory')
+					await expect(
+						(service as any).host(journal).assertSourceUnchanged(journal)
+					).rejects.toThrow('Unsafe');
+				const host = (service as any).host(journal, variant === 'legacy-knowledge-directory');
 				await host.assertSourceUnchanged(journal);
 				const external = path.join(root, 'unselected.jsonl');
-				if (variant === 'knowledge-directory') {
+				if (variant.endsWith('knowledge-directory')) {
 					await fs.mkdir(path.join(external, 'memory'), { recursive: true });
 					await fs.writeFile(path.join(external, 'memory/topic.md'), bytes);
 					await fs.rm(knowledge, { recursive: true });
@@ -379,7 +471,13 @@ describe('provider translation read scope', () => {
 					accountRoot: path.join(root, 'account'),
 					projectRoot: path.join(root, 'project'),
 				};
-				const knowledge = path.join(source.projectRoot, '.maestro/knowledge');
+				vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+				const knowledge = path.join(
+					root,
+					'data/provider-knowledge',
+					translationHash('agent'),
+					generateUUID()
+				);
 				await fs.mkdir(path.join(knowledge, 'memory'), { recursive: true });
 				const file = path.join(knowledge, 'memory/topic.md');
 				const bytes = Buffer.from('selected project memory');
@@ -391,7 +489,10 @@ describe('provider translation read scope', () => {
 				if (variant === 'memory') {
 					await fs.unlink(file);
 					await fs.symlink(external, file);
-				} else await fs.symlink(external, ownedPath);
+				} else {
+					await fs.mkdir(source.projectRoot, { recursive: true });
+					await fs.symlink(external, ownedPath);
+				}
 				vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue({
 					observed: {},
 					lineage: {},
@@ -448,7 +549,13 @@ describe('provider translation read scope', () => {
 				accountRoot: path.join(root, 'account'),
 				projectRoot: path.join(root, 'project'),
 			};
-			const knowledge = path.join(source.projectRoot, '.maestro/knowledge');
+			vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+			const knowledge = path.join(
+				root,
+				'data/provider-knowledge',
+				translationHash('agent'),
+				generateUUID()
+			);
 			await fs.mkdir(path.join(knowledge, '.codex/agents'), { recursive: true });
 			await fs.writeFile(path.join(knowledge, '.codex/agents/reviewer.toml'), 'name = "reviewer"');
 			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue({

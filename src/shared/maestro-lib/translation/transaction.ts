@@ -18,8 +18,12 @@ import type {
 } from './types';
 import { TranslationSourceBusyError } from './types';
 import { limitationsNeedingAcceptance } from './limitations';
+import { assertTranslationKnowledgeDirectory } from './knowledge-binding';
+import { isPathAtOrUnderRoot } from '../../worktreePaths';
 
 export interface TranslationTransactionHost {
+	/** Host-owned app-local directory, never a provider home or the user's project. */
+	knowledgeRoot: string;
 	/** Called again before every mutation and commit, not just when planning. */
 	assertSourceUnchanged(journal: TranslationJournal): Promise<void>;
 	setMigration(state: ProviderMigrationState): Promise<void>;
@@ -31,19 +35,53 @@ export interface TranslationTransactionHost {
 
 const operations = createKeyedWriteQueue();
 
+/** A journal never gets to choose an arbitrary root for its writes or rollback. */
+function translationWriteRoot(
+	journal: TranslationJournal,
+	write: OwnedTranslationWrite,
+	knowledgeRoot: string,
+	allowLegacyKnowledge = false
+): string {
+	if (!journal.resourceWrites.includes(write)) return journal.plan.destination.accountRoot;
+	const directory = journal.knowledgeDirectory;
+	if (directory) {
+		const suffix = path.join(translationHash(journal.plan.agentId), journal.plan.id);
+		const legacyRoot = path.join(
+			journal.plan.destination.projectRoot,
+			'.maestro/provider-knowledge'
+		);
+		const legacy =
+			allowLegacyKnowledge && path.resolve(directory) === path.resolve(legacyRoot, suffix);
+		const root = legacy ? legacyRoot : knowledgeRoot;
+		if (path.resolve(directory) !== path.resolve(root, suffix))
+			throw new Error('Unsafe journal knowledge directory');
+		assertTranslationKnowledgeDirectory(directory, root);
+		if (
+			isPathAtOrUnderRoot(
+				path.resolve(write.path).replace(/\\/g, '/'),
+				path.resolve(directory).replace(/\\/g, '/')
+			)
+		)
+			return legacy ? journal.plan.destination.projectRoot : root;
+	}
+	return journal.plan.destination.projectRoot;
+}
+
 /** An intent is not ownership: only a successful exclusive create permits rollback deletion. */
 async function stageResourceWrite(
 	archive: TranslationArchive,
 	journal: TranslationJournal,
 	write: OwnedTranslationWrite,
-	bytes: Buffer
+	bytes: Buffer,
+	knowledgeRoot: string
 ): Promise<void> {
 	const owned = { ...write, created: false };
 	journal.resourceWrites.push(owned);
 	await archive.write(journal);
-	await assertTranslationTarget(write.path, journal.plan.destination.projectRoot);
+	const root = translationWriteRoot(journal, owned, knowledgeRoot);
+	await assertTranslationTarget(write.path, root);
 	await fs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(write.path, journal.plan.destination.projectRoot);
+	await assertTranslationTarget(write.path, root);
 	if (write.deleted) await fs.unlink(write.path);
 	else if (write.symlinkTarget && write.created) {
 		await fs.symlink(write.symlinkTarget, write.path);
@@ -192,18 +230,15 @@ export async function applyTranslation(
 					archive,
 					journal,
 					projection,
-					Buffer.from(projection.bytesBase64, 'base64')
+					Buffer.from(projection.bytesBase64, 'base64'),
+					host.knowledgeRoot
 				);
 			}
 			if (journal.plan.scope.projectKnowledge) {
-				const directory = path.join(
-					plan.destination.projectRoot,
-					'.maestro',
-					'provider-knowledge',
-					translationHash(plan.agentId),
-					plan.id
-				);
+				const directory = path.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
 				journal.knowledgeDirectory = directory;
+				assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot);
+				await fs.mkdir(host.knowledgeRoot, { recursive: true, mode: 0o700 });
 				for (const artifact of journal.resources) {
 					const relative = path.normalize(artifact.relativePath);
 					if (
@@ -218,7 +253,8 @@ export async function applyTranslation(
 						archive,
 						journal,
 						{ path: file, sha256: artifact.sha256, created: true, mode: artifact.mode },
-						bytes
+						bytes,
+						host.knowledgeRoot
 					);
 				}
 				const indexPath = path.join(directory, 'knowledge-index.md');
@@ -227,10 +263,11 @@ export async function applyTranslation(
 					archive,
 					journal,
 					{ path: indexPath, sha256: translationHash(index), created: true },
-					Buffer.from(index)
+					Buffer.from(index),
+					host.knowledgeRoot
 				);
 			}
-			await verifyTranslationWrites(journal);
+			await verifyTranslationWrites(journal, host.knowledgeRoot);
 			journal.state = 'staged';
 			await archive.write(journal);
 			await host.assertSourceUnchanged(journal);
@@ -280,7 +317,11 @@ export async function applyTranslation(
 	});
 }
 
-export async function verifyTranslationWrites(journal: TranslationJournal): Promise<void> {
+export async function verifyTranslationWrites(
+	journal: TranslationJournal,
+	knowledgeRoot: string,
+	allowLegacyKnowledge = false
+): Promise<void> {
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
 	const destinationObserved: Record<string, string> = {};
@@ -290,9 +331,7 @@ export async function verifyTranslationWrites(journal: TranslationJournal): Prom
 	]) {
 		await assertTranslationTarget(
 			write.path,
-			journal.resourceWrites.includes(write)
-				? journal.plan.destination.projectRoot
-				: journal.plan.destination.accountRoot
+			translationWriteRoot(journal, write, knowledgeRoot, allowLegacyKnowledge)
 		);
 		if (write.deleted) {
 			try {
@@ -410,9 +449,7 @@ export async function recoverTranslation(
 				// Missing files still need root validation before a backup can be restored.
 				await assertTranslationTarget(
 					write.path,
-					journal.resourceWrites.includes(write)
-						? journal.plan.destination.projectRoot
-						: journal.plan.destination.accountRoot
+					translationWriteRoot(journal, write, host.knowledgeRoot, true)
 				);
 				try {
 					await fs.lstat(write.path);
@@ -462,7 +499,7 @@ export async function recoverTranslation(
 					'Incomplete native staging requires inspection/rollback; uncertain writes are not retried'
 				);
 			await host.assertSourceUnchanged(journal);
-			await verifyTranslationWrites(journal);
+			await verifyTranslationWrites(journal, host.knowledgeRoot, true);
 			await host.commit(journal);
 			await finalizeTranslation(archive, journal);
 		}

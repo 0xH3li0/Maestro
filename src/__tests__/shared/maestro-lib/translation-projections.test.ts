@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -160,38 +160,55 @@ describe('native project discovery and shared launch binding', () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
-	it('delivers the selected knowledge on native resume through the shared launch path', async () => {
-		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-launch-'));
-		try {
-			const directory = path.join(
-				root,
-				'.maestro/provider-knowledge',
-				translationHash('agent'),
-				generateUUID()
-			);
-			await fs.mkdir(directory, { recursive: true });
-			await fs.writeFile(
-				path.join(directory, 'knowledge-index.md'),
-				'Read memory/MEMORY.md and its linked topics.'
-			);
-			const result = buildAgentLaunchPlan({
-				surface: 'cli',
-				agent: { id: 'claude-code' },
-				command: 'claude',
-				args: ['--resume', 'native'],
-				cwd: root,
-				prompt: 'Recall the earlier fact.',
-				sessionCustomEnvVars: { [TRANSLATION_KNOWLEDGE_ENV_VAR]: directory },
-			});
-			expect(result.ok).toBe(true);
-			if (!result.ok) throw new Error(result.error);
-			expect(result.plan.args).toContain('--settings');
-			expect(result.plan.args.some((arg) => arg.includes('autoMemoryDirectory'))).toBe(true);
-			expect(result.plan.args.join(' ')).toContain('# User Request');
-			expect(result.plan.args.join(' ')).toContain('Read memory/MEMORY.md');
-			expect(() => bindTranslationKnowledge('prompt', '/unmanaged')).toThrow('Unsafe');
-		} finally {
-			await fs.rm(root, { recursive: true, force: true });
+	it.each(['claude-code', 'codex'])(
+		'delivers the selected knowledge on %s resume through the shared launch path',
+		async (provider) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-launch-'));
+			try {
+				vi.stubEnv('MAESTRO_USER_DATA', root);
+				const directory = path.join(
+					root,
+					'provider-knowledge',
+					translationHash('agent'),
+					generateUUID()
+				);
+				await fs.mkdir(directory, { recursive: true });
+				await fs.writeFile(
+					path.join(directory, 'knowledge-index.md'),
+					'Read memory/MEMORY.md and its linked topics.'
+				);
+				const result = buildAgentLaunchPlan({
+					surface: 'cli',
+					agent: { id: provider },
+					command: provider,
+					args: ['--resume', 'native'],
+					cwd: root,
+					prompt: 'Recall the earlier fact.',
+					sessionCustomEnvVars: { [TRANSLATION_KNOWLEDGE_ENV_VAR]: directory },
+					// Acceptance and desktop inherit the host data directory; library callers may supply it.
+					...(provider === 'claude-code' && {
+						translationKnowledgeRoot: path.join(root, 'provider-knowledge'),
+					}),
+				});
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error(result.error);
+				if (provider === 'claude-code') {
+					expect(result.plan.args).toContain('--settings');
+					expect(result.plan.args).toContain('--add-dir');
+					expect(result.plan.args).toContain(directory);
+					expect(result.plan.args).toContain(
+						JSON.stringify({ autoMemoryDirectory: path.join(directory, 'memory') })
+					);
+				} else expect(result.plan.args).not.toContain('--add-dir');
+				expect(result.plan.args.join(' ')).toContain('# User Request');
+				expect(result.plan.args.join(' ')).toContain('Read memory/MEMORY.md');
+				expect(() =>
+					bindTranslationKnowledge('prompt', '/unmanaged', path.join(root, 'provider-knowledge'))
+				).toThrow('Unsafe');
+			} finally {
+				vi.unstubAllEnvs();
+				await fs.rm(root, { recursive: true, force: true });
+			}
 		}
-	});
+	);
 });

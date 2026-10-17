@@ -8,7 +8,10 @@ import {
 	nativeResourceVariant,
 	assertTranslationTarget,
 } from '../shared/maestro-lib/translation/resource-projections';
-import { TRANSLATION_KNOWLEDGE_ENV_VAR } from '../shared/maestro-lib/translation/knowledge-binding';
+import {
+	assertTranslationKnowledgeDirectory,
+	TRANSLATION_KNOWLEDGE_ENV_VAR,
+} from '../shared/maestro-lib/translation/knowledge-binding';
 import { estimateTokenCount } from '../shared/formatters';
 import { getContextWindowForAgent } from '../shared/agentConstants';
 import { app } from 'electron';
@@ -80,6 +83,7 @@ export interface ProviderTranslationDependencies {
 }
 
 export class ProviderTranslationService {
+	private readonly knowledgeRoot = path.join(app.getPath('userData'), 'provider-knowledge');
 	private readonly registry = createTranslationRegistry();
 	private readonly queue = createKeyedWriteQueue();
 	private readonly archive = new TranslationArchive(
@@ -366,9 +370,9 @@ export class ProviderTranslationService {
 		}
 
 		if (checkpoint && session.providerTranslationKnowledgeDirectory) {
-			await assertTranslationTarget(
+			assertTranslationKnowledgeDirectory(
 				session.providerTranslationKnowledgeDirectory,
-				source.projectRoot
+				this.knowledgeRoot
 			);
 			const managedResources = await collectTranslationResources(
 				source,
@@ -592,8 +596,9 @@ export class ProviderTranslationService {
 			projections: resourceProjections.projections,
 		};
 	}
-	private host(journal: TranslationJournal): TranslationTransactionHost {
+	private host(journal: TranslationJournal, recovering = false): TranslationTransactionHost {
 		return {
+			knowledgeRoot: this.knowledgeRoot,
 			assertSourceUnchanged: async (operation) => {
 				const session = this.session(operation.plan.agentId);
 				if (session.toolType !== operation.plan.source.provider)
@@ -608,11 +613,18 @@ export class ProviderTranslationService {
 				const actual = await this.identity(session, session.toolType, true, operation.checkpoint);
 				if (canonicalJson(actual) !== canonicalJson(operation.plan.source))
 					throw new Error('Source account, project root or provider version changed');
-				if (session.providerTranslationKnowledgeDirectory)
-					await assertTranslationTarget(
-						session.providerTranslationKnowledgeDirectory,
-						actual.projectRoot
-					);
+				if (session.providerTranslationKnowledgeDirectory) {
+					const directory = session.providerTranslationKnowledgeDirectory;
+					const legacyRoot = path.join(actual.projectRoot, '.maestro/provider-knowledge');
+					const legacy =
+						recovering &&
+						isPathAtOrUnderRoot(
+							path.resolve(directory).replace(/\\/g, '/'),
+							path.resolve(legacyRoot).replace(/\\/g, '/')
+						);
+					assertTranslationKnowledgeDirectory(directory, legacy ? legacyRoot : this.knowledgeRoot);
+					if (legacy) await assertTranslationTarget(directory, actual.projectRoot);
+				}
 				for (const artifact of operation.resources)
 					if (path.isAbsolute(artifact.sourcePath)) {
 						const managedDirectory = session.providerTranslationKnowledgeDirectory;
@@ -732,7 +744,7 @@ export class ProviderTranslationService {
 					const result = await recoverTranslation(
 						this.archive,
 						journal,
-						this.host(journal),
+						this.host(journal, true),
 						request.action === 'rollback'
 					);
 					return { success: result.success, plan: journal.plan, result };

@@ -1,4 +1,6 @@
 import * as path from 'node:path';
+import { resolveUserDataDir } from '../paths/userDataDir';
+import { getAgentDefinition } from '../providers/definitions';
 import {
 	bindTranslationKnowledge,
 	TRANSLATION_KNOWLEDGE_ENV_VAR,
@@ -51,7 +53,7 @@ import {
 	type RunOnLaunchResolution,
 	type RunOnRefusalCode,
 } from '../../local-models/run-on';
-import { placeSubcommandArgs, replaceModelArg } from './agent-args';
+import { buildAdditionalDirArgs, placeSubcommandArgs, replaceModelArg } from './agent-args';
 import {
 	describeSecretProblem,
 	resolveSecrets,
@@ -189,6 +191,8 @@ export interface AgentLaunchInput {
 	batchMode?: boolean;
 	/** Vars Maestro states about this spawn (caller identity and the like). */
 	maestroEnvVars?: Record<string, string>;
+	/** Trusted host root for translated knowledge; defaults to Maestro's local data directory. */
+	translationKnowledgeRoot?: string;
 	isResuming?: boolean;
 	querySource?: QuerySource;
 	/** Local only: directories to put in front of PATH. */
@@ -398,19 +402,29 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? [...new Set(input.requiredSecrets)].sort()
 			: undefined;
 
-	const knowledgeDirectory = envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR];
+	const configuredKnowledgeDirectory = envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR];
+	const knowledgeDirectory = configuredKnowledgeDirectory
+		? path.resolve(configuredKnowledgeDirectory)
+		: undefined;
+	const effectivePrompt =
+		target.kind === 'local' && knowledgeDirectory
+			? bindTranslationKnowledge(
+					input.prompt,
+					knowledgeDirectory,
+					input.translationKnowledgeRoot ?? path.join(resolveUserDataDir(), 'provider-knowledge')
+				)
+			: input.prompt;
 	launchArgs =
 		target.kind === 'local' && agent?.id === 'claude-code' && knowledgeDirectory
 			? [
 					...launchArgs,
+					...buildAdditionalDirArgs(getAgentDefinition('claude-code'), [
+						{ path: knowledgeDirectory, read: true, write: true },
+					]),
 					'--settings',
 					JSON.stringify({ autoMemoryDirectory: path.join(knowledgeDirectory, 'memory') }),
 				]
 			: launchArgs;
-	const effectivePrompt =
-		target.kind === 'local'
-			? bindTranslationKnowledge(input.prompt, envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR])
-			: input.prompt;
 	const prompt = resolvePromptDelivery({
 		agent,
 		prompt: effectivePrompt,

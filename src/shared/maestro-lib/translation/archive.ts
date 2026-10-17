@@ -28,6 +28,7 @@ export interface TranslationJournal {
 	result?: TranslationResult;
 	error?: string;
 	failurePhase?: TranslationOperationState;
+	/** App-local for new operations; legacy in-repo paths remain intact for recovery/rollback. */
 	knowledgeDirectory?: string;
 	/** Native hashes captured at staged readback, never reconstructed from later destination work. */
 	destinationObserved?: Record<string, string>;
