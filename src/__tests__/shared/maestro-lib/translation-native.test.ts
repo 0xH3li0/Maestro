@@ -129,7 +129,7 @@ describe('native-preserving extraction', () => {
 		expect(bundle.records[0].native).toEqual(native);
 	});
 
-	it('blocks an interrupted native tool tail and mismatched project ownership', () => {
+	it('still blocks mismatched project ownership when the tool tail was interrupted', () => {
 		const row = {
 			type: 'assistant',
 			uuid: 'pending',
@@ -141,7 +141,100 @@ describe('native-preserving extraction', () => {
 		};
 		const bundle = extractNativeConversation(identity, 't', 's', Buffer.from(JSON.stringify(row)));
 		expect(bundle.limitations.map((l) => l.code)).toEqual(
-			expect.arrayContaining(['unfinished-tool-call', 'native-project-root-mismatch'])
+			expect.arrayContaining(['interrupted-tool-call-dropped', 'native-project-root-mismatch'])
+		);
+	});
+
+	describe.each([
+		{ provider: 'claude-code', custom: false },
+		{ provider: 'codex', custom: false },
+		{ provider: 'codex', custom: true },
+	] as const)('$provider interrupted tools (custom: $custom)', ({ provider, custom }) => {
+		it.each([
+			{ laterRole: undefined, opaque: false },
+			{ laterRole: 'user', opaque: false },
+			{ laterRole: 'assistant', opaque: false },
+			{ laterRole: 'user', opaque: true },
+			{ laterRole: 'assistant', opaque: true },
+		] as const)(
+			'classifies an orphan with later role $laterRole (opaque: $opaque) without changing source evidence',
+			({ laterRole, opaque }) => {
+				const rows = [
+					provider === 'claude-code'
+						? {
+								uuid: 'pending',
+								type: 'assistant',
+								message: {
+									role: 'assistant',
+									content: [{ type: 'tool_use', id: 'pending-call', name: 'Read', input: {} }],
+								},
+							}
+						: {
+								type: 'response_item',
+								payload: {
+									id: 'pending',
+									type: custom ? 'custom_tool_call' : 'function_call',
+									call_id: 'pending-call',
+									name: 'Read',
+									...(custom ? { input: 'synthetic' } : { arguments: '{}' }),
+								},
+							},
+					...(laterRole
+						? [
+								provider === 'claude-code'
+									? {
+											uuid: 'later',
+											type: laterRole,
+											message: {
+												role: laterRole,
+												content: opaque
+													? [{ type: 'future-content', data: 'Later conversation' }]
+													: 'Later conversation',
+											},
+										}
+									: {
+											type: 'response_item',
+											payload: {
+												id: 'later',
+												type: 'message',
+												role: laterRole,
+												content: opaque
+													? [{ type: 'future-content', data: 'Later conversation' }]
+													: [{ type: 'input_text', text: 'Later conversation' }],
+											},
+										},
+							]
+						: []),
+					{ type: 'token_usage_record', data: { input_tokens: 12 } },
+				];
+				const bytes = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+				const bundle = extractNativeConversation({ ...identity, provider }, 't', 's', bytes);
+				expect(bundle.records.map((record) => record.native)).toEqual(rows);
+				expect(Buffer.from(bundle.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+				expect(bundle.records[0].blocks[0]).toMatchObject({
+					kind: 'tool-call',
+					callId: 'pending-call',
+					...(laterRole ? {} : { interrupted: true }),
+				});
+				if (laterRole) {
+					expect(bundle.records[0].blocks[0]).not.toHaveProperty('interrupted');
+					expect(bundle.limitations).toContainEqual(
+						expect.objectContaining({ code: 'unfinished-tool-call', severity: 'block' })
+					);
+					expect(bundle.limitations.some((l) => l.code === 'interrupted-tool-call-dropped')).toBe(
+						false
+					);
+				} else {
+					expect(bundle.limitations.some((l) => l.severity === 'block')).toBe(false);
+					expect(bundle.limitations).toContainEqual(
+						expect.objectContaining({
+							code: 'interrupted-tool-call-dropped',
+							severity: 'warning',
+							message: expect.stringContaining('pending-call'),
+						})
+					);
+				}
+			}
 		);
 	});
 

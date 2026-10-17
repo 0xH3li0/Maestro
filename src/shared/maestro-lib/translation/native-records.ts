@@ -356,17 +356,20 @@ export function extractNativeConversation(
 			r.blocks.filter((b) => b.kind === 'tool-result').map((b) => b.callId)
 		)
 	);
-	for (const callId of calls)
-		if (!results.has(callId))
-			conversation.limitations.push({
-				code: 'unfinished-tool-call',
-				severity: 'block',
-				tabId,
-				message: `Tool call ${callId} has no recorded result. A pending source tool must not be replayed on the destination.`,
-			});
+	// Tool-only rows (including partial parallel results) and runtime metadata do not
+	// advance the conversation past a stopped turn. Mixed text/tool rows still do.
+	const lastConversationalIndex = conversation.records.reduce(
+		(last, record, index) =>
+			(record.role === 'user' || record.role === 'assistant') &&
+			record.blocks.some((block) => block.kind !== 'tool-call' && block.kind !== 'tool-result')
+				? index
+				: last,
+		-1
+	);
+	const interruptedCalls = new Set<string>();
 	const seenCalls = new Set<string>();
 	const seenResults = new Set<string>();
-	for (const record of conversation.records)
+	for (const [index, record] of conversation.records.entries())
 		for (const block of record.blocks) {
 			if (
 				(block.kind === 'tool-call' || block.kind === 'tool-result') &&
@@ -390,6 +393,19 @@ export function extractNativeConversation(
 					message: `Tool evidence at ${record.nativeId} has an invalid message role for native projection.`,
 				});
 			if (!block.callId) continue;
+			if (block.kind === 'tool-call' && !results.has(block.callId)) {
+				if (index < lastConversationalIndex)
+					conversation.limitations.push({
+						code: 'unfinished-tool-call',
+						severity: 'block',
+						tabId,
+						message: `Tool call ${block.callId} has no recorded result before later conversation. A pending source tool must not be replayed on the destination.`,
+					});
+				else {
+					block.interrupted = true;
+					interruptedCalls.add(block.callId);
+				}
+			}
 			const seen = block.kind === 'tool-call' ? seenCalls : seenResults;
 			if (seen.has(block.callId))
 				conversation.limitations.push({
@@ -407,5 +423,12 @@ export function extractNativeConversation(
 				});
 			seen.add(block.callId);
 		}
+	if (interruptedCalls.size)
+		conversation.limitations.push({
+			code: 'interrupted-tool-call-dropped',
+			severity: 'warning',
+			tabId,
+			message: `Stopped tool calls ${[...interruptedCalls].join(', ')} have no recorded results. They remain archived and are omitted from the destination session.`,
+		});
 	return conversation;
 }

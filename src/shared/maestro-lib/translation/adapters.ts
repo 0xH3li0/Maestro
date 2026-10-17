@@ -86,6 +86,7 @@ export function projectConversation(
 					break;
 				}
 				case 'tool-call':
+					if (block.interrupted) break;
 					if (provider === 'claude-code') {
 						let input = block.input;
 						if (typeof input === 'string') {

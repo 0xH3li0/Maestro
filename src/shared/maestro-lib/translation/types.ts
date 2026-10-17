@@ -24,7 +24,15 @@ export interface RecordOrigin {
 
 export type PortableBlock =
 	| { kind: 'text'; text: string }
-	| { kind: 'tool-call'; callId: string; name: string; input: unknown; custom?: boolean }
+	| {
+			kind: 'tool-call';
+			callId: string;
+			name: string;
+			input: unknown;
+			custom?: boolean;
+			/** Stopped source turn: retain evidence, omit this call from native projection. */
+			interrupted?: boolean;
+	  }
 	| { kind: 'tool-result'; callId: string; output: unknown; isError?: boolean; custom?: boolean }
 	| { kind: 'attachment'; artifactId: string; mediaType: string; native: unknown }
 	| { kind: 'opaque'; native: unknown };

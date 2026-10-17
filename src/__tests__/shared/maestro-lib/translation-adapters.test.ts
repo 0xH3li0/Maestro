@@ -241,6 +241,100 @@ describe('destination native projections', () => {
 		expect(projected[3].item.call_id).toBe('c');
 		expect(projectConversation(bundle, 'codex', 'again')).toEqual(projected);
 	});
+	it.each(['claude-code', 'codex'] as const)(
+		'projects a stopped parallel tool tail from %s without replay or fabricated results',
+		(provider) => {
+			const calls = ['completed', 'stopped-one', 'stopped-two'];
+			const rows =
+				provider === 'claude-code'
+					? [
+							{
+								type: 'assistant',
+								uuid: 'calls',
+								message: {
+									role: 'assistant',
+									content: [
+										{ type: 'text', text: 'Keep this text' },
+										...calls.map((id) => ({ type: 'tool_use', id, name: 'Read', input: {} })),
+									],
+								},
+							},
+							{
+								type: 'user',
+								uuid: 'result',
+								message: {
+									role: 'user',
+									content: [{ type: 'tool_result', tool_use_id: 'completed', content: 'ok' }],
+								},
+							},
+						]
+					: [
+							{
+								type: 'response_item',
+								payload: {
+									type: 'message',
+									role: 'assistant',
+									content: [{ type: 'output_text', text: 'Keep this text' }],
+								},
+							},
+							...calls.map((call_id) => ({
+								type: 'response_item',
+								payload: {
+									type: 'custom_tool_call',
+									call_id,
+									name: 'Read',
+									input: 'synthetic',
+								},
+							})),
+							{
+								type: 'response_item',
+								payload: { type: 'custom_tool_call_output', call_id: 'completed', output: 'ok' },
+							},
+						];
+			const bundle = extractNativeConversation(
+				{ ...identity, provider },
+				't',
+				's',
+				Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'))
+			);
+			expect(bundle.limitations.some((l) => l.severity === 'block')).toBe(false);
+			expect(bundle.limitations.filter((l) => l.code === 'interrupted-tool-call-dropped')).toEqual([
+				expect.objectContaining({
+					severity: 'warning',
+					message: expect.stringContaining('stopped-one, stopped-two'),
+				}),
+			]);
+			for (const destination of ['claude-code', 'codex'] as const) {
+				const projected = projectConversation(bundle, destination, 'destination');
+				const serialized = JSON.stringify(projected);
+				expect(serialized).toContain('Keep this text');
+				expect(serialized).not.toContain('stopped-one');
+				expect(serialized).not.toContain('stopped-two');
+				if (destination === 'codex') {
+					expect(projected.map((r) => r.item.type)).toEqual([
+						'message',
+						provider === 'codex' ? 'custom_tool_call' : 'function_call',
+						provider === 'codex' ? 'custom_tool_call_output' : 'function_call_output',
+					]);
+					expect(projected[1].item.call_id).toBe('completed');
+					expect(projected[2].item.call_id).toBe('completed');
+				} else {
+					expect(
+						projected.flatMap((r) => (r.item.message as { content: unknown[] }).content)
+					).toEqual([
+						{ type: 'text', text: 'Keep this text' },
+						{
+							type: 'tool_use',
+							id: 'completed',
+							name: 'Read',
+							input: provider === 'codex' ? { input: 'synthetic' } : {},
+						},
+						{ type: 'tool_result', tool_use_id: 'completed', content: 'ok' },
+					]);
+				}
+			}
+		}
+	);
 	it('builds new Claude parent relationships without foreign reasoning signatures', () => {
 		const bytes = Buffer.from(
 			[
