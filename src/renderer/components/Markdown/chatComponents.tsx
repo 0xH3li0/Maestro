@@ -262,6 +262,23 @@ export function createChatMarkdownComponents(
 				);
 			}
 
+			// Codex's `visualize` reference names an HTML fragment the agent just
+			// wrote, which the Codex app renders inline. Maestro does not run
+			// agent-authored HTML in a chat surface (see `codex-inline-vis` in
+			// `remarkCodexDirectives`), so it draws as the file the agent wrote,
+			// one click from the preview.
+			if (directive.name === 'visualize' && directive.attributes.path) {
+				return (
+					<CodexFileCitation
+						path={directive.attributes.path}
+						purpose="output"
+						artifactKind="visualization"
+						theme={theme}
+						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
 			// A review comment is a statement about the code, not an offer, so it
 			// draws with no conversation context either. `body` is the one part
 			// that cannot be missing: a card with a title and no explanation says
