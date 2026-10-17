@@ -11,9 +11,6 @@ import type {
 	UsageStats,
 } from '../../shared/types';
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
-// Registers agy's conversation-store reader with maestro-lib (see host.ts), so
-// an Antigravity run spawned here keeps its thinking text and command status.
-import '../../main/parsers/antigravity-step-store';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
 import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
@@ -1341,6 +1338,13 @@ async function spawnJsonLineAgent(
 	const parser = createOutputParser(toolType);
 	if (!parser) {
 		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+	}
+	if (toolType === 'antigravity') {
+		// Registers agy's conversation-store reader with maestro-lib (see host.ts),
+		// so the run keeps its thinking text and command status. Loaded on demand:
+		// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
+		// reach through a static import (plain-node-imports.test.ts).
+		await import('../../main/parsers/antigravity-step-store');
 	}
 
 	// The shared capture applies the provider's usage rule (Codex reports a
