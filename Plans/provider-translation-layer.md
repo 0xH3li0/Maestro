@@ -340,3 +340,35 @@ Claude block codes: `native-project-root-mismatch` in 60 files and `unfinished-t
 Added synthetic regression coverage for CLI validation, newest-file sampling across accounts, identity extraction and fallback, subagent exclusion, per-file diagnostic counts, future info severity, missing/malformed metadata, output privacy, unchanged input bytes and mtime, and scratch output confinement. Test cases were not run, per the standing conductor instruction.
 
 Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify`, focused Prettier, script syntax checking, and `command git diff --check` all passed. No task images were supplied.
+
+### 2026-10-17: Ensemble 02 extraction recheck
+
+Re-ran the read-only probe after the cwd-origin, interrupted-tool-call, severity-tier and plan-telemetry changes in [[ENSEMBLE-02]], at commit `109eab74d2`:
+
+```bash
+node scripts/provider-translation-probe.mjs --json .maestro/scratch/provider-translation-probe/ensemble-02-2026-10-17.json
+```
+
+| Provider    | Sampled | Phase 01 blocked | Phase 02 clean | Phase 02 blocked | Blocked fraction |
+| ----------- | ------- | ---------------- | -------------- | ---------------- | ---------------- |
+| Claude Code | 300     | 60 (20%)         | 300            | 0                | 0%               |
+| Codex       | 300     | 1 (0.33%)        | 300            | 0                | 0%               |
+
+Neither provider emitted a block code, including `native-project-root-mismatch` or `unfinished-tool-call`; no code crossed the 2% investigation threshold. These are fresh samples of live, mutable transcripts, not a replay of the baseline's exact files.
+
+| Provider    | Severity | Code                            | Files |
+| ----------- | -------- | ------------------------------- | ----- |
+| Claude Code | info     | `opaque-runtime-state`          | 300   |
+| Claude Code | info     | `native-attachment-state`       | 300   |
+| Claude Code | info     | `native-cwd-drift`              | 66    |
+| Claude Code | warning  | `interrupted-tool-call-dropped` | 27    |
+| Claude Code | warning  | `native-boundary`               | 6     |
+| Codex       | info     | `historical-instructions`       | 300   |
+| Codex       | info     | `opaque-runtime-state`          | 300   |
+| Codex       | info     | `native-cwd-drift`              | 1     |
+| Codex       | warning  | `interrupted-tool-call-dropped` | 2     |
+| Codex       | warning  | `native-boundary`               | 12    |
+
+All always-on codes now appear as info; warnings remain separate for interrupted calls and native boundaries. Counts are files per code and can overlap. This probe measures extraction only: it does not establish native resume, context continuity, resource discovery, or Sentry delivery. No provider homes were modified. No code or tests changed, and test cases were not run, per the standing conductor instruction. No task images were supplied.
+
+Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify` (1,397 asserted paths, 455 index entries, zero findings), focused Prettier and `command git diff --check` passed.
