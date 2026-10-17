@@ -453,6 +453,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
 						let output = '';
+						let rawOutput = '';
 						let resolved = false;
 						let effortRejection: EffortRejection | null = null;
 
@@ -460,6 +461,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							clearTimeout(timeoutId);
 							clearInterval(earlyExtractIntervalId);
 							processManager.off('data', onData);
+							processManager.off('raw-stdout', onRawStdout);
 							processManager.off('exit', onExit);
 							processManager.off('agent-error', onAgentError);
 						};
@@ -500,7 +502,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							const earlyResult = extractTabNameFromOutput(
 								effectiveAgentType,
 								output,
-								requireStructuredOutput
+								requireStructuredOutput,
+								rawOutput
 							);
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
@@ -511,6 +514,12 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						const onData = (dataSessionId: string, data: string) => {
 							if (dataSessionId !== sessionId) return;
 							output += data;
+						};
+						// The data event contains parsed text. Keep stdout so a final JSON
+						// response can be distinguished from an unstructured terminal line.
+						const onRawStdout = (dataSessionId: string, data: string) => {
+							if (dataSessionId !== sessionId) return;
+							rawOutput += data;
 						};
 
 						// A provider's refusal of the effort arrives as an agent error, not
@@ -570,7 +579,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							const extraction = extractTabNameFromOutput(
 								effectiveAgentType,
 								output,
-								requireStructuredOutput
+								requireStructuredOutput,
+								rawOutput
 							);
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
@@ -585,6 +595,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						};
 
 						processManager.on('data', onData);
+						processManager.on('raw-stdout', onRawStdout);
 						processManager.on('exit', onExit);
 						processManager.on('agent-error', onAgentError);
 
@@ -671,7 +682,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
  *      along with the other headless-only flags, so the model runs a real
  *      agentic turn and its raw terminal transcript leaks function-call markup
  *      like `<invoke name="...">` / `</parameter>` / `</invoke>`. That output
- *      isn't stream-json, so extractAgentResponseText() can't lift a clean
+ *      isn't stream-json, so extractAgentResponse() can't lift a clean
  *      result and we fall back to scraping the raw TUI buffer.
  *   2. Empty-turn placeholders. The TUI renders `(no content)` / `(no output)`
  *      for a turn with no text block.
@@ -712,11 +723,15 @@ interface TabNameExtractionResult {
  * maestro-p TUI emits plain terminal text), so the caller falls back to
  * running extractTabName over the raw output exactly as before.
  */
-function extractAgentResponseText(agentType: string, output: string): string | null {
+function extractAgentResponse(
+	agentType: string,
+	output: string
+): { text: string; isFinal: boolean } | null {
 	const parser = createOutputParser(agentType);
 	if (!parser) return null;
 
 	let sawJson = false;
+	let isFinal = false;
 	let resultText = '';
 	let assistantText = '';
 	for (const line of output.split('\n')) {
@@ -732,11 +747,12 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (!parsed || typeof parsed !== 'object') continue;
 		sawJson = true;
 		const event = parser.parseJsonObject(parsed);
-		if (!event?.text) continue;
-		if (event.type === 'result') {
-			// The final result carries the complete response; last one wins.
-			resultText = event.text;
-		} else if (event.type === 'text' && !event.isReasoning) {
+		if (!event) continue;
+		if (parser.isResultMessage(event)) {
+			// Completion can be a textless marker after streamed answer chunks.
+			isFinal = true;
+			if (event.text) resultText = event.text;
+		} else if (event.type === 'text' && !event.isReasoning && event.text) {
 			// Streaming assistant chunks - accumulate so early extraction can
 			// resolve before the terminating result event arrives. Reasoning
 			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
@@ -749,7 +765,7 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 
 	if (!sawJson) return null;
 	const text = (resultText || assistantText).trim();
-	return text.length > 0 ? text : null;
+	return text.length > 0 ? { text, isFinal } : null;
 }
 
 /**
@@ -771,13 +787,14 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 function extractTabNameFromOutput(
 	agentType: string,
 	output: string,
-	structuredOnly = false
+	structuredOnly = false,
+	rawOutput = ''
 ): TabNameExtractionResult {
-	const responseText = extractAgentResponseText(agentType, output);
-	if (responseText === null && structuredOnly) {
+	const response = extractAgentResponse(agentType, rawOutput || output);
+	if (response === null && structuredOnly) {
 		return { name: null, reason: 'structured_only_no_json' };
 	}
-	return extractTabName(responseText ?? output);
+	return extractTabName(response?.text ?? output, response?.isFinal ?? false);
 }
 
 /**
@@ -785,7 +802,7 @@ function extractTabNameFromOutput(
  * The output may contain ANSI codes, extra whitespace, or markdown formatting.
  * Returns a structured result with diagnostic reason for logging.
  */
-function extractTabName(output: string): TabNameExtractionResult {
+function extractTabName(output: string, isFinal = false): TabNameExtractionResult {
 	if (!output || !output.trim()) {
 		return { name: null, reason: 'empty_output' };
 	}
@@ -809,7 +826,7 @@ function extractTabName(output: string): TabNameExtractionResult {
 		// Filter out empty lines and lines that look like instructions/examples
 		return (
 			trimmed.length > 0 &&
-			trimmed.length <= 40 && // Tab names should be short
+			(isFinal || trimmed.length <= 40) && // Only final responses may be shortened
 			!trimmed.toLowerCase().includes('example') &&
 			!trimmed.toLowerCase().includes('message:') &&
 			!trimmed.toLowerCase().includes('rules:') &&
@@ -836,7 +853,8 @@ function extractTabName(output: string): TabNameExtractionResult {
 
 	// Ensure reasonable length (max 40 chars for tab names)
 	if (tabName.length > 40) {
-		tabName = tabName.substring(0, 37) + '...';
+		const wordBoundary = tabName.lastIndexOf(' ', 37);
+		tabName = tabName.substring(0, wordBoundary > 0 ? wordBoundary : 37) + '...';
 	}
 
 	// If the result is empty or too short, return null

@@ -636,6 +636,122 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Side-Scroller Game');
 		});
 
+		it.each(['claude-code', 'codex', 'grok', 'factory-droid', 'copilot-cli'] as const)(
+			'shortens a 48-character final title from %s',
+			async (agentType) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: agentType });
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType,
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				const streams = {
+					'claude-code': [{ type: 'result', result: title }],
+					codex: [{ type: 'item.completed', item: { type: 'agent_message', text: title } }],
+					grok: [
+						{ type: 'thought', data: 'Generate a short title' },
+						{ type: 'text', data: title.slice(0, 20) },
+						{ type: 'text', data: title.slice(20) },
+						{ type: 'end', stopReason: 'end_turn' },
+					],
+					'factory-droid': [
+						{ type: 'message', role: 'assistant', text: title },
+						{ type: 'completion' },
+					],
+					'copilot-cli': [
+						{ type: 'assistant.message_delta', data: { deltaContent: title } },
+						{ type: 'result' },
+					],
+				};
+				const raw = streams[agentType].map((event) => JSON.stringify(event)).join('\n') + '\n';
+				if (agentType !== 'claude-code') {
+					// ProcessManager emits the parsed title on data; raw-stdout retains its provenance.
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(0, 20));
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(20));
+					listeners.get('data')?.(sessionId, title);
+				} else {
+					listeners.get('data')?.(sessionId, raw);
+				}
+				listeners.get('exit')?.(sessionId, 0);
+
+				expect(title).toHaveLength(48);
+				expect(await resultPromise).toBe('Donation Appeal Pages Japanese...');
+				expect(mockProcessManager.off).toHaveBeenCalledWith(
+					'raw-stdout',
+					listeners.get('raw-stdout')
+				);
+			}
+		);
+
+		it.each(['missing', 'cancelled'])(
+			'rejects a long Grok title with %s completion',
+			async (kind) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'grok' });
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType: 'grok',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const stream = [JSON.stringify({ type: 'text', data: title })];
+				if (kind === 'cancelled') {
+					stream.push(JSON.stringify({ type: 'end', stopReason: 'cancelled' }));
+				}
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				listeners.get('raw-stdout')?.(sessionId, stream.join('\n') + '\n');
+				listeners.get('data')?.(sessionId, title);
+				listeners.get('exit')?.(sessionId, 0);
+				expect(await resultPromise).toBeNull();
+			}
+		);
+
+		it.each(['raw', 'partial', 'noise'])('does not shorten a long %s response', async (kind) => {
+			const title = 'Donation Appeal Pages Japanese Translation Dates';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const output =
+				kind === 'raw'
+					? title
+					: JSON.stringify(
+							kind === 'partial'
+								? { type: 'assistant', message: { content: [{ type: 'text', text: title }] } }
+								: { type: 'result', result: title + ' <invoke>' }
+						);
+			listeners.get('data')?.('tab-naming-mock-uuid-1234', output);
+			listeners.get('exit')?.('tab-naming-mock-uuid-1234', 0);
+			expect(await resultPromise).toBeNull();
+		});
+
 		it('extracts from streaming assistant text when no result event arrives (early extraction)', async () => {
 			// Early extraction resolves before the process exits, so only assistant
 			// (streaming) events are present - no terminating result line yet.
