@@ -343,6 +343,23 @@ listed warnings are accepted. Blocking limitations prevent the switch. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
 for the steps, scope, CLI examples and activity indicator.
 
+The plan separates **Translated now** (open AI tabs) from **Translated on next
+use** (closed, snoozed and other saved conversations), with counts. Only open
+tabs are converted during the switch. Reopening a closed tab, waking a snoozed
+tab or resuming from History does not convert it immediately. Its next message
+triggers conversion before the destination resumes, including when that
+provider has an older copy of the conversation. A problem in a closed
+conversation is checked then and does not block the initial switch.
+
+During conversion, the tab shows **Translating context from &lt;provider&gt;**.
+A running source turn is allowed to finish. Notes pass without review; a new
+warning holds the message and offers a toast that opens the tab's conversion
+review in Edit Agent. Blocking limitations must be resolved before sending.
+Previously accepted warnings carry forward only when the direction, provider
+versions and warning details match. Held messages stay in the draft or queue,
+and queued messages keep the provider, model and effort selected when queued.
+The headless runtime uses the same conversion checks and retains held messages.
+
 Carried knowledge stays outside your project in Maestro's local data directory:
 `<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. Maestro connects its
 knowledge index to each turn, including resumed sessions. Claude also receives
