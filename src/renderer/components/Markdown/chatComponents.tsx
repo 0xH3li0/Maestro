@@ -22,6 +22,7 @@ import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
 import { CodexFileCitation } from './components/CodexFileCitation';
+import { CodexVisualizationFrame } from './components/CodexVisualizationFrame';
 import { CodeCommentCard } from './components/CodeCommentCard';
 import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
@@ -263,18 +264,18 @@ export function createChatMarkdownComponents(
 			}
 
 			// Codex's `visualize` reference names an HTML fragment the agent just
-			// wrote, which the Codex app renders inline. Maestro does not run
-			// agent-authored HTML in a chat surface (see `codex-inline-vis` in
-			// `remarkCodexDirectives`), so it draws as the file the agent wrote,
-			// one click from the preview.
+			// wrote. It renders the way the Codex app renders it: wrapped in
+			// Codex's own visualize kit and run in an isolated sandboxed frame,
+			// with the file chip as the fallback (see CodexVisualizationFrame).
 			if (directive.name === 'visualize' && directive.attributes.path) {
 				return (
-					<CodexFileCitation
+					<CodexVisualizationFrame
 						path={directive.attributes.path}
-						purpose="output"
-						artifactKind="visualization"
+						title={directive.attributes.title}
+						mode={directive.attributes.mode}
 						theme={theme}
 						LinkComponent={ChatLink}
+						conversation={codexFollowup}
 					/>
 				);
 			}

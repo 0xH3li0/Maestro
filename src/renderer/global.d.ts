@@ -4978,6 +4978,15 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+	/**
+	 * Codex `visualize` content references. `load` builds the isolated document
+	 * for one fragment and returns the id/revision to frame it by.
+	 */
+	codexVisualization: {
+		load: (
+			request: import('../shared/codexVisualization').CodexVisualizationLoadRequest
+		) => Promise<import('../shared/codexVisualization').CodexVisualizationLoadResult>;
+	};
 }
 
 declare global {
