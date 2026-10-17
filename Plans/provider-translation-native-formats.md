@@ -1,6 +1,8 @@
 # Claude Code and Codex native mapping
 
-Implementation mapping, 2026-10-14. Claude Code **2.1.296**, Codex **0.162.1**. Both directions remain **unverified**. Schema inspection, structural readback and lint are not native resume evidence. No imports, tests or live acceptance cases were executed while implementing this feature.
+Implementation mapping, 2026-10-14; version policy updated 2026-10-17. Minimum versions are Claude Code **2.1.296** and Codex **0.162.1**; each is also its provider's sole tested version for synthetic schema coverage. Both directions remain **unverified**. Schema inspection, structural readback and lint are not native resume evidence. No imports, tests or live acceptance cases were executed during the initial implementation; later checks are recorded in [[provider-translation-layer]].
+
+`translation/support.ts` declares `minVersion` and `testedVersions` and shares `translationVersionLimitation()` across registry, adapters and acceptance-driver preflight. Unparseable or below-minimum versions block with `unknown-version`. Valid semver versions at or above the minimum outside the tested list warn with `untested-version`, naming the installed and tested versions. A direction certified for tested versions remains unverified on any untested version. Per-record schema checks still block malformed records, invalid content and other extraction failures.
 
 ## Transport and projection
 

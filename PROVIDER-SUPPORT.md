@@ -682,7 +682,16 @@ Implement translation in `src/shared/maestro-lib/`, with thin desktop and CLI ca
 
 CLI migration uses the dedicated WebSocket request/result `provider_translation` / `provider_translation_result`, forwarded to the existing migration callback. Older desktops reject that verb; there is no fallback to a legacy destructive `toolType` settings patch. `--migration-plan <id>` carries a reviewed operation ID through apply, status, recovery or rollback, preserving preflight fingerprint checks. Cue invokes the command through an existing shell Command node, with JSON output and nonzero refusal/failure status; see [Starting Translation from Cue](docs/provider-notes.md#starting-translation-from-cue). This switches the active provider and does not claim independent two-agent or non-switching replica synchronization.
 
-The registered pairs are **Claude Code 2.1.296 → Codex 0.162.1** and the reverse, both **unverified**. Unknown versions/providers block. Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. No native acceptance or test cases were executed for this implementation.
+The registered directions are **Claude Code → Codex** and the reverse, both **unverified**. Version support comes from `TRANSLATION_PROVIDER_VERSIONS` in `translation/support.ts`:
+
+| Provider    | Minimum version (`minVersion`) | Tested versions (`testedVersions`) |
+| ----------- | ------------------------------ | ---------------------------------- |
+| Claude Code | `2.1.296`                      | `2.1.296`                          |
+| Codex       | `0.162.1`                      | `0.162.1`                          |
+
+Unparseable versions and versions below the minimum block with `unknown-version`; providers without an adapter also block. Valid semver versions at or above the minimum are eligible for preflight. Any version absent from `testedVersions` adds an `untested-version` warning naming the installed and tested versions, and keeps the plan unverified even if the direction is certified for its tested versions. Native record/schema checks still block malformed or unsupported content.
+
+Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Tested versions identify synthetic schema coverage, not native certification. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. No native acceptance has been recorded.
 
 The renderer-safe declarations in `src/shared/maestro-lib/translation/support.ts` are shared by native registration and the Edit Agent provider picker. Destinations with a declared direction from the agent's current provider show `→ Memory + history (preview)` while unverified. This is an adapter discovery hint; preflight still checks the installed versions and actual contents before allowing a switch. Adding a provider requires updating these declarations and registering its native adapter, rather than maintaining a separate UI support list.
 
@@ -691,14 +700,19 @@ To switch, select the destination in Edit Agent, review the automatically read c
 Minimal adapter registration, using the actual contract (replace `grok` and its schema reader/writer with the provider being integrated):
 
 ```typescript
-import { TranslationRegistry, type TranslationAdapter } from './src/shared/maestro-lib/translation';
+import {
+	TRANSLATION_PROVIDER_VERSIONS,
+	TranslationRegistry,
+	type TranslationAdapter,
+} from './src/shared/maestro-lib/translation';
 
 // These provider-specific functions must implement the declared native mapping.
 declare const readGrokNative: TranslationAdapter['extract'];
 declare const stageGrokNative: TranslationAdapter['stage'];
 const grok: TranslationAdapter = {
 	provider: 'grok',
-	versions: ['documented-schema-version'],
+	minVersion: '1.0.0', // Replace with the provider's minimum mapped semver version.
+	testedVersions: ['1.0.0'], // Replace with versions exercised by schema tests.
 	extract: readGrokNative,
 	stage: stageGrokNative,
 };
@@ -707,8 +721,10 @@ registry.register(grok);
 registry.declareDirection({
 	source: 'claude-code',
 	destination: 'grok',
-	sourceVersions: ['2.1.296'],
-	destinationVersions: grok.versions,
+	sourceMinVersion: TRANSLATION_PROVIDER_VERSIONS['claude-code'].minVersion,
+	destinationMinVersion: grok.minVersion,
+	sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions,
+	destinationTestedVersions: grok.testedVersions,
 	verification: 'unverified',
 });
 // Register the source adapter too before calling planTranslation.

@@ -36,7 +36,9 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 
 ## Switching Providers with Memory and Session Carry
 
-Memory and session conversion is available as a preview between **Claude Code 2.1.296** and **Codex 0.162.1**, in both directions. Native resume and repeated round-trip continuity remain unverified. Other provider/version combinations have no supported converter and are blocked by preflight.
+Memory and session conversion is available as a preview between **Claude Code 2.1.296 or newer** and **Codex 0.162.1 or newer**, in both directions. The tested versions are Claude Code **2.1.296** and Codex **0.162.1**. Other versions at or above those minimums show an `untested-version` warning that names the installed and tested versions. Unreadable versions, older versions and providers without a converter are blocked by preflight.
+
+Native resume and repeated round-trip continuity remain unverified. Tested versions describe schema coverage, not native certification; an untested version keeps the plan unverified even if its direction later gains certification. Preflight still checks the actual history and resources, and blocking content limitations prevent conversion on any version.
 
 In **Edit Agent**, destinations with a converter from the agent's current provider are marked **→ Memory + history (preview)** in the provider list. The marker identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
 

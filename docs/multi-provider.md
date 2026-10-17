@@ -325,10 +325,17 @@ started on one account is intelligible to the other, and in Claude Code's case
 directly resumable.
 
 Different providers use different native formats. Maestro provides preview
-conversion between **Claude Code 2.1.296** and **Codex 0.162.1**, in both
-directions, for session history and project memory. Native resume and repeated
-round-trip continuity remain unverified; other provider/version combinations
-have no supported converter.
+conversion between **Claude Code 2.1.296 or newer** and **Codex 0.162.1 or newer**,
+in both directions, for session history and project memory. The tested versions
+are **2.1.296** and **0.162.1**, respectively; other versions at or above those
+minimums show an `untested-version` warning naming the installed and tested
+versions. Unreadable versions, older versions and providers without a converter
+are blocked by preflight.
+
+Native resume and repeated round-trip continuity remain unverified. Tested
+versions describe schema coverage, not native certification. Untested versions
+keep the plan unverified even if the direction later gains certification;
+blocking history or resource limitations still prevent conversion on any version.
 
 In **Edit Agent**, marked provider destinations have a carry-over adapter.
 Selecting one reads a conversion plan; **Save Changes** applies it after any
