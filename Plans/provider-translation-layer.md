@@ -319,3 +319,24 @@ env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE
 `rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` both exited 0. `npm run docs:verify` reported 1,393 asserted paths, 453 index entries and zero findings. Focused Prettier and `command git diff --check` passed.
 
 This is unit-test baseline evidence only. Native resume, context continuity and resource discovery remain unverified; no real provider homes were modified.
+
+### 2026-10-17: Read-only native transcript probe
+
+Added `scripts/provider-translation-probe.mjs` for [[ENSEMBLE-01]]. It bundles and imports the existing native extractor, samples the most recent files across Claude account homes and nested Codex sessions, and reports file counts per diagnostic code. `clean` means no blocking diagnostic; warning and info counts remain separate. Each code counts a file once, and files can contribute to several codes. Claude subagent subfolders are excluded. The probe reads provider homes without writing to them; generated bundles and optional JSON reports are confined to `.maestro/scratch/`, with symlink and hard-link output rejection. Message content and diagnostic messages are never printed or stored in reports.
+
+Baseline command:
+
+```bash
+node scripts/provider-translation-probe.mjs --json .maestro/scratch/provider-translation-probe/baseline-2026-10-17.json
+```
+
+| Provider    | Sampled | Clean | Blocked | Blocked fraction |
+| ----------- | ------- | ----- | ------- | ---------------- |
+| Claude Code | 300     | 240   | 60      | 20%              |
+| Codex       | 300     | 299   | 1       | 0.33%            |
+
+Claude block codes: `native-project-root-mismatch` in 60 files and `unfinished-tool-call` in 6 files, with overlap. Warning codes: `opaque-runtime-state` in 300 files, `native-attachment-state` in 300 files, and `native-boundary` in 6 files. Codex block codes: `unfinished-tool-call` in 1 file. Warning codes: `historical-instructions` in 300 files, `opaque-runtime-state` in 300 files, and `native-boundary` in 12 files. Both providers had no info codes. The current sample differs from the earlier review; these are live, mutable transcripts and an in-flight tool call can block extraction. This measures extraction only, not version compatibility or native resume acceptance.
+
+Added synthetic regression coverage for CLI validation, newest-file sampling across accounts, identity extraction and fallback, subagent exclusion, per-file diagnostic counts, future info severity, missing/malformed metadata, output privacy, unchanged input bytes and mtime, and scratch output confinement. Test cases were not run, per the standing conductor instruction.
+
+Validation: `rtk proxy npm run lint`, `rtk proxy npm run lint:eslint`, `npm run docs:verify`, focused Prettier, script syntax checking, and `command git diff --check` all passed. No task images were supplied.
