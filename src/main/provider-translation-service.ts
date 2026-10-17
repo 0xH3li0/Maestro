@@ -24,6 +24,7 @@ import { isAgentBusy, type ProcessLivenessProbe } from './utils/agent-busy';
 import { capabilitySnapshots } from './agents/capability-snapshot';
 import { execGitReadOnly } from './utils/remote-git';
 import { execFileNoThrow } from './utils/execFile';
+import { captureMessage } from './utils/sentry';
 import { CodexSessionStorage } from './storage/codex-session-storage';
 import { getHistoryManager } from './history-manager';
 import { resolveAgentAccountKey } from '../shared/providerProfiles';
@@ -556,6 +557,24 @@ export class ProviderTranslationService {
 				projections: resourceProjections.projections,
 			})
 		);
+		const limitationCounts: Record<TranslationLimitation['severity'], Record<string, number>> = {
+			info: Object.create(null),
+			warning: Object.create(null),
+			block: Object.create(null),
+		};
+		for (const limitation of plan.limitations) {
+			const counts = limitationCounts[limitation.severity];
+			counts[limitation.code] = (counts[limitation.code] ?? 0) + 1;
+		}
+		void captureMessage('provider-translation-plan', 'info', {
+			sourceProvider: plan.source.provider,
+			destinationProvider: plan.destination.provider,
+			sourceVersion: plan.source.version,
+			destinationVersion: plan.destination.version,
+			status: plan.status,
+			verification: plan.verification,
+			limitationCounts,
+		});
 		return {
 			schemaVersion: 1,
 			plan,

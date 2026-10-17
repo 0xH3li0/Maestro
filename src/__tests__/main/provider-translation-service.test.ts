@@ -17,6 +17,8 @@ import {
 } from '../../shared/maestro-lib/translation/archive';
 import { openCodexTranslationConnection } from '../../shared/maestro-lib/codex/connection';
 import { applyTranslation } from '../../shared/maestro-lib/translation/transaction';
+import * as translationResources from '../../shared/maestro-lib/translation/resources';
+import { captureMessage } from '../../main/utils/sentry';
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -28,6 +30,9 @@ vi.mock('../../main/agents/capability-snapshot', () => ({ capabilitySnapshots: {
 vi.mock('../../main/storage/codex-session-storage', () => ({ CodexSessionStorage: vi.fn() }));
 vi.mock('../../main/utils/remote-git', () => ({ execGitReadOnly: vi.fn() }));
 vi.mock('../../main/utils/execFile', () => ({ execFileNoThrow: vi.fn() }));
+vi.mock('../../main/utils/sentry', () => ({
+	captureMessage: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../shared/maestro-lib/codex/connection', () => ({
 	openCodexTranslationConnection: vi.fn(),
 }));
@@ -37,6 +42,84 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 }));
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('provider translation plan telemetry', () => {
+	it.each(['ready', 'blocked', 'deferred', 'noop'] as const)(
+		'reports exactly the allowed metadata and severity counts once for a %s plan',
+		async (status) => {
+			vi.mocked(captureMessage).mockClear();
+			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [],
+				limitations: [
+					...(['info', 'info', 'warning'] as const).map((severity, index) => ({
+						code: 'shared-code',
+						severity,
+						message: `Private conversation content ${index}`,
+						tabId: `private-tab-${index}`,
+						artifactId: `private-artifact-${index}`,
+					})),
+					...(status === 'blocked'
+						? [{ code: 'blocked-code', severity: 'block' as const, message: '/private/path' }]
+						: []),
+				],
+			});
+			const session = createMockSession({
+				id: 'private-agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'private-tab', agentSessionId: null }] as any,
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: { get: vi.fn(() => [session]) },
+				getProcessManager: () => ({ get: () => (status === 'deferred' ? {} : undefined) }),
+			} as unknown as ProviderTranslationDependencies);
+			vi.spyOn(service as any, 'identity').mockImplementation(
+				async (_session: unknown, provider: unknown) => ({
+					provider,
+					version: provider === 'codex' ? '0.162.1' : '2.1.296',
+					accountRoot: '/private/account',
+					projectRoot: '/private/project',
+				})
+			);
+			const journal = await (service as any).prepare({
+				agentId: session.id,
+				destination: status === 'noop' ? 'codex' : 'claude-code',
+				action: 'plan',
+			});
+			expect(journal.plan.status).toBe(status);
+			expect(captureMessage).toHaveBeenCalledExactlyOnceWith('provider-translation-plan', 'info', {
+				sourceProvider: 'codex',
+				destinationProvider: status === 'noop' ? 'codex' : 'claude-code',
+				sourceVersion: '0.162.1',
+				destinationVersion: status === 'noop' ? '0.162.1' : '2.1.296',
+				status,
+				verification: 'unverified',
+				limitationCounts: {
+					info: status === 'noop' ? {} : { 'shared-code': 2 },
+					warning:
+						status === 'noop'
+							? {}
+							: {
+									'shared-code': 1,
+									'native-project-memory-unavailable': 1,
+									'unverified-native-resume': 1,
+								},
+					block: status === 'blocked' ? { 'blocked-code': 1 } : {},
+				},
+			});
+			expect(Object.keys(vi.mocked(captureMessage).mock.calls[0][2]!)).toEqual([
+				'sourceProvider',
+				'destinationProvider',
+				'sourceVersion',
+				'destinationVersion',
+				'status',
+				'verification',
+				'limitationCounts',
+			]);
+		}
+	);
+});
 
 describe('provider translation read scope', () => {
 	it.each(['file', 'parent'] as const)(
