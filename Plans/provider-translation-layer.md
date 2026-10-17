@@ -303,3 +303,19 @@ Reviewed all seven phases and retained the existing implementation and user docu
 Updated the transaction persistence case and added renderer cases for changed tabs/messages/severity, exact saved acceptance with reordered keys and colon-containing artifact IDs, and refusal of legacy acceptance. Cases remain **authored, not executed**. The final contract in `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md` and `docs/agent-guides/AGENT-INFRA.md` describes these requirements.
 
 Checks: `npm run lint` passed; ESLint with `--max-warnings 0` passed on all 61 changed production files and the dash-only configuration passed on 28 changed test files. A TypeScript compiler program using `tsconfig.lint.json` plus both updated regression files reported zero diagnostics without executing modules; syntax parsing passed on all 28 changed test files. `npm run docs:verify` passed with 713 asserted paths, 262 index entries and zero findings. Focused Prettier, `git diff --check` and static compilation of the prepared acceptance driver passed. No LSP surface was exposed. Both native directions remain **unverified**. No tests, live acceptance, imports, provider turns, commits/hooks, PR, push or branch switches were run. The branch remains `provider-translation-layer`; the original guinea pig and provider homes were not modified.
+
+## Hardening log
+
+### 2026-10-16: Ensemble baseline
+
+Baseline executed on 2026-10-17 for [[ENSEMBLE-01]]. `command git fetch origin` succeeded. Branch `acappella` at `14ac0a4a3daf5cfdb73dc55033d7da12187364d3` matches `origin/acappella` and already contains `origin/rc` at `295ef6667656fdd773aaec0d12032f2933067220`; no fast-forward or merge was needed. `node_modules` is a real directory, so no reinstall was needed.
+
+The requested translation suite passed before any changes: **11 test files passed, 0 failed; 134 tests passed, 0 failed, 0 skipped**. Command:
+
+```bash
+env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE_CODE_SESSION_ID npx vitest run src/__tests__/shared/maestro-lib/translation-*.test.ts src/__tests__/main/provider-translation-service.test.ts src/__tests__/renderer/services/providerTranslation.test.ts
+```
+
+`rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` both exited 0. `npm run docs:verify` reported 1,393 asserted paths, 453 index entries and zero findings. Focused Prettier and `command git diff --check` passed.
+
+This is unit-test baseline evidence only. Native resume, context continuity and resource discovery remain unverified; no real provider homes were modified.
