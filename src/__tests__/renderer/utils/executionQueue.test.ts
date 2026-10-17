@@ -22,6 +22,7 @@ import {
 	dropConsultHold,
 	findQueuedMergeTarget,
 	mergeQueuedItemIntoPrevious,
+	applyReplayDispatch,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -613,6 +614,30 @@ describe('applyQueuedItemDispatchFailure', () => {
 // The re-authentication resume replays a snapshotted prompt. If the user
 // already re-sent that prompt by hand (which is what they do when the failed
 // turn is invisible), running both spends two turns on one question.
+describe('applyReplayDispatch', () => {
+	const busySession = () =>
+		createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+		} as Partial<Session>);
+
+	it('refuses a tab that is mid-turn', () => {
+		const result = applyReplayDispatch(busySession(), item('q1'));
+		expect(result.blocked).toBe('target-tab-busy');
+	});
+
+	it('resends onto a tab the caller itself marked busy for this turn', () => {
+		const result = applyReplayDispatch(busySession(), item('q1'), undefined, {
+			targetBusyIsOurs: true,
+		});
+		expect(result.blocked).toBeUndefined();
+		expect(result.session.aiTabs[0].state).toBe('busy');
+		expect(result.session.state).toBe('busy');
+	});
+});
+
 describe('isSameQueuedPrompt', () => {
 	const base: QueuedItem = { id: 'a', timestamp: 0, tabId: 'tab-1', type: 'message', text: 'hi' };
 

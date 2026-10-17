@@ -961,8 +961,11 @@ async function fireRetry(key: string): Promise<void> {
 		// Cast so TS does not narrow to `undefined`: the updater runs synchronously
 		// inside the store's `set`, which control-flow analysis cannot see.
 		let blocked = undefined as ReplayBlockedReason | undefined;
+		// A finished compaction left the tab busy on purpose (see
+		// `compactBeforeResend`), and its process is gone: that busy is this turn's.
+		const targetBusyIsOurs = !!useRetryStore.getState().retries[key]?.compaction?.compacted;
 		updateSessionWith(entry.sessionId, (session) => {
-			const result = applyReplayDispatch(session, item);
+			const result = applyReplayDispatch(session, item, undefined, { targetBusyIsOurs });
 			blocked = result.blocked;
 			return result.session;
 		});

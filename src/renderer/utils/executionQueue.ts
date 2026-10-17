@@ -1046,14 +1046,18 @@ export interface ReplayDispatchResult {
  *    tab does not apply: `processQueuedItem` refuses an item whose own tab is
  *    gone, so marking the active tab here left it busy with nothing behind it;
  *  - the tab is already mid-turn - a second spawn on one tab key makes the main
- *    process KILL the live one, so a replay must never race a running turn;
+ *    process KILL the live one, so a replay must never race a running turn.
+ *    `opts.targetBusyIsOurs` waives this when the caller itself marked the tab
+ *    busy for this same turn and no process holds it (a context compaction
+ *    keeps the tab busy across the summary, so the turn never reads idle);
  *  - the user has already re-sent this exact prompt, which is queued and will
  *    drain on its own.
  */
 export function applyReplayDispatch(
 	session: Session,
 	item: QueuedItem,
-	noteText?: string
+	noteText?: string,
+	opts: { targetBusyIsOurs?: boolean } = {}
 ): ReplayDispatchResult {
 	const duplicate = findQueuedDuplicate(session, item);
 	if (duplicate) return { session, blocked: 'already-queued' };
@@ -1066,7 +1070,9 @@ export function applyReplayDispatch(
 	const targetTab =
 		session.aiTabs.find((t) => t.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
-	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+	if (targetTab?.state === 'busy' && !opts.targetBusyIsOurs) {
+		return { session, blocked: 'target-tab-busy' };
+	}
 
 	const note: LogEntry | undefined = noteText
 		? { id: generateId(), timestamp: Date.now(), source: 'system', text: noteText }
