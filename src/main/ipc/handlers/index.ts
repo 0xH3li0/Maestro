@@ -62,6 +62,7 @@ import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerMaestroRunHandlers } from './maestroRun';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
+import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
@@ -71,6 +72,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
@@ -145,7 +147,7 @@ export { registerComputerHistoryHandlers };
 export { registerMaestroRunHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
-export { registerNotificationsHandlers };
+export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
@@ -156,6 +158,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerPluginsHandlers };
@@ -356,6 +359,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+	registerNotificationHistoryHandlers();
 	// Register notification handlers (OS notifications and TTS). The window
 	// registry getter lets a notification click focus the window that owns the
 	// completing agent rather than always the primary window (multi-window).
@@ -396,6 +400,11 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register Cue Backup handlers (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();

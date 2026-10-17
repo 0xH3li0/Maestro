@@ -469,13 +469,24 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 | Control           | Icon  | What it does                                                                                            |
 | ----------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| **Merge**         | ⑂     | Fold the message into the one above it, so both go out as a single message in the upper one's place     |
 | **Edit**          | ✏️    | Reopen the message to change its text or add, annotate, and remove image attachments before it's sent   |
 | **Copy**          | ⧉     | Copy the message text (or the command) to the clipboard                                                 |
 | **Hold / Resume** | ⏸ / ▶ | Hold a message so the queue skips over it, then resume it later. Held items show a **HELD** badge       |
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+
+### Merging queued messages
+
+Queued two messages that belong together? **Merge** folds a message into the one above it, so they go out as a single message.
+
+- **When it shows:** only when there is a message above to merge into, for the same tab. The first message on a tab never shows it. Neither does a message whose card above is a slash command, a message that starts with an `@mention` (another agent answers those), or a turn waiting on a consult.
+- **Confirmation:** a dialog shows both messages and asks you to confirm, because a merge cannot be undone. **Merge** has focus, so `Enter` accepts and `Esc` cancels.
+- **Result:** the upper message keeps its place in the queue, its hold state, and its model and effort. The lower message's text follows it as a new paragraph (one blank line between them), and its images are added after the upper message's.
+
+Merge is on the queued cards in the chat and in the [Execution Queue view](#execution-queue-view). Agents can do the same with `maestro-cli queue merge <item-id> --agent <id>`.
 
 ### Force Send
 
@@ -491,7 +502,7 @@ While a turn is running, a queued message for that tab can carry a **Steer** but
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
 
-A steered message is headed with the Steer button's arrow in the transcript, and the header says what the agent did with it. **Steering the running turn** shows while the agent has the text and has not yet acted on it. **Steered into the running turn**, with a check, means the turn took the message and changed course; the bubble is indented and joined by a line to the turn it steered. **Sent as a follow-up** means the agent could not fold the message in and runs it as a follow-up after the turn ends, so that bubble stands on its own. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the header.
+A steered message is headed with the Steer button's arrow in the transcript, and the header says what the agent did with it. **Steering the running turn** shows while the agent has the text and has not yet acted on it. **Steered into the running turn**, with a check, means the turn took the message and changed course; the bubble is indented and joined by a line to the turn it steered. **Sent as a follow-up** means the agent could not fold the message in and runs it as a follow-up after the turn ends, so that bubble stands on its own. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the header. The agent is told to answer each steer in its final reply, because the transcript keeps only that reply and drops what the agent writes between tool calls.
 
 Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
 
@@ -522,9 +533,9 @@ Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." 
 
 ### Execution Queue view
 
-Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
+Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (merge, edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
-The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Merge into Message Above, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry, and Merge appears only when an earlier message for the same tab is queued. Messages for different tabs of one agent sit in the same list here, so the message a card merges into can be further up than the card directly above it. The confirmation shows exactly which two messages will join.
 
 Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off; clicking it explains the block and links straight to that setting. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 
@@ -753,6 +764,37 @@ Configure a command to run automatically every time a terminal tab's shell is st
 
 > **SSH agents**: when the agent is configured to run on a remote host, the terminal tab also runs on that host, and the startup command executes remotely (the working directory must be a path on the remote machine).
 
+## Opening Links
+
+Clicking a web link in the AI Terminal, a Command Terminal, a file preview, or a user message opens it in the browser chosen under **Settings -> General -> Default Browser**: an in-app Maestro browser tab, or your system browser.
+
+| Gesture                    | Result                                                           |
+| -------------------------- | ---------------------------------------------------------------- |
+| Click                      | Opens in the default browser                                     |
+| `Cmd+Click` / `Ctrl+Click` | Opens in the other browser, for this link only                   |
+| Right-click                | Menu: Copy Link, Open in Maestro Browser, Open in System Browser |
+
+### Routing Hints
+
+To make one link always open in a specific browser, whatever the setting and whatever key is held, put a hint in front of its `http://` or `https://`:
+
+| Written as                      | Always opens in                           |
+| ------------------------------- | ----------------------------------------- |
+| `maestro+http://localhost:5173` | A Maestro browser tab in the active agent |
+| `system+https://github.com`     | The system browser                        |
+
+Maestro removes the hint before it opens the page, so the server never sees it, and **Copy Link** copies the address without it. This is useful for a script that prints a local dev-server URL into a terminal tab, or for an agent that links a preview in chat:
+
+```bash
+echo "Preview: maestro+http://localhost:5173"
+```
+
+```markdown
+[dev server](maestro+http://localhost:5173)
+```
+
+Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
+
 ## Agent Management
 
 Agents are the core of Maestro - each agent represents an AI coding assistant running in its own workspace.
@@ -922,6 +964,7 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Go to **Settings** (`Cmd+,` / `Ctrl+,`) → **General**
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
+- Toggle **Shorten long tab names** to cut a generated name longer than 40 characters at the last whole word (for example `Donation Appeal Pages Japanese...`). Default: off, which keeps the full name.
 
 **Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
 

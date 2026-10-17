@@ -2,20 +2,36 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildNotificationCommands } from '../../../../../renderer/components/QuickActionsModal/commands/notificationCommands';
 import type { ToastPosition } from '../../../../../shared/toastPosition';
 
-function harness(visibleToastCount: number, toastPosition: ToastPosition = 'bottom-right') {
+function harness(
+	visibleToastCount: number,
+	toastPosition: ToastPosition = 'bottom-right',
+	unreadNotificationCount = 0,
+	notificationCenterEnabled = true
+) {
 	const clearToasts = vi.fn();
+	const openNotificationCenter = notificationCenterEnabled ? vi.fn() : undefined;
 	const setToastPosition = vi.fn();
 	const setQuickActionOpen = vi.fn();
 	const actions = buildNotificationCommands({
 		visibleToastCount,
 		clearToasts,
+		unreadNotificationCount,
+		openNotificationCenter,
 		toastPosition,
 		setToastPosition,
 		setQuickActionOpen,
 	});
 	const clearAll = actions.find((a) => a.id === 'clear-all-notifications')!;
 	const positionActions = actions.filter((a) => a.id.startsWith('toast-position-'));
-	return { actions, clearAll, positionActions, clearToasts, setToastPosition, setQuickActionOpen };
+	return {
+		openNotificationCenter,
+		actions,
+		clearAll,
+		positionActions,
+		clearToasts,
+		setToastPosition,
+		setQuickActionOpen,
+	};
 }
 
 describe('buildNotificationCommands', () => {
@@ -91,5 +107,29 @@ describe('buildNotificationCommands', () => {
 				expect(action.label.toLowerCase()).toContain('notification');
 			}
 		});
+	});
+
+	it('opens the notification center and closes the palette', () => {
+		const { actions, openNotificationCenter, setQuickActionOpen } = harness(0, 'bottom-right', 3);
+		const open = actions.find((a) => a.id === 'open-notification-center')!;
+		expect(open.subtext).toBe('3 unread notifications');
+		open.action();
+		expect(openNotificationCenter).toHaveBeenCalledTimes(1);
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('drops Open Notification Center while its Encore Feature is off', () => {
+		const { actions } = harness(0, 'bottom-right', 3, false);
+		expect(actions.some((a) => a.id === 'open-notification-center')).toBe(false);
+		// The toast commands do not depend on the inbox.
+		expect(actions.some((a) => a.id === 'clear-all-notifications')).toBe(true);
+	});
+
+	it('says when nothing is unread, and singularizes a lone one', () => {
+		const subtext = (unread: number) =>
+			harness(0, 'bottom-right', unread).actions.find((a) => a.id === 'open-notification-center')!
+				.subtext;
+		expect(subtext(0)).toBe('No unread notifications');
+		expect(subtext(1)).toBe('1 unread notification');
 	});
 });

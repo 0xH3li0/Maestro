@@ -151,9 +151,25 @@ Restarting discovery does not disconnect an existing session; an actual network
 identity change still invalidates it. If a saved SSH forwarding port is occupied,
 Lite chooses another loopback port without disturbing the existing listener.
 
+Temporary network errors or HTTP 502/503/504 from a health check do not discard
+the current host view or its unsent draft. Connection status follows the actual
+WebSocket; expired or revoked credentials and incompatible host identities still
+fail closed. Turning off host access closes its connections; the disconnected
+view may retain a draft, but cannot execute work.
+
+If Lite cannot confirm the host's active-process state before a new AI send, it
+keeps the message and attachments as an unsent draft and reports **Message not
+submitted**. It does not create a client-only execution-queue entry or
+automatically send that draft after recovery. Reconnect, review host state, and
+explicitly send again. Messages already accepted by the host keep their existing
+queue and acknowledgement rules; ambiguous submissions are never replayed.
+
 A session whose owning window cannot answer bootstrap falls back to its saved
 metadata without hiding other sessions. Agent errors remain visible on remote
 clients; retries, History writes and other execution effects remain host-owned.
+Bootstrap reads only live browser/terminal inventory, not full conversations.
+Opening a conversation reads its canonical host transcript privately, without
+broadcasting the full response again to every connected client.
 
 New-agent creation flushes session changes immediately rather than waiting for
 other agents to stop streaming. If a save is already running, the creation flush
@@ -181,6 +197,9 @@ If the first agent read races host startup, use the visible **Retry** control.
 The failed read leaves saved agents untouched and keeps persistence disabled
 until loading succeeds. An uncertain submission must be checked on the host
 before it is submitted again.
+A received save rejection is reported without permanently blocking later saves.
+A save with a lost acknowledgement remains held until the host view is reloaded;
+the rejected or uncertain write is never automatically resent.
 
 A failed process start does not create a running capture. Host administration
 settings, including Encore feature controls, remain unavailable to browser/Lite

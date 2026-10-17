@@ -116,7 +116,7 @@ describe('reclaimOrphanedAutoRuns', () => {
 		start.mockReset();
 		useBatchStore.setState({ batchRunStates: {}, customPrompts: {} });
 		useSessionStore.setState({
-			sessions: [{ id: 'agent-1', name: 'Agent One' } as Session],
+			sessions: [{ id: 'agent-1', name: 'Agent One', aiTabs: [] } as Session],
 		});
 		useSettingsStore.setState({ autoRunDisabled: false });
 		vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([]);

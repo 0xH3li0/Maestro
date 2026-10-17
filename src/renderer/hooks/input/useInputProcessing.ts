@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import type {
 	Session,
 	SessionState,
@@ -8,7 +8,13 @@ import type {
 	BatchRunState,
 	AITab,
 } from '../../types';
-import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	getBusyTabs,
+	getTabDisplayName,
+	settleAgentStateFromTabs,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -27,6 +33,7 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import {
+	queuedMentionFields,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 	type CrossAgentMentionPlan,
@@ -50,6 +57,8 @@ import {
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { notifyToast } from '../../stores/notificationStore';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -289,6 +298,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onDispatchCrossAgentMentions,
 	} = deps;
 
+	const stagedImagesRef = useRef(stagedImages);
+	useLayoutEffect(() => {
+		stagedImagesRef.current = stagedImages;
+	}, [stagedImages]);
+
 	// Ref for the processInput function so external code can access the latest version
 	const processInputRef = useRef<
 		((overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>) | null
@@ -342,7 +356,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
-			let effectiveInputValue = overrideInputValue ?? getInputValue();
+			const inputValueAtSubmit = overrideInputValue ?? getInputValue();
+			let effectiveInputValue = inputValueAtSubmit;
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
@@ -673,14 +688,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// The AI path takes the draft out of the composer BEFORE its ownership
-			// probe rather than after, so a second Enter during the probe reads an
-			// empty box instead of the same text. `composerTaken` tells the exits
-			// past the probe the composer is already clear: clearing again there
-			// would wipe whatever the user typed while the probe was out. Nothing
-			// past the probe returns without sending or queuing the message (and
-			// the probe resolves on failure rather than rejecting), so the taken
-			// draft never needs putting back.
+			// Desktop owns its queue and takes the draft before probing. Remote
+			// clients keep it until readiness is known: a failed read cannot turn
+			// unsubmitted input into a local-only host queue item.
 			let composerTaken = false;
 			const clearComposer = () => {
 				setInputValue('');
@@ -688,26 +698,77 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				syncAiInputToSession('', syncTarget);
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			};
-			const clearComposerUnlessTaken = () => {
-				if (!composerTaken) clearComposer();
+			const canClearComposer = () => {
+				if (!isWebDesktop() || currentMode !== 'ai') return true;
+				const selected = selectActiveSession(useSessionStore.getState());
+				return (
+					selected?.id === activeSession.id &&
+					getActiveTab(selected)?.id === targetTabId &&
+					getInputValue() === inputValueAtSubmit &&
+					(usingOverrideImages || stagedImagesRef.current === submitted.images)
+				);
 			};
-			// The probe is the only await between Enter and the queue/send decision,
-			// and everything after it is synchronous, so the in-flight window is
-			// exactly the probe.
-			const probeForSubmit = async (tabId: string | undefined) => {
-				if (!isComposerSubmit) return probeSessionAiProcesses(activeSession.id, tabId);
-				const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
-				composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
-				try {
+			const clearComposerUnlessTaken = () => {
+				if (composerTaken) return;
+				if (canClearComposer()) {
 					clearComposer();
-					composerTaken = true;
-					return await probeSessionAiProcesses(activeSession.id, tabId);
+					return;
+				}
+				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
+				// Switching owners flushes the original draft. Clear only the submitted
+				// fields there, without cancelling or stamping the new owner's composer.
+				updateSessionWith(activeSession.id, (session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((tab) => {
+						if (tab.id !== targetTabId) return tab;
+						const clearText = tab.inputValue === inputValueAtSubmit;
+						const images = tab.stagedImages ?? [];
+						const clearImages =
+							!usingOverrideImages &&
+							images.length === submitted.images.length &&
+							images.every((image, index) => image === submitted.images[index]);
+						if (!clearText && !clearImages) return tab;
+						return {
+							...tab,
+							...(clearText ? { inputValue: '' } : {}),
+							...(clearImages ? { stagedImages: [] } : {}),
+						};
+					}),
+				}));
+			};
+			const probeForSubmit = async (tabId: string | undefined) => {
+				if (isComposerSubmit) {
+					const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
+					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
+				}
+				try {
+					if (isComposerSubmit && !isWebDesktop()) {
+						clearComposer();
+						composerTaken = true;
+					}
+					const state = await probeSessionAiProcesses(activeSession.id, tabId);
+					if (state.probeFailed && isWebDesktop()) {
+						notifyToast({
+							color: 'yellow',
+							title: 'Message not submitted',
+							message:
+								'Could not verify the host connection. Your draft was kept; reconnect and review host state before sending again.',
+							dismissible: true,
+							skipCustomNotification: true,
+							skipOsNotification: true,
+						});
+						requestWebBridgeReconcile();
+						return null;
+					}
+					return state;
 				} finally {
-					const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
-						(entry) => entry !== submitted
-					);
-					if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
-					else composerSubmitsInFlight.delete(inFlightKey);
+					if (isComposerSubmit) {
+						const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
+							(entry) => entry !== submitted
+						);
+						if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
+						else composerSubmitsInFlight.delete(inFlightKey);
+					}
 				}
 			};
 
@@ -813,6 +874,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// consult fired in that window is exactly the premature ping this
 					// whole path exists to prevent.
 					const mentionProbe = await probeForSubmit(mentionSourceTabId);
+					if (!mentionProbe) return;
 					const liveMentionSession =
 						useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
 						activeSession;
@@ -841,7 +903,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									? activeTab.agentSessionId.split('-')[0].toUpperCase()
 									: 'New'),
 							readOnlyMode: activeTab?.readOnlyMode === true,
-							crossAgentMention: true,
+							...queuedMentionFields(crossAgentMentionPlan),
 							crossAgentOnly: true,
 							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
@@ -949,6 +1011,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// process and discard its eventual response. A failed probe holds the
 				// message until bridge recovery can answer authoritatively.
 				const processState = await probeForSubmit(activeTab?.id);
+				if (!processState) return;
 				if (processState.probeFailed) {
 					logger.warn(
 						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
@@ -1100,7 +1163,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
-						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...queuedMentionFields(crossAgentMentionPlan),
 						...((processState.probeFailed || connectionHold) && {
 							waitingForConnection: true,
 						}),
@@ -1423,20 +1486,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
-			// An AI send already took the draft before its probe; clearing here again
-			// would wipe whatever the user typed while that probe was out.
-			if (!composerTaken) {
+			// Desktop already took an AI draft; remote clients clear only the
+			// submitted draft, not input typed or selected while readiness was pending.
+			if (currentMode === 'ai') {
+				clearComposerUnlessTaken();
+			} else {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
-
-				// Sync empty value to session state (prevents stale input restoration on blur)
-				if (isAiMode) {
-					syncAiInputToSession('', syncTarget);
-				} else {
-					syncTerminalInputToSession('');
-				}
-
-				// Reset height
+				syncTerminalInputToSession('');
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			}
 
@@ -1485,7 +1542,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
-				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				...queuedMentionFields(crossAgentMentionPlan),
 				turnSettings: captureQueuedTurnSettings(tab, session),
 			});
 
@@ -1663,28 +1720,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
 								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
-							// Reset target tab's state to 'idle' and add error log
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) =>
-											tab.id === errorTabId
-												? {
-														...tab,
-														state: 'idle' as const,
-														thinkingStartTime: undefined,
-														logs: [...tab.logs, errorLog],
-													}
-												: tab
-										)
-									: s.aiTabs;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-								executionQueue,
-							};
+							// Settle the target tab and add the error log; another tab
+							// mid-turn keeps the agent busy.
+							return settleTabThinkingState(
+								{
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === errorTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+									),
+									executionQueue,
+								},
+								errorTabId
+							);
 						});
 					}
 				})();
@@ -1693,10 +1740,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const trimmedCommand = capturedInputValue.trim();
 				if (trimmedCommand === 'clear') {
 					updateSessionWith(resolvedSessionId, (s) => ({
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
+						...settleAgentStateFromTabs(s),
 						shellLogs: [],
 					}));
 					return;
@@ -1724,10 +1768,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					.catch((error) => {
 						logger.error('Failed to run command:', undefined, error);
 						updateSessionWith(resolvedSessionId, (s) => ({
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
+							...settleAgentStateFromTabs(s),
 							// TODO: Remove shellLogs once terminal tabs migration is complete
 							...(!s.terminalTabs?.length && {
 								shellLogs: [
@@ -1752,29 +1793,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						source: 'system',
 						text: `Error: Failed to write to process - ${(error as Error).message}`,
 					};
-					updateSessionWith(resolvedSessionId, (s) => {
-						// Reset active tab's state to 'idle' and add error log
-						const updatedAiTabs =
-							s.aiTabs?.length > 0
-								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
-											? {
-													...tab,
-													state: 'idle' as const,
-													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLog],
-												}
-											: tab
-									)
-								: s.aiTabs;
-						return {
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs,
-						};
-					});
+					// Settle the active tab and add the error log; another tab mid-turn
+					// keeps the agent busy.
+					updateSessionWith(resolvedSessionId, (s) =>
+						settleTabThinkingState(
+							{
+								...s,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === s.activeTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+								),
+							},
+							s.activeTabId
+						)
+					);
 				});
 			}
 		},

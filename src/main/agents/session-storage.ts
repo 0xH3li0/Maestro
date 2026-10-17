@@ -16,6 +16,7 @@
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
+import type { TokenSpeedBucket } from '../../shared/tokenSpeed';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
@@ -72,6 +73,12 @@ export interface AgentSessionInfo {
 	 * dashboard. Absent means "not computed", not "no models".
 	 */
 	byModel?: ModelTokenUsage[];
+	/**
+	 * Per-API-call throughput, bucketed per local hour and model. Only storages
+	 * whose transcripts time each call (claude, codex) populate it; absent means
+	 * "not measurable", which the dashboard reports rather than counting as zero.
+	 */
+	speed?: TokenSpeedBucket[];
 	durationSeconds: number;
 	origin?: AgentSessionOrigin;
 	sessionName?: string;
@@ -118,6 +125,12 @@ export type SessionSearchMode = 'title' | 'user' | 'assistant' | 'all';
 export interface SessionListOptions {
 	cursor?: string;
 	limit?: number;
+	/**
+	 * The agent's account dir (`CLAUDE_CONFIG_DIR` and the like), from
+	 * `resolveAgentAccountDir`. Lists that account's transcript pool instead of
+	 * the provider default. Providers that keep no account dir ignore it.
+	 */
+	configDir?: string;
 }
 
 /**

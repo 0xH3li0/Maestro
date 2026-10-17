@@ -5,9 +5,12 @@
 //                    --stream-thinking, --max-wait, --first-byte-timeout,
 //                    --ready-timeout, --help, --version) and their values.
 //   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
-//                    (--output-format, --input-format, --verbose). Dropped
-//                    without a word when maestro-p honors them anyway
-//                    (`--verbose`, `--output-format stream-json`), with a
+//                    (--output-format, --input-format, --verbose, and the
+//                    --print-only --include-partial-messages and
+//                    --replay-user-messages). Dropped without a word when
+//                    maestro-p honors them anyway or loses nothing the TUI
+//                    could give (`--verbose`, `--output-format stream-json`,
+//                    the partial-message flags), with a
 //                    one-line stderr warning when it cannot.
 //   (c) passthrough - everything else, forwarded verbatim to the spawned
 //                    `claude` TUI.
@@ -121,7 +124,41 @@ const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
 // with `@path` image mentions; other values are stripped with a warning
 // (same as the legacy behavior for the rest of the headless-only flags).
 const STRIPPED_VALUE_FLAGS = new Set(['--output-format']);
-const STRIPPED_BOOLEAN_FLAGS = new Set(['--verbose']);
+// `--include-partial-messages` and `--replay-user-messages` are `--print`-only:
+// the TUI refuses to start with either ("--include-partial-messages requires
+// --print and --output-format=stream-json") and the turn dies as `tui_exited`
+// in a quarter second. Every wizard and the feedback conversation pass the
+// first one, so a Claude agent on TUI mode could not run any of them.
+const STRIPPED_BOOLEAN_FLAGS = new Set([
+	'--verbose',
+	'--include-partial-messages',
+	'--replay-user-messages',
+]);
+
+// Long flags that take one OR MORE values (`<tools...>` in `claude --help`).
+// Maestro spawns `--allowedTools Read Glob Grep LS`; under the one-value
+// heuristic `Glob` became the prompt and the real prompt after `--` fell into
+// passthrough. These consume every following token up to the next flag or `--`.
+const VARIADIC_CLAUDE_LONG_FLAGS = new Set([
+	'--add-dir',
+	'--allowedTools',
+	'--allowed-tools',
+	'--betas',
+	'--disallowedTools',
+	'--disallowed-tools',
+	'--file',
+	'--mcp-config',
+	'--tools',
+]);
+
+/**
+ * Whether an argv token is a flag rather than a value. `--` counts (it ends
+ * the options), as does any `--name` / `--name=value` token. A value that only
+ * starts with dashes (`--- frontmatter`, `-1`) does not.
+ */
+function isFlagToken(token: string): boolean {
+	return token === '--' || /^--[A-Za-z][A-Za-z0-9-]*(=|$)/.test(token);
+}
 
 // Long flags that claude treats as booleans - the parser must NOT swallow the
 // next argv slot when one of these appears. Out-of-date entries here only cause
@@ -400,13 +437,19 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		// Pass-through long flag. Apply the value-arity heuristic: assume the
-		// next argv slot is its value unless this is a known boolean.
+		// next argv slot is its value unless this is a known boolean, or the
+		// slot is itself a flag (an unknown boolean followed by another flag
+		// must not swallow it). Variadic flags take every value up to the next flag.
 		if (raw.startsWith('--')) {
 			passThroughArgs.push(raw);
 			const isKnownBoolean = KNOWN_CLAUDE_BOOLEAN_LONG_FLAGS.has(flag);
-			if (!isKnownBoolean && inlineValue === undefined && i + 1 < argv.length) {
-				i += 1;
-				passThroughArgs.push(argv[i]);
+			if (!isKnownBoolean && inlineValue === undefined) {
+				const isVariadic = VARIADIC_CLAUDE_LONG_FLAGS.has(flag);
+				while (i + 1 < argv.length && !isFlagToken(argv[i + 1])) {
+					i += 1;
+					passThroughArgs.push(argv[i]);
+					if (!isVariadic) break;
+				}
 			}
 			i += 1;
 			continue;

@@ -25,6 +25,7 @@
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
+ * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -62,7 +63,11 @@ import {
 	handleGetSessionHistory,
 } from './sessions';
 import { handleRefreshFileTree, handleGetFileTree } from './fileTree';
-import { handleNotifyToast, handleNotifyCenterFlash } from './notifications';
+import {
+	handleNotifyToast,
+	handleNotifyCenterFlash,
+	handleNotificationInbox,
+} from './notifications';
 import { handleCadenza } from './cadenza';
 import {
 	handleMovement,
@@ -109,6 +114,7 @@ import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
+import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -149,6 +155,7 @@ import {
 	handleStartGroupChat,
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
+	handleSteerGroupChat,
 	handleStopGroupChat,
 } from './groupChat';
 import {
@@ -166,6 +173,8 @@ import {
 	handleCuePipelineGet,
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
+	handleCueBundleExport,
+	handleCueBundleImport,
 } from './cue';
 import {
 	handleEnqueueCommand,
@@ -173,6 +182,7 @@ import {
 	handleRemoveQueueItem,
 	handleSteerQueueItem,
 	handleSetQueueItemPaused,
+	handleMergeQueueItem,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -183,6 +193,7 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetTokenUsage,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -336,6 +347,10 @@ export class WebSocketMessageHandler {
 				handleWindowCommand(this.ctx, client, message);
 				break;
 
+			case 'throughput_gauge_command':
+				handleThroughputGaugeCommand(this.ctx, client, message);
+				break;
+
 			case 'reorder_tab':
 				handleReorderTab(this.ctx, client, message);
 				break;
@@ -402,6 +417,10 @@ export class WebSocketMessageHandler {
 
 			case 'set_queue_item_paused':
 				handleSetQueueItemPaused(this.ctx, client, message);
+				break;
+
+			case 'merge_queue_item':
+				handleMergeQueueItem(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -576,6 +595,10 @@ export class WebSocketMessageHandler {
 				handleSendGroupChatMessage(this.ctx, client, message);
 				break;
 
+			case 'steer_group_chat':
+				handleSteerGroupChat(this.ctx, client, message);
+				break;
+
 			case 'stop_group_chat':
 				handleStopGroupChat(this.ctx, client, message);
 				break;
@@ -628,6 +651,14 @@ export class WebSocketMessageHandler {
 				handleCuePipelineRemove(this.ctx, client, message);
 				break;
 
+			case 'cue_bundle_export':
+				handleCueBundleExport(this.ctx, client, message);
+				break;
+
+			case 'cue_bundle_import':
+				handleCueBundleImport(this.ctx, client, message);
+				break;
+
 			case 'get_usage_dashboard':
 				handleGetUsageDashboard(this.ctx, client, message);
 				break;
@@ -638,6 +669,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_stats_aggregation':
 				handleGetStatsAggregation(this.ctx, client, message);
+				break;
+
+			case 'get_token_usage':
+				handleGetTokenUsage(this.ctx, client, message);
 				break;
 
 			case 'stats_query':
@@ -654,6 +689,10 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				handleTerminalResize(this.ctx, client, message);
+				break;
+
+			case 'notification_inbox':
+				void handleNotificationInbox(this.ctx, client, message);
 				break;
 
 			case 'notify_toast':

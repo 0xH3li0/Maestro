@@ -21,6 +21,7 @@ import {
 } from '../../shared/maestro-lib/providers/capabilities';
 import {
 	buildAgentLaunchPlan,
+	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import {
@@ -152,6 +153,7 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'requiredSecrets'
 	| 'globalEnvVars'
 	| 'agentConfigValues'
 	| 'agentCommand'
@@ -163,6 +165,8 @@ type SpawnOverrides = Pick<
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
 	| 'onProgress'
+	| 'onProcessStarted'
+	| 'maestroPMaxWaitSeconds'
 >;
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
@@ -342,6 +346,7 @@ function planCliLaunch(
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
+		requiredSecrets?: string[];
 	}
 ): AgentLaunchPlanResult {
 	const result = buildAgentLaunchPlan({
@@ -359,7 +364,14 @@ function planCliLaunch(
 		querySource: input.querySource,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
+		requiredSecrets: input.requiredSecrets,
 	});
+	// Names only, on stderr: stdout is the command's result. The turn still
+	// runs, and the agent reports its own auth error if it needed the secret.
+	if (result.ok) {
+		const warning = describeUndeliveredSecrets(def?.name ?? toolType, result.plan.secrets);
+		if (warning) console.error(`[maestro-cli] ${warning}`);
+	}
 	// Desktop-backed local turns use the same blank-unset, path expansion and
 	// environment layering as desktop spawns. The prompt still follows the CLI
 	// wire format, and standalone/remote launches keep their existing rules.
@@ -752,6 +764,7 @@ async function spawnClaudeAgent(
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -823,6 +836,7 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -855,6 +869,7 @@ async function spawnClaudeAgent(
 			customEnvVars: {},
 			execPath: packagedHost?.execPath,
 			resourcesPath: packagedHost?.resourcesPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -1038,6 +1053,7 @@ async function spawnClaudeAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onLine: processLine,
 			onOversizedLine: warnOversizedLineBuffer,
@@ -1270,6 +1286,7 @@ async function spawnJsonLineAgent(
 		isResuming: isResume,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1322,6 +1339,13 @@ async function spawnJsonLineAgent(
 	if (!parser) {
 		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
 	}
+	if (toolType === 'antigravity') {
+		// Registers agy's conversation-store reader with maestro-lib (see host.ts),
+		// so the run keeps its thinking text and command status. Loaded on demand:
+		// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
+		// reach through a static import (plain-node-imports.test.ts).
+		await import('../../main/parsers/antigravity-step-store');
+	}
 
 	// The shared capture applies the provider's usage rule (Codex reports a
 	// running session total that is turned into deltas before summing; everyone
@@ -1357,6 +1381,7 @@ async function spawnJsonLineAgent(
 			stdin: sshStdinScript || plan.stdin,
 		},
 		{
+			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
 			onEvent: (event) => {
 				if (stopped || overrides.signal?.aborted) {
@@ -1508,6 +1533,8 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
+	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
@@ -1528,6 +1555,12 @@ export interface SpawnAgentOptions {
 	globalEnvVars?: Record<string, string>;
 	agentConfigValues?: Record<string, unknown>;
 	agentCommand?: string;
+	/**
+	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
+	 * import). Resolved from systemd credentials, `/run/secrets` or the
+	 * environment and put in this agent's environment only.
+	 */
+	requiredSecrets?: string[];
 	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
@@ -1561,6 +1594,12 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * maestro-p idle cap (`--max-wait`) when the turn runs through the TUI.
+	 * Unset keeps maestro-p's 300s default; Auto Run passes its own inactivity
+	 * budget (see autoRunMaestroPMaxWaitSeconds) so a silent test run survives.
+	 */
+	maestroPMaxWaitSeconds?: number;
 	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
@@ -1628,16 +1667,19 @@ async function spawnAgentOnce(
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
 		onProgress: options?.onProgress,
+		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		requiredSecrets: options?.requiredSecrets,
 		globalEnvVars: options?.globalEnvVars,
 		agentConfigValues: options?.agentConfigValues,
 		agentCommand: options?.agentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

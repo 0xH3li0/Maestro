@@ -134,6 +134,53 @@ describe('parseArgs', () => {
 			expect(result.passThroughArgs).toEqual(['--model', 'opus']);
 			expect(result.prompt).toBe('what is 2+2?');
 		});
+
+		it('forwards every value of a variadic flag (--allowedTools a b c)', () => {
+			const result = callArgs(['--allowedTools', 'Read', 'Glob', 'Grep', '--', 'the prompt']);
+			expect(result.passThroughArgs).toEqual(['--allowedTools', 'Read', 'Glob', 'Grep']);
+			expect(result.prompt).toBe('the prompt');
+		});
+
+		it('does not let an unknown boolean swallow the next flag or the -- marker', () => {
+			const result = callArgs(['--fork-session', '--model', 'opus', '--no-color', '--', 'hi']);
+			expect(result.passThroughArgs).toEqual(['--fork-session', '--model', 'opus', '--no-color']);
+			expect(result.prompt).toBe('hi');
+		});
+
+		it('still takes a dash-led value that is not a flag (e.g. frontmatter)', () => {
+			const result = callArgs(['--append-system-prompt', '---\ntitle: x', '-p', 'hi']);
+			expect(result.passThroughArgs).toEqual(['--append-system-prompt', '---\ntitle: x']);
+		});
+
+		it('parses the wizard spawn line: real prompt, read-only tools, no print-only flags', () => {
+			const result = callArgs([
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--include-partial-messages',
+				'--allowedTools',
+				'Read',
+				'Glob',
+				'Grep',
+				'LS',
+				'--model',
+				'opus[1m]',
+				'--',
+				'Tell me about the project',
+			]);
+			expect(result.prompt).toBe('Tell me about the project');
+			expect(result.passThroughArgs).toEqual([
+				'--allowedTools',
+				'Read',
+				'Glob',
+				'Grep',
+				'LS',
+				'--model',
+				'opus[1m]',
+			]);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('stripped flags', () => {
@@ -176,6 +223,13 @@ describe('parseArgs', () => {
 		it('drops --verbose without a warning, since the output is already verbose-shaped', () => {
 			const result = callArgs(['--verbose', '-p', 'hi']);
 			expect(result.passThroughArgs).toEqual([]);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('drops the --print-only partial/replay flags the TUI refuses to start with', () => {
+			const result = callArgs(['--include-partial-messages', '--replay-user-messages', '-p', 'hi']);
+			expect(result.passThroughArgs).toEqual([]);
+			expect(result.prompt).toBe('hi');
 			expect(warnSpy).not.toHaveBeenCalled();
 		});
 

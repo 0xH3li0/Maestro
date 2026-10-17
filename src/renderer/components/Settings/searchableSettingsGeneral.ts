@@ -357,6 +357,25 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-shorten-tab-names',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Shorten long tab names',
+		description:
+			'Cut an automatic tab name longer than 40 characters at a word boundary, or keep the full name',
+		keywords: [
+			'tab',
+			'name',
+			'naming',
+			'long',
+			'shorten',
+			'truncate',
+			'title',
+			'length',
+			'ellipsis',
+		],
+	},
+	{
 		id: 'general-utility-agent',
 		tab: 'general',
 		tabLabel: 'General',

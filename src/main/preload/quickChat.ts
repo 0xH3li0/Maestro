@@ -13,6 +13,8 @@ import type {
 	QuickChatCommandResult,
 	QuickChatFontScaleRequest,
 	QuickChatLayout,
+	QuickChatRecent,
+	QuickChatRecentSummary,
 	QuickChatSnapshot,
 	QuickChatStatus,
 	QuickChatWindowAction,
@@ -56,6 +58,9 @@ export function createQuickChatApi() {
 		/** Step, set, or reset the conversation's text zoom. Resolves with the new zoom. */
 		setFontScale: (request: QuickChatFontScaleRequest): Promise<number> =>
 			ipcRenderer.invoke('quickChat:setFontScale', request),
+
+		/** The recent chats, newest first (the History button's list). */
+		getRecents: (): Promise<QuickChatRecentSummary[]> => ipcRenderer.invoke('quickChat:getRecents'),
 
 		/** Fired when the text zoom changes, including from `maestro-cli quick-chat font`. */
 		onFontScale: (callback: (fontScale: number) => void): (() => void) => {
@@ -104,6 +109,13 @@ export function createQuickChatApi() {
 			ipcRenderer.on('quickChat:command', handler);
 			return () => ipcRenderer.removeListener('quickChat:command', handler);
 		},
+
+		/** A recent chat in full, to bring it back; null when it is not in the list. */
+		getRecent: (id: string): Promise<QuickChatRecent | null> =>
+			ipcRenderer.invoke('quickChat:getRecent', id),
+
+		/** Remember the chat in progress in the recent chats list. */
+		saveRecent: (recent: QuickChatRecent): void => ipcRenderer.send('quickChat:saveRecent', recent),
 
 		/** Report the conversation's current state. */
 		pushSnapshot: (snapshot: QuickChatSnapshot): void =>

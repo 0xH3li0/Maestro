@@ -33,7 +33,11 @@ function makeApi(
 		setConfig: vi.fn(async (patch: Record<string, unknown>) => ({ ...config, ...patch })),
 		pause: vi.fn(async () => ({})),
 		resume: vi.fn(async () => ({})),
-		listRules: vi.fn(async () => ({ rules: [], builtIn: ['com.maestro.app'] })),
+		listRules: vi.fn(async () => ({
+			rules: [],
+			builtIn: ['com.maestro.app'],
+			builtInApps: [{ label: 'Maestro', category: 'maestro' }],
+		})),
 		addRule: vi.fn(async () => ({
 			rule: { id: 'r', match: 'app', value: 'com.apple.mobilesms' },
 			matches: [] as Array<{ id: string; name?: string }>,
@@ -77,6 +81,20 @@ describe('ComputerHistorySection', () => {
 		expect(await screen.findByText('Waiting for permission')).toBeTruthy();
 		fireEvent.click(await screen.findByText('Record visible window text'));
 		await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ snapshots: false }));
+	});
+
+	it('the status banner leads the panel and explains a missing recorder', async () => {
+		const api = makeApi('macos', null, 'granted');
+		const base = await api.status();
+		api.status.mockResolvedValue({ ...base, state: 'binary-missing' });
+		install(api);
+		render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByText('Recorder not installed')).toBeTruthy();
+		const banner = screen.getByTestId('computer-history-status-banner');
+		expect(banner.getAttribute('data-state')).toBe('binary-missing');
+		expect(banner.textContent).toContain('maestro-computer-history');
+		const panel = banner.parentElement!;
+		expect(panel.firstElementChild).toBe(banner);
 	});
 
 	it('macOS: the permission button asks the service to show the prompt', async () => {

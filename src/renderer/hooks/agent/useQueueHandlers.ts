@@ -6,6 +6,7 @@
  *   - Switch to a session that has queued items
  *   - Reorder queued items within a session
  *   - Force send a queued item out of turn
+ *   - Merge a queued message into the earlier message for its tab
  *
  * Reads from: sessionStore (setSessions, setActiveSessionId)
  */
@@ -18,7 +19,11 @@ import type { QueueSteerResult } from '../../../shared/chatSteering';
 import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
-import { sendQueuedItemNow } from '../../services/queuedPrompt';
+import {
+	mergeQueuedItemIntoAbove,
+	sendQueuedItemNow,
+	toggleQueuedItemPaused,
+} from '../../services/queuedPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -52,6 +57,8 @@ export interface UseQueueHandlersReturn {
 	 * getSteerEligibility.
 	 */
 	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<QueueSteerResult>;
+	/** Fold a queued message into the earlier message for its tab (Execution Queue browser) */
+	handleMergeQueueItem: (sessionId: string, itemId: string) => void;
 }
 
 // ============================================================================
@@ -115,17 +122,7 @@ export function useQueueHandlers({
 	);
 
 	const handleTogglePauseQueueItem = useCallback((sessionId: string, itemId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				return {
-					...s,
-					executionQueue: s.executionQueue.map((item) =>
-						item.id === itemId ? { ...item, paused: !item.paused } : item
-					),
-				};
-			})
-		);
+		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
 	const handleEditQueueItem = useCallback(
@@ -139,10 +136,18 @@ export function useQueueHandlers({
 			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
 			// spawning locally, and the reverse must stop spawning. Leaving
 			// `crossAgentOnly` behind silently discards half of what the user edited.
-			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			//
+			// A routing the user PICKED when queuing it survives the edit; the plan
+			// drops it only when the edit removes every mention.
+			const pickedRouting = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)
+				?.executionQueue.find((item) => item.id === itemId)?.mentionRouting;
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId, pickedRouting);
 			const crossAgent = {
 				crossAgentMention: !!mentionPlan,
 				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+				mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
 			};
 			setSessions((prev) =>
 				prev.map((s) =>
@@ -180,6 +185,12 @@ export function useQueueHandlers({
 		[]
 	);
 
+	// Merge: the same service the inline card's Merge button and
+	// `maestro-cli queue merge` reach, so the rules cannot differ by surface.
+	const handleMergeQueueItem = useCallback((sessionId: string, itemId: string) => {
+		mergeQueuedItemIntoAbove(sessionId, itemId);
+	}, []);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
@@ -188,5 +199,6 @@ export function useQueueHandlers({
 		handleEditQueueItem,
 		handleForceSendQueueItem,
 		handleSteerQueueItem,
+		handleMergeQueueItem,
 	};
 }

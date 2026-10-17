@@ -111,6 +111,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'computerHistory',
 			'quickChat',
 			'maestroRun',
+			'throughputGauge',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {

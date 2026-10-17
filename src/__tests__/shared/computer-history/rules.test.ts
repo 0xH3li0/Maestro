@@ -14,7 +14,11 @@ import {
 	normalizeRuleValue,
 	ruleIdFor,
 } from '../../../shared/computer-history/config';
-import { builtInBlockedApps } from '../../../shared/computer-history/exclusions';
+import {
+	builtInBlockedApps,
+	builtInExclusions,
+	isBuiltInBlockedApp,
+} from '../../../shared/computer-history/exclusions';
 import { parseDurationInput, parseTimeInput } from '../../../shared/computer-history/timeRange';
 import { resolveKindInput } from '../../../shared/computer-history/status';
 import type { CaptureRule, ObservedEvent } from '../../../shared/computer-history/types';
@@ -77,6 +81,20 @@ describe('dropReason', () => {
 		).toBe('private-window');
 		expect(isPrivateWindowTitle('InPrivate - Microsoft Edge')).toBe(true);
 		expect(isPrivateWindowTitle('Privacy policy')).toBe(false);
+	});
+
+	it('keeps private windows only when the user switched skipping off', () => {
+		const incognito = ev({ window: { title: 'New Incognito Tab - Google Chrome' } });
+		expect(dropReason(incognito, { rules, skipPrivateWindows: true })).toBe('private-window');
+		expect(dropReason(incognito, { rules, skipPrivateWindows: false })).toBeNull();
+	});
+
+	it('drops a built-in app by display name when its id is one we do not list', () => {
+		const authy = ev({ app: { id: 'com.example.authy-rebuild', name: 'Authy Desktop', pid: 1 } });
+		expect(dropReason(authy, { rules: [] })).toBe('built-in-app');
+		expect(dropReason(ev({ app: { id: 'x', name: 'coreautha', pid: 1 } }), { rules: [] })).toBe(
+			'built-in-app'
+		);
 	});
 
 	it('drops blocked domains and their subdomains only', () => {
@@ -210,6 +228,14 @@ describe('config', () => {
 		expect(normalizeConfig('garbage')).toEqual(defaultComputerHistoryConfig());
 	});
 
+	it('skips private windows unless the config says false, and patches the flag', () => {
+		expect(defaultComputerHistoryConfig().skipPrivateWindows).toBe(true);
+		expect(normalizeConfig({ skipPrivateWindows: 'no' }).skipPrivateWindows).toBe(true);
+		const off = applyConfigPatch(defaultComputerHistoryConfig(), { skipPrivateWindows: false });
+		expect(off.skipPrivateWindows).toBe(false);
+		expect(applyConfigPatch(off, { retentionDays: 30 }).skipPrivateWindows).toBe(false);
+	});
+
 	it('applyConfigPatch merges digests and clamps', () => {
 		const next = applyConfigPatch(defaultComputerHistoryConfig(), {
 			retentionDays: 30,
@@ -244,6 +270,26 @@ describe('exclusions, time parsing, kinds', () => {
 		expect(builtInBlockedApps('windows')).toContain('maestro.exe');
 		expect(builtInBlockedApps('linux')).toContain('maestro');
 		expect(builtInBlockedApps('linux')).toContain('seahorse');
+	});
+
+	it('built-ins carry display names to every platform, but ids stay ids', () => {
+		expect(builtInBlockedApps('windows')).toContain('1password');
+		expect(builtInBlockedApps('macos')).toContain('com.ledger.live');
+		// Names block only where the entry applies, so the list shows every block.
+		expect(builtInBlockedApps('linux')).not.toContain('dashlane');
+		expect(builtInExclusions('linux').map((e) => e.label)).not.toContain('Dashlane');
+		expect(builtInBlockedApps('linux')).toContain('ente auth');
+		// A Linux id that is a plain word does not block a same-named macOS app.
+		expect(isBuiltInBlockedApp({ id: 'com.example.sparrow', name: 'Sparrow' })).toBe(false);
+		expect(isBuiltInBlockedApp({ id: 'com.sparrowwallet.sparrow', name: 'S' })).toBe(true);
+	});
+
+	it('lists the built-ins that apply on a platform, by name and category', () => {
+		const mac = builtInExclusions('macos');
+		expect(mac).toContainEqual({ label: 'Keychain Access', category: 'password-manager' });
+		expect(mac).toContainEqual({ label: 'Ente Auth', category: 'authenticator' });
+		expect(mac.map((e) => e.label)).not.toContain('KDE Wallet');
+		expect(builtInExclusions('linux').map((e) => e.label)).toContain('KDE Wallet');
 	});
 
 	it('parses durations including weeks, ISO, and epoch', () => {

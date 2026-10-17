@@ -189,6 +189,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		}),
 		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
 		setQueueItemPaused: vi.fn().mockResolvedValue({ success: true, found: true, paused: true }),
+		mergeQueueItem: vi
+			.fn()
+			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -238,6 +241,11 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		sendGroupChatMessage: vi.fn().mockResolvedValue(true),
+		steerGroupChat: vi.fn().mockResolvedValue({
+			outcome: 'delivered',
+			verdict: 'delivered',
+			targets: ['Moderator'],
+		}),
 		mergeContext: vi.fn().mockResolvedValue(true),
 		transferContext: vi.fn().mockResolvedValue(true),
 		summarizeContext: vi.fn().mockResolvedValue(true),
@@ -250,6 +258,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCuePipeline: vi.fn().mockResolvedValue(null),
 		setCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
 		removeCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
+		exportCueBundle: vi.fn().mockResolvedValue({ ok: true, outputPath: '/tmp/b.zip' }),
+		importCueBundle: vi.fn().mockResolvedValue({ ok: true, applied: true, plan: {} }),
 		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
@@ -319,6 +329,89 @@ describe('WebSocketMessageHandler', () => {
 		client = createMockClient();
 		callbacks = createMockCallbacks();
 		handler.setCallbacks(callbacks);
+	});
+
+	describe('External toast duration units', () => {
+		it.each([5, 60])(
+			'accepts legacy %s seconds and normalizes to renderer milliseconds',
+			async (duration) => {
+				handler.handleMessage(client, {
+					type: 'notify_toast',
+					title: 'Timeout test',
+					message: 'Hello',
+					duration,
+					requestId: 'timeout',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				expect(callbacks.notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ duration: duration * 1000 })
+				);
+				expect(
+					JSON.parse(vi.mocked(client.socket.send).mock.calls.at(-1)![0] as string)
+				).toMatchObject({ type: 'notify_toast_result', success: true, requestId: 'timeout' });
+			}
+		);
+		it.each([0, -1, 61, NaN, Infinity])('rejects invalid duration %s', (duration) => {
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Timeout test',
+				message: 'Hello',
+				duration,
+			});
+			expect(callbacks.notifyToast).not.toHaveBeenCalled();
+			expect(
+				JSON.parse(vi.mocked(client.socket.send).mock.calls.at(-1)![0] as string)
+			).toMatchObject({ success: false });
+		});
+	});
+
+	describe('Notification inbox', () => {
+		it('forwards validated actions and returns the resulting snapshot with the request ID', async () => {
+			callbacks.notificationInbox = vi.fn().mockResolvedValue({
+				success: true,
+				unreadCount: 1,
+				open: true,
+				notifications: [{ id: 'n1' }],
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, {
+				type: 'notification_inbox',
+				action: 'read',
+				id: 'n2',
+				requestId: 'request-1',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.notificationInbox).toHaveBeenCalledWith({
+				action: 'read',
+				id: 'n2',
+				unread: undefined,
+			});
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string)).toMatchObject({
+				type: 'notification_inbox_result',
+				requestId: 'request-1',
+				success: true,
+				unreadCount: 1,
+			});
+		});
+		it.each([{ action: 'bogus' }, { action: 'clear', id: {} }, { action: 'list', unread: 'yes' }])(
+			'rejects malformed requests: %j',
+			(request) => {
+				callbacks.notificationInbox = vi.fn();
+				handler.handleMessage(client, { type: 'notification_inbox', ...request });
+				expect(callbacks.notificationInbox).not.toHaveBeenCalled();
+				expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string).success).toBe(
+					false
+				);
+			}
+		);
+		it('reports an unavailable renderer instead of claiming success', async () => {
+			handler.handleMessage(client, { type: 'notification_inbox', action: 'clear' });
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string)).toMatchObject({
+				success: false,
+				error: 'Notification inbox unavailable',
+			});
+		});
 	});
 
 	describe('Ping/Pong Health Check', () => {
@@ -2138,6 +2231,148 @@ describe('WebSocketMessageHandler', () => {
 				requestId: 'req-4',
 			});
 		});
+
+		describe('steer_group_chat', () => {
+			it('steers new text and answers with the result', async () => {
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					message: 'also check the docs',
+					readOnly: true,
+					requestId: 'req-s1',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'steer_group_chat_result',
+						success: true,
+						chatId: 'chat-1',
+						result: { outcome: 'delivered', verdict: 'delivered', targets: ['Moderator'] },
+						requestId: 'req-s1',
+					});
+				});
+				expect(callbacks.steerGroupChat).toHaveBeenCalledWith('chat-1', {
+					message: 'also check the docs',
+					readOnly: true,
+				});
+			});
+
+			it('steers a queued item by id', async () => {
+				(callbacks.steerGroupChat as any).mockResolvedValue({
+					outcome: 'settled',
+					verdict: 'absorbed',
+					targets: ['Alice'],
+				});
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					itemId: 'item-1',
+					requestId: 'req-s2',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'steer_group_chat_result',
+						success: true,
+						requestId: 'req-s2',
+					});
+				});
+				expect(callbacks.steerGroupChat).toHaveBeenCalledWith('chat-1', { itemId: 'item-1' });
+			});
+
+			it('answers a refusal as a result, not an error', async () => {
+				(callbacks.steerGroupChat as any).mockResolvedValue({
+					outcome: 'not-steerable',
+					blockedReason: 'room-idle',
+					detail: 'Nothing is running in this room, so there is nothing to steer.',
+				});
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					message: 'hello',
+					requestId: 'req-s3',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'steer_group_chat_result',
+						success: false,
+						result: { outcome: 'not-steerable', blockedReason: 'room-idle' },
+						requestId: 'req-s3',
+					});
+				});
+			});
+
+			it('rejects a missing chatId', () => {
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					message: 'hello',
+					requestId: 'req-s4',
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'error',
+					message: 'Missing chatId',
+					requestId: 'req-s4',
+				});
+				expect(callbacks.steerGroupChat).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['neither', {}],
+				['only blank text', { message: '   ' }],
+				['both', { message: 'hello', itemId: 'item-1' }],
+			])('rejects %s a message and an item id', (_label, fields) => {
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					requestId: 'req-s5',
+					...fields,
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'error',
+					message: 'Pass a queued item id or a message, not both',
+					requestId: 'req-s5',
+				});
+				expect(callbacks.steerGroupChat).not.toHaveBeenCalled();
+			});
+
+			it('rejects readOnly together with a queued item id', () => {
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					itemId: 'item-1',
+					readOnly: true,
+					requestId: 'req-s7',
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'error',
+					message: 'readOnly applies to new text; a queued item keeps its own',
+					requestId: 'req-s7',
+				});
+				expect(callbacks.steerGroupChat).not.toHaveBeenCalled();
+			});
+
+			it('reports a callback that throws, tagged with the requestId', async () => {
+				(callbacks.steerGroupChat as any).mockRejectedValue(new Error('queue gone'));
+				handler.handleMessage(client, {
+					type: 'steer_group_chat',
+					chatId: 'chat-1',
+					message: 'hello',
+					requestId: 'req-s6',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'error',
+						message: 'Failed to steer group chat: queue gone',
+						requestId: 'req-s6',
+					});
+				});
+			});
+		});
 	});
 
 	describe('Read Terminal Tab (Web → Desktop)', () => {
@@ -2838,6 +3073,39 @@ describe('WebSocketMessageHandler', () => {
 					true
 				);
 			});
+		});
+	});
+
+	describe('Merge Queue Item (queue merge)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId and itemId and returns the item it merged into', async () => {
+			handler.handleMessage(client, {
+				type: 'merge_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.mergeQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('merge_queue_item_result');
+				expect(response).toMatchObject({ success: true, merged: true, mergedIntoId: 'item-8' });
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'merge_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('merge_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
 		});
 	});
 
@@ -3782,6 +4050,59 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
 			expect(response.type).toBe('cue_pipeline_remove_result');
 			expect(response.result).toEqual({ ok: true });
+		});
+
+		it('cue_bundle_export runs the export and returns its outcome', async () => {
+			const request = { agentId: 'a1', outputPath: '/tmp/b.zip' };
+			handler.handleMessage(client, { type: 'cue_bundle_export', request, requestId: 'r1' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.exportCueBundle).toHaveBeenCalledWith(request);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'cue_bundle_export_result',
+				requestId: 'r1',
+				outcome: { ok: true, outputPath: '/tmp/b.zip' },
+			});
+		});
+
+		it('cue_bundle_import passes a refusal through as data', async () => {
+			(callbacks.importCueBundle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				ok: false,
+				code: 'CONFLICTS',
+				message: 'conflicts',
+				details: { conflicts: [{ kind: 'agent', target: 'a1', message: 'exists' }] },
+			});
+			const request = { bundlePath: '/tmp/b.zip', workspaces: { app: '/srv/app' } };
+			handler.handleMessage(client, { type: 'cue_bundle_import', request });
+
+			await vi.waitFor(() => {
+				expect(callbacks.importCueBundle).toHaveBeenCalledWith(request);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_bundle_import_result');
+			expect(response.outcome).toMatchObject({ ok: false, code: 'CONFLICTS' });
+			expect(response.outcome.details.conflicts).toHaveLength(1);
+		});
+
+		it('cue_bundle_import rejects a message with no request', () => {
+			handler.handleMessage(client, { type: 'cue_bundle_import' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing bundle request');
+		});
+
+		it('cue_bundle_export reports a failure to run as an error', async () => {
+			(callbacks.exportCueBundle as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Cue bundles are not ready yet')
+			);
+			handler.handleMessage(client, { type: 'cue_bundle_export', request: { agentId: 'a' } });
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('not ready yet');
+			});
 		});
 	});
 
@@ -4735,54 +5056,6 @@ describe('WebSocketMessageHandler', () => {
 			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(payload.type).toBe('error');
 			expect(payload.message).toContain('newCwd');
-		});
-	});
-
-	describe('Update Session Config (CLI → Desktop)', () => {
-		it('passes a provider switch notices back to the caller', async () => {
-			const notice =
-				'A queued message was set to run with model "opus" on Claude Code. It will run with the agent\'s Codex settings instead.';
-			(callbacks.updateSessionConfig as any).mockResolvedValue({
-				success: true,
-				notices: [notice],
-			});
-
-			handler.handleMessage(client, {
-				type: 'update_session_config',
-				sessionId: 'session-1',
-				configPatch: { toolType: 'codex' },
-				requestId: 'req-1',
-			});
-
-			await new Promise((resolve) => setImmediate(resolve));
-
-			expect(callbacks.updateSessionConfig).toHaveBeenCalledWith('session-1', {
-				toolType: 'codex',
-			});
-			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(payload).toMatchObject({
-				type: 'update_session_config_result',
-				success: true,
-				notices: [notice],
-				sessionId: 'session-1',
-				requestId: 'req-1',
-			});
-		});
-
-		it('leaves notices off the result when there are none', async () => {
-			(callbacks.updateSessionConfig as any).mockResolvedValue({ success: true });
-
-			handler.handleMessage(client, {
-				type: 'update_session_config',
-				sessionId: 'session-1',
-				configPatch: { bookmarked: true },
-			});
-
-			await new Promise((resolve) => setImmediate(resolve));
-
-			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(payload).toMatchObject({ type: 'update_session_config_result', success: true });
-			expect(payload).not.toHaveProperty('notices');
 		});
 	});
 

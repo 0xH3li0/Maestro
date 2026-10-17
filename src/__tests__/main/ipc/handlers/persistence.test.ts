@@ -9,6 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
+import {
+	configureImageStore,
+	__resetImageStoreCacheForTests,
+} from '../../../../main/storage/session-image-store';
 import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
@@ -923,9 +928,10 @@ describe('persistence IPC handlers', () => {
 					isDestroyed: () => false,
 					send: (
 						channel: string,
-						payload: { sessionId: string; tabId: string; requestId: string }
+						payload: { sessionId: string; tabId: string; requestId: string; metadataOnly?: boolean }
 					) => {
 						if (channel !== 'sessions:transcriptRequest' || payload.sessionId !== stored.id) return;
+						expect(payload.metadataOnly).toBe(true);
 						handlers.get('sessions:publishTranscript')!(
 							{ sender: { id: 1 } },
 							{
@@ -972,6 +978,12 @@ describe('persistence IPC handlers', () => {
 			const logs = [
 				{ id: 'owner-live-row', timestamp: 1, source: 'stdout', text: 'not yet debounced to disk' },
 			];
+			let requestId = '';
+			const peerSend = vi.fn();
+			const peer = {
+				isDestroyed: () => false,
+				webContents: { id: 2, isDestroyed: () => false, send: peerSend },
+			};
 			const win = {
 				isDestroyed: () => false,
 				webContents: {
@@ -982,6 +994,7 @@ describe('persistence IPC handlers', () => {
 						payload: { sessionId: string; tabId: string; requestId: string }
 					) => {
 						if (channel !== 'sessions:transcriptRequest') return;
+						requestId = payload.requestId;
 						handlers.get('sessions:publishTranscript')!(
 							{ sender: { id: 1 } },
 							{
@@ -992,6 +1005,12 @@ describe('persistence IPC handlers', () => {
 								removedIds: [],
 								orderIds: logs.map((row) => row.id),
 								snapshot: true,
+								runtime: {
+									state: 'idle',
+									agentError: { message: 'provider exited' },
+									agentErrorPaused: true,
+								},
+								clearRuntimeFields: ['thinkingStartTime'],
 							},
 							payload.requestId
 						);
@@ -999,7 +1018,10 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 			// Partial window fixture models the trusted native publication endpoint.
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win] as unknown as BrowserWindow[]);
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				win,
+				peer,
+			] as unknown as BrowserWindow[]);
 			try {
 				const content = await handlers.get('sessions:getDeferredContent')!(
 					{ type: 'bridge' },
@@ -1008,6 +1030,46 @@ describe('persistence IPC handlers', () => {
 					false
 				);
 				expect(content.logs).toEqual(logs);
+				expect(content.transcriptSnapshots).toEqual([
+					expect.objectContaining({
+						runtime: {
+							state: 'idle',
+							agentError: { message: 'provider exited' },
+							agentErrorPaused: true,
+						},
+						clearRuntimeFields: ['thinkingStartTime'],
+					}),
+				]);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
+				// A late duplicate remains private after its waiter has been resolved.
+				expect(
+					handlers.get('sessions:publishTranscript')!(
+						{ sender: { id: 1 } },
+						{
+							sessionId: 's1',
+							tabId: 't1',
+							field: 'logs',
+							upserts: logs,
+							removedIds: [],
+							orderIds: logs.map((row) => row.id),
+							snapshot: true,
+						},
+						requestId
+					)
+				).toBe(false);
+				expect(
+					peerSend.mock.calls.filter(([channel]) => channel === 'sessions:transcriptSync')
+				).toEqual([]);
+				expect(broadcastBridgeEvent).not.toHaveBeenCalledWith(
+					'sessions:transcriptSync',
+					expect.anything()
+				);
 				expect(mockSessionsStore.set).not.toHaveBeenCalled();
 			} finally {
 				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
@@ -2261,6 +2323,55 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 	describe('multi-client observed writes', () => {
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'clears a sent image whose baseline still holds it inline (%s)',
+			async (channel) => {
+				// The renderer keeps the pasted image as a data URL; disk holds its ref.
+				configureImageStore(path.join(os.tmpdir(), `maestro-image-store-${process.pid}`));
+				const pasted = 'data:image/png;base64,iVBORw0KGgo=';
+				const drafted = {
+					id: 'shared',
+					name: 'Agent',
+					toolType: 'claude-code',
+					cwd: '/host',
+					aiTabs: [{ id: 'one', logs: [], inputValue: 'look', stagedImages: [pasted] }],
+					executionQueue: [{ id: 'queued', type: 'message', text: 'look', images: [pasted] }],
+				};
+				let stored: StoredSession[] = [];
+				mockSessionsStore.get.mockImplementation((key) => (key === 'sessions' ? stored : ''));
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (key === 'sessions') stored = value;
+				});
+				const save = (sessions: unknown[], baselines: unknown[]) =>
+					channel === 'sessions:setMany'
+						? handlers.get(channel)!({}, sessions, [], baselines)
+						: handlers.get(channel)!({}, sessions, baselines);
+
+				try {
+					await save([drafted], []);
+					expect(stored[0].aiTabs[0].stagedImages?.[0]).toMatch(/^maestro-image:\/\//);
+
+					const sent = {
+						...drafted,
+						aiTabs: [
+							{
+								id: 'one',
+								logs: [{ id: 'user', text: 'look', images: [pasted] }],
+								inputValue: '',
+								stagedImages: [],
+							},
+						],
+						executionQueue: [],
+					};
+					await save([sent], [drafted]);
+
+					expect(stored[0].aiTabs[0].stagedImages).toEqual([]);
+					expect(stored[0].executionQueue).toEqual([]);
+				} finally {
+					__resetImageStoreCacheForTests();
+				}
+			}
+		);
 		it('broadcasts merged host state instead of stale fields from a remote save', async () => {
 			const baseline = {
 				id: 'shared',

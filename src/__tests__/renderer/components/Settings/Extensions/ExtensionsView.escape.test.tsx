@@ -27,6 +27,7 @@ import { LayerStackProvider } from '../../../../../renderer/contexts/LayerStackC
 import { useModalLayer } from '../../../../../renderer/hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../../../../renderer/constants/modalPriorities';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
+import type { EncoreTileRequest } from '../../../../../renderer/components/Settings/tabs/EncoreTab/types';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 const flags = (overrides: Partial<EncoreFeatureFlags> = {}): EncoreFeatureFlags => ({
@@ -83,16 +84,24 @@ vi.mock('../../../../../renderer/components/Settings/Extensions/ExtensionDetails
 }));
 
 /** Stand-in for the Settings modal that hosts the view. */
-function SettingsHost({ onEscape }: { onEscape: () => void }) {
+function SettingsHost({
+	onEscape,
+	tileRequest,
+}: {
+	onEscape: () => void;
+	tileRequest?: EncoreTileRequest | null;
+}) {
 	useModalLayer(MODAL_PRIORITIES.SETTINGS, 'Settings', onEscape);
-	return <ExtensionsView theme={mockTheme} />;
+	return <ExtensionsView theme={mockTheme} tileRequest={tileRequest} />;
 }
 
-function renderView(): { settingsEscape: ReturnType<typeof vi.fn> } {
+function renderView(tileRequest?: EncoreTileRequest | null): {
+	settingsEscape: ReturnType<typeof vi.fn>;
+} {
 	const settingsEscape = vi.fn();
 	render(
 		<LayerStackProvider>
-			<SettingsHost onEscape={settingsEscape} />
+			<SettingsHost onEscape={settingsEscape} tileRequest={tileRequest} />
 		</LayerStackProvider>
 	);
 	return { settingsEscape };
@@ -109,6 +118,33 @@ function openFirstTile(): void {
 }
 
 afterEach(cleanup);
+
+describe('ExtensionsView tile deep link', () => {
+	it('opens the requested tile instead of the grid, and Escape goes back to the grid', () => {
+		const { settingsEscape } = renderView({ flag: 'maestroCue' });
+		expect(screen.getByTestId('details-name').textContent).toBe(TILES[1].name);
+
+		pressEscape();
+		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
+		expect(settingsEscape).not.toHaveBeenCalled();
+	});
+
+	it('returns to the grid when the request is cleared (the user picked a tab)', () => {
+		const settingsEscape = vi.fn();
+		const { rerender } = render(
+			<LayerStackProvider>
+				<SettingsHost onEscape={settingsEscape} tileRequest={{ flag: 'maestroCue' }} />
+			</LayerStackProvider>
+		);
+		expect(screen.getByTestId('extension-details-stub')).toBeInTheDocument();
+		rerender(
+			<LayerStackProvider>
+				<SettingsHost onEscape={settingsEscape} tileRequest={null} />
+			</LayerStackProvider>
+		);
+		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
+	});
+});
 
 describe('ExtensionsView escape routing', () => {
 	it('lets Escape close Settings while the grid is showing', () => {

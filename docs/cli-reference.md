@@ -482,6 +482,14 @@ Resume a held queued item, like the Resume button on its queued card: it runs wh
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue merge <item-id>`
+
+Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli queue steer <item-id>`
 
 Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.
@@ -595,6 +603,63 @@ Bring a snoozed tab back right now (alias for "snooze wake")
 | `--focus`      | Accepted and ignored: a wake restores the tab without focusing it | -       |
 | `--json`       | Output as JSON                                                    | -       |
 
+## `maestro-cli throughput-gauge`
+
+Show, hide, configure, or read the Throughput Gauge (tokens per second)
+
+## `maestro-cli throughput-gauge show`
+
+Put the gauge on screen (does not move focus)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge hide`
+
+Take the gauge off screen
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge toggle`
+
+Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge set`
+
+Change one or more gauge settings, like the gear on the gauge
+
+| Option               | Description                                              | Default |
+| -------------------- | -------------------------------------------------------- | ------- |
+| `--scope <scope>`    | Whose output to count: all \| active                     | -       |
+| `--metric <metric>`  | Which reading to show: combined \| in \| out             | -       |
+| `--layout <layout>`  | One gauge or all three: single \| all                    | -       |
+| `--style <style>`    | How the reading is drawn: dial \| vu \| lcd \| sparkline | -       |
+| `--window <seconds>` | Rolling-average window in seconds: 5 \| 10 \| 30 \| 60   | -       |
+| `--json`             | Output the gauge status as JSON                          | -       |
+
+## `maestro-cli throughput-gauge reset-peak`
+
+Start the peak mark again from the current reading
+
+| Option   | Description                     | Default |
+| -------- | ------------------------------- | ------- |
+| `--json` | Output the gauge status as JSON | -       |
+
+## `maestro-cli throughput-gauge status`
+
+Read visibility, settings, live rates, and peaks
+
+| Option   | Description                                                        | Default |
+| -------- | ------------------------------------------------------------------ | ------- |
+| `--json` | Output as JSON (enabled, visible, settings, rates, peak, windowMs) | -       |
+
 ## `maestro-cli session`
 
 Inspect open desktop tabs and their conversation history
@@ -642,6 +707,17 @@ Send a message to a group chat (ID, ID prefix, or name); refused while busy
 | `--message-file <path>` | Read the message from a file   | -       |
 | `--json`                | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat steer <chat> [message]`
+
+Type a message into the round running in a group chat instead of waiting for it to end
+
+| Option                  | Description                                                   | Default |
+| ----------------------- | ------------------------------------------------------------- | ------- |
+| `--message-file <path>` | Read the message from a file                                  | -       |
+| `--item <queued-id>`    | Steer a message already in the chat queue (ids are in status) | -       |
+| `--read-only`           | Only steer new text when the running round is read-only       | -       |
+| `--json`                | Output as JSON (for scripting)                                | -       |
+
 ## `maestro-cli group-chat status <chat>`
 
 Show a group chat's state, participants, and latest messages
@@ -670,7 +746,7 @@ Stop a group chat's moderator and participants
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -978,13 +1054,14 @@ Interact with Maestro Cue automation
 
 ## `maestro-cli cue trigger <subscription-name>`
 
-Manually trigger a Cue subscription by name
+Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)
 
-| Option                   | Description                                       | Default |
-| ------------------------ | ------------------------------------------------- | ------- |
-| `-p, --prompt <text>`    | Override the subscription prompt with custom text | -       |
-| `--json`                 | Output as JSON (for scripting)                    | -       |
-| `--source-agent-id <id>` | Agent ID to pass as source context for write-back | -       |
+| Option                   | Description                                                                     | Default |
+| ------------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-p, --prompt <text>`    | Override the subscription prompt with custom text                               | -       |
+| `--json`                 | Output as JSON (for scripting)                                                  | -       |
+| `--source-agent-id <id>` | Agent ID to pass as source context for write-back                               | -       |
+| `--data-dir <path>`      | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue list`
 
@@ -998,15 +1075,16 @@ List all Cue subscriptions across agents
 
 Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
 
-| Option                     | Description                                               | Default |
-| -------------------------- | --------------------------------------------------------- | ------- |
-| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
-| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
-| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
-| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
-| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
-| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
-| `--json`                   | Output as JSON (for scripting)                            | -       |
+| Option                     | Description                                                                     | Default |
+| -------------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)                       | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)                             | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                                              | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)                                 | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model                           | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                                | -       |
+| `--json`                   | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>`        | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue enable <subscription>`
 
@@ -1030,11 +1108,12 @@ Turn a Cue subscription off without deleting it
 
 Show recent Cue runs, newest first
 
-| Option             | Description                        | Default |
-| ------------------ | ---------------------------------- | ------- |
-| `-a, --agent <id>` | Only runs for this agent           | -       |
-| `-n, --limit <n>`  | How many runs to show (default 20) | -       |
-| `--json`           | Output as JSON (for scripting)     | -       |
+| Option              | Description                                                                                                         | Default |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Only runs for this agent                                                                                            | -       |
+| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                  | -       |
+| `--json`            | Output as JSON (for scripting)                                                                                      | -       |
+| `--data-dir <path>` | Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default) | -       |
 
 ## `maestro-cli cue schedule`
 
@@ -1144,36 +1223,106 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 ## `maestro-cli cue engine start`
 
-Start the Cue engine in this process and block until Ctrl+C / stopped
+Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets
 
-| Option   | Description                                 | Default |
-| -------- | ------------------------------------------- | ------- |
-| `--json` | Print machine-readable start/failure status | -       |
+| Option                      | Description                                                                                                    | Default  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| `--json`                    | Print machine-readable start/failure status                                                                    | -        |
+| `--data-dir <path>`         | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                                | -        |
+| `--log-format <format>`     | Log line format: text, or one JSON object per line on stderr                                                   | `"text"` |
+| `--require-ready`           | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"         | -        |
+| `--status-port <port>`      | Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given        | -        |
+| `--drain-timeout <seconds>` | On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once | `90`     |
+| `--notify-webhook <url>`    | POST a JSON notice for every notify action and every expired agent login to this http(s) URL                   | -        |
+
+## `maestro-cli cue engine check`
+
+Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)
+
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine stop`
 
 Stop a running standalone engine (refuses to signal a desktop-owned one)
 
-| Option           | Description                                            | Default |
-| ---------------- | ------------------------------------------------------ | ------- |
-| `--json`         | Output as JSON (for scripting)                         | -       |
-| `--wait-ms <ms>` | How long to wait for the lock to clear after signaling | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
+| `--wait-ms <ms>`    | How long to wait for the lock to clear after signaling                          | -       |
 
 ## `maestro-cli cue engine status`
 
 Report whether an engine is running and its last known heartbeat
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine inspect`
 
 List every agent with a readable .maestro/cue.yaml and its subscription counts
 
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
+
+## `maestro-cli bundle`
+
+Export, validate, inspect, and import portable Cue pipeline and agent bundles
+
+## `maestro-cli bundle export`
+
+Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate
+
+| Option                     | Description                                                                               | Default |
+| -------------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                                             | -       |
+| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)                                         | -       |
+| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)                                    | -       |
+| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret                                   | -       |
+| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default                            | -       |
+| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time                                     | -       |
+| `--no-claude-skills`       | Leave out Claude Code skills (.claude/skills)                                             | -       |
+| `--no-claude-mcp`          | Leave out .mcp.json (exported with secrets as $\{VAR\} references)                        | -       |
+| `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted) | -       |
+| `--json`                   | Output as JSON (for scripting)                                                            | -       |
+
+## `maestro-cli bundle validate <bundle>`
+
+Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version
+
+| Option        | Description                                                                                                                                                        | Default |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--check-env` | Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings | -       |
+| `--json`      | Output as JSON (for scripting)                                                                                                                                     | -       |
+
+## `maestro-cli bundle inspect <bundle>`
+
+Describe a bundle from its manifest and README without unpacking the rest
+
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli bundle import <bundle>`
+
+Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write
+
+| Option                       | Description                                                                             | Default |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `-w, --workspace <key=path>` | Map a bundle workspace to its own local folder (repeatable, one per workspace)          | `[]`    |
+| `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)     | `[]`    |
+| `--data-dir <path>`          | Import into this Maestro data directory instead of the default                          | -       |
+| `--dry-run`                  | Report everything the import would do, including conflicts; write nothing               | -       |
+| `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths                | -       |
+| `--reject-shell-commands`    | Refuse the import, before anything is written, if any subscription runs a shell command | -       |
+| `--json`                     | Output as JSON (for scripting): one document, after the import                          | -       |
 
 ## `maestro-cli director-notes`
 
@@ -1755,7 +1904,7 @@ View and manage per-agent configuration
 
 ## `maestro-cli settings agent list [agent-id]`
 
-List agent configurations (all agents or a specific one)
+List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID
 
 | Option          | Description                           | Default |
 | --------------- | ------------------------------------- | ------- |
@@ -1764,7 +1913,7 @@ List agent configurations (all agents or a specific one)
 
 ## `maestro-cli settings agent get <agent-id> <key>`
 
-Get a single agent config value
+Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)
 
 | Option          | Description                             | Default |
 | --------------- | --------------------------------------- | ------- |
@@ -2011,15 +2160,16 @@ macOS: show the Accessibility prompt. Linux: turn on the desktop accessibility b
 
 Show settings, or change them with the flags below
 
-| Option                      | Description                                                        | Default |
-| --------------------------- | ------------------------------------------------------------------ | ------- |
-| `--retention-days <n>`      | Keep this many days (default 90)                                   | -       |
-| `--max-gb <n>`              | Keep at most this many GB (default 25)                             | -       |
-| `--snapshots <on\|off>`     | Record visible window text snapshots                               | -       |
-| `--digests <on\|off>`       | Have an agent write 15-minute digests (off by default)             | -       |
-| `--digest-agent <id>`       | Agent that writes digests (empty string clears it)                 | -       |
-| `--digest-rollup <on\|off>` | Also write 6-hour roll-ups from the 15-minute digests (default on) | -       |
-| `--json`                    | Output as JSON (for scripting)                                     | -       |
+| Option                             | Description                                                        | Default |
+| ---------------------------------- | ------------------------------------------------------------------ | ------- |
+| `--retention-days <n>`             | Keep this many days (default 90)                                   | -       |
+| `--max-gb <n>`                     | Keep at most this many GB (default 25)                             | -       |
+| `--snapshots <on\|off>`            | Record visible window text snapshots                               | -       |
+| `--skip-private-windows <on\|off>` | Never record private / incognito browser windows (default on)      | -       |
+| `--digests <on\|off>`              | Have an agent write 15-minute digests (off by default)             | -       |
+| `--digest-agent <id>`              | Agent that writes digests (empty string clears it)                 | -       |
+| `--digest-rollup <on\|off>`        | Also write 6-hour roll-ups from the 15-minute digests (default on) | -       |
+| `--json`                           | Output as JSON (for scripting)                                     | -       |
 
 ## `maestro-cli pianola`
 
@@ -2029,13 +2179,14 @@ Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
 
-| Option                 | Description                                                     | Default |
-| ---------------------- | --------------------------------------------------------------- | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)     | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)                         | -       |
-| `--dry-run`            | Classify and record decisions but never send a message          | -       |
-| `--once`               | Run a single iteration instead of looping                       | -       |
-| `--json`               | Reserved for scripting; affects the disabled-feature error only | -       |
+| Option                 | Description                                                                     | Default |
+| ---------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)                     | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                         | -       |
+| `--idle-hours <hours>` | Stop watching after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--dry-run`            | Classify and record decisions but never send a message                          | -       |
+| `--once`               | Run a single iteration instead of looping                                       | -       |
+| `--json`               | Reserved for scripting; affects the disabled-feature error only                 | -       |
 
 ## `maestro-cli pianola rules`
 
@@ -2155,11 +2306,12 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 Register a supervised tab watcher the desktop keeps alive
 
-| Option                 | Description                                | Default |
-| ---------------------- | ------------------------------------------ | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (required) | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)    | -       |
-| `--json`               | Output as JSON (for scripting)             | -       |
+| Option                 | Description                                                                          | Default |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (required)                                           | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                              | -       |
+| `--idle-hours <hours>` | Retire the watcher after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--json`               | Output as JSON (for scripting)                                                       | -       |
 
 ## `maestro-cli pianola supervise orchestrate <planId>`
 
@@ -2262,6 +2414,99 @@ Show a toast notification (queued, click X or icon to dismiss)
 | `--open-url <url>`        | On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)                                                                                                                    | -       |
 | `--json`                  | Output as JSON (for scripting)                                                                                                                                                                                                 | -       |
 
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox collapse`
+
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
 ## `maestro-cli notify flash <message>`
 
 Show a center-screen flash (momentary, exclusive - replaces any active flash)
@@ -2352,6 +2597,14 @@ Close the Quick Chat window; the conversation is kept
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat return`
+
+Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat toggle`
 
 Open the window, focus it, or close it (exactly what the hotkey does)
@@ -2368,13 +2621,14 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send <message>`
+## `maestro-cli quick-chat send [message...]`
 
-Send a message in the current Quick Chat (starts a chat if none is open)
+Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                  | Default |
+| ------------------- | ------------------------------------------------------------ | ------- |
+| `--image <path...>` | Image file(s) to send with the message (PNG, JPG, GIF, WebP) | -       |
+| `--json`            | Output as JSON (for scripting)                               | -       |
 
 ## `maestro-cli quick-chat new`
 
@@ -2442,7 +2696,23 @@ Open a tab of the chat in the main Maestro window: the tab a message went to, or
 
 ## `maestro-cli quick-chat new-tab [message-id]`
 
-Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
+Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat history`
+
+List the recent chats, newest first (what the window's History button shows)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat recall <chat>`
+
+Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2723,6 +2993,16 @@ Show aggregated Usage Dashboard metrics for a time range
 | --------------------- | ---------------------------------------------------------------- | ------- |
 | `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
 | `--json`              | Output the full aggregation object as JSON                       | -       |
+
+## `maestro-cli stats-tokens`
+
+Show token usage, cost, and tokens per second (average and peak) per provider and model
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
+| `--json`              | Output the full token usage object as JSON                       | -       |
 
 ## `maestro-cli stats-query <sql>`
 

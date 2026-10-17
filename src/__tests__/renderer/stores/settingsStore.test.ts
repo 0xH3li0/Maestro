@@ -126,6 +126,12 @@ function resetStore() {
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		notificationCenterEnabled: false,
+		notificationCenterLarge: false,
+		notificationCenterDetails: false,
+		notificationCenterKeyboardNavigation: false,
+		notificationHistoryQueuedReplies: false,
+		notificationHistoryAutoRunTasks: false,
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
@@ -163,6 +169,7 @@ function resetStore() {
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		automaticTabNamingEnabled: true,
+		shortenLongTabNames: false,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
@@ -177,6 +184,27 @@ function resetStore() {
 }
 
 describe('settingsStore', () => {
+	it.each([
+		['notificationCenterEnabled', 'setNotificationCenterEnabled'],
+		['notificationCenterLarge', 'setNotificationCenterLarge'],
+		['notificationCenterDetails', 'setNotificationCenterDetails'],
+		['notificationCenterKeyboardNavigation', 'setNotificationCenterKeyboardNavigation'],
+		['notificationHistoryQueuedReplies', 'setNotificationHistoryQueuedReplies'],
+		['notificationHistoryAutoRunTasks', 'setNotificationHistoryAutoRunTasks'],
+	] as const)('keeps %s opt-in and persists and restores it', async (key, setter) => {
+		expect(SETTINGS_METADATA[key].default).toBe(false);
+		expect(useSettingsStore.getInitialState()[key]).toBe(false);
+		useSettingsStore.getState()[setter](true);
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(key, true);
+		useSettingsStore.setState({ [key]: false });
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: true });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(true);
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ [key]: false });
+		await loadAllSettings();
+		expect(useSettingsStore.getState()[key]).toBe(false);
+	});
+
 	beforeEach(() => {
 		resetStore();
 
@@ -297,6 +325,7 @@ describe('settingsStore', () => {
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
+			expect(state.shortenLongTabNames).toBe(false);
 			expect(state.fileTabAutoRefreshEnabled).toBe(false);
 			expect(state.suppressWindowsWarning).toBe(false);
 			expect(state.directorNotesSettings).toEqual({
@@ -924,6 +953,12 @@ describe('settingsStore', () => {
 					'automaticTabNamingEnabled',
 					false
 				);
+			});
+
+			it('setShortenLongTabNames updates state and persists', () => {
+				useSettingsStore.getState().setShortenLongTabNames(true);
+				expect(useSettingsStore.getState().shortenLongTabNames).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shortenLongTabNames', true);
 			});
 
 			it('setFileTabAutoRefreshEnabled updates state and persists', () => {

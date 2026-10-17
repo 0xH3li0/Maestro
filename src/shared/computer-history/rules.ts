@@ -7,7 +7,7 @@
  * window, or a blocked domain still never gets it stored.
  */
 
-import { ALL_BUILT_IN_BLOCKED_APPS, PRIVATE_WINDOW_MARKERS } from './exclusions';
+import { isBuiltInBlockedApp, PRIVATE_WINDOW_MARKERS } from './exclusions';
 import { normalizeRuleValue } from './config';
 import type {
 	AppCaptureMode,
@@ -31,6 +31,8 @@ export interface RuleContext {
 	appMode?: AppCaptureMode;
 	/** Process ids that are never recorded (Maestro's own processes). */
 	blockPids?: readonly number[];
+	/** Defaults to true: only an explicit `false` lets private windows through. */
+	skipPrivateWindows?: boolean;
 }
 
 /** Values of the app rules carrying `action`, in rule order. */
@@ -75,8 +77,7 @@ export function hostMatchesDomain(host: string, domain: string): boolean {
 
 /** Why `event` must be dropped, or null when it may be stored. */
 export function dropReason(event: ObservedEvent, ctx: RuleContext): DropReason | null {
-	const appId = event.app?.id?.toLowerCase();
-	if (appId && ALL_BUILT_IN_BLOCKED_APPS.has(appId)) return 'built-in-app';
+	if (event.app && isBuiltInBlockedApp(event.app)) return 'built-in-app';
 	if (event.app && ctx.blockPids?.includes(event.app.pid)) return 'blocked-pid';
 	if (
 		event.app &&
@@ -99,7 +100,9 @@ export function dropReason(event: ObservedEvent, ctx: RuleContext): DropReason |
 	) {
 		return 'not-included';
 	}
-	if (isPrivateWindowTitle(event.window?.title)) return 'private-window';
+	if (ctx.skipPrivateWindows !== false && isPrivateWindowTitle(event.window?.title)) {
+		return 'private-window';
+	}
 	const host = urlHost(event.window?.url);
 	if (
 		host &&

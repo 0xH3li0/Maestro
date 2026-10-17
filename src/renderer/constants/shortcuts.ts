@@ -214,6 +214,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Show/Hide All Cadenzas',
 		keys: ['Alt', 'Meta', 'Shift', 'c'],
 	},
+	// T for Throughput (or tokens). Opt+Cmd+T is the Tab Switcher, so the gauge
+	// takes the Shift sibling, the same way Cadenzas sit beside Concerto.
+	toggleThroughputGauge: {
+		id: 'toggleThroughputGauge',
+		label: 'Show/Hide Throughput Gauge',
+		keys: ['Alt', 'Meta', 'Shift', 't'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
@@ -431,6 +438,11 @@ export const DEFAULT_SHORTCUTS = {
 	// Palette-only actions that had no keyboard route at all. Same reasoning:
 	// registered so they can be bound, unbound so nothing is claimed by default.
 	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	openNotificationCenter: {
+		id: 'openNotificationCenter',
+		label: 'Open Notification Center',
+		keys: [],
+	},
 	clearAllNotifications: {
 		id: 'clearAllNotifications',
 		label: 'Clear All Notifications',

@@ -25,6 +25,11 @@
  *   it knows the URL
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -108,6 +113,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -133,6 +139,7 @@ import type {
 	RemoveQueueItemCallback,
 	SteerQueueItemCallback,
 	SetQueueItemPausedCallback,
+	MergeQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -180,6 +187,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
 	MergeContextCallback,
@@ -213,6 +222,7 @@ import type {
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -617,6 +627,10 @@ export class WebServer {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
 
+	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {
+		this.callbackRegistry.setThroughputGaugeCommandCallback(callback);
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbackRegistry.setReorderTabCallback(callback);
 	}
@@ -631,6 +645,13 @@ export class WebServer {
 
 	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
 		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	/** Register the request-response bridge to the desktop history store. */
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbackRegistry.setNotificationInboxCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -718,6 +739,10 @@ export class WebServer {
 
 	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
 		this.callbackRegistry.setSetQueueItemPausedCallback(callback);
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbackRegistry.setMergeQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -905,6 +930,10 @@ export class WebServer {
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
+	}
+
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
 	setMergeContextCallback(callback: MergeContextCallback): void {
@@ -1315,6 +1344,8 @@ export class WebServer {
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
+			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
+				this.callbackRegistry.throughputGaugeCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
@@ -1322,6 +1353,7 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
+			notificationInbox: (request) => this.callbackRegistry.notificationInbox(request),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
@@ -1373,6 +1405,8 @@ export class WebServer {
 				this.callbackRegistry.steerQueueItem(sessionId, itemId),
 			setQueueItemPaused: async (sessionId: string, itemId: string, paused: boolean) =>
 				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
+			mergeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
@@ -1470,6 +1504,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
+			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
+				this.callbackRegistry.steerGroupChat(chatId, request),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
 				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
 			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
@@ -1515,6 +1551,22 @@ export class WebServer {
 			removeCuePipeline: async (identifier: string) => {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
+			},
+			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// the app context its IPC handlers own (live agents, renderer hand-off).
+			exportCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { exportBundleFromApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return exportBundleFromApp(ctx, request);
+			},
+			importCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { importBundleIntoApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return importBundleIntoApp(ctx, request);
 			},
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),

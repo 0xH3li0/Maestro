@@ -13,14 +13,11 @@
  * `feedback subscribe <n>` adds to the existing issue instead.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { runGhLogin } from '../services/gh-login';
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
-import { resolveCliPath } from '../utils/parse';
-import { getImageMimeType } from '../../shared/gitUtils';
-import { formatSize } from '../../shared/formatters';
+import { readCliImageFile } from '../utils/imageFiles';
 import {
 	FEEDBACK_CATEGORY_ALIASES,
 	MAX_FEEDBACK_ATTACHMENTS,
@@ -50,9 +47,6 @@ import {
 const SUBMIT_TIMEOUT_MS = 180_000;
 /** Search fans out several `gh search` calls in parallel. */
 const GH_TIMEOUT_MS = 60_000;
-
-/** Extensions the modal's drop zone advertises. */
-const ATTACHMENT_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 
 interface JsonOption {
 	json?: boolean;
@@ -85,6 +79,7 @@ function fail(message: string, options: JsonOption, code: ExitCode, extra?: obje
 }
 
 function failFromError(error: unknown, options: JsonOption): never {
+	exitIfMaestroNotRunning(error, options);
 	const message = error instanceof Error ? error.message : String(error);
 	return fail(message, options, exitCodeForError(error));
 }
@@ -100,29 +95,7 @@ export function readAttachments(paths: string[]): FeedbackAttachmentPayload[] {
 			`At most ${MAX_FEEDBACK_ATTACHMENTS} screenshots can be attached (got ${paths.length}).`
 		);
 	}
-	return paths.map((input) => {
-		const filePath = resolveCliPath(input);
-		const ext = path.extname(filePath).slice(1).toLowerCase();
-		if (!ATTACHMENT_EXTENSIONS.has(ext)) {
-			throw new Error(`${input}: screenshots must be PNG, JPG, GIF, or WebP.`);
-		}
-		let size: number;
-		try {
-			size = fs.statSync(filePath).size;
-		} catch {
-			throw new Error(`${input}: file not found.`);
-		}
-		if (size > MAX_FEEDBACK_ATTACHMENT_BYTES) {
-			throw new Error(
-				`${input}: ${formatSize(size)} exceeds the ${formatSize(MAX_FEEDBACK_ATTACHMENT_BYTES)} limit.`
-			);
-		}
-		const base64 = fs.readFileSync(filePath).toString('base64');
-		return {
-			name: path.basename(filePath),
-			dataUrl: `data:${getImageMimeType(ext)};base64,${base64}`,
-		};
-	});
+	return paths.map((input) => readCliImageFile(input, MAX_FEEDBACK_ATTACHMENT_BYTES));
 }
 
 function printIssues(issues: FeedbackIssueMatch[]): void {

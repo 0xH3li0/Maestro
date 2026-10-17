@@ -16,15 +16,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 
 // Mock the yaml loader
 const mockLoadCueConfig = vi.fn<(projectRoot: string) => CueConfig | null>();
-type DetailedResult =
-	| { ok: true; config: CueConfig; warnings: string[] }
-	| { ok: false; reason: 'missing' }
-	| { ok: false; reason: 'parse-error'; message: string }
-	| { ok: false; reason: 'invalid'; errors: string[] };
-const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => DetailedResult>();
+const mockLoadCueConfigDetailed = vi.fn<(projectRoot: string) => LoadCueConfigDetailedResult>();
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: (...args: unknown[]) => mockLoadCueConfig(args[0] as string),
@@ -3255,7 +3251,7 @@ describe('CueEngine', () => {
 		// loadCueConfigDetailed().warnings, which session-runtime-service forwards to
 		// the logger. These tests inject the warning directly via the detailed mock to
 		// verify the integration path: loader warnings → engine logger.
-		it('logs warning when prompt_file is set but prompt is empty', () => {
+		it('logs a structured health warning when prompt_file is set but prompt is empty', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -3267,19 +3263,24 @@ describe('CueEngine', () => {
 					},
 				],
 			});
+			const warning =
+				'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger';
 			mockLoadCueConfigDetailed.mockReturnValue({
 				ok: true,
 				config,
-				warnings: [
-					'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger',
-				],
+				warnings: [warning],
+				healthWarnings: [{ warningIndex: 0 }],
 			});
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('prompt_file'));
-			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('missing.md'));
+			const message = `[CUE] ${warning}`;
+			expect(deps.onLog).toHaveBeenCalledWith('warn', message, {
+				type: 'triggerHealthWarning',
+				sessionId: 'session-1',
+				message,
+			});
 
 			engine.stop();
 		});

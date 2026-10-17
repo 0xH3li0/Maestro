@@ -121,9 +121,10 @@ applies to them.
 
 - Keystrokes. Text comes from a field's settled value, never a key log.
 - Password and other secure fields.
-- Private / incognito browser windows.
-- Password managers (1Password, Bitwarden, Dashlane, LastPass, KeePassXC,
-  Keychain Access, Windows Credential Manager, Seahorse, KWallet) and Maestro.
+- Private / incognito browser windows, unless the user switched that off
+  (\`skipPrivateWindows: false\` in \`config.json\`).
+- Password managers, authenticators, crypto wallets, system password prompts,
+  and Maestro (\`maestro-cli computer-history rules list\` names them).
 - Apps and domains the user excluded with rules (see \`config.json\`). With
   \`appMode: "include"\`, every app NOT on the user's record-only list
   (\`rules\` with \`action: "record"\`) is excluded too, so a gap in the

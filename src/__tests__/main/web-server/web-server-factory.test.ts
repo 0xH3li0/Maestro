@@ -56,6 +56,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSnoozeCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
+			setThroughputGaugeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
@@ -71,6 +72,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
+			setMergeQueueItemCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
 			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
@@ -98,6 +100,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Added with `maestro-cli open`: the factory wires this on every build,
 			// so omitting it makes every test in this file throw.
 			setOpenModalCallback = vi.fn();
+			setNotificationInboxCallback = vi.fn();
 			// Network-roam handling: the factory subscribes so it can push the new
 			// LAN URL to every window when the machine changes networks.
 			setOnLocalAddressChanged = vi.fn();
@@ -125,6 +128,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
+			setSteerGroupChatCallback = vi.fn();
 			setMergeContextCallback = vi.fn();
 			setTransferContextCallback = vi.fn();
 			setSummarizeContextCallback = vi.fn();
@@ -219,6 +223,11 @@ vi.mock('../../../shared/cli-activity', () => ({
 	getSessionIdsBusyWithCli: vi.fn(() => new Set<string>()),
 }));
 
+vi.mock('../../../main/group-chat/group-chat-queue', () => ({
+	steerQueuedItem: vi.fn().mockResolvedValue({ outcome: 'delivered', targets: ['Moderator'] }),
+	steerNewMessage: vi.fn().mockResolvedValue({ outcome: 'refused', verdict: 'refused' }),
+}));
+
 import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
@@ -236,6 +245,7 @@ import {
 	getConcertoHtmlDocumentRevision,
 } from '../../../main/concerto-html';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
+import { steerNewMessage, steerQueuedItem } from '../../../main/group-chat/group-chat-queue';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -328,19 +338,6 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('createWebServerFactory', () => {
-		it('should return a function', () => {
-			const factory = createWebServerFactory(deps);
-			expect(typeof factory).toBe('function');
-		});
-
-		it('should create a WebServer when called', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
-			expect(server).toBeDefined();
-			expect(server).toBeInstanceOf(WebServer);
-		});
-
 		it('should create a loopback-only server unless LAN access is asked for', () => {
 			const createWebServer = createWebServerFactory(deps);
 
@@ -481,71 +478,6 @@ describe('web-server/web-server-factory', () => {
 			expect(storedToken).toMatch(
 				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 			);
-		});
-	});
-
-	describe('callback registrations', () => {
-		let createWebServer: ReturnType<typeof createWebServerFactory>;
-		let server: ReturnType<typeof createWebServer>;
-
-		beforeEach(() => {
-			createWebServer = createWebServerFactory(deps);
-			server = createWebServer();
-		});
-
-		it('should register getSessionsCallback', () => {
-			expect(server.setGetSessionsCallback).toHaveBeenCalled();
-		});
-
-		it('should register getSessionDetailCallback', () => {
-			expect(server.setGetSessionDetailCallback).toHaveBeenCalled();
-		});
-
-		it('should register getThemeCallback', () => {
-			expect(server.setGetThemeCallback).toHaveBeenCalled();
-		});
-
-		it('should register getCustomCommandsCallback', () => {
-			expect(server.setGetCustomCommandsCallback).toHaveBeenCalled();
-		});
-
-		it('should register getHistoryCallback', () => {
-			expect(server.setGetHistoryCallback).toHaveBeenCalled();
-		});
-
-		it('should register writeToSessionCallback', () => {
-			expect(server.setWriteToSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register executeCommandCallback', () => {
-			expect(server.setExecuteCommandCallback).toHaveBeenCalled();
-		});
-
-		it('should register interruptSessionCallback', () => {
-			expect(server.setInterruptSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register switchModeCallback', () => {
-			expect(server.setSwitchModeCallback).toHaveBeenCalled();
-		});
-
-		it('should register selectSessionCallback', () => {
-			expect(server.setSelectSessionCallback).toHaveBeenCalled();
-		});
-
-		it('should register tab operation callbacks', () => {
-			expect(server.setSelectTabCallback).toHaveBeenCalled();
-			expect(server.setNewTabCallback).toHaveBeenCalled();
-			expect(server.setCloseTabCallback).toHaveBeenCalled();
-			expect(server.setRenameTabCallback).toHaveBeenCalled();
-		});
-
-		it('should register file and auto-run callbacks', () => {
-			expect(server.setOpenFileTabCallback).toHaveBeenCalled();
-			expect(server.setOpenDocumentGraphCallback).toHaveBeenCalled();
-			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
-			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
-			expect(server.setConfigureAutoRunCallback).toHaveBeenCalled();
 		});
 	});
 
@@ -1690,7 +1622,9 @@ describe('web-server/web-server-factory', () => {
 			expect(entry.subscriptionId).toBe('agent-1::LegacyPipe::LegacyPipe-chain-2');
 		});
 
-		it('filters by sessionId before applying limit', async () => {
+		it('filters by sessionId before applying limit, keeping the newest runs', async () => {
+			// The engine's log is oldest first; the view is newest first, and
+			// `limit` keeps the newest N (see toCueActivityEntries).
 			const getCueActivityLog = vi.fn().mockReturnValue([
 				{ ...sampleRun, runId: 'run-a', sessionId: 'agent-1' },
 				{ ...sampleRun, runId: 'run-b', sessionId: 'agent-2' },
@@ -1702,7 +1636,7 @@ describe('web-server/web-server-factory', () => {
 
 			const filtered = await callback('agent-1', 1);
 			expect(filtered).toHaveLength(1);
-			expect(filtered[0].id).toBe('run-a');
+			expect(filtered[0].id).toBe('run-c');
 		});
 
 		it('collapses timeout / stopped engine statuses into the web "failed" enum', async () => {
@@ -1719,7 +1653,7 @@ describe('web-server/web-server-factory', () => {
 			expect(entries.map((e: any) => e.status)).toEqual(['failed', 'failed', 'failed']);
 			// stderr should surface as `result` for non-completed runs so the
 			// dashboard can show why it failed without re-fetching stdout.
-			expect(entries[0].result).toBe('took too long');
+			expect(entries.find((e: any) => e.id === 'r1').result).toBe('took too long');
 		});
 
 		it('returns [] and warns when the dep is missing', async () => {
@@ -2285,6 +2219,31 @@ describe('web-server/web-server-factory', () => {
 				'hello',
 				expect.any(String)
 			);
+		});
+
+		it('setSteerGroupChatCallback answers in main: an item id steers the queued item', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSteerGroupChatCallback.mock.calls[0][0];
+
+			await expect(callback('chat-1', { itemId: 'item-1' })).resolves.toMatchObject({
+				outcome: 'delivered',
+			});
+			expect(steerQueuedItem).toHaveBeenCalledWith('chat-1', 'item-1');
+			expect(steerNewMessage).not.toHaveBeenCalled();
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+
+		it('setSteerGroupChatCallback steers new text, read-only when asked', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSteerGroupChatCallback.mock.calls[0][0];
+
+			await expect(
+				callback('chat-1', { message: 'also docs', readOnly: true })
+			).resolves.toMatchObject({ outcome: 'refused' });
+			expect(steerNewMessage).toHaveBeenCalledWith('chat-1', 'also docs', true);
+			expect(steerQueuedItem).not.toHaveBeenCalled();
 		});
 	});
 

@@ -48,6 +48,14 @@ describe('encoreShortcuts', () => {
 		expect(Object.keys(availableShortcuts(all, ALL_ON))).toEqual(Object.keys(all));
 	});
 
+	it('lists the Throughput Gauge toggle only while its feature is on', () => {
+		expect(availableShortcuts(DEFAULT_SHORTCUTS, ALL_OFF).toggleThroughputGauge).toBeUndefined();
+		expect(
+			availableShortcuts(DEFAULT_SHORTCUTS, { ...ALL_OFF, throughputGauge: true })
+				.toggleThroughputGauge
+		).toBe(DEFAULT_SHORTCUTS.toggleThroughputGauge);
+	});
+
 	it('treats a missing flag map as everything off', () => {
 		expect(isShortcutAvailable('openCue', undefined)).toBe(false);
 		expect(isShortcutAvailable('quickAction', undefined)).toBe(true);

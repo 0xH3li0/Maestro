@@ -544,6 +544,57 @@ describe('SessionList', () => {
 	});
 
 	// ============================================================================
+	// Notification Center bell (notificationCenterEnabled setting)
+	// ============================================================================
+
+	describe('Notification Center bell', () => {
+		const setNotificationCenter = (on: boolean) =>
+			useSettingsStore.setState({ notificationCenterEnabled: on });
+
+		afterEach(() => setNotificationCenter(false));
+
+		it('is absent while the setting is off', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			setNotificationCenter(false);
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.queryByTestId('notification-center-button')).not.toBeInTheDocument();
+		});
+
+		it('sits in the indicator band while the setting is on', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
+			setNotificationCenter(true);
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const band = screen.getByTestId('sidebar-header-indicators');
+			expect(within(band).getByTestId('notification-center-button')).toBeInTheDocument();
+		});
+
+		it('is on the collapsed rail too', () => {
+			useUIStore.setState({ leftSidebarOpen: false });
+			setNotificationCenter(true);
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.getByTestId('notification-center-button')).toBeInTheDocument();
+		});
+
+		it('charges its width against the wordmark first', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 300 });
+			setNotificationCenter(false);
+			const { unmount } = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+			unmount();
+
+			setNotificationCenter(true);
+			render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			expect(screen.getByTestId('notification-center-button')).toBeInTheDocument();
+		});
+	});
+
+	// ============================================================================
 	// LIVE Mode Tests
 	// ============================================================================
 

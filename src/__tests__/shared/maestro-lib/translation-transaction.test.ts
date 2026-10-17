@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	mkdtemp,
 	readFile,
@@ -30,6 +30,8 @@ import {
 	translationArtifact,
 	translationHash,
 } from '../../../shared/maestro-lib/translation/identity';
+
+afterEach(() => vi.restoreAllMocks());
 
 async function scenario() {
 	const root = await mkdtemp(path.join(os.tmpdir(), 'maestro-translation-'));

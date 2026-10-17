@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import React from 'react';
+import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
+import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -636,6 +638,16 @@ const mockMaestro = {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
+	cueBundle: {
+		export: vi.fn().mockResolvedValue({ ok: false, code: 'EXPORT_FAILED', message: 'not mocked' }),
+		chooseFile: vi.fn().mockResolvedValue(null),
+		inspect: vi
+			.fn()
+			.mockResolvedValue({ ok: false, code: 'BUNDLE_UNREADABLE', message: 'not mocked' }),
+		import: vi.fn().mockResolvedValue({ ok: false, code: 'WRITE_FAILED', message: 'not mocked' }),
+		onApplyAgents: vi.fn().mockReturnValue(() => {}),
+		sendApplyAgentsResponse: vi.fn(),
+	},
 	shells: {
 		detect: vi.fn().mockResolvedValue([]),
 	},
@@ -678,6 +690,7 @@ const mockMaestro = {
 				bySessionByDay: {},
 				bySource: { user: 0, auto: 0 },
 			},
+			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
 			generatedAtMs: 0,
 		}),
@@ -892,6 +905,9 @@ const mockMaestro = {
 		getFontScale: vi.fn().mockResolvedValue(1),
 		setFontScale: vi.fn().mockResolvedValue(1),
 		onFontScale: vi.fn(() => () => {}),
+		getRecents: vi.fn().mockResolvedValue([]),
+		getRecent: vi.fn().mockResolvedValue(null),
+		saveRecent: vi.fn(),
 		onSnapshot: vi.fn(() => () => {}),
 		onFocusInput: vi.fn(() => () => {}),
 		onCommand: vi.fn(() => () => {}),
@@ -915,3 +931,10 @@ if (typeof window !== 'undefined') {
 		value: mockMaestro,
 	});
 }
+
+// `useCachedResource` keeps results at module scope so a remounted surface
+// renders instantly. Within one test file that would hand one test's fetched
+// data to the next, so every test starts from an empty cache.
+afterEach(() => {
+	clearCachedResources();
+});

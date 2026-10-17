@@ -15,6 +15,7 @@
  *    is encoded as named functions in `./internal/helpers/exit*.ts`.
  */
 
+import { subscribeHeadlessActivity } from '../../stores/headlessActivityStore';
 import { useEffect, useRef } from 'react';
 import type { ToolProgressState, UseAgentListenersDeps } from './internal/types';
 import { useAgentSlashCommandsListener } from './internal/useAgentSlashCommandsListener';
@@ -97,6 +98,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		batchedUpdater: deps.batchedUpdater,
 		activeHiddenToolRef,
 	});
+	useEffect(subscribeHeadlessActivity, []);
 	useAgentThinkingListener();
 	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();

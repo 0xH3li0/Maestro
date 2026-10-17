@@ -1,3 +1,5 @@
+import { NotificationCenterHost } from './NotificationCenter';
+import { useSettingsStore } from '../stores/settingsStore';
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -238,6 +240,7 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	// Ends a performance capture before its trace buffer overflows. Lives here
 	// because it has to be mounted for the whole life of the app - a recording
 	// runs with the command palette closed.
@@ -319,6 +322,7 @@ function AppStandaloneModalsInner({
 	return (
 		<>
 			<HostFolderPicker theme={theme} />
+			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal
 				theme={theme}

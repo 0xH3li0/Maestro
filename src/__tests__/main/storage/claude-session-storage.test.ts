@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs/promises';
+import path from 'path';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import { captureException } from '../../../main/utils/sentry';
 import { listDirWithStatsRemote } from '../../../main/utils/remote-fs';
@@ -59,6 +60,13 @@ vi.mock('fs/promises', () => {
 	};
 	return { default: fsMock, ...fsMock };
 });
+
+// Account dirs the storage falls back to when a transcript is not in the default
+// account. Empty unless a test names some.
+const mockAccountDirs = vi.fn(async (): Promise<string[]> => []);
+vi.mock('../../../main/agents/provider-account-dirs', () => ({
+	getProviderAccountDirs: () => mockAccountDirs(),
+}));
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
@@ -461,6 +469,25 @@ describe('ClaudeSessionStorage', () => {
 			storage.registerSessionOrigin('/project', 'session-1', 'user');
 
 			expect(mockStore.set).toHaveBeenCalledWith('origins', expect.any(Object));
+		});
+	});
+
+	describe('readSessionMessages - account lookup', () => {
+		it("reads a transcript from another account's dir when the default has none", async () => {
+			const workDir = path.join(path.sep, 'home', '.claude-work');
+			const expected = path.join(workDir, 'projects', '-project', 'session-9.jsonl');
+			mockAccountDirs.mockResolvedValueOnce([path.join(path.sep, 'home', '.claude'), workDir]);
+			vi.mocked(fs.access).mockImplementation(async (file) => {
+				if (String(file) !== expected) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({ type: 'user', message: { content: 'hi' } }) as never
+			);
+
+			const result = await storage.readSessionMessages('/project', 'session-9');
+
+			expect(fs.readFile).toHaveBeenCalledWith(expected, 'utf-8');
+			expect(result.messages).toHaveLength(1);
 		});
 	});
 

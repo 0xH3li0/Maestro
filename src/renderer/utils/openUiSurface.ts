@@ -13,7 +13,8 @@ import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
-import { notifyToast } from '../stores/notificationStore';
+import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
+import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
@@ -50,6 +51,18 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const actions = getModalActions();
 
 	switch (surface.id) {
+		case 'notification-center': {
+			// Switched off, there is no inbox to open. Say so rather than opening
+			// nothing, and never flip the setting on the user's behalf.
+			if (!useSettingsStore.getState().notificationCenterEnabled) {
+				const message =
+					'The notification center is off. Turn it on in Settings → Notifications → Notification center.';
+				notifyToast({ color: 'yellow', title: 'Notification Center is off', message });
+				return { ok: false, error: message };
+			}
+			useNotificationStore.getState().setNotificationCenterOpen(true);
+			return { ok: true };
+		}
 		case 'settings':
 			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
 			return { ok: true };
@@ -74,6 +87,11 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			void quickChat.window('show');
 			return { ok: true };
 		}
+		case 'throughput-gauge':
+			// A floating card, not a modal: show it through its own store. Showing
+			// never moves focus, so the user keeps typing where they were.
+			useThroughputGaugeStore.getState().show();
+			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');
 			return { ok: true };

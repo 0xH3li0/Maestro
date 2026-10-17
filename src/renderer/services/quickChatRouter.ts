@@ -300,6 +300,7 @@ export async function reopenClosedConversation(
 		const created = createTab(s, {
 			agentSessionId,
 			logs: resumable.messages,
+			origin: resumable.origin,
 			name: resumable.name,
 			starred: resumable.starred,
 			usageStats: resumable.usageStats,

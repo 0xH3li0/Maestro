@@ -1,3 +1,7 @@
+import { dispatchToastClickAction } from '../../services/toastClickActions';
+import { jumpToAgent } from '../../services/agentNavigation';
+import { startNotificationHistorySync } from '../../stores/notificationStore';
+import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
@@ -15,6 +19,7 @@ import {
 	focusAiTabInSession,
 	reopenClosedAiTabById,
 	hasActiveWizard,
+	syncAgentStateToTabs,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
@@ -22,11 +27,14 @@ import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
 	setQueuedItemPaused,
+	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
@@ -626,6 +634,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...updatedSession,
 							unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
 						};
+						// The snapshot carries tab states only; derive the agent's from them
+						// so its Left Bar dot and Thinking pill agree with the tabs it draws.
+						updatedSession = syncAgentStateToTabs(updatedSession);
 					}
 
 					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
@@ -1336,6 +1347,28 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "merge queue item" from the CLI (`queue merge`). Same merge
+		// the queued card's Merge button runs.
+		const unsubscribeMergeQueueItem = window.maestro.process.onRemoteMergeQueueItem?.(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					const mergedIntoId = mergeQueuedItemIntoAbove(sessionId, itemId);
+					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
+						success: true,
+						merged: mergedIntoId !== null,
+						...(mergedIntoId ? { mergedIntoId } : {}),
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteMergeQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
+						success: false,
+						merged: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
 		// steerQueuedItem() the Steer button does, so the queue removal and the later
 		// re-queue on a `dropped` verdict happen exactly as they do for a click.
@@ -1377,6 +1410,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRemoveQueueItem();
 			unsubscribeSteerQueueItem?.();
 			unsubscribeSetQueueItemPaused?.();
+			unsubscribeMergeQueueItem?.();
 		};
 	}, [
 		sessionsRef,
@@ -1385,6 +1419,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		defaultSaveToHistory,
 		defaultShowThinking,
 	]);
+
+	// Handle a remote Throughput Gauge verb (`maestro-cli throughput-gauge`). Main
+	// sends it to the primary window, which owns the live rates; the service
+	// calls the same store actions as the hotkey, palette, menu, and popover.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteThroughputGaugeCommand(
+			(request, responseChannel) => {
+				const reply = (result: ThroughputGaugeCommandResult) =>
+					window.maestro.process.sendRemoteThroughputGaugeCommandResponse(responseChannel, result);
+				runRemoteThroughputGaugeCommand(request).then(reply, (error: unknown) => {
+					// Expected failures (feature off, bad patch, disk refused the write)
+					// come back as a result; a rejection is a defect, so Sentry sees it.
+					logger.error('[useRemoteIntegration] Throughput Gauge command failed', undefined, error);
+					captureException(error, {
+						extra: { context: 'remoteThroughputGaugeCommand', action: request.action },
+					});
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
 
 	// Handle remote open file tab from web/CLI interface
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
@@ -1412,6 +1473,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribe();
 		};
 	}, []);
+
+	useEffect(() => startNotificationHistorySync(), []);
+	useEffect(
+		() =>
+			window.maestro.notification.onActivateAction?.((action) => {
+				return dispatchToastClickAction(action, {
+					onSessionClick: (sessionId, tabId) => jumpToAgent(sessionId, { tabId }),
+				});
+			}),
+		[]
+	);
+
+	useEffect(
+		() => window.maestro.process.onRemoteNotificationInbox?.(performNotificationInboxAction),
+		[]
+	);
 
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
 	// The main process has already validated the surface and tab, so this is a
@@ -1511,7 +1588,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				color,
 				title,
 				message,
-				duration: duration !== undefined ? duration * 1000 : undefined,
+				duration,
 				dismissible,
 				sessionId,
 				tabId,

@@ -24,7 +24,11 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { calculateModelCost } from '../../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../../shared/claudeSessionUsage';
 import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
@@ -32,6 +36,7 @@ import {
 	GlobalStatsCache,
 	CachedSessionStats,
 	GLOBAL_STATS_CACHE_VERSION,
+	rescaleArchivedEntries,
 } from '../../utils/statsCache';
 import type {
 	AgentSessionInfo,
@@ -59,6 +64,8 @@ import {
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
+import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
+import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -126,20 +133,19 @@ interface SessionFileInfo {
 }
 
 /**
- * Parse a Claude Code session file and extract stats
+ * Parse a Claude Code session file and extract stats. Usage and cost include the
+ * session's subagent transcripts, which Claude Code keeps in separate files.
  */
 function parseClaudeSessionContent(
 	content: string,
-	sizeBytes: number
+	sizeBytes: number,
+	subagentContents: readonly string[]
 ): Omit<CachedSessionStats, 'fileMtimeMs'> {
-	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-
 	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		computeClaudeUsageCost(content);
+		computeClaudeUsageWithSubagents(content, subagentContents);
 
 	return {
-		messages: userMessageCount + assistantMessageCount,
+		messages: countClaudeTranscriptMessages(content),
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -403,7 +409,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			async (
 				agentId: string,
 				projectPath: string,
-				options?: SessionListOptions,
+				options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 				sshRemoteId?: string
 			): Promise<PaginatedSessionsResult> => {
 				const storage = getSessionStorage(agentId);
@@ -415,7 +421,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				// Get SSH config if provided
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 
-				const result = await storage.listSessionsPaginated(projectPath, options, sshConfig);
+				// List the pool of the account this agent actually runs under: its
+				// provider only resumes sessions from that config dir.
+				const listOptions: SessionListOptions = {
+					cursor: options?.cursor,
+					limit: options?.limit,
+					configDir: options?.ownerAgentId
+						? resolveAgentAccountDir(options.ownerAgentId)
+						: undefined,
+				};
+				const result = await storage.listSessionsPaginated(projectPath, listOptions, sshConfig);
 				logger.info(
 					`Listed paginated sessions for agent ${agentId}: ${result.sessions.length} of ${result.totalCount}${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
@@ -987,8 +1002,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				safeSend('agentSessions:globalStatsUpdate', stats);
 			};
 
-			// Load existing cache or create new one
+			// Load existing cache or create new one. An older-but-compatible cache
+			// holds Claude entries from an earlier parser: every live Claude session
+			// is re-parsed and the archived ones rescaled once that is done.
 			let cache = await loadGlobalStatsCache();
+			const claudeDerivationStale = !!cache && cache.version < GLOBAL_STATS_CACHE_VERSION;
 			if (!cache) {
 				cache = {
 					version: GLOBAL_STATS_CACHE_VERSION,
@@ -1038,10 +1056,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			}
 
+			// Snapshot taken before re-parsing replaces any entry, so the upgrade
+			// below can measure how far the fix moved the live sessions.
+			const claudeSessionsBefore = claudeDerivationStale
+				? { ...cache.providers['claude-code'].sessions }
+				: null;
+
 			// Find sessions that need processing (new or modified)
 			const claudeToProcess = claudeFiles.filter((f) => {
 				const cached = cache!.providers['claude-code'].sessions[f.sessionKey];
-				return !cached || cached.fileMtimeMs < f.mtimeMs;
+				return claudeDerivationStale || !cached || cached.fileMtimeMs < f.mtimeMs;
 			});
 			const codexToProcess = codexFiles.filter((f) => {
 				const cached = cache!.providers['codex'].sessions[f.sessionKey];
@@ -1076,7 +1100,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						const content = await fs.readFile(file.filePath, 'utf-8');
 						const stats =
 							provider === 'claude-code'
-								? parseClaudeSessionContent(content, file.sizeBytes)
+								? parseClaudeSessionContent(
+										content,
+										file.sizeBytes,
+										await readClaudeSubagentTranscripts(file.filePath)
+									)
 								: parseCodexSessionContent(content, file.sizeBytes);
 
 						cache.providers[provider].sessions[file.sessionKey] = {
@@ -1118,7 +1146,24 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			);
 
+			if (claudeSessionsBefore) {
+				rescaleArchivedEntries(
+					cache.providers['claude-code'].sessions,
+					claudeSessionsBefore,
+					[
+						'inputTokens',
+						'outputTokens',
+						'cacheReadTokens',
+						'cacheCreationTokens',
+						'costUsd',
+						'messages',
+					],
+					['costUsd']
+				);
+			}
+
 			// Update cache timestamp and save
+			cache.version = GLOBAL_STATS_CACHE_VERSION;
 			cache.lastUpdated = Date.now();
 			await saveGlobalStatsCache(cache);
 

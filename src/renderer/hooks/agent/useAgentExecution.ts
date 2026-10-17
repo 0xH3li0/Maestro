@@ -1,5 +1,8 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import {
+	autoRunMaestroPMaxWaitSeconds,
+	getClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
 import {
 	getActiveTab,
@@ -668,12 +671,24 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
+							// Forward the agent's Claude token source (TUI / Dynamic / API). The
+							// spawn handler reads the persisted record first; this is the
+							// fallback, same as the synopsis spawn below.
+							...getClaudeTokenSourceFields(session),
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							// Origin of the turn. Auto Run is the one dispatcher that reaches
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							// The agent's TUI setting resolves server-side from the
+							// `{sessionId}-batch-` process id. What main cannot know is the
+							// idle budget: maestro-p's own 300s default would kill a silent
+							// test run long before the Auto Run watchdog above, so hand it
+							// that watchdog's budget (or a day when the watchdog is off).
+							maestroPMaxWaitSeconds: isBatchProcess
+								? autoRunMaestroPMaxWaitSeconds(useSettingsStore.getState())
+								: undefined,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -781,6 +796,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let responseText = '';
 					let synopsisUsageStats: UsageStats | undefined;
 					let lastSynopsisUsageEvent: UsageStats | undefined;
+					// The provider's own reason, when it failed on stderr. A CLI that
+					// refuses before it starts (Codex: "thread already has an active
+					// writer") prints nothing to stdout, and the agent error is the only
+					// place its words survive. The tab's error listener ignores synopsis
+					// ids, so this is the one consumer.
+					let synopsisAgentError: string | undefined;
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
@@ -812,6 +833,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
 								agentSessionId = capturedId;
+							}
+						})
+					);
+
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string, error) => {
+							if (sid === targetSessionId && error?.message) {
+								synopsisAgentError = error.message;
 							}
 						})
 					);
@@ -852,7 +881,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										resumeAgentSessionId,
 										prompt,
 										toolType,
-										sessionConfig
+										sessionConfig,
+										options
 									).then(resolve);
 									return;
 								}
@@ -881,7 +911,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									contextUsage: ctx,
 									...(failed
 										? {
-												error: stripAnsiCodes(responseText).trim() || `exit code ${code}`,
+												error:
+													stripAnsiCodes(responseText).trim() ||
+													synopsisAgentError ||
+													`exit code ${code}`,
 												errorKind: 'process-exit' as const,
 											}
 										: {}),

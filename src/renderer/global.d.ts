@@ -101,6 +101,9 @@ interface ProcessConfig {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
+	 *  300s default; Auto Run raises it to its own inactivity budget. */
+	maestroPMaxWaitSeconds?: number;
 }
 
 type AgentConfigOption = import('../shared/types').AgentConfigOption;
@@ -111,6 +114,7 @@ type DirectoryEntry = import('../shared/types').DirectoryEntry;
 type ShellInfo = import('../shared/types').ShellInfo;
 
 type UsageStats = import('../shared/types').UsageStats;
+type CallUsage = import('../shared/types').CallUsage;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
@@ -228,6 +232,10 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type {
+	ThroughputGaugeCommandRequest,
+	ThroughputGaugeCommandResult,
+} from '../shared/throughputGaugeCommands';
+import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../shared/autoRunSteeringCommands';
@@ -270,6 +278,8 @@ interface MaestroAPI {
 				readOnly?: boolean;
 				disableTools?: boolean;
 				timeoutMs?: number;
+				// The agent's Claude token source: a TUI agent runs this turn through maestro-p.
+				claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
@@ -294,6 +304,7 @@ interface MaestroAPI {
 			shellLogs?: import('./types').LogEntry[];
 			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
 			aiCommandHistory?: string[];
+			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
 		}>;
 		setAll: (sessions: any[], baselines?: any[]) => Promise<boolean>;
 		/**
@@ -319,7 +330,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onTranscriptRequest: (
-			handler: (request: { sessionId: string; tabId: string; requestId: string }) => void
+			handler: (request: {
+				sessionId: string;
+				tabId: string;
+				requestId: string;
+				metadataOnly?: boolean;
+			}) => void
 		) => () => void;
 		/**
 		 * Listen for main-side focus requests emitted by the plugin `sessions.focus`
@@ -427,6 +443,12 @@ interface MaestroAPI {
 		}) => Promise<{ exitCode: number }>;
 		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
 		cancelCommand: (sessionId: string) => Promise<boolean>;
+		getHeadlessActivity: () => Promise<
+			import('../shared/headlessAgentActivity').HeadlessAgentActivity
+		>;
+		onHeadlessActivity: (
+			handler: (activity: import('../shared/headlessAgentActivity').HeadlessAgentActivity) => void
+		) => () => void;
 		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
@@ -576,6 +598,14 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
+		onRemoteThroughputGaugeCommand: (
+			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteThroughputGaugeCommandResponse: (
+			responseChannel: string,
+			result: ThroughputGaugeCommandResult
+		) => void;
 		onRemoteReorderTab: (
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
@@ -590,6 +620,13 @@ interface MaestroAPI {
 					mediaMode: import('../shared/mediaTypes').MediaOpenMode;
 				}
 			) => void
+		) => () => void;
+		onRemoteNotificationInbox: (
+			callback: (
+				request: import('../shared/notificationInbox').NotificationInboxRequest
+			) =>
+				| import('../shared/notificationInbox').NotificationInboxResult
+				| Promise<import('../shared/notificationInbox').NotificationInboxResult>
 		) => () => void;
 		onRemoteOpenModal: (
 			callback: (params: { surface: string; tab?: string }) => void
@@ -907,6 +944,13 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; found: boolean; paused?: boolean; error?: string }
 		) => void;
+		onRemoteMergeQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
 		) => () => void;
@@ -1155,6 +1199,7 @@ interface MaestroAPI {
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void) => () => void;
 		onAgentError: (
 			callback: (
 				sessionId: string,
@@ -2071,7 +2116,7 @@ interface MaestroAPI {
 		listPaginated: (
 			agentId: string,
 			projectPath: string,
-			options?: { cursor?: string; limit?: number },
+			options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 			sshRemoteId?: string
 		) => Promise<{
 			sessions: Array<{
@@ -2497,7 +2542,10 @@ interface MaestroAPI {
 				isComplete: boolean;
 			}) => void
 		) => () => void;
-		getProjectStats: (projectPath: string) => Promise<{
+		getProjectStats: (
+			projectPath: string,
+			ownerAgentId?: string
+		) => Promise<{
 			totalSessions: number;
 			totalMessages: number;
 			totalCostUsd: number;
@@ -2510,6 +2558,15 @@ interface MaestroAPI {
 				totalSessions: number;
 				totalMessages: number;
 				totalTokens: number;
+				/** `totalTokens` by kind, over the sessions that recorded one. */
+				tokenSplit?: {
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadTokens: number;
+					cacheCreationTokens: number;
+				};
+				/** Archived tokens counted in `totalTokens` with no record of their kind. */
+				unsplitTokens?: number;
 				totalCostUsd: number;
 				totalSizeBytes: number;
 				oldestTimestamp: string | null;
@@ -2753,6 +2810,25 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
+		changeHistory: (
+			change: import('../shared/notificationHistory').NotificationHistoryChange
+		) => Promise<import('../shared/notificationHistory').NotificationHistorySnapshot>;
+		onHistoryChanged: (
+			callback: (
+				snapshot: import('../shared/notificationHistory').NotificationHistorySnapshot
+			) => void
+		) => () => void;
+		navigateToSource: (
+			sessionId: string,
+			tabId?: string,
+			action?: import('../shared/toastClickAction').ToastClickAction
+		) => Promise<{ success: boolean }>;
+		onActivateAction: (
+			callback: (
+				action: import('../shared/toastClickAction').ToastClickAction
+			) => boolean | Promise<boolean>
+		) => () => void;
+
 		show: (
 			title: string,
 			body: string,
@@ -3374,6 +3450,10 @@ interface MaestroAPI {
 			refused: boolean;
 		}>;
 		queueResume: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		queueSteer: (
+			id: string,
+			itemId: string
+		) => Promise<import('../shared/groupChatSteering').GroupChatSteerResult>;
 		onQueueState: (
 			callback: (
 				groupChatId: string,
@@ -4475,6 +4555,7 @@ interface MaestroAPI {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customEffort?: string;
+			claudeTokenSource?: import('../shared/claudeTokenMode').ClaudeTokenSourceFields;
 			recentCommands?: {
 				command: string;
 				exitCode?: number;
@@ -4737,6 +4818,9 @@ interface MaestroAPI {
 		) => Promise<import('../shared/cue-backup-types').CueBackupDiffStatusMap>;
 		delete: (filePath: string) => Promise<void>;
 	};
+
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
 
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.

@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
+import { STEERING_SOCKET_ENV_VAR } from '../../../chatSteering';
 import { resolveClaudeSpawnModeCore } from '../../launch/interactive-mode';
 import type { SshRemoteSettingsStore } from '../../launch/ssh-remote-resolver';
 import { getAgentDefinition } from '../../providers/definitions';
@@ -153,6 +154,71 @@ describe('prepareGroupChatSpawn', () => {
 			expect(prepared.args[0]).toBe('/app/maestro-p.js');
 			expect(prepared.args).toEqual(expect.arrayContaining(['--max-wait', '600', '--print']));
 			expect(prepared.customEnvVars).toMatchObject({ MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude' });
+		});
+	});
+
+	describe('the steering socket', () => {
+		/** Resolves maestro-p (local interactive) whatever the SSH state, as a local decision would. */
+		const localInteractive: GroupChatSpawnDeps['resolveClaudeSpawnMode'] = (input) =>
+			resolveClaudeSpawnModeCore(
+				{ ...input, sshEnabled: false, sshRemoteId: undefined },
+				{
+					getMaestroPBinPath: () => '/app/maestro-p.js',
+					isMaestroPBinaryPath: (p) => !!p && p.includes('maestro-p'),
+					resolveConfigDirKey: () => 'default',
+					getUsageSnapshot: () => null,
+					fileExists: () => true,
+					getRemoteMaestroPAvailable: () => undefined,
+					selectMode: () => ({ mode: 'interactive', reason: 'auto' }),
+				}
+			);
+
+		it('opens one for a local maestro-p turn, keyed by the turn’s process id', async () => {
+			const steeringSocketPath = vi.fn((processId: string) => `/tmp/steer-${processId}.sock`);
+			const prepared = await prepareGroupChatSpawn(
+				spawnOf({ tokenMode: 'interactive' }),
+				depsOf({ resolveClaudeSpawnMode: localInteractive, steeringSocketPath })
+			);
+
+			expect(prepared.args[0]).toBe('/app/maestro-p.js');
+			expect(steeringSocketPath).toHaveBeenCalledExactlyOnceWith('group-chat-p1');
+			expect(prepared.customEnvVars).toMatchObject({
+				[STEERING_SOCKET_ENV_VAR]: '/tmp/steer-group-chat-p1.sock',
+				MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude',
+			});
+		});
+
+		it('opens none when the host cannot steer', async () => {
+			const prepared = await prepareGroupChatSpawn(
+				spawnOf({ tokenMode: 'interactive' }),
+				depsOf({ resolveClaudeSpawnMode: localInteractive })
+			);
+
+			expect(prepared.args[0]).toBe('/app/maestro-p.js');
+			expect(prepared.customEnvVars ?? {}).not.toHaveProperty(STEERING_SOCKET_ENV_VAR);
+		});
+
+		it('opens none for a turn that runs `claude --print`', async () => {
+			const steeringSocketPath = vi.fn(() => '/tmp/steer.sock');
+			const prepared = await prepareGroupChatSpawn(spawnOf(), depsOf({ steeringSocketPath }));
+
+			expect(steeringSocketPath).not.toHaveBeenCalled();
+			expect(prepared.customEnvVars ?? {}).not.toHaveProperty(STEERING_SOCKET_ENV_VAR);
+		});
+
+		it('opens none over SSH, since the socket is local', async () => {
+			const steeringSocketPath = vi.fn(() => '/tmp/steer.sock');
+			const prepared = await prepareGroupChatSpawn(
+				spawnOf({ tokenMode: 'interactive', sshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+				depsOf({
+					sshStore: storeOf([remote]),
+					resolveClaudeSpawnMode: localInteractive,
+					steeringSocketPath,
+				})
+			);
+
+			expect(steeringSocketPath).not.toHaveBeenCalled();
+			expect(JSON.stringify(prepared)).not.toContain(STEERING_SOCKET_ENV_VAR);
 		});
 	});
 

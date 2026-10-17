@@ -55,6 +55,7 @@ export {
 	isClaudeLimitNotice,
 	getErrorPatterns,
 	matchErrorPattern,
+	stripJsonEventLines,
 	registerErrorPatterns,
 	clearPatternRegistry,
 	matchSshErrorPattern,

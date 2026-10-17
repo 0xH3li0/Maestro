@@ -9,6 +9,7 @@ import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
+import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -136,6 +137,9 @@ export interface MaestroSettings {
 	// Quick Chat (Encore Feature): its own system-wide hotkey, target agent, and
 	// ephemeral/persistent defaults. See src/shared/quickChat.ts.
 	quickChatSettings: QuickChatSettings;
+	// Throughput Gauge (Encore Feature): scope, metric, layout, style, and rate
+	// window. See src/shared/throughputGauge.ts.
+	throughputGaugeSettings: ThroughputGaugeSettings;
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;

@@ -2,9 +2,9 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
-import { parseCliBool, isInheritValue } from './utils/parse';
+import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -14,7 +14,14 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueHold, queueList, queueRemove, queueResume, queueSteer } from './commands/queue';
+import {
+	queueHold,
+	queueList,
+	queueMerge,
+	queueRemove,
+	queueResume,
+	queueSteer,
+} from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -24,6 +31,15 @@ import {
 	snoozeWake,
 } from './commands/snooze';
 import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
+import {
+	throughputGaugeFlagChoices,
+	throughputGaugeHide,
+	throughputGaugeResetPeak,
+	throughputGaugeSet,
+	throughputGaugeShow,
+	throughputGaugeStatus,
+	throughputGaugeToggle,
+} from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -40,6 +56,7 @@ import {
 	groupChatList,
 	groupChatSend,
 	groupChatStart,
+	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
 } from './commands/group-chat';
@@ -63,10 +80,13 @@ import {
 } from './commands/cue-pipeline';
 import {
 	cueEngineStart,
+	cueEngineCheck,
 	cueEngineStop,
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
+import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
+import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -105,6 +125,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { quickChat } from './commands/quick-chat';
 import { maestroRun } from './commands/maestro-run';
@@ -131,7 +152,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery } from './commands/stats';
+import { stats, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -580,8 +601,8 @@ program
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
-// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), and `steer`
-// (the Steer button). The queue lives
+// cleanup/debugging, `hold` / `resume` (the card's Hold / Resume), `merge` (the
+// card's Merge button), and `steer` (the Steer button). The queue lives
 // authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
@@ -617,6 +638,14 @@ queue
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueResume);
+
+queue
+	.command('merge <item-id>')
+	.description(
+		"Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place"
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueMerge);
 
 queue
 	.command('steer <item-id>')
@@ -726,6 +755,59 @@ program
 	.option('--json', 'Output as JSON')
 	.action(snoozeWake);
 
+// Throughput Gauge commands - the CLI half of the floating tokens/sec gauge (an
+// Encore Feature): show and hide, the gear's five settings, Reset peak, and a
+// status read. Every verb answers with the gauge's status after it ran.
+const throughputGauge = program
+	.command('throughput-gauge')
+	.description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
+
+const gaugeFlagHelp = (label: string, field: Parameters<typeof throughputGaugeFlagChoices>[0]) =>
+	`${label}: ${throughputGaugeFlagChoices(field).join(' | ')}`;
+
+throughputGauge
+	.command('show')
+	.description('Put the gauge on screen (does not move focus)')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeShow);
+
+throughputGauge
+	.command('hide')
+	.description('Take the gauge off screen')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeHide);
+
+throughputGauge
+	.command('toggle')
+	.description(
+		'Flip the gauge on or off screen, like the hotkey (scripts should prefer show / hide)'
+	)
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeToggle);
+
+throughputGauge
+	.command('set')
+	.description('Change one or more gauge settings, like the gear on the gauge')
+	.option('--scope <scope>', gaugeFlagHelp('Whose output to count', 'scope'))
+	.option('--metric <metric>', gaugeFlagHelp('Which reading to show', 'metric'))
+	.option('--layout <layout>', gaugeFlagHelp('One gauge or all three', 'layout'))
+	.option('--style <style>', gaugeFlagHelp('How the reading is drawn', 'style'))
+	.option('--window <seconds>', gaugeFlagHelp('Rolling-average window in seconds', 'windowMs'))
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeSet);
+
+throughputGauge
+	.command('reset-peak')
+	.description('Start the peak mark again from the current reading')
+	.option('--json', 'Output the gauge status as JSON')
+	.action(throughputGaugeResetPeak);
+
+throughputGauge
+	.command('status')
+	.description('Read visibility, settings, live rates, and peaks')
+	.option('--json', 'Output as JSON (enabled, visible, settings, rates, peak, windowMs)')
+	.action(throughputGaugeStatus);
+
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
 // left off without owning a persistent channel - pair with `dispatch` to write
@@ -784,6 +866,17 @@ groupChat
 	.action(groupChatSend);
 
 groupChat
+	.command('steer <chat> [message]')
+	.description(
+		'Type a message into the round running in a group chat instead of waiting for it to end'
+	)
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--item <queued-id>', 'Steer a message already in the chat queue (ids are in status)')
+	.option('--read-only', 'Only steer new text when the running round is read-only')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSteer);
+
+groupChat
 	.command('status <chat>')
 	.description("Show a group chat's state, participants, and latest messages")
 	.option('--tail <n>', 'How many recent messages to print (default 5; 0 for none)')
@@ -812,7 +905,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -1142,10 +1235,16 @@ const cue = program.command('cue').description('Interact with Maestro Cue automa
 
 cue
 	.command('trigger <subscription-name>')
-	.description('Manually trigger a Cue subscription by name')
+	.description(
+		'Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)'
+	)
 	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('--source-agent-id <id>', 'Agent ID to pass as source context for write-back')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueTrigger);
 
 cue
@@ -1168,6 +1267,10 @@ cue
 	.option('--clear-model', "Remove the tier / model and use the agent's own model")
 	.option('--clear-effort', "Remove the effort and use the agent's own effort")
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueModel);
 
 cue
@@ -1190,6 +1293,10 @@ cue
 	.option('-a, --agent <id>', 'Only runs for this agent')
 	.option('-n, --limit <n>', 'How many runs to show (default 20)')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default)'
+	)
 	.action(cueActivity);
 
 // Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
@@ -1332,14 +1439,75 @@ const cueEngine = cue
 
 cueEngine
 	.command('start')
-	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.description(
+		'Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets'
+	)
 	.option('--json', 'Print machine-readable start/failure status')
-	.action(cueEngineStart);
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.addOption(
+		new Option(
+			'--log-format <format>',
+			'Log line format: text, or one JSON object per line on stderr'
+		)
+			.choices(['text', 'json'])
+			.default('text')
+	)
+	.option(
+		'--require-ready',
+		'Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"'
+	)
+	.option(
+		'--status-port <port>',
+		'Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given',
+		(value) => {
+			try {
+				return parseCliPort(value, '--status-port');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		}
+	)
+	.option(
+		'--drain-timeout <seconds>',
+		'On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once',
+		(value) => {
+			try {
+				return parseCliSeconds(value, '--drain-timeout');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		},
+		90
+	)
+	.option(
+		'--notify-webhook <url>',
+		'POST a JSON notice for every notify action and every expired agent login to this http(s) URL'
+	)
+	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
+
+cueEngine
+	.command('check')
+	.description(
+		'Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineCheck);
 
 cueEngine
 	.command('stop')
 	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
 		parseInt(v, 10)
 	)
@@ -1349,13 +1517,94 @@ cueEngine
 	.command('status')
 	.description('Report whether an engine is running and its last known heartbeat')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineStatus);
 
 cueEngine
 	.command('inspect')
 	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineInspect);
+
+// Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
+// import one. With the app running (and no --data-dir), export and import go
+// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// write the data directory directly.
+const bundle = program
+	.command('bundle')
+	.description('Export, validate, inspect, and import portable Cue pipeline and agent bundles');
+
+bundle
+	.command('export')
+	.description(
+		'Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate'
+	)
+	.option('-a, --agent <id-or-name>', 'Export this agent (exclusive with --pipeline)')
+	.option('-p, --pipeline <name>', 'Export this Cue pipeline (exclusive with --agent)')
+	.option('-o, --output <path>', 'Zip to write (default: ./<name>.maestro-bundle.zip)')
+	.option('--allow-inline-secrets', 'Export subscriptions that hold a literal webhook.secret')
+	.option('--data-dir <path>', "Read Maestro's data from this directory instead of the default")
+	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
+	.option('--no-claude-skills', 'Leave out Claude Code skills (.claude/skills)')
+	.option('--no-claude-mcp', 'Leave out .mcp.json (exported with secrets as ${VAR} references)')
+	.option(
+		'--no-claude-memory',
+		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => bundleExport(cliVersion, options));
+
+bundle
+	.command('validate <bundle>')
+	.description(
+		'Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version'
+	)
+	.option(
+		'--check-env',
+		'Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((bundlePath, options) => bundleValidate(cliVersion, bundlePath, options));
+
+bundle
+	.command('inspect <bundle>')
+	.description('Describe a bundle from its manifest and README without unpacking the rest')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(bundleInspect);
+
+bundle
+	.command('import <bundle>')
+	.description(
+		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write'
+	)
+	.option(
+		'-w, --workspace <key=path>',
+		'Map a bundle workspace to its own local folder (repeatable, one per workspace)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--agent-path <tool=path>',
+		'Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
+	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
+	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option(
+		'--reject-shell-commands',
+		'Refuse the import, before anything is written, if any subscription runs a shell command'
+	)
+	.option('--json', 'Output as JSON (for scripting): one document, after the import')
+	.action((bundlePath, options) => bundleImport(cliVersion, bundlePath, options));
 
 // Director's Notes commands
 const directorNotes = program
@@ -1400,6 +1649,51 @@ program
 	.description('Diagnose CLI connectivity, version skew, and configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
+
+// Host commands - run Maestro's runtime detached (no desktop) and control that process
+const host = program
+	.command('host')
+	.description('Run the Maestro runtime detached, with no desktop app, and control it');
+
+host
+	.command('start')
+	.description('Start a detached host that serves this data directory over the bridge')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--port <port>', 'Port to listen on (default: any free port)')
+	.option(
+		'--foreground',
+		'Serve in this process instead of detaching (what the detached child runs)'
+	)
+	.option(
+		'--stop-grace <seconds>',
+		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStart(options, cliVersion));
+
+host
+	.command('status')
+	.description('Report the host: pid, uptime, lock holder, Cue state, and work in flight')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStatus(options));
+
+host
+	.command('stop')
+	.description(
+		'Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)'
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option(
+		'--wait [seconds]',
+		'Wait for work in flight to finish (default 300s), then stop; never forces'
+	)
+	.option('--force', 'Stop even with work in flight; a run records how it ended first')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStop(options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -1970,14 +2264,18 @@ const agent = settings.command('agent').description('View and manage per-agent c
 
 agent
 	.command('list [agent-id]')
-	.description('List agent configurations (all agents or a specific one)')
+	.description(
+		'List provider configurations (all, or one provider type), or the settings of one agent when given an agent ID'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('-v, --verbose', 'Show descriptions for each config key')
 	.action(settingsAgentList);
 
 agent
 	.command('get <agent-id> <key>')
-	.description('Get a single agent config value')
+	.description(
+		'Get a provider config value, or one setting of an agent when given an agent ID (e.g. codexTransport)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description')
 	.action(settingsAgentGet);
@@ -2064,7 +2362,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, throughputGauge)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -2209,6 +2507,10 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option(
+		'--skip-private-windows <on|off>',
+		'Never record private / incognito browser windows (default on)'
+	)
 	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
 	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
 	.option(
@@ -2228,6 +2530,10 @@ pianola
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Stop watching after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--dry-run', 'Classify and record decisions but never send a message')
 	.option('--once', 'Run a single iteration instead of looping')
 	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
@@ -2348,6 +2654,10 @@ pianolaSupervise
 	.description('Register a supervised tab watcher the desktop keeps alive')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Retire the watcher after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
 
@@ -2472,6 +2782,51 @@ notify
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
 
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				collapse: 'Collapse expanded notification details',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
+
 notify
 	.command('flash <message>')
 	.description('Show a center-screen flash (momentary, exclusive - replaces any active flash)')
@@ -2559,6 +2914,12 @@ quickChatCmd
 	.action((options) => quickChat('hide', {}, options));
 
 quickChatCmd
+	.command('return')
+	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('return', {}, options));
+
+quickChatCmd
 	.command('toggle')
 	.description('Open the window, focus it, or close it (exactly what the hotkey does)')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -2571,8 +2932,11 @@ quickChatCmd
 	.action((options) => quickChat('status', {}, options));
 
 quickChatCmd
-	.command('send <message...>')
-	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.command('send [message...]')
+	.description(
+		'Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images'
+	)
+	.option('--image <path...>', 'Image file(s) to send with the message (PNG, JPG, GIF, WebP)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
 
@@ -2635,10 +2999,24 @@ quickChatCmd
 quickChatCmd
 	.command('new-tab [message-id]')
 	.description(
-		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+		'Send a message to a new tab instead of the tab it went to: out of the queue, or stopped and sent again if it already ran (default: the latest queued one)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
+
+quickChatCmd
+	.command('history')
+	.description("List the recent chats, newest first (what the window's History button shows)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('history', {}, options));
+
+quickChatCmd
+	.command('recall <chat>')
+	.description(
+		'Bring back a recent chat (its agent, tab, and messages): its number in `history`, its id, or an id prefix'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options) => quickChat('recall', { chatId: chat }, options));
 
 quickChatCmd
 	.command('stop')
@@ -2934,6 +3312,16 @@ program
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full aggregation object as JSON')
 	.action(stats);
+
+program
+	.command('stats-tokens')
+	.description(
+		'Show token usage, cost, and tokens per second (average and peak) per provider and model'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
+	.option('--json', 'Output the full token usage object as JSON')
+	.action(statsTokens);
 
 program
 	.command('stats-query <sql>')

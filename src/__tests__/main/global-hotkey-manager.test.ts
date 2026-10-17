@@ -16,8 +16,13 @@ const unregister = vi.fn((accelerator: string) => {
 	registered.delete(accelerator);
 });
 
+const { app, hideQuickChatWindow } = vi.hoisted(() => ({
+	app: { show: vi.fn(), focus: vi.fn() },
+	hideQuickChatWindow: vi.fn(),
+}));
+
 vi.mock('electron', () => ({
-	app: { show: vi.fn() },
+	app,
 	BrowserWindow: class {},
 	globalShortcut: {
 		register: (a: string, cb: () => void) => register(a, cb),
@@ -28,9 +33,13 @@ vi.mock('../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('../../shared/platformDetection', () => ({ isMacOS: () => true }));
+vi.mock('../../main/quick-chat/quick-chat-window', () => ({
+	hideQuickChatWindow: () => hideQuickChatWindow(),
+}));
 
 import {
 	disposeGlobalHotkey,
+	initGlobalHotkey,
 	keysToAccelerator,
 	setGlobalShowHotkey,
 	setNamedGlobalHotkey,
@@ -41,6 +50,9 @@ beforeEach(() => {
 	registered.clear();
 	register.mockClear();
 	unregister.mockClear();
+	app.show.mockClear();
+	app.focus.mockClear();
+	hideQuickChatWindow.mockClear();
 });
 
 describe('keysToAccelerator', () => {
@@ -102,5 +114,30 @@ describe('setNamedGlobalHotkey', () => {
 		setNamedGlobalHotkey('quickChat', ['Alt', 'Space'], vi.fn());
 		disposeGlobalHotkey();
 		expect(registered.size).toBe(0);
+	});
+});
+
+describe('show Maestro hotkey', () => {
+	it('puts Quick Chat away and brings the main window forward from another app', () => {
+		const win = {
+			isDestroyed: () => false,
+			isMinimized: () => true,
+			isVisible: () => false,
+			restore: vi.fn(),
+			show: vi.fn(),
+			focus: vi.fn(),
+		};
+		initGlobalHotkey(() => win as unknown as Electron.BrowserWindow);
+		setGlobalShowHotkey(['Meta', 'Shift', 'M']);
+
+		registered.get('Command+Shift+M')!();
+
+		expect(hideQuickChatWindow).toHaveBeenCalledTimes(1);
+		expect(win.restore).toHaveBeenCalled();
+		expect(win.show).toHaveBeenCalled();
+		expect(app.show).toHaveBeenCalled();
+		// The non-activating Quick Chat panel leaves another app frontmost.
+		expect(app.focus).toHaveBeenCalledWith({ steal: true });
+		expect(win.focus).toHaveBeenCalled();
 	});
 });

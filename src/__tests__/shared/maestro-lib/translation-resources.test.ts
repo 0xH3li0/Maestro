@@ -12,6 +12,40 @@ import {
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
 
 describe('project resource translation', () => {
+	it.each([false, true])(
+		'reads resources through a project-root alias (managed: %s)',
+		async (managed) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-root-alias-'));
+			try {
+				const project = path.join(root, 'project');
+				const alias = path.join(root, 'alias');
+				await fs.mkdir(path.join(project, '.agents/skills/example'), { recursive: true });
+				await fs.writeFile(
+					path.join(project, '.agents/skills/example/SKILL.md'),
+					'Project instructions'
+				);
+				await fs.symlink(project, alias, process.platform === 'win32' ? 'junction' : 'dir');
+				const resources = await collectTranslationResources(
+					{
+						provider: 'codex',
+						version: '0.162.1',
+						accountRoot: path.join(root, 'account'),
+						projectRoot: alias,
+					},
+					{ projectKnowledge: true, selectedUserResources: [] },
+					managed ? alias : undefined
+				);
+				expect(resources.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+					'.agents/skills/example/SKILL.md',
+				]);
+				expect(resources.limitations).not.toContainEqual(
+					expect.objectContaining({ code: 'linked-user-resource' })
+				);
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
 	it.each(['memory', 'selected-user/memories'])(
 		'archives a managed %s directory link without importing unselected account knowledge',
 		async (directory) => {
@@ -201,11 +235,11 @@ describe('project resource translation', () => {
 	});
 
 	it('resolves account and actual memory directory overrides', () => {
-		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toContain(
-			'/selected/account/projects/'
+		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toBe(
+			path.join('/selected/account', 'projects', '-project-worktree', 'memory')
 		);
 		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account', 'knowledge')).toBe(
-			'/project/worktree/knowledge'
+			path.resolve('/project/worktree', 'knowledge')
 		);
 	});
 	it('translates Markdown definitions into TOML and retains incompatible settings', () => {
@@ -241,8 +275,8 @@ describe('project resource translation', () => {
 			),
 		];
 		const prompt = translationKnowledgePrompt('/project/.maestro/knowledge', artifacts);
-		expect(prompt).toContain('/project/.maestro/knowledge/memory/MEMORY.md');
-		expect(prompt).toContain('/project/.maestro/knowledge/memory/topic.md');
+		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'MEMORY.md'));
+		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'topic.md'));
 		expect(prompt).not.toContain('memory_summary.md');
 	});
 	it('refuses TOML definitions without portable instructions', () => {

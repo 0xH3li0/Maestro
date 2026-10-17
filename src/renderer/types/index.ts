@@ -74,6 +74,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -545,6 +546,11 @@ export interface QueuedItem {
 	// queue slot, because its POSITION is what the user is expressing ("finish
 	// that, then ask them"). Always paired with `crossAgentMention`.
 	crossAgentOnly?: boolean;
+	// How the `@mention` runs, when the user PICKED it in the composer's routing
+	// menu instead of leaving it to the wording. The drain re-plans from the text,
+	// so without this the pick would be lost the moment the message queued.
+	// Absent: the wording decides (`inferMentionTiming`).
+	mentionRouting?: MentionRouting;
 	// Maestro-generated continuation of a turn that @mentioned other agents
 	// mid-message. The local agent answers in parallel with the consult but must
 	// not FINISH before the reply arrives, so this item sits at the head of the
@@ -781,6 +787,8 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	/** Durable conversation provenance, independent of whether a turn is running. */
+	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
 	agentSessionId: string | null; // Agent session UUID (null for new tabs)
 	name: string | null; // User-defined name (null = show UUID octet)
@@ -1533,6 +1541,8 @@ export interface Session {
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
 	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
 	customEnvVarsDisabled?: Record<string, string>;
+	// Secret NAMES from bundle import, resolved by the CLI and Cue at launch. Carried, never read here. See shared/types.ts.
+	requiredSecrets?: string[];
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
@@ -1838,6 +1848,10 @@ export interface EncoreFeatureFlags {
 	// for scheduled scripts. macOS only, off by default. Optional so older
 	// fixtures and persisted settings remain valid.
 	maestroRun?: boolean;
+	// Throughput Gauge - a floating dial showing live tokens per second across
+	// agents. Off by default. Optional so older fixtures and persisted settings
+	// remain valid.
+	throughputGauge?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

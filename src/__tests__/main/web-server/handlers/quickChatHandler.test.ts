@@ -34,6 +34,8 @@ const controller = {
 	setPinned: vi.fn(),
 	setFontScale: vi.fn(),
 	getStatus: vi.fn(),
+	getRecents: vi.fn(),
+	recall: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
 
@@ -75,6 +77,8 @@ describe('quick_chat handler', () => {
 		controller.setPinned.mockReturnValue(status);
 		controller.setFontScale.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
+		controller.getRecents.mockReturnValue([]);
+		controller.recall.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
 	});
@@ -89,7 +93,7 @@ describe('quick_chat handler', () => {
 		});
 	});
 
-	it.each(['show', 'hide', 'toggle'] as const)('runs the %s window action', (action) => {
+	it.each(['show', 'hide', 'toggle', 'return'] as const)('runs the %s window action', (action) => {
 		handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r2' });
 		expect(controller.windowAction).toHaveBeenCalledWith(action);
 		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r2' });
@@ -101,10 +105,25 @@ describe('quick_chat handler', () => {
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r3' });
 	});
 
+	it.each(['hide', 'return'] as const)('still succeeds at %s when the feature is off', (action) => {
+		controller.windowAction.mockReturnValue({ ...status, enabled: false });
+		handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r3b' });
+		expect(controller.windowAction).toHaveBeenCalledWith(action);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r3b' });
+	});
+
 	it.each([
 		[
 			{ action: 'send', text: 'hello' },
 			{ type: 'send', text: 'hello' },
+		],
+		[
+			{ action: 'send', text: 'look', images: ['data:image/png;base64,AAAA'] },
+			{ type: 'send', text: 'look', images: ['data:image/png;base64,AAAA'] },
+		],
+		[
+			{ action: 'send', images: ['data:image/webp;base64,BBBB'] },
+			{ type: 'send', text: '', images: ['data:image/webp;base64,BBBB'] },
 		],
 		[{ action: 'new' }, { type: 'new' }],
 		[{ action: 'keep' }, { type: 'setPersistent', persistent: true }],
@@ -179,6 +198,22 @@ describe('quick_chat handler', () => {
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r6' });
 		handler.handleMessage(client, { type: 'quick_chat', action: 'bogus', requestId: 'r7' });
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r7' });
+		expect(controller.runCommand).not.toHaveBeenCalled();
+	});
+
+	it('rejects images that are not data:image URLs without calling the engine', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'send',
+			text: 'look',
+			images: ['/tmp/shot.png'],
+			requestId: 'r8',
+		});
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'Images must be data:image URLs',
+			requestId: 'r8',
+		});
 		expect(controller.runCommand).not.toHaveBeenCalled();
 	});
 
@@ -320,6 +355,50 @@ describe('quick_chat handler', () => {
 		expect(lastResponse(client)).toMatchObject({
 			success: false,
 			error: 'That message is no longer waiting: it already started',
+		});
+	});
+
+	it('lists the recent chats with the status', () => {
+		const recents = [{ id: 'c1', title: 'hello', messageCount: 1 }];
+		controller.getRecents.mockReturnValue(recents);
+		handler.handleMessage(client, { type: 'quick_chat', action: 'history', requestId: 'r20' });
+		expect(lastResponse(client)).toMatchObject({
+			success: true,
+			requestId: 'r20',
+			recents,
+			status: { hotkey: ['Alt', 'Space'] },
+		});
+	});
+
+	it('recalls a chat by the reference the CLI gave', async () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'recall',
+			chatId: '2',
+			requestId: 'r21',
+		});
+		await flush();
+		expect(controller.recall).toHaveBeenCalledWith('2');
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r21' });
+	});
+
+	it('reports why a chat could not be recalled', async () => {
+		controller.recall.mockResolvedValue({
+			ok: false,
+			error: 'No recent chat zz',
+			snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
+		});
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'recall',
+			chatId: 'zz',
+			requestId: 'r22',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'No recent chat zz',
+			requestId: 'r22',
 		});
 	});
 });

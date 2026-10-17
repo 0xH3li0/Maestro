@@ -30,6 +30,7 @@ import {
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
+import { captureException } from '../../../renderer/utils/sentry';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
@@ -47,6 +48,12 @@ vi.mock('../../../renderer/services/crossAgentAsk', () => ({
 // only forwards the request and relays the result on the response channel.
 vi.mock('../../../renderer/services/chatSteering', () => ({
 	steerQueuedItem: vi.fn(),
+}));
+
+// A remote verb that rejects is a defect the CLI's error reply alone would hide.
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
 }));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -117,6 +124,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteSnoozeCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
+	let onRemoteThroughputGaugeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
 	let onRemoteAutoRunSteeringCommandHandler:
@@ -239,6 +249,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteThroughputGaugeCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteThroughputGaugeCommandResponse: vi.fn(),
 		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteAutoRunSteeringCommandHandler = handler;
 			return () => {};
@@ -1211,6 +1226,36 @@ describe('useRemoteIntegration', () => {
 			expect(state.activeSessionId).toBe('other-session');
 			expect(state.sessions[0].activeTabId).toBe(visible.id);
 			expect(state.sessions[0].aiTabs.find((tab) => tab.id === hidden.id)?.hidden).toBe(true);
+		});
+
+		// The snapshot carries tab states only, and the Left Bar dot and the
+		// Thinking pill read the AGENT's. A phone drew a tab mid-turn under a
+		// green "Ready" agent until something else happened to set it.
+		it('derives the agent state from the tab states the snapshot carries', () => {
+			const tab = createMockTab({ id: 'tab-1', state: 'idle' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [
+					{ ...tab, state: 'busy', thinkingStartTime: 1234 },
+				]);
+			});
+			let updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('busy');
+			expect(updated.busySource).toBe('ai');
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [{ ...tab, state: 'idle' }]);
+			});
+			updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
 		});
 
 		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
@@ -2423,6 +2468,82 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote Throughput Gauge command', () => {
+		// Same contract as snooze: the CLI blocks on the reply, so every outcome
+		// answers on the response channel. The service itself is covered in
+		// throughputGaugeCommands.test.ts.
+		const sent = () =>
+			window.maestro.process.sendRemoteThroughputGaugeCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a status read on its response channel', async () => {
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			act(() => {
+				onRemoteThroughputGaugeCommandHandler?.({ action: 'status' }, 'gauge-response');
+			});
+
+			await waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'gauge-response',
+					expect.objectContaining({ success: true, status: expect.any(Object) })
+				)
+			);
+		});
+
+		it('answers a write with the enable hint while the feature is off', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, throughputGauge: false },
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			act(() => {
+				onRemoteThroughputGaugeCommandHandler?.({ action: 'show' }, 'gauge-response');
+			});
+
+			await waitFor(() =>
+				expect(sent()).toHaveBeenCalledWith(
+					'gauge-response',
+					expect.objectContaining({
+						success: false,
+						error: expect.stringContaining('maestro-cli encore enable throughput-gauge'),
+					})
+				)
+			);
+		});
+
+		it('reports a verb that rejects to Sentry and still answers the caller', async () => {
+			const failure = new Error('settings bridge gone');
+			const { encoreFeatures, setThroughputGaugeSettings } = useSettingsStore.getState();
+			useSettingsStore.setState({
+				encoreFeatures: { ...encoreFeatures, throughputGauge: true },
+				setThroughputGaugeSettings: vi.fn().mockRejectedValue(failure),
+			});
+			try {
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+				act(() => {
+					onRemoteThroughputGaugeCommandHandler?.(
+						{ action: 'set', patch: { style: 'lcd' } },
+						'gauge-response'
+					);
+				});
+
+				await waitFor(() =>
+					expect(sent()).toHaveBeenCalledWith('gauge-response', {
+						success: false,
+						error: 'settings bridge gone',
+					})
+				);
+				expect(captureException).toHaveBeenCalledWith(
+					failure,
+					expect.objectContaining({ extra: expect.objectContaining({ action: 'set' }) })
+				);
+			} finally {
+				useSettingsStore.setState({ encoreFeatures, setThroughputGaugeSettings });
+			}
+		});
+	});
+
 	describe('remote Auto Run steering command', () => {
 		// The CLI process on the far end blocks on this reply, so the listener has
 		// to answer on the response channel for every outcome.
@@ -3154,6 +3275,31 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote notify toast', () => {
+		it('keeps CLI milliseconds unchanged and expires a five-second toast after five seconds', () => {
+			vi.useFakeTimers();
+			try {
+				renderHook(() => useRemoteIntegration(createDeps()));
+				act(() => {
+					onRemoteNotifyToastHandler?.({
+						title: 'Timeout test',
+						message: 'Hello',
+						color: 'theme',
+						duration: 5000,
+					});
+				});
+				const toast = useNotificationStore.getState().toasts[0];
+				expect(toast.duration).toBe(5000);
+				act(() => {
+					vi.advanceTimersByTime(5000);
+				});
+				expect(
+					useNotificationStore.getState().toasts.find((n) => n.id === toast.id)
+				).toBeUndefined();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		// Regression: the renderer used to fall back to `session.activeTabId` when
 		// the IPC payload omitted `tabId`. That caused every agent-scoped toast
 		// (e.g. cron-fired notifications) to be stamped with whatever AI tab was

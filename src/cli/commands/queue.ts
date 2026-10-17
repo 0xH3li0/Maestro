@@ -4,6 +4,7 @@
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { resolveAgentId } from '../services/storage';
 import {
 	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
@@ -46,32 +47,20 @@ export interface QueueSteerOptions {
 	agent?: string;
 }
 
+export interface QueueMergeOptions {
+	agent?: string;
+}
+
 function emitError(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
 }
 
 /**
- * Map a thrown queue-command error to the same "app down" vs "generic failure"
- * codes the dispatch verb uses, so scripts can branch on `code` consistently.
+ * Map a thrown queue-command error that is NOT an absent app (those exit 3
+ * through `exitIfMaestroNotRunning` first) to the verb's generic failure code.
  */
 function mapQueueError(error: unknown): { error: string; code: string } {
 	const msg = error instanceof Error ? error.message : String(error);
-	const lower = msg.toLowerCase();
-	if (
-		lower.includes('econnrefused') ||
-		lower.includes('connection refused') ||
-		lower.includes('websocket') ||
-		lower.includes('enotfound') ||
-		lower.includes('etimedout') ||
-		lower.includes('maestro desktop app is not running') ||
-		lower.includes('discovery file is stale') ||
-		lower.includes('not connected to maestro')
-	) {
-		return {
-			error: 'Maestro desktop is not running or not reachable',
-			code: 'MAESTRO_NOT_RUNNING',
-		};
-	}
 	return { error: `Command failed: ${msg}`, code: 'COMMAND_FAILED' };
 }
 
@@ -107,6 +96,7 @@ export async function queueList(options: QueueListOptions): Promise<void> {
 		const queues = result.queues ?? [];
 		console.log(JSON.stringify({ success: true, queues, totalItems: countItems(queues) }, null, 2));
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
 		process.exit(1);
@@ -159,6 +149,7 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 			JSON.stringify({ success: true, agentId: sessionId, itemId, removed: true }, null, 2)
 		);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
 		process.exit(1);
@@ -224,6 +215,65 @@ export function queueHold(itemId: string, options: QueuePauseOptions): Promise<v
 /** `maestro-cli queue resume <item-id> --agent <id>` - release a held item. */
 export function queueResume(itemId: string, options: QueuePauseOptions): Promise<void> {
 	return setQueueItemPaused('resume', itemId, options);
+}
+
+/**
+ * `maestro-cli queue merge <item-id> --agent <id>` - fold a queued message into
+ * the message above it on the same tab, like the Merge button on the queued
+ * card. Fails with NOT_MERGEABLE when the item is gone, has no message above it,
+ * or either side is not a plain message (a command, a leading-mention message,
+ * or a turn waiting on a consult).
+ */
+export async function queueMerge(itemId: string, options: QueueMergeOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue merge requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const result = await withMaestroClient((client) =>
+			client.sendCommand<{
+				success?: boolean;
+				merged?: boolean;
+				mergedIntoId?: string;
+				error?: string;
+			}>({ type: 'merge_queue_item', sessionId, itemId }, 'merge_queue_item_result')
+		);
+		if (result.success === false) {
+			emitError(result.error ?? 'Queue merge failed', 'MERGE_FAILED');
+			process.exit(1);
+			return;
+		}
+		if (!result.merged) {
+			emitError(
+				`Queued item ${itemId} for agent ${sessionId} cannot be merged: it is gone, has no message above it on its tab, or one of the two is not a plain message`,
+				'NOT_MERGEABLE'
+			);
+			process.exit(1);
+			return;
+		}
+		console.log(
+			JSON.stringify(
+				{ success: true, agentId: sessionId, itemId, mergedIntoId: result.mergedIntoId },
+				null,
+				2
+			)
+		);
+	} catch (error) {
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
 }
 
 /**

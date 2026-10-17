@@ -18,7 +18,7 @@
 #   max-glibc:    highest allowed glibc version, e.g. 2.35 (Ubuntu 22.04)
 #   search-dir:   directory scanned recursively for *.node files
 #   extra-binary: other shipped ELF executables to hold to the same floor
-#                 (e.g. the Computer History helper, resources/native/maestro-observer).
+#                 (e.g. the Computer History helper, resources/native/maestro-computer-history).
 #                 Each must exist; a missing one fails the check.
 
 set -euo pipefail

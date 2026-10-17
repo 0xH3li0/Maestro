@@ -44,6 +44,8 @@ import {
 	readGrants,
 } from './plugin-store-main';
 import { createKeyedWriteQueue } from '../utils/atomic-json-store';
+import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { verifyPluginSignature } from './plugin-signature';
 import {
 	extractPluginArchive,
@@ -126,6 +128,8 @@ export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
 	private readonly mutationQueue = createKeyedWriteQueue();
 	private readonly pendingMutations = new Map<string, number>();
+	private readonly pendingReloads = new Map<string, symbol>();
+	private readonly waitingForServiceDependencies = new Set<string>();
 	private pluginFingerprints = new Map<string, string>();
 	private watchRoot: fs.FSWatcher | null = null;
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
@@ -198,6 +202,11 @@ export class PluginManager {
 	 * Encore flag is off this returns an empty registry without touching disk.
 	 */
 	refresh(): PluginRegistry {
+		return this.refreshRegistry();
+	}
+
+	/** A completed hot reload must not restart unrelated crashed sandboxes. */
+	private refreshRegistry(onlyPluginId?: string): PluginRegistry {
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
 			this.pluginFingerprints.clear();
@@ -207,18 +216,27 @@ export class PluginManager {
 		}
 
 		const dir = pluginsDir();
+		const onlyPluginSource =
+			onlyPluginId === undefined
+				? undefined
+				: this.registry.records.find((record) => record.id === onlyPluginId)?.source;
 		let folders: string[];
 		try {
 			folders = fs
 				.readdirSync(dir, { withFileTypes: true })
 				.filter((e) => e.isDirectory())
 				.map((e) => e.name)
-				.filter(isSafePluginFolderName);
+				.filter(isSafePluginFolderName)
+				.filter(
+					(folder) => onlyPluginId === undefined || path.join(dir, folder) === onlyPluginSource
+				);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-				this.registry = emptyRegistry();
-				this.pluginFingerprints.clear();
-				this.reconcileSandboxes();
+				this.registry =
+					onlyPluginId === undefined ? emptyRegistry() : removeRecord(this.registry, onlyPluginId);
+				if (onlyPluginId === undefined) this.pluginFingerprints.clear();
+				else this.pluginFingerprints.delete(onlyPluginId);
+				this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, onlyPluginId);
 				this.syncPluginWatchers();
 				return this.registry;
 			}
@@ -227,9 +245,12 @@ export class PluginManager {
 
 		const state = readPluginState();
 		const trustedKeys = this.deps.trustedKeys?.() ?? [];
-		let next = emptyRegistry();
+		let next =
+			onlyPluginId === undefined ? emptyRegistry() : removeRecord(this.registry, onlyPluginId);
 		const previousFingerprints = this.pluginFingerprints;
-		const nextFingerprints = new Map<string, string>();
+		const nextFingerprints =
+			onlyPluginId === undefined ? new Map<string, string>() : new Map(this.pluginFingerprints);
+		if (onlyPluginId !== undefined) nextFingerprints.delete(onlyPluginId);
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
 			const rawManifest = this.readManifest(source);
@@ -249,6 +270,9 @@ export class PluginManager {
 				enabled,
 				hostVersion: HOST_API_VERSION,
 			});
+			// A scoped reload owns only this identity. Renamed manifests await a
+			// normal discovery pass and cannot overwrite another plugin's record.
+			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
 			// Attach signature trust (the pure builder cannot read files).
 			let signed = record;
 			try {
@@ -288,7 +312,7 @@ export class PluginManager {
 		}
 
 		this.registry = next;
-		this.reconcileSandboxes(previousFingerprints, nextFingerprints);
+		this.reconcileSandboxes(previousFingerprints, nextFingerprints, onlyPluginId);
 		this.pluginFingerprints = nextFingerprints;
 		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
@@ -325,8 +349,10 @@ export class PluginManager {
 	 * installable + enableable for DECLARATIVE contributions only (themes,
 	 * prompts, UI slots - see getActiveRecords/getContributions, which
 	 * deliberately do NOT use this gate and only exclude tampered `invalid`).
+	 * Pass requireAvailableServices=false to identify consumers that meet all
+	 * execution gates but must wait for a mandatory service to become available.
 	 */
-	private isRunnable(record: PluginRecord): boolean {
+	private isRunnable(record: PluginRecord, requireAvailableServices = true): boolean {
 		return (
 			this.deps.isEnabled() &&
 			!this.pendingMutations.has(record.id) &&
@@ -336,20 +362,26 @@ export class PluginManager {
 			record.manifest.tier >= 1 &&
 			!!record.manifest.entry &&
 			record.signature?.status === 'trusted' &&
-			(record.manifest.requires ?? []).every(
-				(r) => r.optional === true || this.deps.serviceAvailable?.(record.id, r.id) === true
-			)
+			(!requireAvailableServices ||
+				(record.manifest.requires ?? []).every(
+					(r) => r.optional === true || this.deps.serviceAvailable?.(record.id, r.id) === true
+				))
 		);
 	}
 
-	/** Reconcile only consumers with mandatory dependencies; never restart a crashed provider here. */
+	/** Resume consumers held for missing services; crashes remain owned by their supervisor. */
 	reconcileServiceDependencies(): void {
 		if (!this.deps.isEnabled()) return;
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
 		for (const record of this.registry.records) {
-			if (!record.manifest?.requires?.some((r) => !r.optional)) continue;
+			if (!record.manifest?.requires?.some((r) => !r.optional)) {
+				this.waitingForServiceDependencies.delete(record.id);
+				continue;
+			}
 			if (!this.isRunnable(record)) {
+				if (!this.isRunnable(record, false)) this.waitingForServiceDependencies.delete(record.id);
+				else if (sandbox.isRunning(record.id)) this.waitingForServiceDependencies.add(record.id);
 				if (sandbox.isRunning(record.id)) {
 					// Provider registration can race both child exit and resource cleanup.
 					// Re-read the current registry and availability only after a successful drain.
@@ -360,11 +392,18 @@ export class PluginManager {
 						}
 					);
 				}
-			} else if (!sandbox.isRunning(record.id) && record.manifest.entry) {
+			} else if (
+				this.waitingForServiceDependencies.has(record.id) &&
+				!this.pendingReloads.has(record.id) &&
+				!sandbox.isRunning(record.id) &&
+				record.manifest.entry
+			) {
 				try {
 					sandbox.start(record.id, record.source, record.manifest.entry);
-				} catch {
-					/* isolated start failure */
+					this.waitingForServiceDependencies.delete(record.id);
+				} catch (error) {
+					if (error instanceof Error && error.message === 'PluginDrainPending') continue;
+					void captureException(error, { operation: 'plugins:start', pluginId: record.id });
 				}
 			}
 		}
@@ -384,21 +423,54 @@ export class PluginManager {
 	): void {
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
+		for (const id of this.waitingForServiceDependencies) {
+			if (!this.registry.records.some((record) => record.id === id))
+				this.waitingForServiceDependencies.delete(id);
+		}
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
 			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
-			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
+			if (!this.isRunnable(record) || !record.manifest?.entry) {
+				// Explicit discovery/toggles also remember initially blocked consumers.
+				if (this.isRunnable(record, false)) this.waitingForServiceDependencies.add(record.id);
+				else this.waitingForServiceDependencies.delete(record.id);
+				continue;
+			}
 			shouldRun.add(record.id);
+			if (this.pendingReloads.has(record.id)) continue;
 			const fingerprintChanged =
 				previousFingerprints.get(record.id) !== nextFingerprints.get(record.id);
 			if (sandbox.isRunning(record.id) && fingerprintChanged) {
-				sandbox.stop(record.id);
+				const reload = Symbol();
+				this.pendingReloads.set(record.id, reload);
+				void (async () => {
+					try {
+						// Stopping closes admission immediately, but the old child and its
+						// resources remain owned until this drain completes.
+						await sandbox.stop(record.id);
+						if (this.pendingReloads.get(record.id) !== reload) return;
+						this.pendingReloads.delete(record.id);
+						// Re-read identity, enable state and entry after the wait: disable,
+						// uninstall, edits or permission changes may have happened meanwhile.
+						this.refreshRegistry(record.id);
+					} catch (error) {
+						if (this.pendingReloads.get(record.id) === reload)
+							this.pendingReloads.delete(record.id);
+						logger.warn(`Could not reload plugin "${record.id}": ${String(error)}`, 'Plugins');
+						void captureException(error, { operation: 'plugins:reload', pluginId: record.id });
+					}
+				})();
+				continue;
 			}
 			if (!sandbox.isRunning(record.id)) {
 				try {
 					sandbox.start(record.id, record.source, record.manifest.entry);
-				} catch {
+					this.waitingForServiceDependencies.delete(record.id);
+				} catch (error) {
+					if (error instanceof Error && error.message === 'PluginDrainPending') continue;
 					// A failed start is isolated to that plugin; leave it stopped.
+					logger.warn(`Could not start plugin "${record.id}": ${String(error)}`, 'Plugins');
+					void captureException(error, { operation: 'plugins:start', pluginId: record.id });
 				}
 			}
 		}
@@ -710,6 +782,7 @@ export class PluginManager {
 			forgetGrants(id);
 			this.deps.purgePluginData?.(id);
 			this.pluginFingerprints.delete(id);
+			this.waitingForServiceDependencies.delete(id);
 			this.registry = removeRecord(this.registry, id);
 			this.syncPluginWatchers();
 			this.deps.onChange?.(this.registry);
@@ -738,6 +811,8 @@ export class PluginManager {
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
 	stopAllSandboxes(): void {
+		this.pendingReloads.clear();
+		this.waitingForServiceDependencies.clear();
 		this.deps.sandbox?.stopAll();
 	}
 

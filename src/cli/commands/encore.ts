@@ -10,7 +10,12 @@ import {
 	type FirstPartyEncoreFlag,
 } from '../../shared/plugins/first-party';
 import { readSettingValue } from '../services/storage';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 
 // Feature ID -> display name. Keys mirror EncoreFeatureFlags in
 // src/shared/encoreFeatures.ts. Aliases let an agent say "symphony" or "cue".
@@ -26,6 +31,7 @@ const FEATURES: Record<string, string> = {
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun (macOS)',
+	throughputGauge: 'Throughput Gauge',
 };
 
 const ALIASES: Record<string, string> = {
@@ -52,6 +58,11 @@ const ALIASES: Record<string, string> = {
 	quickchat: 'quickChat',
 	'maestro-run': 'maestroRun',
 	maestrorun: 'maestroRun',
+	'throughput-gauge': 'throughputGauge',
+	throughputgauge: 'throughputGauge',
+	throughput: 'throughputGauge',
+	gauge: 'throughputGauge',
+	tps: 'throughputGauge',
 };
 
 interface EncoreOptions {
@@ -106,6 +117,7 @@ export function encoreList(options: EncoreOptions): void {
 	}
 }
 
+/** Toggle one supported Encore feature while preserving the desktop's other saved flags. */
 export async function encoreSet(
 	feature: string,
 	enabled: boolean,
@@ -125,7 +137,15 @@ export async function encoreSet(
 		failCommand(`${FEATURES[key]} is not available on this operating system.`, options.json);
 	}
 
-	const flags = readFlags();
+	// The desktop replaces the whole object, so retain flags outside this
+	// command's target list (including flags introduced by a newer desktop).
+	const storedFlags = readSettingValue('encoreFeatures');
+	const flags: Record<string, unknown> = {
+		...(storedFlags && typeof storedFlags === 'object' && !Array.isArray(storedFlags)
+			? storedFlags
+			: {}),
+		...resolveEncoreFeatures(storedFlags),
+	};
 	flags[key] = enabled;
 
 	try {
@@ -139,6 +159,7 @@ export async function encoreSet(
 			jsonExtra: { feature: key, enabled },
 		});
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

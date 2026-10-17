@@ -149,6 +149,7 @@ import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -167,6 +168,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -1064,6 +1066,8 @@ function MaestroConsoleInner() {
 	// Forwards document visibility to the main-process Cue scanner
 	// subsystem so it pauses background work when the window is hidden.
 	useCueVisibilityWiring();
+	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
+	useCueBundleAgentSync();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
@@ -1261,6 +1265,7 @@ function MaestroConsoleInner() {
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
 		handleResumeGroupChatQueue,
+		handleSteerGroupChatQueueItem,
 		handleStopAll: handleGroupChatStopAll,
 		handleNewGroupChat,
 		handleEditGroupChat,
@@ -1808,12 +1813,13 @@ function MaestroConsoleInner() {
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.map((item) =>
-				item.id === itemId ? { ...item, paused: !item.paused } : item
-			),
-		}));
+		toggleQueuedItemPaused(activeSessionIdRef.current, itemId);
+	}, []);
+
+	// Fold a queued message into the one above it (the queued card's Merge button).
+	// Same service `maestro-cli queue merge` reaches.
+	const handleMergeQueuedItem = useCallback((itemId: string) => {
+		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place.
@@ -1906,7 +1912,10 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			// The base opener, not openWizardModal: the resume handlers call this
+			// after the resume prompt, and openWizardModal would find the saved
+			// state still on disk and raise the same prompt again (#1835).
+			openWizard: _baseOpenWizardModal,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
@@ -2613,6 +2622,7 @@ function MaestroConsoleInner() {
 		handleEditQueueItem,
 		handleForceSendQueueItem,
 		handleSteerQueueItem,
+		handleMergeQueueItem,
 	} = useQueueHandlers({ processQueuedItem });
 
 	// Force Send from the inline chat list: the item always belongs to the active
@@ -2982,6 +2992,7 @@ function MaestroConsoleInner() {
 		handleDeleteLog,
 		handleRemoveQueuedItem,
 		handleToggleQueuedItemPause,
+		handleMergeQueuedItem,
 		handleEditQueuedItem,
 		handleReorderQueuedItem,
 		handleForceSendQueuedItem,
@@ -3373,6 +3384,7 @@ function MaestroConsoleInner() {
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 									onResumeQueue={handleResumeGroupChatQueue}
+									onSteerQueuedItem={handleSteerGroupChatQueueItem}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={chatRawTextMode}
 									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
@@ -3690,6 +3702,7 @@ function MaestroConsoleInner() {
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
 						onForceSendQueueItem={handleForceSendQueueItem}
+						onMergeQueueItem={handleMergeQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}
