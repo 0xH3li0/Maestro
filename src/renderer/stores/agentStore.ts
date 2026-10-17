@@ -452,7 +452,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.text,
 				session,
 				targetTab.id,
-				item.images
+				item.images,
+				item.mentionRouting
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole

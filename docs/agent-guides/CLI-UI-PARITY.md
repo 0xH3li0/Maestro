@@ -461,6 +461,13 @@ deliberate design constraints, including protected host consent, are noted below
     These remain in the protected native host window as a deliberate human-consent
     design choice. Enabling a private listener requires the host owner's review;
     no CLI verbs expose these controls.
+15. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
+    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
+    reachable over the WS bridge. Every mode IS reachable from the CLI through
+    the prompt's wording, which `inferMentionTiming()` reads on every path, so
+    this is a convenience gap, not a capability gap. Closing it means threading
+    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
 
 ### Audit backlog (2026-09-27)
 

@@ -27,6 +27,7 @@ import {
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import {
+	queuedMentionFields,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 	type CrossAgentMentionPlan,
@@ -896,7 +897,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									? activeTab.agentSessionId.split('-')[0].toUpperCase()
 									: 'New'),
 							readOnlyMode: activeTab?.readOnlyMode === true,
-							crossAgentMention: true,
+							...queuedMentionFields(crossAgentMentionPlan),
 							crossAgentOnly: true,
 							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
@@ -1156,7 +1157,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
-						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...queuedMentionFields(crossAgentMentionPlan),
 						...((processState.probeFailed || connectionHold) && {
 							waitingForConnection: true,
 						}),
@@ -1535,7 +1536,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
-				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				...queuedMentionFields(crossAgentMentionPlan),
 				turnSettings: captureQueuedTurnSettings(tab, session),
 			});
 

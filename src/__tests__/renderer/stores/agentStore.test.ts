@@ -1508,10 +1508,52 @@ describe('agentStore', () => {
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
 				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// The routing the user PICKED when queuing must reach the drain: it re-plans
+		// from the text, which on its own would route the other way.
+		it("passes a queued item's picked mention routing to the dispatch", async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'fix it, then send the results to @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'parallel',
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				'fix it, then send the results to @Backend',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				'parallel'
+			);
 		});
 
 		// A mention-only item (the message was addressed at the other agent) fires

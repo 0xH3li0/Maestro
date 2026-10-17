@@ -135,6 +135,19 @@ describe('mergeQueuedItemIntoPrevious', () => {
 		expect(mergeQueuedItemIntoPrevious(q, 'b')?.queue[0].crossAgentMention).toBe(true);
 	});
 
+	it('keeps a picked mention routing, preferring the earlier message', () => {
+		expect(
+			mergeQueuedItemIntoPrevious([msg('a'), msg('b', { mentionRouting: 'handoff' })], 'b')
+				?.queue[0].mentionRouting
+		).toBe('handoff');
+		expect(
+			mergeQueuedItemIntoPrevious(
+				[msg('a', { mentionRouting: 'parallel' }), msg('b', { mentionRouting: 'handoff' })],
+				'b'
+			)?.queue[0].mentionRouting
+		).toBe('parallel');
+	});
+
 	it('refuses the first item, commands, leading-mention messages, and consult holds', () => {
 		expect(mergeQueuedItemIntoPrevious([msg('a'), msg('b')], 'a')).toBeNull();
 		expect(mergeQueuedItemIntoPrevious([msg('a', { type: 'command' }), msg('b')], 'b')).toBeNull();
@@ -440,6 +453,26 @@ describe('applyQueuedItemEdit', () => {
 		const next = applyQueuedItemEdit(queue, 'missing', patch({ model: 'opus' }));
 
 		expect(next[0]).toBe(queue[0]);
+	});
+
+	it('writes the re-derived @mention fields, dropping a routing the edit invalidated', () => {
+		const queue = [{ ...item('a'), crossAgentMention: true, mentionRouting: 'handoff' as const }];
+
+		const kept = applyQueuedItemEdit(queue, 'a', patch(), {
+			crossAgentMention: true,
+			crossAgentOnly: false,
+			mentionRouting: 'handoff',
+		});
+		expect(kept[0].mentionRouting).toBe('handoff');
+
+		// The edit removed every mention: no consult, no routing.
+		const dropped = applyQueuedItemEdit(queue, 'a', patch(), {
+			crossAgentMention: false,
+			crossAgentOnly: false,
+			mentionRouting: undefined,
+		});
+		expect(dropped[0].crossAgentMention).toBe(false);
+		expect(dropped[0].mentionRouting).toBeUndefined();
 	});
 
 	it('does not disturb an item paused state', () => {

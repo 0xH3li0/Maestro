@@ -49,7 +49,7 @@ import {
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
  *
- * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * `crossAgent` is optional and carries the `@mention` fields, re-derived by
  * the caller from the EDITED text. It is a parameter rather than something this
  * function works out for itself because deriving it needs `planCrossAgentMentions`,
  * which reads the session store - a dependency a pure queue utility must not take
@@ -60,7 +60,9 @@ export function applyQueuedItemEdit(
 	queue: QueuedItem[],
 	itemId: string,
 	patch: QueuedItemEditPatch,
-	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
+	crossAgent?: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
+		crossAgentMention: boolean;
+	}
 ): QueuedItem[] {
 	return queue.map((item) =>
 		item.id === itemId
@@ -468,6 +470,7 @@ export function mergeQueuedItemIntoPrevious(
 		text,
 		images: images.length > 0 ? images : undefined,
 		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,
+		mentionRouting: target.mentionRouting ?? item.mentionRouting,
 	};
 	return {
 		queue: queue.filter((i) => i.id !== itemId).map((i) => (i.id === target.id ? merged : i)),

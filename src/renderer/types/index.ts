@@ -74,6 +74,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -545,6 +546,11 @@ export interface QueuedItem {
 	// queue slot, because its POSITION is what the user is expressing ("finish
 	// that, then ask them"). Always paired with `crossAgentMention`.
 	crossAgentOnly?: boolean;
+	// How the `@mention` runs, when the user PICKED it in the composer's routing
+	// menu instead of leaving it to the wording. The drain re-plans from the text,
+	// so without this the pick would be lost the moment the message queued.
+	// Absent: the wording decides (`inferMentionTiming`).
+	mentionRouting?: MentionRouting;
 	// Maestro-generated continuation of a turn that @mentioned other agents
 	// mid-message. The local agent answers in parallel with the consult but must
 	// not FINISH before the reply arrives, so this item sits at the head of the
