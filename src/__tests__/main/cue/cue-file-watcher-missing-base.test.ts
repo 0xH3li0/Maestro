@@ -16,7 +16,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { createCueFileWatcher, staticWatchBase } from '../../../main/cue/cue-file-watcher';
+import {
+	createCueFileWatcher,
+	globOnDisk,
+	staticWatchBase,
+} from '../../../main/cue/cue-file-watcher';
 import type { CueEvent } from '../../../main/cue/cue-types';
 
 const DEBOUNCE_MS = 50;
@@ -201,6 +205,10 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 	it('does not report files already in a folder present at start', async () => {
 		await mkdirWithRetry(path.join(root, 'inbox'));
 		fs.writeFileSync(path.join(root, 'inbox', 'old.txt'), 'old');
+		// macOS FSEvents replays a write made moments before a stream opens, so a
+		// file written right before start can still arrive as `add`. Let it age
+		// past that window: "present at start" means present before the watcher.
+		await delay(SETTLE_MS);
 		start('inbox/*.txt');
 		await delay(SETTLE_MS * 2);
 
@@ -235,5 +243,30 @@ describe('staticWatchBase', () => {
 		['src/**/*.ts', 'src'],
 	])('%s -> %j', (glob, base) => {
 		expect(staticWatchBase(glob)).toBe(base);
+	});
+});
+
+describe('globOnDisk', () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-glob-on-disk-'));
+		fs.mkdirSync(path.join(root, 'inbox', 'Sub'), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(root, RM_OPTIONS);
+	});
+
+	it('respells the static folder the way it is spelled on disk', () => {
+		expect(globOnDisk(root, 'Inbox/sub', 'Inbox/sub/*.txt')).toBe('inbox/Sub/*.txt');
+	});
+
+	it('keeps a leading ./ off and an exact spelling as is', () => {
+		expect(globOnDisk(root, 'inbox', './inbox/**/*.md')).toBe('inbox/**/*.md');
+	});
+
+	it('returns the glob unchanged when the folder is missing', () => {
+		expect(globOnDisk(root, 'outbox', 'outbox/*.txt')).toBe('outbox/*.txt');
 	});
 });

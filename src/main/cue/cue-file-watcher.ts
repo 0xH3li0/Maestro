@@ -45,6 +45,34 @@ export function staticWatchBase(watchGlob: string): string {
 }
 
 /**
+ * `watchGlob` with its static folder `base` spelled the way the folder is
+ * spelled on disk, for a case-insensitive volume where the two can differ
+ * (`Inbox/*.txt` over a folder created as `inbox` -> `inbox/*.txt`). Each
+ * segment keeps its own spelling when an exact match exists. Returns
+ * `watchGlob` unchanged when the folder cannot be read.
+ */
+export function globOnDisk(rootAbs: string, base: string, watchGlob: string): string {
+	const glob = watchGlob.replace(/^\.\/+/, '');
+	if (!glob.startsWith(base)) return watchGlob;
+	const names: string[] = [];
+	let dir = rootAbs;
+	try {
+		for (const segment of base.split('/').filter(Boolean)) {
+			const entries = fs.readdirSync(dir);
+			const match =
+				entries.find((entry) => entry === segment) ??
+				entries.find((entry) => entry.toLowerCase() === segment.toLowerCase());
+			if (!match) return watchGlob;
+			names.push(match);
+			dir = path.join(dir, match);
+		}
+	} catch {
+		return watchGlob; // the folder vanished again; the chain watcher will retry
+	}
+	return names.join('/') + glob.slice(base.length);
+}
+
+/**
  * Creates a chokidar file watcher for a Cue file.changed subscription.
  * Returns a cleanup function to stop watching.
  */
@@ -115,8 +143,8 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		}
 	};
 
-	const attachGlobWatcher = (ignoreInitial: boolean): chokidar.FSWatcher => {
-		const globWatcher = chokidar.watch(watchGlob, {
+	const attachGlobWatcher = (ignoreInitial: boolean, glob = watchGlob): chokidar.FSWatcher => {
+		const globWatcher = chokidar.watch(glob, {
 			cwd: projectRoot,
 			ignoreInitial,
 			persistent: true,
@@ -148,7 +176,10 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		// written `Inbox/*.txt` names a folder created as `inbox`, while
 		// chokidar reports the folder in its on-disk case. Compare chain paths
 		// case-folded there; every match is confirmed with fs.existsSync on the
-		// glob's own spelling before the glob watcher is re-attached.
+		// glob's own spelling before the glob watcher is re-attached, and the
+		// re-attached glob is rewritten to the on-disk spelling: on macOS
+		// FSEvents reports `inbox/a.txt`, which the glob's case-sensitive
+		// matcher would never accept as `Inbox/*.txt`.
 		const foldCase = isWindows() || isMacOS();
 		const chainKey = (p: string) => {
 			const resolved = path.resolve(p);
@@ -177,7 +208,10 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 			// already written into it (`mkdir -p inbox && echo > inbox/a.txt`)
 			// report `add` rather than being skipped as initial.
 			watcher?.close();
-			watcher = attachGlobWatcher(false);
+			watcher = attachGlobWatcher(
+				false,
+				foldCase ? globOnDisk(rootAbs, base, watchGlob) : watchGlob
+			);
 		};
 
 		const chainWatcher = chokidar.watch(rootAbs, {
