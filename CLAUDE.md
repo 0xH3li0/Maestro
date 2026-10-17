@@ -66,6 +66,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
+- **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts`: `humanizeDuration(ms, opts)` plus its presets (never another `Math.floor(ms / 86400000)` ladder)
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
@@ -306,6 +307,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Modal / find-bar ESC pill:** `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`
 - **A modal default sized to the screen:** `viewportModalSize({ width, height })` in `src/renderer/utils/modalSizing.ts`
 - **Audio/video playback:** media NEVER becomes a tab: `handleOpenFileTab()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts` diverts it to `useMediaPlaybackStore` and the one `FloatingMediaPlayer`; `file://` links go through `openFileUrl()` in `src/renderer/utils/openFileUrl.ts`
+- **Opening a clicked link:** `openUrl(url, { ctrlKey })` in `src/renderer/utils/openUrl.ts`, over `parseUrlRoutingHint()` / `isWebUrl()` / `stripUrlRoutingHint()` in `src/shared/urlRoutingHint.ts`
 - **Right-click menu on an image:** already app-wide via `<ImageContextMenuHost>` in `src/renderer/components/ImageContextMenuHost.tsx`; opt a surface out with `data-no-image-menu`
 - **Saving generated image bytes to disk:** `saveImageDataUrlToDisk()`, `saveImageElementToDisk()`, `saveImageToProject()` in `src/renderer/utils/imageExport.ts`
 - **Reading a pasted or dropped image (or any Blob) as a data URL:** `readBlobAsDataUrl()`, `imageFilesIn()`, `downscaleImageDataUrl()` in `src/renderer/utils/imageData.ts`

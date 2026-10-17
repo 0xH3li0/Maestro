@@ -169,6 +169,7 @@ function resetStore() {
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		automaticTabNamingEnabled: true,
+		shortenLongTabNames: false,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
@@ -324,6 +325,7 @@ describe('settingsStore', () => {
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
+			expect(state.shortenLongTabNames).toBe(false);
 			expect(state.fileTabAutoRefreshEnabled).toBe(false);
 			expect(state.suppressWindowsWarning).toBe(false);
 			expect(state.directorNotesSettings).toEqual({
@@ -951,6 +953,12 @@ describe('settingsStore', () => {
 					'automaticTabNamingEnabled',
 					false
 				);
+			});
+
+			it('setShortenLongTabNames updates state and persists', () => {
+				useSettingsStore.getState().setShortenLongTabNames(true);
+				expect(useSettingsStore.getState().shortenLongTabNames).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shortenLongTabNames', true);
 			});
 
 			it('setFileTabAutoRefreshEnabled updates state and persists', () => {

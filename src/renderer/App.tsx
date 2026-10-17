@@ -1912,7 +1912,10 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			// The base opener, not openWizardModal: the resume handlers call this
+			// after the resume prompt, and openWizardModal would find the saved
+			// state still on disk and raise the same prompt again (#1835).
+			openWizard: _baseOpenWizardModal,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,

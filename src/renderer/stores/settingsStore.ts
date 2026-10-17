@@ -2974,6 +2974,7 @@ export function getSettingsActions() {
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
+		setShortenLongTabNames: state.setShortenLongTabNames,
 		setNewTabPlacement: state.setNewTabPlacement,
 		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,
 		setNewTerminalPlacement: state.setNewTerminalPlacement,
