@@ -114,6 +114,7 @@ type DirectoryEntry = import('../shared/types').DirectoryEntry;
 type ShellInfo = import('../shared/types').ShellInfo;
 
 type UsageStats = import('../shared/types').UsageStats;
+type CallUsage = import('../shared/types').CallUsage;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
@@ -1198,6 +1199,7 @@ interface MaestroAPI {
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void) => () => void;
 		onAgentError: (
 			callback: (
 				sessionId: string,

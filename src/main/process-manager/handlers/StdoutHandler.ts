@@ -703,6 +703,12 @@ export class StdoutHandler {
 		}
 
 		this.emitUsageIfPresent(sessionId, managedProcess, event, outputParser);
+		// Ahead of the thinking chunk the same event carries, which main holds
+		// back to coalesce: the gauge must know a source reports per-call usage
+		// before that source's text arrives, or it would count both.
+		if (event.callUsage) {
+			this.emitter.emit('call-usage', sessionId, event.callUsage);
+		}
 
 		// Extract session ID
 		const eventSessionId = outputParser.extractSessionId(event);

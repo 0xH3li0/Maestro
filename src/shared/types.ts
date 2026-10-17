@@ -419,6 +419,19 @@ export interface UsageStats {
 }
 
 /**
+ * Tokens one internal API call spent that no earlier event of its turn
+ * reported (`process:call-usage`). A live progress signal for tokens per
+ * second, never a usage report: the turn's `UsageStats` still counts the whole
+ * turn, these included. Only claude-code sends it today.
+ */
+export interface CallUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+}
+
+/**
  * History entry types for the History panel.
  *
  * - `USER`  - an interactive turn the user typed themselves.

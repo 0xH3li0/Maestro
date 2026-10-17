@@ -1136,6 +1136,58 @@ describe('StdoutHandler', () => {
 
 	// ── normalizeUsageToDelta (tested via outputParser path) ───────────────
 
+	describe('per-call usage (Claude Code)', () => {
+		const assistantCall = (content: unknown[]) => ({
+			type: 'assistant',
+			session_id: 'claude-session',
+			message: {
+				id: 'msg_1',
+				model: 'claude-opus-5',
+				role: 'assistant',
+				content,
+				usage: {
+					input_tokens: 2,
+					output_tokens: 300,
+					cache_read_input_tokens: 160000,
+					cache_creation_input_tokens: 1000,
+				},
+			},
+		});
+
+		it('emits call-usage once per API call, ahead of the thinking chunk, and never as usage', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const order: string[] = [];
+			const callUsageSpy = vi.fn(() => order.push('call-usage'));
+			const usageSpy = vi.fn();
+			emitter.on('call-usage', callUsageSpy);
+			emitter.on('usage', usageSpy);
+			emitter.on('thinking-chunk', () => order.push('thinking-chunk'));
+
+			// One call written as two rows (a text block, then a tool call), each
+			// repeating the call's usage.
+			sendJsonLine(handler, sessionId, assistantCall([{ type: 'text', text: 'Reading it.' }]));
+			sendJsonLine(
+				handler,
+				sessionId,
+				assistantCall([{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }])
+			);
+
+			expect(callUsageSpy).toHaveBeenCalledTimes(1);
+			expect(callUsageSpy).toHaveBeenCalledWith(sessionId, {
+				inputTokens: 2,
+				outputTokens: 300,
+				cacheReadInputTokens: 160000,
+				cacheCreationInputTokens: 1000,
+			});
+			expect(order[0]).toBe('call-usage');
+			expect(usageSpy).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('chat steering verdicts (maestro-p stdout)', () => {
 		function claudeContext() {
 			const ctx = createTestContext({

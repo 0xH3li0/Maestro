@@ -42,6 +42,15 @@ import * as os from 'os';
  * on their own, and a 429 has to stay retryable so a real quota outage still
  * reaches the token-exhaustion strategy.
  */
+/**
+ * A line `codex exec` never writes. The app-server translator emits it at each
+ * mid-turn `thread/tokenUsage/updated` with what the active turn spent since
+ * the previous one, in exec field names under `usage`. Parsed into `callUsage`
+ * (the Throughput Gauge's live reading), never into `usage`: `turn.completed`
+ * still reports the whole turn.
+ */
+export const CODEX_CALL_USAGE_LINE_TYPE = 'maestro.call_usage';
+
 const HARD_CLIENT_ERROR_STATUSES: ReadonlySet<number> = new Set([
 	400, 401, 403, 404, 405, 409, 413, 422,
 ]);
@@ -169,7 +178,9 @@ interface CodexRawMessage {
 		| 'item.completed'
 		| 'turn.completed'
 		| 'turn.failed'
-		| 'error';
+		| 'error'
+		// Maestro's own (see CODEX_CALL_USAGE_LINE_TYPE)
+		| typeof CODEX_CALL_USAGE_LINE_TYPE;
 	// Current format fields
 	timestamp?: string;
 	payload?: CodexPayload;
@@ -529,6 +540,22 @@ export class CodexOutputParser implements AgentOutputParser {
 		// Handle item.completed events (reasoning, agent_message, tool_call, tool_result, command_execution)
 		if (msg.type === 'item.completed' && msg.item) {
 			return this.transformItemCompleted(msg.item, msg);
+		}
+
+		if (msg.type === CODEX_CALL_USAGE_LINE_TYPE) {
+			const usage = msg.usage ?? {};
+			return {
+				type: 'system',
+				callUsage: {
+					inputTokens: usage.input_tokens || 0,
+					// Output counted the way extractUsageFromRaw counts it, so the
+					// turn's report nets these out exactly.
+					outputTokens: (usage.output_tokens || 0) + (usage.reasoning_output_tokens || 0),
+					cacheReadInputTokens: usage.cached_input_tokens || 0,
+					cacheCreationInputTokens: 0,
+				},
+				raw: msg,
+			};
 		}
 
 		// Handle turn.completed (end of turn with usage stats)

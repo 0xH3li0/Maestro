@@ -26,7 +26,7 @@
  * ```
  */
 
-import type { ToolType, AgentError } from '../../types';
+import type { ToolType, AgentError, CallUsage } from '../../types';
 import { isValidAgentId } from '../../agentIds';
 import type { ClaudeCostState } from '../../claudeCostTracker';
 
@@ -148,6 +148,18 @@ export interface ParsedEvent {
 			reasoningTokens: number;
 		};
 	};
+
+	/**
+	 * Tokens one internal API call spent that no earlier event of this turn
+	 * reported, for a live tokens-per-second reading. Set by the claude-code
+	 * parser on `assistant` messages, whose `message.usage` is the usage of ONE
+	 * call and repeats on every row of that call, so this is the DELTA against
+	 * what earlier rows of the same message already carried (zero for a repeat,
+	 * which then leaves the field unset). Never a replacement for `usage`: the
+	 * turn's usage event still reports the turn, and the Throughput Gauge
+	 * subtracts these from it.
+	 */
+	callUsage?: CallUsage;
 
 	/**
 	 * Available slash commands (for 'init' type)

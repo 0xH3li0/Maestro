@@ -2,7 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser, ParsedEvent } from '../parsers';
-import type { AgentError } from '../../shared/types';
+import type { AgentError, CallUsage } from '../../shared/types';
 import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import type { CodexTransport } from '../../shared/codexTransport';
@@ -246,6 +246,8 @@ export interface ProcessManagerEvents {
 	spawn: (config: ProcessConfig) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
+	/** One API call's new spend, mid-turn (see `CallUsage`). claude-code only. */
+	'call-usage': (sessionId: string, usage: CallUsage) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
