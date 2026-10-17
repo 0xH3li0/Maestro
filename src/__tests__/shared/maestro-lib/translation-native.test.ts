@@ -145,6 +145,109 @@ describe('native-preserving extraction', () => {
 		);
 	});
 
+	describe.each(['claude-code', 'codex'] as const)('%s cwd ownership', (provider) => {
+		it.each([
+			{
+				name: 'warns once for drift into subdirectories',
+				origin: identity.projectRoot,
+				later: [`${identity.projectRoot}/src`, `${identity.projectRoot}/docs`],
+				blocked: false,
+				drift: true,
+			},
+			{
+				name: 'warns once for drift outside the project after a matching origin',
+				origin: identity.projectRoot,
+				later: ['/another-project', '/somewhere-else', identity.projectRoot],
+				blocked: false,
+				drift: true,
+			},
+			{
+				name: 'accepts an origin inside the project',
+				origin: `${identity.projectRoot}/src`,
+				later: [`${identity.projectRoot}/src`],
+				blocked: false,
+				drift: false,
+			},
+			{
+				name: 'blocks an outside origin even after returning to the project',
+				origin: '/another-project',
+				later: ['/another-project', identity.projectRoot],
+				blocked: true,
+				drift: true,
+			},
+			{
+				name: 'blocks a similarly named sibling origin',
+				origin: `${identity.projectRoot}-other`,
+				later: [`${identity.projectRoot}-other`],
+				blocked: true,
+				drift: false,
+			},
+			{
+				name: 'compares resolved paths without reporting equivalent cwds as drift',
+				origin: `${identity.projectRoot}/src/..`,
+				later: [identity.projectRoot, `${identity.projectRoot}/`],
+				blocked: false,
+				drift: false,
+			},
+		])('$name', ({ origin, later, blocked, drift }) => {
+			const rows = [
+				// Missing cwd on an earlier row must not hide the first declared origin.
+				provider === 'claude-code'
+					? { type: 'user', uuid: 'initial', message: { role: 'user', content: 'start' } }
+					: {
+							type: 'response_item',
+							payload: {
+								type: 'message',
+								role: 'user',
+								content: [{ type: 'input_text', text: 'start' }],
+							},
+						},
+				...[origin, ...later].map((cwd, index) =>
+					provider === 'claude-code'
+						? {
+								type: 'user',
+								uuid: `cwd-${index}`,
+								cwd,
+								message: { role: 'user', content: 'continue' },
+							}
+						: {
+								type: index === 0 ? 'session_meta' : 'turn_context',
+								payload: { cwd, ...(index === 0 ? { id: 's' } : {}) },
+							}
+				),
+			];
+			const bytes = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+			const bundle = extractNativeConversation({ ...identity, provider }, 't', 's', bytes);
+			expect(bundle.limitations.filter((l) => l.code === 'native-project-root-mismatch')).toEqual(
+				blocked ? [expect.objectContaining({ severity: 'block', tabId: 't' })] : []
+			);
+			expect(bundle.limitations.filter((l) => l.code === 'native-cwd-drift')).toEqual(
+				drift ? [expect.objectContaining({ severity: 'warning', tabId: 't' })] : []
+			);
+			expect(bundle.limitations.filter((l) => l.severity === 'block')).toHaveLength(
+				blocked ? 1 : 0
+			);
+			expect(bundle.records.map((record) => record.native)).toEqual(rows);
+			expect(Buffer.from(bundle.artifacts[0].bytesBase64, 'base64')).toEqual(bytes);
+		});
+	});
+
+	it('uses Codex session metadata as the origin instead of another row cwd', () => {
+		const rows = [
+			{ type: 'turn_context', payload: { cwd: '/before-session-metadata' } },
+			{ type: 'session_meta', payload: { id: 's', cwd: identity.projectRoot } },
+			{ type: 'turn_context', payload: { cwd: identity.projectRoot } },
+		];
+		const bundle = extractNativeConversation(
+			{ ...identity, provider: 'codex' },
+			't',
+			's',
+			Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'))
+		);
+		expect(bundle.limitations.some((l) => l.code === 'native-project-root-mismatch')).toBe(false);
+		expect(bundle.limitations.some((l) => l.code === 'native-cwd-drift')).toBe(false);
+	});
+
 	it.each(['claude-code', 'codex'] as const)(
 		'blocks reversed and duplicated tool linkage in %s before native staging',
 		(provider) => {

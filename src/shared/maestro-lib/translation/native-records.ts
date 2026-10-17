@@ -1,6 +1,7 @@
 import { canonicalJson } from '../../canonicalJson';
 import * as path from 'node:path';
 import { hasEmbeddedSystemPrompt, stripEmbeddedSystemPrompt } from '../../embeddedSystemPrompt';
+import { isPathAtOrUnderRoot } from '../../worktreePaths';
 import { translationArtifact, translationHash } from './identity';
 import type {
 	PortableBlock,
@@ -59,6 +60,8 @@ export function extractNativeConversation(
 	};
 	const rows = parseNativeLines(bytes.toString('utf8'));
 	const nativeIds = new Set<string>();
+	let originCwd: string | undefined;
+	let hasCwdDrift = false;
 	for (const row of rows) {
 		const entry = row.entry ?? { type: 'malformed', raw: row.line };
 		if (row.malformed)
@@ -73,18 +76,43 @@ export function extractNativeConversation(
 				? (entry.payload ?? {})
 				: entry;
 		const message = identity.provider === 'claude-code' ? (entry.message ?? {}) : payload;
-		const declaredCwd = entry.type === 'session_meta' ? entry.payload?.cwd : entry.cwd;
-		if (
-			typeof declaredCwd === 'string' &&
-			path.resolve(declaredCwd) !== path.resolve(identity.projectRoot)
-		)
-			conversation.limitations.push({
-				code: 'native-project-root-mismatch',
-				severity: 'block',
-				tabId,
-				message:
-					'Selected native records belong to a different project root. Resolve their ownership before migration.',
-			});
+		const declaredCwd =
+			identity.provider === 'codex' &&
+			(entry.type === 'session_meta' || entry.type === 'turn_context')
+				? entry.payload?.cwd
+				: entry.cwd;
+		if (typeof declaredCwd === 'string') {
+			const resolvedCwd = path.resolve(declaredCwd);
+			if (
+				originCwd === undefined &&
+				(identity.provider === 'claude-code' || entry.type === 'session_meta')
+			) {
+				originCwd = resolvedCwd;
+				// The shared prefix check takes POSIX separators; these paths are local.
+				if (
+					!isPathAtOrUnderRoot(
+						originCwd.split(path.sep).join('/'),
+						path.resolve(identity.projectRoot).split(path.sep).join('/')
+					)
+				)
+					conversation.limitations.push({
+						code: 'native-project-root-mismatch',
+						severity: 'block',
+						tabId,
+						message:
+							'Selected native records originate outside the selected project root. Resolve their ownership before migration.',
+					});
+			} else if (originCwd !== undefined && resolvedCwd !== originCwd && !hasCwdDrift) {
+				hasCwdDrift = true;
+				conversation.limitations.push({
+					code: 'native-cwd-drift',
+					severity: 'warning',
+					tabId,
+					message:
+						'Native records change working directory after the session origin; original directories are preserved as source evidence.',
+				});
+			}
+		}
 		const declaredSession =
 			entry.type === 'session_meta' ? (entry.payload?.id ?? entry.id) : entry.sessionId;
 		if (typeof declaredSession === 'string' && declaredSession !== sessionId)
