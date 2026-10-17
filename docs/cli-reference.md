@@ -1618,13 +1618,14 @@ Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
 
-| Option                 | Description                                                     | Default |
-| ---------------------- | --------------------------------------------------------------- | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)     | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)                         | -       |
-| `--dry-run`            | Classify and record decisions but never send a message          | -       |
-| `--once`               | Run a single iteration instead of looping                       | -       |
-| `--json`               | Reserved for scripting; affects the disabled-feature error only | -       |
+| Option                 | Description                                                                     | Default |
+| ---------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)                     | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                         | -       |
+| `--idle-hours <hours>` | Stop watching after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--dry-run`            | Classify and record decisions but never send a message                          | -       |
+| `--once`               | Run a single iteration instead of looping                                       | -       |
+| `--json`               | Reserved for scripting; affects the disabled-feature error only                 | -       |
 
 ## `maestro-cli pianola rules`
 
@@ -1744,11 +1745,12 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 Register a supervised tab watcher the desktop keeps alive
 
-| Option                 | Description                                | Default |
-| ---------------------- | ------------------------------------------ | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (required) | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)    | -       |
-| `--json`               | Output as JSON (for scripting)             | -       |
+| Option                 | Description                                                                          | Default |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (required)                                           | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                              | -       |
+| `--idle-hours <hours>` | Retire the watcher after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--json`               | Output as JSON (for scripting)                                                       | -       |
 
 ## `maestro-cli pianola supervise orchestrate <planId>`
 

@@ -114,6 +114,8 @@ maestro-cli pianola supervise watch <tab-id>
 maestro-cli pianola supervise disable <id>
 ```
 
+A supervised watcher retires itself, and its target is removed, when its tab has been closed or deleted for two minutes, or when the tab has had no activity for six hours with nothing waiting on Pianola. Change the idle limit with `--idle-hours <hours>` (`0` keeps the watcher forever). The next `supervise watch` on that tab registers it again.
+
 Full flag-level reference for every verb is in the [CLI reference](/cli-reference).
 
 ## Turning it off
