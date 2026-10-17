@@ -212,6 +212,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()` in `src/renderer/services/tabAutoNaming.ts`
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
+- **Handing the agent back when a shell command or a CLI playbook ends:** `settleAgentStateFromTabs(session)` in `src/renderer/utils/tabHelpers` (never gate on `aiPid`, which per-tab agents leave at 0 or -1)
+- **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
+- **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)
+- **Stop and a pending auto-retry:** `stopRetriesForAgent(sessionId)` in `src/renderer/stores/retryStore.ts` (not `cancelRetry`, which raises the blocking error state)
+- **Killing every AI process an agent owns:** `killAgentAiProcesses(agentId)` in `src/renderer/services/process.ts` (never kill the bare `{id}-ai`, which no per-tab turn uses)
 - **Toggling the unread filters:** `toggleTabUnreadFilter()`, `toggleAllUnreadFilters()`, and `areUnreadFiltersActive()` in `src/renderer/services/unreadFilters.ts`
 - **Creating a tab straight into a tile:** `tileNewTab()` / `canTileNewTab()` in `src/renderer/hooks/tabs/tileNewTab.ts`
 - **Restoring an AI tab's scroll position:** `initialScrollTop` + `initialIsAtBottom`, consumed by `useTerminalOutputScroll()` in `src/renderer/components/TerminalOutput/hooks/useTerminalOutputScroll.ts`

@@ -54,6 +54,7 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
 import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	canCreateGroupInside,
 	canSetGroupParent,
@@ -1597,7 +1598,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// Kill processes
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await killAgentAiProcesses(sessionId);
 		} catch {
 			/* ignore */
 		}
