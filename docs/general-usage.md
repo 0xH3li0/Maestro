@@ -914,6 +914,7 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Go to **Settings** (`Cmd+,` / `Ctrl+,`) → **General**
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
+- Toggle **Shorten long tab names** to cut a generated name longer than 40 characters at the last whole word (for example `Donation Appeal Pages Japanese...`). Default: off, which keeps the full name.
 
 **Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
 

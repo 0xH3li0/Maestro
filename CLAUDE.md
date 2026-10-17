@@ -57,6 +57,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 
 - **ID generation:** `generateId()`, `generateUUID()` in `src/renderer/utils/ids.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
+- **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`

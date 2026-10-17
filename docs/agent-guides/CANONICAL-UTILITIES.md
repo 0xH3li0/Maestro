@@ -6,6 +6,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` checks that every path below sti
 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
+- **Truncate prose without splitting a word:** `truncateAtWordBoundary(text, maxLength, ellipsis?)` in `src/shared/formatters.ts`. Cuts at the last space that fits and counts the ellipsis toward `maxLength`, falling back to a hard cut when there is no space. Tab naming caps generated names with it. Use `truncateText()` / `truncateCommand()` instead for single tokens or commands, where a mid-word cut is fine.
 - **Format numbers:** `formatNumber()` (compact: `1.2M`) and `formatCount()` (exact, grouped: `1,204,993`) in `src/shared/formatters.ts`. Pick by whether the digits ARE the information - a badge wants the magnitude, a filtered row count wants the number.
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`

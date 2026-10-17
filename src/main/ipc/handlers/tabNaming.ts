@@ -40,6 +40,7 @@ import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
+import { truncateAtWordBoundary } from '../../../shared/formatters';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
@@ -449,6 +450,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// structured output on that path. Covers both the local wrap above
 					// and the remote maestro-p case, which share the same decision mode.
 					const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+					// Read once per request so early and final extraction cap alike.
+					const shortenLongNames = settingsStore.get('shortenLongTabNames', false) === true;
 
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
@@ -499,12 +502,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// without waiting for the full process to exit.
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
-							const earlyResult = extractTabNameFromOutput(
-								effectiveAgentType,
-								output,
-								requireStructuredOutput,
-								rawOutput
-							);
+							const earlyResult = extractTabNameFromOutput(effectiveAgentType, output, {
+								structuredOnly: requireStructuredOutput,
+								rawOutput,
+								shortenLongNames,
+							});
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
 							}
@@ -576,12 +578,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								return;
 							}
 
-							const extraction = extractTabNameFromOutput(
-								effectiveAgentType,
-								output,
-								requireStructuredOutput,
-								rawOutput
-							);
+							const extraction = extractTabNameFromOutput(effectiveAgentType, output, {
+								structuredOnly: requireStructuredOutput,
+								rawOutput,
+								shortenLongNames,
+							});
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 									sessionId,
@@ -787,22 +788,54 @@ function extractAgentResponse(
 function extractTabNameFromOutput(
 	agentType: string,
 	output: string,
-	structuredOnly = false,
-	rawOutput = ''
+	{
+		structuredOnly = false,
+		rawOutput = '',
+		shortenLongNames = false,
+	}: { structuredOnly?: boolean; rawOutput?: string; shortenLongNames?: boolean } = {}
 ): TabNameExtractionResult {
 	const response = extractAgentResponse(agentType, rawOutput || output);
 	if (response === null && structuredOnly) {
 		return { name: null, reason: 'structured_only_no_json' };
 	}
-	return extractTabName(response?.text ?? output, response?.isFinal ?? false);
+	return extractTabName(response?.text ?? output, {
+		isFinal: response?.isFinal ?? false,
+		shortenLongNames,
+	});
 }
+
+/**
+ * Longest line accepted as a name from output that is NOT a parser-confirmed
+ * final response (raw terminal text, unfinished streams). Anything longer is
+ * treated as prose, not a title.
+ */
+const TAB_NAME_RAW_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when "Shorten long tab names" is on. The
+ * same value as the raw ceiling, so a shortened name looks like any other.
+ */
+const TAB_NAME_SHORT_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when the setting is off. The tab strip shows
+ * the full name, so this is only a guard against a model answering with a
+ * sentence instead of a title.
+ */
+const TAB_NAME_FULL_MAX_LENGTH = 80;
 
 /**
  * Extract a clean tab name from agent output.
  * The output may contain ANSI codes, extra whitespace, or markdown formatting.
  * Returns a structured result with diagnostic reason for logging.
  */
-function extractTabName(output: string, isFinal = false): TabNameExtractionResult {
+function extractTabName(
+	output: string,
+	{
+		isFinal = false,
+		shortenLongNames = false,
+	}: { isFinal?: boolean; shortenLongNames?: boolean } = {}
+): TabNameExtractionResult {
 	if (!output || !output.trim()) {
 		return { name: null, reason: 'empty_output' };
 	}
@@ -826,7 +859,7 @@ function extractTabName(output: string, isFinal = false): TabNameExtractionResul
 		// Filter out empty lines and lines that look like instructions/examples
 		return (
 			trimmed.length > 0 &&
-			(isFinal || trimmed.length <= 40) && // Only final responses may be shortened
+			(isFinal || trimmed.length <= TAB_NAME_RAW_MAX_LENGTH) && // Only final responses may run long
 			!trimmed.toLowerCase().includes('example') &&
 			!trimmed.toLowerCase().includes('message:') &&
 			!trimmed.toLowerCase().includes('rules:') &&
@@ -851,11 +884,12 @@ function extractTabName(output: string, isFinal = false): TabNameExtractionResul
 	// Remove trailing punctuation (periods, colons, etc.)
 	tabName = tabName.replace(/[.:;,!?]+$/, '');
 
-	// Ensure reasonable length (max 40 chars for tab names)
-	if (tabName.length > 40) {
-		const wordBoundary = tabName.lastIndexOf(' ', 37);
-		tabName = tabName.substring(0, wordBoundary > 0 ? wordBoundary : 37) + '...';
-	}
+	// A long final title is kept whole unless the user asked for short names.
+	tabName = truncateAtWordBoundary(
+		tabName,
+		shortenLongNames ? TAB_NAME_SHORT_MAX_LENGTH : TAB_NAME_FULL_MAX_LENGTH,
+		'...'
+	);
 
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {

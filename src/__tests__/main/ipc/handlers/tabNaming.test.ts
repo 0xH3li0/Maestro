@@ -636,10 +636,27 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Side-Scroller Game');
 		});
 
-		it.each(['claude-code', 'codex', 'grok', 'factory-droid', 'copilot-cli'] as const)(
-			'shortens a 48-character final title from %s',
-			async (agentType) => {
+		const LONG_TITLE_AGENTS = [
+			'claude-code',
+			'codex',
+			'grok',
+			'factory-droid',
+			'copilot-cli',
+		] as const;
+		it.each(
+			LONG_TITLE_AGENTS.flatMap((agentType) => [
+				[agentType, true, 'Donation Appeal Pages Japanese...'] as const,
+				[agentType, false, 'Donation Appeal Pages Japanese Translation Dates'] as const,
+			])
+		)(
+			'names a 48-character final title from %s (shortenLongTabNames: %s)',
+			async (agentType, shorten, expected) => {
 				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+					if (key === 'shortenLongTabNames') return shorten;
+					if (key === 'utilityAgentId' || key === 'utilityModelId') return defaultValue ?? null;
+					return defaultValue ?? {};
+				});
 				const listeners = new Map<string, (...args: any[]) => void>();
 				mockProcessManager.on.mockImplementation(
 					(event: string, callback: (...args: any[]) => void) => {
@@ -686,13 +703,40 @@ describe('Tab Naming IPC Handlers', () => {
 				listeners.get('exit')?.(sessionId, 0);
 
 				expect(title).toHaveLength(48);
-				expect(await resultPromise).toBe('Donation Appeal Pages Japanese...');
+				expect(await resultPromise).toBe(expected);
 				expect(mockProcessManager.off).toHaveBeenCalledWith(
 					'raw-stdout',
 					listeners.get('raw-stdout')
 				);
 			}
 		);
+
+		it('cuts a final title past 80 characters even with shortening off', async () => {
+			const title =
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The Autumn Campaign';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const sessionId = 'tab-naming-mock-uuid-1234';
+			listeners.get('data')?.(sessionId, JSON.stringify({ type: 'result', result: title }) + '\n');
+			listeners.get('exit')?.(sessionId, 0);
+
+			expect(title.length).toBeGreaterThan(80);
+			expect(await resultPromise).toBe(
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The...'
+			);
+		});
 
 		it.each(['missing', 'cancelled'])(
 			'rejects a long Grok title with %s completion',
