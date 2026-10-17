@@ -30,7 +30,11 @@ import {
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { AgentError, ToolType } from '../../../shared/types';
-import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
+import {
+	parseAgentErrorEffortRejection,
+	parseEffortRejection,
+	type EffortRejection,
+} from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -514,7 +518,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// exit below would otherwise read as an anonymous failure.
 						const onAgentError = (errorSessionId: string, agentError: AgentError) => {
 							if (errorSessionId !== sessionId) return;
-							effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+							effortRejection = parseAgentErrorEffortRejection(agentError) ?? effortRejection;
 						};
 
 						// Listen for process exit

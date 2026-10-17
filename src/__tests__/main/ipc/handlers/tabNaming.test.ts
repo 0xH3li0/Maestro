@@ -1628,6 +1628,49 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(await resultPromise).toBe('Slack Formatting Fix');
 		});
 
+		it('retries when the refusal is only in the raw stderr (Copilot Auto model)', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			// Copilot's parser reports a generic exit message and keeps the
+			// provider's own words only in `raw.stderr`.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				type: 'agent_crashed',
+				agentId: 'copilot-cli',
+				recoverable: true,
+				timestamp: 0,
+				message: 'Agent exited with code 1',
+				raw: {
+					exitCode: 1,
+					stderr:
+						'Error: Model "auto" does not support reasoning effort configuration (requested: "low").',
+				},
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[1][2].sessionCustomEffort).toBe(
+				undefined
+			);
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
 		it('detaches the first attempt listeners before retrying', async () => {
 			const callbacks = captureListeners();
 
