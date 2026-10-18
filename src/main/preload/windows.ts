@@ -25,6 +25,7 @@ import {
 	type TabWindowIntent,
 	type TabWindowPopOutOptions,
 	type TabWindowPopOutResult,
+	type TabWindowReorderResult,
 	type TabWindowSessionPatch,
 	type TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
@@ -229,6 +230,13 @@ export function createTabWindowsApi() {
 		/** Show a popped tab in its tab window and raise that window. */
 		focus: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowFocusResult> =>
 			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.focus, agentId, tabRef),
+
+		/**
+		 * Put the agent's tab window strip in this order. `tabRefs` must name
+		 * exactly the tabs the window holds; each keeps its dock slot.
+		 */
+		reorder: (agentId: string, tabRefs: TabWindowTabRef[]): Promise<TabWindowReorderResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.reorder, agentId, tabRefs),
 
 		/** Every tab window and its tabs. */
 		list: (): Promise<TabWindowInfo[]> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.list),

@@ -54,8 +54,19 @@ vi.mock('../../../../main/global-hotkey-manager', () => ({
 	summonAppWindow: (...args: unknown[]) => summonAppWindow(...args),
 }));
 
-import { registerTabWindowsHandlers } from '../../../../main/ipc/handlers/tab-windows';
-import { isStoredAiTabHidden } from '../../../../main/tab-window-service';
+const reroutePermissionRequests = vi.fn();
+vi.mock('../../../../main/permission-relay', () => ({
+	reroutePermissionRequests: () => reroutePermissionRequests(),
+}));
+
+import {
+	registerTabWindowsHandlers,
+	wireTabWindowPermissionRerouting,
+} from '../../../../main/ipc/handlers/tab-windows';
+import {
+	findTabWindowHoldingAiTab,
+	isStoredAiTabHidden,
+} from '../../../../main/tab-window-service';
 import { WindowRegistry } from '../../../../main/window-registry';
 import type {
 	TabWindowIntent,
@@ -154,6 +165,7 @@ describe('Tab Windows IPC Handlers', () => {
 			'tabWindows:popOut',
 			'tabWindows:dock',
 			'tabWindows:focus',
+			'tabWindows:reorder',
 			'tabWindows:list',
 			'tabWindows:getState',
 		]) {
@@ -305,6 +317,37 @@ describe('Tab Windows IPC Handlers', () => {
 				(await invoke('tabWindows:focus', 'agent-1', { type: 'group', id: 'g1' })).focused
 			).toBe(false);
 			expect(summonAppWindow).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('tabWindows:reorder', () => {
+		it('sets the tab window strip order, which the owner runs for the reorderTabs intent', async () => {
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			await invoke('tabWindows:popOut', 'agent-1', FILE_TAB);
+			const entry = registry.getTabWindowForAgent('agent-1')!;
+
+			expect(await invoke('tabWindows:reorder', 'agent-1', [FILE_TAB, AI_TAB])).toEqual({
+				reordered: true,
+				windowId: entry.id,
+			});
+			expect(entry.tabRefs).toEqual([FILE_TAB, AI_TAB]);
+		});
+
+		it('refuses an agent with no tab window, an order that is not its tabs, or bad arguments', async () => {
+			expect(await invoke('tabWindows:reorder', 'agent-1', [AI_TAB])).toEqual({
+				reordered: false,
+				error: 'The agent has no tab window',
+			});
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			expect(await invoke('tabWindows:reorder', 'agent-1', [FILE_TAB])).toEqual({
+				reordered: false,
+				error: "The order does not name exactly the tab window's tabs",
+			});
+			expect((await invoke('tabWindows:reorder', '', [AI_TAB])).reordered).toBe(false);
+			expect((await invoke('tabWindows:reorder', 'agent-1', 'nope')).reordered).toBe(false);
+			expect(
+				(await invoke('tabWindows:reorder', 'agent-1', [{ type: 'group', id: 'g' }])).reordered
+			).toBe(false);
 		});
 	});
 
@@ -462,5 +505,73 @@ describe('isStoredAiTabHidden', () => {
 		expect(isStoredAiTabHidden(store(sessions), 'a', { type: 'ai', id: 'new' })).toBe(false);
 		expect(isStoredAiTabHidden(store(null), 'a', { type: 'ai', id: 't1' })).toBe(false);
 		expect(isStoredAiTabHidden(store([{ id: 'a' }]), 'a', { type: 'ai', id: 't1' })).toBe(false);
+	});
+});
+
+describe('findTabWindowHoldingAiTab (permission prompt routing)', () => {
+	it('finds the live tab window that holds the AI tab', () => {
+		const registry = new WindowRegistry();
+		const tabWin = makeFakeWindow();
+		registry.create({ kind: 'tab', browserWindow: tabWin, agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+		expect(findTabWindowHoldingAiTab(registry, 'tab-1')).toBe(tabWin);
+		expect(findTabWindowHoldingAiTab(registry, 'tab-1', 'agent-1-ai-tab-1')).toBe(tabWin);
+	});
+
+	it('finds nothing for a tab that is not popped, a file tab, or no tab id', () => {
+		const registry = new WindowRegistry();
+		registry.create({
+			kind: 'tab',
+			browserWindow: makeFakeWindow(),
+			agentId: 'agent-1',
+			tabRefs: [FILE_TAB],
+		});
+
+		expect(findTabWindowHoldingAiTab(registry, 'tab-1')).toBeNull();
+		expect(findTabWindowHoldingAiTab(registry, 'file-1')).toBeNull();
+		expect(findTabWindowHoldingAiTab(registry, undefined)).toBeNull();
+	});
+
+	it("refuses a spawn whose session id is another agent's", () => {
+		const registry = new WindowRegistry();
+		registry.create({
+			kind: 'tab',
+			browserWindow: makeFakeWindow(),
+			agentId: 'agent-1',
+			tabRefs: [AI_TAB],
+		});
+
+		expect(findTabWindowHoldingAiTab(registry, 'tab-1', 'agent-2-ai-tab-1')).toBeNull();
+	});
+
+	it('finds nothing when the tab window is gone', () => {
+		const registry = new WindowRegistry();
+		const gone = makeFakeWindow();
+		vi.mocked(gone.isDestroyed).mockReturnValue(true);
+		registry.create({ kind: 'tab', browserWindow: gone, agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+		expect(findTabWindowHoldingAiTab(registry, 'tab-1')).toBeNull();
+	});
+});
+
+describe('wireTabWindowPermissionRerouting', () => {
+	it('re-routes waiting permission prompts on every tab window change, and only then', () => {
+		reroutePermissionRequests.mockClear();
+		const registry = new WindowRegistry();
+		const off = wireTabWindowPermissionRerouting(registry);
+		const id = registry.create({
+			kind: 'tab',
+			browserWindow: makeFakeWindow(),
+			agentId: 'agent-1',
+			tabRefs: [AI_TAB, FILE_TAB],
+		});
+		expect(reroutePermissionRequests).not.toHaveBeenCalled();
+
+		registry.removeTabFromTabWindow(id, AI_TAB);
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
+
+		off();
+		registry.removeTabFromTabWindow(id, FILE_TAB);
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
 	});
 });

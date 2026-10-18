@@ -16,25 +16,39 @@
  *
  * Layout, top to bottom: `TabWindowHeader` (status dot, agent name, Dock), the
  * shared `TabBar` fed with only this window's tabs, `TabWindowContent`, and,
- * under an AI tab, the thinking pill. Which tabs, and which one is shown, come
- * from this window's registry record (`useTabWindowInfo`). The agent's
- * `Session` comes from the renderer `sessionStore`, which holds only this agent,
- * applied from the owner's patches (`useTabWindowMirror`). Tab shortcuts and
- * chip menus work as in the main window (TW-6, `useTabWindowKeyboard`).
+ * under an AI tab, the composer with its thinking pill (`TabWindowComposer`).
+ * Which tabs, and which one is shown, come from this window's registry record
+ * (`useTabWindowInfo`). The agent's `Session` comes from the renderer
+ * `sessionStore`, which holds only this agent, applied from the owner's patches
+ * (`useTabWindowMirror`). Tab shortcuts and chip menus work as in the main
+ * window (TW-6, `useTabWindowKeyboard`). Every action that writes the agent is
+ * an intent the owner runs (`services/tabWindowIntents.ts` there); the dialogs
+ * that confirm one are this window's own (`TabWindowModals`).
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayerStackProvider } from '../../contexts/LayerStackContext';
 import { useWindowSettingsSync } from '../../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../../hooks/ui/useResolvedTheme';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useModalStore } from '../../stores/modalStore';
+import { usePermissionRequestStore } from '../../stores/permissionRequestStore';
 import {
 	buildTabWindowStripSession,
 	buildTabWindowUnifiedTabs,
 	focusFieldsForRef,
 	moveUnifiedTabToTarget,
 } from '../../utils/tabHelpers';
+import { resolveTabRefRenameValue } from '../../utils/panelLayout';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
+import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
+import { sendTabWindowIntent } from '../../services/tabWindowIntentSender';
+import {
+	closeAiTabWithConfirm,
+	closeFileTabWithConfirm,
+	closeTerminalTabWithConfirm,
+} from '../../services/tabCloseConfirm';
 import {
 	excludePreservedRefs,
 	getRefsExceptActive,
@@ -54,10 +68,14 @@ import { ToastContainer } from '../Toast';
 import { CenterFlash } from '../CenterFlash';
 import { ImageContextMenuHost } from '../ImageContextMenuHost';
 import { ZoomViewerHost } from '../ZoomViewer';
+import { PermissionPrompt } from '../PermissionPrompt/PermissionPrompt';
 import { TabBar } from '../TabBar';
 import { TabWindowHeader } from './TabWindowHeader';
 import { TabWindowContent } from './TabWindowContent';
-import { TabWindowThinkingPill } from './TabWindowThinkingPill';
+import { TabWindowComposer } from './TabWindowComposer';
+import { TabWindowModals } from './TabWindowModals';
+import { useTabWindowChatActions } from './useTabWindowChatActions';
+import { useTabWindowViewState } from './useTabWindowViewState';
 import { useTabWindowInfo } from './useTabWindowInfo';
 import { useTabWindowKeyboard } from './useTabWindowKeyboard';
 import { useTabWindowMirror } from './useTabWindowMirror';
@@ -93,6 +111,7 @@ function TabWindowShell({ windowId }: TabWindowRootProps) {
 		agentId ? (s.sessions.find((x) => x.id === agentId) ?? null) : null
 	);
 	useTabWindowTitle(session?.name);
+	usePermissionPromptsForStrip(info?.tabRefs ?? NO_TAB_REFS);
 
 	return (
 		<div
@@ -115,8 +134,24 @@ function TabWindowShell({ windowId }: TabWindowRootProps) {
 			<CenterFlash theme={theme} />
 			<ImageContextMenuHost theme={theme} />
 			<ZoomViewerHost theme={theme} />
+			<TabWindowModals theme={theme} session={session} />
+			{/* Main prompts here for a tab this window shows (permission relay routing). */}
+			<PermissionPrompt theme={theme} />
 		</div>
 	);
+}
+
+/**
+ * Keep this window's permission prompts to its own tabs. Main prompts a
+ * request in the tab window that shows its tab, and moves one still waiting
+ * when the tab docks; this forgets the moved one here without answering it.
+ */
+function usePermissionPromptsForStrip(tabRefs: TabWindowTabRef[]): void {
+	useEffect(() => {
+		usePermissionRequestStore
+			.getState()
+			.forget((request) => !tabRefs.some((ref) => ref.type === 'ai' && ref.id === request.tabId));
+	}, [tabRefs]);
 }
 
 /** Keep the OS title on `<agent name> - Tab Window`, through renames (TW-3). */
@@ -166,6 +201,11 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		const activeAiInStrip = aiTabs.some((tab) => tab.id === focused.activeTabId);
 		return activeAiInStrip ? focused : { ...focused, activeTabId: aiTabs[0]?.id ?? '' };
 	}, [session, activeTab, aiTabs]);
+	// The store's copy of the agent points at the same tabs. The active pointers
+	// are per-window fields the owner's patches never write, and the shared
+	// composer and transcript code reads them from the store (the active tab is
+	// what a send, a Stop, or a link click acts on).
+	useShownTabInStore(viewSession);
 	// The same agent narrowed to this strip: what the shared tab math (keyboard
 	// navigation, reorder, bulk-close pickers) runs on, so it walks these chips only.
 	const stripSession = useMemo(
@@ -180,13 +220,29 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		[unifiedTabs]
 	);
 
-	// Closing is a real close through the owner's close path (D7). The intent is
-	// handled by the owner's dispatcher (phase 5).
+	// Closing is a real close through the owner's close path (D7). What it would
+	// lose is confirmed here first, by the same rules the owner's chips use.
 	const closeTab = useCallback(
 		(type: SingleTabType, id: string) => {
-			tabWindows.sendIntent({ kind: 'closeTab', agentId, tabRef: { type, id } });
+			const close = () => sendTabWindowIntent({ kind: 'closeTab', agentId, tabRef: { type, id } });
+			const current = useSessionStore.getState().sessions.find((s) => s.id === agentId);
+			if (type === 'ai') {
+				closeAiTabWithConfirm(
+					current?.aiTabs.find((t) => t.id === id),
+					close
+				);
+			} else if (type === 'file') {
+				closeFileTabWithConfirm(
+					current?.filePreviewTabs.find((t) => t.id === id),
+					close
+				);
+			} else if (type === 'terminal') {
+				closeTerminalTabWithConfirm(getTerminalSessionId(agentId, id), close);
+			} else {
+				close();
+			}
 		},
-		[tabWindows, agentId]
+		[agentId]
 	);
 	const activeRef: TabWindowTabRef | null =
 		activeTab && activeTab.type !== 'group' ? { type: activeTab.type, id: activeTab.id } : null;
@@ -248,6 +304,40 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		},
 		[tabWindows, agentId, refOf, activeRef, stripSession]
 	);
+	// Rename and snooze open this window's own dialogs (TabWindowModals), which
+	// send the `renameTab` / `snoozeTab` intent once the user confirms.
+	const requestRename = useCallback(
+		(id: string) => {
+			const ref = refOf(id);
+			const initialName = ref ? resolveTabRefRenameValue(session, ref) : null;
+			if (initialName === null) return;
+			useModalStore.getState().openModal('renameTab', { tabId: id, initialName });
+		},
+		[refOf, session]
+	);
+	const requestSnooze = useCallback(
+		(id: string) => {
+			const target = resolveSnoozeTarget(session, id);
+			if (target) useModalStore.getState().openModal('snoozeTab', target);
+		},
+		[session]
+	);
+	const summarizeAndContinue = useCallback(
+		(id: string) => {
+			tabWindows.sendIntent({ kind: 'summarizeAndContinue', agentId, tabRef: { type: 'ai', id } });
+		},
+		[tabWindows, agentId]
+	);
+
+	// The shown AI tab: its transcript's actions, its composer, its view state.
+	const shownAiTab = activeTab?.type === 'ai' ? activeTab.data : null;
+	const composerInputRef = useRef<HTMLTextAreaElement>(null);
+	const chatActions = useTabWindowChatActions(
+		viewSession,
+		shownAiTab?.id ?? viewSession.activeTabId,
+		composerInputRef
+	);
+	useTabWindowViewState(agentId, shownAiTab?.id ?? null);
 
 	return (
 		<>
@@ -277,6 +367,11 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 				onTerminalTabClose={(id) => closeTab('terminal', id)}
 				onTabStar={starTab}
 				onTabMarkUnread={markTabUnread}
+				onRequestRename={requestRename}
+				onFileTabRename={requestRename}
+				onBrowserTabRename={requestRename}
+				onSnooze={requestSnooze}
+				onSummarizeAndContinue={summarizeAndContinue}
 				onUnifiedTabReorder={reorderTab}
 				onCloseOtherTabs={(pivot) => closeTabsBy(getRefsExceptActive, pivot)}
 				onCloseTabsLeft={(pivot) => closeTabsBy(getRefsLeftOfActive, pivot)}
@@ -285,12 +380,57 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 				sshRemote={isSessionRemote(session)}
 			/>
 			<div className="flex-1 min-h-0 flex flex-col">
-				<TabWindowContent theme={theme} session={viewSession} activeTab={activeTab} />
+				<TabWindowContent
+					theme={theme}
+					session={viewSession}
+					activeTab={activeTab}
+					chatActions={chatActions}
+				/>
 			</div>
 			{/* Where the composer sits in an app window, and like it, under an AI tab only. */}
-			{activeTab?.type === 'ai' && (
-				<TabWindowThinkingPill theme={theme} session={viewSession} tabRefs={tabRefs} />
+			{shownAiTab && (
+				<div className="shrink-0" data-testid="tab-window-composer">
+					<TabWindowComposer
+						theme={theme}
+						session={viewSession}
+						tab={shownAiTab}
+						tabRefs={tabRefs}
+						inputRef={composerInputRef}
+						onSelectTab={selectTab}
+					/>
+				</div>
 			)}
 		</>
 	);
+}
+
+/** The focus fields of a session, the per-window pointers the shown tab sets. */
+const FOCUS_FIELDS = [
+	'activeTabId',
+	'activeFileTabId',
+	'activeBrowserTabId',
+	'activeTerminalTabId',
+	'activeGroupId',
+	'inputMode',
+] as const;
+
+/**
+ * Write the shown tab's focus pointers into this window's copy of the agent
+ * whenever they differ, so code that reads the store's active agent and its
+ * active tab (the composer's keyboard handler, the send menu, the lightbox,
+ * services acting on "the shown tab") sees this window's tab, never the
+ * owner's. These are per-window fields: an owner patch never writes them.
+ */
+function useShownTabInStore(viewSession: Session): void {
+	useEffect(() => {
+		const stored = useSessionStore.getState().sessions.find((s) => s.id === viewSession.id);
+		if (!stored || FOCUS_FIELDS.every((field) => stored[field] === viewSession[field])) return;
+		updateSessionWith(viewSession.id, (s) => {
+			const next = { ...s };
+			for (const field of FOCUS_FIELDS) {
+				(next as Record<string, unknown>)[field] = viewSession[field];
+			}
+			return next;
+		});
+	}, [viewSession]);
 }

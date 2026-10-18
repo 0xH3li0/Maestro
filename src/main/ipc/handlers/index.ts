@@ -93,7 +93,7 @@ import {
 	wireEmptySecondaryWindowAutoClose,
 	WindowsHandlerDependencies,
 } from './windows';
-import { registerTabWindowsHandlers } from './tab-windows';
+import { registerTabWindowsHandlers, wireTabWindowPermissionRerouting } from './tab-windows';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -181,7 +181,7 @@ export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
 export { wireEmptySecondaryWindowAutoClose };
-export { registerTabWindowsHandlers };
+export { registerTabWindowsHandlers, wireTabWindowPermissionRerouting };
 export type { WindowsHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };

@@ -30,6 +30,7 @@ import {
 	type TabWindowInfo,
 	type TabWindowPopOutOptions,
 	type TabWindowPopOutResult,
+	type TabWindowReorderResult,
 	type TabWindowTabRef,
 } from '../shared/tabWindowTypes';
 
@@ -155,6 +156,54 @@ export function focusTabWindowTab(
 	}
 	summonAppWindow(entry.browserWindow);
 	return { focused: true, windowId: entry.id };
+}
+
+/**
+ * Put the agent's tab window strip in the order `tabRefs` names (a chip drag or
+ * "Move to First / Last Position" inside the tab window). Only the tab window's
+ * own order moves; every tab keeps its dock slot in the owner (TW-8). The owner
+ * window runs this for the `reorderTabs` intent.
+ */
+export function reorderTabWindow(
+	registry: WindowRegistry,
+	agentId: unknown,
+	tabRefs: unknown
+): TabWindowReorderResult {
+	if (typeof agentId !== 'string' || agentId.length === 0) {
+		return { reordered: false, error: 'An agent id is required' };
+	}
+	if (!Array.isArray(tabRefs) || !tabRefs.every(isSingleTabRef)) {
+		return { reordered: false, error: 'A list of tab refs ({ type, id }) is required' };
+	}
+	const entry = registry.getTabWindowForAgent(agentId);
+	if (!entry) return { reordered: false, error: 'The agent has no tab window' };
+	if (!registry.setTabWindowTabOrder(entry.id, tabRefs)) {
+		return { reordered: false, error: "The order does not name exactly the tab window's tabs" };
+	}
+	return { reordered: true, windowId: entry.id };
+}
+
+/**
+ * The tab window that holds the AI tab `tabId`, if it is popped out and its
+ * window is alive. Tab ids are unique across agents, so the id alone finds it.
+ * When `processSessionId` is given (`{agentId}-ai-{tabId}`, the spawn that
+ * asked), it must start with that window's agent id, so a stray id never
+ * routes into another agent's tab window.
+ */
+export function findTabWindowHoldingAiTab(
+	registry: WindowRegistry,
+	tabId: string | undefined,
+	processSessionId?: string
+): BrowserWindow | null {
+	if (!tabId) return null;
+	for (const entry of registry.getTabWindows()) {
+		const info = toTabWindowInfo(entry);
+		if (!info) continue;
+		if (!info.tabRefs.some((ref) => ref.type === 'ai' && ref.id === tabId)) continue;
+		if (processSessionId && !processSessionId.startsWith(`${info.agentId}-`)) return null;
+		return isWebContentsAvailable(entry.browserWindow) ? entry.browserWindow : null;
+	}
+	return null;
 }
 
 /** Every tab window, in the order they were opened. */

@@ -41,12 +41,21 @@ export interface UnifiedTabNavigators {
 	) => NavigateToUnifiedTabResult | null;
 }
 
-/** The navigators in `tabHelpers`. */
+/**
+ * The navigators in `tabHelpers`. Each one reads its import when it is called,
+ * not when this module loads: the keyboard hooks import this module through
+ * the hooks barrel, so loading it must not touch `tabHelpers` (a test that
+ * replaces `tabHelpers` with a mock of a few functions still loads the barrel).
+ */
 export const UNIFIED_TAB_NAVIGATORS: UnifiedTabNavigators = {
-	navigateToNextUnifiedTab,
-	navigateToPrevUnifiedTab,
-	navigateToUnifiedTabByIndex,
-	navigateToLastUnifiedTab,
+	navigateToNextUnifiedTab: (session, showUnreadOnly) =>
+		navigateToNextUnifiedTab(session, showUnreadOnly),
+	navigateToPrevUnifiedTab: (session, showUnreadOnly) =>
+		navigateToPrevUnifiedTab(session, showUnreadOnly),
+	navigateToUnifiedTabByIndex: (session, index, showUnreadOnly) =>
+		navigateToUnifiedTabByIndex(session, index, showUnreadOnly),
+	navigateToLastUnifiedTab: (session, showUnreadOnly) =>
+		navigateToLastUnifiedTab(session, showUnreadOnly),
 };
 
 /** A keystroke that switches tabs. */

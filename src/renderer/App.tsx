@@ -13,7 +13,7 @@ import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { useEventListener } from './hooks/utils/useEventListener';
-import { slashCommands } from './slashCommands';
+import { buildSlashCommandList } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
 import { AppShell } from './components/AppShell';
@@ -154,6 +154,7 @@ import { useTabWindowStoreSync } from './stores/tabWindowStore';
 import { usePoppedOutTabGuard } from './hooks/tabs/usePoppedOutTabGuard';
 import { useTabWindowDockReconcile } from './hooks/tabs/useTabWindowDockReconcile';
 import { useTabWindowPublisher } from './hooks/tabs/useTabWindowPublisher';
+import { raiseOwnWindow, useTabWindowIntents } from './hooks/tabs/useTabWindowIntents';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -172,7 +173,13 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
-import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
+import {
+	editQueuedItem,
+	mergeQueuedItemIntoAbove,
+	removeQueuedItem,
+	reorderQueuedItems,
+	toggleQueuedItemPaused,
+} from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -214,7 +221,6 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1133,6 +1139,7 @@ function MaestroConsoleInner() {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleDeleteLog,
+		closeTabRefs,
 	} = useTabHandlers(inputRef);
 
 	// Thin App-side slice for modals / attach-image gate. Primitives only so log
@@ -1628,62 +1635,30 @@ function MaestroConsoleInner() {
 
 	// Combine built-in slash commands with custom AI commands, bundled methodology
 	// commands, and agent-specific commands for autocomplete.
-	const allSlashCommands = useMemo(() => {
-		const customCommandsAsSlash = customAICommands.map((cmd) => ({
-			command: cmd.command,
-			description: cmd.description,
-			aiOnly: true,
-			prompt: cmd.prompt,
-		}));
-		const speckitCommandsAsSlash = speckitCommands.map((cmd) => ({
-			command: cmd.command,
-			description: cmd.description,
-			aiOnly: true,
-			prompt: cmd.prompt,
-		}));
-		const openspecCommandsAsSlash = openspecCommands.map((cmd) => ({
-			command: cmd.command,
-			description: cmd.description,
-			aiOnly: true,
-			prompt: cmd.prompt,
-		}));
-		const bmadCommandsAsSlash = bmadCommands.map((cmd) => ({
-			command: cmd.command,
-			description: cmd.description,
-			aiOnly: true,
-			prompt: cmd.prompt,
-		}));
-		// Only include agent-specific commands if the agent supports slash commands
-		// This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
-		const agentCommands = hasActiveSessionCapability('supportsSlashCommands')
-			? (activeSession?.agentCommands || []).map((cmd) => ({
-					command: cmd.command,
-					description: cmd.description,
-					aiOnly: true, // Agent commands are only available in AI mode
-				}))
-			: [];
-		// Filter built-in slash commands by agent type (if specified)
-		const currentAgentType = activeSession?.toolType;
-		const filteredSlashCommands = slashCommands.filter(
-			(cmd) => !cmd.agentTypes || (currentAgentType && cmd.agentTypes.includes(currentAgentType))
-		);
-		return [
-			...filteredSlashCommands,
-			...customCommandsAsSlash,
-			...speckitCommandsAsSlash,
-			...openspecCommandsAsSlash,
-			...bmadCommandsAsSlash,
-			...agentCommands,
-		];
-	}, [
-		customAICommands,
-		speckitCommands,
-		openspecCommands,
-		bmadCommands,
-		activeSession?.agentCommands,
-		activeSession?.toolType,
-		hasActiveSessionCapability,
-	]);
+	const allSlashCommands = useMemo(
+		() =>
+			buildSlashCommandList({
+				toolType: activeSession?.toolType,
+				customAICommands,
+				speckitCommands,
+				openspecCommands,
+				bmadCommands,
+				// Only include agent-specific commands if the agent supports slash commands
+				// This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
+				agentCommands: hasActiveSessionCapability('supportsSlashCommands')
+					? activeSession?.agentCommands
+					: undefined,
+			}),
+		[
+			customAICommands,
+			speckitCommands,
+			openspecCommands,
+			bmadCommands,
+			activeSession?.agentCommands,
+			activeSession?.toolType,
+			hasActiveSessionCapability,
+		]
+	);
 
 	const canAttachImages = useMemo(() => {
 		if (!activeSession || activeSession.inputMode !== 'ai') return false;
@@ -1824,11 +1799,10 @@ function MaestroConsoleInner() {
 	// instead of the conservative defaults.
 	useCapabilitiesPriming();
 
+	// The inline queue cards' actions, on the active agent. Each is the shared
+	// queue service a tab window's owner runs on the agent its intent names.
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
-		}));
+		removeQueuedItem(activeSessionIdRef.current, itemId);
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {
@@ -1843,10 +1817,7 @@ function MaestroConsoleInner() {
 
 	// Edit a queued message's prompt text and attached images in place.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch),
-		}));
+		editQueuedItem(activeSessionIdRef.current, itemId, patch);
 	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The
@@ -1855,10 +1826,7 @@ function MaestroConsoleInner() {
 	// queued items in their absolute positions (see the helper for details).
 	const handleReorderQueuedItem = useCallback(
 		(fromIndex: number, toIndex: number, tabId?: string) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId),
-			}));
+			reorderQueuedItems(activeSessionIdRef.current, fromIndex, toIndex, tabId);
 		},
 		[]
 	);
@@ -2419,7 +2387,7 @@ function MaestroConsoleInner() {
 	processQueuedItemRef.current = processQueuedItem;
 
 	// handleInterrupt - provided by useInterruptHandler hook
-	const { handleInterrupt } = useInterruptHandler({
+	const { handleInterrupt, interruptAgent } = useInterruptHandler({
 		sessionsRef,
 		cancelPendingSynopsis,
 		processQueuedItem,
@@ -2667,6 +2635,31 @@ function MaestroConsoleInner() {
 		},
 		[handleSteerQueueItem]
 	);
+
+	// Tab Windows: run what a user does in a tab window (send, Stop, queue,
+	// tab menu, ...) through the same functions this window's own UI calls,
+	// aimed at the popped tab (D2). Each target-taking variant below is the
+	// handler this window's UI reaches with its own active agent and tab.
+	useTabWindowIntents(windowCtx?.ownsSession, {
+		processInput: (text, options) => processInput(text, options),
+		interruptAgent,
+		performTabClose,
+		closeTabRefs,
+		forceSendQueuedItem: handleForceSendQueueItem,
+		steerQueuedItem: handleSteerQueueItem,
+		deleteLog: handleDeleteLog,
+		forkConversation: handleForkConversation,
+		recoverSession: handleSessionRecover,
+		summarizeAndContinue: handleSummarizeAndContinue,
+		cancelSummarize: cancelTab,
+		cancelMerge: cancelMergeTab,
+		stopBatchRun,
+		cancelWizardTurn: cancelInlineWizardTurn,
+		clearAgentError: handleClearAgentError,
+		openFileLink: handleMainPanelFileClick,
+		showAgent: setActiveSessionId,
+		raiseWindow: () => void raiseOwnWindow(windowCtx?.windowId),
+	});
 
 	// Symphony contribution handler - extracted to useSymphonyContribution hook
 	const { handleStartContribution } = useSymphonyContribution({

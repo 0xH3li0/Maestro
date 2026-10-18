@@ -3,12 +3,20 @@
  * of the full app (Tab Windows, phase 4).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TabWindowRoot } from '../../../../renderer/components/TabWindow/TabWindowRoot';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import {
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../../renderer/stores/sessionStore';
 import { useTabWindowStore } from '../../../../renderer/stores/tabWindowStore';
 import { notifyToast, useNotificationStore } from '../../../../renderer/stores/notificationStore';
+import { useComposerInputStore } from '../../../../renderer/stores/composerInputStore';
+import { useCenterFlashStore } from '../../../../renderer/stores/centerFlashStore';
+import { clearLiveDraft } from '../../../../renderer/utils/liveDraftStore';
+import type { AITab } from '../../../../renderer/types';
 import { THEMES } from '../../../../renderer/constants/themes';
 import type { TabWindowInfo } from '../../../../shared/tabWindowTypes';
 import type { WindowSessionMovedPayload } from '../../../../shared/window-types';
@@ -83,6 +91,9 @@ const tabWindowsApi = {
 
 beforeEach(() => {
 	useNotificationStore.getState().clearToasts();
+	// A draft typed in one test must not read as unsent in the next.
+	useComposerInputStore.setState(useComposerInputStore.getInitialState(), true);
+	clearLiveDraft('a2');
 	useSessionStore.setState({ sessions: [] });
 	useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
 	broadcast = null;
@@ -123,7 +134,7 @@ describe('TabWindowRoot', () => {
 		});
 	});
 
-	it('subscribes to no process:* event, so no one-shot side effect can run here (D1)', async () => {
+	it('subscribes to no process:* event but its permission prompts, so no one-shot side effect can run here (D1)', async () => {
 		// Record every `window.maestro.process.on*` subscription the root makes.
 		const subscribed: string[] = [];
 		const original = window.maestro.process;
@@ -142,7 +153,10 @@ describe('TabWindowRoot', () => {
 		} finally {
 			window.maestro.process = original;
 		}
-		expect(subscribed).toEqual([]);
+		// The permission prompt only: main prompts a popped tab's requests here, and
+		// an exited process's requests leave this window's queue. Neither writes a
+		// Session or runs a one-shot side effect.
+		expect([...new Set(subscribed)].sort()).toEqual(['onExit', 'onPermissionRequest']);
 	});
 
 	it('hosts toasts raised in this window', async () => {
@@ -443,6 +457,136 @@ describe('TabWindowRoot tab switching (TW-6)', () => {
 			agentId: AGENT,
 			tabRef: { type: 'ai', id: 'a2' },
 			starred: true,
+		});
+	});
+
+	it('confirms a close that would lose the typed draft, and sends the close only once confirmed', async () => {
+		await renderRoot();
+		const composer = screen.getByTestId('tab-window-composer');
+		fireEvent.change(within(composer).getByRole('textbox'), {
+			target: { value: 'half-written' },
+		});
+		tabWindowsApi.sendIntent.mockClear();
+
+		press({ key: 'w', code: 'KeyW', metaKey: true });
+		expect(
+			await screen.findByText('This tab has an unsent draft. Are you sure you want to close it?')
+		).toBeInTheDocument();
+		expect(tabWindowsApi.sendIntent).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'closeTab',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+		});
+	});
+
+	it('renames the chip through the rename intent, from the same dialog the owner uses', async () => {
+		await renderRoot();
+		await chooseFromChipMenu('Popped Chat', 'Rename Tab');
+		const field = await screen.findByDisplayValue('Popped Chat');
+		fireEvent.change(field, { target: { value: 'Release notes' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'renameTab',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			name: 'Release notes',
+		});
+		expect(screen.queryByDisplayValue('Release notes')).not.toBeInTheDocument();
+	});
+
+	it('snoozes the chip through the snooze intent with the chosen wake time', async () => {
+		const before = Date.now();
+		await renderRoot();
+		await chooseFromChipMenu('Popped Chat', 'Snooze Tab');
+		fireEvent.change(
+			await screen.findByPlaceholderText('1d, 10h, 2 weeks, next month, aug 5, friday 3pm'),
+			{ target: { value: '2h' } }
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Snooze' }));
+
+		const snooze = tabWindowsApi.sendIntent.mock.calls
+			.map(([intent]) => intent)
+			.find((intent) => intent.kind === 'snoozeTab');
+		expect(snooze).toMatchObject({ agentId: AGENT, tabRef: { type: 'ai', id: 'a2' } });
+		// Two hours out, to the minute the parser rounds to.
+		expect(snooze.wakeAt).toBeGreaterThan(before + 2 * 60 * 60 * 1000 - 60_000);
+		expect(snooze.wakeAt).toBeLessThan(before + 2 * 60 * 60 * 1000 + 60_000);
+	});
+});
+
+describe('TabWindowRoot composer sends intents to the owner (phase 5)', () => {
+	const composer = () => screen.getByTestId('tab-window-composer');
+	const draftBox = () => within(composer()).getByRole('textbox');
+	const typeDraft = (text: string) => fireEvent.change(draftBox(), { target: { value: text } });
+	// Cmd+Enter sends under either Enter-to-send setting.
+	const submit = () => fireEvent.keyDown(draftBox(), { key: 'Enter', metaKey: true });
+
+	beforeEach(() => {
+		seedAgent();
+		useCenterFlashStore.setState({ active: null });
+		tabWindowsApi.getState.mockResolvedValue(WINDOW_INFO);
+	});
+
+	it('sends the draft as one send intent for the shown tab, and clears it', async () => {
+		await renderRoot();
+		tabWindowsApi.sendIntent.mockClear();
+		typeDraft('Ship it');
+		submit();
+
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledTimes(1);
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 'send',
+				agentId: AGENT,
+				tabRef: { type: 'ai', id: 'a2' },
+				text: 'Ship it',
+				images: [],
+				commandMode: 'off',
+			})
+		);
+		expect(draftBox()).toHaveValue('');
+	});
+
+	it('keeps the draft and sends nothing while the tab runs the planning wizard, and says why', async () => {
+		updateAiTab(AGENT, 'a2', (tab) => ({
+			...tab,
+			wizardState: { isActive: true } as AITab['wizardState'],
+		}));
+		await renderRoot();
+		tabWindowsApi.sendIntent.mockClear();
+		typeDraft('Next step');
+		submit();
+
+		expect(tabWindowsApi.sendIntent).not.toHaveBeenCalled();
+		expect(useCenterFlashStore.getState().active?.message).toBe(
+			'The planning wizard runs in the main window. Dock this tab to continue it.'
+		);
+		expect(draftBox()).toHaveValue('Next step');
+	});
+
+	it('stops the turn of the shown tab through the interrupt intent', async () => {
+		const startedAt = Date.now();
+		updateSessionWith(AGENT, (session) => ({
+			...session,
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: startedAt,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 'a2' ? { ...tab, state: 'busy', thinkingStartTime: startedAt } : tab
+			),
+		}));
+		await renderRoot();
+		tabWindowsApi.sendIntent.mockClear();
+		fireEvent.click(within(composer()).getByRole('button', { name: 'Stop' }));
+
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'interrupt',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
 		});
 	});
 });

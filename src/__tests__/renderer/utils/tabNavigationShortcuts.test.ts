@@ -88,4 +88,16 @@ describe('matchTabNavigationShortcut', () => {
 		expect(result).toMatchObject({ type: 'ai', id: 'a2' });
 		expect(UNIFIED_TAB_NAVIGATORS.navigateToNextUnifiedTab(SESSION)).toMatchObject({ id: 'a2' });
 	});
+
+	it('loads without touching tabHelpers, so a mock of a few of its functions still loads it', async () => {
+		vi.resetModules();
+		vi.doMock('../../../renderer/utils/tabHelpers', () => ({}));
+		try {
+			const module = await import('../../../renderer/utils/tabNavigationShortcuts');
+			expect(module.UNIFIED_TAB_NAVIGATORS).toBeDefined();
+		} finally {
+			vi.doUnmock('../../../renderer/utils/tabHelpers');
+			vi.resetModules();
+		}
+	});
 });

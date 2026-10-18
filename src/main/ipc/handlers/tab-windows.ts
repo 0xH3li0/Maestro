@@ -24,7 +24,9 @@ import {
 	popOutTab,
 	relayTabWindowIntent,
 	relayTabWindowPatch,
+	reorderTabWindow,
 } from '../../tab-window-service';
+import { reroutePermissionRequests } from '../../permission-relay';
 import { requireDependency, withIpcErrorLogging } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
 import { toTabWindowInfo, type WindowRegistry } from '../../window-registry';
@@ -36,6 +38,7 @@ import {
 	type TabWindowInfo,
 	type TabWindowPopOutOptions,
 	type TabWindowPopOutResult,
+	type TabWindowReorderResult,
 } from '../../../shared/tabWindowTypes';
 
 const LOG_CONTEXT = '[TabWindows]';
@@ -54,6 +57,20 @@ export interface TabWindowsHandlerDependencies {
 /** The window that sent a relay message, or null when it has none. */
 function senderWindow(event: Electron.IpcMainEvent): BrowserWindow | null {
 	return event?.sender ? BrowserWindow.fromWebContents(event.sender) : null;
+}
+
+/**
+ * Move a permission prompt that waits in a tab window to the window that shows
+ * its tab now, whenever a tab window's tabs change (a dock, or the window
+ * closing, which docks every tab). The relay prompts a popped tab's requests
+ * in its tab window (`initPermissionRelay` routing); without this, a request
+ * left unanswered there when the tab docks would wait out the relay's timeout.
+ * Returns the unsubscribe function.
+ */
+export function wireTabWindowPermissionRerouting(registry: WindowRegistry): () => void {
+	return registry.onChange((change) => {
+		if (change.type === 'tab-window-changed') reroutePermissionRequests();
+	});
 }
 
 /**
@@ -108,6 +125,18 @@ export function registerTabWindowsHandlers(deps: TabWindowsHandlerDependencies):
 			async (agentId: string, tabRef: unknown): Promise<TabWindowFocusResult> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
 				return focusTabWindowTab(registry, agentId, tabRef);
+			}
+		)
+	);
+
+	// Set a tab window's own strip order (the owner runs the `reorderTabs` intent).
+	ipcMain.handle(
+		TAB_WINDOW_CHANNELS.reorder,
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'reorder' },
+			async (agentId: string, tabRefs: unknown): Promise<TabWindowReorderResult> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				return reorderTabWindow(registry, agentId, tabRefs);
 			}
 		)
 	);

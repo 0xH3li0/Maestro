@@ -17,7 +17,10 @@ vi.mock('../../../../renderer/utils/runtimeContext', async (importOriginal) => (
 	isTabWindow: () => runtime.tabWindow,
 }));
 
-import { useTranscriptBackfill } from '../../../../renderer/hooks/agent/useTranscriptBackfill';
+import {
+	TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS,
+	useTranscriptBackfill,
+} from '../../../../renderer/hooks/agent/useTranscriptBackfill';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import type { AITab, Session } from '../../../../renderer/types';
@@ -338,5 +341,36 @@ describe('useTranscriptBackfill', () => {
 		expect(result.current.isLoading).toBe(false);
 		expect(onPrepend).not.toHaveBeenCalled();
 		expect(storedLogs()).toEqual([]);
+	});
+
+	it('asks the owner for the page from a tab window, once per interval (loadEarlierTranscript)', () => {
+		runtime.tabWindow = true;
+		vi.useFakeTimers();
+		const sendIntent = vi.fn();
+		(window as any).maestro.tabWindows = { sendIntent };
+		try {
+			const session = seedStore(makeTab({ logs: [] }));
+			const { result } = renderHook(() =>
+				useTranscriptBackfill(session, useSessionStore.getState().sessions[0].aiTabs![0])
+			);
+
+			act(() => result.current.loadEarlier());
+			// A user parked at the top fires scroll events: one request goes out.
+			act(() => result.current.loadEarlier());
+			expect(sendIntent).toHaveBeenCalledTimes(1);
+			expect(sendIntent).toHaveBeenCalledWith({
+				kind: 'loadEarlierTranscript',
+				agentId: 'sess-1',
+				tabRef: { type: 'ai', id: 'tab-1' },
+			});
+
+			vi.advanceTimersByTime(TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS);
+			act(() => result.current.loadEarlier());
+			expect(sendIntent).toHaveBeenCalledTimes(2);
+			expect(read).not.toHaveBeenCalled();
+		} finally {
+			delete (window as any).maestro.tabWindows;
+			vi.useRealTimers();
+		}
 	});
 });

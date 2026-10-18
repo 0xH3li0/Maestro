@@ -7,6 +7,7 @@ import {
 	useIsTabPoppedOut,
 	usePoppedOutTabKeys,
 	startTabWindowStoreSync,
+	isTabViewedInTabWindow,
 } from '../../../renderer/stores/tabWindowStore';
 import type { TabWindowInfo } from '../../../shared/tabWindowTypes';
 import type { WindowSessionMovedPayload } from '../../../shared/window-types';
@@ -35,7 +36,32 @@ async function flush(): Promise<void> {
 
 describe('tabWindowStore', () => {
 	beforeEach(() => {
-		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {}, viewedTabs: new Set() });
+	});
+
+	describe('isTabViewedInTabWindow (the owner unread rule)', () => {
+		it('is true while the tab window reports the popped tab watched', () => {
+			useTabWindowStore.getState().setWindows([tabWindow()]);
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', true);
+			expect(isTabViewedInTabWindow('agent-a', 'tab-1')).toBe(true);
+			expect(isTabViewedInTabWindow('agent-b', 'tab-1')).toBe(false);
+
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', false);
+			expect(isTabViewedInTabWindow('agent-a', 'tab-1')).toBe(false);
+		});
+
+		it('is false for a tab that is not popped out, whatever was last reported', () => {
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', true);
+			expect(isTabViewedInTabWindow('agent-a', 'tab-1')).toBe(false);
+		});
+
+		it('keeps its state object when nothing changes', () => {
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', true);
+			const before = useTabWindowStore.getState().viewedTabs;
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', true);
+			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-2', false);
+			expect(useTabWindowStore.getState().viewedTabs).toBe(before);
+		});
 	});
 
 	describe('isTabPoppedOut', () => {

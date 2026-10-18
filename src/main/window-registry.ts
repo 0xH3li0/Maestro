@@ -301,6 +301,30 @@ export class WindowRegistry extends EventEmitter {
 		return true;
 	}
 
+	/**
+	 * Put the strip of the tab window `windowId` in the order `tabRefs` names.
+	 * Only the tab window's own order changes: each tab keeps its dock slot in
+	 * the agent's `unifiedTabOrder` (TW-8). Refuses (returns false, emits
+	 * nothing) when the window is not a tab window or `tabRefs` is not exactly
+	 * the tabs it holds: a reorder never adds or drops a tab. Emits
+	 * `tab-window-changed` only when the order actually changed.
+	 */
+	setTabWindowTabOrder(windowId: string, tabRefs: readonly TabWindowTabRef[]): boolean {
+		const entry = this.windows.get(windowId);
+		if (!isTabWindowEntry(entry)) return false;
+		if (tabRefs.length !== entry.tabRefs.length) return false;
+		const ordered: TabWindowTabRef[] = [];
+		for (const ref of tabRefs) {
+			const held = entry.tabRefs.find((candidate) => isSameTabRef(candidate, ref));
+			if (!held || ordered.includes(held)) return false;
+			ordered.push(held);
+		}
+		if (ordered.every((ref, index) => ref === entry.tabRefs[index])) return true;
+		entry.tabRefs = ordered;
+		this.emitTabWindowChange(entry);
+		return true;
+	}
+
 	/** The primary (`isMain`) window, if one is registered. */
 	getPrimary(): RegisteredWindow | undefined {
 		for (const entry of this.windows.values()) {

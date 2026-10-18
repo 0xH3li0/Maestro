@@ -66,6 +66,8 @@ export const TAB_WINDOW_CHANNELS = {
 	dock: 'tabWindows:dock',
 	/** Show a popped tab in its tab window and raise that window. */
 	focus: 'tabWindows:focus',
+	/** Set the order of a tab window's strip (its own order, not the dock slots). */
+	reorder: 'tabWindows:reorder',
 	/** Every tab window, as {@link TabWindowInfo}. */
 	list: 'tabWindows:list',
 	/** The calling tab window's own {@link TabWindowInfo}. */
@@ -104,6 +106,11 @@ export type TabWindowDockResult =
 export type TabWindowFocusResult =
 	| { focused: true; windowId: string }
 	| { focused: false; error: string };
+
+/** Answer of {@link TAB_WINDOW_CHANNELS.reorder}. */
+export type TabWindowReorderResult =
+	| { reordered: true; windowId: string }
+	| { reordered: false; error: string };
 
 // ============================================================================
 // Session patches (owner to tab window)

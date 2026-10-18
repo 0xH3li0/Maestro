@@ -70,6 +70,7 @@ import {
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
 	registerTabWindowsHandlers,
+	wireTabWindowPermissionRerouting,
 	setupLoggerEventForwarding,
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
@@ -227,6 +228,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,
+		// A permission prompt for a popped-out tab goes to its tab window.
+		getWindowRegistry: () => deps.windowRegistry,
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
@@ -430,6 +433,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getWindowManager: () => deps.windowManager,
 		sessionsStore: deps.sessionsStore,
 	});
+	// A permission prompt waiting in a tab window whose tab docks (or whose
+	// window closes) moves to the window that shows the tab now.
+	wireTabWindowPermissionRerouting(deps.windowRegistry);
 	// Close a secondary window as soon as its last agent moves out - an empty
 	// secondary shell can surface nothing (every agent is owned by some window),
 	// so the agent-level move flow tidies it up automatically.

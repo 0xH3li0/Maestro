@@ -229,6 +229,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **How big a tab's conversation is and how long it ran:** `computeTabConversationStats()`, `formatConversationDuration()` in `src/shared/tabConversationStats.ts`
 - **What a snooze opener was handed:** `resolveSnoozeTarget(session, id)` in `src/renderer/utils/snoozeHelpers.ts`
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
+- **Changing one AI tab's settings by agent and tab:** `setAiTabModel()`, `setAiTabEffort()`, `setAiTabPermissionMode()`, `setAiTabStarred()`, `markAiTabUnread()` and siblings in `src/renderer/services/aiTabActions.ts`
+- **Closing a tab with the confirm its chip uses:** `closeAiTabWithConfirm()`, `closeFileTabWithConfirm()`, `closeTerminalTabWithConfirm()` in `src/renderer/services/tabCloseConfirm.ts`
+- **A tab window action that writes the agent:** `sendTabWindowIntent()`, `sendShownTabIntent()` in `src/renderer/services/tabWindowIntentSender.ts`; owner side `dispatchTabWindowIntent()` in `src/renderer/services/tabWindowIntents.ts`
 
 #### Composer, queue, and transcript
 

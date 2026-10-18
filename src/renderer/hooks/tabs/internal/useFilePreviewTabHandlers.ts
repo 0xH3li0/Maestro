@@ -15,7 +15,7 @@ import { fileTabFocusFields } from '../../../utils/tabFocusFields';
 import { generateId } from '../../../utils/ids';
 import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
 import { logger } from '../../../utils/logger';
-import { useModalStore } from '../../../stores/modalStore';
+import { closeFileTabWithConfirm } from '../../../services/tabCloseConfirm';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
 import { useUIStore } from '../../../stores/uiStore';
@@ -254,21 +254,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			}
 
 			const tabToClose = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-			if (!tabToClose) {
-				forceCloseFileTab(tabId);
-				return;
-			}
-
-			if (tabToClose.editContent !== undefined) {
-				useModalStore.getState().openModal('confirm', {
-					message: `"${tabToClose.name}${tabToClose.extension}" has unsaved changes. Are you sure you want to close it?`,
-					onConfirm: () => {
-						forceCloseFileTab(tabId);
-					},
-				});
-			} else {
-				forceCloseFileTab(tabId);
-			}
+			closeFileTabWithConfirm(tabToClose, () => forceCloseFileTab(tabId));
 		},
 		[forceCloseFileTab]
 	);

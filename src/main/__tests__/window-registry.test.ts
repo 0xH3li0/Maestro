@@ -774,6 +774,45 @@ describe('WindowRegistry', () => {
 			});
 		});
 
+		describe('setTabWindowTabOrder', () => {
+			it('puts the strip in the given order, keeps the shown tab, and emits once', () => {
+				const id = createTabWindow('agent-a', [ai1, ai2, term]);
+				registry.setTabWindowActiveTab(id, ai2);
+				const changes: WindowRegistryChange[] = [];
+				registry.onChange((c) => changes.push(c));
+
+				expect(registry.setTabWindowTabOrder(id, [term, { ...ai1 }, ai2])).toBe(true);
+
+				expect(registry.get(id)?.tabRefs).toEqual([term, ai1, ai2]);
+				expect(registry.get(id)?.activeTabRef).toEqual(ai2);
+				expect(changes).toEqual([{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' }]);
+			});
+
+			it('emits nothing for the order it already has', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.setTabWindowTabOrder(id, [ai1, term])).toBe(true);
+				expect(listener).not.toHaveBeenCalled();
+			});
+
+			it('refuses an order that adds, drops, or repeats a tab, and a window that is not a tab window', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				registry.create({ windowId: 'app', browserWindow: makeWindow() });
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.setTabWindowTabOrder(id, [ai1])).toBe(false);
+				expect(registry.setTabWindowTabOrder(id, [ai1, ai2])).toBe(false);
+				expect(registry.setTabWindowTabOrder(id, [ai1, ai1])).toBe(false);
+				expect(registry.setTabWindowTabOrder('app', [ai1])).toBe(false);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1, term]);
+				expect(listener).not.toHaveBeenCalled();
+			});
+		});
+
 		describe('never becomes an owner (D1)', () => {
 			it('registerSession into a tab window is a silent no-op', () => {
 				const primary = registry.create({

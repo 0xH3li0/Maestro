@@ -661,6 +661,22 @@ export function hasWizardInteraction(tab: AITab): boolean {
 }
 
 /**
+ * What closing an AI tab must ask first, or null when it closes at once: a
+ * wizard the user has talked to loses its progress, and a draft is unsent
+ * work. A wizard nobody has used yet closes without asking, even with a draft.
+ * Shared by every surface that closes a tab with a confirm (the app window's
+ * chip close and a tab window's), so they cannot disagree on when to ask.
+ */
+export function aiTabCloseConfirmMessage(tab: AITab): string | null {
+	if (hasWizardInteraction(tab)) {
+		return 'Close this wizard? Your progress will be lost and cannot be restored.';
+	}
+	if (hasActiveWizard(tab)) return null;
+	if (hasDraft(tab)) return 'This tab has an unsent draft. Are you sure you want to close it?';
+	return null;
+}
+
+/**
  * Collect the ids of AI tabs that have at least one queued execution item waiting
  * in the execution queue (a message or command targeting that tab). A tab with
  * pending queued work needs attention, so it must survive the unread filter and stay

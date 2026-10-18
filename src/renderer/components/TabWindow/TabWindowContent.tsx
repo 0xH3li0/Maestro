@@ -6,24 +6,37 @@
  * `TiledFilePane` (`FilePreview`) for a file tab. Both take a session and a tab
  * id, so they render a tab that is not the session's active one.
  *
- * Action bundles are null for now: every control that writes state becomes an
- * intent to the owner in phase 5, and the composer mounts with the draft round
- * trip there. Terminal and browser tabs move differently (D5: the tab window
- * attaches its own xterm to the PTY, and opens a new webview) and land in
- * phase 6; until then they show a notice instead of an empty pane.
+ * The AI transcript's controls come in `chatActions`, the same bundle a tiled
+ * pane gets, built by `useTabWindowChatActions`: each one that writes the agent
+ * is an intent to the owner (D2). The file pane's bundle is still null (file
+ * tabs land in phase 6). Terminal and browser tabs move differently (D5: the
+ * tab window attaches its own xterm to the PTY, and opens a new webview) and
+ * land in phase 6; until then they show a notice instead of an empty pane.
  */
 
 import type { Session, Theme, UnifiedTab } from '../../types';
-import { PaneMissingTab, TiledAiPane, TiledFilePane } from '../MainPanel/TiledLayout';
+import {
+	PaneMissingTab,
+	TiledAiPane,
+	TiledFilePane,
+	type PaneChatActions,
+} from '../MainPanel/TiledLayout';
 
 export interface TabWindowContentProps {
 	theme: Theme;
 	session: Session;
 	/** The tab this window shows, or null when its record names no live tab. */
 	activeTab: UnifiedTab | null;
+	/** The AI transcript's controls (each one that writes the agent is an intent). */
+	chatActions: PaneChatActions | null;
 }
 
-export function TabWindowContent({ theme, session, activeTab }: TabWindowContentProps) {
+export function TabWindowContent({
+	theme,
+	session,
+	activeTab,
+	chatActions,
+}: TabWindowContentProps) {
 	if (!activeTab) return <PaneMissingTab theme={theme} />;
 	switch (activeTab.type) {
 		case 'ai':
@@ -35,7 +48,7 @@ export function TabWindowContent({ theme, session, activeTab }: TabWindowContent
 					session={session}
 					theme={theme}
 					isFocused
-					actions={null}
+					actions={chatActions}
 				/>
 			);
 		case 'file':

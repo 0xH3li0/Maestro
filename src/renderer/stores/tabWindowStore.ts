@@ -39,8 +39,21 @@ interface TabWindowStoreState {
 	 * per-agent selector re-renders only for that agent.
 	 */
 	poppedByAgent: Record<string, PoppedOutTabKeys>;
+	/**
+	 * The popped AI tabs their tab window reports as watched (shown there, the
+	 * window visible, scrolled to the bottom), as {@link viewedTabKey} strings.
+	 * Owner side only: the tab window sends it with the `setViewState` intent.
+	 */
+	viewedTabs: ReadonlySet<string>;
 	/** Replace the mirror with a fresh `tabWindows:list()` answer. */
 	setWindows: (windows: TabWindowInfo[]) => void;
+	/** Record whether a popped AI tab is watched in its tab window. */
+	setTabViewed: (agentId: string, tabId: string, viewed: boolean) => void;
+}
+
+/** Key of one AI tab in {@link TabWindowStoreState.viewedTabs}. */
+function viewedTabKey(agentId: string, tabId: string): string {
+	return `${agentId}\n${tabId}`;
 }
 
 function sameKeys(a: PoppedOutTabKeys, b: PoppedOutTabKeys): boolean {
@@ -75,11 +88,21 @@ function buildPoppedByAgent(
 export const useTabWindowStore = create<TabWindowStoreState>()((set) => ({
 	windows: [],
 	poppedByAgent: {},
+	viewedTabs: new Set<string>(),
 	setWindows: (windows) =>
 		set((state) => ({
 			windows,
 			poppedByAgent: buildPoppedByAgent(windows, state.poppedByAgent),
 		})),
+	setTabViewed: (agentId, tabId, viewed) =>
+		set((state) => {
+			const key = viewedTabKey(agentId, tabId);
+			if (state.viewedTabs.has(key) === viewed) return state;
+			const viewedTabs = new Set(state.viewedTabs);
+			if (viewed) viewedTabs.add(key);
+			else viewedTabs.delete(key);
+			return { viewedTabs };
+		}),
 }));
 
 /** The popped tab keys of one agent; an empty Set when it has none. */
@@ -94,6 +117,19 @@ export function getPoppedOutTabKeys(agentId: string): PoppedOutTabKeys {
 export function isTabPoppedOut(agentId: string, ref: UnifiedTabRef): boolean {
 	if (ref.type === 'group') return false;
 	return getPoppedOutTabKeys(agentId).has(tabRefKey(ref));
+}
+
+/**
+ * Whether the user is watching an AI tab in its tab window: popped out, shown
+ * there, the window visible, and scrolled to the bottom. The owner's unread
+ * rule treats such a tab as on screen, which a popped tab never is in the owner
+ * (D4). A tab that docked stops counting at once, whatever was last reported.
+ */
+export function isTabViewedInTabWindow(agentId: string, tabId: string): boolean {
+	return (
+		useTabWindowStore.getState().viewedTabs.has(viewedTabKey(agentId, tabId)) &&
+		isTabPoppedOut(agentId, { type: 'ai', id: tabId })
+	);
 }
 
 /** Hook form of {@link isTabPoppedOut}. */

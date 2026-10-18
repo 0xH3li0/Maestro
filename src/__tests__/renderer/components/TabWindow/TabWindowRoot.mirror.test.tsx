@@ -3,10 +3,10 @@
  * snapshot and deltas are built by the real patch functions and cloned the way
  * IPC clones them, and the tab window renders them with the main panel's own
  * AI tab views: the transcript (`TerminalOutput`), the queued items inside it,
- * and the thinking pill. Only the markdown stack is mocked.
+ * and the composer's thinking pill. Only the markdown stack is mocked.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -115,7 +115,15 @@ function deliver(send: () => void): void {
 }
 
 const root = () => screen.getByTestId('tab-window-root');
-const pill = () => screen.queryByTestId('tab-window-thinking');
+/**
+ * The composer, while its thinking pill shows (the pill always carries its
+ * elapsed timer; "Thinking..." gives way to the token count), else null.
+ */
+const pill = () => {
+	const composer = screen.queryByTestId('tab-window-composer');
+	const timer = composer ? within(composer).queryByText('Elapsed:') : null;
+	return timer ? composer : null;
+};
 
 beforeEach(() => {
 	nextLogId = 0;
@@ -222,6 +230,29 @@ describe('TabWindowRoot fed by the owner patch stream (D2, TW-7)', () => {
 		deliver(() => owner.delta(session));
 		expect(screen.getAllByText('Queued for the popped tab')).toHaveLength(1);
 		expect(root()).not.toHaveTextContent('Queued for the home tab');
+	});
+
+	it("removes a queued item through the owner's intent, after the queue's own confirm (phase 5)", async () => {
+		await renderTabWindow();
+		let session = ownerAgent();
+		deliver(() => owner.snapshot(session));
+		session = {
+			...busyOn(session, 'popped', Date.now()),
+			executionQueue: [queued('q1', 'popped', 'Queued for the popped tab')],
+		};
+		deliver(() => owner.delta(session));
+		api.sendIntent.mockClear();
+
+		fireEvent.click(screen.getByTitle('Remove from queue'));
+		expect(api.sendIntent).not.toHaveBeenCalled();
+		fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+		expect(api.sendIntent).toHaveBeenCalledWith({
+			kind: 'removeQueuedItem',
+			agentId: AGENT,
+			tabRef: POPPED,
+			itemId: 'q1',
+		});
 	});
 
 	it('recovers when it missed the attach snapshot: deltas wait for the one it asks for', async () => {
