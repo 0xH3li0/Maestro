@@ -147,3 +147,24 @@ export type {
 	DataviewRebuildRequest,
 	DataviewChangeEvent,
 } from './types';
+
+export { parseSandboxMessage, SANDBOX_MAX_GUEST_MESSAGE_BYTES } from './sandboxProtocol';
+export type {
+	SandboxSender,
+	SandboxMessage,
+	SandboxGuestMessage,
+	SandboxHostMessage,
+	SandboxParseResult,
+	SandboxQueryDqlMessage,
+	SandboxIoLoadMessage,
+	SandboxOpenLinkMessage,
+	SandboxToggleTaskMessage,
+	SandboxRenderDoneMessage,
+	SandboxRenderErrorMessage,
+	SandboxRunMessage,
+	SandboxIndexSnapshot,
+	SandboxSnapshotPage,
+	SandboxQueryDqlResultMessage,
+	SandboxIoLoadResultMessage,
+	SandboxRequestFailedMessage,
+} from './sandboxProtocol';
