@@ -63,7 +63,7 @@ function writeJourney(agentId: string, entries: UserJourneyEntry[], extra = ''):
 }
 
 function output(): string {
-	return log.mock.calls.map((c) => String(c[0])).join('\n');
+	return log.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 }
 
 function jsonOutput(): {

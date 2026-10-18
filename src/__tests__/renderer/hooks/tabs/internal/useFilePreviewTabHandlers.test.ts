@@ -864,7 +864,7 @@ describe('useFilePreviewTabHandlers', () => {
 			expect(recordJourney).not.toHaveBeenCalled();
 
 			act(() => {
-				useModalStore.getState().modals.get('confirm')?.data?.onConfirm();
+				useModalStore.getState().getData('confirm')?.onConfirm();
 			});
 			expect(recordJourney).toHaveBeenCalledWith(
 				'test-session',
