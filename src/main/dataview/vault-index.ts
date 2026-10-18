@@ -35,6 +35,7 @@ import {
 	parseRawPage,
 	starredPathsFromBookmarks,
 	type DataObject,
+	type DataviewIndexReader,
 	type FullIndex,
 	type LinkResolver,
 	type PageMetadata,
@@ -138,7 +139,7 @@ interface IndexUpdate {
 	persist: boolean;
 }
 
-export class VaultIndex implements FullIndex {
+export class VaultIndex implements DataviewIndexReader {
 	readonly pages = new Map<string, PageMetadata>();
 	readonly tags = new ValueCaseInsensitiveIndexMap();
 	readonly links = new IndexMap();
@@ -243,6 +244,14 @@ export class VaultIndex implements FullIndex {
 	 */
 	pagesForSource(source: Source, originFile = ''): Result<Set<string>, string> {
 		return matchingSourcePaths(source, this, originFile);
+	}
+
+	/**
+	 * The vault path an Obsidian link path names from `sourcePath` (M3), or null when nothing matches. The
+	 * same resolution the query engine reaches through `metadataCache.getFirstLinkpathDest`.
+	 */
+	resolveLink(linkpath: string, sourcePath: string): string | null {
+		return this.linkResolver().resolve(linkpath, sourcePath);
 	}
 
 	/** Subscribe to index changes. Returns the unsubscribe function. */

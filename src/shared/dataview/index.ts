@@ -105,3 +105,28 @@ export {
 	starredPathsFromBookmarks,
 	buildResolvedLinks,
 } from './vault';
+
+export { executeDql, executeInlineDql, parseErrorLine } from './execute';
+export {
+	toWireValue,
+	fromWireValue,
+	mapTaskGroups,
+	reviveDataviewResult,
+	reviveDataviewInlineResult,
+} from './wire';
+export type {
+	DataviewIndexReader,
+	DataviewIdMeaning,
+	DataviewWireValue,
+	DataviewTaskGroups,
+	DataviewTableResult,
+	DataviewListResult,
+	DataviewTaskResult,
+	DataviewUnsupportedResult,
+	DataviewErrorResult,
+	DataviewResult,
+	RevivedDataviewResult,
+	DataviewValueResult,
+	DataviewInlineResult,
+	RevivedDataviewInlineResult,
+} from './types';
