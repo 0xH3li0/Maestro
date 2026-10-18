@@ -2993,7 +2993,9 @@ quickChatCmd
 
 quickChatCmd
 	.command('new')
-	.description('Start a new chat (an ephemeral previous chat is deleted)')
+	.description(
+		'Start a new chat (the previous one finishes any reply in progress; an ephemeral one is then deleted)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('new', {}, options));
 
