@@ -295,3 +295,37 @@ export function formatJourneyLine(
 	}
 	return `${time} ${action}`;
 }
+
+/** How far back the `{{USER_JOURNEY_RECENT}}` snapshot reaches. */
+export const JOURNEY_RECENT_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+/** Most entries the `{{USER_JOURNEY_RECENT}}` snapshot shows. */
+export const JOURNEY_RECENT_MAX_ENTRIES = 15;
+
+/** What `{{USER_JOURNEY_RECENT}}` reads when the window is empty. */
+export const JOURNEY_RECENT_EMPTY_TEXT = 'No recent activity.';
+
+/**
+ * The read that feeds `{{USER_JOURNEY_RECENT}}`: the newest
+ * `JOURNEY_RECENT_MAX_ENTRIES` from the last `JOURNEY_RECENT_WINDOW_MS`.
+ * Prompt builders pass it to their journey reader so only those entries cross
+ * IPC or leave the file.
+ */
+export function recentJourneyReadOptions(now: number): ReadJourneyOptions {
+	return { since: now - JOURNEY_RECENT_WINDOW_MS, tail: JOURNEY_RECENT_MAX_ENTRIES };
+}
+
+/**
+ * The `{{USER_JOURNEY_RECENT}}` text: one `formatJourneyLine` bullet per recent
+ * entry, oldest first, or `JOURNEY_RECENT_EMPTY_TEXT`. Applies the window and
+ * the cap itself, so a caller may pass a wider read.
+ */
+export function formatRecentJourney(
+	entries: readonly UserJourneyEntry[],
+	now: number,
+	options: FormatJourneyLineOptions = {}
+): string {
+	const recent = filterJourneyEntries([...entries], recentJourneyReadOptions(now));
+	if (recent.length === 0) return JOURNEY_RECENT_EMPTY_TEXT;
+	return recent.map((entry) => `- ${formatJourneyLine(entry, now, options)}`).join('\n');
+}

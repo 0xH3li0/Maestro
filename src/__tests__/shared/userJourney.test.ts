@@ -2,16 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { formatTimestamp } from '../../shared/formatters';
 import {
 	JOURNEY_MAX_ENTRIES_PER_AGENT,
+	JOURNEY_RECENT_EMPTY_TEXT,
+	JOURNEY_RECENT_MAX_ENTRIES,
+	JOURNEY_RECENT_WINDOW_MS,
 	JOURNEY_RETENTION_DAYS,
 	USER_JOURNEY_KINDS,
 	applyJourneyLimits,
 	filterJourneyEntries,
 	formatJourneyLine,
+	formatRecentJourney,
 	journeyFileName,
 	parseJourneyJsonl,
 	isUserJourneyKind,
 	normalizeJourneyEntry,
 	sanitizeJourneyUrl,
+	recentJourneyReadOptions,
 	shouldCollapseJourneyEntry,
 	type UserJourneyEntry,
 } from '../../shared/userJourney';
@@ -317,5 +322,48 @@ describe('formatJourneyLine', () => {
 		expect(formatJourneyLine(entry({ ts: YESTERDAY }), NOW, { cwd })).toBe(
 			`${formatTimestamp(YESTERDAY, 'datetime')} opened src/foo.ts`
 		);
+	});
+});
+
+describe('recentJourneyReadOptions', () => {
+	it('reads the last two hours, capped at the snapshot size', () => {
+		expect(JOURNEY_RECENT_WINDOW_MS).toBe(2 * 60 * 60 * 1000);
+		expect(JOURNEY_RECENT_MAX_ENTRIES).toBe(15);
+		expect(recentJourneyReadOptions(NOW)).toEqual({
+			since: NOW - JOURNEY_RECENT_WINDOW_MS,
+			tail: JOURNEY_RECENT_MAX_ENTRIES,
+		});
+	});
+});
+
+describe('formatRecentJourney', () => {
+	const cwd = '/repo';
+
+	it('reads "No recent activity." with no entries', () => {
+		expect(JOURNEY_RECENT_EMPTY_TEXT).toBe('No recent activity.');
+		expect(formatRecentJourney([], NOW)).toBe(JOURNEY_RECENT_EMPTY_TEXT);
+	});
+
+	it('renders one formatJourneyLine bullet per entry, oldest first', () => {
+		const first = entry({});
+		const second = entry({ kind: 'file.save', ts: TODAY + 1000, linesAdded: 1, linesRemoved: 2 });
+		expect(formatRecentJourney([first, second], NOW, { cwd })).toBe(
+			[first, second].map((e) => `- ${formatJourneyLine(e, NOW, { cwd })}`).join('\n')
+		);
+	});
+
+	it('drops entries older than the window, even when the caller passed them', () => {
+		const stale = entry({ ts: NOW - JOURNEY_RECENT_WINDOW_MS - 1 });
+		expect(formatRecentJourney([stale], NOW)).toBe(JOURNEY_RECENT_EMPTY_TEXT);
+	});
+
+	it('keeps only the newest JOURNEY_RECENT_MAX_ENTRIES', () => {
+		const entries = Array.from({ length: JOURNEY_RECENT_MAX_ENTRIES + 5 }, (_, i) =>
+			entry({ ts: TODAY + i, target: `/repo/f${i}.ts` })
+		);
+		const lines = formatRecentJourney(entries, NOW, { cwd }).split('\n');
+		expect(lines).toHaveLength(JOURNEY_RECENT_MAX_ENTRIES);
+		expect(lines[0]).toContain('opened f5.ts');
+		expect(lines[lines.length - 1]).toContain(`opened f${JOURNEY_RECENT_MAX_ENTRIES + 4}.ts`);
 	});
 });

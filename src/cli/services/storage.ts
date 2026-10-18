@@ -21,15 +21,8 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
-import {
-	JOURNEY_DIR_NAME,
-	applyJourneyLimits,
-	filterJourneyEntries,
-	journeyFileName,
-	parseJourneyJsonl,
-	type ReadJourneyOptions,
-	type UserJourneyEntry,
-} from '../../shared/userJourney';
+import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
+import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
 	DORMANT_PIANOLA_MESSAGE,
 	filterLiveAgents,
@@ -338,7 +331,7 @@ export function readHistoryPaginated(options?: {
  * `getJourneyFilePath()` in `src/main/user-journey-manager.ts`.
  */
 export function getJourneyFilePath(agentId: string): string {
-	return path.join(getConfigDir(), JOURNEY_DIR_NAME, journeyFileName(agentId));
+	return journeyFilePath(getConfigDir(), agentId);
 }
 
 /**
@@ -348,13 +341,7 @@ export function getJourneyFilePath(agentId: string): string {
  * as no entries.
  */
 export function readJourney(agentId: string, options: ReadJourneyOptions = {}): UserJourneyEntry[] {
-	let raw: string;
-	try {
-		raw = fs.readFileSync(getJourneyFilePath(agentId), 'utf-8');
-	} catch {
-		return [];
-	}
-	return filterJourneyEntries(applyJourneyLimits(parseJourneyJsonl(raw), Date.now()), options);
+	return readJourneyFile(getJourneyFilePath(agentId), options);
 }
 
 /**
