@@ -73,7 +73,7 @@ import {
 	setupLoggerEventForwarding,
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
-import { saveWindowState } from '../../window-state-persistence';
+import { wireWindowStateSaveOnChange } from '../../window-state-persistence';
 import { startCoworkingService } from '../../coworking/coworking-lifecycle';
 import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
 import { initializeOutputParsers } from '../../parsers';
@@ -434,16 +434,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// secondary shell can surface nothing (every agent is owned by some window),
 	// so the agent-level move flow tidies it up automatically.
 	wireEmptySecondaryWindowAutoClose(deps.windowRegistry);
-	// Persist a window rename or a panel-collapse toggle as soon as it happens
-	// (rather than only on quit), so both survive even an abrupt exit. A panel
-	// toggle fires no window move/resize, so without this its saved value would go
-	// stale. saveWindowState snapshots the whole live registry, so passing the
-	// affected window's id is enough.
-	deps.windowRegistry.onChange((change) => {
-		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
-			saveWindowState(deps.windowStateStore, deps.windowRegistry, change.windowId);
-		}
-	});
+	// Persist a window rename, a panel-collapse toggle, or a tab window's tabs
+	// changing as soon as it happens (rather than only on quit).
+	wireWindowStateSaveOnChange(deps.windowStateStore, deps.windowRegistry);
 
 	// Record aggregate multi-window usage telemetry (secondary windows opened +
 	// peak concurrent windows) as windows open. Gated on the user's

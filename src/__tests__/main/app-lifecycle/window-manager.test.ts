@@ -2943,6 +2943,22 @@ describe('app-lifecycle/window-manager', () => {
 			});
 		});
 
+		it('clamps a restored tab window onto the primary display when its monitor is gone (TW-10)', async () => {
+			// Only the primary display exists (beforeEach reset); the saved bounds
+			// name a since-removed monitor to the right.
+			const { registry, windowManager } = await setup();
+
+			windowManager.createTabWindow({
+				agentId: 'agent-1',
+				tabRefs: [AI_TAB],
+				bounds: { id: 'saved-tab-window', x: 2000, y: 100, width: 800, height: 600 },
+			});
+
+			// Centered on the primary 1920x1080 work area for an 800x600 window.
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 560, y: 240, width: 800, height: 600 });
+			expect(registry.get('saved-tab-window')?.agentId).toBe('agent-1');
+		});
+
 		it('shows a background tab window without focusing it', async () => {
 			const { windowManager } = await setup();
 

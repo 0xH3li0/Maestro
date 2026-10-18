@@ -52,3 +52,12 @@ export function isSingleTabRef(value: unknown): value is SingleTabRef {
 export function isSameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
 	return a.type === b.type && a.id === b.id;
 }
+
+/**
+ * Stable key for a tab ref (used to dedupe / match refs by value in a Set, and
+ * to key the per-pane geometry map the tiled layout publishes for keep-alive
+ * overlay repositioning - e.g. `terminal:<id>` / `browser:<id>`).
+ */
+export function tabRefKey(ref: UnifiedTabRef): string {
+	return `${ref.type}:${ref.id}`;
+}
