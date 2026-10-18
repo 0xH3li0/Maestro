@@ -470,6 +470,8 @@ docs/dataview.md                                       user docs                
 
 - Locally: `fs.promises.stat` per ancestor is cheap.
 - Over SSH, `src/main/utils/remote-fs.ts` exports no batch or arbitrary-command runner. Every function wraps one shell string in the private `execRemoteCommand()`, which adds a per-host limiter (4 in flight), a 30 s timeout, and retries on recoverable errors. Add one exported function there (one remote `sh` loop that tests `[ -d "$d/.obsidian" ]` up the ancestors) built on `execRemoteCommand()`. Do not use `execShellRemote()` from `src/main/utils/remote-git.ts`: it has no limiter, no retry, and no default timeout.
+- Built (DATAVIEW-04 task 1): `resolveVaultRoot()` in `src/main/dataview/vault-root.ts` over `findAncestorWithDirRemote()` in `src/main/utils/remote-fs.ts`. The cache holds the found root or `null` per directory (keyed by SSH remote id too), so the cwd fallback is applied per call. A miss caches every directory it walked. Unknown remote ids and failed remote commands throw; nothing falls back to local `fs`.
+- Invalidation: the vault watcher must pass the `.obsidian` folder's own `addDir` / `unlinkDir` path to `invalidateVaultRootCache(path, sshRemoteId)`. The index ignores everything INSIDE `.obsidian/`, so write the chokidar `ignored` rule to drop the folder's children, not the folder itself, or this event never arrives. A remote root gets no events; the 30 s poll should invalidate when the marker's presence changes.
 
 #### Full scan
 

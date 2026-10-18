@@ -6,6 +6,7 @@ import {
 	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
+	findAncestorWithDirRemote,
 	directorySizeRemote,
 	writeFileRemote,
 	existsRemote,
@@ -1018,6 +1019,64 @@ describe('remote-fs', () => {
 				'sess-good',
 				'sess-also-good',
 			]);
+		});
+	});
+
+	describe('findAncestorWithDirRemote', () => {
+		it('returns the ancestor the remote loop printed', async () => {
+			const deps = createMockDeps({ stdout: '/home/u/vault', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote(
+				'/home/u/vault/notes',
+				'.obsidian',
+				baseConfig,
+				deps
+			);
+
+			expect(result).toEqual({ success: true, data: '/home/u/vault' });
+		});
+
+		it('walks every ancestor in ONE ssh command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await findAncestorWithDirRemote('/home/u/vault/notes', '.obsidian', baseConfig, deps);
+
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const remoteCommand = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain(`d='/home/u/vault/notes'`);
+			expect(remoteCommand).toContain(`m='.obsidian'`);
+			expect(remoteCommand).toContain('[ -d "$d/$m" ]');
+			expect(remoteCommand).toContain('dirname "$d"');
+		});
+
+		it('returns null when no ancestor has the marker', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote('/srv/notes', '.obsidian', baseConfig, deps);
+
+			expect(result).toEqual({ success: true, data: null });
+		});
+
+		it('keeps a trailing space in the printed path', async () => {
+			const deps = createMockDeps({ stdout: '/srv/vault \n', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote(
+				'/srv/vault /a',
+				'.obsidian',
+				baseConfig,
+				deps
+			);
+
+			expect(result.data).toBe('/srv/vault ');
+		});
+
+		it('reports a failed command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: 'Permission denied', exitCode: 1 });
+
+			const result = await findAncestorWithDirRemote('/srv/notes', '.obsidian', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Permission denied');
 		});
 	});
 

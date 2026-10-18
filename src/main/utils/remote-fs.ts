@@ -945,6 +945,54 @@ export async function statRemote(
 }
 
 /**
+ * Find the nearest ancestor of a remote directory (the directory itself
+ * included) that contains a child directory named `markerDir`, in ONE SSH
+ * round trip. One `stat` per ancestor would cost a round trip each.
+ *
+ * The remote `sh` loop walks up with `dirname` until it finds the marker or
+ * reaches the filesystem root.
+ *
+ * @param startDir Directory on the remote host to start from
+ * @param markerDir Name of the child directory to look for (e.g. `.obsidian`)
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns The matching ancestor, or `null` when no ancestor has the marker
+ *
+ * @example
+ * const root = await findAncestorWithDirRemote('/home/u/vault/notes', '.obsidian', sshConfig);
+ * // => { success: true, data: '/home/u/vault' }
+ */
+export async function findAncestorWithDirRemote(
+	startDir: string,
+	markerDir: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const remoteCommand =
+		`d=${shellEscapeRemotePath(startDir)}; m=${shellEscape(markerDir)}; ` +
+		`while :; do ` +
+		`if [ -d "$d/$m" ]; then printf '%s' "$d"; exit 0; fi; ` +
+		`p=$(dirname "$d"); ` +
+		`if [ "$p" = "$d" ]; then exit 0; fi; ` +
+		`d=$p; ` +
+		`done`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to search ancestors of: ${startDir}`,
+		};
+	}
+
+	// printf adds no newline; strip only line endings so a path that ends in
+	// a space survives.
+	const found = result.stdout.replace(/[\r\n]+$/, '');
+	return { success: true, data: found === '' ? null : found };
+}
+
+/**
  * Get total size of a directory from a remote host via SSH.
  *
  * Executes `du -sb` on the remote to calculate the total size
