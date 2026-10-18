@@ -21,6 +21,8 @@ import type {
 	TranslationServiceSession,
 } from '../shared/maestro-lib/translation/service';
 import type { TranslationIdentity } from '../shared/maestro-lib/translation/types';
+import { translationKnowledgeRoot } from '../shared/maestro-lib/translation/knowledge-binding';
+import { assertTranslationTarget } from '../shared/maestro-lib/translation/resource-projections';
 import { createSshTranslationFs } from './provider-translation-fs';
 import { execFileNoThrow } from './utils/execFile';
 import { execGitReadOnly, execShellRemote } from './utils/remote-git';
@@ -78,9 +80,13 @@ export async function resolveSshTranslationHost(
 		nativeFs,
 		execGit,
 		findCodexSessionFile: (id, root) => findCodexSessionFile(id, root, nativeFs),
-		assertCanApply: () => {
-			// The next task supplies the remote managed knowledge root and launch binding.
-			throw new Error('SSH translation apply requires the remote managed knowledge location.');
+		assertCanApply: async (destination) => {
+			if (destination.remoteHost !== translationHash(canonicalJson(remote)))
+				throw new Error('Provider knowledge belongs to a different SSH host');
+			const root = translationKnowledgeRoot('', destination);
+			if ((await nativeFs.realpath('~')) !== (await nativeFs.realpath(destination.remoteHome!)))
+				throw new Error('Provider knowledge belongs to a different SSH home');
+			await assertTranslationTarget(root, destination.remoteHome!, nativeFs);
 		},
 		openCodexConnection: async (destination) => {
 			if (

@@ -184,7 +184,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Providers, accounts, and auth
 
-- **Provider translation filesystems:** `TranslationFs` in `src/shared/maestro-lib/translation/fs-port.ts`; `localTranslationFs`, `localTranslationFsSync` in `translation/local-fs.ts`
+- **Provider translation filesystems:** `TranslationFs` in `src/shared/maestro-lib/translation/fs-port.ts`; `localTranslationFs`, `localTranslationFsSync` in `translation/local-fs.ts`; `setMaestroLibSshTranslationFs()`, `resolveSshTranslationFs()` in `src/shared/maestro-lib/host.ts`
 - **SSH provider translation:** `createSshTranslationFs()` in `src/main/provider-translation-fs.ts`; `resolveSshTranslationHost()` in `src/main/provider-translation-ssh.ts`
 - **Codex translation import connection:** `openCodexTranslationConnection()` in `src/shared/maestro-lib/codex/connection.ts`
 - **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
@@ -194,7 +194,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
 - **Provider translation acceptance:** `limitationsNeedingAcceptance()`, `translationWarningsAccepted()` in `src/shared/maestro-lib/translation/limitations.ts`
-- **Provider translation knowledge scope:** `assertTranslationKnowledgeDirectory()`, `bindTranslationKnowledge()` in `src/shared/maestro-lib/translation/knowledge-binding.ts`; `translationWriteRoot()` in `src/shared/maestro-lib/translation/transaction.ts`
+- **Provider translation knowledge scope:** `translationKnowledgeRoot()`, `resolveTranslationKnowledgeBinding()`, `assertTranslationKnowledgeDirectory()`, `bindTranslationKnowledge()` in `src/shared/maestro-lib/translation/knowledge-binding.ts`; `translationWriteRoot()` in the sibling `transaction.ts`
 - **Provider translation context window:** `activeContextRecords()`, `formatTranslationRecordCounts()` in `src/shared/maestro-lib/translation/context-window.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`

@@ -328,6 +328,13 @@ describe('project resource translation', () => {
 		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'MEMORY.md'));
 		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'topic.md'));
 		expect(prompt).not.toContain('memory_summary.md');
+		const remotePrompt = translationKnowledgePrompt(
+			'/remote/home/.maestro/knowledge',
+			artifacts,
+			path.posix
+		);
+		expect(remotePrompt).toContain('/remote/home/.maestro/knowledge/memory/MEMORY.md');
+		expect(remotePrompt).not.toContain('\\');
 	});
 	it('refuses TOML definitions without portable instructions', () => {
 		const artifact = translationArtifact(

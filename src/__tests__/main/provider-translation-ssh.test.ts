@@ -98,6 +98,7 @@ describe('remote translation identity', () => {
 		])
 			await fs.mkdir(path.join(root, directory), { recursive: true });
 		port.nativeFs.realpath.mockImplementation(async (file) => {
+			if (file === '~') return '/remote/home';
 			await fs.stat(port.backingPath(file));
 			return file;
 		});
@@ -218,7 +219,21 @@ describe('remote translation identity', () => {
 			expect.anything(),
 			expect.anything()
 		);
-		expect(() => host.assertCanApply!()).toThrow('remote managed knowledge location');
+		await expect(host.assertCanApply!(identity)).resolves.toBeUndefined();
+		expect(port.nativeFs.createExclusive).not.toHaveBeenCalled();
+	});
+
+	it('refuses managed knowledge on another SSH host or home before mutation', async () => {
+		const host = (await resolveSshTranslationHost(session, store, providers))!;
+		const identity = await host.resolveIdentity!(session, 'codex', false);
+		await expect(host.assertCanApply!({ ...identity, remoteHost: 'f'.repeat(64) })).rejects.toThrow(
+			'different SSH host'
+		);
+		await expect(
+			host.assertCanApply!({ ...identity, remoteHome: '/remote/account' })
+		).rejects.toThrow('different SSH home');
+		expect(port.nativeFs.mkdir).not.toHaveBeenCalled();
+		expect(port.nativeFs.createExclusive).not.toHaveBeenCalled();
 	});
 
 	describe('Codex import over SSH stdio', () => {

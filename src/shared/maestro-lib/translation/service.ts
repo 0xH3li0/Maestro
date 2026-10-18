@@ -11,7 +11,9 @@ import {
 } from './resource-projections';
 import {
 	assertTranslationKnowledgeDirectory,
+	translationKnowledgeRoot,
 	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR,
 } from './knowledge-binding';
 import { estimateTokenCount } from '../../formatters';
 import type { TranslationFs } from './fs-port';
@@ -79,7 +81,7 @@ export interface TranslationServiceHost {
 		checkpoint?: TranslationCheckpoint
 	): Promise<TranslationIdentity>;
 	/** Refuse writes when a host lacks a required transaction transport. */
-	assertCanApply?(): void;
+	assertCanApply?(destination: TranslationIdentity): void | Promise<void>;
 	/** Native host owns the import transport; SSH must never use the local fallback. */
 	openCodexConnection?(
 		destination: TranslationIdentity
@@ -125,7 +127,6 @@ export type TranslationNativeHost = Pick<
 >;
 
 export class NativeTranslationService {
-	private readonly knowledgeRoot: string;
 	private readonly nativeFs: TranslationFs;
 	private readonly paths: path.PlatformPath;
 	private readonly registry = createTranslationRegistry();
@@ -134,7 +135,6 @@ export class NativeTranslationService {
 	constructor(private readonly deps: TranslationServiceHost) {
 		this.nativeFs = deps.nativeFs ?? localTranslationFs;
 		this.paths = this.nativeFs.paths ?? path;
-		this.knowledgeRoot = path.join(deps.userDataDir, 'provider-knowledge');
 		this.archive = new TranslationArchive(path.join(deps.userDataDir, 'provider-translations'));
 	}
 	private session(agentId: string): TranslationServiceSession {
@@ -321,6 +321,7 @@ export class NativeTranslationService {
 		const sourceProvider = pendingSource ?? session.toolType;
 		const source = await this.identity(session, sourceProvider, true, checkpoint);
 		const destination = await this.identity(session, request.destination, false, checkpoint);
+		const knowledgeRoot = translationKnowledgeRoot(this.deps.userDataDir, source);
 		const scope = {
 			projectKnowledge: true as const,
 			selectedUserResources: request.selectedUserResources ?? [],
@@ -443,7 +444,7 @@ export class NativeTranslationService {
 		if (checkpoint && session.providerTranslationKnowledgeDirectory) {
 			await assertTranslationKnowledgeDirectory(
 				session.providerTranslationKnowledgeDirectory,
-				this.knowledgeRoot,
+				knowledgeRoot,
 				this.nativeFs
 			);
 			const managedResources = await collectTranslationResources(
@@ -680,8 +681,14 @@ export class NativeTranslationService {
 		};
 	}
 	private host(journal: TranslationJournal, recovering = false): TranslationTransactionHost {
+		const session = this.session(journal.plan.agentId);
+		if (
+			Boolean(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) !==
+			Boolean(journal.plan.destination.remoteHost)
+		)
+			throw new Error('Provider knowledge journal does not match the launch host');
 		return {
-			knowledgeRoot: this.knowledgeRoot,
+			knowledgeRoot: translationKnowledgeRoot(this.deps.userDataDir, journal.plan.destination),
 			nativeFs: this.nativeFs,
 			resolveProjectGit: (root) => this.resolveProjectGit(root),
 			assertSourceUnchanged: async (operation) => {
@@ -726,7 +733,7 @@ export class NativeTranslationService {
 						);
 					await assertTranslationKnowledgeDirectory(
 						directory,
-						legacy ? legacyRoot : this.knowledgeRoot,
+						legacy ? legacyRoot : translationKnowledgeRoot(this.deps.userDataDir, actual),
 						this.nativeFs
 					);
 					if (legacy) await assertTranslationTarget(directory, actual.projectRoot, this.nativeFs);
@@ -813,6 +820,17 @@ export class NativeTranslationService {
 				(journal.plan.tabId !== undefined ||
 					this.session(journal.plan.agentId).toolType === journal.plan.destination.provider),
 			commit: async (operation) => {
+				const knowledgeEnv = operation.knowledgeDirectory
+					? {
+							[TRANSLATION_KNOWLEDGE_ENV_VAR]: operation.knowledgeDirectory,
+							[TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR]: operation.plan.destination.remoteHost
+								? canonicalJson({
+										remoteHost: operation.plan.destination.remoteHost,
+										remoteHome: operation.plan.destination.remoteHome,
+									})
+								: '',
+						}
+					: {};
 				await this.persist(operation.plan.agentId, (session) => {
 					const result = commitTranslationSession(
 						session,
@@ -842,9 +860,7 @@ export class NativeTranslationService {
 											...session.providerOverrides?.[operation.plan.destination.provider]
 												?.customEnvVars,
 											[envKey]: operation.plan.destination.accountRoot,
-											...(operation.knowledgeDirectory && {
-												[TRANSLATION_KNOWLEDGE_ENV_VAR]: operation.knowledgeDirectory,
-											}),
+											...knowledgeEnv,
 										},
 									},
 								},
@@ -866,9 +882,7 @@ export class NativeTranslationService {
 								session.toolType === operation.plan.destination.provider && {
 									[envKey]: operation.plan.destination.accountRoot,
 								}),
-							...(operation.knowledgeDirectory && {
-								[TRANSLATION_KNOWLEDGE_ENV_VAR]: operation.knowledgeDirectory,
-							}),
+							...knowledgeEnv,
 						},
 					};
 				});
@@ -911,7 +925,6 @@ export class NativeTranslationService {
 					throw new Error(
 						'SSH translation requires a remote native host; local fallback is forbidden.'
 					);
-				if (['apply', 'recover', 'rollback'].includes(request.action)) this.deps.assertCanApply?.();
 				if (
 					request.action === 'status' ||
 					request.action === 'recover' ||
@@ -944,6 +957,7 @@ export class NativeTranslationService {
 								error: journal.error,
 							},
 						};
+					await this.deps.assertCanApply?.(journal.plan.destination);
 					const result = await recoverTranslation(
 						this.archive,
 						journal,
@@ -1019,6 +1033,7 @@ export class NativeTranslationService {
 					// Retain the reviewed operation's identity across apply and response retries.
 					journal.plan.id = previous.plan.id;
 				}
+				await this.deps.assertCanApply?.(journal.plan.destination);
 				const host = this.host(journal);
 				let connection: Awaited<ReturnType<typeof openCodexTranslationConnection>> | undefined;
 				try {

@@ -3,7 +3,7 @@ import { resolveUserDataDir } from '../paths/userDataDir';
 import { getAgentDefinition } from '../providers/definitions';
 import {
 	bindTranslationKnowledge,
-	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	resolveTranslationKnowledgeBinding,
 } from '../translation/knowledge-binding';
 /**
  * The launch plan: one answer to "what exactly do we start for this agent?",
@@ -36,11 +36,10 @@ import {
  * cloud, which is not where the turn is going, so the plan skips it and says so
  * (`runOn.skippedGatewayUrl`).
  *
- * No spawning. Its only reads are `process.env` (through
- * `buildAgentEnvironment`) and, for a CLI or Cue launch of an agent that
- * declares `requiredSecrets`, those secrets' files (`serverSecrets.ts`). A
- * plan for an SSH remote describes the remote invocation; the caller hands it
- * to the SSH wrapper, which owns building the ssh command.
+ * No spawning. Reads include process env, local translated knowledge and,
+ * for CLI/Cue agents declaring `requiredSecrets`, secret files. An SSH plan
+ * validates the knowledge host binding without reading remote files; the SSH
+ * wrapper reads the remote index before building the invocation.
  */
 
 import { isWindows } from '../../platformDetection';
@@ -402,27 +401,26 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? [...new Set(input.requiredSecrets)].sort()
 			: undefined;
 
-	const configuredKnowledgeDirectory = envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR];
-	const knowledgeDirectory = configuredKnowledgeDirectory
-		? path.resolve(configuredKnowledgeDirectory)
-		: undefined;
+	const knowledge = resolveTranslationKnowledgeBinding(
+		envVars,
+		input.translationKnowledgeRoot ?? path.join(resolveUserDataDir(), 'provider-knowledge'),
+		target.kind === 'remote' ? target.remote : undefined
+	);
+	const knowledgeDirectory = knowledge?.directory;
+	const nativePaths = target.kind === 'remote' ? path.posix : path;
 	const effectivePrompt =
-		target.kind === 'local' && knowledgeDirectory
-			? bindTranslationKnowledge(
-					input.prompt,
-					knowledgeDirectory,
-					input.translationKnowledgeRoot ?? path.join(resolveUserDataDir(), 'provider-knowledge')
-				)
+		target.kind === 'local' && knowledge
+			? bindTranslationKnowledge(input.prompt, knowledge.directory, knowledge.root)
 			: input.prompt;
 	launchArgs =
-		target.kind === 'local' && agent?.id === 'claude-code' && knowledgeDirectory
+		agent?.id === 'claude-code' && knowledgeDirectory
 			? [
 					...launchArgs,
 					...buildAdditionalDirArgs(getAgentDefinition('claude-code'), [
 						{ path: knowledgeDirectory, read: true, write: true },
 					]),
 					'--settings',
-					JSON.stringify({ autoMemoryDirectory: path.join(knowledgeDirectory, 'memory') }),
+					JSON.stringify({ autoMemoryDirectory: nativePaths.join(knowledgeDirectory, 'memory') }),
 				]
 			: launchArgs;
 	const prompt = resolvePromptDelivery({

@@ -12,7 +12,11 @@ import {
 	translationHash,
 } from '../../shared/maestro-lib/translation/identity';
 import { generateUUID } from '../../shared/uuid';
-import { TRANSLATION_KNOWLEDGE_ENV_VAR } from '../../shared/maestro-lib/translation/knowledge-binding';
+import {
+	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR,
+} from '../../shared/maestro-lib/translation/knowledge-binding';
+import { NativeTranslationService } from '../../shared/maestro-lib/translation/service';
 import { getHistoryManager } from '../../main/history-manager';
 import {
 	ProviderTranslationService,
@@ -87,7 +91,7 @@ describe('single-tab provider translation service', () => {
 						accountRoot: `/remote/${provider}`,
 						projectRoot: '/remote/project',
 						remoteHome: '/remote',
-						remoteHost: 'remote-host',
+						remoteHost: translationHash('remote-host'),
 					})),
 					execGit: vi.fn(),
 					findCodexSessionFile: vi.fn(),
@@ -115,7 +119,7 @@ describe('single-tab provider translation service', () => {
 					false
 				);
 				expect(translationResources.collectTranslationResources).toHaveBeenCalledWith(
-					expect.objectContaining({ remoteHost: 'remote-host' }),
+					expect.objectContaining({ remoteHost: translationHash('remote-host') }),
 					expect.anything(),
 					undefined,
 					native.nativeFs
@@ -495,6 +499,105 @@ describe('single-tab provider translation service', () => {
 });
 
 describe('app-local managed knowledge', () => {
+	it('writes SSH knowledge through the native port and persists its host binding with a local journal', async () => {
+		const root = await fs.realpath(
+			await fs.mkdtemp(path.join(os.tmpdir(), 'translation-ssh-knowledge-'))
+		);
+		try {
+			const userDataDir = path.join(root, 'data');
+			const native = remapTranslationFs('/remote', path.join(root, 'remote'));
+			native.nativeFs.paths = path.posix;
+			const realpath = native.nativeFs.realpath.getMockImplementation()!;
+			native.nativeFs.realpath.mockImplementation(async (file) =>
+				(await realpath(file)).split(path.sep).join('/')
+			);
+			await native.nativeFs.mkdir('/remote', { recursive: true });
+			const remoteIdentity = { remoteHost: translationHash('remote'), remoteHome: '/remote' };
+			let session = createMockSession({
+				id: 'remote-agent',
+				toolType: 'codex',
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
+				aiTabs: [{ id: 'tab', agentSessionId: null }] as any,
+			});
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Remote fact')
+					),
+				],
+				limitations: [],
+			});
+			const service = new NativeTranslationService({
+				userDataDir,
+				nativeFs: native.nativeFs,
+				getSession: () => session,
+				persist: async (_id, update) => {
+					session = update(session) as typeof session;
+				},
+				resolveIdentity: async (_session, provider) => ({
+					provider,
+					version: provider === 'codex' ? '0.162.1' : '2.1.296',
+					accountRoot: `/remote/${provider}`,
+					projectRoot: '/remote/project',
+					...remoteIdentity,
+				}),
+				getProvider: vi.fn(),
+				providerConfig: () => ({}),
+				globalEnv: () => ({}),
+				isBusy: () => false,
+				findCodexSessionFile: vi.fn(),
+				history: async () => [],
+				execGit: vi.fn(),
+				execFile: vi.fn(),
+				contextWindow: () => 200_000,
+			});
+			const actual = await vi.importActual<
+				typeof import('../../shared/maestro-lib/translation/transaction')
+			>('../../shared/maestro-lib/translation/transaction');
+			vi.mocked(applyTranslation).mockImplementationOnce(actual.applyTranslation);
+			const report = await service.run({
+				agentId: session.id,
+				destination: 'claude-code',
+				action: 'apply',
+				acceptLimitations: true,
+			});
+			expect(report.result?.state).toBe('committed');
+			const directory = path.posix.join(
+				'/remote/.maestro/provider-knowledge',
+				translationHash(session.id),
+				report.plan!.id
+			);
+			expect(session.providerTranslationKnowledgeDirectory).toBe(directory);
+			expect(session.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR]).toBe(directory);
+			expect(JSON.parse(session.customEnvVars![TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR])).toEqual(
+				remoteIdentity
+			);
+			expect(await fs.readFile(native.backingPath(`${directory}/memory/MEMORY.md`), 'utf8')).toBe(
+				'Remote fact'
+			);
+			expect(native.nativeFs.createExclusive).toHaveBeenCalledWith(
+				`${directory}/knowledge-index.md`,
+				expect.any(Buffer),
+				expect.anything()
+			);
+			const archive = new TranslationArchive(path.join(userDataDir, 'provider-translations'));
+			const journal = await archive.read(session.id, report.plan!.id);
+			expect(journal.knowledgeDirectory).toBe(directory);
+			await expect(fs.stat(path.join(userDataDir, 'provider-knowledge'))).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
+			// A remote journal cannot acquire local filesystem authority after SSH is disabled.
+			session.sessionSshRemoteConfig = undefined;
+			expect(() => (service as any).host(journal)).toThrow('does not match the launch host');
+		} finally {
+			vi.mocked(applyTranslation).mockReset();
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 	it.each(['default', 'git', 'non-git'] as const)(
 		'keeps knowledge app-local and installs resources only by consent (%s)',
 		async (mode) => {

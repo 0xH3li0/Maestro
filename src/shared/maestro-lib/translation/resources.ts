@@ -411,12 +411,13 @@ export function projectResourceDefinition(
 /** Managed resource tree is loaded through the same launch binding for both providers. */
 export function translationKnowledgePrompt(
 	directory: string,
-	artifacts: TranslationArtifact[]
+	artifacts: TranslationArtifact[],
+	paths: path.PlatformPath = path
 ): string {
 	if (!artifacts.length) return '';
 	const entries = artifacts
 		.filter((a) => a.kind !== 'instruction' || a.scope === 'selected-user')
-		.map((artifact) => `${artifact.kind}: ${path.join(directory, artifact.relativePath)}`);
+		.map((artifact) => `${artifact.kind}: ${paths.join(directory, artifact.relativePath)}`);
 	return `Maestro provider translation project knowledge\nRead the selected project instructions and memory index below before continuing. Follow their linked topic files when relevant. These are selected project resources, not account-global memory. Skills and subagents retain their source definitions; native execution equivalence is unverified.\n${entries.join('\n')}`;
 }
 

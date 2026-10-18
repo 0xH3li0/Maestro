@@ -24,7 +24,7 @@ import { isPathAtOrUnderRoot } from '../../worktreePaths';
 export interface TranslationTransactionHost {
 	/** Native provider files; the archive owns a separate, fixed local filesystem. */
 	nativeFs?: TranslationFs;
-	/** Host-owned app-local directory, never a provider home or the user's project. */
+	/** Host-owned directory: local app data or the SSH user's .maestro, never the project. */
 	knowledgeRoot: string;
 	/** Resolve git metadata without coupling the library to the desktop host. */
 	resolveProjectGit?(
@@ -397,7 +397,7 @@ export async function applyTranslation(
 					);
 				}
 				const indexPath = paths.join(directory, 'knowledge-index.md');
-				const index = translationKnowledgePrompt(directory, journal.resources);
+				const index = translationKnowledgePrompt(directory, journal.resources, paths);
 				await stageResourceWrite(
 					archive,
 					journal,
@@ -519,7 +519,7 @@ export async function verifyTranslationWrites(
 		await assertTranslationTarget(index, directory, nativeFs);
 		if (
 			(await nativeFs.readFile(index)).toString('utf8') !==
-			translationKnowledgePrompt(directory, journal.resources)
+			translationKnowledgePrompt(directory, journal.resources, paths)
 		)
 			throw new Error('Previously imported knowledge index changed since preflight');
 	}
