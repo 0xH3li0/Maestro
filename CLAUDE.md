@@ -213,8 +213,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which provider generates a synopsis:** `synopsisProviderChoice()`, `pickFirstAvailableProvider()` in `src/shared/directorNotesProvider.ts`; `resolveSynopsisProvider()` in `src/main/utils/director-notes-provider.ts`
 - **Parsing a Codex assistant directive:** `parseCodexDirective()`, `findCodexDirectives()`, `KNOWN_CODEX_DIRECTIVES` in `src/shared/codexDirectives.ts`
 - **Acting on a clicked Codex followup chip:** `requestCodexFollowup()`, `resolveCodexFollowup()`, `codexDirectivesLiveForSource()` in `src/renderer/services/codexFollowup.ts`, drawn by `FollowupChip`
-- **Changing an agent's provider:** `switchAgentProvider()`, `switchTabProvider()`, `resolveTurnProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
+- **Changing an agent's provider:** `switchAgentProvider()`, `switchTabProvider()`, `resolveTurnProvider()`, `resolveErrorProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
 - **Selecting one tab's provider:** `resolveTabProvider()`, `resolveTabNativeProvider()`, `switchTabProviderFor()` in `src/shared/maestro-lib/agents/providerSwap.ts`; `useTabStore.setTabProvider()` in `src/renderer/stores/tabStore.ts`
+- **Inspecting tab providers:** `inspectTabProvider()`, `TabProviderInspection`, `TabConfigResult` in `src/shared/desktopTabs.ts`
 - **Projecting one tab for launch:** `projectTabProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
 
 #### Agents (renderer state and navigation)

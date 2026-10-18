@@ -30,6 +30,7 @@
  */
 
 import { getAgentDisplayName, getAgentPickerMeta } from '../../agentMetadata';
+import { isValidAgentId } from '../../agentIds';
 import type { RunOnTarget } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType, UsageStats } from '../../types';
@@ -133,6 +134,7 @@ export interface ProviderSwitchQueuedItem {
 /** The agent fields a provider switch reads and writes. */
 export interface ProviderSwitchAgent extends ProviderAgentOverrides {
 	toolType: ToolType;
+	runOn?: RunOnTarget;
 	aiTabs?: ProviderSwitchTab[];
 	/**
 	 * Parked agent-level overrides for every provider this agent is NOT
@@ -236,6 +238,17 @@ export function resolveTurnProvider(
 	agent: Pick<ProviderSwitchAgent, 'toolType'>
 ): ToolType {
 	return tab?.turnProvider ?? resolveTabProvider(tab, agent);
+}
+
+/** A captured failure outranks both the current selection and a later turn. */
+export function resolveErrorProvider(
+	tab: Pick<ProviderSwitchTab, 'turnProvider' | 'tabProvider'> | undefined,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>,
+	error?: { agentId?: string }
+): ToolType {
+	return error?.agentId && isValidAgentId(error.agentId)
+		? error.agentId
+		: resolveTurnProvider(tab, agent);
 }
 
 /**

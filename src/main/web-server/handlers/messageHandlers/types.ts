@@ -1,4 +1,4 @@
-import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
+import type { TabConfigResult } from '../../../../shared/desktopTabs';
 import type {
 	NotificationInboxRequest,
 	NotificationInboxResult,
@@ -398,7 +398,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<TranslationReport>;
+	) => Promise<TabConfigResult>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;

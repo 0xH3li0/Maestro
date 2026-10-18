@@ -1169,7 +1169,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: TranslationReport
+			result: import('../shared/desktopTabs').TabConfigResult
 		) => void;
 		onRemoteCreateGroup: (
 			callback: (

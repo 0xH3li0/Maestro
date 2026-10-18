@@ -2485,6 +2485,36 @@ Show one tab's settings (model, effort, thinking, access, history)
 maestro-cli tab show active --agent <agent-id>
 ```
 
+## `maestro-cli tab provider <tab-id> [provider]`
+
+Read or select the provider for one Ensemble tab. Requires Ensemble in Encore Features for reads and writes. Provider, model, effort and Run on edits are validated before parking any native state. `--inherit` clears the provider pin. Selection does not accept translation warnings or start a native import.
+
+| Option              | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `-a, --agent <id>`  | Whose active tab, when `<tab-id>` is `active`                        |
+| `--inherit`         | Follow the agent default provider; cannot accompany a named provider |
+| `--model <model>`   | Set the destination model, including `auto`, or `inherit`            |
+| `--effort <effort>` | Set a supported destination effort, or `inherit`                     |
+| `--run-on <target>` | Explicit `provider`, `<source id>:<model>`, or `inherit`             |
+| `--json`            | Return authoritative provider and selection state                    |
+
+```bash
+maestro-cli tab provider <tab-id>
+maestro-cli tab provider <tab-id> codex --model auto --effort high --json
+maestro-cli tab provider <tab-id> --inherit
+```
+
+## `maestro-cli tab run-on <tab-id> [target]`
+
+Read or set the Run on target for one Ensemble tab through the same selection operation. `provider` explicitly selects its cloud; `inherit` clears the override. Source IDs use the existing `<source id>:<model>` syntax. SSH provider choices remain disabled pending live acceptance.
+
+```bash
+maestro-cli tab run-on <tab-id> provider
+maestro-cli tab run-on <tab-id> local-source:qwen3:latest --json
+```
+
+`tab show`, `session list` and `session show --json` expose `provider` (effective), `tabProvider` (explicit pin or null), `agentProvider` (default), `turnProvider` (captured owner or null), pending translation, effective model/effort overrides and Run on. Generic inspection works with Ensemble off. Existing `toolType`, `model` and `effort` fields retain their prior meanings. A null effective model/effort means the provider's configured default applies. Environment secrets and parked native data are excluded.
+
 ## `maestro-cli tab thinking <tab-id> <mode>`
 
 Set the thinking display: off, on, sticky, or cycle

@@ -14,7 +14,10 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { formatRelativeTime } from '../../shared/formatters';
-import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
+import type {
+	DesktopTabEntry as DesktopSessionEntry,
+	TabProviderInspection,
+} from '../../shared/desktopTabs';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 export interface SessionListOptions {
@@ -35,7 +38,7 @@ interface SessionMessage {
 	timestamp: string;
 }
 
-interface SessionShowResult {
+interface SessionShowResult extends TabProviderInspection {
 	success: true;
 	tabId: string;
 	sessionId: string;
@@ -154,16 +157,18 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 
 	try {
 		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				success?: boolean;
-				error?: string;
-				code?: string;
-				tabId?: string;
-				sessionId?: string;
-				agentId?: string;
-				agentSessionId?: string | null;
-				messages?: SessionMessage[];
-			}>(
+			return client.sendCommand<
+				{
+					success?: boolean;
+					error?: string;
+					code?: string;
+					tabId?: string;
+					sessionId?: string;
+					agentId?: string;
+					agentSessionId?: string | null;
+					messages?: SessionMessage[];
+				} & TabProviderInspection
+			>(
 				{
 					type: 'get_session_history',
 					tabId,
@@ -187,6 +192,14 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			agentId: result.agentId ?? '',
 			agentSessionId: result.agentSessionId ?? null,
 			messages: result.messages ?? [],
+			provider: result.provider,
+			agentProvider: result.agentProvider,
+			tabProvider: result.tabProvider,
+			turnProvider: result.turnProvider,
+			pendingTranslation: result.pendingTranslation,
+			effectiveModel: result.effectiveModel,
+			effectiveEffort: result.effectiveEffort,
+			runOn: result.runOn,
 		};
 
 		if (options.json) {
@@ -199,6 +212,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 		// follow-up `session show --since "<timestamp>"` call without having to
 		// re-parse a localized datetime.
 		const headerParts = [`Tab: ${payload.tabId}`, `Agent: ${payload.agentId || '(unknown)'}`];
+		if (payload.provider) headerParts.push(`Provider: ${payload.provider}`);
 		if (payload.agentSessionId) headerParts.push(`Session: ${payload.agentSessionId}`);
 		headerParts.push(`Messages: ${payload.messages.length}`);
 		console.log(headerParts.join('  '));

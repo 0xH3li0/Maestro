@@ -16,6 +16,7 @@
 
 import {
 	sendSimpleCommand,
+	sendBridgeCommand,
 	reportResult,
 	failCommand,
 	resolveAgentOrFail,
@@ -26,11 +27,11 @@ import {
 	failFromError,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
-import { getSessionById, readHarnessTierDefaults } from '../services/storage';
-import { AUTO_MODEL, AUTO_MODEL_LABEL, isAutoModel } from '../../shared/autoModel';
-import { autoModelProblem } from '../../shared/autoTurn';
+import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import { isInheritValue } from '../utils/parse';
+import { parseRunOnSpec, formatRunOnSpec } from '../../shared/local-models/run-on';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface TabNewOptions {
@@ -360,36 +361,13 @@ export async function tabModel(
 	model: string | null,
 	options: TabMutateOptions
 ): Promise<void> {
-	// `auto` is the composer's Auto choice: the model router picks the tier and
-	// effort of each turn this tab sends. It is the one value that IS checked,
-	// because the composer only offers it for an agent it can act on. An Auto
-	// that would change nothing is refused by name, and the word is stored as
-	// `auto` whatever the caller's spelling.
-	if (!isAutoModel(model)) {
-		await tabFlag(
-			tabId,
-			{ customModel: model },
-			(owner) =>
-				model === null
-					? `Tab ${owner.tabId} now inherits the agent's model`
-					: `Set tab ${owner.tabId} model to ${model}`,
-			options
-		);
-		return;
-	}
-	let owner: { agentId: string; tabId: string };
-	try {
-		owner = await resolveTabOwner(tabId, options.agent);
-	} catch (error) {
-		return failFromError(error, options.json);
-	}
-	const agent = getSessionById(owner.agentId);
-	const problem = agent ? autoModelProblem(agent, readHarnessTierDefaults()) : null;
-	if (problem) return failCommand(problem, options.json);
-	await writeTabPatch(
-		owner,
-		{ customModel: AUTO_MODEL },
-		`Set tab ${owner.tabId} model to ${AUTO_MODEL_LABEL}`,
+	await tabFlag(
+		tabId,
+		{ customModel: isAutoModel(model) ? AUTO_MODEL : model },
+		(owner) =>
+			model === null
+				? `Tab ${owner.tabId} now inherits its provider's model`
+				: `Set tab ${owner.tabId} model to ${model}`,
 		options
 	);
 }
@@ -461,7 +439,10 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 		console.log(`  ${`${label}:`.padEnd(17)}${value}`);
 	console.log(`Tab ${entry.tabId}${entry.active ? ' (active)' : ''}`);
 	row('Agent', `${entry.agentName} (${entry.agentId})`);
-	row('Provider', entry.toolType);
+	row('Provider', entry.provider ?? entry.toolType);
+	row('Agent default', entry.agentProvider ?? entry.toolType);
+	row('Provider pin', entry.tabProvider ?? 'inherited');
+	row('Turn provider', entry.turnProvider ?? '(unknown)');
 	row('Name', entry.name ?? '(unnamed)');
 	row('State', entry.state);
 	row('Session', entry.agentSessionId ?? '(none yet)');
@@ -473,4 +454,59 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	row('Enter to send', inherited(entry.enterToSend));
 	row('Starred', String(entry.starred));
 	row('Unread', String(entry.hasUnread ?? false));
+}
+
+/** Ensemble selection uses the same validated parking action as the composer. */
+export async function tabProvider(
+	tabId: string,
+	provider: string | undefined,
+	options: TabMutateOptions & { inherit?: boolean; model?: string; effort?: string; runOn?: string }
+): Promise<void> {
+	if (provider !== undefined && options.inherit)
+		return failCommand('A named provider and --inherit are mutually exclusive.', options.json);
+	try {
+		const entry = await resolveTabEntry(tabId, options.agent);
+		const runOn =
+			options.runOn === undefined || isInheritValue(options.runOn)
+				? null
+				: parseRunOnSpec(options.runOn);
+		if (runOn && !runOn.ok) return failCommand(runOn.error, options.json);
+		const result = await sendBridgeCommand<{ success: boolean; tab?: DesktopTabEntry }>(
+			{
+				type: 'tab_provider',
+				sessionId: entry.agentId,
+				tabId: entry.tabId,
+				...(provider !== undefined ? { provider } : options.inherit ? { provider: null } : {}),
+				...(options.model !== undefined
+					? { model: isInheritValue(options.model) ? null : options.model }
+					: {}),
+				...(options.effort !== undefined
+					? { effort: isInheritValue(options.effort) ? null : options.effort }
+					: {}),
+				...(options.runOn !== undefined ? { runOn: runOn?.ok ? runOn.target : null } : {}),
+			},
+			'tab_provider_result',
+			options.json
+		);
+		if (!result.tab?.provider)
+			return failCommand(
+				'Desktop did not return tab provider state; upgrade the desktop.',
+				options.json
+			);
+		if (options.json) console.log(JSON.stringify(result, null, 2));
+		else
+			console.log(
+				`${entry.tabId}: ${result.tab.provider} (agent default: ${result.tab.agentProvider}, pin: ${result.tab.tabProvider ?? 'inherited'})\n  Model: ${result.tab.effectiveModel ?? 'provider default'}  Effort: ${result.tab.effectiveEffort ?? 'provider default'}  Run on: ${formatRunOnSpec(result.tab.runOn ?? { type: 'provider' })}`
+			);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+}
+
+export async function tabRunOn(
+	tabId: string,
+	target: string | undefined,
+	options: TabMutateOptions
+): Promise<void> {
+	await tabProvider(tabId, undefined, { ...options, runOn: target });
 }

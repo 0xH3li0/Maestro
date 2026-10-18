@@ -1,4 +1,4 @@
-import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
+import type { TabConfigResult } from '../../../shared/desktopTabs';
 import { ipcRenderer } from 'electron';
 import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
 
@@ -212,7 +212,7 @@ export function createSessionCrudRemoteApi() {
 		 */
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: TranslationReport
+			result: TabConfigResult
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

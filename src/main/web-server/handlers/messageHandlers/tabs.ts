@@ -25,6 +25,56 @@ import {
 } from '../../../../shared/uiSurfaces';
 import { currentEncoreFeatures } from '../bridgePathGuard';
 import { normalizeRenameTabResult } from '../../types';
+import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults';
+
+/** Dedicated transport: an older desktop must reject rather than partially patch a tab. */
+export async function handleTabProvider(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (result: Record<string, unknown>) =>
+		ctx.send(client, {
+			type: 'tab_provider_result',
+			sessionId: message.sessionId,
+			tabId: message.tabId,
+			requestId: message.requestId,
+			...result,
+		});
+	if (!resolveEncoreFeatures(currentEncoreFeatures()).ensemble) {
+		reply({ success: false, error: 'Ensemble is disabled. Enable Ensemble in Encore Features.' });
+		return;
+	}
+	if (typeof message.sessionId !== 'string' || typeof message.tabId !== 'string') {
+		reply({ success: false, error: 'Missing sessionId or tabId' });
+		return;
+	}
+	if (!ctx.callbacks.updateSessionConfig) {
+		reply({ success: false, error: 'Tab provider selection is not supported by this desktop.' });
+		return;
+	}
+	try {
+		const result = await ctx.callbacks.updateSessionConfig(message.sessionId, {
+			tabId: message.tabId,
+			tabProviderSelection: {
+				...('provider' in message ? { provider: message.provider } : {}),
+				...('model' in message ? { model: message.model } : {}),
+				...('effort' in message ? { effort: message.effort } : {}),
+				...('runOn' in message ? { runOn: message.runOn } : {}),
+			},
+		});
+		reply(
+			result.success && !result.tab
+				? {
+						success: false,
+						error: 'Desktop did not return tab provider state; upgrade the desktop.',
+					}
+				: { success: result.success, error: result.error, tab: result.tab }
+		);
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
 
 /**
  * Handle select_tab message - select a tab within a session

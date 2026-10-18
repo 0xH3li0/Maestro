@@ -486,7 +486,19 @@ describe('runAutoResumeTick', () => {
 				agentErrorPaused: true,
 				agentError: error,
 				agentErrorTabId: 'tab-1',
-				aiTabs: [createMockAITab({ id: 'tab-1', agentError: error, logs: [captureLog] })],
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-1',
+						tabProvider: 'codex',
+						turnProvider: 'claude-code',
+						agentError: error,
+						logs: [captureLog],
+						customModel: 'gpt-x',
+						providerSessions: {
+							'claude-code': { agentSessionId: 'claude-native', customModel: 'opus' },
+						},
+					}),
+				],
 			}),
 		]);
 
@@ -499,6 +511,7 @@ describe('runAutoResumeTick', () => {
 			type: 'message',
 			text: 'continue please',
 			tabId: 'tab-1',
+			turnSettings: expect.objectContaining({ provider: 'claude-code', model: 'opus' }),
 		});
 		// recoveryAction consumed so it fires only once.
 		expect(after.aiTabs[0].logs[0].recoveryAction).toBeUndefined();
@@ -743,5 +756,24 @@ describe('useAutoResumeCoordinator (timer)', () => {
 
 		// Standard non-Claude session resumed → error cleared.
 		expect(useSessionStore.getState().sessions[0].state).toBe('idle');
+	});
+});
+
+describe('Ensemble failed owner probes', () => {
+	it('probes Claude quota for a captured Claude failure after the agent default changes', async () => {
+		const session = makeLimitPausedSession({
+			toolType: 'codex',
+			providerOverrides: {
+				'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/home/.claude' } },
+			},
+		});
+		useClaudeUsageStore.setState({ snapshots: {} });
+		expect(await probeAvailability(session)).toBe(false);
+	});
+
+	it('uses resume as probe for a Codex failure even on a Claude default agent', async () => {
+		const session = makeLimitPausedSession({ agentError: makeLimitError({ agentId: 'codex' }) });
+		useClaudeUsageStore.setState({ snapshots: {} });
+		expect(await probeAvailability(session)).toBe(true);
 	});
 });

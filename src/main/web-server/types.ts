@@ -1,4 +1,3 @@
-import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -8,7 +7,11 @@ import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
-import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type {
+	DesktopTabEntry,
+	TabProviderInspection,
+	TabConfigResult,
+} from '../../shared/desktopTabs';
 import type { OpenUiSurfaceRequest } from '../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type {
@@ -173,7 +176,7 @@ export interface SessionData {
 /**
  * Session detail type for single session endpoint.
  */
-export interface SessionDetail {
+export interface SessionDetail extends TabProviderInspection {
 	id: string;
 	name: string;
 	toolType: string;
@@ -1044,7 +1047,7 @@ export interface SessionHistoryMessage {
 	timestamp: string;
 }
 
-export interface SessionHistoryResult {
+export interface SessionHistoryResult extends TabProviderInspection {
 	tabId: string;
 	sessionId: string;
 	agentId: string;
@@ -1367,7 +1370,7 @@ export type UpdateSessionSshCallback = (
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<TranslationReport>;
+) => Promise<TabConfigResult>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (

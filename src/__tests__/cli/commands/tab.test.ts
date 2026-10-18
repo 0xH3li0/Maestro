@@ -31,6 +31,8 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabProvider,
+	tabRunOn,
 } from '../../../cli/commands/tab';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
@@ -315,19 +317,19 @@ describe('tab commands', () => {
 		const getModel = mockTab({ success: true });
 		// Any spelling is the same choice, and it is stored as the word.
 		await tabModel('tab-cccc', 'Auto', {});
-		expect(getSessionById).toHaveBeenCalledWith('agent-1');
+		expect(getSessionById).not.toHaveBeenCalled();
 		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'auto' });
 	});
 
 	it('tab model auto is refused, by name, where it would change nothing', async () => {
 		// No effort ladder and no tier mapped: the composer does not offer Auto here.
 		vi.mocked(getSessionById).mockReturnValue({ id: 'agent-1', toolType: 'opencode' } as never);
-		const getModel = mockTab({ success: true });
+		const getModel = mockTab({ success: false, error: 'Auto would change nothing for this agent' });
 		await expect(tabModel('tab-cccc', 'auto', {})).rejects.toThrow('__exit__');
 		expect(formatError).toHaveBeenCalledWith(
 			expect.stringContaining('Auto would change nothing for this agent')
 		);
-		expect(getModel().configPatch).toBeUndefined();
+		expect(getModel().configPatch).toEqual({ tabId: 'tab-cccc', customModel: 'auto' });
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -371,5 +373,44 @@ describe('tab commands', () => {
 		const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
 		expect(printed.tab.tabId).toBe('tab-bbbb');
 		expect(printed.tab.model).toBe('opus');
+	});
+	it('sends an atomic provider/model/effort edit and prints authoritative readback', async () => {
+		const tab = {
+			provider: 'codex',
+			agentProvider: 'claude-code',
+			tabProvider: 'codex',
+			turnProvider: 'claude-code',
+			effectiveModel: 'auto',
+		};
+		const payload = mockTab({ success: true, tab });
+		await tabProvider('tab-cccc', 'codex', { model: 'auto', effort: 'high', json: true });
+		expect(payload()).toEqual({
+			type: 'tab_provider',
+			sessionId: 'agent-1',
+			tabId: 'tab-cccc',
+			provider: 'codex',
+			model: 'auto',
+			effort: 'high',
+		});
+		expect(JSON.parse(consoleSpy.mock.calls.at(-1)![0])).toMatchObject({ success: true, tab });
+	});
+
+	it('clears the provider pin only with inherit and keeps explicit cloud Run on', async () => {
+		const payload = mockTab({ success: true, tab: { provider: 'claude-code', tabProvider: null } });
+		await tabProvider('tab-cccc', undefined, { inherit: true });
+		expect(payload().provider).toBeNull();
+		await tabRunOn('tab-cccc', 'provider', {});
+		expect(payload().runOn).toEqual({ type: 'provider' });
+	});
+
+	it('refuses mutually exclusive provider arguments before contacting the desktop', async () => {
+		await expect(tabProvider('tab-cccc', 'codex', { inherit: true })).rejects.toThrow('__exit__');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	it('refuses an older desktop that does not return provider state', async () => {
+		mockTab({ success: true });
+		await expect(tabProvider('tab-cccc', undefined, {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('upgrade the desktop'));
 	});
 });

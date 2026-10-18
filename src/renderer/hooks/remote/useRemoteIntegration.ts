@@ -1,3 +1,6 @@
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { inspectTabProvider } from '../../../shared/desktopTabs';
+import { resolveTabProvider } from '../../utils/providerTabSessions';
 import { getAgentCommands } from '../../utils/agentCommands';
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
@@ -271,6 +274,14 @@ async function buildSessionGistBody(session: Session, agentSessionId: string): P
 		const body = formatLogsForClipboard(liveTab.logs);
 		return body ? { body } : { error: `Session has no conversation history: ${agentSessionId}` };
 	}
+	const parkedOwners = session.aiTabs.flatMap((tab) =>
+		Object.entries(tab.providerSessions ?? {})
+			.filter(([, slot]) => slot?.agentSessionId === agentSessionId)
+			.map(([provider]) => provider)
+	);
+	if (new Set(parkedOwners).size > 1)
+		return { error: `Ambiguous provider session: ${agentSessionId}` };
+	const transcriptProvider = parkedOwners[0] ?? session.toolType;
 
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
 	if (!projectPathForSessions) {
@@ -280,7 +291,7 @@ async function buildSessionGistBody(session: Session, agentSessionId: string): P
 	let result: { messages: SessionMessage[]; hasMore: boolean };
 	try {
 		result = await window.maestro.agentSessions.read(
-			session.toolType,
+			transcriptProvider,
 			projectPathForSessions,
 			agentSessionId,
 			{ offset: 0, limit: GIST_SESSION_MESSAGE_LIMIT },
@@ -1013,7 +1024,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
 
 					if (tab.agentSessionId) {
-						const agentId = session.toolType || 'claude-code';
+						const agentId = resolveTabProvider(tab, session);
 						if (agentId === 'claude-code') {
 							await window.maestro.claude.updateSessionName(
 								session.projectRoot,
@@ -2573,7 +2584,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs
-					.map((t) => `${t.id}:${t.name || ''}:${t.starred}:${t.state}:${t.hasUnread ?? false}`)
+					.map(
+						(t) =>
+							`${t.id}:${t.name || ''}:${t.starred}:${t.state}:${t.hasUnread ?? false}:${canonicalJson(inspectTabProvider(t, session))}`
+					)
 					.join('|');
 
 				const prev = prevTabsRef.current.get(session.id);
@@ -2593,6 +2607,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const tabsForBroadcast = session.aiTabs.map((tab) => ({
 						id: tab.id,
 						agentSessionId: tab.agentSessionId,
+						...inspectTabProvider(tab, session),
 						name: tab.name,
 						starred: tab.starred,
 						inputValue: tab.inputValue,

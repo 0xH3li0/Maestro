@@ -1,3 +1,4 @@
+import { inspectTabProvider } from '../../desktopTabs';
 /**
  * The requests a detached host answers: the desktop bridge's typed messages, run against a
  * `MaestroClient`.
@@ -322,6 +323,7 @@ async function projectSessions(client: MaestroClient): Promise<Frame[]> {
 				...(typeof agent.activeTabId === 'string' ? { activeTabId: agent.activeTabId } : {}),
 				aiTabs: (tabs.ok ? tabs.value : []).map((tab) => ({
 					id: tab.id,
+					...inspectTabProvider(tab as never, agent as never),
 					agentSessionId: tab.agentSessionId ?? null,
 					name: tab.name ?? null,
 					...(tab.starred !== undefined ? { starred: tab.starred } : {}),
@@ -416,8 +418,23 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 						ssh: (obj(message.sshPatch) ?? {}) as never,
 					})
 				);
+			case 'tab_provider':
+				return refusal(
+					'tab_provider_result',
+					'Ensemble provider selection requires the desktop app.'
+				);
 			case 'update_session_config': {
 				const config = obj(message.configPatch) ?? {};
+				if (
+					'tabProviderSelection' in config ||
+					'tabProvider' in config ||
+					'providerSessions' in config ||
+					'pendingTranslation' in config
+				)
+					return refusal(
+						'update_session_config_result',
+						'Use tab provider through the desktop parking operation.'
+					);
 				if ('migrationAction' in config) {
 					return refusal(
 						'update_session_config_result',

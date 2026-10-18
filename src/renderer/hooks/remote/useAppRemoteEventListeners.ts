@@ -52,6 +52,9 @@ import {
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
+import { inspectTabProvider } from '../../../shared/desktopTabs';
+import { isValidAgentId } from '../../../shared/agentIds';
+import { TAB_EDITABLE_KEYS } from '../../../shared/maestro-lib/agents/rules';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
@@ -1820,6 +1823,64 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 
 		const patchObj = configPatch as Record<string, unknown>;
+		if ('tabProviderSelection' in patchObj) {
+			try {
+				if (!useSettingsStore.getState().encoreFeatures.ensemble)
+					throw new Error('Ensemble is disabled. Enable Ensemble in Encore Features.');
+				const selection = patchObj.tabProviderSelection;
+				if (!selection || typeof selection !== 'object' || Array.isArray(selection))
+					throw new Error('Invalid tab provider selection');
+				const edit = selection as Record<string, unknown>;
+				if (
+					Object.keys(edit).some((key) => !['provider', 'model', 'effort', 'runOn'].includes(key))
+				)
+					throw new Error('Unknown tab provider setting');
+				const tabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : '';
+				const owner = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				const tab = owner?.aiTabs.find((t) => t.id === tabId);
+				if (!tab) throw new Error('Tab not found');
+				if (
+					'provider' in edit &&
+					edit.provider !== null &&
+					(typeof edit.provider !== 'string' || !isValidAgentId(edit.provider))
+				)
+					throw new Error('Invalid tab provider');
+				for (const key of ['model', 'effort']) {
+					if (key in edit && edit[key] !== null && typeof edit[key] !== 'string')
+						throw new Error(`Invalid tab ${key}`);
+				}
+				if (Object.keys(edit).length) {
+					await useTabStore
+						.getState()
+						.setTabProvider(
+							sessionId,
+							tabId,
+							'provider' in edit
+								? ((edit.provider as ToolType | null) ?? undefined)
+								: tab.tabProvider,
+							{
+								...('model' in edit ? { model: edit.model as string | null } : {}),
+								...('effort' in edit ? { effort: edit.effort as string | null } : {}),
+								...('runOn' in edit ? { runOn: edit.runOn } : {}),
+							}
+						);
+				}
+				const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				const currentTab = current?.aiTabs.find((t) => t.id === tabId);
+				if (!current || !currentTab) throw new Error('Tab not found');
+				if (Object.keys(edit).length) await window.maestro.sessions.setMany([current as any], []);
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: true,
+					tab: inspectTabProvider(currentTab, current),
+				});
+			} catch (error) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+			return;
+		}
 
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
@@ -1859,21 +1920,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// persistent state over adding another fire-and-forget renderer channel.
 		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
 		if (targetTabId !== undefined) {
+			if (
+				'tabProvider' in patchObj ||
+				'providerSessions' in patchObj ||
+				'pendingTranslation' in patchObj
+			) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Use tab provider to select a provider through the parking operation.',
+				});
+				return;
+			}
 			// Everything the composer chips toggle, keyed by the value it accepts.
 			// The type is enforced here rather than trusted from the wire: these
 			// land straight in the persisted tab, so a bad value (a string in
 			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
 			// chip rather than a rejected command.
-			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
-				starred: 'boolean',
-				hasUnread: 'boolean',
-				saveToHistory: 'boolean',
-				readOnlyMode: 'boolean',
-				enterToSend: 'boolean',
-				showThinking: 'thinking',
-				customModel: 'string',
-				customEffort: 'string',
-			};
 			const tabPatch: Record<string, unknown> = {};
 			for (const key of Object.keys(patchObj)) {
 				const kind = TAB_EDITABLE_KEYS[key];
@@ -1918,6 +1980,29 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			if ('customModel' in tabPatch || 'customEffort' in tabPatch) {
+				try {
+					await useTabStore.getState().setTabProvider(sessionId, targetTabId, undefined, {
+						settingsOnly: true,
+						...('customModel' in tabPatch
+							? { model: (tabPatch.customModel as string | undefined) ?? null }
+							: {}),
+						...('customEffort' in tabPatch
+							? { effort: (tabPatch.customEffort as string | undefined) ?? null }
+							: {}),
+					});
+					// The validated action already wrote these into the captured slot.
+					// Reapplying them after the await could overwrite a newly selected provider.
+					delete tabPatch.customModel;
+					delete tabPatch.customEffort;
+				} catch (error) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return;
+				}
+			}
 			const applyTabPatch = (s: Session): Session => ({
 				...s,
 				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
@@ -1928,9 +2013,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			);
 
 			try {
-				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+				const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				await window.maestro.sessions.setMany([applyTabPatch(current ?? session) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Failed to persist tab config',
+				});
+				return;
 			}
 
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {

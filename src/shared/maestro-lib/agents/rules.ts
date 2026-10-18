@@ -648,6 +648,8 @@ export function applyTabPatch(
 	tab: AITabRecord,
 	patch: Record<string, unknown>
 ): RuleResult<AITabRecord> {
+	if ('tabProvider' in patch || 'providerSessions' in patch || 'pendingTranslation' in patch)
+		return invalid('Use tab provider to select a provider through the parking operation.');
 	const next: AITabRecord = { ...tab };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {

@@ -12,6 +12,16 @@ and the Left Bar context menus (`src/renderer/components/SessionList/`). The
 authoritative CLI surface is `docs/cli-reference.md`, generated from the
 Commander tree by `npm run gen:cli-reference`.
 
+## Ensemble tab provider selection
+
+| UI action                                | CLI path                                                                        | Shared operation                                                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Select the tab harness, model and effort | `tab provider <tab-id> [provider] [--model <m>] [--effort <e>]`, or `--inherit` | Dedicated `tab_provider` transport uses `tabStore.setTabProvider()` and `switchTabProviderFor()` for atomic parking. The composer picker is pending. |
+| Select where this tab runs               | `tab run-on <tab-id> [provider\|<source id>:<model>\|inherit]`                  | Same selection action, using `parseRunOnEdit()`; explicit cloud differs from inheritance.                                                            |
+| Inspect current and captured providers   | `tab show`, `session list`, `session show --json`                               | Shared `inspectTabProvider()` exposes effective, explicit, agent-default and turn ownership without secrets or parked native slots.                  |
+
+Provider reads/writes require Ensemble on; ordinary inspection remains available when off. Existing `tab model` and `tab effort` validate against the effective provider through the same tab action. No selection command changes focus. Unverified SSH choices remain disabled, and selection does not accept native translation warnings. Headless hosts refuse the provider mutation until they support the same validated operation.
+
 ## Focus belongs to the human (`--background` / `--focus`)
 
 Provider translation (`update-agent --provider`) uses `provider_translation`, which forwards to the same migration callback as Edit Agent. Its dedicated transport prevents a newer CLI's preflight/apply from falling through to an older desktop's destructive provider settings patch. `--migration-plan` targets a reviewed operation; `--dry-run --json` supplies its ID for a Cue shell Command node. This operation changes the active provider; it is not an independent replica sync API.

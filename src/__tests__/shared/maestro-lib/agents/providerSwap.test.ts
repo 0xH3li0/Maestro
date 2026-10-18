@@ -19,6 +19,7 @@ import {
 	resolveTabProvider,
 	resolveTabNativeProvider,
 	resolveTurnProvider,
+	resolveErrorProvider,
 	switchAgentProvider,
 	switchTabProvider,
 	switchTabProviderFor,
@@ -883,5 +884,24 @@ describe('native transcript owner', () => {
 		expect(
 			resolveTabNativeProvider({ tabProvider: 'codex', pendingTranslation: 'opencode' }, agent)
 		).toBe('opencode');
+	});
+});
+
+describe('captured failure ownership', () => {
+	it('prefers the failure owner over selection and a later turn', () => {
+		expect(
+			resolveErrorProvider(
+				{ tabProvider: 'codex', turnProvider: 'codex' },
+				{ toolType: 'opencode' },
+				{ agentId: 'claude-code' }
+			)
+		).toBe('claude-code');
+		expect(
+			resolveErrorProvider(
+				{ tabProvider: 'codex' },
+				{ toolType: 'opencode' },
+				{ agentId: 'unknown' }
+			)
+		).toBe('codex');
 	});
 });

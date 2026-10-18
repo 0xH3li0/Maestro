@@ -4386,4 +4386,94 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 	});
+	describe('Ensemble provider bridge ownership', () => {
+		it('renames native metadata with the target tab provider', async () => {
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'codex-native',
+				tabProvider: 'codex',
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				projectRoot: '/test/project',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			await act(async () => {
+				await onRemoteRenameTabHandler?.(session.id, tab.id, 'New name', 'response');
+			});
+			expect(mockAgentSessions.setSessionName).toHaveBeenCalledWith(
+				'codex',
+				'/test/project',
+				'codex-native',
+				'New name'
+			);
+			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('broadcasts provider-only selection changes with separate default and turn owners', () => {
+			const tab = createMockTab({ id: 'tab-1', tabProvider: 'codex', turnProvider: 'claude-code' });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session], isLiveMode: true })));
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				session.id,
+				expect.arrayContaining([
+					expect.objectContaining({
+						provider: 'codex',
+						tabProvider: 'codex',
+						agentProvider: 'claude-code',
+						turnProvider: 'claude-code',
+					}),
+				]),
+				tab.id,
+				false
+			);
+			useSessionStore
+				.getState()
+				.updateSession(session.id, { aiTabs: [{ ...tab, tabProvider: 'claude-code' }] });
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				session.id,
+				expect.arrayContaining([
+					expect.objectContaining({ provider: 'claude-code', tabProvider: 'claude-code' }),
+				]),
+				tab.id,
+				false
+			);
+		});
+
+		it('reads a parked native transcript through its captured provider', async () => {
+			mockAgentSessions.read.mockResolvedValueOnce({ messages: [], total: 0, hasMore: false });
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'claude-native',
+				providerSessions: { codex: { agentSessionId: 'codex-native' } },
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				projectRoot: '/test/project',
+				aiTabs: [tab],
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(session.id, '', false, 'codex-native', false, 'response');
+			});
+			expect(mockAgentSessions.read).toHaveBeenCalledWith(
+				'codex',
+				'/test/project',
+				'codex-native',
+				expect.anything(),
+				undefined
+			);
+		});
+	});
 });

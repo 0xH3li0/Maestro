@@ -44,6 +44,7 @@ export {
 	resolveTabProvider,
 	resolveTabNativeProvider,
 	resolveTurnProvider,
+	resolveErrorProvider,
 	switchAgentProvider,
 	switchTabProvider,
 	switchTabProviderFor,

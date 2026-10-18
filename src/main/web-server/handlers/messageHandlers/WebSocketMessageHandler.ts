@@ -167,6 +167,7 @@ import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
 	handleSelectTab,
+	handleTabProvider,
 	handleNewTab,
 	handleCloseTab,
 	handleRenameTab,
@@ -591,6 +592,10 @@ export class WebSocketMessageHandler {
 
 			case 'provider_translation':
 				handleProviderTranslation(this.ctx, client, message);
+				break;
+
+			case 'tab_provider':
+				void handleTabProvider(this.ctx, client, message);
 				break;
 
 			case 'get_groups':
