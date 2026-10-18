@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for useWizardHandlers hook
  *
@@ -301,7 +302,112 @@ describe('useWizardHandlers', () => {
 	// ========================================================================
 	// Slash command discovery effect
 	// ========================================================================
+	it('starts an existing wizard on the pinned harness with that harness configuration', () => {
+		const session = createMockSession({
+			toolType: 'claude-code',
+			customPath: '/bin/claude',
+			providerOverrides: { codex: { customPath: '/bin/codex-work', customModel: 'gpt-work' } },
+			aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'codex' })],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useWizardHandlers(deps));
+		act(() => result.current.handleWizardCommand('ship'));
+		expect(deps.inlineWizardContext.startWizard).toHaveBeenCalledWith(
+			'ship',
+			expect.anything(),
+			session.projectRoot,
+			'codex',
+			session.name,
+			'tab-1',
+			session.id,
+			session.autoRunFolderPath,
+			session.sessionSshRemoteConfig,
+			expect.anything(),
+			expect.objectContaining({ customPath: '/bin/codex-work', customModel: 'gpt-work' })
+		);
+	});
+
 	describe('slash command discovery effect', () => {
+		it('discovers a pinned provider using its own account and binary, excluding agent commands', async () => {
+			const session = createMockSession({
+				toolType: 'claude-code',
+				customPath: '/bin/claude',
+				agentCommands: [{ command: '/claude-only', description: 'Claude' }],
+				providerOverrides: {
+					codex: { customPath: '/bin/codex-work', customEnvVars: { CODEX_HOME: '/accounts/work' } },
+				},
+				aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'codex' })],
+			});
+			session.agentCommandsScope = agentCommandScope(session);
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				'/bin/codex-work',
+				undefined,
+				{ CODEX_HOME: '/accounts/work' }
+			);
+			expect(window.maestro.claude.getCommands).not.toHaveBeenCalled();
+		});
+
+		it('reads custom Claude commands from the pinned account', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				providerOverrides: {
+					'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/work/claude' } },
+				},
+				aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'claude-code' })],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(window.maestro.claude.getCommands).toHaveBeenCalledWith(
+				session.projectRoot,
+				'/work/claude'
+			);
+			expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'claude-code',
+				session.cwd,
+				undefined,
+				undefined,
+				{ CLAUDE_CONFIG_DIR: '/work/claude' }
+			);
+		});
+
+		it('discards discovery replies after the selected provider changes', async () => {
+			let finish!: (commands: { name: string }[]) => void;
+			vi.mocked(window.maestro.agents.discoverSlashCommands).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							aiTabs: session.aiTabs.map((tab) => ({ ...tab, tabProvider: 'claude-code' })),
+						},
+					],
+				});
+			});
+			await act(async () => {
+				finish([{ name: 'codex-only' }]);
+			});
+			expect(
+				useSessionStore
+					.getState()
+					.sessions[0].agentCommands?.some((command) => command.command === '/codex-only')
+			).not.toBe(true);
+		});
+
 		it('refreshes Codex commands when global environment settings change', async () => {
 			const session = createMockSession({ toolType: 'codex' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
@@ -432,7 +538,7 @@ describe('useWizardHandlers', () => {
 				await new Promise((r) => setTimeout(r, 50));
 			});
 
-			expect((window as any).maestro.claude.getCommands).toHaveBeenCalledWith('/projects/test');
+			expect((window as any).maestro.claude.getCommands.mock.calls[0][0]).toBe('/projects/test');
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
 				'claude-code',
 				'/projects/test',
@@ -477,6 +583,7 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession({
 				agentCommands: [{ command: '/existing', description: 'Existing' }],
 			});
+			session.agentCommandsScope = agentCommandScope(session, session.aiTabs[0]);
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
 			const deps = createMockDeps();

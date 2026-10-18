@@ -1,3 +1,4 @@
+import { getAgentCommands } from '../../utils/agentCommands';
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
 import { startNotificationHistorySync } from '../../stores/notificationStore';
@@ -854,7 +855,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						...(deps.speckitCommandsRef?.current ?? []),
 						...(deps.openspecCommandsRef?.current ?? []),
 						...(deps.bmadCommandsRef?.current ?? []),
-						...(targetSession.agentCommands ?? []),
+						...(getAgentCommands(
+							targetSession,
+							targetSession.aiTabs.find((tab) => tab.id === createdTabId)
+						) ?? []),
 					].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
 				if (isBusy || isSlashCommand) {
 					// Busy agents wait for their current turn. Slash commands also use

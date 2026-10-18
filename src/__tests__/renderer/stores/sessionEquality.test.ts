@@ -150,6 +150,13 @@ describe('sidebarSessionEquality', () => {
 });
 
 describe('activeSessionChromeEquality', () => {
+	it('invalidates command readouts when only their provider/account scope changes', () => {
+		const session = createMockSession({ agentCommandsScope: 'scope-a', agentCommands: [] });
+		expect(
+			activeSessionChromeEquality(session, { ...session, agentCommandsScope: 'scope-b' })
+		).toBe(false);
+	});
+
 	it('returns true when isGeneratingName flips (MainPanel owns naming spinner)', () => {
 		const a = createMockSession({ aiTabs: [tab({ id: 't1', isGeneratingName: false })] });
 		const b: Session = {

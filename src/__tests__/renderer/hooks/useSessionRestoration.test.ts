@@ -1491,6 +1491,8 @@ describe('Session & Group loading effect', () => {
 			updateSessionWith('web-agent', (session) => ({
 				...session,
 				shellLogs: [{ id: 'live-shell', timestamp: 2, source: 'stdout', text: 'new shell' }],
+				agentCommandsScope: 'new-provider',
+				agentCommands: [{ command: '/current', description: 'Current provider' }],
 			}));
 		});
 		await act(async () => {
@@ -1505,6 +1507,7 @@ describe('Session & Group loading effect', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual(['old', 'live']);
 			expect(session.shellLogs.map((log) => log.id)).toEqual(['old-shell', 'live-shell']);
+			expect(session.agentCommands?.map((command) => command.command)).toEqual(['/current']);
 			expect(session.deferredContent).toBeUndefined();
 			expect(session.aiCommandHistory).toEqual(['old prompt']);
 		});

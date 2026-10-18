@@ -30,6 +30,7 @@ export interface DeferredContentPayload {
 	logs?: StoredAiTab['logs'];
 	shellLogs?: unknown[];
 	agentCommands?: unknown[];
+	agentCommandsScope?: string;
 	aiCommandHistory?: string[];
 	transcriptSnapshots?: SessionRuntimeSnapshot[];
 }
@@ -136,6 +137,7 @@ export function readDeferredContent(
 			? {
 					shellLogs: session.shellLogs ?? [],
 					agentCommands: session.agentCommands ?? [],
+					agentCommandsScope: session.agentCommandsScope,
 					aiCommandHistory: session.aiCommandHistory ?? [],
 				}
 			: {}),
@@ -206,11 +208,14 @@ export function mergeDeferredSessionContent(
 			incoming.shellLogs,
 			(log: { id?: string }) => log.id
 		);
-		complete.agentCommands = mergeDeferredItems(
-			stored.agentCommands,
-			incoming.agentCommands,
-			(command: { command: string }) => command.command
-		);
+		complete.agentCommands =
+			stored.agentCommandsScope === incoming.agentCommandsScope
+				? mergeDeferredItems(
+						stored.agentCommands,
+						incoming.agentCommands,
+						(command: { command: string }) => command.command
+					)
+				: (incoming.agentCommands ?? []);
 		complete.aiCommandHistory = mergeDeferredItems(
 			stored.aiCommandHistory,
 			incoming.aiCommandHistory,

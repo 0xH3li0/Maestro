@@ -1,3 +1,4 @@
+import { getAgentCommands } from '../../utils/agentCommands';
 import { prepareProviderTranslationForSend } from '../../services/providerTranslation';
 import { TranslationSendHeldError } from '../../../shared/maestro-lib/translation/send';
 import { applyQueuedItemDispatchFailure } from '../../utils/executionQueue';
@@ -11,6 +12,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
+	QueuedTurnSettings,
 } from '../../types';
 import {
 	getActiveTab,
@@ -255,6 +257,8 @@ export type ProcessInputOptions = {
 	sessionId?: string;
 	/** Prefer this AI tab over the session's current activeTabId. */
 	tabId?: string;
+	/** Frozen ownership for a deferred recovery send. */
+	turnSettings?: QueuedTurnSettings;
 };
 
 export interface UseInputProcessingReturn {
@@ -347,6 +351,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							? sessionsRef.current.find((s) => s.id === resolvedSessionId)
 							: undefined) ?? selectActiveSession(useSessionStore.getState()));
 
+			if (options?.tabId && !activeSession?.aiTabs.some((tab) => tab.id === options.tabId)) return;
+
 			// Pin the target tab before any async work. The user can switch tabs while
 			// process reconciliation or agent configuration is in flight, but this send
 			// must keep using the tab that owned the submitted input.
@@ -358,9 +364,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const resolveTargetTab = (session: Session) =>
 				targetTabId ? session.aiTabs.find((tab) => tab.id === targetTabId) : getActiveTab(session);
 
-			const submittedSettings = activeSession
-				? captureQueuedTurnSettings(resolveTargetTab(activeSession), activeSession)
-				: undefined;
+			const submittedSettings =
+				options?.turnSettings ??
+				(activeSession
+					? captureQueuedTurnSettings(resolveTargetTab(activeSession), activeSession)
+					: undefined);
 			const submittedProvider = submittedSettings?.provider;
 
 			const syncTarget = activeSession
@@ -532,9 +540,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand = activeSession.agentCommands?.find(
-						(cmd) => cmd.command === baseCommand && cmd.prompt
-					);
+					const matchingAgentCommand = getAgentCommands(
+						activeSession,
+						resolveTargetTab(activeSession),
+						submittedProvider
+					)?.find((cmd) => cmd.command === baseCommand && cmd.prompt);
 					const matchingCustomCommand =
 						customAICommands.find((cmd) => cmd.command === baseCommand) ||
 						(matchingAgentCommand

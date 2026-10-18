@@ -1531,6 +1531,8 @@ export interface Session {
 	// Active time tracking - cumulative milliseconds of active use
 	activeTimeMs: number;
 	// Agent slash commands available for this session (fetched per session based on cwd)
+	/** Discovery scope for agentCommands; an unscoped legacy list must be refreshed. */
+	agentCommandsScope?: string;
 	agentCommands?: { command: string; description: string; prompt?: string }[];
 	// Bookmark flag - bookmarked sessions appear in a dedicated section at the top
 	bookmarked?: boolean;

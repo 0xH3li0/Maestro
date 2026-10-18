@@ -16,6 +16,8 @@
  * Contexts: useInlineWizardContext, useWizard, useInputContext
  */
 
+import { agentCommandScope, getAgentCommands } from '../../utils/agentCommands';
+import { projectTabProvider, resolveTabProvider } from '../../utils/providerTabSessions';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
 	ToolType,
@@ -46,6 +48,7 @@ import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
+import { resolveAgentAccountKey } from '../../../shared/providerProfiles';
 import { parseSynopsis } from '../../../shared/synopsis';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
@@ -193,21 +196,23 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// wake App via this hook. Effects use narrow fields; callbacks resolve via getState().
 	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
-	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
+	const activeToolType = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? resolveTabProvider(getActiveTab(session), session) : undefined;
+	});
+	const activeCommandScope = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? agentCommandScope(session, getActiveTab(session)) : undefined;
+	});
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
 	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
-	// Codex refreshes persisted command lists on focus; its own write must not retrigger discovery.
-	const activeAgentCommands = useSessionStore((s) => {
-		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
-	});
 	const activeCodexEnv = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
+		return session && activeToolType === 'codex'
+			? projectTabProvider(session, getActiveTab(session)).agent.customEnvVars
+			: undefined;
 	});
-	const codexShellEnv = useSettingsStore((s) =>
-		activeToolType === 'codex' ? s.shellEnvVars : undefined
-	);
+	const codexShellEnv = useSettingsStore((s) => s.shellEnvVars);
 	const activeSshRemoteId = useSessionStore((s) => {
 		const session = selectActiveSession(s);
 		return isSessionRemote(session) ? getSessionSshRemoteId(session) : undefined;
@@ -239,8 +244,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// Slash command discovery effect
 	// ========================================================================
 	useEffect(() => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) return;
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		if (!savedSession) return;
+		const tab = getActiveTab(savedSession);
+		const { agent: currentSession } = projectTabProvider(savedSession, tab);
+		const scope = agentCommandScope(savedSession, tab);
 		if (
 			currentSession.toolType !== 'claude-code' &&
 			currentSession.toolType !== 'opencode' &&
@@ -248,7 +256,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			currentSession.toolType !== 'codex'
 		)
 			return;
-		if (currentSession.toolType !== 'codex' && currentSession.agentCommands?.length) return;
+		if (currentSession.toolType !== 'codex' && getAgentCommands(savedSession, tab)?.length) return;
 
 		const sessionId = currentSession.id;
 		const projectRoot = currentSession.projectRoot;
@@ -269,7 +277,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const fetchCustomCommands = async () => {
 			try {
-				const customClaudeCommands = await (window as any).maestro.claude.getCommands(projectRoot);
+				const account = resolveAgentAccountKey(
+					currentSession.toolType,
+					{ ...codexShellEnv, ...currentSession.customEnvVars },
+					getHomeDir()
+				);
+				const customClaudeCommands = await window.maestro.claude.getCommands(
+					projectRoot,
+					account ?? undefined
+				);
 				if (cancelled) return;
 
 				const customCommandObjects = (customClaudeCommands || []).map(
@@ -281,9 +297,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				if (customCommandObjects.length > 0) {
 					updateSessionWith(sessionId, (s) => {
-						const existingCommands = s.agentCommands || [];
+						const liveTab = s.aiTabs.find((candidate) => candidate.id === tab?.id);
+						if (!liveTab || agentCommandScope(s, liveTab) !== scope) return s;
+						const existingCommands = getAgentCommands(s, liveTab) || [];
 						return {
 							...s,
+							agentCommandsScope: scope,
 							agentCommands: mergeCommands(existingCommands, customCommandObjects),
 						};
 					});
@@ -306,9 +325,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.cwd,
 					currentSession.customPath,
 					activeSshRemoteId,
-					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
-						? [currentSession.customEnvVars]
-						: [])
+					...(currentSession.customEnvVars !== undefined ? [currentSession.customEnvVars] : [])
 				);
 				if (cancelled) return;
 
@@ -325,9 +342,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
 					updateSessionWith(sessionId, (s) => {
-						const existingCommands = s.agentCommands || [];
+						const liveTab = s.aiTabs.find((candidate) => candidate.id === tab?.id);
+						if (!liveTab || agentCommandScope(s, liveTab) !== scope) return s;
+						const existingCommands = getAgentCommands(s, liveTab) || [];
 						return {
 							...s,
+							agentCommandsScope: scope,
 							agentCommands:
 								currentSession.toolType === 'codex'
 									? agentCommandObjects
@@ -346,7 +366,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			}
 		};
 
-		if (currentSession.toolType === 'claude-code') {
+		if (currentSession.toolType === 'claude-code' && !activeSshRemoteId) {
 			fetchCustomCommands();
 		}
 		discoverAgentCommands();
@@ -356,10 +376,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		};
 	}, [
 		activeSessionId,
+		activeTabId,
+		activeCommandScope,
 		activeToolType,
 		activeCwd,
 		activeCustomPath,
-		activeAgentCommands,
 		activeCodexEnv,
 		codexShellEnv,
 		activeSshRemoteId,
@@ -606,7 +627,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleHistoryCommand - /history slash command
 	// ========================================================================
 	const handleHistoryCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		const currentSession = savedSession
+			? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+			: undefined;
 		if (!currentSession) {
 			logger.warn('[handleHistoryCommand] No active session');
 			return;
@@ -752,7 +776,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleSkillsCommand - /skills slash command
 	// ========================================================================
 	const handleSkillsCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		const currentSession = savedSession
+			? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+			: undefined;
 		if (!currentSession) {
 			logger.warn('[handleSkillsCommand] No active session');
 			return;
@@ -856,7 +883,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	const handleWizardCommand = useCallback(
 		(args: string) => {
-			const currentSession = selectActiveSession(useSessionStore.getState());
+			const savedSession = selectActiveSession(useSessionStore.getState());
+			const currentSession = savedSession
+				? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+				: undefined;
 			if (!currentSession) {
 				logger.warn('[handleWizardCommand] No active session');
 				return;

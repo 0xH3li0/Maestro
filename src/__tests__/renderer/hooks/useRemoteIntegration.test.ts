@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 // Pull in Window.maestro. Test files sit outside tsconfig.json include, so the
@@ -597,6 +598,10 @@ describe('useRemoteIntegration', () => {
 		} = {}
 	) => {
 		const sessions = overrides.sessions ?? [createMockSession()];
+		for (const session of sessions) {
+			if (session.agentCommands && !session.agentCommandsScope)
+				session.agentCommandsScope = agentCommandScope(session);
+		}
 		const activeSessionId = overrides.activeSessionId ?? sessions[0]?.id ?? '';
 		// The hook now mutates state through updateSessionWith/updateAiTab, which
 		// operate directly on useSessionStore - so sessionsRef must mirror

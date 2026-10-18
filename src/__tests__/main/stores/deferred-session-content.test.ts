@@ -118,3 +118,21 @@ describe('mergeDeferredSessionContent', () => {
 		);
 	});
 });
+
+describe('command discovery scope', () => {
+	it('does not merge deferred commands from another provider or account', () => {
+		const stored = storedAgent({
+			agentCommandsScope: 'claude-account',
+			agentCommands: [{ command: '/claude-only' }],
+		});
+		const incoming = {
+			...stored,
+			agentCommandsScope: 'codex-account',
+			agentCommands: [{ command: '/codex-only' }],
+			deferredContent: { commands: true, tabIds: [] },
+		};
+		expect(mergeDeferredSessionContent(incoming, stored).agentCommands).toEqual([
+			{ command: '/codex-only' },
+		]);
+	});
+});

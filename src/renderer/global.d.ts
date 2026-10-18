@@ -317,6 +317,7 @@ interface MaestroAPI {
 			logs?: import('./types').LogEntry[];
 			shellLogs?: import('./types').LogEntry[];
 			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
+			agentCommandsScope?: string;
 			aiCommandHistory?: string[];
 			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
 		}>;
@@ -2646,7 +2647,10 @@ interface MaestroAPI {
 				matchCount: number;
 			}>
 		>;
-		getCommands: (projectPath: string) => Promise<
+		getCommands: (
+			projectPath: string,
+			configDir?: string
+		) => Promise<
 			Array<{
 				command: string;
 				description: string;

@@ -964,6 +964,26 @@ describe('resilience event recording', () => {
 
 	beforeEach(() => recordMock().mockClear());
 
+	it('records the failed provider after a selection or agent default change', () => {
+		setupSession('ensemble-stats', 't1');
+		noteDispatch(
+			'ensemble-stats',
+			{
+				id: 'stats-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-stats', 't1', quota());
+		updateSessionWith('ensemble-stats', (session) => ({ ...session, toolType: 'opencode' }));
+		cancelRetry('ensemble-stats', 't1');
+		expect(recordMock()).toHaveBeenCalledWith(expect.objectContaining({ agentType: 'codex' }));
+	});
+
 	it('records a recovered outage when the resend settles', () => {
 		setupSession('s20', 't1');
 		seedSnapshot('s20', 't1');
@@ -1618,6 +1638,74 @@ describe('queue durability across an outage', () => {
  * waiting out a reset that no longer applies to it.
  */
 describe('provider change during an outage', () => {
+	it('watches the captured provider slot without reacting to another tab or agent default', () => {
+		setupTabs('ensemble-retry', ['t1', 't2'], { toolType: 'claude-code' });
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't1' ? { ...tab, tabProvider: 'codex', customModel: 'gpt-a' } : tab
+			),
+		}));
+		noteDispatch(
+			'ensemble-retry',
+			{
+				id: 'ensemble-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex', model: 'gpt-a' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-retry', 't1', quota());
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			customModel: 'another-claude',
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't2' ? { ...tab, customModel: 'sibling' } : tab
+			),
+		}));
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't1' ? { ...tab, customModel: 'gpt-b' } : tab
+			),
+		}));
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][1].turnSettings).toMatchObject({
+			provider: 'codex',
+			model: 'gpt-b',
+		});
+	});
+
+	it('retries when the captured provider account changes, including a parked provider', () => {
+		setupSession('ensemble-account', 't1', {
+			toolType: 'claude-code',
+			providerOverrides: { codex: { customEnvVars: { CODEX_HOME: '/accounts/old' } } },
+		});
+		noteDispatch(
+			'ensemble-account',
+			{
+				id: 'account-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-account', 't1', quota());
+		updateSessionWith('ensemble-account', (session) => ({
+			...session,
+			providerOverrides: { codex: { customEnvVars: { CODEX_HOME: '/accounts/new' } } },
+		}));
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][1].turnSettings.provider).toBe('codex');
+	});
+
 	it('fires the waiting retry when the model changes', () => {
 		setupSession('p1', 't1', { customModel: 'opus' });
 		seedSnapshot('p1', 't1');

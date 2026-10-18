@@ -309,6 +309,7 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		}
 	}
 
+	if (a.agentCommandsScope !== b.agentCommandsScope) return false;
 	if (a.agentCommands !== b.agentCommands) {
 		const ca = a.agentCommands;
 		const cb = b.agentCommands;

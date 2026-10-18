@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for src/renderer/services/queuedPrompt.ts
  *
@@ -257,6 +258,30 @@ describe('enqueuePromptForTab with expandCommands', () => {
 		registerDispatchDepsProvider(() => deps as never);
 	});
 	afterEach(() => registerDispatchDepsProvider(null));
+
+	it('expands discovered commands only for the addressed provider scope', () => {
+		const session = seed({
+			agentCommands: [{ command: '/codex-skill', description: 'Codex', prompt: 'Do Codex work' }],
+		});
+		session.aiTabs[1].tabProvider = 'codex';
+		session.agentCommandsScope = agentCommandScope(session, session.aiTabs[1]);
+		expect(
+			enqueuePromptForTab({
+				sessionId: session.id,
+				tabId: 'a',
+				text: '/codex-skill',
+				expandCommands: true,
+			})?.type
+		).toBe('message');
+		expect(
+			enqueuePromptForTab({
+				sessionId: session.id,
+				tabId: 'b',
+				text: '/codex-skill',
+				expandCommands: true,
+			})?.type
+		).toBe('command');
+	});
 
 	it('queues a message that is exactly a slash command as that command', () => {
 		seed();

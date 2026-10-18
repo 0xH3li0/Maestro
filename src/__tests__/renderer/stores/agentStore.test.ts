@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for agentStore - Agent lifecycle orchestration store
  *
@@ -2306,6 +2307,7 @@ describe('agentStore', () => {
 						},
 					],
 				});
+				session.agentCommandsScope = agentCommandScope(session, session.aiTabs[0]);
 				useSessionStore.getState().setSessions([session]);
 
 				const item = createQueuedItem({

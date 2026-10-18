@@ -1,3 +1,4 @@
+import { getAgentCommands } from '../utils/agentCommands';
 /**
  * queuedPrompt - put a prompt into an agent's execution queue from outside the
  * composer.
@@ -113,7 +114,8 @@ export function buildQueuedMessageItem({
  */
 function matchSlashCommand(
 	session: Session,
-	text: string
+	text: string,
+	tab: AITab
 ): { command: string; description?: string } | null {
 	const commandText = text.trim();
 	if (!commandText.startsWith('/')) return null;
@@ -123,7 +125,7 @@ function matchSlashCommand(
 		deps?.speckitCommands.find((cmd) => cmd.command === commandText) ??
 		deps?.openspecCommands.find((cmd) => cmd.command === commandText) ??
 		deps?.bmadCommands?.find((cmd) => cmd.command === commandText) ??
-		session.agentCommands?.find((cmd) => cmd.command === commandText && cmd.prompt) ??
+		getAgentCommands(session, tab)?.find((cmd) => cmd.command === commandText && cmd.prompt) ??
 		null
 	);
 }
@@ -170,7 +172,7 @@ export function enqueuePromptForTab(options: {
 		slashCommand,
 		turnSettings: options.turnSettings,
 	});
-	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text) : null;
+	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const item: QueuedItem = command
 		? {
 				id: message.id,

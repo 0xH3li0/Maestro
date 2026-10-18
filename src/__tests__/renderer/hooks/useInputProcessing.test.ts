@@ -207,6 +207,51 @@ describe('useInputProcessing', () => {
 		return deps;
 	};
 
+	it('keeps a deferred recovery send on its captured provider while a different harness is selected', async () => {
+		const session = createMockSession({
+			toolType: 'claude-code',
+			aiTabs: [
+				createMockTab({ id: 'recover-tab', tabProvider: 'claude-code', agentSessionId: null }),
+			],
+			activeTabId: 'recover-tab',
+		});
+		const deps = createDeps({
+			activeSession: session,
+			inputValue: 'continue',
+			sessionsRef: { current: [session] },
+		});
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			command: 'codex',
+			path: '/bin/codex',
+			args: ['exec'],
+		} as any);
+		const { result } = renderHook(() => useInputProcessing(deps));
+		await act(async () => {
+			await result.current.processInput('continue', {
+				sessionId: session.id,
+				tabId: 'recover-tab',
+				turnSettings: { provider: 'codex', model: 'gpt-work' },
+			});
+		});
+		await vi.waitFor(() =>
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex', sessionCustomModel: 'gpt-work' })
+			)
+		);
+	});
+
+	it('does not retarget a deferred send when its pinned tab has closed', async () => {
+		const deps = createDeps({ inputValue: 'continue' });
+		const { result } = renderHook(() => useInputProcessing(deps));
+		await act(async () => {
+			await result.current.processInput('continue', {
+				tabId: 'closed-tab',
+				turnSettings: { provider: 'codex' },
+			});
+		});
+		expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+	});
+
 	it('launches the pinned tab harness with its model and native id', async () => {
 		const session = createMockSession({
 			customModel: 'opus',
