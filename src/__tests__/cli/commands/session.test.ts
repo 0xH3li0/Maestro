@@ -214,6 +214,12 @@ describe('session show command', () => {
 			agentProvider: 'codex',
 			tabProvider: 'claude-code',
 			turnProvider: 'codex',
+			pendingTranslation: 'codex',
+			effectiveModel: 'auto',
+			effectiveEffort: 'high',
+			runOn: { type: 'provider' },
+			providerSessions: { codex: { agentSessionId: 'parked-private-id' } },
+			customEnvVars: { PRIVATE_TEST_VALUE: 'must-not-be-published' },
 			messages: [
 				{
 					id: 'log-1',
@@ -251,7 +257,13 @@ describe('session show command', () => {
 			agentProvider: 'codex',
 			tabProvider: 'claude-code',
 			turnProvider: 'codex',
+			pendingTranslation: 'codex',
+			effectiveModel: 'auto',
+			effectiveEffort: 'high',
+			runOn: { type: 'provider' },
 		});
+		expect(output).not.toHaveProperty('providerSessions');
+		expect(output).not.toHaveProperty('customEnvVars');
 		expect(output.messages).toHaveLength(2);
 		expect(output.messages[0].role).toBe('user');
 		expect(output.messages[1].role).toBe('assistant');

@@ -2502,7 +2502,12 @@ Read or select the provider for one Ensemble tab. Requires Ensemble in Encore Fe
 maestro-cli tab provider <tab-id>
 maestro-cli tab provider <tab-id> codex --model auto --effort high --json
 maestro-cli tab provider <tab-id> --inherit
+maestro-cli tab provider active --agent <agent-id> --json
+maestro-cli tab provider <tab-id> --model auto --effort high
+maestro-cli session show <tab-id> --json
 ```
+
+Without a named provider or `--inherit`, model, effort and Run on edits apply to the current provider slot without changing its pin. With no edit options, the command reads the authoritative bridge state. Reads and writes keep the current view; no background flag is needed.
 
 ## `maestro-cli tab run-on <tab-id> [target]`
 
