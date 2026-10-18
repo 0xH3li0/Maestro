@@ -605,6 +605,22 @@ describe('WindowRegistry', () => {
 			expect(registry.get(stale)?.activeTabRef).toEqual(ai2);
 		});
 
+		it('announces a new tab window with tabs as a tab window change, so the owner hides them', () => {
+			const changes: WindowRegistryChange[] = [];
+			registry.onChange((c) => changes.push(c));
+
+			const id = createTabWindow('agent-a', [ai1]);
+			const empty = createTabWindow('agent-b', []);
+			registry.create({ windowId: 'app', browserWindow: makeWindow() });
+
+			expect(changes).toEqual([
+				{ type: 'created', windowId: id },
+				{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' },
+				{ type: 'created', windowId: empty },
+				{ type: 'created', windowId: 'app' },
+			]);
+		});
+
 		it('refuses a tab window without an agent', () => {
 			expect(() => registry.create({ kind: 'tab', browserWindow: makeWindow() })).toThrow(
 				/agentId/

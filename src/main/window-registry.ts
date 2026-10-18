@@ -190,6 +190,10 @@ export class WindowRegistry extends EventEmitter {
 		}
 		this.windows.set(id, entry);
 		this.emitChange({ type: 'created', windowId: id });
+		// `created` never reaches a renderer. A new tab window already holds its
+		// first tabs, so the owner must hear it as a tab window change, or it keeps
+		// the tab in its strip and never starts the patch stream.
+		if (isTabWindowEntry(entry) && entry.tabRefs.length > 0) this.emitTabWindowChange(entry);
 		return id;
 	}
 

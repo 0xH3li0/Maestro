@@ -615,13 +615,18 @@ describe('wireTabWindowPermissionRerouting', () => {
 			agentId: 'agent-1',
 			tabRefs: [AI_TAB, FILE_TAB],
 		});
-		expect(reroutePermissionRequests).not.toHaveBeenCalled();
+		// A new tab window with tabs is a tab window change: a prompt already
+		// waiting for the popped tab moves to it.
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
+
+		registry.create({ windowId: 'app', browserWindow: makeFakeWindow() });
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
 
 		registry.removeTabFromTabWindow(id, AI_TAB);
-		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(2);
 
 		off();
 		registry.removeTabFromTabWindow(id, FILE_TAB);
-		expect(reroutePermissionRequests).toHaveBeenCalledTimes(1);
+		expect(reroutePermissionRequests).toHaveBeenCalledTimes(2);
 	});
 });
