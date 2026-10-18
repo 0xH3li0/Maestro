@@ -131,6 +131,7 @@ export const LogItem = memo(
 		bionifyAlgorithm,
 		userMessageAlignment,
 		responseDurationMs,
+		showTurnProvider,
 		steerRunContinues,
 		codexDirectives,
 		codexFollowupTabId,
@@ -1031,6 +1032,7 @@ export const LogItem = memo(
 					{!crossAgent &&
 						log.source !== 'user' &&
 						((isClaudeCode && showProviderModePill) ||
+							showTurnProvider ||
 							log.turnModel ||
 							log.turnEffort ||
 							log.turnRunOn ||
@@ -1059,6 +1061,7 @@ export const LogItem = memo(
 									})()}
 								<TurnSettingPills
 									theme={theme}
+									provider={showTurnProvider ? log.turnProvider : undefined}
 									model={log.turnModel}
 									effort={log.turnEffort}
 									runOn={log.turnRunOn}
@@ -1258,6 +1261,11 @@ export const LogItem = memo(
 			prevProps.log.steerState === nextProps.log.steerState &&
 			prevProps.steerRunContinues === nextProps.steerRunContinues &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
+			prevProps.log.turnProvider === nextProps.log.turnProvider &&
+			prevProps.log.turnModel === nextProps.log.turnModel &&
+			prevProps.log.turnEffort === nextProps.log.turnEffort &&
+			prevProps.log.turnRunOn === nextProps.log.turnRunOn &&
+			prevProps.log.turnAuto === nextProps.log.turnAuto &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			// A command card's whole header is driven by these, and none of them
@@ -1303,10 +1311,10 @@ export const LogItem = memo(
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
 			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
-			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
-			// agent, this one is a toggle the user flips while looking at the
-			// transcript - leave it out and every message already on screen keeps its
-			// pill until something unrelated re-renders it.
+			// Captured attribution can arrive without changing the message text.
+			prevProps.showTurnProvider === nextProps.showTurnProvider &&
+			prevProps.isClaudeCode === nextProps.isClaudeCode &&
+			prevProps.isAdaptiveMode === nextProps.isAdaptiveMode &&
 			prevProps.responseDurationMs === nextProps.responseDurationMs &&
 			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);

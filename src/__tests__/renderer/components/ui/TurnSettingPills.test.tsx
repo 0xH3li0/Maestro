@@ -14,6 +14,14 @@ function renderPills(props: Partial<React.ComponentProps<typeof TurnSettingPills
 }
 
 describe('TurnSettingPills', () => {
+	it('names a captured provider even when the model and effort were defaults', () => {
+		const { getByTestId } = renderPills({ provider: 'codex' });
+		const pill = getByTestId('turn-provider-pill');
+		expect(pill.textContent).toBe('Codex');
+		expect(pill.getAttribute('title')).toBe('Provider: Codex');
+		expect(pill.hasAttribute('data-turn-setting-pill')).toBe(true);
+	});
+
 	it('renders nothing when the turn ran on the agent defaults', () => {
 		const { container } = renderPills();
 		expect(container.firstElementChild).toBeNull();

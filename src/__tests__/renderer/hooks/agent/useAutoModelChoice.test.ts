@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useAutoModelChoice } from '../../../../renderer/hooks/agent/useAutoModelChoice';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { TierTargets } from '../../../../shared/modelTiers';
+import { projectTabProvider } from '../../../../renderer/utils/providerTabSessions';
+import type { RunOnTarget } from '../../../../shared/local-models/run-on';
 
 describe('useAutoModelChoice', () => {
 	beforeEach(() => {
@@ -27,6 +29,58 @@ describe('useAutoModelChoice', () => {
 		expect(renderHook(() => useAutoModelChoice(undefined)).result.current).toBeNull();
 		// A form's working copy before a provider is picked.
 		expect(renderHook(() => useAutoModelChoice({})).result.current).toBeNull();
+	});
+
+	it('uses the selected harness defaults without borrowing the agent tier targets', () => {
+		const agent = {
+			toolType: 'claude-code' as const,
+			tierTargets: { medium: { type: 'provider-model' as const, model: 'agent-only' } },
+		};
+		const { result, rerender } = renderHook(
+			({ tabProvider }: { tabProvider: 'claude-code' | 'opencode' }) =>
+				useAutoModelChoice(projectTabProvider(agent, { tabProvider, agentSessionId: null }).agent),
+			{ initialProps: { tabProvider: 'opencode' } }
+		);
+		expect(result.current).toBeNull();
+		act(() => {
+			useSettingsStore.setState({
+				harnessTierDefaults: {
+					opencode: { medium: { type: 'provider-model', model: 'opencode-default' } },
+				},
+			});
+		});
+		expect(result.current?.support.model).toBe(true);
+		rerender({ tabProvider: 'claude-code' });
+		expect(result.current?.support).toEqual({ model: true, effort: true });
+	});
+
+	it('keeps agent tier targets for an explicit pin equal to the default provider', () => {
+		const agent = {
+			toolType: 'opencode' as const,
+			tierTargets: { low: { type: 'provider-model' as const, model: 'agent-model' } },
+		};
+		const { result } = renderHook(() =>
+			useAutoModelChoice(
+				projectTabProvider(agent, { tabProvider: 'opencode', agentSessionId: null }).agent
+			)
+		);
+		expect(result.current?.support.model).toBe(true);
+	});
+
+	it('reads the selected tab Run on instead of inheriting a foreign agent source', () => {
+		const source: RunOnTarget = { type: 'source', endpointId: 'ollama', model: 'local-model' };
+		const agent = { toolType: 'codex' as const, runOn: source };
+		const { result, rerender } = renderHook(
+			({ runOn }: { runOn?: RunOnTarget }) =>
+				useAutoModelChoice(
+					projectTabProvider(agent, { tabProvider: 'claude-code', agentSessionId: null, runOn })
+						.agent
+				),
+			{ initialProps: {} }
+		);
+		expect(result.current?.support).toEqual({ model: true, effort: true });
+		rerender({ runOn: source });
+		expect(result.current?.support).toEqual({ model: false, effort: true });
 	});
 
 	it('offers Auto on both axes for Claude Code, and says the router is off by default', () => {

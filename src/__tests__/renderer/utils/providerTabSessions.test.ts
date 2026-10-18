@@ -10,7 +10,7 @@
  * This file only checks that the renderer's import site still reaches it.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
 	switchAgentProvider,
 	switchTabProvider,
@@ -731,6 +731,88 @@ describe('a turn sent on the Auto model', () => {
 });
 
 describe('Ensemble turn captures', () => {
+	let saved: ReturnType<typeof useSettingsStore.getState>;
+	beforeEach(() => {
+		saved = useSettingsStore.getState();
+		useSettingsStore.setState({ harnessTierDefaults: {}, localModelEndpoints: [] });
+	});
+	afterEach(() => {
+		useSettingsStore.setState({
+			harnessTierDefaults: saved.harnessTierDefaults,
+			localModelEndpoints: saved.localModelEndpoints,
+		});
+	});
+
+	it('shows the queued provider and source after the tab selection and agent target change', () => {
+		const session = makeSession('claude-code', {
+			runOn: { type: 'source', endpointId: 'ollama', model: 'queued-model' },
+		});
+		const tab = makeTab({ customModel: 'sonnet', customEffort: 'high' });
+		const settings = captureQueuedTurnSettings(tab, session);
+		const switched = switchTabProviderFor(tab, session, 'codex');
+		session.runOn = { type: 'provider' };
+		expect(queuedTurnPills(settings)).toEqual({
+			provider: 'claude-code',
+			model: 'sonnet',
+			effort: 'high',
+			runOn: turnRunOnLabel({ runOn: settings.runOn }),
+		});
+		expect(codifyQueuedTurnSettings({ turnSettings: settings }, switched, session)).toMatchObject({
+			turnProvider: 'claude-code',
+			turnRunOnSource: { endpointId: 'ollama', model: 'queued-model' },
+		});
+	});
+
+	it('uses frozen foreign-harness Auto tiers and Run on in both queue pills and dispatch', () => {
+		useSettingsStore.setState({
+			harnessTierDefaults: {
+				codex: { high: { type: 'source', endpointId: 'frozen-source', model: 'frozen-model' } },
+			},
+		});
+		const session = makeSession('claude-code', {
+			tierTargets: { high: { type: 'provider-model', model: 'wrong-agent-tier' } },
+			runOn: { type: 'source', endpointId: 'wrong-source', model: 'wrong-model' },
+		});
+		const tab = makeTab({ tabProvider: 'codex', customModel: 'auto' });
+		const settings = captureQueuedTurnSettings(tab, session);
+		settings.route = { tier: 'high', effort: 'high', engine: 'System One', calibrated: true };
+		useSettingsStore.setState({
+			harnessTierDefaults: { codex: { high: { type: 'provider-model', model: 'changed-tier' } } },
+		});
+		const captured = codifyQueuedTurnSettings({ turnSettings: settings }, tab, session);
+		expect(settings.model).toBe('auto');
+		expect(settings.routing?.tierTargets).toBeUndefined();
+		expect(settings.runOn).toEqual({ type: 'provider' });
+		expect(captured).toMatchObject({
+			turnProvider: 'codex',
+			turnModel: 'frozen-model',
+			turnRunOnTarget: { type: 'source', endpointId: 'frozen-source', model: 'frozen-model' },
+			turnRunOnSource: { endpointId: 'frozen-source', model: 'frozen-model' },
+		});
+		expect(queuedTurnPills(settings)).toMatchObject({
+			provider: 'codex',
+			runOn: captured.turnRunOn,
+			auto: { status: 'routed', route: settings.route },
+		});
+	});
+
+	it('lets a captured Auto provider tier replace a source and keeps source on no decision', () => {
+		const session = makeSession('claude-code', {
+			customModel: 'auto',
+			tierTargets: { high: { type: 'provider-model', model: 'cloud-tier' } },
+			runOn: { type: 'source', endpointId: 'ollama', model: 'source-model' },
+		});
+		const settings = captureQueuedTurnSettings(makeTab(), session);
+		settings.route = { tier: 'high', effort: 'high', engine: 'System One', calibrated: true };
+		expect(queuedTurnPills(settings).runOn).toBeUndefined();
+		settings.route = { skipped: 'off', detail: 'Router off' };
+		expect(queuedTurnPills(settings)).toMatchObject({
+			provider: 'claude-code',
+			runOn: turnRunOnLabel({ runOn: settings.runOn }),
+			auto: { status: 'router-off' },
+		});
+	});
+
 	it('freezes a tab pin and its provider defaults while the feature controls are hidden', () => {
 		const session = makeSession('claude-code', {
 			customModel: 'opus',

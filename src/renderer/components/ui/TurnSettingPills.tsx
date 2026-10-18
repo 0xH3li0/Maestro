@@ -1,5 +1,5 @@
 /**
- * TurnSettingPills - read-only badges naming the model and effort a turn ran under.
+ * TurnSettingPills - read-only badges naming a turn's provider, model and effort.
  *
  * The transcript counterpart to the composer's interactive `ModelEffortPills`:
  * same icons and same color roles (accent for model, warning for effort), but
@@ -8,9 +8,8 @@
  * who changes model or effort mid-conversation can read back which
  * configuration produced each response.
  *
- * Values come from the entry's send-time stamp (`LogEntry.turnModel` /
- * `turnEffort`). An unset value means the agent's own default was in force, and
- * that pill is omitted rather than labeled with a guess.
+ * Values come from the entry's send-time stamp. An unset provider is unknown;
+ * unset model/effort mean the provider's defaults. Omit them instead of guessing.
  *
  * A turn that ran on a Run on source (`LogEntry.turnRunOn`) names the model and
  * the source in the model pill's place (`qwen3:latest · Ollama`): the agent's
@@ -32,9 +31,13 @@ import { memo } from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import { autoTurnDetail, autoTurnLabel, type AutoTurnStamp } from '../../../shared/autoTurn';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import type { ToolType } from '../../../shared/types';
 
 export interface TurnSettingPillsProps {
 	theme: Theme;
+	/** Captured owner, supplied only where a provider readout is needed. */
+	provider?: ToolType;
 	/** Model the turn ran under, or undefined for the agent default. */
 	model?: string;
 	/** Effort/reasoning level the turn ran under, or undefined for the default. */
@@ -47,15 +50,31 @@ export interface TurnSettingPillsProps {
 
 export const TurnSettingPills = memo(function TurnSettingPills({
 	theme,
+	provider,
 	model,
 	effort,
 	runOn,
 	auto,
 }: TurnSettingPillsProps) {
-	if (!model && !effort && !runOn && !auto) return null;
+	if (!provider && !model && !effort && !runOn && !auto) return null;
 
 	return (
 		<>
+			{provider && (
+				<span
+					className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+					style={{
+						backgroundColor: `${theme.colors.accent}20`,
+						color: theme.colors.accent,
+						opacity: 0.7,
+					}}
+					title={`Provider: ${getAgentDisplayName(provider)}`}
+					data-testid="turn-provider-pill"
+					data-turn-setting-pill
+				>
+					{getAgentDisplayName(provider)}
+				</span>
+			)}
 			{auto && (
 				<span
 					className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded max-w-[20rem]"

@@ -23,6 +23,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -4205,6 +4206,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-1',
 					text: 'response from API stream',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4230,6 +4232,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-1',
 					text: 'response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 					turnModel: 'opus',
 					turnEffort: 'high',
@@ -4255,6 +4258,7 @@ describe('TerminalOutput', () => {
 					id: 'api-resp',
 					text: 'response from API stream',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4262,6 +4266,7 @@ describe('TerminalOutput', () => {
 					id: 'interactive-resp',
 					text: 'response captured from interactive TUI',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 			];
@@ -4296,6 +4301,7 @@ describe('TerminalOutput', () => {
 					id: 'interactive-resp',
 					text: 'response captured from interactive TUI',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 			];
@@ -4320,6 +4326,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-tui',
 					text: 'tui response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4327,6 +4334,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-api',
 					text: 'api response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4354,6 +4362,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-tui',
 					text: 'tui response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4361,6 +4370,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-api',
 					text: 'api response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4411,7 +4421,7 @@ describe('TerminalOutput', () => {
 		it('does not render the pill on non-Claude agents', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
-				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnProvider: 'codex' }),
 			];
 
 			const session = createDefaultSession({
@@ -4430,6 +4440,79 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('model / effort pill rendering', () => {
+		it('shows the first captured owner and changes, skipping legacy and non-response entries', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'a', text: 'first', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'tool', source: 'tool', text: 'tool', turnProvider: 'codex' }),
+				createLogEntry({ id: 'a2', text: 'same owner', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'u1', source: 'user' }),
+				createLogEntry({ id: 'legacy', text: 'legacy owner unknown' }),
+				createLogEntry({ id: 'u2', source: 'user' }),
+				createLogEntry({ id: 'a3', text: 'still same owner', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'u3', source: 'user' }),
+				createLogEntry({ id: 'b', text: 'second owner', turnProvider: 'codex' }),
+				createLogEntry({ id: 'u4', source: 'user' }),
+				createLogEntry({ id: 'b2', text: 'same second owner', turnProvider: 'codex' }),
+				createLogEntry({ id: 'u5', source: 'user' }),
+				createLogEntry({ id: 'a4', text: 'returned owner', turnProvider: 'claude-code' }),
+			];
+			const session = createDefaultSession({
+				toolType: 'opencode',
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs, isUnread: false }],
+			});
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getAllByTestId('turn-provider-pill').map((pill) => pill.textContent)).toEqual([
+				'Claude Code',
+				'Codex',
+				'Claude Code',
+			]);
+		});
+
+		it('updates captured pills when attribution changes without changing the reply text', () => {
+			const entry = createLogEntry({ id: 'reply', text: 'same text', turnProvider: 'codex' });
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs: [entry], isUnread: false }],
+			});
+			const { rerender } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Codex');
+			const updated = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'native',
+						logs: [{ ...entry, turnProvider: 'claude-code', turnModel: 'sonnet' }],
+						isUnread: false,
+					},
+				],
+			});
+			rerender(<TerminalOutput {...createDefaultProps({ session: updated })} />);
+			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Claude Code');
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('sonnet');
+		});
+
+		it('uses captured ownership for mode pills and leaves untagged history unknown', () => {
+			useSettingsStore.setState({ showProviderModePill: true });
+			const logs = [
+				createLogEntry({ id: 'legacy', text: 'legacy text', renderStyle: 'text-stream' }),
+				createLogEntry({ id: 'u', source: 'user' }),
+				createLogEntry({
+					id: 'claude',
+					text: 'captured',
+					renderStyle: 'text-stream',
+					turnProvider: 'claude-code',
+				}),
+			];
+			const session = createDefaultSession({
+				toolType: 'codex',
+				providerOverrides: { 'claude-code': { enableMaestroP: true } },
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs, isUnread: false }],
+			});
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getAllByText('Dynamic TUI Wrapper')).toHaveLength(1);
+			expect(screen.getAllByTestId('turn-provider-pill')).toHaveLength(1);
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
 		it('labels each response with the model and effort its turn was sent with', () => {
 			// The point of the pills: the user switched configuration mid-conversation,
 			// so each response has to say which one produced it.
@@ -4966,6 +5049,50 @@ describe('collapseAiResponseLogs', () => {
 		fromAgentName,
 		fromToolType: 'claude-code' as const,
 		...(error ? { error } : {}),
+	});
+
+	it('preserves the captured owner when a system banner leads the response', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'banner', source: 'system', text: 'Mode changed. ' }),
+			mk({ id: 'reply', turnProvider: 'codex', text: 'Answer' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0]).toMatchObject({
+			id: 'banner',
+			turnProvider: 'codex',
+			text: 'Mode changed. Answer',
+		});
+	});
+
+	it('does not assign adjacent providers to untagged assistant history', () => {
+		const logs = [
+			mk({ id: 'u', source: 'user', timestamp: 10 }),
+			mk({ id: 'old', text: 'unknown', timestamp: 20 }),
+			mk({ id: 'owned', text: 'known', turnProvider: 'codex', timestamp: 30 }),
+			mk({ id: 'old2', text: 'unknown again', timestamp: 40 }),
+		];
+		const out = collapseAiResponseLogs(logs);
+		expect(out.map((entry) => entry.id)).toEqual(['u', 'old', 'owned', 'old2']);
+		expect(out[1].turnProvider).toBeUndefined();
+		expect(out[2].turnProvider).toBe('codex');
+		expect(out[3].turnProvider).toBeUndefined();
+		expect([...computeTurnDurations(logs)]).toEqual([['old2', 30]]);
+	});
+
+	it('keeps different captured owners separate without requiring a user row', () => {
+		const logs = [
+			mk({ id: 'u', source: 'user', timestamp: 10 }),
+			mk({ id: 'a', turnProvider: 'claude-code', text: 'A', timestamp: 20 }),
+			mk({ id: 'b', turnProvider: 'codex', text: 'B', timestamp: 30 }),
+			mk({ id: 'b2', turnProvider: 'codex', text: '2', timestamp: 40 }),
+		];
+		expect(collapseAiResponseLogs(logs).map((entry) => [entry.id, entry.text])).toEqual([
+			['u', ''],
+			['a', 'A'],
+			['b', 'B2'],
+		]);
+		// The elapsed badge must still point to the last rendered reply's id.
+		expect([...computeTurnDurations(logs)]).toEqual([['b', 30]]);
 	});
 
 	it('collapses consecutive local response entries into one bubble', () => {

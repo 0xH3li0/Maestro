@@ -337,15 +337,33 @@ export function captureQueuedTurnSettings(
  * shown for it: it is not what the turn will run at.
  */
 export function queuedTurnPills(settings: QueuedTurnSettings | undefined): {
+	provider?: QueuedTurnSettings['provider'];
 	model?: string;
 	effort?: string;
+	runOn?: string;
 	auto?: AutoTurnStamp;
 } {
+	// Use the captured harness and routing inputs, including a tier's explicit
+	// provider target. Never borrow today's agent routing for a queued readout.
+	const turn =
+		settings?.provider && isAutoModel(settings.model) && settings.route
+			? resolveAutoTurn({
+					toolType: settings.provider,
+					route: settings.route,
+					agentEffort: settings.effort,
+					routing: settings.routing,
+				})
+			: undefined;
+	const runOn = turnRunOnLabel({ runOn: turn?.runOn ?? settings?.runOn });
+	const captured = {
+		...(settings?.provider ? { provider: settings.provider } : {}),
+		...(runOn ? { runOn } : {}),
+	};
 	if (!settings || !isAutoModel(settings.model)) {
-		return { model: settings?.model, effort: settings?.effort };
+		return { ...captured, model: settings?.model, effort: settings?.effort };
 	}
 	const auto = queuedAutoTurnStamp(settings.route);
-	return { auto, ...(auto.status === 'routed' ? {} : { effort: settings.effort }) };
+	return { ...captured, auto, ...(auto.status === 'routed' ? {} : { effort: settings.effort }) };
 }
 
 /**
