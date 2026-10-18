@@ -7,7 +7,14 @@ import {
 	type DataviewDocumentScope,
 } from '../../../../renderer/components/Markdown/components/DataviewDocumentContext';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { Link, toWireValue, type DataviewResult, type Literal } from '../../../../shared/dataview';
+import {
+	Link,
+	toWireValue,
+	type DataviewChangeEvent,
+	type DataviewResult,
+	type Literal,
+} from '../../../../shared/dataview';
+import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const ROOT = '/vault';
@@ -17,14 +24,33 @@ function scope(overrides: Partial<DataviewDocumentScope> = {}): DataviewDocument
 	return { filePath: NOTE, agentId: 'agent-1', openLink: vi.fn(), ...overrides };
 }
 
-function respond(result: DataviewResult, path = 'People/Ada.md') {
+function respond(result: DataviewResult, path = 'People/Ada.md', revision = 1) {
 	vi.mocked(window.maestro.dataview.query).mockResolvedValue({
 		root: ROOT,
 		sshRemoteId: null,
-		revision: 1,
+		revision,
 		path,
 		result,
 	});
+}
+
+/** Capture the window's `dataview:changed` listener so a test can emit events. */
+function captureChanges(): (event: DataviewChangeEvent) => void {
+	let emit: (event: DataviewChangeEvent) => void = () => {};
+	vi.mocked(window.maestro.dataview.onChanged).mockImplementation((handler) => {
+		emit = handler;
+		return () => {};
+	});
+	return (event) => emit(event);
+}
+
+function listOf(names: string[]): DataviewResult {
+	return {
+		kind: 'list',
+		items: wire(names),
+		idMeaning: { type: 'path' },
+		warnings: [],
+	};
 }
 
 function wire(values: Literal[]) {
@@ -50,6 +76,7 @@ function setDataviewEnabled(enabled: boolean) {
 
 describe('DataviewBlock', () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
 		setDataviewEnabled(true);
 	});
 
@@ -198,6 +225,74 @@ describe('DataviewBlock', () => {
 
 		fireEvent.click(boxes[0]);
 		expect(toggleOwnTask).toHaveBeenCalledWith(4);
+	});
+
+	it('toggles a task of another file in that file, after checking the line still holds it', async () => {
+		vi.mocked(window.maestro.fs.readFile).mockResolvedValue('# Alpha\n- [ ] ship it\n');
+		vi.mocked(window.maestro.fs.writeFile).mockResolvedValue({ success: true });
+		const toggleOwnTask = vi.fn().mockResolvedValue(true);
+		respond({
+			kind: 'task',
+			groups: [{ text: 'ship it', line: 1, path: 'Projects/Alpha.md', task: true, checked: false }],
+			idMeaning: { type: 'path' },
+			warnings: [],
+		});
+		renderBlock('TASK', scope({ toggleOwnTask }));
+
+		await screen.findByText('ship it');
+		fireEvent.click(screen.getByRole('checkbox'));
+
+		await waitFor(() =>
+			expect(window.maestro.fs.writeFile).toHaveBeenCalledWith(
+				'/vault/Projects/Alpha.md',
+				'# Alpha\n- [x] ship it\n',
+				undefined
+			)
+		);
+		expect(toggleOwnTask).not.toHaveBeenCalled();
+	});
+
+	it('re-runs on a change to its root and keeps the old result on screen until the new one arrives', async () => {
+		const emit = captureChanges();
+		respond(listOf(['first']));
+		renderBlock('LIST');
+		await screen.findByText('first');
+
+		let answer: (value: unknown) => void = () => {};
+		vi.mocked(window.maestro.dataview.query).mockImplementation(
+			() => new Promise((resolve) => (answer = resolve as (value: unknown) => void))
+		);
+		emit({ root: ROOT, sshRemoteId: null, revision: 2, changedPaths: ['People/Ada.md'] });
+		emit({ root: ROOT, sshRemoteId: null, revision: 3, changedPaths: ['People/Ada.md'] });
+
+		await waitFor(() => expect(window.maestro.dataview.query).toHaveBeenCalledTimes(2), {
+			timeout: DATAVIEW_REFRESH_DEBOUNCE_MS * 4,
+		});
+		// The burst cost one query, and the previous answer is still shown.
+		expect(screen.getByText('first')).toBeTruthy();
+
+		answer({
+			root: ROOT,
+			sshRemoteId: null,
+			revision: 3,
+			path: 'People/Ada.md',
+			result: listOf(['second']),
+		});
+		await screen.findByText('second');
+		expect(screen.queryByText('first')).toBeNull();
+	});
+
+	it('ignores a change to another root or one it has already read', async () => {
+		const emit = captureChanges();
+		respond(listOf(['first']), 'People/Ada.md', 5);
+		renderBlock('LIST');
+		await screen.findByText('first');
+
+		emit({ root: '/other-vault', sshRemoteId: null, revision: 9, changedPaths: [] });
+		emit({ root: ROOT, sshRemoteId: null, revision: 5, changedPaths: [] });
+		await new Promise((resolve) => setTimeout(resolve, DATAVIEW_REFRESH_DEBOUNCE_MS * 2));
+
+		expect(window.maestro.dataview.query).toHaveBeenCalledTimes(1);
 	});
 
 	it('renders GROUP BY task groups under their keys', async () => {

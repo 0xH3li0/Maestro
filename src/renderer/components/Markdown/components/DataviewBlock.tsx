@@ -11,10 +11,16 @@
  * provider, with the Encore Feature off, or in an untitled buffer, the fence
  * renders as ordinary highlighted code.
  *
- * Results live in the module-level resource cache (`useCachedResource`), keyed by
- * agent, note, and query source: a component map rebuild (theme, search, the Auto
- * Run lock) or a virtualized Fast-tier item remounts the block, and the cached
- * result repaints on the first frame instead of flashing the placeholder.
+ * Results live in the module-level resource cache (`useLiveDataviewResult`), keyed
+ * by agent, note, and query source: a component map rebuild (theme, search, the
+ * Auto Run lock) or a virtualized Fast-tier item remounts the block, and the cached
+ * result repaints on the first frame instead of flashing the placeholder. A
+ * `dataview:changed` event for the result's root re-runs the query (debounced) and
+ * keeps the old result on screen until the new one arrives (DV-7).
+ *
+ * A task checkbox toggles the task's own source line (DV-8): through the surface's
+ * own toggle for the note on screen, and `toggleDataviewTaskInFile()` for any
+ * other file.
  *
  * Styling is the surface's own: plain `table`, `ul`, and `li` elements inherit the
  * GFM table and task-list CSS File Preview and Auto Run already apply. Nothing in
@@ -34,8 +40,10 @@ import {
 	type RevivedDataviewResult,
 } from '../../../../shared/dataview';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { useCachedResource } from '../../../hooks/utils/useCachedResource';
+import { useLiveDataviewResult } from '../../../hooks/file/useLiveDataviewResult';
+import { toggleDataviewTaskInFile } from '../../../services/dataviewTaskToggle';
 import { ipcErrorMessage } from '../../../utils/ipcErrorMessage';
+import { joinPath } from '../../../../shared/formatters';
 import { AlertCallout } from './AlertCallout';
 import { TaskCheckbox } from './TaskCheckbox';
 import { PrismHighlightedCode } from './PrismCodeBlock';
@@ -88,7 +96,7 @@ function DataviewQueryView({
 			throw new Error(ipcErrorMessage(error));
 		}
 	}, [agentId, filePath, code]);
-	const { data, error, loading } = useCachedResource(key, fetchResult);
+	const { data, error, loading } = useLiveDataviewResult(key, fetchResult);
 
 	// The Fast tier routes clicks on anchors from its container; result links are
 	// handled here already, so a second handler must not open them again.
@@ -372,11 +380,22 @@ function TaskListItem({
 	const isTask = item.task === true;
 	const children = Array.isArray(item.children) ? (item.children as TaskItem[]) : [];
 	const line = typeof item.line === 'number' ? item.line + 1 : null;
-	const ownDocument = item.path === data.path;
+	const path = typeof item.path === 'string' ? item.path : null;
+	const text = typeof item.text === 'string' ? item.text : '';
 	const toggle = useCallback(
-		(sourceLine: number): Promise<boolean> =>
-			ownDocument && doc.toggleOwnTask ? doc.toggleOwnTask(sourceLine) : Promise.resolve(false),
-		[ownDocument, doc]
+		(sourceLine: number): Promise<boolean> => {
+			if (path === null) return Promise.resolve(false);
+			if (path === data.path) {
+				return doc.toggleOwnTask ? doc.toggleOwnTask(sourceLine) : Promise.resolve(false);
+			}
+			return toggleDataviewTaskInFile({
+				filePath: joinPath(data.root, path),
+				line: sourceLine,
+				text,
+				sshRemoteId: data.sshRemoteId,
+			});
+		},
+		[path, text, data.path, data.root, data.sshRemoteId, doc]
 	);
 	return (
 		<li
@@ -393,7 +412,7 @@ function TaskListItem({
 					/>{' '}
 				</>
 			)}
-			<DataviewMarkdown text={typeof item.text === 'string' ? item.text : ''} />
+			<DataviewMarkdown text={text} />
 			{children.length > 0 && <TaskList items={children} theme={theme} data={data} doc={doc} />}
 		</li>
 	);
