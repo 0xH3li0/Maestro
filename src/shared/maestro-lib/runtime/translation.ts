@@ -25,10 +25,15 @@ export function createRuntimeTranslationService(
 			...record,
 			toolType: record.toolType,
 			cwd: record.cwd,
-			aiTabs: (record.aiTabs ?? []).map((tab) => ({
-				...tab,
-				agentSessionId: tab.agentSessionId ?? null,
-			})),
+			aiTabs: (record.aiTabs ?? []).map((tab) => {
+				if (tab.tabProvider !== undefined && !isValidAgentId(tab.tabProvider))
+					throw new Error(`Unknown tab provider: ${tab.tabProvider}`);
+				return {
+					...tab,
+					tabProvider: tab.tabProvider,
+					agentSessionId: tab.agentSessionId ?? null,
+				};
+			}),
 		};
 	};
 	const providerConfig = (provider: string): Record<string, any> => {

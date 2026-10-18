@@ -2,36 +2,19 @@ import { canonicalJson } from '../../canonicalJson';
 import { agentRunOnSupport } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
+import type { ProviderSwitchTab } from '../agents/providerSwap';
 import type {
 	ProviderMigrationState,
 	TranslationTabMapping,
 	HistoryTranslationMapping,
 } from './types';
 
-export interface TranslationTab {
+export interface TranslationTab extends ProviderSwitchTab {
 	id: string;
-	agentSessionId: string | null;
-	usageStats?: unknown;
-	customModel?: string;
-	customEffort?: string;
-	awaitingSessionId?: boolean;
-	/** Native owner whose latest context must be imported before the next destination send. */
-	pendingTranslation?: ToolType;
-	providerSessions?: Partial<
-		Record<
-			ToolType,
-			{
-				agentSessionId: string | null;
-				usageStats?: any;
-				customModel?: string;
-				customEffort?: string;
-			}
-		>
-	>;
 }
 
 /** Shared parking invariant: live ID belongs to the active provider; its slot is removed. */
-export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
+export function switchTabProvider<T extends Omit<TranslationTab, 'id' | 'tabProvider'>>(
 	tab: T,
 	fromProvider: ToolType,
 	toProvider: ToolType
@@ -43,6 +26,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
 		usageStats: tab.usageStats,
 		customModel: tab.customModel,
 		customEffort: tab.customEffort,
+		runOn: tab.runOn,
 	};
 	const restored = parked[toProvider];
 	delete parked[toProvider];
@@ -52,6 +36,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
 		usageStats: restored?.usageStats,
 		customModel: restored?.customModel,
 		customEffort: restored?.customEffort,
+		runOn: restored?.runOn,
 		awaitingSessionId: false,
 		providerSessions: parked,
 	};
@@ -268,6 +253,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			.map(translate)
 			.map((tab) => ({
 				id: tab.id,
+				tabProvider: tab.tabProvider,
 				agentSessionId: tab.agentSessionId,
 				providerSessions: tab.providerSessions,
 				pendingTranslation: tab.pendingTranslation,

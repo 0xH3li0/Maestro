@@ -214,6 +214,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Parsing a Codex assistant directive:** `parseCodexDirective()`, `findCodexDirectives()`, `KNOWN_CODEX_DIRECTIVES` in `src/shared/codexDirectives.ts`
 - **Acting on a clicked Codex followup chip:** `requestCodexFollowup()`, `resolveCodexFollowup()`, `codexDirectivesLiveForSource()` in `src/renderer/services/codexFollowup.ts`, drawn by `FollowupChip`
 - **Changing an agent's provider:** `switchAgentProvider()`, `switchTabProvider()`, `resolveTurnProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
+- **Selecting one tab's provider:** `resolveTabProvider()`, `switchTabProviderFor()` in `src/shared/maestro-lib/agents/providerSwap.ts`; `useTabStore.setTabProvider()` in `src/renderer/stores/tabStore.ts`
 
 #### Agents (renderer state and navigation)
 

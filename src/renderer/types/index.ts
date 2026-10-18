@@ -952,11 +952,15 @@ export interface AITab {
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
-	 * `customModel` / `customEffort` as they always have, so this map never holds
-	 * an entry for `session.toolType`. Changing the agent's provider swaps the
+	 * `customModel` / `customEffort` / `runOn`, so this map never holds
+	 * an entry for `resolveTabProvider(tab, session)`. Changing the provider swaps the
 	 * live values with this map's entry rather than clearing them.
 	 */
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
+	/** Absent inherits the agent's provider; a named provider explicitly pins this tab. */
+	tabProvider?: ToolType;
+	/** Per-provider Run on choice; absent inherits the matching harness default. */
+	runOn?: RunOnTarget;
 	/** Latest native owner awaiting lazy translation, even if the destination has an older slot. */
 	pendingTranslation?: ToolType;
 	/**
@@ -1396,7 +1400,7 @@ export interface Session {
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions' | 'pendingTranslation'>
+		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions' | 'pendingTranslation' | 'tabProvider'>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */

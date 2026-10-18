@@ -32,6 +32,42 @@ afterEach(async () => {
 });
 
 describe('headless translate at send', () => {
+	it('preserves an unknown persisted tab provider and refuses native translation', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'runtime-tab-provider-'));
+		roots.push(root);
+		const paths = resolveMaestroPaths({
+			env: { MAESTRO_USER_DATA: root },
+			productionDataPath: root,
+		});
+		const stored = {
+			sessions: [
+				{
+					id: 'agent',
+					name: 'Test',
+					toolType: 'claude-code',
+					cwd: root,
+					aiTabs: [{ id: 'tab', agentSessionId: 'native', tabProvider: 'future-provider' }],
+				},
+			],
+		};
+		await fs.writeFile(paths.sessionsFile, JSON.stringify(stored));
+		const bus = createEventBus('test');
+		const registry = createProcessRegistry();
+		const repository = createAgentRepository({ paths, bus, processes: registry });
+		expect(await repository.load()).toEqual({ ok: true });
+		const service = createRuntimeTranslationService(paths, repository, registry);
+		const report = await service.run({
+			agentId: 'agent',
+			tabId: 'tab',
+			destination: 'codex',
+			action: 'plan',
+		});
+		expect(report.success).toBe(false);
+		expect(report.error).toContain('Unknown tab provider: future-provider');
+		expect(repository.getTab('agent', 'tab')?.tabProvider).toBe('future-provider');
+		expect(JSON.parse(await fs.readFile(paths.sessionsFile, 'utf8'))).toEqual(stored);
+	});
+
 	it('holds warnings, then uses the shared native transaction and resumes its output', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'runtime-translation-'));
 		roots.push(root);

@@ -64,7 +64,20 @@ import {
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab as updateSessionAiTab,
+} from './sessionStore';
+import { useSettingsStore } from './settingsStore';
+import type { ToolType } from '../../shared/types';
+import {
+	resolveTabProvider,
+	switchTabProviderFor,
+} from '../../shared/maestro-lib/agents/providerSwap';
+import { getDeclaredTranslationDirection } from '../../shared/maestro-lib/translation/support';
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 import {
 	renameGroup as renameGroupHelper,
 	setGroupEmoji as setGroupEmojiHelper,
@@ -297,6 +310,8 @@ export interface TabStoreActions {
 	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
 	 */
 	setTabModel: (tabId: string, model: string | undefined) => void;
+	/** Select a tab harness through the shared parking operation and session mutation. */
+	setTabProvider: (sessionId: string, tabId: string, provider: ToolType | undefined) => void;
 
 	/**
 	 * Set per-tab effort/reasoning override. Pass undefined to clear and fall back to session/agent default.
@@ -729,6 +744,26 @@ export const useTabStore = create<TabStore>()((set) => ({
 
 	setTabModel: (tabId, model) => {
 		updateAiTab(tabId, { customModel: model || undefined });
+	},
+
+	setTabProvider: (sessionId, tabId, provider) => {
+		if (!useSettingsStore.getState().encoreFeatures.ensemble)
+			throw new Error('Enable Ensemble in Encore Features before selecting a tab provider.');
+		updateSessionAiTab(sessionId, tabId, (tab) => {
+			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (!session) return tab;
+			if (migrationHoldsTurns(session.providerMigration))
+				throw new Error('Finish the current provider translation before changing providers.');
+			const source = resolveTabProvider(tab, session);
+			const destination = provider ?? session.toolType;
+			if (source !== destination) {
+				if (session.sessionSshRemoteConfig?.enabled)
+					throw new Error('Ensemble SSH switching is disabled until live acceptance is verified.');
+				if (!getDeclaredTranslationDirection(source, destination))
+					throw new Error(`Context translation from ${source} to ${destination} is not available.`);
+			}
+			return switchTabProviderFor(tab, session, provider);
+		});
 	},
 
 	setTabEffort: (tabId, effort) => {

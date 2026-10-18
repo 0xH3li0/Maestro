@@ -40,9 +40,11 @@ import {
 
 export {
 	providerOverridesFor,
+	resolveTabProvider,
 	resolveTurnProvider,
 	switchAgentProvider,
 	switchTabProvider,
+	switchTabProviderFor,
 	updateProviderSlot,
 } from '../../shared/maestro-lib/agents/providerSwap';
 

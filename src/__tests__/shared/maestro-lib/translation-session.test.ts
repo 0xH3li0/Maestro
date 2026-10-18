@@ -15,6 +15,7 @@ describe('one provider mapping commit', () => {
 			const source = { agentSessionId: 'claude-one', customModel: 'source-model' };
 			const other = {
 				id: 'other',
+				tabProvider: live,
 				agentSessionId: 'other-native',
 				providerSessions: { codex: { agentSessionId: 'parked-other' } },
 			};
@@ -67,6 +68,9 @@ describe('one provider mapping commit', () => {
 			expect(result.customEnvVars).toBe(session.customEnvVars);
 			expect(result.executionQueue).toBe(session.executionQueue);
 			expect(result.aiTabs[1]).toBe(other);
+			expect(result.providerTranslationTabInventory).toContainEqual(
+				expect.objectContaining({ id: 'other', tabProvider: live })
+			);
 			expect(result.closedTabHistory?.[0].tab).toBe(other);
 			expect(result.unifiedClosedTabHistory?.[0].tab).toBe(other);
 			expect(result.snoozedTabs?.[0].members?.[0].tab).toBe(other);

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTabStore } from '../../../renderer/stores/tabStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, AITab, FilePreviewTab, TerminalTab } from '../../../renderer/types';
 import {
 	createMockAITab as createBaseMockAITab,
@@ -76,6 +77,9 @@ function setupSessionWithTabs(
 
 describe('tabStore', () => {
 	beforeEach(() => {
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
+		}));
 		// Reset both stores before each test
 		useTabStore.setState({
 			tabGistContent: null,
@@ -456,6 +460,90 @@ describe('tabStore', () => {
 			// Tab-1 should be unchanged
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].starred).toBe(false);
+		});
+
+		it('persists one tab provider through session mutations without changing its siblings', () => {
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+			}));
+			const tab = createMockAITab({
+				id: 'tab-1',
+				agentSessionId: 'claude-native',
+				customModel: 'auto',
+			});
+			const sibling = createMockAITab({ id: 'tab-2' });
+			const sessionId = setupSessionWithTabs([tab, sibling]);
+			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
+			useTabStore.getState().setTabProvider(sessionId, tab.id, 'codex');
+			const switched = useSessionStore.getState().sessions[0];
+			expect(switched.toolType).toBe('claude-code');
+			expect(switched.activeTabId).toBe(tab.id);
+			expect(switched.aiTabs[1]).toBe(sibling);
+			expect(switched.aiTabs[0]).toMatchObject({
+				tabProvider: 'codex',
+				pendingTranslation: 'claude-code',
+				agentSessionId: null,
+				providerSessions: {
+					'claude-code': { agentSessionId: 'claude-native', customModel: 'auto' },
+				},
+			});
+			useTabStore.getState().setTabProvider(sessionId, tab.id, undefined);
+			const restored = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(restored.agentSessionId).toBe('claude-native');
+			expect(restored.tabProvider).toBeUndefined();
+			expect(restored.pendingTranslation).toBeUndefined();
+		});
+
+		it('rejects provider selection while Ensemble is off without changing persisted state', () => {
+			const sessionId = setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
+			const before = useSessionStore.getState().sessions;
+			expect(() => useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')).toThrow(
+				'Enable Ensemble'
+			);
+			expect(useSessionStore.getState().sessions).toBe(before);
+		});
+
+		it('rejects unsupported directions and unverified SSH selection without changing state', () => {
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+			}));
+			const sessionId = setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
+			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
+			const before = useSessionStore.getState().sessions;
+			expect(() => useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'opencode')).toThrow(
+				'Context translation'
+			);
+			expect(useSessionStore.getState().sessions).toBe(before);
+			useSessionStore.getState().updateSession(sessionId, {
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-host' },
+			});
+			const sshBefore = useSessionStore.getState().sessions;
+			expect(() => useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')).toThrow(
+				'SSH switching is disabled'
+			);
+			expect(useSessionStore.getState().sessions).toBe(sshBefore);
+		});
+
+		it('refuses a provider change during a migration without dropping native state', () => {
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+			}));
+			const sessionId = setupSessionWithTabs([
+				createMockAITab({ id: 'tab-1', agentSessionId: 'native' }),
+			]);
+			useSessionStore.getState().updateSession(sessionId, {
+				providerMigration: {
+					operationId: 'migration',
+					destination: 'codex',
+					state: 'staging',
+					verification: 'unverified',
+				},
+			});
+			const before = useSessionStore.getState().sessions;
+			expect(() => useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')).toThrow(
+				'Finish the current provider translation'
+			);
+			expect(useSessionStore.getState().sessions).toBe(before);
 		});
 
 		it('should set and clear per-tab customModel', () => {

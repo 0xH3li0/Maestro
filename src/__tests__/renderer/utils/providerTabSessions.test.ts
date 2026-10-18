@@ -14,6 +14,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	switchAgentProvider,
 	switchTabProvider,
+	switchTabProviderFor,
+	resolveTabProvider,
 	resolveTurnProvider,
 	updateProviderSlot,
 	codifyTurnSettings,
@@ -56,6 +58,8 @@ describe('provider swap re-exports', () => {
 	it('are the library implementation, so renderer turn attribution and runtime parking cannot drift', () => {
 		expect(switchAgentProvider).toBe(providerSwap.switchAgentProvider);
 		expect(switchTabProvider).toBe(providerSwap.switchTabProvider);
+		expect(switchTabProviderFor).toBe(providerSwap.switchTabProviderFor);
+		expect(resolveTabProvider).toBe(providerSwap.resolveTabProvider);
 		expect(switchTabProvider).toBe(translationSwitch);
 		expect(resolveTurnProvider).toBe(providerSwap.resolveTurnProvider);
 		expect(updateProviderSlot).toBe(providerSwap.updateProviderSlot);
