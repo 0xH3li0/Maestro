@@ -472,6 +472,14 @@ sequenceDiagram
 - `tab-window-changed` now rides `windows:sessionMoved` with `agentId`, to app windows AND tab windows (the only type tab windows receive). `WindowContext` ignores it (no ownership change).
 - None of these channels is on the web bridge allow-list (`bridgeDenyList.ts`), so a browser client is refused by default (TW-13). That includes `maestro-cli`, which is a bridge client: phase 7 needs its own route to the service.
 
+### Renderer pop-out service (landed, phase 7)
+
+- `popOutTab(agentId, ref, { background? })` and `dockTab(agentId, ref)` in `src/renderer/services/tabWindowActions.ts` are the only renderer callers of `tabWindows.popOut` / `tabWindows.dock`. The chip menu items, the Cmd+K commands, the shortcut, the tab window's Dock button, and the CLI handlers all go through them.
+- `popOutTab` refuses in web-desktop and inside a tab window (`canUseTabWindows()`, TW-13, D1), and refuses a hidden consult tab or a tab the agent lacks (`popOutRefusal(session, ref)`, TW-14). Entry points hide their item with the same two predicates.
+- A tiled tab is detached first with `promotePaneToStandalone`, inserted right after its group's ref (D6), and the `Session` write lands before the IPC call. The tab stays standalone when main refuses.
+- Neither function shows a toast: refusals and IPC rejections come back as the result's `error` (rejections also go to Sentry), so the CLI can report the same words. UI callers show it (the Dock button through `runTabWindowCall`).
+- Tests: `src/__tests__/renderer/services/tabWindowActions.test.ts`. `installTabWindowsApi` now fakes `popOut` too (third argument).
+
 ### Persistence and restore (landed, phase 2)
 
 - `MultiWindowState.tabWindows` holds the tab windows; `windows` stays app windows only, so the primary pointer rule holds and an older build ignores them. Each record is a `WindowState` with `kind: 'tab'`, `agentId`, `tabRefs`, `activeTabRef`, bounds, and empty `sessionIds`.

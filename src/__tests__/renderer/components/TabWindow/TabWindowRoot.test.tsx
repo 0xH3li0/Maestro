@@ -337,7 +337,7 @@ describe('TabWindowRoot shell (TW-2, TW-3)', () => {
 		expect(release()).toBe(true);
 	});
 
-	it('shows a notice for a browser tab, which phase 6 has not wired yet', async () => {
+	it('renders a browser tab in its own webview host (D5)', async () => {
 		useSessionStore.setState({
 			sessions: [
 				createMockSession({
@@ -353,7 +353,8 @@ describe('TabWindowRoot shell (TW-2, TW-3)', () => {
 			activeTabRef: { type: 'browser', id: 'b1' },
 		});
 		await renderRoot();
-		expect(screen.getByTestId('pane-notice')).toHaveTextContent(/cannot show in a tab window yet/);
+		expect(screen.getByTestId('browser-tab-host')).toBeInTheDocument();
+		expect(screen.queryByTestId('pane-notice')).not.toBeInTheDocument();
 	});
 
 	it('docks the active tab through tabWindows:dock', async () => {

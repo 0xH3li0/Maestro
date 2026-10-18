@@ -15,6 +15,7 @@ import type {
 	TabWindowDockResult,
 	TabWindowFocusResult,
 	TabWindowIntent,
+	TabWindowPopOutResult,
 	TabWindowSessionPatch,
 	TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
@@ -35,7 +36,7 @@ export function clearTabWindowStore(): void {
 
 /**
  * Install a fake `window.maestro.tabWindows` whose `focus` answers `result`,
- * whose `dock` answers `dockResult`, and whose `getState` (a tab window's own
+ * whose `dock` answers `dockResult`, whose `popOut` answers `popOutResult`, and whose `getState` (a tab window's own
  * record) answers null until a test says otherwise. The relay half records
  * what is sent (`sendSessionPatch`, `sendIntent`). As main's relay would,
  * `emitIntent` delivers an intent to every `onIntent` subscriber, and
@@ -44,10 +45,12 @@ export function clearTabWindowStore(): void {
  */
 export function installTabWindowsApi(
 	result: TabWindowFocusResult = { focused: true, windowId: 'tw-1' },
-	dockResult: TabWindowDockResult = { docked: true, windowId: 'tw-1' }
+	dockResult: TabWindowDockResult = { docked: true, windowId: 'tw-1' },
+	popOutResult: TabWindowPopOutResult = { poppedOut: true, windowId: 'tw-1', created: true }
 ): {
 	focus: ReturnType<typeof vi.fn>;
 	dock: ReturnType<typeof vi.fn>;
+	popOut: ReturnType<typeof vi.fn>;
 	getState: ReturnType<typeof vi.fn>;
 	sendSessionPatch: ReturnType<typeof vi.fn>;
 	sendIntent: ReturnType<typeof vi.fn>;
@@ -61,6 +64,7 @@ export function installTabWindowsApi(
 	const previous = maestro.tabWindows;
 	const focus = vi.fn().mockResolvedValue(result);
 	const dock = vi.fn().mockResolvedValue(dockResult);
+	const popOut = vi.fn().mockResolvedValue(popOutResult);
 	const getState = vi.fn().mockResolvedValue(null);
 	const sendSessionPatch = vi.fn();
 	const sendIntent = vi.fn();
@@ -77,6 +81,7 @@ export function installTabWindowsApi(
 	maestro.tabWindows = {
 		focus,
 		dock,
+		popOut,
 		getState,
 		sendSessionPatch,
 		sendIntent,
@@ -86,6 +91,7 @@ export function installTabWindowsApi(
 	return {
 		focus,
 		dock,
+		popOut,
 		getState,
 		sendSessionPatch,
 		sendIntent,

@@ -44,6 +44,7 @@ import { resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { sendTabWindowIntent } from '../../services/tabWindowIntentSender';
+import { dockTab } from '../../services/tabWindowActions';
 import {
 	closeAiTabWithConfirm,
 	closeFileTabWithConfirm,
@@ -269,10 +270,10 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		flushFileTabs();
 		void runTabWindowCall(
 			'dock',
-			() => tabWindows.dock(agentId, activeRef),
+			() => dockTab(agentId, activeRef),
 			(result) => (result.docked ? null : result.error)
 		);
-	}, [tabWindows, agentId, activeRef, flushDraft, flushFileTabs]);
+	}, [agentId, activeRef, flushDraft, flushFileTabs]);
 
 	// Tab shortcuts: the main window's entries, scoped to this strip (TW-6).
 	useTabWindowKeyboard({
