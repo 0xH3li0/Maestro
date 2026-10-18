@@ -10,6 +10,38 @@
  * part that matters: what the count means, and when filtering is unsafe.
  */
 
+import { getAgentDisplayName, getAgentPickerMeta } from '../../shared/agentMetadata';
+import { getDeclaredTranslationDirection } from '../../shared/maestro-lib/translation/support';
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
+import type { AITab, Session, ToolType } from '../types';
+import { resolveTabNativeProvider, resolveTabProvider } from './providerTabSessions';
+
+/** Shared refusal for the composer and the CLI's authoritative switch action. */
+export function tabProviderSwitchProblem(
+	session: Session,
+	tab: AITab,
+	destination: ToolType,
+	ensemble: boolean,
+	available?: boolean
+): string | undefined {
+	if (!ensemble) return 'Ensemble is disabled. Enable Ensemble in Encore Features.';
+	if (!getAgentPickerMeta(destination))
+		return `Provider cannot run an Ensemble tab: ${destination}`;
+	if (migrationHoldsTurns(session.providerMigration))
+		return 'Finish the current provider translation before changing providers.';
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId)
+		return 'Ensemble SSH switching is disabled: provider switching over SSH is unverified; live SSH acceptance was skipped.';
+	const current = resolveTabProvider(tab, session);
+	const source = resolveTabNativeProvider(tab, session);
+	if (destination !== current && destination !== source) {
+		if (!getDeclaredTranslationDirection(source, destination))
+			return `Context translation from ${getAgentDisplayName(source)} to ${getAgentDisplayName(destination)} is not available.`;
+	}
+	if (destination !== current && available === false)
+		return `${getAgentDisplayName(destination)} is not installed on this host.`;
+	return undefined;
+}
+
 /**
  * Narrow a provider list to the ones that are installed.
  *

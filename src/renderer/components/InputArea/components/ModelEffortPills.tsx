@@ -10,6 +10,7 @@ interface ModelEffortPillsProps {
 	isVisible: boolean;
 	/** Ensemble provider pill, supplied by the shared toolbar choice. */
 	providerControl?: React.ReactNode;
+	runOnControl?: React.ReactNode;
 	theme: Theme;
 	/**
 	 * Chord for the full-screen model/effort switcher, pinned as a hint row at
@@ -47,6 +48,7 @@ interface ModelEffortPillsProps {
 export const ModelEffortPills = memo(function ModelEffortPills({
 	isVisible,
 	providerControl,
+	runOnControl,
 	theme,
 	shortcutKeys,
 	currentModel,
@@ -123,6 +125,15 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 											{model ? modelChoiceLabel(model) : '(default)'}
 										</button>
 									)
+								)}
+								{runOnControl && (
+									<div
+										className="w-80 max-w-[calc(100vw-32px)] border-t px-3 py-2"
+										style={{ borderColor: theme.colors.border }}
+										onKeyDown={(e) => e.stopPropagation()}
+									>
+										{runOnControl}
+									</div>
 								)}
 							</div>
 							{/*

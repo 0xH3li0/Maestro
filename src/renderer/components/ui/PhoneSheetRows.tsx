@@ -87,6 +87,7 @@ export interface PhoneSheetOptionRowProps {
 	label: string;
 	/** Second line under the label, for options that need explaining. */
 	description?: string;
+	disabled?: boolean;
 	selected: boolean;
 	accent: string;
 	onSelect: () => void;
@@ -97,6 +98,7 @@ export interface PhoneSheetOptionRowProps {
 export function PhoneSheetOptionRow({
 	label,
 	description,
+	disabled,
 	selected,
 	accent,
 	onSelect,
@@ -107,7 +109,8 @@ export function PhoneSheetOptionRow({
 		<button
 			type="button"
 			onClick={onSelect}
-			className="flex w-full items-center gap-3 pl-11 pr-4 text-left"
+			disabled={disabled}
+			className="flex w-full items-center gap-3 pl-11 pr-4 text-left disabled:opacity-60 disabled:cursor-not-allowed"
 			style={{
 				minHeight: PHONE_SHEET_OPTION_HEIGHT,
 				color: selected ? accent : theme.colors.textMain,

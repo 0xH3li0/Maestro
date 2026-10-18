@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	filterToAvailableProviders,
 	providerLocationLabel,
+	tabProviderSwitchProblem,
 } from '../../../renderer/utils/providerAvailability';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 interface Provider {
 	id: string;
@@ -85,5 +88,36 @@ describe('providerLocationLabel', () => {
 		expect(providerLocationLabel()).toBe('locally');
 		expect(providerLocationLabel(null)).toBe('locally');
 		expect(providerLocationLabel('')).toBe('locally');
+	});
+});
+
+describe('tabProviderSwitchProblem', () => {
+	const session = createMockSession({ toolType: 'claude-code' });
+	const tab = createMockAITab();
+	it('shares flag, direction and availability refusals with the switch action', () => {
+		expect(tabProviderSwitchProblem(session, tab, 'codex', false, true)).toContain(
+			'Ensemble is disabled'
+		);
+		expect(tabProviderSwitchProblem(session, tab, 'opencode', true, true)).toContain(
+			'from Claude Code to OpenCode is not available'
+		);
+		expect(tabProviderSwitchProblem(session, tab, 'codex', true, false)).toContain(
+			'Codex is not installed on this host'
+		);
+		expect(tabProviderSwitchProblem(session, tab, 'codex', true, true)).toBeUndefined();
+	});
+	it('keeps the current provider usable even when detection stops finding it', () => {
+		expect(tabProviderSwitchProblem(session, tab, 'claude-code', true, false)).toBeUndefined();
+	});
+	it('disables same-provider pins and inheritance on SSH', () => {
+		expect(
+			tabProviderSwitchProblem(
+				{ ...session, sshRemoteId: 'remote' },
+				tab,
+				'claude-code',
+				true,
+				true
+			)
+		).toContain('live SSH acceptance was skipped');
 	});
 });

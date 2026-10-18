@@ -100,6 +100,24 @@ describe('ToolbarControls', () => {
 		expect(screen.getByText('Read-Only')).toBeInTheDocument();
 	});
 
+	it.each([false, true])('builds the real provider control when phone=%s', (phone) => {
+		mockedUsePhoneLayout.mockReturnValue(phone);
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+		}));
+		const session = createInputAreaSession({ toolType: 'claude-code' });
+		session.aiTabs[0].tabProvider = 'codex';
+		renderToolbar({ session });
+		if (phone) {
+			fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+			expect(screen.getByTestId('composer-options-provider')).toHaveTextContent('Codex');
+		} else {
+			expect(
+				screen.getByRole('button', { name: 'Provider for this tab: Codex' })
+			).toBeInTheDocument();
+		}
+	});
+
 	describe('dictation', () => {
 		const dictationTarget: DictationTarget = { getElement: () => null, insert: () => true };
 

@@ -416,6 +416,8 @@ export const MODAL_PRIORITIES = {
 	 * user just opened rather than ending the conversation underneath it - the
 	 * one Escape in this feature that must NOT reach for the microphone. */
 	VOICE_PILL_MENU: 232,
+	/** Composer provider menu closes before the composer can handle Escape. */
+	PROVIDER_PILL_MENU: 233,
 	/** Header notification center popover - same tier as the git pill menu:
 	 * Escape closes the popover before anything underneath it. */
 	NOTIFICATION_CENTER: 221,

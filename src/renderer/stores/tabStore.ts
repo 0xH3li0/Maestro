@@ -77,9 +77,9 @@ import {
 	switchTabProviderFor,
 	PROVIDER_OVERRIDE_KEYS,
 } from '../../shared/maestro-lib/agents/providerSwap';
-import { getDeclaredTranslationDirection } from '../../shared/maestro-lib/translation/support';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
-import { projectTabProvider, resolveTabNativeProvider } from '../utils/providerTabSessions';
+import { projectTabProvider } from '../utils/providerTabSessions';
+import { tabProviderSwitchProblem } from '../utils/providerAvailability';
 import { autoModelProblem } from '../../shared/autoTurn';
 import { isAutoModel, AUTO_MODEL } from '../../shared/autoModel';
 import { parseRunOnEdit } from '../../shared/local-models/run-on';
@@ -769,26 +769,20 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const destination = settings.settingsOnly
 			? resolveTabProvider(snapshotTab, snapshot)
 			: (provider ?? snapshot.toolType);
-		if (!settings.settingsOnly && !useSettingsStore.getState().encoreFeatures.ensemble)
-			throw new Error('Ensemble is disabled. Enable Ensemble in Encore Features.');
+		if (!settings.settingsOnly) {
+			const problem = tabProviderSwitchProblem(
+				snapshot,
+				snapshotTab,
+				destination,
+				!!useSettingsStore.getState().encoreFeatures.ensemble
+			);
+			if (problem) throw new Error(problem);
+		}
 		if (!getAgentPickerMeta(destination))
 			throw new Error(`Provider cannot run an Ensemble tab: ${destination}`);
 		if (migrationHoldsTurns(snapshot.providerMigration))
 			throw new Error('Finish the current provider translation before changing providers.');
 		const changing = destination !== resolveTabProvider(snapshotTab, snapshot);
-		if (
-			!settings.settingsOnly &&
-			(snapshot.sessionSshRemoteConfig?.enabled || snapshot.sshRemoteId)
-		)
-			throw new Error('Ensemble SSH switching is disabled until live acceptance is verified.');
-		if (
-			changing &&
-			destination !== resolveTabNativeProvider(snapshotTab, snapshot) &&
-			!getDeclaredTranslationDirection(resolveTabNativeProvider(snapshotTab, snapshot), destination)
-		)
-			throw new Error(
-				`Context translation from ${resolveTabNativeProvider(snapshotTab, snapshot)} to ${destination} is not available.`
-			);
 		const projected = projectTabProvider(snapshot, snapshotTab, destination);
 		const patch: Partial<AITab> = {};
 		if (settings.model !== undefined) {

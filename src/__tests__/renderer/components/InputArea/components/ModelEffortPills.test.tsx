@@ -49,6 +49,20 @@ describe('ModelEffortPills', () => {
 
 		expect(screen.queryByTitle('Change model')).not.toBeInTheDocument();
 	});
+	it('places the shared Run on control inside the model menu', () => {
+		renderPills({
+			modelMenuOpen: true,
+			runOnControl: (
+				<label>
+					Run on
+					<select aria-label="Run on">
+						<option>Provider</option>
+					</select>
+				</label>
+			),
+		});
+		expect(screen.getByRole('combobox', { name: 'Run on' })).toBeInTheDocument();
+	});
 
 	it('opens model menu and closes effort menu when model pill is clicked', () => {
 		const setModelMenuOpen = vi.fn();
