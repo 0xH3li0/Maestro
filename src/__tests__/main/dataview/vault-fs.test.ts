@@ -124,7 +124,7 @@ describe('createLocalVaultFs', () => {
 		});
 
 		it.skipIf(process.platform === 'win32')(
-			'follows a symlink that stays inside, and refuses one that leads out of the root',
+			'follows a symlink that stays inside, and refuses one that leads out of the root or into a dot folder',
 			async () => {
 				const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dataview-vault-fs-outside-'));
 				try {
@@ -132,6 +132,9 @@ describe('createLocalVaultFs', () => {
 					fs.symlinkSync(path.join(outside, 'secret.md'), path.join(tempDir, 'escape.md'));
 					fs.symlinkSync(outside, path.join(tempDir, 'escape-dir'));
 					fs.symlinkSync(path.join(tempDir, 'README.md'), path.join(tempDir, 'alias.md'));
+					fs.mkdirSync(path.join(tempDir, '.obsidian'), { recursive: true });
+					fs.writeFileSync(path.join(tempDir, '.obsidian', 'app.json'), '{"token":"t"}');
+					fs.symlinkSync(path.join(tempDir, '.obsidian'), path.join(tempDir, 'settings'));
 					const vaultFs = createLocalVaultFs(tempDir);
 
 					await expect(vaultFs.readTextInRoot('alias.md', 1 << 20)).resolves.toBe(
@@ -142,6 +145,10 @@ describe('createLocalVaultFs', () => {
 					);
 					await expect(vaultFs.readTextInRoot('escape-dir/secret.md', 1 << 20)).rejects.toThrow(
 						'resolves outside'
+					);
+					// Inside the root, but a symlink must not lead into a folder the index excludes.
+					await expect(vaultFs.readTextInRoot('settings/app.json', 1 << 20)).rejects.toThrow(
+						'resolves to .obsidian/app.json, which DataviewJS cannot read'
 					);
 				} finally {
 					fs.rmSync(outside, { recursive: true, force: true });

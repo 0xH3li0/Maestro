@@ -62,9 +62,11 @@ export interface VaultFs {
 	readText(relPath: string): Promise<string>;
 	/**
 	 * Read a vault-relative file for UNTRUSTED code (DataviewJS `dv.io.load`, D4): only when its REAL path,
-	 * symlinks resolved, stays inside the real root, and reading the resolved file. `relPath` must already be
-	 * a normalized root-relative path (`normalizeRootRelativePath()`). Null when no regular file is there.
-	 * Throws for a path that resolves outside the root, a file over `maxBytes`, or a failed read.
+	 * symlinks resolved, stays inside the real root and is still a path the index holds (`isIndexedVaultPath()`,
+	 * so a symlink cannot lead into `.obsidian/`, `.git/`, or `node_modules`), and reading the resolved file.
+	 * `relPath` must already be a normalized root-relative path (`normalizeRootRelativePath()`). Null when no
+	 * regular file is there. Throws for a path that resolves outside the root or into an excluded folder, a
+	 * file over `maxBytes`, or a failed read.
 	 */
 	readTextInRoot(relPath: string, maxBytes: number): Promise<string | null>;
 	/**
@@ -158,6 +160,11 @@ export function createLocalVaultFs(root: string): VaultFs {
 			const target = await resolvePathInRealRoot(root, relPath);
 			if (target.kind === 'missing') return null;
 			if (target.kind === 'outside') throw new Error(`${relPath} resolves outside ${root}`);
+			if (!isIndexedVaultPath(target.realRelativePath)) {
+				throw new Error(
+					`${relPath} resolves to ${target.realRelativePath}, which DataviewJS cannot read`
+				);
+			}
 			const stat = await fs.stat(target.realPath);
 			if (!stat.isFile()) return null;
 			if (stat.size > maxBytes) throw new Error(`${relPath} is larger than ${maxBytes} bytes`);

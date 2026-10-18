@@ -76,6 +76,7 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 		await expect(resolvePathInRealRoot(root, 'notes/a.md')).resolves.toEqual({
 			kind: 'inside',
 			realPath: path.join(root, 'notes', 'a.md'),
+			realRelativePath: 'notes/a.md',
 		});
 	});
 
@@ -83,6 +84,8 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 		await expect(resolvePathInRealRoot(root, 'alias.md')).resolves.toEqual({
 			kind: 'inside',
 			realPath: path.join(root, 'notes', 'a.md'),
+			// Where the link landed, not the name it was asked by, so callers can apply their rules to it.
+			realRelativePath: 'notes/a.md',
 		});
 	});
 
@@ -110,6 +113,7 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 		await expect(resolvePathInRealRoot(linkedRoot, 'notes/a.md')).resolves.toEqual({
 			kind: 'inside',
 			realPath: path.join(root, 'notes', 'a.md'),
+			realRelativePath: 'notes/a.md',
 		});
 		await expect(resolvePathInRealRoot(linkedRoot, 'escape.md')).resolves.toMatchObject({
 			kind: 'outside',

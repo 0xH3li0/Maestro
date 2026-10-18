@@ -47,7 +47,8 @@ export function isPathWithin(child: string, parent: string): boolean {
 
 /** Where a root-relative path really points. */
 export type RealPathInRoot =
-	| { kind: 'inside'; realPath: string }
+	/** `realRelativePath`: `realPath` relative to the real root, `/`-separated (where a symlink landed). */
+	| { kind: 'inside'; realPath: string; realRelativePath: string }
 	| { kind: 'outside'; realPath: string }
 	/** Nothing there, a dangling link, or a link loop. */
 	| { kind: 'missing' };
@@ -73,5 +74,7 @@ export async function resolvePathInRealRoot(
 		throw error;
 	}
 	const inside = isPathWithin(foldPathCase(realPath, platform), foldPathCase(realRoot, platform));
-	return inside ? { kind: 'inside', realPath } : { kind: 'outside', realPath };
+	if (!inside) return { kind: 'outside', realPath };
+	const realRelativePath = path.relative(realRoot, realPath).split(path.sep).join('/');
+	return { kind: 'inside', realPath, realRelativePath };
 }

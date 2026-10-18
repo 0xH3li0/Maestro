@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -1839,7 +1843,56 @@ describe('remote-fs', () => {
 			);
 			expect(noRealpath.success).toBe(false);
 			expect(noRealpath.error).toContain('realpath');
+
+			const excluded = await readFileInRootRemote(
+				ROOT,
+				'settings/app.json',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 7 })
+			);
+			expect(excluded.success).toBe(false);
+			expect(excluded.error).toContain('hidden folder or node_modules');
 		});
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses, under a real shell, a symlink out of the root or into a dot folder or node_modules',
+			async () => {
+				const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-in-root-')));
+				try {
+					const root = path.join(base, 'vault');
+					fs.mkdirSync(path.join(root, '.obsidian'), { recursive: true });
+					fs.mkdirSync(path.join(root, 'node_modules'));
+					fs.writeFileSync(path.join(root, 'a.md'), 'inside');
+					fs.writeFileSync(path.join(root, '.obsidian', 'app.json'), 'token');
+					fs.writeFileSync(path.join(root, 'node_modules', 'x.js'), 'module');
+					fs.writeFileSync(path.join(base, 'secret.md'), 'secret');
+					fs.symlinkSync(path.join(root, 'a.md'), path.join(root, 'alias.md'));
+					fs.symlinkSync(path.join(base, 'secret.md'), path.join(root, 'escape.md'));
+					fs.symlinkSync(path.join(root, '.obsidian'), path.join(root, 'settings'));
+					fs.symlinkSync(path.join(root, 'node_modules'), path.join(root, 'mods'));
+
+					// The generated script, run by the local shell as the remote would run it.
+					const run = async (relPath: string) => {
+						const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+						await readFileInRootRemote(root, relPath, 1024, baseConfig, deps);
+						const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+							-1
+						) as string;
+						const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+						return { status: result.status, stdout: result.stdout };
+					};
+
+					expect(await run('a.md')).toEqual({ status: 0, stdout: 'inside' });
+					expect(await run('alias.md')).toEqual({ status: 0, stdout: 'inside' });
+					expect(await run('escape.md')).toEqual({ status: 4, stdout: '' });
+					expect(await run('settings/app.json')).toEqual({ status: 7, stdout: '' });
+					expect(await run('mods/x.js')).toEqual({ status: 7, stdout: '' });
+				} finally {
+					fs.rmSync(base, { recursive: true, force: true });
+				}
+			}
+		);
 
 		it('reports any other failure with the remote error text', async () => {
 			const result = await readFileInRootRemote(
