@@ -163,9 +163,17 @@ spawn codex app-server (one child per turn)
 - **Instructions.** The thread picks up `AGENTS.md` from the cwd (`instructionSources`, `plain-turn:6`), same as exec.
 - **Verified live (codex-cli 0.162.1).** Plain turn, resume on the same thread id, a mid-tool-loop steer (`delivered` then `absorbed`), a steer after exit (`refused` / `not-running`), Stop (the child and its `sleep` grandchild both gone), and the default transport staying on `codex exec` all behaved as written here. One ordering to expect: the exit is reported on `turn/completed`, a moment BEFORE the child process actually leaves, so a check that the pid is gone has to wait briefly after the exit event.
 
+## SSH remotes
+
+An SSH agent spawn is a local `ssh ... /bin/bash --norc --noprofile -s` whose stdin carries a launch script (PATH, `cd`, env exports) ending in `exec <agent>`. Bash reads a script from a pipe one byte at a time, so everything written after the `exec` line reaches the agent untouched. app-server rides that channel: the spawner writes the script first and the JSON-RPC lines after it.
+
+- **Built beside the exec wrapper.** `wrapSpawnForSsh()` builds the exec wrapper as always and, for a turn that `wantsCodexAppServer()`, also calls `buildCodexAppServerSshLaunch()` (`ssh-launch.ts`) with the same remote, binary, cwd and env. The launch carries the planned exec turn (`execArgs`, the REMOTE `cwd`, `prompt`), because the config itself holds the ssh client's args, the local cwd and no prompt. `parseCodexExecArgs()` reads those args exactly as it reads a local config's, and the remote command is `codex app-server <configArgs>`.
+- **No launch, no app-server.** `codexAppServerConfigBlocker()` refuses an SSH config without `codexAppServerSsh`, so an Auto Run, Cue, image or unsupported-arg turn runs the exec wrapper. Every setup failure falls back to that same wrapper.
+- **Stop reaches the host.** The script is prefixed with `withRemotePidRecord()`. `turn/interrupt` still goes first; every stop that would signal the local ssh client (the grace ladder, kill, fallback) also calls `signalRemoteAgent()`, since a signal to the client never reaches the remote server.
+- **Steering.** `getSteerEligibility()` and `getSteerSupport()` check the Codex transport before the SSH block, so an SSH Codex agent on app-server offers Steer, and one on exec is told the transport is the fix.
+
 ## Out of scope (stay on `codex exec`)
 
-- SSH remotes. The app-server child would run on the remote host and its stdio would have to cross the SSH wrapper; not attempted.
 - Image prompts (`-i`). `turn/start` input supports images in the schema, but phase 1 is text-only.
 - Auto Run, Cue, and CLI batch spawns (`maestro-cli` / `agent-spawner.ts`). None of them can be steered from the UI, so they gain nothing.
 - Group chat (moderator and participants).

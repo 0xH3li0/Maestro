@@ -321,6 +321,10 @@ export function ThemedSelect({
 									}}
 								>
 									<span>{opt.label}</span>
+									{/* The space keeps the badge a separate word in the option's
+									    accessible name ("Beta Carry Over", not "BetaCarry Over");
+									    a flex container does not render it. */}
+									{opt.rightContent ? ' ' : null}
 									{opt.rightContent}
 								</button>
 							))

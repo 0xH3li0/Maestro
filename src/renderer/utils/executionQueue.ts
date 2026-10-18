@@ -813,19 +813,20 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
-	// The turn runs on another host: a Claude TUI there has no local socket, and an
-	// SSH Codex turn always runs on exec. Main would refuse every attempt, so the
-	// button would be a control that can only decline.
-	if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
 	if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
-		// accepts `turn/steer` while a turn runs. `codex exec` (the default) accepts
-		// nothing once the turn has started. An app-server agent can still run a
-		// given turn on exec (SSH, images); main answers that steer `refused` with
-		// `not-running`, so the routing is not re-derived here.
+		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
+		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
+		// once the turn has started. An app-server agent can still run a given turn
+		// on exec (images, an unsupported arg); main answers that steer `refused`
+		// with `not-running`, so the routing is not re-derived here.
 		if (resolveCodexTransport(session) !== 'app-server') {
 			return { canSteer: false, blockedReason: 'codex-exec' };
 		}
+	} else if (isSessionRemote(session)) {
+		// A Claude TUI on another host has no local socket to type into. Main would
+		// refuse every attempt, so the button would be a control that can only decline.
+		return { canSteer: false, blockedReason: 'ssh-remote' };
 	} else if (session.toolType !== 'claude-code') {
 		return { canSteer: false, blockedReason: 'not-claude' };
 	} else if (session.claudeInteractive?.mode !== 'interactive') {

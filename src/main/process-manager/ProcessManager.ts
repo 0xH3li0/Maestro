@@ -14,9 +14,7 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
-import { codexAppServerConfigBlocker } from '../codex-app-server/invocation';
-import { resolveCodexTransport } from '../../shared/codexTransport';
-import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
+import { codexAppServerConfigBlocker, wantsCodexAppServer } from '../codex-app-server/invocation';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
@@ -356,23 +354,17 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
 	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
-	 * INTERACTIVE turn: an Auto Run or Cue turn has nobody to steer it, so it
-	 * stays on the default transport rather than paying for an experimental one.
-	 * Origin is read from `querySource`, which every dispatcher claims at the
-	 * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+	 * INTERACTIVE turn (`wantsCodexAppServer`, which the SSH spawn handler also
+	 * reads before it builds an app-server launch).
 	 *
-	 * The config-level exclusions (no prompt, images, SSH, a prompt already in
-	 * the args) are the spawner's own `codexAppServerConfigBlocker`, so routing
-	 * and the spawner cannot disagree about which turns app-server can carry.
-	 * The spawner still re-checks the args and falls back to exec for anything
-	 * it does not recognize.
+	 * The config-level exclusions (no prompt, images, an SSH turn with no
+	 * app-server launch, a prompt already in the args) are the spawner's own
+	 * `codexAppServerConfigBlocker`, so routing and the spawner cannot disagree
+	 * about which turns app-server can carry. The spawner still re-checks the
+	 * args and falls back to exec for anything it does not recognize.
 	 */
 	private shouldUseCodexAppServer(config: ProcessConfig): boolean {
-		return (
-			resolveCodexTransport(config) === 'app-server' &&
-			(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user' &&
-			codexAppServerConfigBlocker(config) === null
-		);
+		return wantsCodexAppServer(config) && codexAppServerConfigBlocker(config) === null;
 	}
 
 	/**
