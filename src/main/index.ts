@@ -45,6 +45,7 @@ import {
 import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
+import { createDataviewSupervisorHooks } from './dataview/dataview-service';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { RELAY_PLUGIN_ID } from '../shared/plugins/relay-identity';
@@ -1591,6 +1592,9 @@ app
 			// Computer History: `computerHistory.observer` - the accessibility
 			// helper plus the segment writer. Disable/revoke stops both.
 			computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
+			// Dataview: `dataview.index` - every open vault index with its watcher
+			// or poller and idle timer. Indexes open on demand; off disposes them.
+			dataview: createDataviewSupervisorHooks(),
 			// MaestroRun: no long-running service, only the bounded poll that
 			// watches for the Full Disk Access grant. Disable/revoke stops it.
 			maestroRun: {

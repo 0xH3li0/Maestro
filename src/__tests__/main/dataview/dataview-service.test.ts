@@ -1,7 +1,7 @@
 /**
  * Tests for the main-process `DataviewService` (src/main/dataview/dataview-service.ts): one index per
  * `(root, sshRemoteId)`, idle disposal, the open-root cap, monotonic revisions across reopens, rebuild,
- * change relay, and failure handling.
+ * change relay, failure handling, and the Encore gate (D3).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -15,13 +15,23 @@ vi.mock('../../../main/utils/remote-fs', () => ({
 	listFilesWithStatsRemote: vi.fn(),
 	readFileRemote: vi.fn(),
 }));
-vi.mock('../../../main/stores/getters', () => ({ getSshRemoteById: vi.fn(() => undefined) }));
+// The `dataview` Encore flag the service's default gate reads; on unless a test turns it off.
+const settings = vi.hoisted(() => ({
+	encoreFeatures: { dataview: true } as Record<string, boolean>,
+}));
+vi.mock('../../../main/stores/getters', () => ({
+	getSshRemoteById: vi.fn(() => undefined),
+	getSettingsStore: () => ({
+		get: (key: string) => (key === 'encoreFeatures' ? settings.encoreFeatures : undefined),
+	}),
+}));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import {
 	DATAVIEW_INDEX_IDLE_MS,
 	DATAVIEW_MAX_OPEN_ROOTS,
 	DataviewService,
+	createDataviewSupervisorHooks,
 	getDataviewService,
 	normalizeVaultRoot,
 	setDataviewServiceForTests,
@@ -29,6 +39,7 @@ import {
 	type DataviewChangeEvent,
 } from '../../../main/dataview/dataview-service';
 import type { VaultFs, VaultListing } from '../../../main/dataview/vault-fs';
+import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 
 /** In-memory vaults by root. Each file is `{ text, mtime }` so a test can edit one in place. */
 type MemoryVault = Record<string, string>;
@@ -589,5 +600,105 @@ describe('DataviewService requests', () => {
 				fileService.queryFile({ filePath: notePath, agentId: 'remote', block: 1.5 })
 			).rejects.toThrow('Dataview: block must be a whole number from 1');
 		});
+	});
+});
+
+describe('the Dataview Encore gate (D3)', () => {
+	const root = rootAt('gate');
+	const note = path.join(root, 'A.md');
+	const files: MemoryVault = { 'A.md': '# A\n' };
+	let service: DataviewService;
+	let opened: number;
+
+	beforeEach(() => {
+		settings.encoreFeatures = { dataview: false };
+		opened = 0;
+		service = new DataviewService({
+			resolveRoot: async () => root,
+			resolveAgent: () => ({ agentCwd: root, sshRemoteId: null }),
+			watch: false,
+			cacheDir: () => null,
+			createVaultFs: (vaultRoot, sshRemoteId) => {
+				opened++;
+				return memoryFs(vaultRoot, files, sshRemoteId);
+			},
+		});
+	});
+
+	afterEach(async () => {
+		settings.encoreFeatures = { dataview: true };
+		await service.disposeAll();
+	});
+
+	it('refuses every request with the turned-off message while the flag is off, and opens nothing', async () => {
+		const off = encoreDisabledMessage('dataview');
+		expect(off).toBe(
+			'Dataview is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable dataview'
+		);
+		const agentId = 'agent-1';
+
+		await expect(service.query({ filePath: note, source: 'LIST', agentId })).rejects.toThrow(off);
+		await expect(service.queryInline({ filePath: note, expression: '1', agentId })).rejects.toThrow(
+			off
+		);
+		await expect(service.queryFile({ filePath: note, agentId })).rejects.toThrow(off);
+		await expect(service.rebuildIndex({ root })).rejects.toThrow(off);
+		await expect(service.rebuild(root)).rejects.toThrow(off);
+		await expect(service.getIndex(note, { agentCwd: root })).rejects.toThrow(off);
+		expect(() => service.indexStatus()).toThrow(off);
+
+		expect(opened).toBe(0);
+		expect(service.openRootCount).toBe(0);
+	});
+
+	it('refuses before validating the request, so a bad request still reads as turned off', async () => {
+		await expect(service.query({} as never)).rejects.toThrow(encoreDisabledMessage('dataview'));
+	});
+
+	it('answers again as soon as the flag is on, read live from the settings store', async () => {
+		settings.encoreFeatures = { dataview: true };
+		const response = await service.query({ filePath: note, source: 'LIST', agentId: 'agent-1' });
+		expect(response.result.kind).toBe('list');
+		expect(service.openRootCount).toBe(1);
+	});
+
+	it('uses an injected check instead of the settings store when given one', async () => {
+		const injected = new DataviewService({
+			isEnabled: () => true,
+			resolveRoot: async () => root,
+			resolveAgent: () => ({ agentCwd: root, sshRemoteId: null }),
+			watch: false,
+			cacheDir: () => null,
+			createVaultFs: (vaultRoot, sshRemoteId) => memoryFs(vaultRoot, files, sshRemoteId),
+		});
+		expect(injected.indexStatus()).toEqual([]);
+		await injected.disposeAll();
+	});
+});
+
+describe('createDataviewSupervisorHooks', () => {
+	afterEach(() => {
+		setDataviewServiceForTests(null);
+	});
+
+	it('disposes every open index on stopAll and starts nothing on reconcile', () => {
+		const disposeAll = vi.fn(async () => undefined);
+		const hooks = createDataviewSupervisorHooks(() => ({ disposeAll }));
+
+		hooks.reconcile();
+		expect(disposeAll).not.toHaveBeenCalled();
+		hooks.stopAll();
+		expect(disposeAll).toHaveBeenCalledTimes(1);
+	});
+
+	it('never creates the service: stopAll with none open does nothing', () => {
+		setDataviewServiceForTests(null);
+		const hooks = createDataviewSupervisorHooks();
+		expect(() => hooks.stopAll()).not.toThrow();
+
+		const created = getDataviewService();
+		const disposeAll = vi.spyOn(created, 'disposeAll');
+		hooks.stopAll();
+		expect(disposeAll).toHaveBeenCalledTimes(1);
 	});
 });

@@ -12,8 +12,10 @@
 //   input that starts with `=` is an inline expression.
 // - `index status [<root>]` and `index rebuild <root>` read and reset an index.
 //
-// Not Encore-gated yet: the `dataview` flag arrives in DATAVIEW-06, which
-// registers this command with `encoreCommand()` instead.
+// Encore-gated (D3): `src/cli/index.ts` registers the command with
+// `encoreCommand()`, so it is hidden and refused while the `dataview` flag is
+// off. The app's service refuses too, with the same text; that reply carries
+// the same `--json` code.
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { failFromError } from '../services/session-command';
@@ -21,6 +23,7 @@ import { ExitCode, exitWith } from '../exit-codes';
 import { resolveCliPath } from '../utils/parse';
 import { resolveOwningAgent } from '../utils/owning-agent';
 import { formatTextTable } from '../output/formatter';
+import { encoreDisabledCode, encoreDisabledMessage } from '../utils/encore-gate';
 import type {
 	DataviewCommandAction,
 	DataviewFileQueryResult,
@@ -86,7 +89,15 @@ async function send<T>(
 		failFromError(error, options.json);
 	}
 	if (!reply.success || reply.response === undefined) {
-		fail(reply.error || `dataview ${action} failed`, options);
+		const error = reply.error || `dataview ${action} failed`;
+		// The app read the flag as off (it was switched off after this verb checked the settings file).
+		const disabled = error === encoreDisabledMessage('dataview');
+		fail(
+			error,
+			options,
+			ExitCode.GeneralError,
+			disabled ? { code: encoreDisabledCode('dataview') } : {}
+		);
 	}
 	return reply.response;
 }

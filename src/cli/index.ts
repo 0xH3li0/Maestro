@@ -2954,11 +2954,11 @@ maestroRunCmd
 
 // Dataview commands - run the Dataview queries of a note the way File Preview
 // renders them. Every verb reaches the running app's DataviewService, the same
-// one the preview queries. DATAVIEW-06 moves this behind the `dataview` Encore
-// Feature with encoreCommand().
-const dataviewCmd = program
-	.command('dataview')
-	.description("Dataview: run a note's Dataview queries and manage the vault index");
+// one the preview queries. Hidden and refused while the Dataview Encore Feature
+// is off.
+const dataviewCmd = encoreCommand(program, 'dataview', 'dataview', encoreFlags).description(
+	"Dataview: run a note's Dataview queries and manage the vault index"
+);
 
 dataviewCmd
 	.command('query <file>')

@@ -15,11 +15,17 @@
  * surface reads the same index. The request methods (`query`, `queryInline`, `indexStatus`, `rebuildIndex`)
  * are the handler bodies: they take the wire requests, resolve the agent in main, and answer in wire form.
  * The quit handler calls `shutdownDataviewService()`.
+ *
+ * Gate (D3): while the `dataview` Encore Feature is off, every request method, `getIndex`, and `rebuild`
+ * throw `encoreDisabledMessage('dataview')` (the text a gated CLI verb prints) before touching anything, so no root opens and nothing is
+ * watched. The Encore lifecycle's `stopAll` hook ({@link createDataviewSupervisorHooks}) disposes what was
+ * open when the flag turned off.
  */
 
 import * as path from 'path';
 import { app } from 'electron';
-import { getSshRemoteById } from '../stores/getters';
+import { getSettingsStore, getSshRemoteById } from '../stores/getters';
+import { encoreDisabledMessage, isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 import { sshUnresolvedRemoteMessage } from '../../shared/maestro-lib/launch/ssh-spawn-wrapper';
 import { isAbsolutePath } from '../../shared/formatters';
 import {
@@ -48,6 +54,7 @@ import { VaultIndex } from './vault-index';
 import { resolveVaultRoot } from './vault-root';
 import { toVaultRelativePath } from './vault-watcher';
 import { resolveDataviewAgentContext } from './agent-context';
+import type { FirstPartySupervisorHooks } from '../plugins/first-party-bridge';
 
 const LOG_CONTEXT = 'Dataview';
 
@@ -79,6 +86,8 @@ export interface DataviewServiceOptions {
 	watch?: boolean;
 	/** Defaults to `resolveDataviewAgentContext` (the stored agent record). */
 	resolveAgent?: (agentId: string) => DataviewAgentContext;
+	/** Whether the `dataview` Encore Feature is on. Defaults to reading the settings store. */
+	isEnabled?: () => boolean;
 }
 
 interface IndexEntry {
@@ -92,6 +101,10 @@ interface IndexEntry {
 
 function defaultCacheDir(): string {
 	return path.join(app.getPath('userData'), DATAVIEW_CACHE_DIR_NAME);
+}
+
+function defaultIsEnabled(): boolean {
+	return isEncoreFeatureEnabled(getSettingsStore(), 'dataview');
 }
 
 function defaultVaultFs(root: string, sshRemoteId: string | null): VaultFs {
@@ -127,6 +140,7 @@ export class DataviewService {
 	private readonly createVaultFs: (root: string, sshRemoteId: string | null) => VaultFs;
 	private readonly watch: boolean;
 	private readonly resolveAgent: (agentId: string) => DataviewAgentContext;
+	private readonly isEnabled: () => boolean;
 
 	constructor(options: DataviewServiceOptions = {}) {
 		this.cacheDir = options.cacheDir ?? defaultCacheDir;
@@ -134,6 +148,7 @@ export class DataviewService {
 		this.createVaultFs = options.createVaultFs ?? defaultVaultFs;
 		this.watch = options.watch ?? true;
 		this.resolveAgent = options.resolveAgent ?? resolveDataviewAgentContext;
+		this.isEnabled = options.isEnabled ?? defaultIsEnabled;
 	}
 
 	/** How many roots are open right now. */
@@ -148,6 +163,7 @@ export class DataviewService {
 	 * tries again.
 	 */
 	async getIndex(filePath: string, agent: DataviewAgentContext): Promise<VaultIndex> {
+		this.requireEnabled();
 		const sshRemoteId = agent.sshRemoteId ?? null;
 		const root = await this.resolveRoot(filePath, { agentCwd: agent.agentCwd, sshRemoteId });
 		return this.openRoot(root, sshRemoteId);
@@ -159,6 +175,7 @@ export class DataviewService {
 	 * remote, or a root that cannot be opened throws.
 	 */
 	async query(request: DataviewQueryRequest): Promise<DataviewQueryResponse<DataviewResult>> {
+		this.requireEnabled();
 		const source = requireString(request?.source, 'source');
 		return this.runForNote(request, (index, thisPath) => executeDql(source, thisPath, index));
 	}
@@ -167,6 +184,7 @@ export class DataviewService {
 	async queryInline(
 		request: DataviewInlineQueryRequest
 	): Promise<DataviewQueryResponse<DataviewInlineResult>> {
+		this.requireEnabled();
 		const expression = requireString(request?.expression, 'expression');
 		return this.runForNote(request, async (index, thisPath) =>
 			executeInlineDql(expression, thisPath, index)
@@ -182,6 +200,7 @@ export class DataviewService {
 	async queryFile(
 		request: DataviewFileQueryRequest
 	): Promise<DataviewQueryResponse<DataviewFileQueryResult>> {
+		this.requireEnabled();
 		const wanted = request?.block;
 		if (wanted !== undefined && (!Number.isInteger(wanted) || wanted < 1)) {
 			throw new Error('Dataview: block must be a whole number from 1');
@@ -208,6 +227,7 @@ export class DataviewService {
 	 * root. Never opens anything.
 	 */
 	indexStatus(request: DataviewStatusRequest = {}): DataviewIndexStatus[] {
+		this.requireEnabled();
 		if (request.root === undefined) return this.statuses();
 		const root = requireString(request.root, 'root');
 		const status = this.status(root, this.remoteIdFor(request.agentId));
@@ -216,6 +236,7 @@ export class DataviewService {
 
 	/** Rebuild one root from scratch (`dataview:rebuild`). */
 	async rebuildIndex(request: DataviewRebuildRequest): Promise<DataviewIndexStatus> {
+		this.requireEnabled();
 		const root = requireAbsolutePath(request?.root, 'root');
 		return this.rebuild(root, this.remoteIdFor(request.agentId));
 	}
@@ -236,6 +257,7 @@ export class DataviewService {
 	 * leaves it open. Resolves with the new status once the full scan has finished.
 	 */
 	async rebuild(root: string, sshRemoteId: string | null = null): Promise<DataviewIndexStatus> {
+		this.requireEnabled();
 		const normalized = normalizeVaultRoot(root, sshRemoteId);
 		const key = rootKey(normalized, sshRemoteId);
 		const entry = this.entries.get(key);
@@ -264,6 +286,11 @@ export class DataviewService {
 	async disposeAll(): Promise<void> {
 		for (const entry of [...this.entries.values()]) this.close(entry);
 		await Promise.all(this.closing.values());
+	}
+
+	/** Refuse while the `dataview` Encore Feature is off (D3). */
+	private requireEnabled(): void {
+		if (!this.isEnabled()) throw new Error(encoreDisabledMessage('dataview'));
 	}
 
 	/** Open the note's index and run `run` with the note's vault-relative path bound as `this`. */
@@ -471,6 +498,24 @@ export function getDataviewService(): DataviewService {
  */
 export function shutdownDataviewService(): Promise<void> {
 	return service?.disposeAll() ?? Promise.resolve();
+}
+
+/**
+ * The Encore lifecycle hooks for the `dataview.index` background service (D3). Indexes open on demand, so
+ * `reconcile` has nothing to start; `stopAll` disposes every index, watcher, poller, and idle timer when
+ * the flag turns off. Never creates the service.
+ */
+export function createDataviewSupervisorHooks(
+	getService: () => Pick<DataviewService, 'disposeAll'> | null = () => service
+): FirstPartySupervisorHooks {
+	return {
+		reconcile: () => {},
+		stopAll: () => {
+			void getService()
+				?.disposeAll()
+				.catch((err) => void captureException(err, { operation: 'dataview:stopAll' }));
+		},
+	};
 }
 
 /** Test seam. */

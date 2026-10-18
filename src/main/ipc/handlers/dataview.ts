@@ -6,6 +6,10 @@
  * request never names a host. Every channel here is on the web bridge's allowlist
  * (`src/main/web-server/handlers/bridgeDenyList.ts`), so the browser build runs DQL too.
  *
+ * Gate (D3): the service's request methods refuse while the `dataview` Encore Feature is off, with the
+ * readable `encoreDisabledMessage('dataview')` text, so these handlers and the WS bridge refuse alike
+ * and no root opens.
+ *
  * `dataview:changed` goes out through the all-windows `safeSend`, which also reaches bridge clients:
  * File Preview can sit in a secondary window.
  */

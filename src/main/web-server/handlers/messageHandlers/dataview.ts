@@ -5,7 +5,8 @@
  * One message carrying an `action`, answered by the SAME DataviewService request methods the
  * `dataview:*` IPC handlers call, so a CLI result is the result the preview shows. The request fields
  * travel as the message's own fields and the service validates them (a bad request throws, and the
- * reply carries the error).
+ * reply carries the error). While the `dataview` Encore Feature is off the service refuses every action,
+ * and the reply carries that refusal.
  */
 
 import { logger } from '../../../utils/logger';

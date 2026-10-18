@@ -32,6 +32,7 @@ import { resolveOwningAgent } from '../../../cli/utils/owning-agent';
 import { ExitCode } from '../../../cli/exit-codes';
 import { Link, toWireValue } from '../../../shared/dataview';
 import type { DataviewIndexStatus } from '../../../shared/dataview';
+import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 
 const NOTE = path.resolve('/vault/People/Pedram Amini.md');
 
@@ -304,6 +305,21 @@ describe('dataview command', () => {
 			expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
 				success: false,
 				error: 'Dataview: no agent with id "x"',
+			});
+		});
+
+		it('reports the app refusing while Dataview is off, with the DATAVIEW_DISABLED code under --json', async () => {
+			const off = encoreDisabledMessage('dataview');
+			mockReply({ type: 'dataview_result', success: false, error: off });
+			await expect(dataviewQuery(NOTE, {})).rejects.toThrow('__exit__');
+			expect(errors()).toContain(off);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+
+			await expect(dataviewQuery(NOTE, { json: true })).rejects.toThrow('__exit__');
+			expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
+				success: false,
+				error: off,
+				code: 'DATAVIEW_DISABLED',
 			});
 		});
 	});

@@ -469,6 +469,8 @@ export interface SettingsStoreState
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
+	dataviewJsEnabled: boolean;
+	dataviewJsTrustedRoots: string[];
 	directorNotesSettings: DirectorNotesSettings;
 	quickChatSettings: QuickChatSettings;
 	throughputGaugeSettings: ThroughputGaugeSettings;
@@ -592,6 +594,8 @@ export interface SettingsStoreActions
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
+	setDataviewJsEnabled: (value: boolean) => void;
+	setDataviewJsTrustedRoots: (value: string[]) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setQuickChatSettings: (value: QuickChatSettings) => void;
 	/** Resolves once the write lands on disk (`false` when it failed), for `maestro-cli throughput-gauge set`. */
@@ -852,6 +856,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBrowserInteractionConfirm: {},
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
+		dataviewJsEnabled: false,
+		dataviewJsTrustedRoots: [],
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		quickChatSettings: resolveQuickChatSettings(undefined),
 		throughputGaugeSettings: resolveThroughputGaugeSettings(undefined),
@@ -1404,6 +1410,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCoworkingBackgroundBrowsers: (value) => {
 			set({ coworkingBackgroundBrowsers: value });
 			window.maestro.settings.set('coworkingBackgroundBrowsers', value);
+		},
+
+		setDataviewJsEnabled: (value) => {
+			set({ dataviewJsEnabled: value });
+			window.maestro.settings.set('dataviewJsEnabled', value);
+		},
+
+		setDataviewJsTrustedRoots: (value) => {
+			set({ dataviewJsTrustedRoots: value });
+			window.maestro.settings.set('dataviewJsTrustedRoots', value);
 		},
 		setCoworkingBackgroundBrowsersLimit: (value) => {
 			const clamped = Math.min(10, Math.max(1, Math.floor(value) || 1));
@@ -2626,6 +2642,16 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (typeof allSettings['coworkingBackgroundBrowsers'] === 'boolean') {
 			patch.coworkingBackgroundBrowsers = allSettings['coworkingBackgroundBrowsers'];
+		}
+
+		// Dataview: DataviewJS switch and the vault roots whose scripts run unasked.
+		if (typeof allSettings['dataviewJsEnabled'] === 'boolean') {
+			patch.dataviewJsEnabled = allSettings['dataviewJsEnabled'];
+		}
+		if (Array.isArray(allSettings['dataviewJsTrustedRoots'])) {
+			patch.dataviewJsTrustedRoots = (allSettings['dataviewJsTrustedRoots'] as unknown[])
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim());
 		}
 		if (
 			typeof allSettings['coworkingBackgroundBrowsersLimit'] === 'number' &&
