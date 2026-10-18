@@ -17,6 +17,8 @@
 
 import { formatDurationCompact } from './duration';
 import { formatTimestamp } from './formatters';
+import { sanitizeSessionId } from './history';
+import { stripJsonBom } from './jsonUtils';
 import { toLocalYmd } from './localDay';
 import { isPathAtOrUnderRoot, normalizeWorktreePath } from './worktreePaths';
 
@@ -25,6 +27,16 @@ export const JOURNEY_MAX_ENTRIES_PER_AGENT = 5000;
 
 /** Entries older than this many days are pruned. */
 export const JOURNEY_RETENTION_DAYS = 30;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Folder under Maestro's data directory that holds the journey files. */
+export const JOURNEY_DIR_NAME = 'journey';
+
+/** File name of an agent's journey inside `JOURNEY_DIR_NAME`. */
+export function journeyFileName(agentId: string): string {
+	return `${sanitizeSessionId(agentId)}.jsonl`;
+}
 
 export type UserJourneyKind =
 	| 'file.open'
@@ -138,6 +150,63 @@ export function shouldCollapseJourneyEntry(
 	if (!prev || next.kind !== 'browser.navigate') return false;
 	if (prev.kind !== 'browser.open' && prev.kind !== 'browser.navigate') return false;
 	return prev.tabId === next.tabId && prev.target === next.target;
+}
+
+/**
+ * Parse a journey file, skipping torn or foreign lines. File order (oldest
+ * first). Shared by the main-process store and the CLI, which reads the file
+ * directly.
+ */
+export function parseJourneyJsonl(raw: string): UserJourneyEntry[] {
+	const entries: UserJourneyEntry[] = [];
+	for (const line of stripJsonBom(raw).split('\n')) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			const entry = normalizeJourneyEntry(JSON.parse(trimmed));
+			if (entry) entries.push(entry);
+		} catch {
+			// A torn final line from an interrupted append costs that one entry.
+		}
+	}
+	return entries;
+}
+
+/**
+ * Keep entries inside retention, then the newest `JOURNEY_MAX_ENTRIES_PER_AGENT`.
+ * The store prunes with slack, so readers apply this to hide the overshoot.
+ */
+export function applyJourneyLimits(entries: UserJourneyEntry[], now: number): UserJourneyEntry[] {
+	const cutoff = now - JOURNEY_RETENTION_DAYS * DAY_MS;
+	const fresh = entries.filter((e) => e.ts >= cutoff);
+	return fresh.length > JOURNEY_MAX_ENTRIES_PER_AGENT
+		? fresh.slice(fresh.length - JOURNEY_MAX_ENTRIES_PER_AGENT)
+		: fresh;
+}
+
+export interface ReadJourneyOptions {
+	/** Only entries with `ts >= since` (epoch ms). */
+	since?: number;
+	/** Only the newest N entries (after the other filters). */
+	tail?: number;
+	/** Only these kinds. */
+	kinds?: UserJourneyKind[];
+}
+
+/** Apply `ReadJourneyOptions` to entries in file order (oldest first). */
+export function filterJourneyEntries(
+	entries: UserJourneyEntry[],
+	options: ReadJourneyOptions = {}
+): UserJourneyEntry[] {
+	const { since, tail, kinds } = options;
+	let out = entries;
+	if (since !== undefined) out = out.filter((e) => e.ts >= since);
+	if (kinds && kinds.length > 0) {
+		const wanted = new Set(kinds);
+		out = out.filter((e) => wanted.has(e.kind));
+	}
+	if (tail !== undefined) out = tail > 0 ? out.slice(-tail) : [];
+	return out;
 }
 
 export interface FormatJourneyLineOptions {

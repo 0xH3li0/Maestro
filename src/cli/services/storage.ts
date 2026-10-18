@@ -22,6 +22,15 @@ import {
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
 import {
+	JOURNEY_DIR_NAME,
+	applyJourneyLimits,
+	filterJourneyEntries,
+	journeyFileName,
+	parseJourneyJsonl,
+	type ReadJourneyOptions,
+	type UserJourneyEntry,
+} from '../../shared/userJourney';
+import {
 	DORMANT_PIANOLA_MESSAGE,
 	filterLiveAgents,
 	isAgentDormant,
@@ -317,6 +326,35 @@ export function readHistoryPaginated(options?: {
 	const { projectPath, sessionId, pagination } = options || {};
 	const entries = readHistory(projectPath, sessionId);
 	return paginateEntries(entries, pagination);
+}
+
+// ============================================================================
+// User Journey
+// ============================================================================
+
+/**
+ * Absolute path of an agent's User Journey file. Lives in the config directory
+ * (never the sync directory), next to `history/`, matching
+ * `getJourneyFilePath()` in `src/main/user-journey-manager.ts`.
+ */
+export function getJourneyFilePath(agentId: string): string {
+	return path.join(getConfigDir(), JOURNEY_DIR_NAME, journeyFileName(agentId));
+}
+
+/**
+ * An agent's User Journey, oldest first, inside retention and the entry cap,
+ * with the same filters the desktop's `journey:read` applies. Read-only: the
+ * desktop app owns every write and prune. A missing or unreadable file reads
+ * as no entries.
+ */
+export function readJourney(agentId: string, options: ReadJourneyOptions = {}): UserJourneyEntry[] {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(getJourneyFilePath(agentId), 'utf-8');
+	} catch {
+		return [];
+	}
+	return filterJourneyEntries(applyJourneyLimits(parseJourneyJsonl(raw), Date.now()), options);
 }
 
 /**

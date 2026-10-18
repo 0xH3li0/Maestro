@@ -4,7 +4,11 @@ import {
 	JOURNEY_MAX_ENTRIES_PER_AGENT,
 	JOURNEY_RETENTION_DAYS,
 	USER_JOURNEY_KINDS,
+	applyJourneyLimits,
+	filterJourneyEntries,
 	formatJourneyLine,
+	journeyFileName,
+	parseJourneyJsonl,
 	isUserJourneyKind,
 	normalizeJourneyEntry,
 	sanitizeJourneyUrl,
@@ -156,6 +160,79 @@ describe('shouldCollapseJourneyEntry', () => {
 
 	it('keeps the first entry', () => {
 		expect(shouldCollapseJourneyEntry(undefined, nav)).toBe(false);
+	});
+});
+
+describe('journeyFileName', () => {
+	it('sanitizes the agent id the same way history files do', () => {
+		expect(journeyFileName('agent-1')).toBe('agent-1.jsonl');
+		expect(journeyFileName('../evil')).not.toContain('/');
+	});
+});
+
+describe('parseJourneyJsonl', () => {
+	it('keeps valid lines in file order and skips torn, blank, and foreign lines', () => {
+		const good = { ts: 1, agentId: 'a', kind: 'file.open', target: '/x' };
+		const raw = [
+			JSON.stringify(good),
+			'',
+			JSON.stringify({ ts: 2, agentId: 'a', kind: 'not.a.kind', target: '/y' }),
+			JSON.stringify({ ...good, ts: 3, extra: 'dropped' }),
+			'{"ts":',
+		].join('\n');
+		const entries = parseJourneyJsonl(`\uFEFF${raw}`);
+		expect(entries.map((e) => e.ts)).toEqual([1, 3]);
+		expect(entries[1]).not.toHaveProperty('extra');
+	});
+});
+
+describe('applyJourneyLimits', () => {
+	const DAY = 24 * 60 * 60 * 1000;
+	const now = 100 * DAY;
+
+	it('drops entries older than retention', () => {
+		const entries = [now - (JOURNEY_RETENTION_DAYS + 1) * DAY, now - DAY].map(
+			(ts): UserJourneyEntry => ({ ts, agentId: 'a', kind: 'file.open', target: '/x' })
+		);
+		expect(applyJourneyLimits(entries, now).map((e) => e.ts)).toEqual([now - DAY]);
+	});
+
+	it('keeps only the newest entries past the cap', () => {
+		const entries = Array.from(
+			{ length: JOURNEY_MAX_ENTRIES_PER_AGENT + 2 },
+			(_, i): UserJourneyEntry => ({
+				ts: now - 1000 + i,
+				agentId: 'a',
+				kind: 'file.open',
+				target: '/x',
+			})
+		);
+		const kept = applyJourneyLimits(entries, now);
+		expect(kept).toHaveLength(JOURNEY_MAX_ENTRIES_PER_AGENT);
+		expect(kept[0].ts).toBe(entries[2].ts);
+	});
+});
+
+describe('filterJourneyEntries', () => {
+	const entries: UserJourneyEntry[] = [
+		{ ts: 10, agentId: 'a', kind: 'file.open', target: '/x' },
+		{ ts: 20, agentId: 'a', kind: 'file.save', target: '/x' },
+		{ ts: 30, agentId: 'a', kind: 'browser.navigate', target: 'https://a.test/' },
+	];
+
+	it('returns everything with no options', () => {
+		expect(filterJourneyEntries(entries)).toEqual(entries);
+	});
+
+	it('applies since, kinds, then tail', () => {
+		expect(filterJourneyEntries(entries, { since: 20 }).map((e) => e.ts)).toEqual([20, 30]);
+		expect(
+			filterJourneyEntries(entries, { kinds: ['file.open', 'browser.navigate'] }).map((e) => e.ts)
+		).toEqual([10, 30]);
+		expect(
+			filterJourneyEntries(entries, { kinds: ['file.open', 'file.save'], tail: 1 }).map((e) => e.ts)
+		).toEqual([20]);
+		expect(filterJourneyEntries(entries, { tail: 0 })).toEqual([]);
 	});
 });
 

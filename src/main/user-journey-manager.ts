@@ -17,16 +17,21 @@ import { app } from 'electron';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
-import { stripJsonBom } from '../shared/jsonUtils';
-import { sanitizeSessionId } from '../shared/history';
 import {
+	JOURNEY_DIR_NAME,
 	JOURNEY_MAX_ENTRIES_PER_AGENT,
 	JOURNEY_RETENTION_DAYS,
+	applyJourneyLimits,
+	filterJourneyEntries,
+	journeyFileName,
 	normalizeJourneyEntry,
+	parseJourneyJsonl,
 	shouldCollapseJourneyEntry,
+	type ReadJourneyOptions,
 	type UserJourneyEntry,
-	type UserJourneyKind,
 } from '../shared/userJourney';
+
+export type { ReadJourneyOptions };
 
 const LOG_CONTEXT = '[UserJourney]';
 
@@ -41,15 +46,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const PRUNE_ENTRY_SLACK = 500;
 const PRUNE_AGE_SLACK_MS = DAY_MS;
 
-export interface ReadJourneyOptions {
-	/** Only entries with `ts >= since` (epoch ms). */
-	since?: number;
-	/** Only the newest N entries (after the other filters). */
-	tail?: number;
-	/** Only these kinds. */
-	kinds?: UserJourneyKind[];
-}
-
 /** What the store remembers about a file between appends, so an append never reads it. */
 interface FileState {
 	count: number;
@@ -61,32 +57,16 @@ const writeQueue = createKeyedWriteQueue();
 const fileStates = new Map<string, FileState>();
 
 function getJourneyDir(): string {
-	return path.join(app.getPath('userData'), 'journey');
+	return path.join(app.getPath('userData'), JOURNEY_DIR_NAME);
 }
 
 /** Absolute path of an agent's journey file. */
 export function getJourneyFilePath(agentId: string): string {
-	return path.join(getJourneyDir(), `${sanitizeSessionId(agentId)}.jsonl`);
+	return path.join(getJourneyDir(), journeyFileName(agentId));
 }
 
 function serializeLine(entry: UserJourneyEntry): string {
 	return `${JSON.stringify(entry)}\n`;
-}
-
-/** Parse a journey file, skipping torn or foreign lines. File order (oldest first). */
-function parseJourneyJsonl(raw: string): UserJourneyEntry[] {
-	const entries: UserJourneyEntry[] = [];
-	for (const line of stripJsonBom(raw).split('\n')) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-		try {
-			const entry = normalizeJourneyEntry(JSON.parse(trimmed));
-			if (entry) entries.push(entry);
-		} catch {
-			// A torn final line from an interrupted append costs that one entry.
-		}
-	}
-	return entries;
 }
 
 async function readFileEntries(agentId: string): Promise<UserJourneyEntry[]> {
@@ -104,15 +84,6 @@ function stateOf(entries: UserJourneyEntry[]): FileState {
 		oldestTs: entries[0]?.ts,
 		last: entries[entries.length - 1],
 	};
-}
-
-/** Keep entries inside retention, then the newest `JOURNEY_MAX_ENTRIES_PER_AGENT`. */
-function applyLimits(entries: UserJourneyEntry[], now: number): UserJourneyEntry[] {
-	const cutoff = now - JOURNEY_RETENTION_DAYS * DAY_MS;
-	const fresh = entries.filter((e) => e.ts >= cutoff);
-	return fresh.length > JOURNEY_MAX_ENTRIES_PER_AGENT
-		? fresh.slice(fresh.length - JOURNEY_MAX_ENTRIES_PER_AGENT)
-		: fresh;
 }
 
 function needsPrune(state: FileState, now: number): boolean {
@@ -151,7 +122,7 @@ export async function appendJourneyEntry(raw: UserJourneyEntry): Promise<boolean
 
 			const now = Date.now();
 			if (needsPrune(state, now)) {
-				const kept = applyLimits(await readFileEntries(agentId), now);
+				const kept = applyJourneyLimits(await readFileEntries(agentId), now);
 				await atomicWriteFile(filePath, kept.map(serializeLine).join(''));
 				fileStates.set(agentId, stateOf(kept));
 				logger.debug(`Pruned journey for agent ${agentId} to ${kept.length}`, LOG_CONTEXT);
@@ -174,20 +145,13 @@ export async function readJourney(
 ): Promise<UserJourneyEntry[]> {
 	let entries: UserJourneyEntry[];
 	try {
-		entries = applyLimits(await readFileEntries(agentId), Date.now());
+		entries = applyJourneyLimits(await readFileEntries(agentId), Date.now());
 	} catch (error) {
 		logger.warn(`Failed to read journey for agent ${agentId}: ${error}`, LOG_CONTEXT);
 		captureException(error, { operation: 'journey:read', agentId });
 		return [];
 	}
-	const { since, tail, kinds } = options;
-	if (since !== undefined) entries = entries.filter((e) => e.ts >= since);
-	if (kinds && kinds.length > 0) {
-		const wanted = new Set(kinds);
-		entries = entries.filter((e) => wanted.has(e.kind));
-	}
-	if (tail !== undefined) entries = tail > 0 ? entries.slice(-tail) : [];
-	return entries;
+	return filterJourneyEntries(entries, options);
 }
 
 /** Delete an agent's journey file. Called when the agent is removed. */
