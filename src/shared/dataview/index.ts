@@ -163,7 +163,23 @@ export type {
 	DataviewStatusRequest,
 	DataviewRebuildRequest,
 	DataviewChangeEvent,
+	DataviewJsSnapshotRequest,
+	DataviewReadInRootRequest,
+	DataviewReadInRootResponse,
 } from './types';
+export {
+	DATAVIEW_GUEST_SCHEME,
+	DATAVIEW_GUEST_URL,
+	DATAVIEW_GUEST_PARTITION_PREFIX,
+	DATAVIEW_GUEST_CSP,
+	DATAVIEW_JS_RUN_TIMEOUT_MS,
+	DATAVIEW_JS_MAX_FRAME_HEIGHT,
+	DATAVIEW_JS_MAX_GUESTS_PER_WINDOW,
+	dataviewGuestPartition,
+	isDataviewGuestPartition,
+	isAllowedDataviewGuestAttachment,
+} from './sandboxHost';
+export { normalizeTrustedRoot, isTrustedDataviewRoot } from './trust';
 
 export {
 	parseSandboxMessage,

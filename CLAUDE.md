@@ -89,6 +89,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
@@ -107,6 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Main process: stores, persistence, platform
 
+- **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)

@@ -18,6 +18,7 @@
  */
 
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import { joinPath } from '../../shared/formatters';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { taskTextAtLine, toggleTaskCheckboxAtLine } from '../utils/markdownTasks';
@@ -48,6 +49,47 @@ function hasUnsavedEdits(filePath: string): boolean {
 					tab.path === filePath && tab.editContent !== undefined && tab.editContent !== tab.content
 			)
 		);
+}
+
+/** Where a Dataview result came from: what `DataviewQueryResponse` reports (and the DataviewJS snapshot). */
+export interface DataviewResultOrigin {
+	/** The vault root the result's paths are relative to. */
+	root: string;
+	sshRemoteId: string | null;
+	/** The vault-relative path of the note on screen. */
+	path: string;
+}
+
+/** A task a Dataview result shows, as its own file holds it. */
+export interface DataviewResultTask {
+	/** Vault-relative path of the task's file. */
+	path: string;
+	/** 1-based line of the task's marker. */
+	line: number;
+	/** The task's text as the index reported it. */
+	text: string;
+}
+
+/**
+ * Toggle a task a Dataview result shows (DV-8), wherever it lives: a task of the note on screen through the
+ * surface's own toggle (its unsaved-edit guard and pending content), any other through
+ * {@link toggleDataviewTaskInFile}. `DataviewBlock` (DQL `TASK` results) and `DataviewJsFrame` (a guest's
+ * `toggle.task`) both route through here. Resolves false when the surface offers no toggle.
+ */
+export function toggleDataviewResultTask(
+	toggleOwnTask: ((sourceLine: number) => Promise<boolean>) | undefined,
+	origin: DataviewResultOrigin,
+	task: DataviewResultTask
+): Promise<boolean> {
+	if (task.path === origin.path) {
+		return toggleOwnTask ? toggleOwnTask(task.line) : Promise.resolve(false);
+	}
+	return toggleDataviewTaskInFile({
+		filePath: joinPath(origin.root, task.path),
+		line: task.line,
+		text: task.text,
+		sshRemoteId: origin.sshRemoteId,
+	});
 }
 
 /** Toggle one task in its own file. Resolves true once the file is written. */

@@ -3,12 +3,17 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 
-const { listFilesWithStatsRemote, readFileRemote } = vi.hoisted(() => ({
+const { listFilesWithStatsRemote, readFileRemote, readFileInRootRemote } = vi.hoisted(() => ({
 	listFilesWithStatsRemote: vi.fn(),
 	readFileRemote: vi.fn(),
+	readFileInRootRemote: vi.fn(),
 }));
 
-vi.mock('../../../main/utils/remote-fs', () => ({ listFilesWithStatsRemote, readFileRemote }));
+vi.mock('../../../main/utils/remote-fs', () => ({
+	listFilesWithStatsRemote,
+	readFileRemote,
+	readFileInRootRemote,
+}));
 
 import {
 	VAULT_PRUNED_NAMES,
@@ -100,12 +105,57 @@ describe('createLocalVaultFs', () => {
 	it('throws when the root cannot be listed', async () => {
 		await expect(createLocalVaultFs(path.join(tempDir, 'missing')).list()).rejects.toThrow();
 	});
+
+	describe('readTextInRoot', () => {
+		it('reads a file inside the root, and answers null where no regular file is', async () => {
+			const vaultFs = createLocalVaultFs(tempDir);
+			await expect(vaultFs.readTextInRoot('views/sample/view.css', 1024)).resolves.toBe(
+				fs.readFileSync(path.join(tempDir, 'views', 'sample', 'view.css'), 'utf8')
+			);
+			await expect(vaultFs.readTextInRoot('nope.md', 1024)).resolves.toBeNull();
+			await expect(vaultFs.readTextInRoot('views/sample', 1024)).resolves.toBeNull();
+		});
+
+		it('refuses a file over the size cap', async () => {
+			fs.writeFileSync(path.join(tempDir, 'big.csv'), 'x'.repeat(2048));
+			await expect(createLocalVaultFs(tempDir).readTextInRoot('big.csv', 1024)).rejects.toThrow(
+				'larger than 1024 bytes'
+			);
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'follows a symlink that stays inside, and refuses one that leads out of the root',
+			async () => {
+				const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dataview-vault-fs-outside-'));
+				try {
+					fs.writeFileSync(path.join(outside, 'secret.md'), 'secret');
+					fs.symlinkSync(path.join(outside, 'secret.md'), path.join(tempDir, 'escape.md'));
+					fs.symlinkSync(outside, path.join(tempDir, 'escape-dir'));
+					fs.symlinkSync(path.join(tempDir, 'README.md'), path.join(tempDir, 'alias.md'));
+					const vaultFs = createLocalVaultFs(tempDir);
+
+					await expect(vaultFs.readTextInRoot('alias.md', 1 << 20)).resolves.toBe(
+						fs.readFileSync(path.join(tempDir, 'README.md'), 'utf8')
+					);
+					await expect(vaultFs.readTextInRoot('escape.md', 1 << 20)).rejects.toThrow(
+						'resolves outside'
+					);
+					await expect(vaultFs.readTextInRoot('escape-dir/secret.md', 1 << 20)).rejects.toThrow(
+						'resolves outside'
+					);
+				} finally {
+					fs.rmSync(outside, { recursive: true, force: true });
+				}
+			}
+		);
+	});
 });
 
 describe('createRemoteVaultFs', () => {
 	beforeEach(() => {
 		listFilesWithStatsRemote.mockReset();
 		readFileRemote.mockReset();
+		readFileInRootRemote.mockReset();
 	});
 
 	it('lists in one call, derives folders, and keeps stats for markdown pages', async () => {
@@ -162,5 +212,27 @@ describe('createRemoteVaultFs', () => {
 		await expect(createRemoteVaultFs('/srv/vault', remote).readText('x')).rejects.toThrow(
 			'File not found: x'
 		);
+	});
+
+	it('reads in the root through the remote realpath check, never the plain read', async () => {
+		readFileInRootRemote.mockResolvedValue({ success: true, data: 'csv' });
+		const vaultFs = createRemoteVaultFs('/srv/vault', remote);
+		await expect(vaultFs.readTextInRoot('data/people.csv', 2048)).resolves.toBe('csv');
+		expect(readFileInRootRemote).toHaveBeenCalledWith(
+			'/srv/vault',
+			'data/people.csv',
+			2048,
+			remote
+		);
+		expect(readFileRemote).not.toHaveBeenCalled();
+
+		readFileInRootRemote.mockResolvedValue({ success: true, data: null });
+		await expect(vaultFs.readTextInRoot('gone.md', 2048)).resolves.toBeNull();
+
+		readFileInRootRemote.mockResolvedValue({
+			success: false,
+			error: 'Path resolves outside /srv/vault: x',
+		});
+		await expect(vaultFs.readTextInRoot('x', 2048)).rejects.toThrow('resolves outside');
 	});
 });

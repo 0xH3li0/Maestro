@@ -1,7 +1,8 @@
 /**
  * `dataview:*` IPC. Each handler is a pass-through to one DataviewService request method (the CLI's WS
  * verbs call the same methods), and every index change goes out as `dataview:changed` through the
- * all-windows `safeSend` (DV-7).
+ * all-windows `safeSend` (DV-7). The DataviewJS channels (`jsSnapshot`, `readInRoot`, D4) pass through the
+ * same way, and registration wires the guest host's serving check to the service.
  */
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -26,6 +27,10 @@ vi.mock('../../../../main/dataview/dataview-service', () => ({
 }));
 
 import { registerDataviewHandlers } from '../../../../main/ipc/handlers/dataview';
+import {
+	isDataviewJsServing,
+	setDataviewJsServingCheck,
+} from '../../../../main/dataview/guest-host';
 
 const queryRequest = { filePath: '/vault/People/A.md', source: 'LIST', agentId: 'agent-1' };
 const queryResponse = {
@@ -58,23 +63,58 @@ beforeEach(() => {
 		queryInline: vi.fn(async () => ({ ...queryResponse, result: { kind: 'value', value: 'A' } })),
 		indexStatus: vi.fn(() => [status]),
 		rebuildIndex: vi.fn(async () => status),
+		jsSnapshot: vi.fn(async () => ({ ...queryResponse, result: { revision: 3, pages: [] } })),
+		readInRoot: vi.fn(async () => ({
+			root: '/vault',
+			sshRemoteId: null,
+			path: 'a.csv',
+			text: 'x',
+		})),
+		jsServing: vi.fn(() => true),
 		onChange: vi.fn((listener: (event: unknown) => void) => {
 			h.changeListeners.push(listener);
 			return () => undefined;
 		}),
 	};
 	safeSend = vi.fn<(channel: string, ...args: unknown[]) => void>();
+	setDataviewJsServingCheck(() => false);
 	registerDataviewHandlers({ safeSend });
 });
 
 describe('dataview IPC', () => {
-	it('registers the four request channels', () => {
+	it('registers the four DQL channels and the two DataviewJS channels', () => {
 		expect([...h.handlers.keys()].sort()).toEqual([
+			'dataview:jsSnapshot',
 			'dataview:query',
 			'dataview:queryInline',
+			'dataview:readInRoot',
 			'dataview:rebuild',
 			'dataview:status',
 		]);
+	});
+
+	it('answers the DataviewJS snapshot and in-root reads through the service', async () => {
+		const snapshotRequest = { filePath: '/vault/People/A.md', agentId: 'agent-1' };
+		await expect(invoke('dataview:jsSnapshot', snapshotRequest)).resolves.toMatchObject({
+			root: '/vault',
+			result: { revision: 3 },
+		});
+		expect(h.service!.jsSnapshot).toHaveBeenCalledWith(snapshotRequest);
+
+		const readRequest = { ...snapshotRequest, path: 'a.csv' };
+		await expect(invoke('dataview:readInRoot', readRequest)).resolves.toMatchObject({ text: 'x' });
+		expect(h.service!.readInRoot).toHaveBeenCalledWith(readRequest);
+
+		h.service!.readInRoot.mockRejectedValueOnce(new Error('Dataview: ../x is not a path inside'));
+		await expect(invoke('dataview:readInRoot', { ...readRequest, path: '../x' })).rejects.toThrow(
+			'not a path inside'
+		);
+	});
+
+	it('wires the guest host to ask the service whether DataviewJS may run', () => {
+		expect(isDataviewJsServing()).toBe(true);
+		h.service!.jsServing.mockReturnValue(false);
+		expect(isDataviewJsServing()).toBe(false);
 	});
 
 	it('runs a block through the service and returns its answer unchanged', async () => {

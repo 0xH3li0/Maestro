@@ -15,7 +15,7 @@ vi.mock('../../../main/utils/remote-fs', () => ({
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
-import { EXPRESSION } from '../../../shared/dataview';
+import { EXPRESSION, PageIndex } from '../../../shared/dataview';
 import type { Source } from '../../../shared/dataview';
 import {
 	createLocalVaultFs,
@@ -64,6 +64,9 @@ function memoryFs(files: Record<string, string>, overrides: Partial<VaultFs> = {
 		async readText(relPath) {
 			if (!(relPath in files)) throw new Error(`ENOENT: ${relPath}`);
 			return files[relPath];
+		},
+		async readTextInRoot(relPath) {
+			return relPath in files ? files[relPath] : null;
 		},
 		...overrides,
 	};
@@ -196,6 +199,24 @@ describe('VaultIndex over the fixture vault', () => {
 		expect(index.starred.starred('People/Rami Example.md')).toBe(true);
 		expect(index.starred.starred('People/Pedram Amini.md')).toBe(false);
 		expect(index.getPage('People/Rami Example.md')!.serialize(index).file.starred).toBe(true);
+	});
+
+	it('takes the DataviewJS snapshot the guest rebuilds the same index from (D4)', () => {
+		const snapshot = index.jsSnapshot();
+		expect(snapshot.revision).toBe(index.revision);
+		expect(sorted(snapshot.files)).toEqual(sorted(index.prefix.allFiles()));
+		expect(sorted(snapshot.folders)).toEqual(sorted(index.prefix.allFolders()));
+		expect(snapshot.stars).toEqual(['People/Rami Example.md']);
+		expect(sorted(snapshot.pages.map((page) => page.path))).toEqual(sorted(index.pages.keys()));
+
+		const guest = PageIndex.fromSnapshot(snapshot, (relPath) => index.fs.readText(relPath));
+		for (const text of ['#meeting or "meetings"', '"Projects"', '[[Pedram Amini]]']) {
+			const want = index.pagesForSource(source(text));
+			const got = guest.pagesForSource(source(text));
+			expect(got.successful && sorted(got.value), text).toEqual(
+				want.successful && sorted(want.value)
+			);
+		}
 	});
 
 	it('serializes file.inlinks from the inlink index', () => {

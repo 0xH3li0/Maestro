@@ -897,6 +897,8 @@ const mockMaestro = {
 		queryInline: vi.fn(() => new Promise(() => {})),
 		status: vi.fn().mockResolvedValue([]),
 		rebuild: vi.fn().mockResolvedValue(null),
+		jsSnapshot: vi.fn(() => new Promise(() => {})),
+		readInRoot: vi.fn(() => new Promise(() => {})),
 		onChanged: vi.fn(() => () => {}),
 	},
 	// Quick Chat (floating window + its engine). Subscriptions return a no-op

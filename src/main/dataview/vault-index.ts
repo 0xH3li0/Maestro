@@ -35,6 +35,7 @@ import {
 	type LinkResolver,
 	type PageMetadata,
 	type PageParseWarning,
+	type SandboxIndexSnapshot,
 } from '../../shared/dataview';
 import {
 	LOCAL_SESSION_READ_CONCURRENCY,
@@ -271,6 +272,24 @@ export class VaultIndex extends PageIndex {
 		this.cacheWriteTimer = null;
 		await this.flushCache();
 		this.listeners.clear();
+	}
+
+	/**
+	 * The index as a DataviewJS run sees it (D4): every file, folder, and star, and each page's cached raw
+	 * parse, from which the guest rebuilds the index the way {@link installCache} does. Taken synchronously,
+	 * so it is one revision, never half of an update.
+	 */
+	jsSnapshot(): SandboxIndexSnapshot {
+		return {
+			revision: this.revision,
+			files: this.prefix.allFiles(),
+			folders: this.prefix.allFolders(),
+			stars: [...this.stars],
+			pages: Array.from(this.entries, ([path, entry]) => ({
+				path,
+				data: entry.data as Record<string, unknown>,
+			})),
+		};
 	}
 
 	/** Write the cache now if anything changed since the last write. */

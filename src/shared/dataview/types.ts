@@ -214,6 +214,39 @@ export type DataviewFileQueryResult<V = DataviewWireValue> =
 	| DataviewErrorResult;
 
 /**
+ * The index as a DataviewJS run sees it (`dataview:jsSnapshot`, D4). Main refuses it unless DataviewJS is on
+ * and the note's vault root is trusted.
+ */
+export interface DataviewJsSnapshotRequest {
+	/** Absolute path of the note that holds the `dataviewjs` block. It binds `dv.current()`. */
+	filePath: string;
+	agentId: string;
+}
+
+/**
+ * Read one text file inside the vault root of a note (`dataview:readInRoot`): `dv.io.load`, and through it
+ * `dv.io.csv` and `dv.view` (D4, D5). Main resolves the root itself, refuses a path that leaves it (also
+ * through a symlink) or that the index does not hold, and refuses unless DataviewJS is on and the root trusted.
+ */
+export interface DataviewReadInRootRequest {
+	/** Absolute path of the note the script runs in. Its vault root bounds the read. */
+	filePath: string;
+	agentId: string;
+	/** Vault-relative POSIX path of the file to read. */
+	path: string;
+}
+
+/** The answer to `dataview:readInRoot`. */
+export interface DataviewReadInRootResponse {
+	root: string;
+	sshRemoteId: string | null;
+	/** The path read, normalized. */
+	path: string;
+	/** The file's text, or null when no such file exists (upstream `dv.io.load` answers undefined). */
+	text: string | null;
+}
+
+/**
  * The actions of the `dataview_command` WS message (`maestro-cli dataview`), one per DataviewService
  * request method. The request's fields travel as the message's own fields.
  */

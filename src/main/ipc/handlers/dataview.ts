@@ -3,8 +3,9 @@
  *
  * Thin pass-throughs to the one DataviewService: each handler body is a service request method, and the
  * CLI's WS verbs call the same methods. Main resolves the agent's cwd and SSH remote from its id, so a
- * request never names a host. Every channel here is on the web bridge's allowlist
- * (`src/main/web-server/handlers/bridgeDenyList.ts`), so the browser build runs DQL too.
+ * request never names a host. The DQL channels are on the web bridge's allowlist
+ * (`src/main/web-server/handlers/bridgeDenyList.ts`), so the browser build runs DQL too; the DataviewJS
+ * channels (`jsSnapshot`, `readInRoot`) are not, since DataviewJS is desktop only (DV-14).
  *
  * Gate (D3): the service's request methods refuse while the `dataview` Encore Feature is off, with the
  * readable `encoreDisabledMessage('dataview')` text, so these handlers and the WS bridge refuse alike
@@ -17,10 +18,13 @@
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { getDataviewService } from '../../dataview/dataview-service';
+import { setDataviewJsServingCheck } from '../../dataview/guest-host';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type {
 	DataviewInlineQueryRequest,
+	DataviewJsSnapshotRequest,
 	DataviewQueryRequest,
+	DataviewReadInRootRequest,
 	DataviewRebuildRequest,
 	DataviewStatusRequest,
 } from '../../../shared/dataview';
@@ -62,6 +66,23 @@ export function registerDataviewHandlers(deps: DataviewHandlerDependencies): voi
 			service.rebuildIndex(request)
 		)
 	);
+	// DataviewJS (D4): desktop only, so neither channel is on the web bridge's allowlist. The service
+	// refuses both unless DataviewJS is on and the root trusted, and re-checks every path in main.
+	ipcMain.handle(
+		'dataview:jsSnapshot',
+		withIpcErrorLogging(opts('jsSnapshot'), async (request: DataviewJsSnapshotRequest) =>
+			service.jsSnapshot(request)
+		)
+	);
+	ipcMain.handle(
+		'dataview:readInRoot',
+		withIpcErrorLogging(opts('readInRoot'), async (request: DataviewReadInRootRequest) =>
+			service.readInRoot(request)
+		)
+	);
+
+	// The guest host serves and attaches DataviewJS guests only while this says yes (default deny).
+	setDataviewJsServingCheck(() => service.jsServing());
 
 	// DV-7: every open index's changes, to every window and bridge client.
 	service.onChange((event) => deps.safeSend('dataview:changed', event));

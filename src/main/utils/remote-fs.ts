@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'child_process';
+import * as path from 'path';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
 import { shellEscape, shellEscapeRemotePath } from './shell-escape';
@@ -601,6 +602,57 @@ export async function readFileRemote(
 		success: true,
 		data: result.stdout,
 	};
+}
+
+/** Exit codes of the {@link readFileInRootRemote} script, past the ones `sh` and ssh use for themselves. */
+const IN_ROOT_EXIT = { missing: 3, outside: 4, tooLarge: 5, noRealpath: 6 } as const;
+
+/**
+ * Read a text file inside a root on a remote host, in ONE SSH round trip, only if its REAL path stays inside
+ * the root's real path: the remote's `realpath` resolves both, so a symlink inside the root that points out
+ * of it is refused, and the file read is the resolved one. `relPath` must already be a normalized,
+ * root-relative POSIX path (`normalizeRootRelativePath()`); this adds the symlink check the lexical one cannot
+ * make. Answers null for a path with no regular file behind it, and an error for a path outside the root, a
+ * file over `maxBytes`, or a remote without `realpath`.
+ *
+ * @example
+ * const text = await readFileInRootRemote('/home/u/vault', 'views/x/view.js', 1 << 20, sshConfig);
+ */
+export async function readFileInRootRemote(
+	root: string,
+	relPath: string,
+	maxBytes: number,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const rootArg = shellEscapeRemotePath(root);
+	const fileArg = shellEscapeRemotePath(path.posix.join(root, relPath));
+	const { missing, outside, tooLarge, noRealpath } = IN_ROOT_EXIT;
+	const remoteCommand =
+		`command -v realpath >/dev/null 2>&1 || exit ${noRealpath}; ` +
+		`r=$(realpath ${rootArg}) || exit 1; ` +
+		`f=$(realpath ${fileArg} 2>/dev/null) || exit ${missing}; ` +
+		`[ "$r" = / ] || case "$f" in "$r"/*) ;; *) exit ${outside} ;; esac; ` +
+		`[ -f "$f" ] || exit ${missing}; ` +
+		`s=$(wc -c < "$f" | tr -d ' ') || exit 1; ` +
+		`[ "$s" -le ${Math.max(0, Math.floor(maxBytes))} ] || exit ${tooLarge}; ` +
+		`cat "$f"`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	switch (result.exitCode) {
+		case 0:
+			return { success: true, data: result.stdout };
+		case missing:
+			return { success: true, data: null };
+		case outside:
+			return { success: false, error: `Path resolves outside ${root}: ${relPath}` };
+		case tooLarge:
+			return { success: false, error: `File is larger than ${maxBytes} bytes: ${relPath}` };
+		case noRealpath:
+			return { success: false, error: 'The remote host has no realpath command' };
+		default:
+			return { success: false, error: result.stderr || `Failed to read file: ${relPath}` };
+	}
 }
 
 /**

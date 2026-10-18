@@ -13,7 +13,8 @@ import * as path from 'path';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isMarkdownPagePath } from '../../shared/dataview';
 import { walkLocalFileTree, type LocalTreeNode } from '../utils/file-tree-walk';
-import { listFilesWithStatsRemote, readFileRemote } from '../utils/remote-fs';
+import { listFilesWithStatsRemote, readFileInRootRemote, readFileRemote } from '../utils/remote-fs';
+import { resolvePathInRealRoot } from '../utils/real-path-containment';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../utils/watcher-ignore';
 import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 
@@ -59,6 +60,13 @@ export interface VaultFs {
 	list(): Promise<VaultListing>;
 	/** Read a vault-relative file as UTF-8 text. Throws when it cannot be read. */
 	readText(relPath: string): Promise<string>;
+	/**
+	 * Read a vault-relative file for UNTRUSTED code (DataviewJS `dv.io.load`, D4): only when its REAL path,
+	 * symlinks resolved, stays inside the real root, and reading the resolved file. `relPath` must already be
+	 * a normalized root-relative path (`normalizeRootRelativePath()`). Null when no regular file is there.
+	 * Throws for a path that resolves outside the root, a file over `maxBytes`, or a failed read.
+	 */
+	readTextInRoot(relPath: string, maxBytes: number): Promise<string | null>;
 	/**
 	 * Stat one vault-relative path; null when it no longer exists. Only a local vault has it: the watcher
 	 * that needs it is local, and a remote vault is polled through `list()` instead.
@@ -146,6 +154,15 @@ export function createLocalVaultFs(root: string): VaultFs {
 		readText(relPath) {
 			return fs.readFile(absolute(relPath), 'utf8');
 		},
+		async readTextInRoot(relPath, maxBytes) {
+			const target = await resolvePathInRealRoot(root, relPath);
+			if (target.kind === 'missing') return null;
+			if (target.kind === 'outside') throw new Error(`${relPath} resolves outside ${root}`);
+			const stat = await fs.stat(target.realPath);
+			if (!stat.isFile()) return null;
+			if (stat.size > maxBytes) throw new Error(`${relPath} is larger than ${maxBytes} bytes`);
+			return fs.readFile(target.realPath, 'utf8');
+		},
 		async stat(relPath) {
 			let stat;
 			try {
@@ -201,6 +218,13 @@ export function createRemoteVaultFs(root: string, sshRemote: SshRemoteConfig): V
 		},
 		async readText(relPath) {
 			const result = await readFileRemote(absolute(relPath), sshRemote);
+			if (!result.success || result.data === undefined) {
+				throw new Error(result.error ?? `Failed to read ${relPath}`);
+			}
+			return result.data;
+		},
+		async readTextInRoot(relPath, maxBytes) {
+			const result = await readFileInRootRemote(root, relPath, maxBytes, sshRemote);
 			if (!result.success || result.data === undefined) {
 				throw new Error(result.error ?? `Failed to read ${relPath}`);
 			}

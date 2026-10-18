@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { toggleDataviewTaskInFile } from '../../../renderer/services/dataviewTaskToggle';
+import {
+	toggleDataviewResultTask,
+	toggleDataviewTaskInFile,
+} from '../../../renderer/services/dataviewTaskToggle';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockSession } from '../../helpers/mockSession';
@@ -122,5 +125,54 @@ describe('toggleDataviewTaskInFile', () => {
 		]);
 
 		expect(disk).toBe('# Alpha\n\n- [x] ship it\n- [ ] plan it\n');
+	});
+});
+
+describe('toggleDataviewResultTask', () => {
+	const origin = { root: '/vault', sshRemoteId: 'remote-1', path: 'Notes/Today.md' };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		seedTabs();
+		vi.mocked(window.maestro.fs.readFile).mockResolvedValue(CONTENT);
+		vi.mocked(window.maestro.fs.writeFile).mockResolvedValue({ success: true });
+	});
+
+	it('toggles a task of the note on screen through the surface, never through the file system', async () => {
+		const toggleOwnTask = vi.fn(async () => true);
+		await expect(
+			toggleDataviewResultTask(toggleOwnTask, origin, {
+				path: 'Notes/Today.md',
+				line: 7,
+				text: 'x',
+			})
+		).resolves.toBe(true);
+		expect(toggleOwnTask).toHaveBeenCalledWith(7);
+		expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+	});
+
+	it('refuses a task of the note on screen when the surface has no toggle', async () => {
+		await expect(
+			toggleDataviewResultTask(undefined, origin, { path: 'Notes/Today.md', line: 7, text: 'x' })
+		).resolves.toBe(false);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+
+	it("toggles a task of any other file in that file, under the result's root and host", async () => {
+		const toggleOwnTask = vi.fn(async () => true);
+		await expect(
+			toggleDataviewResultTask(toggleOwnTask, origin, {
+				path: 'Projects/Alpha.md',
+				line: 3,
+				text: 'ship it',
+			})
+		).resolves.toBe(true);
+		expect(toggleOwnTask).not.toHaveBeenCalled();
+		expect(window.maestro.fs.readFile).toHaveBeenCalledWith(FILE, 'remote-1');
+		expect(window.maestro.fs.writeFile).toHaveBeenCalledWith(
+			FILE,
+			'# Alpha\n\n- [x] ship it\n- [x] plan it\n',
+			'remote-1'
+		);
 	});
 });

@@ -19,6 +19,7 @@ const distMainDir = path.join(rootDir, 'dist/main');
 const preloadOutfile = path.join(distMainDir, 'preload.js');
 const consentPreloadOutfile = path.join(distMainDir, 'consent-preload.js');
 const pluginPanelPreloadOutfile = path.join(distMainDir, 'plugin-panel-preload.js');
+const dataviewGuestPreloadOutfile = path.join(distMainDir, 'dataview-guest-preload.js');
 const consentHtmlSrc = path.join(rootDir, 'src/main/consent/consent.html');
 const consentHtmlDest = path.join(distMainDir, 'consent.html');
 const dataviewGuestEntry = path.join(rootDir, 'src/renderer/dataview-sandbox/guest.ts');
@@ -123,6 +124,17 @@ async function build() {
 			...sharedOptions,
 		});
 		logBuilt(pluginPanelPreloadOutfile);
+
+		// Bridge-only preload for DataviewJS guests (D4): relays the sandbox
+		// bridge and the theme, exposes nothing. Forced in will-attach-webview
+		// (src/main/dataview/guest-host.ts names the file); never referenced by
+		// the renderer.
+		await esbuild.build({
+			entryPoints: [path.join(rootDir, 'src/main/preload/dataview-guest.ts')],
+			outfile: dataviewGuestPreloadOutfile,
+			...sharedOptions,
+		});
+		logBuilt(dataviewGuestPreloadOutfile);
 
 		await buildDataviewGuest();
 

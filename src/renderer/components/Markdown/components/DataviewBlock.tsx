@@ -41,9 +41,8 @@ import {
 } from '../../../../shared/dataview';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useLiveDataviewResult } from '../../../hooks/file/useLiveDataviewResult';
-import { toggleDataviewTaskInFile } from '../../../services/dataviewTaskToggle';
+import { toggleDataviewResultTask } from '../../../services/dataviewTaskToggle';
 import { ipcErrorMessage } from '../../../utils/ipcErrorMessage';
-import { joinPath } from '../../../../shared/formatters';
 import { AlertCallout } from './AlertCallout';
 import { TaskCheckbox } from './TaskCheckbox';
 import { PrismHighlightedCode } from './PrismCodeBlock';
@@ -385,17 +384,9 @@ function TaskListItem({
 	const toggle = useCallback(
 		(sourceLine: number): Promise<boolean> => {
 			if (path === null) return Promise.resolve(false);
-			if (path === data.path) {
-				return doc.toggleOwnTask ? doc.toggleOwnTask(sourceLine) : Promise.resolve(false);
-			}
-			return toggleDataviewTaskInFile({
-				filePath: joinPath(data.root, path),
-				line: sourceLine,
-				text,
-				sshRemoteId: data.sshRemoteId,
-			});
+			return toggleDataviewResultTask(doc.toggleOwnTask, data, { path, line: sourceLine, text });
 		},
-		[path, text, data.path, data.root, data.sshRemoteId, doc]
+		[path, text, data, doc]
 	);
 	return (
 		<li

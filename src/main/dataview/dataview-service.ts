@@ -12,9 +12,13 @@
  * - `onChange` relays every index's changes with the root they belong to (DV-7).
  *
  * IPC handlers and the WS bridge (the CLI) both call this one instance (`getDataviewService()`), so every
- * surface reads the same index. The request methods (`query`, `queryInline`, `indexStatus`, `rebuildIndex`)
- * are the handler bodies: they take the wire requests, resolve the agent in main, and answer in wire form.
- * The quit handler calls `shutdownDataviewService()`.
+ * surface reads the same index. The request methods (`query`, `queryInline`, `indexStatus`, `rebuildIndex`,
+ * and DataviewJS's `jsSnapshot` and `readInRoot`) are the handler bodies: they take the wire requests,
+ * resolve the agent in main, and answer in wire form. The quit handler calls `shutdownDataviewService()`.
+ *
+ * DataviewJS (D3, D4): `jsSnapshot` and `readInRoot` are what a sandboxed script can learn about a vault, so
+ * they also refuse unless the DataviewJS setting is on and the note's root is in `dataviewJsTrustedRoots`,
+ * both read live on every request. `readInRoot` re-checks the path in main whatever the renderer checked.
  *
  * Gate (D3): while the `dataview` Encore Feature is off, every request method, `getIndex`, and `rebuild`
  * throw `encoreDisabledMessage('dataview')` (the text a gated CLI verb prints) before touching anything, so no root opens and nothing is
@@ -42,14 +46,25 @@ import {
 	type DataviewInlineResult,
 	type DataviewQueryRequest,
 	type DataviewQueryResponse,
+	type DataviewJsSnapshotRequest,
+	type DataviewReadInRootRequest,
+	type DataviewReadInRootResponse,
 	type DataviewRebuildRequest,
 	type DataviewResult,
 	type DataviewStatusRequest,
+	type SandboxIndexSnapshot,
 } from '../../shared/dataview';
+import { isTrustedDataviewRoot } from '../../shared/dataview/trust';
+import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { DATAVIEW_CACHE_DIR_NAME, dataviewCacheFilePath, deleteVaultCache } from './vault-cache';
-import { createLocalVaultFs, createRemoteVaultFs, type VaultFs } from './vault-fs';
+import {
+	createLocalVaultFs,
+	createRemoteVaultFs,
+	isIndexedVaultPath,
+	type VaultFs,
+} from './vault-fs';
 import { VaultIndex } from './vault-index';
 import { resolveVaultRoot } from './vault-root';
 import { toVaultRelativePath } from './vault-watcher';
@@ -63,6 +78,18 @@ export const DATAVIEW_INDEX_IDLE_MS = 10 * 60 * 1000;
 
 /** Most roots indexed at once. Opening one more disposes the least recently queried. */
 export const DATAVIEW_MAX_OPEN_ROOTS = 8;
+
+/** The largest file a DataviewJS script may read (`dv.io.load`, `dv.io.csv`, `dv.view`). */
+export const DATAVIEW_JS_MAX_READ_BYTES = 16 * 1024 * 1024;
+
+/** Why a DataviewJS request was refused while the DataviewJS setting is off. */
+export const DATAVIEW_JS_DISABLED_MESSAGE =
+	'Dataview: DataviewJS is turned off. Turn on Run DataviewJS in the Dataview settings.';
+
+/** Why a DataviewJS request was refused in a vault that is not trusted. */
+export function dataviewJsUntrustedMessage(root: string): string {
+	return `Dataview: DataviewJS does not run in ${root}, a vault that is not trusted.`;
+}
 
 /** The agent a query runs for: where a file outside any vault is rooted, and which remote it lives on. */
 export interface DataviewAgentContext {
@@ -88,6 +115,10 @@ export interface DataviewServiceOptions {
 	resolveAgent?: (agentId: string) => DataviewAgentContext;
 	/** Whether the `dataview` Encore Feature is on. Defaults to reading the settings store. */
 	isEnabled?: () => boolean;
+	/** Whether the DataviewJS setting is on. Defaults to reading the settings store. */
+	isJsEnabled?: () => boolean;
+	/** The trusted vault roots (`dataviewJsTrustedRoots`). Defaults to reading the settings store. */
+	trustedRoots?: () => readonly unknown[];
 }
 
 interface IndexEntry {
@@ -105,6 +136,15 @@ function defaultCacheDir(): string {
 
 function defaultIsEnabled(): boolean {
 	return isEncoreFeatureEnabled(getSettingsStore(), 'dataview');
+}
+
+function defaultIsJsEnabled(): boolean {
+	return getSettingsStore().get('dataviewJsEnabled') === true;
+}
+
+function defaultTrustedRoots(): readonly unknown[] {
+	const roots: unknown = getSettingsStore().get('dataviewJsTrustedRoots');
+	return Array.isArray(roots) ? roots : [];
 }
 
 function defaultVaultFs(root: string, sshRemoteId: string | null): VaultFs {
@@ -141,6 +181,8 @@ export class DataviewService {
 	private readonly watch: boolean;
 	private readonly resolveAgent: (agentId: string) => DataviewAgentContext;
 	private readonly isEnabled: () => boolean;
+	private readonly isJsEnabled: () => boolean;
+	private readonly trustedRoots: () => readonly unknown[];
 
 	constructor(options: DataviewServiceOptions = {}) {
 		this.cacheDir = options.cacheDir ?? defaultCacheDir;
@@ -149,6 +191,8 @@ export class DataviewService {
 		this.watch = options.watch ?? true;
 		this.resolveAgent = options.resolveAgent ?? resolveDataviewAgentContext;
 		this.isEnabled = options.isEnabled ?? defaultIsEnabled;
+		this.isJsEnabled = options.isJsEnabled ?? defaultIsJsEnabled;
+		this.trustedRoots = options.trustedRoots ?? defaultTrustedRoots;
 	}
 
 	/** How many roots are open right now. */
@@ -223,6 +267,70 @@ export class DataviewService {
 	}
 
 	/**
+	 * The index a DataviewJS run of the note at `filePath` reads (`dataview:jsSnapshot`, D4): every page's
+	 * cached raw parse plus the file, folder, and star lists, with `path` the note `dv.current()` binds to.
+	 * Refused unless DataviewJS is on and the note's vault root is trusted (D3), and for a note outside its
+	 * root.
+	 */
+	async jsSnapshot(
+		request: DataviewJsSnapshotRequest
+	): Promise<DataviewQueryResponse<SandboxIndexSnapshot>> {
+		this.requireJsEnabled();
+		const { index, filePath, thisPath } = await this.openNote(request);
+		this.requireTrustedRoot(index.root);
+		if (thisPath === null) throw new Error(outsideRootMessage(filePath, index.root));
+		const snapshot = index.jsSnapshot();
+		return {
+			root: index.root,
+			sshRemoteId: index.fs.sshRemoteId,
+			revision: snapshot.revision,
+			path: thisPath,
+			result: snapshot,
+		};
+	}
+
+	/**
+	 * Read one text file inside the vault root of the note at `filePath`, for a DataviewJS script
+	 * (`dataview:readInRoot`; `dv.io.load`, `dv.io.csv`, `dv.view`). The guest and the renderer checked the
+	 * path already; main checks again and never trusts them: the path must stay inside the root once `..` is
+	 * collapsed, be one the index holds (no dot folder such as `.obsidian/`, whose plugin settings can hold
+	 * API tokens, and no `node_modules`), and still be inside the root once symlinks resolve
+	 * (`VaultFs.readTextInRoot`). Refused unless DataviewJS is on and the root trusted. `text` is null when
+	 * no such file exists.
+	 */
+	async readInRoot(request: DataviewReadInRootRequest): Promise<DataviewReadInRootResponse> {
+		this.requireJsEnabled();
+		const requested = requireString(request?.path, 'path');
+		const relPath = normalizeRootRelativePath(requested);
+		if (relPath === null || relPath === '') {
+			throw new Error(`Dataview: ${JSON.stringify(requested)} is not a path inside the vault root`);
+		}
+		if (!isIndexedVaultPath(relPath)) {
+			throw new Error(`Dataview: DataviewJS cannot read ${relPath}`);
+		}
+		const { index } = await this.openNote(request);
+		this.requireTrustedRoot(index.root);
+		return {
+			root: index.root,
+			sshRemoteId: index.fs.sshRemoteId,
+			path: relPath,
+			text: await index.fs.readTextInRoot(relPath, DATAVIEW_JS_MAX_READ_BYTES),
+		};
+	}
+
+	/**
+	 * Whether DataviewJS may run at all: the `dataview` Encore Feature and the DataviewJS setting both on.
+	 * Never throws; the guest host reads it before it serves or attaches a guest.
+	 */
+	jsServing(): boolean {
+		try {
+			return this.isEnabled() && this.isJsEnabled();
+		} catch {
+			return false;
+		}
+	}
+
+	/**
 	 * The open roots `dataview:status` reports: the named root (none when it is not open), or every open
 	 * root. Never opens anything.
 	 */
@@ -293,19 +401,44 @@ export class DataviewService {
 		if (!this.isEnabled()) throw new Error(encoreDisabledMessage('dataview'));
 	}
 
+	/** Refuse unless the Encore Feature and the DataviewJS setting are both on (D3). */
+	private requireJsEnabled(): void {
+		this.requireEnabled();
+		if (!this.isJsEnabled()) throw new Error(DATAVIEW_JS_DISABLED_MESSAGE);
+	}
+
+	/** Refuse a root that is not in `dataviewJsTrustedRoots` (D3, DV-12), read live on every request. */
+	private requireTrustedRoot(root: string): void {
+		if (!isTrustedDataviewRoot(root, this.trustedRoots())) {
+			throw new Error(dataviewJsUntrustedMessage(root));
+		}
+	}
+
+	/**
+	 * Open the index of the note a request names, and find the note in it. `thisPath` is the note's
+	 * vault-relative path, or null when the agent's cwd roots the note but the note sits outside it.
+	 */
+	private async openNote(request: {
+		filePath: string;
+		agentId: string;
+	}): Promise<{ index: VaultIndex; filePath: string; thisPath: string | null }> {
+		const filePath = requireAbsolutePath(request?.filePath, 'filePath');
+		const agent = this.resolveAgent(requireString(request?.agentId, 'agentId'));
+		const index = await this.getIndex(filePath, agent);
+		const pathApi = index.fs.sshRemoteId ? path.posix : path;
+		return { index, filePath, thisPath: toVaultRelativePath(index.root, filePath, pathApi) };
+	}
+
 	/** Open the note's index and run `run` with the note's vault-relative path bound as `this`. */
 	private async runForNote<R>(
 		request: { filePath: string; agentId: string },
 		run: (index: VaultIndex, thisPath: string) => Promise<R>
 	): Promise<DataviewQueryResponse<R | DataviewErrorResult>> {
-		const filePath = requireAbsolutePath(request.filePath, 'filePath');
-		const agent = this.resolveAgent(requireString(request.agentId, 'agentId'));
-		const index = await this.getIndex(filePath, agent);
+		const { index, filePath, thisPath } = await this.openNote(request);
 		const sshRemoteId = index.fs.sshRemoteId;
 		// Read before running: a change that lands mid-query then carries a newer revision, and the
 		// consumer re-runs instead of keeping a result that might predate it.
 		const revision = index.revision;
-		const thisPath = toVaultRelativePath(index.root, filePath, sshRemoteId ? path.posix : path);
 		if (thisPath === null) {
 			// The agent's cwd roots the note, but the note sits outside it: `this` has no page.
 			return {
@@ -313,10 +446,7 @@ export class DataviewService {
 				sshRemoteId,
 				revision,
 				path: filePath,
-				result: {
-					kind: 'error',
-					message: `Dataview: ${filePath} is outside the vault root ${index.root}`,
-				},
+				result: { kind: 'error', message: outsideRootMessage(filePath, index.root) },
 			};
 		}
 		return {
@@ -454,6 +584,11 @@ export class DataviewService {
 			}
 		}
 	}
+}
+
+/** Why a note outside its vault root has no page to bind `this` to. */
+function outsideRootMessage(filePath: string, root: string): string {
+	return `Dataview: ${filePath} is outside the vault root ${root}`;
 }
 
 /** A request field that must be a non-empty string. Requests cross IPC and the WS bridge unchecked. */

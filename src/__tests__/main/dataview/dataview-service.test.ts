@@ -15,22 +15,28 @@ vi.mock('../../../main/utils/remote-fs', () => ({
 	listFilesWithStatsRemote: vi.fn(),
 	readFileRemote: vi.fn(),
 }));
-// The `dataview` Encore flag the service's default gate reads; on unless a test turns it off.
+// The settings the service's default gates read: the `dataview` Encore flag (on unless a test turns it
+// off), and the DataviewJS switch and trusted roots (off and empty unless a test sets them).
 const settings = vi.hoisted(() => ({
 	encoreFeatures: { dataview: true } as Record<string, boolean>,
+	dataviewJsEnabled: false as unknown,
+	dataviewJsTrustedRoots: [] as unknown,
 }));
 vi.mock('../../../main/stores/getters', () => ({
 	getSshRemoteById: vi.fn(() => undefined),
 	getSettingsStore: () => ({
-		get: (key: string) => (key === 'encoreFeatures' ? settings.encoreFeatures : undefined),
+		get: (key: string) => (settings as Record<string, unknown>)[key],
 	}),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import {
 	DATAVIEW_INDEX_IDLE_MS,
+	DATAVIEW_JS_DISABLED_MESSAGE,
+	DATAVIEW_JS_MAX_READ_BYTES,
 	DATAVIEW_MAX_OPEN_ROOTS,
 	DataviewService,
+	dataviewJsUntrustedMessage,
 	createDataviewSupervisorHooks,
 	getDataviewService,
 	normalizeVaultRoot,
@@ -40,6 +46,7 @@ import {
 } from '../../../main/dataview/dataview-service';
 import type { VaultFs, VaultListing } from '../../../main/dataview/vault-fs';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
+import { PageIndex } from '../../../shared/dataview';
 
 /** In-memory vaults by root. Each file is `{ text, mtime }` so a test can edit one in place. */
 type MemoryVault = Record<string, string>;
@@ -58,6 +65,9 @@ function memoryFs(root: string, files: MemoryVault, sshRemoteId: string | null):
 		async readText(relPath) {
 			if (!(relPath in files)) throw new Error(`ENOENT: ${relPath}`);
 			return files[relPath];
+		},
+		async readTextInRoot(relPath) {
+			return relPath in files ? files[relPath] : null;
 		},
 	};
 }
@@ -700,5 +710,238 @@ describe('createDataviewSupervisorHooks', () => {
 		const disposeAll = vi.spyOn(created, 'disposeAll');
 		hooks.stopAll();
 		expect(disposeAll).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('DataviewJS requests (D3, D4)', () => {
+	const root = rootAt('js');
+	const remoteRoot = '/remote/js-vault';
+	const note = path.join(root, 'Notes', 'Note.md');
+	const files: MemoryVault = {
+		'Notes/Note.md': '---\ntags: meeting\n---\n# Note\n[[Other]]\n',
+		'Notes/Other.md': '# Other\n- [ ] a task\n',
+		'data/people.csv': 'name\nA\n',
+	};
+	let jsEnabled: boolean;
+	let trusted: unknown[];
+	let readsInRoot: { relPath: string; maxBytes: number }[];
+	let opened: number;
+	let service: DataviewService;
+
+	function createJsService(
+		options: Partial<ConstructorParameters<typeof DataviewService>[0]> = {}
+	) {
+		return new DataviewService({
+			resolveRoot: async (_filePath: string, agent: { agentCwd: string }) => agent.agentCwd,
+			resolveAgent: (agentId) =>
+				agentId === 'remote'
+					? { agentCwd: remoteRoot, sshRemoteId: 'remote-1' }
+					: { agentCwd: root, sshRemoteId: null },
+			watch: false,
+			cacheDir: () => null,
+			isJsEnabled: () => jsEnabled,
+			trustedRoots: () => trusted,
+			createVaultFs: (vaultRoot, sshRemoteId) => {
+				opened++;
+				const vaultFs = memoryFs(vaultRoot, files, sshRemoteId);
+				const readTextInRoot = vaultFs.readTextInRoot.bind(vaultFs);
+				vaultFs.readTextInRoot = (relPath, maxBytes) => {
+					readsInRoot.push({ relPath, maxBytes });
+					return readTextInRoot(relPath, maxBytes);
+				};
+				return vaultFs;
+			},
+			...options,
+		});
+	}
+
+	beforeEach(() => {
+		jsEnabled = true;
+		trusted = [root, remoteRoot];
+		readsInRoot = [];
+		opened = 0;
+		service = createJsService();
+	});
+
+	afterEach(async () => {
+		settings.encoreFeatures = { dataview: true };
+		settings.dataviewJsEnabled = false;
+		settings.dataviewJsTrustedRoots = [];
+		await service.disposeAll();
+	});
+
+	describe('jsSnapshot', () => {
+		it('answers the whole index with the note `dv.current()` binds to, at one revision', async () => {
+			const response = await service.jsSnapshot({ filePath: note, agentId: 'local' });
+			expect(response.root).toBe(root);
+			expect(response.sshRemoteId).toBeNull();
+			expect(response.path).toBe('Notes/Note.md');
+			expect(response.revision).toBe(response.result.revision);
+			expect(response.result.files.sort()).toEqual(Object.keys(files).sort());
+			// One entry per page the index holds (this fake stats every file, so the CSV is a page too).
+			const mainIndex = await service.getIndex(note, { agentCwd: root });
+			expect(response.result.pages.map((page) => page.path).sort()).toEqual(
+				[...mainIndex.pages.keys()].sort()
+			);
+			expect(response.result.pages.map((page) => page.path)).toContain('Notes/Other.md');
+			expect(response.result.stars).toEqual([]);
+		});
+
+		it('is a snapshot the guest can rebuild the same index from', async () => {
+			const response = await service.jsSnapshot({ filePath: note, agentId: 'local' });
+			const guestIndex = PageIndex.fromSnapshot(response.result, async () => '');
+			const mainIndex = await service.getIndex(note, { agentCwd: root });
+			expect([...guestIndex.pages.keys()].sort()).toEqual([...mainIndex.pages.keys()].sort());
+			expect(guestIndex.pages.get('Notes/Note.md')?.links.map((link) => link.path)).toEqual(
+				mainIndex.pages.get('Notes/Note.md')?.links.map((link) => link.path)
+			);
+		});
+
+		it('refuses a note outside the root it resolves to', async () => {
+			await expect(
+				service.jsSnapshot({ filePath: path.join(rootAt('elsewhere'), 'X.md'), agentId: 'local' })
+			).rejects.toThrow('is outside the vault root');
+		});
+	});
+
+	describe('readInRoot', () => {
+		it("reads a file in the note's root with the size cap, and answers null for no such file", async () => {
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'data/people.csv' })
+			).resolves.toEqual({ root, sshRemoteId: null, path: 'data/people.csv', text: 'name\nA\n' });
+			expect(readsInRoot).toEqual([
+				{ relPath: 'data/people.csv', maxBytes: DATAVIEW_JS_MAX_READ_BYTES },
+			]);
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'data/missing.csv' })
+			).resolves.toMatchObject({ text: null });
+		});
+
+		it('normalizes the path before reading it', async () => {
+			const response = await service.readInRoot({
+				filePath: note,
+				agentId: 'local',
+				path: './data//x/../people.csv',
+			});
+			expect(response.path).toBe('data/people.csv');
+			expect(readsInRoot.map((read) => read.relPath)).toEqual(['data/people.csv']);
+		});
+
+		it('refuses traversal, absolute and drive paths, the root itself, dot folders, and node_modules, without reading', async () => {
+			for (const requested of [
+				'../outside.md',
+				'data/../../outside.md',
+				'/etc/passwd',
+				'\\\\server\\share\\x',
+				'C:\\Windows\\win.ini',
+				'C:x',
+				'',
+				'.',
+				'.obsidian/plugins/x/data.json',
+				'Notes/.hidden.md',
+				'node_modules/pkg/index.js',
+			]) {
+				await expect(
+					service.readInRoot({ filePath: note, agentId: 'local', path: requested }),
+					requested
+				).rejects.toThrow(/Dataview: /);
+			}
+			expect(readsInRoot).toEqual([]);
+		});
+
+		it('reads through the remote file system for an SSH agent', async () => {
+			const response = await service.readInRoot({
+				filePath: `${remoteRoot}/Notes/Note.md`,
+				agentId: 'remote',
+				path: 'data/people.csv',
+			});
+			expect(response).toMatchObject({
+				root: remoteRoot,
+				sshRemoteId: 'remote-1',
+				text: 'name\nA\n',
+			});
+		});
+	});
+
+	describe('gates', () => {
+		it('refuses both while the Encore Feature is off, before opening anything', async () => {
+			settings.encoreFeatures = { dataview: false };
+			const off = encoreDisabledMessage('dataview');
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(off);
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'data/people.csv' })
+			).rejects.toThrow(off);
+			expect(opened).toBe(0);
+		});
+
+		it('refuses both while DataviewJS is off, before opening anything', async () => {
+			jsEnabled = false;
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				DATAVIEW_JS_DISABLED_MESSAGE
+			);
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'data/people.csv' })
+			).rejects.toThrow(DATAVIEW_JS_DISABLED_MESSAGE);
+			expect(opened).toBe(0);
+		});
+
+		it('refuses both in a vault that is not trusted, read live on every request', async () => {
+			trusted = [rootAt('another')];
+			const untrusted = dataviewJsUntrustedMessage(root);
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				untrusted
+			);
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'data/people.csv' })
+			).rejects.toThrow(untrusted);
+			expect(readsInRoot).toEqual([]);
+
+			trusted = [`${root}${path.sep}`];
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).resolves.toMatchObject(
+				{
+					root,
+				}
+			);
+		});
+
+		it('jsServing is on only while the Encore Feature and DataviewJS both are, and never throws', () => {
+			expect(service.jsServing()).toBe(true);
+			jsEnabled = false;
+			expect(service.jsServing()).toBe(false);
+			jsEnabled = true;
+			settings.encoreFeatures = { dataview: false };
+			expect(service.jsServing()).toBe(false);
+			const throwing = createJsService({
+				isJsEnabled: () => {
+					throw new Error('store gone');
+				},
+			});
+			settings.encoreFeatures = { dataview: true };
+			expect(throwing.jsServing()).toBe(false);
+		});
+
+		it('reads the DataviewJS switch and the trusted roots from the settings store by default', async () => {
+			const defaults = createJsService({ isJsEnabled: undefined, trustedRoots: undefined });
+			try {
+				await expect(defaults.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+					DATAVIEW_JS_DISABLED_MESSAGE
+				);
+				settings.dataviewJsEnabled = true;
+				await expect(defaults.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+					dataviewJsUntrustedMessage(root)
+				);
+				settings.dataviewJsTrustedRoots = 'not a list';
+				await expect(defaults.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+					dataviewJsUntrustedMessage(root)
+				);
+				settings.dataviewJsTrustedRoots = [root];
+				await expect(
+					defaults.jsSnapshot({ filePath: note, agentId: 'local' })
+				).resolves.toMatchObject({ root });
+				expect(defaults.jsServing()).toBe(true);
+			} finally {
+				await defaults.disposeAll();
+			}
+		});
 	});
 });

@@ -55,6 +55,16 @@ describe('Dataview Preload API', () => {
 		});
 	});
 
+	it('asks for the DataviewJS snapshot and in-root reads on their own channels', async () => {
+		const snapshotRequest = { filePath: '/vault/A.md', agentId: 'agent-1' };
+		await api.jsSnapshot(snapshotRequest);
+		expect(mockInvoke).toHaveBeenCalledWith('dataview:jsSnapshot', snapshotRequest);
+
+		const readRequest = { ...snapshotRequest, path: 'data/people.csv' };
+		await api.readInRoot(readRequest);
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:readInRoot', readRequest);
+	});
+
 	it('subscribes to dataview:changed and unsubscribes the same listener', () => {
 		const handler = vi.fn();
 		const unsubscribe = api.onChanged(handler);

@@ -509,6 +509,12 @@ deliberate design constraints, including protected host consent, are noted below
     is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
     Cue modal panel could render its gaps directly; it is CLI first because it
     exists for unattended servers, where nobody opens the desktop.
+17. **Run a DataviewJS block again** (Run again on a block whose script timed
+    out, crashed its sandbox, or failed to load). Deliberate: DataviewJS renders
+    in the desktop app only (spec D8), so the CLI never runs note scripts, and
+    `dataview query` on a `dataviewjs` block exits 2. The block's source is
+    readable with `dataview query <file> --json`; there is no rendered output
+    for an agent to read back.
 
 ### Audit backlog (2026-09-27)
 

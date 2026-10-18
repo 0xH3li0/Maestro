@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	readDirRemote,
 	readFileRemote,
+	readFileInRootRemote,
 	readBinaryFileRemoteAsBase64,
 	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
@@ -1768,6 +1769,87 @@ describe('remote-fs', () => {
 
 			expect(await deleteManyRemote([], baseConfig, true, deps)).toEqual([]);
 			expect(deps.execSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('readFileInRootRemote', () => {
+		const ROOT = '/home/u/vault';
+
+		it('runs ONE remote script that resolves the root and the file with realpath before reading', async () => {
+			const deps = createMockDeps({ stdout: 'view();\n', stderr: '', exitCode: 0 });
+
+			const result = await readFileInRootRemote(ROOT, 'views/x/view.js', 1024, baseConfig, deps);
+
+			expect(result).toEqual({ success: true, data: 'view();\n' });
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1) as string;
+			expect(command).toContain(`realpath '${ROOT}'`);
+			expect(command).toContain(`realpath '${ROOT}/views/x/view.js'`);
+			// The containment check runs on the REAL paths, before the read, which reads the resolved file.
+			expect(command).toContain('case "$f" in "$r"/*)');
+			expect(command.indexOf('case "$f"')).toBeLessThan(command.indexOf('cat "$f"'));
+			expect(command).toContain('[ "$s" -le 1024 ]');
+		});
+
+		it('quotes a path holding shell syntax so it can never run', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await readFileInRootRemote(ROOT, "a'$(touch pwned)`id`.md", 1024, baseConfig, deps);
+
+			const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1) as string;
+			expect(command).toContain(`'${ROOT}/a'\\''$(touch pwned)\`id\`.md'`);
+		});
+
+		it('answers null for a path with no regular file behind it', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 3 });
+
+			expect(await readFileInRootRemote(ROOT, 'gone.md', 1024, baseConfig, deps)).toEqual({
+				success: true,
+				data: null,
+			});
+		});
+
+		it('refuses a path whose real path leaves the root, a file over the cap, and a remote without realpath', async () => {
+			const outside = await readFileInRootRemote(
+				ROOT,
+				'escape.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 4 })
+			);
+			expect(outside.success).toBe(false);
+			expect(outside.error).toContain('outside');
+
+			const tooLarge = await readFileInRootRemote(
+				ROOT,
+				'big.csv',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 5 })
+			);
+			expect(tooLarge.success).toBe(false);
+			expect(tooLarge.error).toContain('1024 bytes');
+
+			const noRealpath = await readFileInRootRemote(
+				ROOT,
+				'a.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 6 })
+			);
+			expect(noRealpath.success).toBe(false);
+			expect(noRealpath.error).toContain('realpath');
+		});
+
+		it('reports any other failure with the remote error text', async () => {
+			const result = await readFileInRootRemote(
+				ROOT,
+				'a.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: 'cat: a.md: Permission denied', exitCode: 1 })
+			);
+			expect(result).toEqual({ success: false, error: 'cat: a.md: Permission denied' });
 		});
 	});
 });
