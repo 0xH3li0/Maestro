@@ -341,6 +341,14 @@ export interface TabWindowIntentPayloads {
 	openUrlInMaestro: { url: string };
 	clearAgentError: NoPayload;
 	coworkingApproval: { requestId: string; approved: boolean };
+
+	// F. Patch stream
+	/**
+	 * Send this window a fresh snapshot. A tab window asks on load (a new or
+	 * reloaded window holds nothing yet) and when a delta does not apply. The
+	 * owner's patch publisher answers it; the tab ref is any tab of the window.
+	 */
+	requestSnapshot: NoPayload;
 }
 
 export type TabWindowIntentKind = keyof TabWindowIntentPayloads;
@@ -420,6 +428,7 @@ const INTENT_KIND_SET: Record<TabWindowIntentKind, true> = {
 	openUrlInMaestro: true,
 	clearAgentError: true,
 	coworkingApproval: true,
+	requestSnapshot: true,
 };
 
 /** Every intent kind. */

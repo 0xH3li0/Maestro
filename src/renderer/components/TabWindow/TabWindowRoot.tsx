@@ -22,7 +22,7 @@
  * chip menus work as in the main window (TW-6, `useTabWindowKeyboard`).
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayerStackProvider } from '../../contexts/LayerStackContext';
 import { useWindowSettingsSync } from '../../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../../hooks/ui/useResolvedTheme';
@@ -41,7 +41,11 @@ import {
 	getRefsRightOfActive,
 } from '../../hooks/tabs/internal/unifiedCloseHelpers';
 import { isSessionRemote } from '../../utils/sessionHelpers';
-import { formatTabWindowTitle, type TabWindowTabRef } from '../../../shared/tabWindowTypes';
+import {
+	formatTabWindowTitle,
+	type TabWindowInfo,
+	type TabWindowTabRef,
+} from '../../../shared/tabWindowTypes';
 import {
 	isSameTabRef,
 	isSingleTabRef,
@@ -60,6 +64,7 @@ import { useTabWindowInfo } from './useTabWindowInfo';
 import { useTabWindowKeyboard } from './useTabWindowKeyboard';
 import { useTabWindowSelection } from './useTabWindowSelection';
 import { runTabWindowCall } from './runTabWindowCall';
+import { requestTabWindowSnapshot } from './requestTabWindowSnapshot';
 
 export interface TabWindowRootProps {
 	/** Registry id of this tab window (the `?tabWindow=<id>` query value). */
@@ -88,6 +93,7 @@ function TabWindowShell({ windowId }: TabWindowRootProps) {
 		agentId ? (s.sessions.find((x) => x.id === agentId) ?? null) : null
 	);
 	useTabWindowTitle(session?.name);
+	useSnapshotRequestOnLoad(info);
 
 	return (
 		<div
@@ -119,6 +125,19 @@ function useTabWindowTitle(agentName: string | undefined): void {
 	useEffect(() => {
 		document.title = formatTabWindowTitle(agentName);
 	}, [agentName]);
+}
+
+/**
+ * Ask the owner for a snapshot once the record names the agent, once per agent
+ * for this page load: a new or reloaded tab window holds nothing yet (D2).
+ * Later record changes (a tab switch, a reorder) need no snapshot.
+ */
+function useSnapshotRequestOnLoad(info: TabWindowInfo | null): void {
+	const requestedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (!info || requestedFor.current === info.agentId) return;
+		if (requestTabWindowSnapshot(info)) requestedFor.current = info.agentId;
+	}, [info]);
 }
 
 interface TabWindowBodyProps {

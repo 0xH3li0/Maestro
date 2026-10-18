@@ -6,11 +6,12 @@
  *   1. Dock-back. When a `tab-window-changed` read drops a ref, the tab is back
  *      in this window. It never left `unifiedTabOrder`, so it is already at its
  *      old slot; this makes it the owner's active tab.
- *   2. Stale refs after a restart. Main restores a tab window from the stored
- *      sessions, but the owner drops some tabs while it loads them (a terminal
- *      tab with no startup command). The first time an owned agent with a tab
- *      window is seen after the sessions loaded, every ref whose tab the agent
- *      no longer has is docked, so main drops it.
+ *   2. Stale refs. A ref whose tab the owned agent no longer has is docked, so
+ *      main drops it and its tab window never keeps a chip for a gone tab (D7).
+ *      That covers a popped tab closed or snoozed through the owner (from the
+ *      tab window, the CLI, a PTY exit) and a restart: main restores a tab
+ *      window from the stored sessions, but the owner drops some tabs while it
+ *      loads them (a terminal tab with no startup command).
  *
  * Only an app window mounts this. A tab window shows the popped tabs, so it
  * must not (the same trap as `usePoppedOutTabGuard`).
@@ -87,26 +88,41 @@ export function focusDockedTabs(
 	if (changed) setSessions(updated);
 }
 
+/** Key of one ref in the pending docks of {@link dockStaleTabWindowRefs}. */
+function pendingDockKey(agentId: string, ref: TabWindowTabRef): string {
+	return `${agentId}\n${tabRefKey(ref)}`;
+}
+
 /**
- * Dock the refs main restored for tabs the owner's session no longer has. Runs
- * once per agent: `checked` holds the agents already done and is updated in
- * place. An agent this window does not own (or has not loaded) is left for a
- * later pass. Does nothing until the sessions were read back successfully.
+ * Dock every ref whose tab the owned agent no longer has. `pending` holds the
+ * docks asked for that the registry does not reflect yet, so each ref is asked
+ * once; it is updated in place. A key is forgotten once the registry no longer
+ * lists its ref, so the same tab can be docked again after it pops out again.
+ * An agent this window does not own (or has not loaded) is left for a later
+ * pass. Does nothing until the sessions were read back successfully.
  */
-export function dockStaleTabWindowRefs(checked: Set<string>, ownsSession?: OwnsSession): void {
+export function dockStaleTabWindowRefs(pending: Set<string>, ownsSession?: OwnsSession): void {
 	const api = window.maestro?.tabWindows;
 	if (!api) return;
 	const { sessions, sessionsLoaded, sessionsReadOk } = useSessionStore.getState();
 	if (!sessionsLoaded || !sessionsReadOk) return;
 	const windows = useTabWindowStore.getState().windows;
+	if (pending.size > 0) {
+		const listed = new Set<string>();
+		for (const win of windows) {
+			for (const ref of win.tabRefs) listed.add(pendingDockKey(win.agentId, ref));
+		}
+		for (const key of pending) if (!listed.has(key)) pending.delete(key);
+	}
 	for (const win of windows) {
-		if (checked.has(win.agentId)) continue;
 		const session = sessions.find((s) => s.id === win.agentId);
 		if (!session) continue;
 		if (ownsSession && !ownsSession(session.id)) continue;
-		checked.add(win.agentId);
 		for (const ref of win.tabRefs) {
 			if (sessionHasTab(session, ref)) continue;
+			const key = pendingDockKey(win.agentId, ref);
+			if (pending.has(key)) continue;
+			pending.add(key);
 			api
 				.dock(win.agentId, ref)
 				.then((result) => {
@@ -131,10 +147,11 @@ export function dockStaleTabWindowRefs(checked: Set<string>, ownsSession?: OwnsS
 export function useTabWindowDockReconcile(ownsSession?: OwnsSession): void {
 	const ownsSessionRef = useRef(ownsSession);
 	ownsSessionRef.current = ownsSession;
-	const checkedRef = useRef(new Set<string>());
+	const pendingDocksRef = useRef(new Set<string>());
 
 	useEffect(() => {
-		const runStaleCheck = () => dockStaleTabWindowRefs(checkedRef.current, ownsSessionRef.current);
+		const runStaleCheck = () =>
+			dockStaleTabWindowRefs(pendingDocksRef.current, ownsSessionRef.current);
 		const unsubscribeWindows = useTabWindowStore.subscribe((state, prev) => {
 			if (state.windows === prev.windows) return;
 			focusDockedTabs(prev.windows, state.windows, ownsSessionRef.current);
@@ -156,8 +173,8 @@ export function useTabWindowDockReconcile(ownsSession?: OwnsSession): void {
 		};
 	}, []);
 
-	// An agent moved into this window may have a tab window still unchecked.
+	// An agent moved into this window may have a tab window with stale refs.
 	useEffect(() => {
-		dockStaleTabWindowRefs(checkedRef.current, ownsSession);
+		dockStaleTabWindowRefs(pendingDocksRef.current, ownsSession);
 	}, [ownsSession]);
 }

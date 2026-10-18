@@ -9,6 +9,7 @@ import { useTabWindowStore } from '../../renderer/stores/tabWindowStore';
 import type {
 	TabWindowDockResult,
 	TabWindowFocusResult,
+	TabWindowIntent,
 	TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
 
@@ -28,7 +29,10 @@ export function clearTabWindowStore(): void {
 
 /**
  * Install a fake `window.maestro.tabWindows` whose `focus` answers `result` and
- * whose `dock` answers `dockResult`. Returns both mocks and a restore function.
+ * whose `dock` answers `dockResult`. The relay half records what is sent
+ * (`sendSessionPatch`, `sendIntent`), and `emitIntent` delivers an intent to
+ * every `onIntent` subscriber, as main's relay would. Returns the mocks and a
+ * restore function.
  */
 export function installTabWindowsApi(
 	result: TabWindowFocusResult = { focused: true, windowId: 'tw-1' },
@@ -36,16 +40,33 @@ export function installTabWindowsApi(
 ): {
 	focus: ReturnType<typeof vi.fn>;
 	dock: ReturnType<typeof vi.fn>;
+	sendSessionPatch: ReturnType<typeof vi.fn>;
+	sendIntent: ReturnType<typeof vi.fn>;
+	onIntent: ReturnType<typeof vi.fn>;
+	emitIntent: (intent: TabWindowIntent) => void;
 	restore: () => void;
 } {
 	const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
 	const previous = maestro.tabWindows;
 	const focus = vi.fn().mockResolvedValue(result);
 	const dock = vi.fn().mockResolvedValue(dockResult);
-	maestro.tabWindows = { focus, dock };
+	const sendSessionPatch = vi.fn();
+	const sendIntent = vi.fn();
+	const intentListeners = new Set<(intent: TabWindowIntent) => void>();
+	const onIntent = vi.fn((callback: (intent: TabWindowIntent) => void) => {
+		intentListeners.add(callback);
+		return () => intentListeners.delete(callback);
+	});
+	maestro.tabWindows = { focus, dock, sendSessionPatch, sendIntent, onIntent };
 	return {
 		focus,
 		dock,
+		sendSessionPatch,
+		sendIntent,
+		onIntent,
+		emitIntent: (intent) => {
+			for (const listener of [...intentListeners]) listener(intent);
+		},
 		restore: () => {
 			if (previous === undefined) delete maestro.tabWindows;
 			else maestro.tabWindows = previous;

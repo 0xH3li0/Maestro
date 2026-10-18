@@ -256,6 +256,27 @@ describe('TabWindowRoot shell (TW-2, TW-3)', () => {
 		expect(tabWindowsApi.focus).toHaveBeenCalledWith(AGENT, { type: 'file', id: 'f1' });
 	});
 
+	it('asks its owner for a snapshot once on load, so a reloaded window recovers (D2)', async () => {
+		useSessionStore.setState({ sessions: [] });
+		await renderRoot();
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledTimes(1);
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'requestSnapshot',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+		});
+
+		// A tab switch re-reads the record; it needs no snapshot.
+		tabWindowsApi.getState.mockResolvedValue({
+			...WINDOW_INFO,
+			activeTabRef: { type: 'file', id: 'f1' },
+		});
+		await act(async () => {
+			broadcast?.({ type: 'tab-window-changed', windowId: 'tw-7', agentId: AGENT });
+		});
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledTimes(1);
+	});
+
 	it('titles the OS window after the agent and follows a rename', async () => {
 		await renderRoot();
 		expect(document.title).toBe('Maestro Marketing - Tab Window');
@@ -363,6 +384,8 @@ describe('TabWindowRoot tab switching (TW-6)', () => {
 
 	it('leaves agent cycling and the sidebar shortcuts inert', async () => {
 		await renderRoot();
+		// The load-time snapshot request is not a shortcut.
+		tabWindowsApi.sendIntent.mockClear();
 		press({ key: '[', code: 'BracketLeft', metaKey: true });
 		press({ key: ']', code: 'BracketRight', metaKey: true });
 		press({ key: 'b', code: 'KeyB', metaKey: true, altKey: true });

@@ -60,6 +60,10 @@ describe('TAB_WINDOW_INTENT_KINDS', () => {
 		}
 	});
 
+	it('lets a tab window ask for a fresh snapshot (D2)', () => {
+		expect(TAB_WINDOW_INTENT_KINDS).toContain('requestSnapshot');
+	});
+
 	it('is frozen', () => {
 		expect(Object.isFrozen(TAB_WINDOW_INTENT_KINDS)).toBe(true);
 	});

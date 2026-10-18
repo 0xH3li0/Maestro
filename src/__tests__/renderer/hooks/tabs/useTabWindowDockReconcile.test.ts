@@ -142,30 +142,59 @@ describe('dockStaleTabWindowRefs', () => {
 	});
 	afterEach(() => api.restore());
 
-	it('docks only the refs whose tab the session lacks, once per agent', () => {
+	it('docks only the refs whose tab the session lacks, once per ref while it is pending', () => {
 		setWindows([
 			tabWindow('s1', [
 				{ type: 'ai', id: 'a2' },
 				{ type: 'terminal', id: 't-dropped' },
 			]),
 		]);
-		const checked = new Set<string>();
-		dockStaleTabWindowRefs(checked);
+		const pending = new Set<string>();
+		dockStaleTabWindowRefs(pending);
 		expect(api.dock).toHaveBeenCalledTimes(1);
 		expect(api.dock).toHaveBeenCalledWith('s1', { type: 'terminal', id: 't-dropped' });
-		expect(checked.has('s1')).toBe(true);
+		expect(pending.size).toBe(1);
 
-		dockStaleTabWindowRefs(checked);
+		dockStaleTabWindowRefs(pending);
 		expect(api.dock).toHaveBeenCalledTimes(1);
+	});
+
+	it('docks the ref of a popped tab the owner closed (D7)', () => {
+		setWindows([tabWindow('s1', [{ type: 'ai', id: 'a2' }])]);
+		const pending = new Set<string>();
+		dockStaleTabWindowRefs(pending);
+		expect(api.dock).not.toHaveBeenCalled();
+
+		useSessionStore.setState({
+			sessions: [agent('s1', { aiTabs: [createMockAITab({ id: 'a1' })] }), agent('s2')],
+		});
+		dockStaleTabWindowRefs(pending);
+		expect(api.dock).toHaveBeenCalledWith('s1', { type: 'ai', id: 'a2' });
+	});
+
+	it('forgets a dock once main dropped the ref, so the tab can dock again later', () => {
+		const gone = { type: 'ai', id: 'gone' } as const;
+		setWindows([tabWindow('s1', [gone])]);
+		const pending = new Set<string>();
+		dockStaleTabWindowRefs(pending);
+		expect(api.dock).toHaveBeenCalledTimes(1);
+
+		// Main dropped it; the same id pops out again and is lost again.
+		setWindows([]);
+		dockStaleTabWindowRefs(pending);
+		expect(pending.size).toBe(0);
+		setWindows([tabWindow('s1', [gone])]);
+		dockStaleTabWindowRefs(pending);
+		expect(api.dock).toHaveBeenCalledTimes(2);
 	});
 
 	it('waits until the sessions were read back', () => {
 		useSessionStore.setState({ sessionsLoaded: true, sessionsReadOk: false });
 		setWindows([tabWindow('s1', [{ type: 'ai', id: 'gone' }])]);
-		const checked = new Set<string>();
-		dockStaleTabWindowRefs(checked);
+		const pending = new Set<string>();
+		dockStaleTabWindowRefs(pending);
 		expect(api.dock).not.toHaveBeenCalled();
-		expect(checked.size).toBe(0);
+		expect(pending.size).toBe(0);
 	});
 
 	it('leaves an agent this window does not own (or has not loaded) for later', () => {
@@ -173,22 +202,22 @@ describe('dockStaleTabWindowRefs', () => {
 			tabWindow('s1', [{ type: 'ai', id: 'gone' }]),
 			tabWindow('missing', [{ type: 'ai', id: 'x' }]),
 		]);
-		const checked = new Set<string>();
-		dockStaleTabWindowRefs(checked, () => false);
+		const pending = new Set<string>();
+		dockStaleTabWindowRefs(pending, () => false);
 		expect(api.dock).not.toHaveBeenCalled();
-		expect(checked.size).toBe(0);
+		expect(pending.size).toBe(0);
 
-		dockStaleTabWindowRefs(checked);
+		dockStaleTabWindowRefs(pending);
+		expect(api.dock).toHaveBeenCalledTimes(1);
 		expect(api.dock).toHaveBeenCalledWith('s1', { type: 'ai', id: 'gone' });
-		expect(checked.has('missing')).toBe(false);
 	});
 
 	it('is a no-op without the tab windows API (web-desktop, TW-13)', () => {
 		api.restore();
 		setWindows([tabWindow('s1', [{ type: 'ai', id: 'gone' }])]);
-		const checked = new Set<string>();
-		expect(() => dockStaleTabWindowRefs(checked)).not.toThrow();
-		expect(checked.size).toBe(0);
+		const pending = new Set<string>();
+		expect(() => dockStaleTabWindowRefs(pending)).not.toThrow();
+		expect(pending.size).toBe(0);
 	});
 });
 
@@ -222,6 +251,20 @@ describe('useTabWindowDockReconcile', () => {
 		renderHook(() => useTabWindowDockReconcile());
 		act(() => setWindows([tabWindow('s1', [{ type: 'ai', id: 'gone' }])]));
 		expect(api.dock).toHaveBeenCalledWith('s1', { type: 'ai', id: 'gone' });
+	});
+
+	it('docks a popped tab the moment the owner closes it (D7)', () => {
+		act(() => setWindows([tabWindow('s1', [{ type: 'ai', id: 'a3' }])]));
+		renderHook(() => useTabWindowDockReconcile());
+		expect(api.dock).not.toHaveBeenCalled();
+
+		act(() =>
+			useSessionStore.setState({
+				sessions: [agent('s1', { aiTabs: [createMockAITab({ id: 'a1' })] })],
+			})
+		);
+		expect(api.dock).toHaveBeenCalledTimes(1);
+		expect(api.dock).toHaveBeenCalledWith('s1', { type: 'ai', id: 'a3' });
 	});
 
 	it('stops after unmount', () => {

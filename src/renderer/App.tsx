@@ -153,6 +153,7 @@ import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 import { useTabWindowStoreSync } from './stores/tabWindowStore';
 import { usePoppedOutTabGuard } from './hooks/tabs/usePoppedOutTabGuard';
 import { useTabWindowDockReconcile } from './hooks/tabs/useTabWindowDockReconcile';
+import { useTabWindowPublisher } from './hooks/tabs/useTabWindowPublisher';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -1079,11 +1080,13 @@ function MaestroConsoleInner() {
 	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
 	useCueBundleAgentSync();
 	// Which tabs are popped out into a tab window (Tab Windows, D4), keep this
-	// window's active tab off them, show a tab that docks back, and dock the refs
-	// a restart restored for tabs that did not survive the load.
+	// window's active tab off them, show a tab that docks back, dock the refs
+	// whose tab is gone (closed while popped, or lost to a restart), and stream
+	// each owned agent to its tab window (D2).
 	useTabWindowStoreSync();
 	usePoppedOutTabGuard(windowCtx?.ownsSession);
 	useTabWindowDockReconcile(windowCtx?.ownsSession);
+	useTabWindowPublisher(windowCtx?.ownsSession);
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
