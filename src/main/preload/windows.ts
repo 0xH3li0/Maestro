@@ -267,6 +267,42 @@ export function createTabWindowsApi() {
 			ipcRenderer.on(TAB_WINDOW_CHANNELS.intent, handler);
 			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.intent, handler);
 		},
+
+		/**
+		 * Terminal handoff (D5, `src/main/terminal-handoff.ts`): this window gives
+		 * up its view of a PTY. Main starts holding the PTY's output and answers
+		 * through {@link onTerminalReleaseBegun}, in order with `process:data`.
+		 */
+		beginTerminalRelease: (processId: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalRelease, processId);
+		},
+
+		/** The answer to {@link beginTerminalRelease}. */
+		onTerminalReleaseBegun: (callback: (processId: string) => void): (() => void) => {
+			const handler = (_event: unknown, processId: string) => callback(processId);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.terminalReleaseBegun, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.terminalReleaseBegun, handler);
+		},
+
+		/** The scrollback of a view this window gave up, for the next view to replay. */
+		commitTerminalRelease: (processId: string, text: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalCommit, processId, text);
+		},
+
+		/** This window mounts a view of a PTY: ask for the scrollback to replay. */
+		claimTerminalReplay: (processId: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalClaim, processId);
+		},
+
+		/** The answer to {@link claimTerminalReplay}: the replay, or null for none. */
+		onTerminalReplay: (
+			callback: (processId: string, text: string | null) => void
+		): (() => void) => {
+			const handler = (_event: unknown, processId: string, text: string | null) =>
+				callback(processId, text);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.terminalReplay, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.terminalReplay, handler);
+		},
 	};
 }
 

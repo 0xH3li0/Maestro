@@ -81,6 +81,28 @@ const WINDOW_INFO: TabWindowInfo = {
 let broadcast: ((payload: WindowSessionMovedPayload) => void) | null = null;
 // No patch ever arrives here: these tests seed the store the mirror would fill
 // (TabWindowRoot.mirror.test.tsx plays a real patch stream).
+// The terminal view is covered by its own tests; here it only reports what the
+// tab window handed it (D5). Its last props are kept to call its callbacks.
+const terminalViewProps: { current: Record<string, unknown> | null } = { current: null };
+vi.mock('../../../../renderer/components/TerminalView', () => ({
+	TerminalView: (props: {
+		session: { terminalTabs: Array<{ id: string }>; activeTerminalTabId: string | null };
+		attachOnly?: boolean;
+		isVisible?: boolean;
+	}) => {
+		terminalViewProps.current = props as unknown as Record<string, unknown>;
+		return (
+			<div
+				data-testid="terminal-view"
+				data-tabs={props.session.terminalTabs.map((tab) => tab.id).join(',')}
+				data-shown={props.session.activeTerminalTabId ?? ''}
+				data-attach-only={String(props.attachOnly === true)}
+				data-visible={String(props.isVisible === true)}
+			/>
+		);
+	},
+}));
+
 const tabWindowsApi = {
 	getState: vi.fn(),
 	dock: vi.fn(),
@@ -224,30 +246,111 @@ describe('TabWindowRoot shell (TW-2, TW-3)', () => {
 		expect(screen.queryByTestId('ai-pane')).not.toBeInTheDocument();
 	});
 
-	it('shows a notice for a tab type phase 6 has not wired yet', async () => {
+	function seedTerminalAgent() {
+		const terminal = (id: string) => ({
+			id,
+			name: null,
+			shellType: 'zsh',
+			pid: 4321,
+			cwd: '/',
+			createdAt: 0,
+			state: 'idle',
+		});
 		useSessionStore.setState({
 			sessions: [
 				createMockSession({
 					id: AGENT,
 					name: 'Maestro Marketing',
-					terminalTabs: [
-						{
-							id: 't1',
-							name: null,
-							shellType: 'zsh',
-							pid: 0,
-							cwd: '/',
-							createdAt: 0,
-							state: 'idle',
-						},
-					] as never,
+					aiTabs: [createMockAITab({ id: 'a1' })],
+					activeTabId: 'a1',
+					terminalTabs: [terminal('t1'), terminal('t2'), terminal('t-owner')] as never,
+				}),
+			],
+		});
+	}
+
+	it('attaches its own terminal view to the PTY of a popped terminal tab (D5)', async () => {
+		seedTerminalAgent();
+		tabWindowsApi.getState.mockResolvedValue({
+			...WINDOW_INFO,
+			tabRefs: [
+				{ type: 'terminal', id: 't1' },
+				{ type: 'ai', id: 'a1' },
+			],
+			activeTabRef: { type: 'terminal', id: 't1' },
+		});
+		await renderRoot();
+
+		const view = screen.getByTestId('terminal-view');
+		// Only this strip's terminals: a tab the owner keeps never mounts here.
+		expect(view).toHaveAttribute('data-tabs', 't1');
+		expect(view).toHaveAttribute('data-shown', 't1');
+		expect(view).toHaveAttribute('data-attach-only', 'true');
+		expect(view).toHaveAttribute('data-visible', 'true');
+		expect(screen.queryByTestId('pane-notice')).not.toBeInTheDocument();
+	});
+
+	it('keeps a terminal mounted, hidden, while another tab shows', async () => {
+		seedTerminalAgent();
+		tabWindowsApi.getState.mockResolvedValue({
+			...WINDOW_INFO,
+			tabRefs: [
+				{ type: 'terminal', id: 't1' },
+				{ type: 'ai', id: 'a1' },
+			],
+			activeTabRef: { type: 'ai', id: 'a1' },
+		});
+		await renderRoot();
+
+		expect(screen.getByTestId('ai-pane')).toHaveTextContent('a1');
+		const view = screen.getByTestId('terminal-view');
+		expect(view).toHaveAttribute('data-tabs', 't1');
+		expect(view).toHaveAttribute('data-visible', 'false');
+		expect(screen.getByTestId('tab-window-terminals')).toHaveStyle({ visibility: 'hidden' });
+	});
+
+	it('hands a terminal back only once its tab has left this strip', async () => {
+		seedTerminalAgent();
+		tabWindowsApi.getState.mockResolvedValue({
+			...WINDOW_INFO,
+			tabRefs: [
+				{ type: 'terminal', id: 't1' },
+				{ type: 'terminal', id: 't2' },
+			],
+			activeTabRef: { type: 'terminal', id: 't1' },
+		});
+		await renderRoot();
+		const release = () =>
+			(terminalViewProps.current!.releaseTabOnUnmount as (tabId: string) => boolean)('t2');
+		expect(release()).toBe(false);
+
+		tabWindowsApi.getState.mockResolvedValue({
+			...WINDOW_INFO,
+			tabRefs: [{ type: 'terminal', id: 't1' }],
+			activeTabRef: { type: 'terminal', id: 't1' },
+		});
+		await act(async () => {
+			broadcast?.({ type: 'tab-window-changed', windowId: 'tw-7', agentId: AGENT });
+		});
+
+		expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-tabs', 't1');
+		expect(release()).toBe(true);
+	});
+
+	it('shows a notice for a browser tab, which phase 6 has not wired yet', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: AGENT,
+					name: 'Maestro Marketing',
+					browserTabs: [{ id: 'b1', url: 'https://example.com', title: 'Example' }] as never,
 				}),
 			],
 		});
 		tabWindowsApi.getState.mockResolvedValue({
 			...WINDOW_INFO,
-			tabRefs: [{ type: 'terminal', id: 't1' }],
-			activeTabRef: { type: 'terminal', id: 't1' },
+			tabRefs: [{ type: 'browser', id: 'b1' }],
+			activeTabRef: { type: 'browser', id: 'b1' },
 		});
 		await renderRoot();
 		expect(screen.getByTestId('pane-notice')).toHaveTextContent(/cannot show in a tab window yet/);

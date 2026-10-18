@@ -76,6 +76,19 @@ export const TAB_WINDOW_CHANNELS = {
 	sessionPatch: 'tabWindow:sessionPatch',
 	/** Tab window to owner window, relayed by main. */
 	intent: 'tabWindow:intent',
+	/**
+	 * Terminal handoff (D5), `src/main/terminal-handoff.ts`. A window giving up
+	 * its view of a PTY asks main to start holding that PTY's output...
+	 */
+	terminalRelease: 'tabWindow:terminalRelease',
+	/** ...main answers on the sender's own channel, in order with `process:data`... */
+	terminalReleaseBegun: 'tabWindow:terminalReleaseBegun',
+	/** ...and the window sends the scrollback it read off its xterm. */
+	terminalCommit: 'tabWindow:terminalCommit',
+	/** A window that mounts a view of a PTY asks for the scrollback to replay... */
+	terminalClaim: 'tabWindow:terminalClaim',
+	/** ...and main answers with it (null: nothing to replay), in order with `process:data`. */
+	terminalReplay: 'tabWindow:terminalReplay',
 } as const;
 
 export type TabWindowChannel = (typeof TAB_WINDOW_CHANNELS)[keyof typeof TAB_WINDOW_CHANNELS];

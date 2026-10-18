@@ -9,9 +9,10 @@
  * The AI transcript's controls come in `chatActions`, the same bundle a tiled
  * pane gets, built by `useTabWindowChatActions`: each one that writes the agent
  * is an intent to the owner (D2). The file pane's bundle is still null (file
- * tabs land in phase 6). Terminal and browser tabs move differently (D5: the
- * tab window attaches its own xterm to the PTY, and opens a new webview) and
- * land in phase 6; until then they show a notice instead of an empty pane.
+ * tabs land in phase 6). Terminal tabs render nothing here: `TabWindowTerminals`
+ * keeps every terminal of the strip mounted above this content (D5). Browser
+ * tabs open a new webview (D5) and land in phase 6; until then they show a
+ * notice instead of an empty pane.
  */
 
 import type { Session, Theme, UnifiedTab } from '../../types';
@@ -61,8 +62,11 @@ export function TabWindowContent({
 					actions={null}
 				/>
 			);
+		case 'terminal':
+			// Drawn by TabWindowTerminals, which keeps the xterm alive across tab switches.
+			return null;
 		default:
-			// Terminal and browser tabs, until phase 6 mounts their own views here (D5).
+			// Browser tabs, until phase 6 mounts their own view here (D5).
 			return (
 				<PaneMissingTab
 					theme={theme}

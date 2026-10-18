@@ -17,6 +17,7 @@ import type { BrowserWindow } from 'electron';
 import type Store from 'electron-store';
 import type { WindowManager } from './app-lifecycle/window-manager';
 import { summonAppWindow } from './global-hotkey-manager';
+import { expectTerminalHandoff } from './terminal-handoff';
 import type { SessionsData } from './stores/types';
 import { isWebContentsAvailable } from './utils/safe-send';
 import { toTabWindowInfo, type WindowRegistry } from './window-registry';
@@ -94,7 +95,12 @@ export function popOutTab(
 
 	const existing = registry.getTabWindowForAgent(agentId);
 	if (existing) {
+		const alreadyThere = existing.tabRefs?.some(
+			(ref) => ref.type === tabRef.type && ref.id === tabRef.id
+		);
 		registry.addTabToTabWindow(existing.id, agentId, tabRef, { activate: !background });
+		// A terminal's view moves from the owner to this window (D5).
+		if (!alreadyThere) expectTerminalHandoff(agentId, tabRef);
 		if (!background) summonAppWindow(existing.browserWindow);
 		return { poppedOut: true, windowId: existing.id, created: false };
 	}
@@ -106,6 +112,7 @@ export function popOutTab(
 		// untracked. Say so rather than invent an id.
 		return { poppedOut: false, error: 'The tab window is not tracked by the registry' };
 	}
+	expectTerminalHandoff(agentId, tabRef);
 	return { poppedOut: true, windowId: created.id, created: true };
 }
 
@@ -130,6 +137,8 @@ export function dockTab(
 	if (!registry.removeTabFromTabWindow(entry.id, tabRef)) {
 		return { docked: false, error: "The tab is not in the agent's tab window" };
 	}
+	// A terminal's view moves from this window back to the owner (D5).
+	expectTerminalHandoff(agentId, tabRef);
 	return { docked: true, windowId: entry.id };
 }
 

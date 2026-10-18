@@ -106,6 +106,62 @@ export function installTabWindowsApi(
 	};
 }
 
+/** A fake of the terminal handoff half of `window.maestro.tabWindows`. */
+export interface TerminalHandoffApiDouble {
+	beginTerminalRelease: ReturnType<typeof vi.fn>;
+	commitTerminalRelease: ReturnType<typeof vi.fn>;
+	claimTerminalReplay: ReturnType<typeof vi.fn>;
+	/** Main's answer to a release, on the window's own channel. */
+	emitReleaseBegun: (processId: string) => void;
+	/** Main's answer to a claim: the replay, or null for nothing to replay. */
+	emitReplay: (processId: string, text: string | null) => void;
+	restore: () => void;
+}
+
+/**
+ * Add the terminal handoff methods (D5, `services/terminalHandoff.ts`) to
+ * `window.maestro.tabWindows`, creating it when the test installed none.
+ * Main's answers are played with `emitReleaseBegun` / `emitReplay`.
+ */
+export function installTerminalHandoffApi(): TerminalHandoffApiDouble {
+	const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
+	const previous = maestro.tabWindows as Record<string, unknown> | undefined;
+	const begunListeners = new Set<(processId: string) => void>();
+	const replayListeners = new Set<(processId: string, text: string | null) => void>();
+	const beginTerminalRelease = vi.fn();
+	const commitTerminalRelease = vi.fn();
+	const claimTerminalReplay = vi.fn();
+	maestro.tabWindows = {
+		...(previous ?? {}),
+		beginTerminalRelease,
+		commitTerminalRelease,
+		claimTerminalReplay,
+		onTerminalReleaseBegun: vi.fn((callback: (processId: string) => void) => {
+			begunListeners.add(callback);
+			return () => begunListeners.delete(callback);
+		}),
+		onTerminalReplay: vi.fn((callback: (processId: string, text: string | null) => void) => {
+			replayListeners.add(callback);
+			return () => replayListeners.delete(callback);
+		}),
+	};
+	return {
+		beginTerminalRelease,
+		commitTerminalRelease,
+		claimTerminalReplay,
+		emitReleaseBegun: (processId) => {
+			for (const listener of [...begunListeners]) listener(processId);
+		},
+		emitReplay: (processId, text) => {
+			for (const listener of [...replayListeners]) listener(processId, text);
+		},
+		restore: () => {
+			if (previous === undefined) delete maestro.tabWindows;
+			else maestro.tabWindows = previous;
+		},
+	};
+}
+
 /**
  * The owner window's hook-bound intent handlers (`TabWindowOwnerHandlers`), as
  * mocks: each answers the way its real function does when it succeeds.

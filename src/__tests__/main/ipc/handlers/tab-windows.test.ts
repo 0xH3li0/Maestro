@@ -15,7 +15,7 @@
  * createTabWindow registers the window, as the real one does.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, BrowserWindow } from 'electron';
 
 vi.mock('electron', () => ({
@@ -68,6 +68,7 @@ import {
 	isStoredAiTabHidden,
 } from '../../../../main/tab-window-service';
 import { WindowRegistry } from '../../../../main/window-registry';
+import { terminalHandoff } from '../../../../main/terminal-handoff';
 import type {
 	TabWindowIntent,
 	TabWindowSessionPatch,
@@ -173,6 +174,55 @@ describe('Tab Windows IPC Handlers', () => {
 		}
 		expect(listeners.has('tabWindow:sessionPatch')).toBe(true);
 		expect(listeners.has('tabWindow:intent')).toBe(true);
+		// The terminal handoff (D5).
+		for (const channel of [
+			'tabWindow:terminalRelease',
+			'tabWindow:terminalCommit',
+			'tabWindow:terminalClaim',
+		]) {
+			expect(listeners.has(channel)).toBe(true);
+		}
+	});
+
+	describe('terminal handoff (D5)', () => {
+		const TERMINAL_TAB: TabWindowTabRef = { type: 'terminal', id: 'term-1' };
+		const PTY = 'agent-1-terminal-term-1';
+
+		beforeEach(() => terminalHandoff.clear());
+		afterEach(() => terminalHandoff.clear());
+
+		it('announces the move of a terminal view on pop-out, into a new or an existing window', async () => {
+			await invoke('tabWindows:popOut', 'agent-1', TERMINAL_TAB);
+			expect(terminalHandoff.has(PTY)).toBe(true);
+
+			terminalHandoff.clear();
+			await invoke('tabWindows:popOut', 'agent-1', { type: 'terminal', id: 'term-2' });
+			expect(terminalHandoff.has('agent-1-terminal-term-2')).toBe(true);
+		});
+
+		it('announces nothing for another tab type, or a terminal already in the window', async () => {
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			expect(terminalHandoff.has('agent-1-terminal-tab-1')).toBe(false);
+
+			await invoke('tabWindows:popOut', 'agent-1', TERMINAL_TAB);
+			terminalHandoff.clear();
+			await invoke('tabWindows:popOut', 'agent-1', TERMINAL_TAB);
+			expect(terminalHandoff.has(PTY)).toBe(false);
+		});
+
+		it('announces the move back on dock, so the owner view waits for the replay', async () => {
+			await invoke('tabWindows:popOut', 'agent-1', TERMINAL_TAB);
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			terminalHandoff.clear();
+
+			await invoke('tabWindows:dock', 'agent-1', TERMINAL_TAB);
+
+			const reply = vi.fn();
+			terminalHandoff.claim(PTY, reply);
+			expect(reply).not.toHaveBeenCalled();
+			terminalHandoff.commit(PTY, 'tab window scrollback');
+			expect(reply).toHaveBeenCalledWith('tab window scrollback');
+		});
 	});
 
 	describe('tabWindows:popOut', () => {

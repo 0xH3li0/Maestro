@@ -27,6 +27,7 @@ import {
 	reorderTabWindow,
 } from '../../tab-window-service';
 import { reroutePermissionRequests } from '../../permission-relay';
+import { registerTerminalHandoffHandlers } from '../../terminal-handoff';
 import { requireDependency, withIpcErrorLogging } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
 import { toTabWindowInfo, type WindowRegistry } from '../../window-registry';
@@ -180,4 +181,7 @@ export function registerTabWindowsHandlers(deps: TabWindowsHandlerDependencies):
 		const result = relayTabWindowIntent(registry, senderWindow(event), intent);
 		if (!result.relayed) logger.warn(`Dropped intent: ${result.reason}`, LOG_CONTEXT);
 	});
+
+	// A terminal tab's view moving between windows: scrollback out, replay in (D5).
+	registerTerminalHandoffHandlers();
 }

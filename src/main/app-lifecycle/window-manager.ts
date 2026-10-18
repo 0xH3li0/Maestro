@@ -41,6 +41,7 @@ import { resolveLinuxWindowIconPath } from './app-icon';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 import { TAB_WINDOW_QUERY_PARAM, type TabWindowTabRef } from '../../shared/tabWindowTypes';
+import { expectTerminalHandoff } from '../terminal-handoff';
 
 /** Which renderer a window boots: the primary app, a secondary app, or a tab window. */
 type WindowEntryMode = 'main' | 'secondary' | 'tab';
@@ -592,7 +593,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			const dockAllTabs = () => {
 				const entry = windowRegistry.get(windowId);
 				for (const ref of [...(entry?.tabRefs ?? [])]) {
-					windowRegistry.removeTabFromTabWindow(windowId, ref);
+					// A terminal's scrollback comes from this window's unload (D5).
+					if (windowRegistry.removeTabFromTabWindow(windowId, ref)) {
+						expectTerminalHandoff(agentId, ref);
+					}
 				}
 			};
 

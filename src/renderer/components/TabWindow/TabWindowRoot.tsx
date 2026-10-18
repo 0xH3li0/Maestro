@@ -72,6 +72,7 @@ import { PermissionPrompt } from '../PermissionPrompt/PermissionPrompt';
 import { TabBar } from '../TabBar';
 import { TabWindowHeader } from './TabWindowHeader';
 import { TabWindowContent } from './TabWindowContent';
+import { TabWindowTerminals } from './TabWindowTerminals';
 import { TabWindowComposer } from './TabWindowComposer';
 import { TabWindowModals } from './TabWindowModals';
 import { useTabWindowChatActions } from './useTabWindowChatActions';
@@ -385,12 +386,18 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 				colorBlindMode={colorBlindMode}
 				sshRemote={isSessionRemote(session)}
 			/>
-			<div className="flex-1 min-h-0 flex flex-col">
+			<div className="flex-1 min-h-0 flex flex-col relative">
 				<TabWindowContent
 					theme={theme}
 					session={viewSession}
 					activeTab={activeTab}
 					chatActions={chatActions}
+				/>
+				<TabWindowTerminals
+					theme={theme}
+					session={viewSession}
+					tabRefs={tabRefs}
+					shownTabId={activeTab?.type === 'terminal' ? activeTab.id : null}
 				/>
 			</div>
 			{/* Where the composer sits in an app window, and like it, under an AI tab only. */}

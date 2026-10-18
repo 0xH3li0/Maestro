@@ -3025,6 +3025,20 @@ describe('app-lifecycle/window-manager', () => {
 			expect(registry.getTabWindowForAgent('agent-1')).toBeUndefined();
 		});
 
+		it('announces the move of a docked terminal view, so the owner waits for its replay (D5)', async () => {
+			const { registry, windowManager } = await setup();
+			const { terminalHandoff } = await import('../../../main/terminal-handoff');
+			const TERMINAL_TAB = { type: 'terminal' as const, id: 'term-1' };
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, TERMINAL_TAB] });
+			expect(registry.getTabWindowForAgent('agent-1')).toBeDefined();
+
+			windowCloseHandler!();
+
+			expect(terminalHandoff.has('agent-1-terminal-term-1')).toBe(true);
+			expect(terminalHandoff.has('agent-1-terminal-tab-a')).toBe(false);
+			terminalHandoff.clear();
+		});
+
 		it('docks on closed when close never fired (destroy)', async () => {
 			const { registry, windowManager, changes } = await setup();
 			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
