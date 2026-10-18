@@ -25,8 +25,12 @@ import { isAbsolutePath } from '../../shared/formatters';
 import {
 	executeDql,
 	executeInlineDql,
+	extractDataviewBlocks,
 	type DataviewChangeEvent,
 	type DataviewErrorResult,
+	type DataviewFileBlock,
+	type DataviewFileQueryRequest,
+	type DataviewFileQueryResult,
 	type DataviewIndexStatus,
 	type DataviewInlineQueryRequest,
 	type DataviewInlineResult,
@@ -167,6 +171,36 @@ export class DataviewService {
 		return this.runForNote(request, async (index, thisPath) =>
 			executeInlineDql(expression, thisPath, index)
 		);
+	}
+
+	/**
+	 * Run the `dataview` blocks of the note at `filePath` (`maestro-cli dataview query`): the one at
+	 * position `block` among them, or every one. The note is read through the vault's own file system, so
+	 * an SSH note is read on its remote. A `dataviewjs` fence is listed without a result. A `block` past
+	 * the last fence answers with no blocks and the real `blockCount`.
+	 */
+	async queryFile(
+		request: DataviewFileQueryRequest
+	): Promise<DataviewQueryResponse<DataviewFileQueryResult>> {
+		const wanted = request?.block;
+		if (wanted !== undefined && (!Number.isInteger(wanted) || wanted < 1)) {
+			throw new Error('Dataview: block must be a whole number from 1');
+		}
+		return this.runForNote(request, async (index, thisPath): Promise<DataviewFileQueryResult> => {
+			const fences = extractDataviewBlocks(await index.fs.readText(thisPath));
+			const blocks: DataviewFileBlock[] = [];
+			let position = 0;
+			for (const fence of fences) {
+				const block = fence.language === 'dataview' ? ++position : null;
+				if (wanted !== undefined && block !== wanted) continue;
+				blocks.push({
+					...fence,
+					block,
+					...(block === null ? {} : { result: await executeDql(fence.source, thisPath, index) }),
+				});
+			}
+			return { kind: 'blocks', blockCount: position, blocks };
+		});
 	}
 
 	/**

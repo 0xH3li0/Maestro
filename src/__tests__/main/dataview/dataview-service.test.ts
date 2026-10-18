@@ -501,4 +501,93 @@ describe('DataviewService requests', () => {
 			'Dataview: root must be an absolute path'
 		);
 	});
+
+	describe('queryFile', () => {
+		const note = [
+			'# Blocks',
+			'```dataview',
+			'LIST FROM "People" SORT file.name ASC',
+			'```',
+			'```dataviewjs',
+			'dv.paragraph("hi")',
+			'```',
+			'```dataview',
+			'TABLE Role FROM "People" WHERE Role = "Designer"',
+			'```',
+		].join('\n');
+		const notePath = `${remoteRoot}/Notes/Blocks.md`;
+		let fileService: DataviewService;
+		const reads: string[] = [];
+
+		beforeEach(() => {
+			reads.length = 0;
+			fileService = new DataviewService({
+				resolveRoot,
+				resolveAgent,
+				watch: false,
+				cacheDir: () => null,
+				createVaultFs: (root, sshRemoteId) => {
+					const vaultFs = memoryFs(root, { ...files, 'Notes/Blocks.md': note }, sshRemoteId);
+					const readText = vaultFs.readText.bind(vaultFs);
+					vaultFs.readText = (relPath) => {
+						reads.push(relPath);
+						return readText(relPath);
+					};
+					return vaultFs;
+				},
+			});
+		});
+
+		afterEach(async () => {
+			await fileService.disposeAll();
+		});
+
+		it("runs every dataview block of the note, read through the vault's own fs", async () => {
+			const response = await fileService.queryFile({ filePath: notePath, agentId: 'remote' });
+
+			expect(response).toMatchObject({ root: remoteRoot, sshRemoteId: 'remote-1' });
+			expect(reads).toContain('Notes/Blocks.md');
+			expect(response.result.kind).toBe('blocks');
+			if (response.result.kind !== 'blocks') return;
+			expect(response.result.blockCount).toBe(2);
+			expect(
+				response.result.blocks.map(({ language, block, line }) => ({ language, block, line }))
+			).toEqual([
+				{ language: 'dataview', block: 1, line: 2 },
+				{ language: 'dataviewjs', block: null, line: 5 },
+				{ language: 'dataview', block: 2, line: 8 },
+			]);
+			const [list, script, table] = response.result.blocks;
+			expect(list.result).toMatchObject({ kind: 'list' });
+			if (list.result?.kind === 'list') expect(list.result.items).toHaveLength(2);
+			expect(script.result).toBeUndefined();
+			expect(script.source).toBe('dv.paragraph("hi")');
+			expect(table.result).toMatchObject({ kind: 'table', headers: ['File', 'Role'] });
+			if (table.result?.kind === 'table') expect(table.result.rows).toHaveLength(1);
+		});
+
+		it('runs only the n-th dataview block, and none past the last', async () => {
+			const second = await fileService.queryFile({
+				filePath: notePath,
+				agentId: 'remote',
+				block: 2,
+			});
+			expect(second.result).toMatchObject({ kind: 'blocks', blockCount: 2 });
+			if (second.result.kind === 'blocks') {
+				expect(second.result.blocks.map((entry) => entry.line)).toEqual([8]);
+			}
+
+			const past = await fileService.queryFile({ filePath: notePath, agentId: 'remote', block: 3 });
+			expect(past.result).toEqual({ kind: 'blocks', blockCount: 2, blocks: [] });
+		});
+
+		it('refuses a block number that is not a whole number from 1', async () => {
+			await expect(
+				fileService.queryFile({ filePath: notePath, agentId: 'remote', block: 0 })
+			).rejects.toThrow('Dataview: block must be a whole number from 1');
+			await expect(
+				fileService.queryFile({ filePath: notePath, agentId: 'remote', block: 1.5 })
+			).rejects.toThrow('Dataview: block must be a whole number from 1');
+		});
+	});
 });

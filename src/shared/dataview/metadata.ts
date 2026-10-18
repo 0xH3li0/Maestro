@@ -26,7 +26,8 @@ import type {
 } from './vendor/obsidian-shim';
 import { LIST_ITEM_REGEX } from './vendor/data-import/markdown-file';
 
-type Token = ReturnType<MarkdownIt['parse']>[number];
+export type MarkdownToken = ReturnType<MarkdownIt['parse']>[number];
+type Token = MarkdownToken;
 
 /** A problem found while reading a page. The page still indexes; the warning says what was dropped. */
 export interface MetadataWarning {
@@ -76,19 +77,33 @@ const SECTION_TYPES: Record<string, string> = {
 	html_block: 'html',
 };
 
-interface FrontmatterBlock {
+export interface FrontmatterBlock {
 	/** 0-based line of the closing `---`. */
 	endLine: number;
 	text: string;
 }
 
 /** The YAML block between a first-line `---` and the next `---` line, as Obsidian reads it. */
-function findFrontmatter(lines: string[]): FrontmatterBlock | null {
+export function findFrontmatter(lines: string[]): FrontmatterBlock | null {
 	if (lines.length < 2 || lines[0].trimEnd() !== '---') return null;
 	for (let i = 1; i < lines.length; i++) {
 		if (lines[i].trimEnd() === '---') return { endLine: i, text: lines.slice(1, i).join('\n') };
 	}
 	return null;
+}
+
+/**
+ * markdown-it's tokens for a file's lines. The frontmatter, when there is one, is blanked first so its
+ * YAML never parses as markdown and the tokens' line maps stay file-relative (0-based).
+ */
+export function tokenizeMarkdownLines(
+	lines: string[],
+	frontmatter: FrontmatterBlock | null = findFrontmatter(lines)
+): MarkdownToken[] {
+	const body = frontmatter
+		? lines.map((line, index) => (index <= frontmatter.endLine ? '' : line))
+		: lines;
+	return md.parse(body.join('\n'), {});
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -159,7 +174,6 @@ export function extractMetadata(content: string): ExtractedMetadata {
 
 	const sections: SectionCache[] = [];
 	const frontmatterBlock = findFrontmatter(lines);
-	let bodyLines = lines;
 	if (frontmatterBlock) {
 		const { endLine, text } = frontmatterBlock;
 		metadata.frontmatterPosition = span(0, endLine);
@@ -188,11 +202,9 @@ export function extractMetadata(content: string): ExtractedMetadata {
 				message: `Invalid YAML frontmatter: ${yamlError.reason ?? yamlError.message ?? String(error)}`,
 			});
 		}
-		// Blank the frontmatter so markdown-it's line maps stay file-relative.
-		bodyLines = lines.map((line, index) => (index <= endLine ? '' : line));
 	}
 
-	const tokens = md.parse(bodyLines.join('\n'), {});
+	const tokens = tokenizeMarkdownLines(lines, frontmatterBlock);
 
 	const links: LinkCache[] = [];
 	const embeds: EmbedCache[] = [];

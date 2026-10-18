@@ -113,7 +113,8 @@ export function mapTaskGroups<A, B>(
 	) as DataviewTaskGroups<B>;
 }
 
-function isTaskGroup<V>(entry: unknown): entry is { key: V; rows: DataviewTaskGroups<V> } {
+/** Whether one entry of a task grouping is a `GROUP BY` level (`{ key, rows }`) rather than a task. */
+export function isTaskGroup<V>(entry: unknown): entry is { key: V; rows: DataviewTaskGroups<V> } {
 	return (
 		entry !== null &&
 		typeof entry === 'object' &&

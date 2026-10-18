@@ -179,3 +179,42 @@ export interface DataviewChangeEvent {
 	/** Vault-relative POSIX paths of every page set, removed, relinked, or (un)starred. */
 	changedPaths: string[];
 }
+
+/**
+ * Run the `dataview` blocks of a note (`maestro-cli dataview query`). Main reads the note through the
+ * vault's own file system, so a note on an SSH remote works the same as a local one.
+ */
+export interface DataviewFileQueryRequest {
+	filePath: string;
+	agentId: string;
+	/** 1-based position among the note's `dataview` fences (`dataviewjs` fences are not counted). Every block when omitted. */
+	block?: number;
+}
+
+/** One fence of a note and what it rendered to. */
+export interface DataviewFileBlock<V = DataviewWireValue> {
+	language: 'dataview' | 'dataviewjs';
+	/** 1-based position among the note's `dataview` fences; null for a `dataviewjs` fence. */
+	block: number | null;
+	/** 1-based line of the opening fence. */
+	line: number;
+	source: string;
+	/** The block's result. Absent for a `dataviewjs` fence: DataviewJS renders in the desktop app only. */
+	result?: DataviewResult<V>;
+}
+
+/** The blocks of one note, or an error result when the note sits outside its vault root. */
+export type DataviewFileQueryResult<V = DataviewWireValue> =
+	| {
+			kind: 'blocks';
+			/** How many `dataview` fences the note holds, whichever were run. */
+			blockCount: number;
+			blocks: DataviewFileBlock<V>[];
+	  }
+	| DataviewErrorResult;
+
+/**
+ * The actions of the `dataview_command` WS message (`maestro-cli dataview`), one per DataviewService
+ * request method. The request's fields travel as the message's own fields.
+ */
+export type DataviewCommandAction = 'query' | 'queryInline' | 'queryFile' | 'status' | 'rebuild';

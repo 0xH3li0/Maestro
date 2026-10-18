@@ -107,10 +107,13 @@ export {
 } from './vault';
 
 export { executeDql, executeInlineDql, parseErrorLine } from './execute';
+export { extractDataviewBlocks } from './blocks';
+export type { DataviewBlock, DataviewBlockLanguage } from './blocks';
 export {
 	toWireValue,
 	fromWireValue,
 	mapTaskGroups,
+	isTaskGroup,
 	reviveDataviewResult,
 	reviveDataviewInlineResult,
 } from './wire';
@@ -132,6 +135,10 @@ export type {
 	DataviewQueryRequest,
 	DataviewInlineQueryRequest,
 	DataviewQueryResponse,
+	DataviewFileQueryRequest,
+	DataviewFileBlock,
+	DataviewFileQueryResult,
+	DataviewCommandAction,
 	DataviewWatchMode,
 	DataviewIndexStatus,
 	DataviewStatusRequest,

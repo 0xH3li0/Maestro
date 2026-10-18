@@ -141,6 +141,7 @@ import { snoozeList, snoozeTabCommand } from '../../cli/commands/snooze';
 import { stats, statsQuery } from '../../cli/commands/stats';
 import { status } from '../../cli/commands/status';
 import { supportPackage } from '../../cli/commands/support-package';
+import { dataviewIndexStatus, dataviewQuery } from '../../cli/commands/dataview';
 import { tabClose, tabNew, tabRename, tabShow } from '../../cli/commands/tab';
 import { themeSet } from '../../cli/commands/theme';
 import { updateAgent } from '../../cli/commands/update-agent';
@@ -298,6 +299,8 @@ const rows: Row[] = [
 	},
 	{ name: 'feedback subscribe', run: (json) => feedbackSubscribe('12', j(json)) },
 	{ name: 'support-package', run: (json) => supportPackage({ output: dataDir, json }) },
+	{ name: 'dataview query', run: (json) => dataviewQuery(docPath, { agent: 'agent-1', json }) },
+	{ name: 'dataview index status', run: (json) => dataviewIndexStatus(undefined, j(json)) },
 	// special cases
 	{
 		name: 'goal-run --visible',
