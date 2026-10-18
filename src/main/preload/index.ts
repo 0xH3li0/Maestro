@@ -75,6 +75,7 @@ import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
+import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -299,6 +300,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
 	quickChat: createQuickChatApi(),
+	// Codex `visualize` content references rendered inline
+	codexVisualization: createCodexVisualizationApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -415,6 +418,8 @@ export {
 	createCotExportApi,
 	// Quick Chat
 	createQuickChatApi,
+	// Codex visualizations
+	createCodexVisualizationApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -707,3 +712,7 @@ export type {
 	// From cotExport
 	CotExportApi,
 } from './cotExport';
+export type {
+	// From codexVisualization
+	CodexVisualizationApi,
+} from './codexVisualization';

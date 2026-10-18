@@ -50,6 +50,7 @@ import { requireProcessManager, requireDependency } from '../../../utils/ipcHand
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
 import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder';
+import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
@@ -965,6 +966,22 @@ async function handleProcessSpawnImpl(
 	const sendPromptViaStdin =
 		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';
 	const sendPromptViaStdinRaw = promptDelivery.via === 'stdin' && promptDelivery.format === 'raw';
+
+	// A background synopsis may still be writing the provider session this
+	// spawn resumes. Two writers on one session fail the turn on Codex and
+	// interleave the transcript on Claude, so wait it out (see the helper).
+	if (agentSessionId) {
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		if (gate.waitedFor.length > 0) {
+			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				agentSessionId,
+				waitedFor: gate.waitedFor,
+				killed: gate.killed,
+				elapsedMs: gate.elapsedMs,
+			});
+		}
+	}
 
 	const result = processManager.spawn({
 		...config,

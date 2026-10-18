@@ -651,6 +651,10 @@ export interface BatchRunState {
 	// Overall progress (grows as reset docs add tasks back)
 	totalTasksAcrossAllDocs: number;
 	completedTasksAcrossAllDocs: number;
+	// Checked tasks the documents already held at START_BATCH. They count toward
+	// percent complete but took no time in this run, so the ETA subtracts them
+	// before computing pace (see `estimateAutoRunEta`).
+	initialCompletedTasks?: number;
 
 	// Loop mode
 	loopEnabled: boolean;

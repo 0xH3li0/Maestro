@@ -336,6 +336,8 @@ describe('assembleTurn parity with the desktop', () => {
 		const processManager = {
 			spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
 			get: vi.fn(),
+			// The synopsis-writer gate scans running processes before every spawn.
+			getAll: vi.fn(() => []),
 		};
 		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
 		await handleProcessSpawn(config, {

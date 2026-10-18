@@ -35,6 +35,7 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
@@ -539,6 +540,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// - that function is dead code, so a registration that lives solely there
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
+
+	// Codex `visualize` content references rendered inline in the transcript.
+	registerCodexVisualizationHandlers();
 
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
