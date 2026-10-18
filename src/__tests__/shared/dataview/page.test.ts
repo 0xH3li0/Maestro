@@ -11,8 +11,9 @@ import { DateTime } from 'luxon';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createLinkResolver, Link, parsePage } from '../../../shared/dataview';
 import type { LinkResolver, PageMetadata, PageParseWarning } from '../../../shared/dataview';
+import { DATAVIEW_FIXTURE_VAULT, fixtureCreatedTime } from '../../helpers/dataviewFixtureVault';
 
-const VAULT = path.join(__dirname, '..', '..', 'fixtures', 'dataview-vault');
+const VAULT = DATAVIEW_FIXTURE_VAULT;
 const MTIME = Date.UTC(2026, 9, 1);
 
 /** Every vault file as a POSIX path, skipping dot folders (`.obsidian`, `.trash`) as the index will. */
@@ -25,13 +26,6 @@ function listVault(dir = VAULT): string[] {
 		else out.push(path.relative(VAULT, full).split(path.sep).join('/'));
 	}
 	return out.sort();
-}
-
-/** The note's `created` date read from its raw text, so a note whose YAML is broken still gets one. */
-function createdOf(content: string): number {
-	const match = /^created: (\d{4}-\d{2}-\d{2})$/m.exec(content);
-	if (!match) throw new Error('fixture note has no frontmatter created date');
-	return DateTime.fromISO(match[1]).toMillis();
 }
 
 const files = listVault();
@@ -66,7 +60,7 @@ beforeAll(() => {
 				{
 					path: file,
 					content,
-					ctime: createdOf(content),
+					ctime: fixtureCreatedTime(content),
 					mtime: MTIME,
 					size: Buffer.byteLength(content),
 				},

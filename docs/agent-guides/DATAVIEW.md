@@ -406,6 +406,9 @@ No build config changed. The CLI esbuild bundle and an esbuild browser bundle bo
   - `warnings` lists, per query step, the rows the engine dropped because an expression failed on them (upstream drops them silently). An unknown field is not an error; it evaluates to null.
   - A `TASK` result carries each task's own serialized fields only. The engine copies every page field (including all of `file`) onto each task for `WHERE` and `SORT`; the wire form keeps the keys the page's own serialization of that task has, and drops the deprecated aliases `subtasks`, `header`, and `real` (`subtasks` is `children` again, so keeping it doubles the payload at every nesting level).
   - The codec extends `Transferable` for values it has no case for (DEV-8).
+- Phase 05 task 2 added `src/__tests__/shared/dataview/engine.test.ts`: both motivating blocks and every query type over a `VaultIndex` on a temp copy of the fixture vault, each result checked through `JSON.stringify` and the revive helpers. `src/__tests__/helpers/dataviewFixtureVault.ts` holds the vault path, `fixtureCreatedTime(content)`, and `withFixtureCreatedTimes(vaultFs)`, which stubs every page's `ctime` from its frontmatter `created` (birth time cannot be set on a copy); `page.test.ts` uses it too. Behavior it pins:
+  - The Connections block returns Dana and Rami (the vault README's table), not Rami alone: Dana's list-valued `Connection` holds Pedram.
+  - `TASK` without `GROUP BY` is a flat list; every task carries `path`, `line`, `status`, and `completed`. Grouping by file in the preview is the renderer's job (upstream's task view does it), and `GROUP BY file.link` groups in the engine. The test writes a second task note (`Inbox/Todo.md`) into the temp copy only, so the fixture vault and its README stay unchanged.
 
 ---
 
