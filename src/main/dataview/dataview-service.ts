@@ -12,19 +12,38 @@
  * - `onChange` relays every index's changes with the root they belong to (DV-7).
  *
  * IPC handlers and the WS bridge (the CLI) both call this one instance (`getDataviewService()`), so every
- * surface reads the same index. The quit handler calls `shutdownDataviewService()`.
+ * surface reads the same index. The request methods (`query`, `queryInline`, `indexStatus`, `rebuildIndex`)
+ * are the handler bodies: they take the wire requests, resolve the agent in main, and answer in wire form.
+ * The quit handler calls `shutdownDataviewService()`.
  */
 
 import * as path from 'path';
 import { app } from 'electron';
 import { getSshRemoteById } from '../stores/getters';
 import { sshUnresolvedRemoteMessage } from '../../shared/maestro-lib/launch/ssh-spawn-wrapper';
+import { isAbsolutePath } from '../../shared/formatters';
+import {
+	executeDql,
+	executeInlineDql,
+	type DataviewChangeEvent,
+	type DataviewErrorResult,
+	type DataviewIndexStatus,
+	type DataviewInlineQueryRequest,
+	type DataviewInlineResult,
+	type DataviewQueryRequest,
+	type DataviewQueryResponse,
+	type DataviewRebuildRequest,
+	type DataviewResult,
+	type DataviewStatusRequest,
+} from '../../shared/dataview';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { DATAVIEW_CACHE_DIR_NAME, dataviewCacheFilePath, deleteVaultCache } from './vault-cache';
 import { createLocalVaultFs, createRemoteVaultFs, type VaultFs } from './vault-fs';
-import { VaultIndex, type VaultWatchMode } from './vault-index';
+import { VaultIndex } from './vault-index';
 import { resolveVaultRoot } from './vault-root';
+import { toVaultRelativePath } from './vault-watcher';
+import { resolveDataviewAgentContext } from './agent-context';
 
 const LOG_CONTEXT = 'Dataview';
 
@@ -40,27 +59,8 @@ export interface DataviewAgentContext {
 	sshRemoteId?: string | null;
 }
 
-/** What `status()` reports about one open root. */
-export interface DataviewIndexStatus {
-	root: string;
-	sshRemoteId: string | null;
-	pageCount: number;
-	revision: number;
-	/** Duration of the last full scan (a reconcile), or null before the first one finished. */
-	lastScanDurationMs: number | null;
-	lastScanAt: number | null;
-	/** Whether the index was served from the disk cache when it opened. */
-	cacheHit: boolean;
-	watchMode: VaultWatchMode;
-}
-
-/** One index change, tagged with the root it belongs to. */
-export interface DataviewChangeEvent {
-	root: string;
-	sshRemoteId: string | null;
-	revision: number;
-	changedPaths: string[];
-}
+// The wire shapes live in `src/shared/dataview/types.ts`, so the preload and the CLI can name them.
+export type { DataviewChangeEvent, DataviewIndexStatus };
 
 export type DataviewChangeListener = (event: DataviewChangeEvent) => void;
 
@@ -73,6 +73,8 @@ export interface DataviewServiceOptions {
 	createVaultFs?: (root: string, sshRemoteId: string | null) => VaultFs;
 	/** Whether indexes watch (local) or poll (remote) once open. Defaults to true. */
 	watch?: boolean;
+	/** Defaults to `resolveDataviewAgentContext` (the stored agent record). */
+	resolveAgent?: (agentId: string) => DataviewAgentContext;
 }
 
 interface IndexEntry {
@@ -120,12 +122,14 @@ export class DataviewService {
 	private readonly resolveRoot: typeof resolveVaultRoot;
 	private readonly createVaultFs: (root: string, sshRemoteId: string | null) => VaultFs;
 	private readonly watch: boolean;
+	private readonly resolveAgent: (agentId: string) => DataviewAgentContext;
 
 	constructor(options: DataviewServiceOptions = {}) {
 		this.cacheDir = options.cacheDir ?? defaultCacheDir;
 		this.resolveRoot = options.resolveRoot ?? resolveVaultRoot;
 		this.createVaultFs = options.createVaultFs ?? defaultVaultFs;
 		this.watch = options.watch ?? true;
+		this.resolveAgent = options.resolveAgent ?? resolveDataviewAgentContext;
 	}
 
 	/** How many roots are open right now. */
@@ -143,6 +147,43 @@ export class DataviewService {
 		const sshRemoteId = agent.sshRemoteId ?? null;
 		const root = await this.resolveRoot(filePath, { agentCwd: agent.agentCwd, sshRemoteId });
 		return this.openRoot(root, sshRemoteId);
+	}
+
+	/**
+	 * Run one `dataview` block with `this` bound to the note at `filePath` (`dataview:query`). Query
+	 * problems come back as an error result (DV-9); a bad request, an unknown agent, an unresolvable SSH
+	 * remote, or a root that cannot be opened throws.
+	 */
+	async query(request: DataviewQueryRequest): Promise<DataviewQueryResponse<DataviewResult>> {
+		const source = requireString(request?.source, 'source');
+		return this.runForNote(request, (index, thisPath) => executeDql(source, thisPath, index));
+	}
+
+	/** Evaluate one inline `` `= expr` `` against the note at `filePath` (`dataview:queryInline`). */
+	async queryInline(
+		request: DataviewInlineQueryRequest
+	): Promise<DataviewQueryResponse<DataviewInlineResult>> {
+		const expression = requireString(request?.expression, 'expression');
+		return this.runForNote(request, async (index, thisPath) =>
+			executeInlineDql(expression, thisPath, index)
+		);
+	}
+
+	/**
+	 * The open roots `dataview:status` reports: the named root (none when it is not open), or every open
+	 * root. Never opens anything.
+	 */
+	indexStatus(request: DataviewStatusRequest = {}): DataviewIndexStatus[] {
+		if (request.root === undefined) return this.statuses();
+		const root = requireString(request.root, 'root');
+		const status = this.status(root, this.remoteIdFor(request.agentId));
+		return status ? [status] : [];
+	}
+
+	/** Rebuild one root from scratch (`dataview:rebuild`). */
+	async rebuildIndex(request: DataviewRebuildRequest): Promise<DataviewIndexStatus> {
+		const root = requireAbsolutePath(request?.root, 'root');
+		return this.rebuild(root, this.remoteIdFor(request.agentId));
 	}
 
 	/** The state of an open root, or null when it is not open. */
@@ -189,6 +230,47 @@ export class DataviewService {
 	async disposeAll(): Promise<void> {
 		for (const entry of [...this.entries.values()]) this.close(entry);
 		await Promise.all(this.closing.values());
+	}
+
+	/** Open the note's index and run `run` with the note's vault-relative path bound as `this`. */
+	private async runForNote<R>(
+		request: { filePath: string; agentId: string },
+		run: (index: VaultIndex, thisPath: string) => Promise<R>
+	): Promise<DataviewQueryResponse<R | DataviewErrorResult>> {
+		const filePath = requireAbsolutePath(request.filePath, 'filePath');
+		const agent = this.resolveAgent(requireString(request.agentId, 'agentId'));
+		const index = await this.getIndex(filePath, agent);
+		const sshRemoteId = index.fs.sshRemoteId;
+		// Read before running: a change that lands mid-query then carries a newer revision, and the
+		// consumer re-runs instead of keeping a result that might predate it.
+		const revision = index.revision;
+		const thisPath = toVaultRelativePath(index.root, filePath, sshRemoteId ? path.posix : path);
+		if (thisPath === null) {
+			// The agent's cwd roots the note, but the note sits outside it: `this` has no page.
+			return {
+				root: index.root,
+				sshRemoteId,
+				revision,
+				path: filePath,
+				result: {
+					kind: 'error',
+					message: `Dataview: ${filePath} is outside the vault root ${index.root}`,
+				},
+			};
+		}
+		return {
+			root: index.root,
+			sshRemoteId,
+			revision,
+			path: thisPath,
+			result: await run(index, thisPath),
+		};
+	}
+
+	/** The SSH remote of the agent that names a root; a local root without one. */
+	private remoteIdFor(agentId: string | undefined): string | null {
+		if (agentId === undefined) return null;
+		return this.resolveAgent(requireString(agentId, 'agentId')).sshRemoteId ?? null;
 	}
 
 	private async openRoot(root: string, sshRemoteId: string | null): Promise<VaultIndex> {
@@ -311,6 +393,21 @@ export class DataviewService {
 			}
 		}
 	}
+}
+
+/** A request field that must be a non-empty string. Requests cross IPC and the WS bridge unchecked. */
+function requireString(value: unknown, name: string): string {
+	if (typeof value !== 'string' || value.trim() === '') {
+		throw new Error(`Dataview: ${name} must be a non-empty string`);
+	}
+	return value;
+}
+
+/** A request path that must be absolute: main has no meaningful cwd to resolve a relative one against. */
+function requireAbsolutePath(value: unknown, name: string): string {
+	const text = requireString(value, name);
+	if (!isAbsolutePath(text)) throw new Error(`Dataview: ${name} must be an absolute path`);
+	return text;
 }
 
 function statusOf(index: VaultIndex): DataviewIndexStatus {

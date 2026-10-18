@@ -103,3 +103,79 @@ export type DataviewInlineResult<V = DataviewWireValue> =
 	| DataviewErrorResult;
 
 export type RevivedDataviewInlineResult = DataviewInlineResult<Literal>;
+
+/** Run one `dataview` block (`dataview:query`). Main resolves the vault root and SSH from the agent. */
+export interface DataviewQueryRequest {
+	/** Absolute path of the note that holds the block. It binds `this`. */
+	filePath: string;
+	/** The block's DQL source. */
+	source: string;
+	/** The agent the note belongs to: its cwd is the fallback root (DV-4), its SSH remote the host (DV-6). */
+	agentId: string;
+}
+
+/** Evaluate one inline `` `= expr` `` (`dataview:queryInline`). */
+export interface DataviewInlineQueryRequest {
+	filePath: string;
+	/** The expression, with or without its leading `=`. */
+	expression: string;
+	agentId: string;
+}
+
+/**
+ * A query answer with the index state it was computed from. A consumer re-runs it when a
+ * `dataview:changed` event names the same `root` and `sshRemoteId` with a newer `revision` (DV-7).
+ */
+export interface DataviewQueryResponse<R = DataviewResult> {
+	/** The vault root the query ran against, as main spells it. */
+	root: string;
+	sshRemoteId: string | null;
+	/** The index revision the query read. Revisions only go up per root. */
+	revision: number;
+	/** The note's vault-relative POSIX path, the one `this` was bound to. */
+	path: string;
+	result: R;
+}
+
+/** How changes reach an open index: a local watcher, the remote poll, or nothing yet. */
+export type DataviewWatchMode = 'chokidar' | 'poll' | 'none';
+
+/** What `dataview:status` reports about one open root. */
+export interface DataviewIndexStatus {
+	root: string;
+	sshRemoteId: string | null;
+	pageCount: number;
+	revision: number;
+	/** Duration of the last full scan (a reconcile), or null before the first one finished. */
+	lastScanDurationMs: number | null;
+	lastScanAt: number | null;
+	/** Whether the index was served from the disk cache when it opened. */
+	cacheHit: boolean;
+	watchMode: DataviewWatchMode;
+}
+
+/**
+ * Which roots `dataview:status` reports: one root, or every open root. `agentId` names the SSH remote
+ * the root lives on (a local root when omitted).
+ */
+export interface DataviewStatusRequest {
+	root?: string;
+	agentId?: string;
+}
+
+/** Drop one root's cache and index it again (`dataview:rebuild`). */
+export interface DataviewRebuildRequest {
+	/** Absolute path of the vault root. */
+	root: string;
+	/** The agent whose SSH remote holds the root; a local root when omitted. */
+	agentId?: string;
+}
+
+/** One index change (`dataview:changed`), tagged with the root it belongs to (DV-7). */
+export interface DataviewChangeEvent {
+	root: string;
+	sshRemoteId: string | null;
+	revision: number;
+	/** Vault-relative POSIX paths of every page set, removed, relinked, or (un)starred. */
+	changedPaths: string[];
+}

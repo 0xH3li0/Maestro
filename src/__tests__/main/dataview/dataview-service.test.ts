@@ -320,3 +320,185 @@ describe('the Dataview service singleton', () => {
 		expect(disposeAll).toHaveBeenCalledTimes(1);
 	});
 });
+
+/**
+ * The request methods the IPC handlers and the CLI's WS verbs call: they validate the wire request,
+ * resolve the agent, run the query against the note's index, and answer with the index state it read.
+ */
+describe('DataviewService requests', () => {
+	const localRoot = rootAt('requests');
+	const remoteRoot = '/remote/vault';
+	const files: MemoryVault = {
+		'People/A.md': '---\nRole: Engineer\n---\n# A\n',
+		'People/B.md': '---\nRole: Designer\n---\n# B\n',
+		'Notes/C.md': '# C\n',
+	};
+	const agents: Record<string, { agentCwd: string; sshRemoteId: string | null }> = {
+		local: { agentCwd: localRoot, sshRemoteId: null },
+		remote: { agentCwd: remoteRoot, sshRemoteId: 'remote-1' },
+	};
+	const resolveAgent = vi.fn((agentId: string) => {
+		const context = agents[agentId];
+		if (!context) throw new Error(`Dataview: no agent with id "${agentId}"`);
+		return context;
+	});
+	// Every note in these tests belongs to its agent's cwd: no `.obsidian` anywhere.
+	const resolveRoot = vi.fn(
+		async (_filePath: string, options: { agentCwd: string }) => options.agentCwd
+	);
+	let service: DataviewService;
+
+	beforeEach(() => {
+		resolveAgent.mockClear();
+		service = new DataviewService({
+			resolveRoot,
+			resolveAgent,
+			watch: false,
+			cacheDir: () => null,
+			createVaultFs: (root, sshRemoteId) => memoryFs(root, files, sshRemoteId),
+		});
+	});
+
+	afterEach(async () => {
+		await service.disposeAll();
+	});
+
+	it('runs a block with `this` bound to the note, and reports the root and revision it read', async () => {
+		const response = await service.query({
+			filePath: path.join(localRoot, 'People', 'A.md'),
+			source: 'LIST WHERE file.path = this.file.path',
+			agentId: 'local',
+		});
+
+		expect(response).toMatchObject({
+			root: localRoot,
+			sshRemoteId: null,
+			revision: 1,
+			path: 'People/A.md',
+		});
+		expect(response.result.kind).toBe('list');
+		if (response.result.kind !== 'list') return;
+		expect(response.result.items).toHaveLength(1);
+		expect(resolveAgent).toHaveBeenCalledWith('local');
+	});
+
+	it('runs a TABLE over a folder source and returns wire values', async () => {
+		const response = await service.query({
+			filePath: path.join(localRoot, 'Notes', 'C.md'),
+			source: 'TABLE Role FROM "People" SORT Role ASC',
+			agentId: 'local',
+		});
+
+		expect(response.result).toMatchObject({ kind: 'table', headers: ['File', 'Role'] });
+		if (response.result.kind !== 'table') return;
+		expect(response.result.rows.map((row) => row[1])).toEqual(['Designer', 'Engineer']);
+		// The answer is plain JSON: it crosses IPC and the WS bridge unchanged.
+		expect(JSON.parse(JSON.stringify(response))).toEqual(response);
+	});
+
+	it('evaluates an inline expression against the note', async () => {
+		const response = await service.queryInline({
+			filePath: path.join(localRoot, 'People', 'B.md'),
+			expression: '= this.Role',
+			agentId: 'local',
+		});
+
+		expect(response.path).toBe('People/B.md');
+		expect(response.result).toEqual({ kind: 'value', value: 'Designer' });
+	});
+
+	it('returns query errors as an error result (DV-9)', async () => {
+		const response = await service.query({
+			filePath: path.join(localRoot, 'People', 'A.md'),
+			source: 'TABLE FROM',
+			agentId: 'local',
+		});
+
+		expect(response.result.kind).toBe('error');
+	});
+
+	it("resolves a remote agent's note against its remote root with POSIX paths", async () => {
+		const response = await service.query({
+			filePath: `${remoteRoot}/People/A.md`,
+			source: 'LIST WHERE file.path = this.file.path',
+			agentId: 'remote',
+		});
+
+		expect(response).toMatchObject({
+			root: remoteRoot,
+			sshRemoteId: 'remote-1',
+			path: 'People/A.md',
+		});
+		expect(service.status(remoteRoot, 'remote-1')).not.toBeNull();
+		expect(service.status(remoteRoot)).toBeNull();
+	});
+
+	it('answers with an error result for a note outside the root it was given', async () => {
+		const outside = path.join(rootAt('elsewhere'), 'X.md');
+		const response = await service.query({
+			filePath: outside,
+			source: 'LIST',
+			agentId: 'local',
+		});
+
+		expect(response.path).toBe(outside);
+		expect(response.result).toEqual({
+			kind: 'error',
+			message: `Dataview: ${outside} is outside the vault root ${localRoot}`,
+		});
+	});
+
+	it('refuses a malformed request and an unknown agent', async () => {
+		const filePath = path.join(localRoot, 'People', 'A.md');
+		await expect(
+			service.query({ filePath: 'People/A.md', source: 'LIST', agentId: 'local' })
+		).rejects.toThrow('Dataview: filePath must be an absolute path');
+		await expect(service.query({ filePath, source: '  ', agentId: 'local' })).rejects.toThrow(
+			'Dataview: source must be a non-empty string'
+		);
+		await expect(
+			service.queryInline({
+				filePath,
+				expression: undefined as unknown as string,
+				agentId: 'local',
+			})
+		).rejects.toThrow('Dataview: expression must be a non-empty string');
+		await expect(service.query({ filePath, source: 'LIST', agentId: 'nobody' })).rejects.toThrow(
+			'Dataview: no agent with id "nobody"'
+		);
+		expect(service.openRootCount).toBe(0);
+	});
+
+	it('reports every open root, one named root, or none for a root that is not open', async () => {
+		expect(service.indexStatus()).toEqual([]);
+		await service.query({
+			filePath: path.join(localRoot, 'People', 'A.md'),
+			source: 'LIST',
+			agentId: 'local',
+		});
+		await service.query({
+			filePath: `${remoteRoot}/People/A.md`,
+			source: 'LIST',
+			agentId: 'remote',
+		});
+
+		expect(service.indexStatus().map((status) => status.root)).toEqual([localRoot, remoteRoot]);
+		expect(service.indexStatus({ root: localRoot })).toMatchObject([
+			{ root: localRoot, pageCount: 3 },
+		]);
+		expect(service.indexStatus({ root: remoteRoot, agentId: 'remote' })).toMatchObject([
+			{ root: remoteRoot, sshRemoteId: 'remote-1' },
+		]);
+		// The same path with no agent names the local root, which is not open.
+		expect(service.indexStatus({ root: remoteRoot })).toEqual([]);
+	});
+
+	it('rebuilds a root on the remote of the agent that names it, and refuses a relative root', async () => {
+		const status = await service.rebuildIndex({ root: remoteRoot, agentId: 'remote' });
+
+		expect(status).toMatchObject({ root: remoteRoot, sshRemoteId: 'remote-1', pageCount: 3 });
+		await expect(service.rebuildIndex({ root: 'vault' })).rejects.toThrow(
+			'Dataview: root must be an absolute path'
+		);
+	});
+});

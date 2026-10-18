@@ -87,6 +87,15 @@ describe('vaultWatchIgnored', () => {
 		expect(toVaultRelativePath(ROOT, inRoot('People', 'A.md'))).toBe('People/A.md');
 		expect(toVaultRelativePath(ROOT, path.join(ROOT, '..', 'B.md'))).toBeNull();
 	});
+
+	it('maps a remote root with POSIX paths whatever this machine runs', () => {
+		const remote = '/home/me/vault';
+		expect(toVaultRelativePath(remote, '/home/me/vault/People/A.md', path.posix)).toBe(
+			'People/A.md'
+		);
+		expect(toVaultRelativePath(remote, remote, path.posix)).toBe('');
+		expect(toVaultRelativePath(remote, '/home/me/other/A.md', path.posix)).toBeNull();
+	});
 });
 
 describe('createVaultWatcher', () => {

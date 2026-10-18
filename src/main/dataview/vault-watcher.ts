@@ -30,12 +30,19 @@ export interface VaultWatcher {
 	close(): Promise<void>;
 }
 
-/** `absPath` as a vault-relative POSIX path, `''` for the root, or null when it is outside the root. */
-export function toVaultRelativePath(root: string, absPath: string): string | null {
-	const rel = path.relative(root, absPath);
+/**
+ * `absPath` as a vault-relative POSIX path, `''` for the root, or null when it is outside the root. A remote
+ * root passes `path.posix`, since the remote host's paths are POSIX whatever this machine runs.
+ */
+export function toVaultRelativePath(
+	root: string,
+	absPath: string,
+	pathApi: Pick<typeof path, 'relative' | 'isAbsolute' | 'sep'> = path
+): string | null {
+	const rel = pathApi.relative(root, absPath);
 	if (rel === '') return '';
-	if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
-	return rel.split(path.sep).join('/');
+	if (rel === '..' || rel.startsWith(`..${pathApi.sep}`) || pathApi.isAbsolute(rel)) return null;
+	return rel.split(pathApi.sep).join('/');
 }
 
 /**

@@ -129,4 +129,12 @@ export type {
 	DataviewValueResult,
 	DataviewInlineResult,
 	RevivedDataviewInlineResult,
+	DataviewQueryRequest,
+	DataviewInlineQueryRequest,
+	DataviewQueryResponse,
+	DataviewWatchMode,
+	DataviewIndexStatus,
+	DataviewStatusRequest,
+	DataviewRebuildRequest,
+	DataviewChangeEvent,
 } from './types';

@@ -36,6 +36,7 @@ import {
 	starredPathsFromBookmarks,
 	type DataObject,
 	type DataviewIndexReader,
+	type DataviewWatchMode,
 	type FullIndex,
 	type LinkResolver,
 	type PageMetadata,
@@ -90,7 +91,7 @@ export const DATAVIEW_REMOTE_POLL_MS = 30 * 1000;
 export const DATAVIEW_CACHE_WRITE_DEBOUNCE_MS = 1000;
 
 /** How the index learns about changes after `open()`. */
-export type VaultWatchMode = 'chokidar' | 'poll' | 'none';
+export type VaultWatchMode = DataviewWatchMode;
 
 /** One index change: the new revision and every page path whose data may differ. */
 export interface VaultIndexChange {
