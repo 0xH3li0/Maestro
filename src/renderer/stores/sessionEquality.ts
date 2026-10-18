@@ -1,5 +1,29 @@
 import type { AITab, PeerAccess, PeerAgent, Session } from '../types';
 
+// Parked token streaming does not change chrome. Compare the identity and
+// remembered selections so updates still reach provider-aware consumers.
+function providerTabSettingsEqual(
+	a: AITab['providerSessions'],
+	b: AITab['providerSessions']
+): boolean {
+	if (a === b) return true;
+	const providers = Object.keys(a ?? {}) as Array<keyof NonNullable<AITab['providerSessions']>>;
+	if (providers.length !== Object.keys(b ?? {}).length) return false;
+	return providers.every((provider) => {
+		const x = a?.[provider];
+		const y = b?.[provider];
+		return (
+			x === y ||
+			(!!x &&
+				!!y &&
+				x.agentSessionId === y.agentSessionId &&
+				x.customModel === y.customModel &&
+				x.customEffort === y.customEffort &&
+				x.runOn === y.runOn)
+		);
+	});
+}
+
 // Fields on Session that the sidebar (SessionList, useSessionCategories) actually
 // reads to render. Streaming-heavy fields (aiLogs, shellLogs, workLog, usageStats,
 // contextUsage, currentCycleBytes, currentCycleTokens, fileTree, etc.) are
@@ -14,7 +38,11 @@ function aiTabEqual(a: AITab, b: AITab): boolean {
 		a.starred === b.starred &&
 		a.hasUnread === b.hasUnread &&
 		a.readOnlyMode === b.readOnlyMode &&
-		a.agentSessionId === b.agentSessionId
+		a.agentSessionId === b.agentSessionId &&
+		a.tabProvider === b.tabProvider &&
+		a.turnProvider === b.turnProvider &&
+		a.pendingTranslation === b.pendingTranslation &&
+		providerTabSettingsEqual(a.providerSessions, b.providerSessions)
 	);
 }
 
@@ -171,9 +199,14 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 		a.showThinking === b.showThinking &&
 		a.enterToSend === b.enterToSend &&
 		a.agentSessionId === b.agentSessionId &&
+		a.tabProvider === b.tabProvider &&
+		a.pendingTranslation === b.pendingTranslation &&
+		providerTabSettingsEqual(a.providerSessions, b.providerSessions) &&
 		a.autoSendOnActivate === b.autoSendOnActivate &&
 		a.customModel === b.customModel &&
 		a.customEffort === b.customEffort &&
+		a.runOn === b.runOn &&
+		a.turnProvider === b.turnProvider &&
 		!!a.pendingMergedContext === !!b.pendingMergedContext &&
 		a.agentError?.timestamp === b.agentError?.timestamp &&
 		a.agentError?.message === b.agentError?.message

@@ -267,3 +267,59 @@ describe('delegationRosterEquality', () => {
 		).toBe(true);
 	});
 });
+
+describe('Ensemble session equality', () => {
+	it.each([
+		{ tabProvider: 'codex' },
+		{ pendingTranslation: 'codex' },
+		{ providerSessions: { codex: { agentSessionId: 'parked' } } },
+	] as Partial<AITab>[])('invalidates native ownership consumers on %j', (patch) => {
+		const base = createMockSession({ aiTabs: [tab()] });
+		const next = { ...base, aiTabs: [tab(patch)] };
+		expect(sidebarSessionEquality([base], [next])).toBe(false);
+		expect(activeSessionChromeEquality(base, next)).toBe(false);
+	});
+	it.each([{ runOn: { type: 'provider' } }, { turnProvider: 'codex' }] as Partial<AITab>[])(
+		'invalidates composer chrome for %j',
+		(patch) => {
+			const base = createMockSession({ aiTabs: [tab()] });
+			expect(activeSessionChromeEquality(base, { ...base, aiTabs: [tab(patch)] })).toBe(false);
+		}
+	);
+});
+
+it('ignores parked token updates without hiding parked selections', () => {
+	const base = createMockSession({
+		aiTabs: [tab({ providerSessions: { codex: { agentSessionId: 'parked' } } })],
+	});
+	const next = {
+		...base,
+		aiTabs: [
+			tab({
+				providerSessions: {
+					codex: {
+						agentSessionId: 'parked',
+						usageStats: {
+							inputTokens: 20,
+							outputTokens: 10,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 1000,
+						},
+					},
+				},
+			}),
+		],
+	};
+	expect(sidebarSessionEquality([base], [next])).toBe(true);
+	expect(activeSessionChromeEquality(base, next)).toBe(true);
+	expect(
+		activeSessionChromeEquality(base, {
+			...next,
+			aiTabs: [
+				tab({ providerSessions: { codex: { agentSessionId: 'parked', customModel: 'auto' } } }),
+			],
+		})
+	).toBe(false);
+});

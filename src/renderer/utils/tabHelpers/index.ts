@@ -38,7 +38,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
-import { codifyQueuedTurnSettings, switchTabProvider } from '../providerTabSessions';
+import { codifyQueuedTurnSettings, resolveTabProvider } from '../providerTabSessions';
 import {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -1077,7 +1077,7 @@ export function syncAgentStateToTabs(session: Session): Session {
 export interface CreateTabOptions {
 	origin?: AITab['origin'];
 	agentSessionId?: string | null; // Native provider session UUID (null for new tabs)
-	/** Reopening foreign History parks its native ID; translation waits for a send. */
+	/** A native History conversation is pinned to its source provider. */
 	sourceProvider?: ToolType;
 	providerSessions?: AITab['providerSessions'];
 	logs?: LogEntry[]; // Initial conversation history
@@ -1156,36 +1156,34 @@ export function createTab(
 	const activate = activateOption && !hidden;
 
 	// Create the new tab with default values
-	const newTab: AITab = switchTabProvider(
-		{
-			id: id ?? generateId(),
-			...(origin ? { origin } : {}),
-			agentSessionId,
-			name,
-			starred,
-			logs,
-			inputValue: '',
-			stagedImages: [],
-			usageStats,
-			createdAt: Date.now(),
-			state: 'idle',
-			saveToHistory,
-			showThinking,
-			...(hidden ? { hidden: true } : {}),
-			...(options.sourceProvider && options.sourceProvider !== session.toolType && agentSessionId
-				? { pendingTranslation: options.sourceProvider }
-				: {}),
-			...(options.providerSessions && {
-				providerSessions: options.providerSessions,
-				customModel:
-					options.providerSessions[options.sourceProvider ?? session.toolType]?.customModel,
-				customEffort:
-					options.providerSessions[options.sourceProvider ?? session.toolType]?.customEffort,
-			}),
-		},
-		options.sourceProvider ?? session.toolType,
-		session.toolType
-	);
+	const provider = options.sourceProvider ?? session.toolType;
+	const parked = { ...options.providerSessions };
+	const sourceSlot = parked[provider];
+	delete parked[provider];
+	const newTab: AITab = {
+		id: id ?? generateId(),
+		...(origin ? { origin } : {}),
+		agentSessionId,
+		name,
+		starred,
+		logs,
+		inputValue: '',
+		stagedImages: [],
+		usageStats,
+		createdAt: Date.now(),
+		state: 'idle',
+		saveToHistory,
+		showThinking,
+		...(hidden ? { hidden: true } : {}),
+		...(options.sourceProvider && { tabProvider: options.sourceProvider }),
+		...(options.providerSessions && {
+			providerSessions: parked,
+			customModel: sourceSlot?.customModel,
+			customEffort: sourceSlot?.customEffort,
+			runOn: sourceSlot?.runOn,
+			usageStats: usageStats ?? sourceSlot?.usageStats,
+		}),
+	};
 
 	// Update the session with the new tab added. When `activate` is true (the
 	// default) the new tab becomes the visible one via aiTabFocusFields, which
@@ -1656,7 +1654,9 @@ export function reopenClosedTab(session: Session): ReopenTabResult | null {
 	const matchingOrphan = session.orphanedThinkingTabs?.find(
 		(t) =>
 			t.id === tabToRestore.id ||
-			(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+			(!!t.agentSessionId &&
+				t.agentSessionId === tabToRestore.agentSessionId &&
+				resolveTabProvider(t, session) === resolveTabProvider(tabToRestore, session))
 	);
 	if (matchingOrphan) {
 		const restored = restoreOrphanedTab(session, matchingOrphan.id);
@@ -1671,9 +1671,11 @@ export function reopenClosedTab(session: Session): ReopenTabResult | null {
 
 	// Check for duplicate: does a tab with the same agentSessionId already exist?
 	// Note: null agentSessionId (new/empty tabs) are never considered duplicates
-	if (tabToRestore.agentSessionId !== null) {
+	if (tabToRestore.agentSessionId) {
 		const existingTab = session.aiTabs.find(
-			(tab) => tab.agentSessionId === tabToRestore.agentSessionId
+			(tab) =>
+				tab.agentSessionId === tabToRestore.agentSessionId &&
+				resolveTabProvider(tab, session) === resolveTabProvider(tabToRestore, session)
 		);
 
 		if (existingTab) {
@@ -2045,7 +2047,9 @@ function restoreClosedAiTab(
 		(t) =>
 			(!restoredTabId || t.id === restoredTabId) &&
 			(t.id === tabToRestore.id ||
-				(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId))
+				(!!t.agentSessionId &&
+					t.agentSessionId === tabToRestore.agentSessionId &&
+					resolveTabProvider(t, session) === resolveTabProvider(tabToRestore, session)))
 	);
 	if (matchingOrphan) {
 		const restored = restoreOrphanedTab(session, matchingOrphan.id);
@@ -2060,9 +2064,12 @@ function restoreClosedAiTab(
 	}
 
 	// Check for duplicate: does a tab with the same agentSessionId already exist?
-	if (restoredTabId || tabToRestore.agentSessionId !== null) {
+	if (restoredTabId || tabToRestore.agentSessionId) {
 		const existingTab = session.aiTabs.find((tab) =>
-			restoredTabId ? tab.id === restoredTabId : tab.agentSessionId === tabToRestore.agentSessionId
+			restoredTabId
+				? tab.id === restoredTabId
+				: tab.agentSessionId === tabToRestore.agentSessionId &&
+					resolveTabProvider(tab, session) === resolveTabProvider(tabToRestore, session)
 		);
 
 		if (existingTab) {

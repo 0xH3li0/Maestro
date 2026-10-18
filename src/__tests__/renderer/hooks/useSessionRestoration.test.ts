@@ -38,6 +38,7 @@ import {
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
 import type { Session } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
@@ -166,6 +167,37 @@ afterEach(() => {
 // ============================================================================
 
 describe('restoreSession - Migration logic', () => {
+	it('restores an Ensemble slot without moving its pending native owner', async () => {
+		const tab = createMockAITab({
+			id: 'mixed',
+			state: 'busy',
+			tabProvider: 'codex',
+			agentSessionId: 'old-codex',
+			customModel: 'auto',
+			customEffort: 'high',
+			runOn: { type: 'provider' },
+			pendingTranslation: 'claude-code',
+			providerSessions: {
+				'claude-code': {
+					agentSessionId: 'source',
+					customModel: 'opus',
+					runOn: { type: 'provider' },
+				},
+			},
+		});
+		const session = createMockSession({
+			aiTabs: [tab],
+			activeTabId: tab.id,
+			unifiedTabOrder: [{ type: 'ai', id: tab.id }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored!: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+		expect(restored.aiTabs[0]).toMatchObject({ ...tab, state: 'idle', isGeneratingName: false });
+		expect(restored.toolType).toBe(session.toolType);
+	});
 	it('sets projectRoot to cwd when missing', async () => {
 		const session = createMockSession({ projectRoot: undefined, cwd: '/my/path' });
 		const { result } = renderHook(() => useSessionRestoration());

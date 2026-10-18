@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useDebouncedPersistence,
+	prepareSessionForPersistence,
 	DEFAULT_DEBOUNCE_DELAY,
 	SESSION_PERSISTENCE_BASELINE_EVENT,
 } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
@@ -2890,5 +2891,49 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
+	});
+});
+
+describe('Ensemble persistence round trip', () => {
+	it('retains pins, Auto, Run on and pending ownership in live and snoozed tabs', () => {
+		const tab = makeTab({
+			id: 'mixed',
+			state: 'busy',
+			tabProvider: 'codex',
+			customModel: 'auto',
+			customEffort: 'high',
+			runOn: { type: 'provider' },
+			pendingTranslation: 'claude-code',
+			providerSessions: {
+				'claude-code': {
+					agentSessionId: 'source',
+					customModel: 'opus',
+					runOn: { type: 'provider' },
+				},
+			},
+		});
+		const session = makeSession({
+			aiTabs: [tab],
+			snoozedTabs: [{ id: 'snooze', type: 'ai', tab, unifiedIndex: 0, snoozedAt: 0, wakeAt: 10 }],
+		});
+		const persisted = prepareSessionForPersistence(session);
+		const expected = {
+			...tab,
+			state: 'idle',
+			thinkingStartTime: undefined,
+			translatingFrom: undefined,
+			agentError: undefined,
+			wizardState: undefined,
+		};
+		expect(persisted.aiTabs[0]).toEqual(expected);
+		expect(persisted.snoozedTabs?.[0]).toMatchObject({
+			tab: {
+				tabProvider: 'codex',
+				customModel: 'auto',
+				runOn: tab.runOn,
+				pendingTranslation: 'claude-code',
+				providerSessions: tab.providerSessions,
+			},
+		});
 	});
 });
