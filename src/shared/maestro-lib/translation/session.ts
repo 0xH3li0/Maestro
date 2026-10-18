@@ -320,12 +320,31 @@ export function translatedHistorySessionId(
 /** Resolve a History identity without importing it. Pending conversations keep their native owner. */
 export function resolveHistorySession(
 	session: TranslatableSession,
-	originalSessionId: string
+	originalSessionId: string,
+	provider?: ToolType
 ): {
 	provider: ToolType;
 	agentSessionId: string;
 	providerSessions?: TranslationTab['providerSessions'];
 } {
+	if (provider) {
+		const tab = [...session.aiTabs, ...translationSessionTabs(session).reverse()].find(
+			(candidate) =>
+				(resolveTabProvider(candidate, session) === provider
+					? candidate.agentSessionId
+					: candidate.providerSessions?.[provider]?.agentSessionId) === originalSessionId
+		);
+		return {
+			provider,
+			agentSessionId: originalSessionId,
+			providerSessions: tab
+				? {
+						...tab.providerSessions,
+						...switchTabProvider(tab, resolveTabProvider(tab, session), provider).providerSessions,
+					}
+				: undefined,
+		};
+	}
 	const mapping = session.providerTranslationHistoryMappings?.find(
 		(entry) => entry.tabId === `history:${originalSessionId}`
 	);
@@ -350,6 +369,21 @@ export function resolveHistorySession(
 			},
 		};
 	}
+	// With no migration alias, a parked native ID still names its own provider.
+	const parked =
+		!mapping &&
+		Object.entries(tab?.providerSessions ?? {}).find(
+			([, slot]) => slot?.agentSessionId === originalSessionId
+		);
+	if (tab && parked)
+		return {
+			provider: parked[0] as ToolType,
+			agentSessionId: originalSessionId,
+			providerSessions: {
+				...tab.providerSessions,
+				...switchTabProvider(tab, liveProvider, parked[0] as ToolType).providerSessions,
+			},
+		};
 	if (tab?.agentSessionId)
 		return {
 			provider: liveProvider,

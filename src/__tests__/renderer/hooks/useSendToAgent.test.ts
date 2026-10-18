@@ -33,7 +33,7 @@ vi.mock('../../../renderer/utils/contextExtractor', () => ({
 		projectRoot: session.projectRoot,
 		name: `${name} / ${tab.name || 'Tab'}`,
 		logs: tab.logs,
-		agentType: session.toolType,
+		agentType: tab.pendingTranslation ?? tab.tabProvider ?? session.toolType,
 	})),
 }));
 
@@ -118,6 +118,31 @@ function createMockSession(
 }
 
 describe('useSendToAgent', () => {
+	it('grooms from the native tab owner while retaining the chosen new agent provider', async () => {
+		const sourceSession = createMockSession('source', 'claude-code');
+		sourceSession.aiTabs[0].tabProvider = 'codex';
+		const { result } = renderHook(() => useSendToAgent());
+		await act(async () => {
+			await result.current.startTransfer({
+				sourceSession,
+				sourceTabId: 'tab-1',
+				targetAgent: 'opencode',
+				options: { groomContext: true, createNewSession: true, targetSessionId: 'new-target' },
+			});
+		});
+		expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sources: [expect.objectContaining({ agentType: 'codex' })],
+				targetAgent: 'opencode',
+			}),
+			expect.any(Function)
+		);
+		const { createMergedSession } = await import('../../../renderer/utils/tabHelpers');
+		expect(createMergedSession).toHaveBeenCalledWith(
+			expect.objectContaining({ toolType: 'opencode' })
+		);
+	});
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 

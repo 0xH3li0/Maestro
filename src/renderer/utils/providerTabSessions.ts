@@ -42,6 +42,7 @@ export {
 	projectTabProvider,
 	providerOverridesFor,
 	resolveTabProvider,
+	resolveTabNativeProvider,
 	resolveTurnProvider,
 	switchAgentProvider,
 	switchTabProvider,

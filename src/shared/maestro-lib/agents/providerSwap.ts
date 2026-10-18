@@ -180,6 +180,14 @@ export function resolveTabProvider(
 	return tab?.tabProvider ?? agent.toolType;
 }
 
+/** Native transcript owner, including the latest source awaiting translation. */
+export function resolveTabNativeProvider(
+	tab: Pick<ProviderSwitchTab, 'tabProvider' | 'pendingTranslation'> | undefined,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>
+): ToolType {
+	return tab?.pendingTranslation ?? resolveTabProvider(tab, agent);
+}
+
 /**
  * Select one tab's provider without changing the agent or captured turn.
  * Callers gate availability before persisting this pure transform with updateAiTab.

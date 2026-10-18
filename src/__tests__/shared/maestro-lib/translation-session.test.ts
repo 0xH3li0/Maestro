@@ -521,3 +521,50 @@ describe('Ensemble translation commits', () => {
 		expect(result.closedTabHistory?.[0].tab).toBe(pinned);
 	});
 });
+
+describe('provider-scoped native History', () => {
+	it('resolves a parked identity independently of the live tab and agent default', () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [
+				{
+					id: 'tab',
+					tabProvider: 'codex',
+					agentSessionId: 'codex-live',
+					providerSessions: { opencode: { agentSessionId: 'opencode-parked' } },
+				},
+			],
+		};
+		expect(resolveHistorySession(session, 'opencode-parked')).toMatchObject({
+			provider: 'opencode',
+			agentSessionId: 'opencode-parked',
+			providerSessions: { codex: { agentSessionId: 'codex-live' } },
+		});
+	});
+
+	it('preserves an explicit native owner when providers have matching IDs', () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [
+				{
+					id: 'tab',
+					tabProvider: 'codex',
+					agentSessionId: 'same',
+					pendingTranslation: 'claude-code',
+					providerSessions: { 'claude-code': { agentSessionId: 'same' } },
+				},
+			],
+		};
+		expect(resolveHistorySession(session, 'same', 'codex')).toMatchObject({
+			provider: 'codex',
+			agentSessionId: 'same',
+		});
+		expect(resolveHistorySession(session, 'same', 'opencode')).toMatchObject({
+			provider: 'opencode',
+			agentSessionId: 'same',
+			providerSessions: undefined,
+		});
+	});
+});

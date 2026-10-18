@@ -55,6 +55,51 @@ function lastAddedEntry(): Record<string, unknown> {
 }
 
 describe('useAgentSessionManagement - history token source capture', () => {
+	it('keeps a closed tab turn owner when recording History', async () => {
+		const tab = createMockAITab({
+			id: 'closed',
+			tabProvider: 'claude-code',
+			turnProvider: 'codex',
+		});
+		const session = createMockSession({
+			toolType: 'claude-code',
+			aiTabs: [],
+			closedTabHistory: [{ tab, index: 0, closedAt: 1 }],
+		});
+		seedActiveSession(session);
+		const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+		await act(async () => {
+			await result.current.addHistoryEntry({ type: 'USER', summary: 'closed turn', tabId: tab.id });
+		});
+		expect(lastAddedEntry().tokenSource).toBeUndefined();
+	});
+
+	it.each(['codex', 'claude-code'] as const)(
+		'uses the captured %s turn owner after selection changes',
+		async (provider) => {
+			const tab = createMockAITab({
+				id: 'owner',
+				tabProvider: provider === 'codex' ? 'claude-code' : 'codex',
+				turnProvider: provider,
+			});
+			const session = createMockSession({
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+			await act(async () => {
+				await result.current.addHistoryEntry({
+					type: 'USER',
+					summary: 'finished turn',
+					tabId: tab.id,
+				});
+			});
+			expect(lastAddedEntry().tokenSource).toBe(provider === 'claude-code' ? 'api' : undefined);
+		}
+	);
+
 	it('stamps tokenSource/tokenSourceReason from a Claude Code session in TUI mode', async () => {
 		const activeSession = createMockSession({
 			id: 'sess-tui',

@@ -1,6 +1,16 @@
-import { resolveHistorySession } from '../../../shared/maestro-lib/translation/session';
+import {
+	resolveHistorySession,
+	translationSessionTabs,
+} from '../../../shared/maestro-lib/translation/session';
 import { useCallback, useRef } from 'react';
-import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
+import type {
+	Session,
+	LogEntry,
+	UsageStats,
+	ThinkingMode,
+	HistoryEntryType,
+	ToolType,
+} from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
 import { focusAiTabInSession, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -9,6 +19,11 @@ import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { logger } from '../../utils/logger';
 import { isSynopsisRequest } from '../../utils/transcriptMessages';
+import {
+	resolveTabProvider,
+	resolveTurnProvider,
+	switchTabProviderFor,
+} from '../../utils/providerTabSessions';
 import { loadResumableSession } from '../../services/resumableSession';
 
 // Re-exported from its shared home so existing importers keep working; the
@@ -109,6 +124,8 @@ export interface UseAgentSessionManagementReturn {
  * Optional behavior overrides for {@link UseAgentSessionManagementReturn.handleResumeSession}.
  */
 export interface ResumeSessionOptions {
+	/** Explicit native owner supplied by a provider-scoped browser or History record. */
+	provider?: ToolType;
 	/**
 	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
 	 * store, rather than the current active session. Required when jumping
@@ -202,7 +219,12 @@ export function useAgentSessionManagement(
 						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
 					};
 				}
-				if (entrySession?.toolType === 'claude-code') {
+				const entryTab = entrySession
+					? translationSessionTabs(entrySession).find(
+							(tab) => tab.id === (entry.tabId ?? entrySession.activeTabId)
+						)
+					: undefined;
+				if (entrySession && resolveTurnProvider(entryTab, entrySession) === 'claude-code') {
 					const ci = entrySession.claudeInteractive;
 					return {
 						tokenSource: ci?.mode ?? 'api',
@@ -300,7 +322,7 @@ export function useAgentSessionManagement(
 			if (!targetSession) return false;
 			let native: ReturnType<typeof resolveHistorySession>;
 			try {
-				native = resolveHistorySession(targetSession, agentSessionId);
+				native = resolveHistorySession(targetSession, agentSessionId, opts?.provider);
 				agentSessionId = native.agentSessionId;
 			} catch (error) {
 				if (!opts?.suppressUnavailableFlash)
@@ -328,7 +350,7 @@ export function useAgentSessionManagement(
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = targetSession.aiTabs?.find(
 				(tab) =>
-					(native.provider === targetSession.toolType
+					(native.provider === resolveTabProvider(tab, targetSession)
 						? tab.agentSessionId
 						: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
 			);
@@ -379,7 +401,7 @@ export function useAgentSessionManagement(
 						// of creating a duplicate. There must never be two tabs for one session.
 						const freshExistingTab = s.aiTabs?.find(
 							(tab) =>
-								(native.provider === s.toolType
+								(native.provider === resolveTabProvider(tab, s)
 									? tab.agentSessionId
 									: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
 						);
@@ -389,6 +411,8 @@ export function useAgentSessionManagement(
 						if (freshExistingTab) {
 							const updatedTabs = s.aiTabs.map((tab) => {
 								if (tab.id !== freshExistingTab.id) return tab;
+								// Restore the requested native owner without changing the agent default.
+								tab = switchTabProviderFor(tab, s, native.provider);
 								// Already-loaded tabs own newer metadata than History's snapshot.
 								if (tab.logs?.length) return { ...tab, origin: origin ?? tab.origin };
 								return {
@@ -396,7 +420,9 @@ export function useAgentSessionManagement(
 									logs: messages,
 									name: name ?? tab.name,
 									starred: isStarred || tab.starred,
-									usageStats: finalUsageStats ?? tab.usageStats,
+									usageStats: tab.pendingTranslation
+										? tab.usageStats
+										: (finalUsageStats ?? tab.usageStats),
 									origin: origin ?? tab.origin,
 								};
 							});
@@ -417,8 +443,13 @@ export function useAgentSessionManagement(
 							showThinking: defaultShowThinking,
 						});
 						if (!result) return s;
-
-						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
+						const reopened = switchTabProviderFor(result.tab, s, native.provider);
+						return {
+							...result.session,
+							aiTabs: result.session.aiTabs.map((tab) => (tab.id === reopened.id ? reopened : tab)),
+							activeFileTabId: null,
+							inputMode: 'ai',
+						};
 					})
 				);
 				setActiveAgentSessionId(agentSessionId);

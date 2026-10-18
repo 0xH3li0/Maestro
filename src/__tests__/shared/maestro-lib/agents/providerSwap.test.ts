@@ -17,6 +17,7 @@ import {
 	projectTabProvider,
 	providerOverridesFor,
 	resolveTabProvider,
+	resolveTabNativeProvider,
 	resolveTurnProvider,
 	switchAgentProvider,
 	switchTabProvider,
@@ -862,4 +863,15 @@ it('marks a captured queued provider as the latest source after it runs behind a
 	});
 	expect(updated.pendingTranslation).toBe('claude-code');
 	expect(updated.agentSessionId).toBe('codex-live');
+});
+
+describe('native transcript owner', () => {
+	it('uses the selection until a pending source owns the latest transcript', () => {
+		const agent = { toolType: 'claude-code' as const };
+		expect(resolveTabNativeProvider(undefined, agent)).toBe('claude-code');
+		expect(resolveTabNativeProvider({ tabProvider: 'codex' }, agent)).toBe('codex');
+		expect(
+			resolveTabNativeProvider({ tabProvider: 'codex', pendingTranslation: 'opencode' }, agent)
+		).toBe('opencode');
+	});
 });
