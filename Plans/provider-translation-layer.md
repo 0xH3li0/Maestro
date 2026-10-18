@@ -365,3 +365,9 @@ No code or tests changed, and no test cases or live provider acceptance ran. No 
 **OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the third task's deferral handling. Synthetic fixtures, extraction/projection/round-trip/blocking/readback tests and the OpenCode probe extension were not implemented. The probe and translation suite were not executed; no sample counts or certification evidence are claimed.
 
 No code or tests changed, and no test cases or live provider acceptance ran. No provider homes were accessed or modified. No human gate or halt marker was added; no task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode support documentation deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the fourth task's deferral handling. Updates to `PROVIDER-SUPPORT.md`, `CLAUDE-AGENTS.md`, `docs/agent-guides/AGENT-INFRA.md`, `docs/multi-provider.md` and the provider readiness table were deferred because the OpenCode adapter was not implemented. No OpenCode direction is declared implemented or certified.
+
+No code or tests changed, and no test cases, translation suite or live provider acceptance ran. No provider homes were accessed or modified. No human gate or halt marker was added; no task images were supplied.
