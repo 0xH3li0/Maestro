@@ -14,6 +14,8 @@ import Store from 'electron-store';
 
 import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
+import type { MaestroSettings } from '../ipc/handlers/persistence';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { effectiveAgentCustomEnvVars, isAccountDirName } from '../../shared/providerProfiles';
@@ -35,6 +37,8 @@ export interface CodexUsageSamplingDeps {
 	sessionsStore: Pick<Store<SessionsData>, 'get'>;
 	agentConfigsStore: Store<AgentConfigsData>;
 	agentDetector: AgentDetector;
+	/** Read for the Encore flags, so a dormant agent (Pianola, flag off) is skipped. */
+	settingsStore?: Pick<Store<MaestroSettings>, 'get'>;
 }
 
 interface SamplingTarget {
@@ -168,7 +172,10 @@ export async function runCodexUsageSampling(deps: CodexUsageSamplingDeps): Promi
 		return;
 	}
 
-	const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+	const storedSessions = filterLiveAgents(
+		deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+		deps.settingsStore?.get('encoreFeatures')
+	);
 	const codexSessions = storedSessions.filter((s) => s?.toolType === 'codex');
 	const agentLevelEnvVars = getAgentLevelEnvVars(deps.agentConfigsStore);
 

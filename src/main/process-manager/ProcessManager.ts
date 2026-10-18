@@ -46,6 +46,13 @@ import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-si
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
 	appVersion?: string;
+	/**
+	 * Live read of the `encoreFeatures.coworking` gate. While it is off, no spawn
+	 * carries the coworking session/socket env vars, so nothing in the agent can
+	 * find the bridge. Main always passes it; omitted keeps the injection, which
+	 * is what a bare `new ProcessManager()` in a test expects.
+	 */
+	isCoworkingEnabled?: () => boolean;
 }
 
 /**
@@ -66,6 +73,7 @@ export class ProcessManager extends EventEmitter {
 	private codexAppServerSpawner: CodexAppServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
+	private readonly isCoworkingEnabled: () => boolean;
 
 	constructor(
 		/**
@@ -78,6 +86,7 @@ export class ProcessManager extends EventEmitter {
 		options: ProcessManagerOptions = {}
 	) {
 		super();
+		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
@@ -268,7 +277,8 @@ export class ProcessManager extends EventEmitter {
 		// keyed by the bare Session.id from the renderer. Without this, the
 		// bridge handshake binds to a session id that never has records in the
 		// registry → `list_terminals` returns [] for the caller's own session.
-		// Terminals don't run MCP clients, so we skip them. Spawn-callers can
+		// Terminals don't run MCP clients, so we skip them, and nothing is
+		// injected while the coworking Encore flag is off. Spawn-callers can
 		// override by passing the var explicitly in customEnvVars.
 		//
 		// We ALSO inject the owning window's bridge socket path
@@ -281,7 +291,7 @@ export class ProcessManager extends EventEmitter {
 		// config socket is stale. Codex does not propagate env and falls back to the
 		// config socket (single-window).
 		const configWithCoworkingSession =
-			config.toolType === 'terminal'
+			config.toolType === 'terminal' || !this.isCoworkingEnabled()
 				? config
 				: {
 						...config,

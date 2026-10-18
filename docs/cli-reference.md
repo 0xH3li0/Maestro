@@ -1417,9 +1417,10 @@ Print a shell completion script (bash, zsh, or fish)
 
 Print the full command reference (Markdown, or --format json)
 
-| Option              | Description                         | Default |
-| ------------------- | ----------------------------------- | ------- |
-| `--format <format>` | Output format: md (default) or json | -       |
+| Option              | Description                                                   | Default |
+| ------------------- | ------------------------------------------------------------- | ------- |
+| `--format <format>` | Output format: md (default) or json                           | -       |
+| `--all`             | Include the commands of Encore Features that are switched off | -       |
 
 ## `maestro-cli create-agent <name>`
 
@@ -1997,11 +1998,11 @@ Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 
 ## `maestro-cli encore`
 
-List and toggle experimental Encore features
+List and toggle the optional features on Settings > Plugins
 
 ## `maestro-cli encore list`
 
-List Encore features and whether each is enabled
+List the optional features and whether each is on
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2009,7 +2010,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)
+Turn a feature on (any id from `encore list`, e.g. computerHistory or groups-plus)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2017,7 +2018,7 @@ Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, piano
 
 ## `maestro-cli encore disable <feature>`
 
-Disable an Encore feature
+Turn a feature off
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

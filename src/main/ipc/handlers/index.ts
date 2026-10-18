@@ -427,7 +427,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
 	// Register multi-window handlers (windows:* channel surface). The registry

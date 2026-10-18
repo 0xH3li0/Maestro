@@ -121,3 +121,5 @@ maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots 
 - Windows: nothing to grant. Windows of apps running as administrator cannot be read and appear as app and title only.
 
 If `status` shows `blocked`, the recorder is running but cannot see anything yet; tell the user which permission is missing rather than guessing at history that is not there.
+
+User-facing docs (recording, permissions, privacy): https://docs.runmaestro.ai/computer-history.md

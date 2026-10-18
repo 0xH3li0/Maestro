@@ -29,6 +29,7 @@ import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
 import { notifyToast } from '../../../stores/notificationStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import { isWebUrl } from '../../../../shared/urlRoutingHint';
 
 export interface MarkdownLinkBehavior {
@@ -117,6 +118,13 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 		// agent's chat can point at a Movement/Cadenza instead of re-typing it.
 		const concertoTarget = parseConcertoHref(href);
 		if (concertoTarget) {
+			// With the Concerto Encore Feature off the link is plain text: no chip,
+			// no click handler, nothing that names the disabled feature. Read at
+			// render (not subscribed) because react-markdown and the tests call
+			// this positionally; the next message render picks up a flag change.
+			if (useSettingsStore.getState().encoreFeatures?.concerto !== true) {
+				return React.createElement(React.Fragment, null, children);
+			}
 			const notifyUnavailable = () =>
 				notifyToast({
 					color: 'orange',

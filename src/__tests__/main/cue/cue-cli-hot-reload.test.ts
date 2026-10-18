@@ -44,7 +44,7 @@ vi.mock('chokidar', async (importOriginal) => {
 		},
 	};
 });
-vi.mock('../../../cli/services/storage', () => ({ readSessions }));
+vi.mock('../../../cli/services/storage', () => ({ readSessions, readLiveSessions: readSessions }));
 vi.mock('../../../main/cue/cue-db', () => ({ clearGitHubSeenForSubscription: vi.fn() }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 

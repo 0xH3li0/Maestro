@@ -426,19 +426,9 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Prevent Sleep While Working',
 		description:
-			'Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue pipelines are scheduled',
-		keywords: [
-			'sleep',
-			'power',
-			'awake',
-			'prevent sleep',
-			'caffeine',
-			'battery',
-			'cue',
-			'pipeline',
-			'idle',
-			'wake',
-		],
+			'Keeps your computer awake when AI agents are busy, Auto Run is active, or automations are scheduled',
+		keywords: ['sleep', 'power', 'awake', 'prevent sleep', 'caffeine', 'battery', 'idle', 'wake'],
+		encoreKeywords: { maestroCue: ['cue', 'cue pipeline', 'pipeline'] },
 	},
 	{
 		id: 'general-display-sleep',

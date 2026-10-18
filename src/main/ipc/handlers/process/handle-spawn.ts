@@ -40,6 +40,11 @@ import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
+import {
+	DORMANT_PIANOLA_MESSAGE,
+	isAgentDormant,
+	isPianolaEnabled,
+} from '../../../../shared/agentVisibility';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import {
 	buildAgentArgs,
@@ -134,9 +139,16 @@ async function handleProcessSpawnImpl(
 	const migrationAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{
 			id: string;
+			isPianola?: boolean;
 			providerMigration?: import('../../../../shared/maestro-lib/translation/types').ProviderMigrationState;
 		}>
 	).find((s) => s.id === migrationAgentId);
+	// A dormant agent (Pianola with its Encore flag off) never runs: it stays in
+	// the store only so turning the feature back on restores it.
+	const encoreFeatures = settingsStore.get('encoreFeatures');
+	if (isAgentDormant(migrationAgent, encoreFeatures)) {
+		throw new Error(DORMANT_PIANOLA_MESSAGE);
+	}
 	if (config.toolType !== 'terminal' && migrationHoldsTurns(migrationAgent?.providerMigration)) {
 		throw new Error(
 			'Provider migration is pending; the next turn remains queued until migration settles'
@@ -348,9 +360,11 @@ async function handleProcessSpawnImpl(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession = (
-		deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
-	).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+	const isPianolaSession =
+		isPianolaEnabled(encoreFeatures) &&
+		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>).some(
+			(s) => s?.id === baseSessionId && s?.isPianola === true
+		);
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),

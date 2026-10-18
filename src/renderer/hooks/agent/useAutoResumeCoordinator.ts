@@ -31,6 +31,7 @@ import { isLimitError } from '../../../shared/types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
+import { getLiveSessionsSnapshot } from '../session/useLiveSessions';
 import { useBatchStore } from '../../stores/batchStore';
 import { useAgentStore } from '../../stores/agentStore';
 import {
@@ -443,7 +444,8 @@ export async function runAutoResumeTick(
 ): Promise<void> {
 	const { giveUp = new Map(), giveUpDays = DEFAULT_GIVE_UP_DAYS, now = Date.now() } = options;
 
-	const sessions = useSessionStore.getState().sessions;
+	// Live agents only: a dormant Pianola (flag off) is never resumed.
+	const sessions = getLiveSessionsSnapshot();
 	const batchStates = useBatchStore.getState().batchRunStates;
 	const limitPaused: { session: Session; error: AgentError }[] = [];
 	for (const session of sessions) {

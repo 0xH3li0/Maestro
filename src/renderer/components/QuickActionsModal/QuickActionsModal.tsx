@@ -948,7 +948,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			searchAllTabsShortcut: shortcuts.searchAllTabs,
 		}),
 		...buildGroupChatCommands({
-			sessions,
+			// The "2+ agents" rule counts only live agents: a dormant Pianola must
+			// not make New Group Chat appear.
+			sessions: switchableSessions,
 			groupChats,
 			activeGroupChatId,
 			onNewGroupChat,
