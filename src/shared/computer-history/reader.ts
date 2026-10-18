@@ -87,13 +87,26 @@ export interface QueryResult {
 	draftsCollapsed: number;
 }
 
-/** A draft and the commit that supersedes it must be this close in time. */
-export const DRAFT_SUPERSEDE_MS = 5 * 60_000;
+/**
+ * A draft and the commit that supersedes it must be this close in time.
+ * Typing pauses and dictation blurs are seconds apart; a send that never
+ * reads as `cleared`, followed by a new message that happens to start with
+ * it, is rarely this quick.
+ */
+export const DRAFT_SUPERSEDE_MS = 90_000;
 
-/** The field a text commit came from: same app, same role, same label. */
+/**
+ * The field a text commit came from: same app, role, label, and window. The
+ * window title tells two chats with the same "Message" box apart; a commit
+ * with neither a label nor a title has no reliable identity and is never
+ * collapsed.
+ */
 function draftFieldKey(event: StoredEvent): string | null {
 	if (event.kind !== 'text.committed' || !event.app) return null;
-	return `${event.app.id}\u0000${event.element?.role ?? ''}\u0000${event.element?.label ?? ''}`;
+	const label = event.element?.label ?? '';
+	const title = event.window?.title ?? '';
+	if (!label && !title) return null;
+	return [event.app.id, event.element?.role ?? '', label, title].join('\u0000');
 }
 
 /**
@@ -112,21 +125,20 @@ export function isSupersededDraft(older: StoredEvent, newer: StoredEvent): boole
 	return draft.length > 0 && (newer.text ?? '').trim().startsWith(draft);
 }
 
-/** Fed matches newest-first, drops each draft the next commit in its field supersedes. */
+/**
+ * Fed every commit in range newest-first (not only the search hits, so a
+ * send between two commits is never skipped over), reports each draft the
+ * next commit in its field supersedes.
+ */
 class DraftCollapser {
 	private readonly nextInField = new Map<string, StoredEvent>();
-	collapsed = 0;
 
-	keep(event: StoredEvent): boolean {
+	isDraft(event: StoredEvent): boolean {
 		const key = draftFieldKey(event);
-		if (!key) return true;
+		if (!key) return false;
 		const newer = this.nextInField.get(key);
 		this.nextInField.set(key, event);
-		if (newer && isSupersededDraft(event, newer)) {
-			this.collapsed++;
-			return false;
-		}
-		return true;
+		return !!newer && isSupersededDraft(event, newer);
 	}
 }
 
@@ -354,29 +366,34 @@ export async function queryEvents(
 	const segments = await listSegments(storeDir, options);
 	const limit = options.limit !== undefined && options.limit > 0 ? options.limit : undefined;
 	const drafts = new DraftCollapser();
-	const keep = (e: StoredEvent) => options.keepDrafts === true || drafts.keep(e);
+	const range: TimeRange = { sinceMs: options.sinceMs, untilMs: options.untilMs };
+	let draftsCollapsed = 0;
+	// Every event in range passes through the collapser, so it compares a
+	// commit with the next commit in its field, not with the next search hit.
+	const isResult = (e: StoredEvent) => {
+		const draft = options.keepDrafts !== true && eventMatches(e, range) && drafts.isDraft(e);
+		if (!eventMatches(e, options)) return false;
+		if (draft) draftsCollapsed++;
+		return !draft;
+	};
 	let segmentsScanned = 0;
 	if (limit === undefined) {
 		const events: StoredEvent[] = [];
 		for (const seg of segments) {
 			segmentsScanned++;
-			for (const e of await readSegment(storeDir, seg.file)) {
-				if (eventMatches(e, options)) events.push(e);
-			}
+			events.push(...(await readSegment(storeDir, seg.file)));
 		}
 		events.sort(compareEvents);
-		const kept = events.reverse().filter(keep).reverse();
-		return { events: kept, limited: false, segmentsScanned, draftsCollapsed: drafts.collapsed };
+		const kept = events.reverse().filter(isResult).reverse();
+		return { events: kept, limited: false, segmentsScanned, draftsCollapsed };
 	}
 	const newestFirst: StoredEvent[] = [];
 	let limited = false;
 	for (let i = segments.length - 1; i >= 0; i--) {
 		segmentsScanned++;
-		const matches = (await readSegment(storeDir, segments[i].file))
-			.filter((e) => eventMatches(e, options))
-			.sort(compareEvents);
+		const matches = (await readSegment(storeDir, segments[i].file)).sort(compareEvents);
 		for (let j = matches.length - 1; j >= 0; j--) {
-			if (!keep(matches[j])) continue;
+			if (!isResult(matches[j])) continue;
 			if (newestFirst.length >= limit) {
 				limited = true;
 				break;
@@ -393,7 +410,7 @@ export async function queryEvents(
 		events: newestFirst.reverse(),
 		limited,
 		segmentsScanned,
-		draftsCollapsed: drafts.collapsed,
+		draftsCollapsed,
 	};
 }
 

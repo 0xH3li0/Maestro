@@ -209,8 +209,10 @@ describe('ingest pipeline', () => {
 		const codeField = { element: { role: 'text_field', label: 'Device user code' } };
 		expect(await service.ingest(textEvent('WDJB-MJHT', codeField))).toBe(true);
 		expect(await service.ingest(textEvent('482913', { element: { label: 'Code' } }))).toBe(true);
-		// A normal sentence in a code-labeled field is kept.
+		expect(await service.ingest(textEvent('482 913', { element: { label: 'Code' } }))).toBe(true);
+		// A normal sentence in a code-labeled field, and a zip code, are kept.
 		expect(await service.ingest(textEvent('see you at 5pm', codeField))).toBe(true);
+		expect(await service.ingest(textEvent('94110', { element: { label: 'ZIP code' } }))).toBe(true);
 		expect(
 			await service.ingest(
 				textEvent('Your verification code is 482913', {
@@ -223,7 +225,9 @@ describe('ingest pipeline', () => {
 		expect(texts).toEqual([
 			'[REDACTED_CODE]',
 			'[REDACTED_CODE]',
+			'[REDACTED_CODE]',
 			'see you at 5pm',
+			'94110',
 			'Your verification code is [REDACTED_CODE]',
 		]);
 		await service.stop();

@@ -84,10 +84,17 @@ describe('redactSecrets - typed placeholders', () => {
 		);
 		expect(redactSecrets('Use G-482913 to verify', otp).text).toBe('Use [REDACTED_CODE] to verify');
 		expect(redactSecrets('Security code 482-913', otp).text).toBe('Security code [REDACTED_CODE]');
+		expect(redactSecrets('Your device code is WDJB-MJHT', otp).text).toBe(
+			'Your device code is [REDACTED_CODE]'
+		);
 		for (const clean of [
 			'process exited with exit code 1234',
 			'status code 4040',
 			'zip code 94110',
+			'Your status code is 4040',
+			'4040 is your status code',
+			'Your zip code is 94110',
+			'your code is well-known',
 		]) {
 			expect(redactSecrets(clean, otp).text).toBe(clean);
 		}

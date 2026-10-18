@@ -171,6 +171,15 @@ const RULES: readonly Rule[] = [
 
 const HEX_BLOB_RULE: Rule = { kind: 'secret', pattern: /\b[A-Fa-f0-9]{40,}\b/g };
 
+/** "your status code", "your zip code": codes that are data, not credentials. */
+const NOT_AUTH_CODE_WORD =
+	'(?!(?:status|exit|error|zip|postal|area|country|promo|coupon|discount|source|response|return|tracking|reference|qr|bar)\\b)';
+const CODE_FILLER = `(?:\\s{1,3}${NOT_AUTH_CODE_WORD}[A-Za-z]{1,20}){0,2}`;
+const CODE_KEYWORD = `(?:(?:verification|security|login|sign[- ]?in|confirmation|access|auth(?:entication)?|one[- ]time|2fa|mfa|device|user|activation|pairing|your${CODE_FILLER})\\s{1,3}code|passcode|otp)`;
+
+/** A device-login code ("WDJB-MJHT"): upper case, checked case-sensitively. */
+const DEVICE_CODE = /[A-Z0-9]{3,6}-[A-Z0-9]{3,6}$/;
+
 /** Every gap is bounded, so each rule is linear on any input. */
 const ONE_TIME_CODE_RULES: readonly Rule[] = [
 	// "verification code: 123-456", "Your Uber code is 1234", "passcode 1234".
@@ -178,14 +187,29 @@ const ONE_TIME_CODE_RULES: readonly Rule[] = [
 	// 4040" in a terminal or log stay readable.
 	{
 		kind: 'one_time_code',
-		pattern:
-			/\b((?:(?:verification|security|login|sign[- ]?in|confirmation|access|auth(?:entication)?|one[- ]time|2fa|mfa|your(?:\s{1,3}[A-Za-z]{1,20}){0,2})\s{1,3}code|passcode|otp)\b[^\d\n]{0,20}?)\b(\d{3}[- ]?\d{3}|\d{4,8})\b/gi,
+		pattern: new RegExp(
+			`\\b(${CODE_KEYWORD}\\b[^\\d\\n]{0,20}?)\\b(\\d{3}[- ]?\\d{3}|\\d{4,8})\\b`,
+			'gi'
+		),
 		keepGroup: 1,
+	},
+	// "Your device code is WDJB-MJHT".
+	{
+		kind: 'one_time_code',
+		pattern: new RegExp(
+			`\\b(${CODE_KEYWORD}\\b[^\\n]{0,20}?)\\b([A-Z0-9]{3,6}-[A-Z0-9]{3,6})\\b`,
+			'gi'
+		),
+		keepGroup: 1,
+		accept: (match) => DEVICE_CODE.test(match),
 	},
 	// "123456 is your Instagram code".
 	{
 		kind: 'one_time_code',
-		pattern: /\b\d{4,8}(?=\s+is\s+your\b[^\n]{0,40}?\b(?:code|passcode|otp|pin)\b)/gi,
+		pattern: new RegExp(
+			`\\b\\d{4,8}(?=\\s{1,3}is\\s{1,3}your${CODE_FILLER}\\s{1,3}(?:code|passcode|otp|pin)\\b)`,
+			'gi'
+		),
 	},
 	// Google's "G-123456".
 	{ kind: 'one_time_code', pattern: /\bG-\d{6}\b/g },

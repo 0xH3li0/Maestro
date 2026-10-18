@@ -224,12 +224,16 @@ const SCREEN_REDACTION = { oneTimeCodes: true } as const;
 const CODE_FIELD_LABEL =
 	/\b(?:code|otp|totp|passcode|pin|2fa|mfa|one[- ]time|verification|authenticat\w*)\b/i;
 
+/** Code fields that hold ordinary data, not a credential. */
+const NOT_A_CODE_FIELD =
+	/\b(?:zip|postal|post|area|country|promo|coupon|discount|source)\s*code\b/i;
+
 /**
  * A value short and dense enough to be a code: 4-12 characters with a digit
  * among them, or an upper-case pair like a device-login "WDJB-MJHT". A word
  * typed into a "Search code" box has neither shape.
  */
-const CODE_VALUE = /^(?:(?=.*\d)[A-Za-z0-9-]{4,12}|[A-Z0-9]{3,6}-[A-Z0-9]{3,6})$/;
+const CODE_VALUE = /^(?:(?=.*\d)[A-Za-z0-9-]{4,12}|\d{3} \d{3}|[A-Z0-9]{3,6}-[A-Z0-9]{3,6})$/;
 
 /**
  * True when a text commit is a code typed into a code field ("Enter the
@@ -239,7 +243,13 @@ const CODE_VALUE = /^(?:(?=.*\d)[A-Za-z0-9-]{4,12}|[A-Z0-9]{3,6}-[A-Z0-9]{3,6})$
 export function isOneTimeCodeEntry(event: ObservedEvent): boolean {
 	const label = event.element?.label;
 	const text = event.text?.trim();
-	return !!label && !!text && CODE_FIELD_LABEL.test(label) && CODE_VALUE.test(text);
+	return (
+		!!label &&
+		!!text &&
+		CODE_FIELD_LABEL.test(label) &&
+		!NOT_A_CODE_FIELD.test(label) &&
+		CODE_VALUE.test(text)
+	);
 }
 
 /** Redact secrets in every free-text field and re-apply the byte caps. */
