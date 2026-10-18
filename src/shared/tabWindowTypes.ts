@@ -107,6 +107,8 @@ export type TabWindowFocusResult =
 
 // ============================================================================
 // Session patches (owner to tab window)
+//
+// Built and applied by the pure functions in `src/shared/tabWindowPatch.ts`.
 // ============================================================================
 
 /**
@@ -125,7 +127,18 @@ export interface TabWindowLogSplice<TLog = unknown> {
 /** What changed on one popped tab since the previous patch. */
 export interface TabWindowTabDelta<TTab = unknown, TLog = unknown> {
 	ref: TabWindowTabRef;
-	/** Changed tab fields only. Per-window draft fields are never included. */
+	/**
+	 * The tab left the agent's tab lists in the owner (closed or snoozed). The
+	 * tab window drops its copy. No other field is set.
+	 */
+	removed?: true;
+	/**
+	 * Changed tab fields only; `undefined` means the owner removed the field.
+	 * Per-window fields (the composer draft) are never included, except for a
+	 * tab the previous patch did not have, which carries all of its fields, its
+	 * `id` included. A change never carries `id`, so the tab window can tell the
+	 * two apart.
+	 */
 	fields?: Partial<TTab>;
 	/** AI tabs only: the changed tail of `logs`. */
 	logSplice?: TabWindowLogSplice<TLog>;
@@ -141,6 +154,13 @@ export interface TabWindowSessionSnapshot<TSession = unknown> {
 	agentId: string;
 	/** Restarts the sequence: the next delta carries `seq + 1`. */
 	seq: number;
+	/**
+	 * The popped refs the owner built `session` for. These tabs carry their
+	 * transcripts, and the deltas until the next snapshot cover exactly them.
+	 * The tab window keeps its own draft of a tab that was in the previous
+	 * snapshot's list too.
+	 */
+	tabRefs: TabWindowTabRef[];
 	session: TSession;
 }
 
@@ -156,7 +176,11 @@ export interface TabWindowSessionDelta<TSession = unknown, TTab = unknown, TLog 
 	 * a patch and must ask for a fresh snapshot instead of applying this one.
 	 */
 	seq: number;
-	/** Session-level fields the tab UI reads (state, busySource, name, ...). */
+	/**
+	 * Session-level fields that changed (state, busySource, name, ...);
+	 * `undefined` means the owner removed the field. Never the tab lists (they
+	 * travel in `tabs`) and never a per-window field.
+	 */
 	session?: Partial<TSession>;
 	tabs?: TabWindowTabDelta<TTab, TLog>[];
 }
@@ -165,13 +189,30 @@ export type TabWindowSessionPatch<TSession = unknown, TTab = unknown, TLog = unk
 	| TabWindowSessionSnapshot<TSession>
 	| TabWindowSessionDelta<TSession, TTab, TLog>;
 
-/** True for a well-formed patch envelope (form, agent id, sequence number). */
+/**
+ * True for a well-formed patch envelope (form, agent id, sequence number). A
+ * snapshot must also carry its popped refs and a session of the same agent.
+ */
 export function isTabWindowSessionPatch(value: unknown): value is TabWindowSessionPatch {
 	if (typeof value !== 'object' || value === null) return false;
-	const patch = value as { form?: unknown; agentId?: unknown; seq?: unknown; session?: unknown };
+	const patch = value as {
+		form?: unknown;
+		agentId?: unknown;
+		seq?: unknown;
+		tabRefs?: unknown;
+		session?: unknown;
+	};
 	if (typeof patch.agentId !== 'string' || patch.agentId.length === 0) return false;
 	if (typeof patch.seq !== 'number' || !Number.isInteger(patch.seq) || patch.seq < 0) return false;
-	if (patch.form === 'snapshot') return typeof patch.session === 'object' && patch.session !== null;
+	if (patch.form === 'snapshot') {
+		return (
+			Array.isArray(patch.tabRefs) &&
+			patch.tabRefs.every(isSingleTabRef) &&
+			typeof patch.session === 'object' &&
+			patch.session !== null &&
+			(patch.session as { id?: unknown }).id === patch.agentId
+		);
+	}
 	return patch.form === 'delta';
 }
 

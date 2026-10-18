@@ -263,7 +263,13 @@ describe('Tab Windows Preload API', () => {
 	});
 
 	it('sendSessionPatch and sendIntent are fire-and-forget sends', () => {
-		const patch = { form: 'snapshot' as const, agentId: 'a', seq: 0, session: {} };
+		const patch = {
+			form: 'snapshot' as const,
+			agentId: 'a',
+			seq: 0,
+			tabRefs: [tabRef],
+			session: { id: 'a' },
+		};
 		const intent = { kind: 'closeTab' as const, agentId: 'a', tabRef };
 		api.sendSessionPatch(patch);
 		api.sendIntent(intent);

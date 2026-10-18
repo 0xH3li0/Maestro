@@ -358,6 +358,7 @@ describe('Tab Windows IPC Handlers', () => {
 			form: 'snapshot',
 			agentId: 'agent-1',
 			seq: 0,
+			tabRefs: [AI_TAB],
 			session: { id: 'agent-1' },
 		};
 		const intent = {

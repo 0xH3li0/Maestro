@@ -123,6 +123,7 @@ describe('isTabWindowSessionPatch', () => {
 			form: 'snapshot',
 			agentId: 'agent-1',
 			seq: 0,
+			tabRefs: [aiRef],
 			session: { id: 'agent-1' },
 		};
 		const delta: TabWindowSessionPatch = {
@@ -136,10 +137,17 @@ describe('isTabWindowSessionPatch', () => {
 	});
 
 	it('rejects a snapshot without a session object', () => {
-		expect(isTabWindowSessionPatch({ form: 'snapshot', agentId: 'a', seq: 0 })).toBe(false);
-		expect(isTabWindowSessionPatch({ form: 'snapshot', agentId: 'a', seq: 0, session: null })).toBe(
-			false
-		);
+		const base = { form: 'snapshot', agentId: 'a', seq: 0, tabRefs: [aiRef] };
+		expect(isTabWindowSessionPatch(base)).toBe(false);
+		expect(isTabWindowSessionPatch({ ...base, session: null })).toBe(false);
+	});
+
+	it('rejects a snapshot without its popped refs, or of another agent than it names', () => {
+		const base = { form: 'snapshot', agentId: 'a', seq: 0, session: { id: 'a' } };
+		expect(isTabWindowSessionPatch(base)).toBe(false);
+		expect(isTabWindowSessionPatch({ ...base, tabRefs: [{ type: 'group', id: 'g' }] })).toBe(false);
+		expect(isTabWindowSessionPatch({ ...base, tabRefs: [], session: { id: 'b' } })).toBe(false);
+		expect(isTabWindowSessionPatch({ ...base, tabRefs: [] })).toBe(true);
 	});
 
 	it('rejects a bad sequence number', () => {
