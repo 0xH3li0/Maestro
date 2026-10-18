@@ -36,6 +36,7 @@ import type { InterruptTarget } from '../hooks/agent/useInterruptHandler';
 import {
 	selectSessionById,
 	updateAiTab,
+	updateBrowserTab,
 	updateFileTab,
 	useSessionStore,
 } from '../stores/sessionStore';
@@ -50,6 +51,8 @@ import { normalizeComposerCommandMode } from '../utils/shellCommandInput';
 import { openMaestroLink } from '../utils/openMaestroLink';
 import { openInMaestroBrowser } from '../utils/openUrl';
 import { requestFileTreeRefresh } from '../utils/fileTreeRefresh';
+import { withoutGuestState } from '../utils/browserTabPersistence';
+import { normalizeBrowserTabUpdates } from '../hooks/tabs/internal/browserTabHelpers';
 import {
 	cycleAiTabShowThinking,
 	markAiTabUnread,
@@ -80,7 +83,9 @@ import { sessionHasTab } from './tabWindowNavigation';
 import { loadEarlierTranscriptForTab } from './transcriptBackfill';
 import { tabRefKey } from '../../shared/unifiedTabRef';
 import {
+	isTabWindowBrowserTabWriteBackField,
 	isTabWindowFileTabField,
+	type TabWindowBrowserTabWriteBack,
 	type TabWindowFileTabState,
 	type TabWindowIntent,
 	type TabWindowIntentOf,
@@ -249,6 +254,39 @@ function writeTabWindowFileTab(
 		updateFileTab(session.id, tabRef.id, (tab) => ({ ...tab, ...fields }));
 	}
 	if (intent.refreshFileTree) requestFileTreeRefresh(session.id);
+	return HANDLED;
+}
+
+/**
+ * Write what a tab window's webview shows on a popped browser tab onto the
+ * owner's copy: the page (URL, title, icon) and the agent visibility toggle.
+ * This copy is what the owner reopens once the tab docks (D5).
+ *
+ * The owner holds no webview for a popped tab, so its copy drops the guest
+ * state (`withoutGuestState`): no history flags, no guest id, no streamed
+ * page. Its next webview then starts clean at the latest
+ * page. A write for a tab that is not popped out is refused: a docked tab has
+ * the owner's own webview again, and a URL written over it would move its
+ * address bar away from the page it shows. Writes go at once (no pause), so a
+ * dock never leaves one behind.
+ */
+function writeTabWindowBrowserTab(
+	session: Session,
+	intent: TabWindowIntentOf<'setBrowserTabState'>
+): TabWindowIntentOutcome {
+	const { tabRef } = intent;
+	if (tabRef.type !== 'browser' || !session.browserTabs?.some((tab) => tab.id === tabRef.id)) {
+		return refuse('the tab is gone');
+	}
+	if (!isTabPoppedOut(session.id, tabRef)) return refuse('the tab is not popped out');
+	const fields: Partial<TabWindowBrowserTabWriteBack> = {};
+	const sent = typeof intent.fields === 'object' && intent.fields !== null ? intent.fields : {};
+	for (const [key, value] of Object.entries(sent)) {
+		if (isTabWindowBrowserTabWriteBackField(key)) (fields as Record<string, unknown>)[key] = value;
+	}
+	updateBrowserTab(session.id, tabRef.id, (tab) =>
+		withoutGuestState(normalizeBrowserTabUpdates(tab, fields))
+	);
 	return HANDLED;
 }
 
@@ -500,6 +538,10 @@ export function dispatchTabWindowIntent(
 		// D'. File tab
 		case 'setFileTabState':
 			return writeTabWindowFileTab(session, intent);
+
+		// D''. Browser tab
+		case 'setBrowserTabState':
+			return writeTabWindowBrowserTab(session, intent);
 
 		// E. Transcript
 		case 'deleteLog':

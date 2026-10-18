@@ -302,6 +302,86 @@ export function isTabWindowFileTabField(key: string): key is TabWindowFileTabFie
 }
 
 // ============================================================================
+// Browser tabs (D5)
+// ============================================================================
+
+/**
+ * The fields of a popped browser tab that its tab window owns while the tab is
+ * popped out: what its own `<webview>` reports, as `BrowserTab`
+ * (`src/shared/browserPage.ts`) holds it. A `<webview>` cannot move between
+ * windows, so the tab window opens a new one at the tab's URL and the owner
+ * mounts none. The owner's snapshot seeds these, a delta never carries them
+ * (an echo of an older write would move the address bar back), and the tab
+ * window writes the page fields back with the `setBrowserTabState` intent.
+ */
+export interface TabWindowBrowserTabState {
+	url: string;
+	title: string;
+	favicon?: string | null;
+	canGoBack: boolean;
+	canGoForward: boolean;
+	isLoading: boolean;
+	webContentsId?: number;
+	remotePage?: boolean;
+}
+
+/** A field of {@link TabWindowBrowserTabState}. */
+export type TabWindowBrowserTabField = keyof TabWindowBrowserTabState;
+
+// A record, so a field added to the state without listing it here fails the type check.
+const BROWSER_TAB_FIELD_SET: Record<TabWindowBrowserTabField, true> = {
+	url: true,
+	title: true,
+	favicon: true,
+	canGoBack: true,
+	canGoForward: true,
+	isLoading: true,
+	webContentsId: true,
+	remotePage: true,
+};
+
+/** True for a field a tab window owns on a popped browser tab. */
+export function isTabWindowBrowserTabField(key: string): key is TabWindowBrowserTabField {
+	return Object.prototype.hasOwnProperty.call(BROWSER_TAB_FIELD_SET, key);
+}
+
+/**
+ * What a tab window writes back on a popped browser tab: the page it shows
+ * (the fields `browserTabPersistence` keeps), so a dock reopens the latest page
+ * in the owner, and the agent visibility toggle on its toolbar. The webview's
+ * runtime state (history flags, loading, guest id) stays in the tab window:
+ * the owner's next webview starts its own.
+ */
+export interface TabWindowBrowserTabWriteBack {
+	url: string;
+	title: string;
+	favicon?: string | null;
+	hiddenFromAgent?: boolean;
+}
+
+/** A field of {@link TabWindowBrowserTabWriteBack}. */
+export type TabWindowBrowserTabWriteBackField = keyof TabWindowBrowserTabWriteBack;
+
+const BROWSER_TAB_WRITE_BACK_FIELD_SET: Record<TabWindowBrowserTabWriteBackField, true> = {
+	url: true,
+	title: true,
+	favicon: true,
+	hiddenFromAgent: true,
+};
+
+/** Every field a tab window writes back on a popped browser tab. */
+export const TAB_WINDOW_BROWSER_TAB_WRITE_BACK_FIELDS = Object.freeze(
+	Object.keys(BROWSER_TAB_WRITE_BACK_FIELD_SET) as TabWindowBrowserTabWriteBackField[]
+);
+
+/** True for a field a tab window writes back on a popped browser tab. */
+export function isTabWindowBrowserTabWriteBackField(
+	key: string
+): key is TabWindowBrowserTabWriteBackField {
+	return Object.prototype.hasOwnProperty.call(BROWSER_TAB_WRITE_BACK_FIELD_SET, key);
+}
+
+// ============================================================================
 // Intents (tab window to owner)
 // ============================================================================
 
@@ -416,6 +496,14 @@ export interface TabWindowIntentPayloads {
 	 */
 	setFileTabState: { fields: Partial<TabWindowFileTabState>; refreshFileTree?: boolean };
 
+	// D''. Browser tab (D5)
+	/**
+	 * Write back what changed on a popped browser tab's page since the last
+	 * write, at once: its URL, title, and icon after a navigation, and the agent
+	 * visibility toggle.
+	 */
+	setBrowserTabState: { fields: Partial<TabWindowBrowserTabWriteBack> };
+
 	// E. Transcript
 	deleteLog: { logId: string };
 	replayMessage: { text: string; images?: string[] };
@@ -508,6 +596,7 @@ const INTENT_KIND_SET: Record<TabWindowIntentKind, true> = {
 	reorderTabs: true,
 	closeTabs: true,
 	setFileTabState: true,
+	setBrowserTabState: true,
 	deleteLog: true,
 	replayMessage: true,
 	forkConversation: true,

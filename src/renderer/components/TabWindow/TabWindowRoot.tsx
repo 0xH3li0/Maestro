@@ -73,6 +73,7 @@ import { TabBar } from '../TabBar';
 import { TabWindowHeader } from './TabWindowHeader';
 import { TabWindowContent } from './TabWindowContent';
 import { TabWindowTerminals } from './TabWindowTerminals';
+import { TabWindowBrowsers } from './TabWindowBrowsers';
 import { TabWindowComposer } from './TabWindowComposer';
 import { TabWindowModals } from './TabWindowModals';
 import { useTabWindowChatActions } from './useTabWindowChatActions';
@@ -408,6 +409,12 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 					session={viewSession}
 					tabRefs={tabRefs}
 					shownTabId={activeTab?.type === 'terminal' ? activeTab.id : null}
+				/>
+				<TabWindowBrowsers
+					theme={theme}
+					session={viewSession}
+					tabRefs={tabRefs}
+					shownTabId={activeTab?.type === 'browser' ? activeTab.id : null}
 				/>
 			</div>
 			{/* Where the composer sits in an app window, and like it, under an AI tab only. */}

@@ -20,11 +20,13 @@ import {
 } from '../../shared/tabWindowPatch';
 import { MAX_PERSISTED_TOOL_OUTPUT_CHARS, compactToolOutput } from '../../shared/toolOutput';
 import type { TabWindowTabRef } from '../../shared/tabWindowTypes';
+import type { BrowserTab } from '../../shared/browserPage';
 
 const AGENT = 'agent-1';
 const POPPED_REF: TabWindowTabRef = { type: 'ai', id: 'popped' };
 const OTHER_REF: TabWindowTabRef = { type: 'ai', id: 'other' };
 const FILE_REF: TabWindowTabRef = { type: 'file', id: 'file-1' };
+const BROWSER_REF: TabWindowTabRef = { type: 'browser', id: 'browser-1' };
 /** The popped set most tests use: one AI tab and one file tab. */
 const REFS: TabWindowTabRef[] = [POPPED_REF, FILE_REF];
 
@@ -72,6 +74,20 @@ function fileTab(session: Session, tabId: string): FilePreviewTab {
 	const tab = session.filePreviewTabs.find((t) => t.id === tabId);
 	if (!tab) throw new Error(`no file tab ${tabId}`);
 	return tab;
+}
+
+function browserTab(overrides: Partial<BrowserTab> = {}): BrowserTab {
+	return {
+		id: 'browser-1',
+		url: 'https://owner.test/',
+		title: 'Owner page',
+		createdAt: 1,
+		canGoBack: true,
+		canGoForward: false,
+		isLoading: false,
+		webContentsId: 5,
+		...overrides,
+	};
 }
 
 /** `session` with one AI tab replaced, the way the owner's store writes it (immutably). */
@@ -424,6 +440,32 @@ describe('diffTabWindowSession', () => {
 		expect(diff(prev, ai)?.tabs).toEqual([{ ref: POPPED_REF, fields: { scrollTop: 120 } }]);
 	});
 
+	it('never sends the browser tab fields the tab window owns while the tab is popped (D5)', () => {
+		const prev = agent({ browserTabs: [browserTab()] });
+		const next = {
+			...prev,
+			browserTabs: [
+				browserTab({
+					url: 'https://older.test/',
+					title: 'Older',
+					favicon: null,
+					canGoBack: false,
+					isLoading: true,
+					webContentsId: 9,
+					remotePage: true,
+					customTitle: 'Docs',
+					hiddenFromAgent: true,
+				}),
+			],
+		};
+
+		// The page and its runtime state are the tab window's webview's; the
+		// owner's rename and agent visibility still reach it.
+		expect(diff(prev, next, [BROWSER_REF])?.tabs).toEqual([
+			{ ref: BROWSER_REF, fields: { customTitle: 'Docs', hiddenFromAgent: true } },
+		]);
+	});
+
 	it('caps tool output in a splice', () => {
 		const prev = agent();
 		const next = withLogs(prev, 'popped', (logs) => [
@@ -623,6 +665,47 @@ describe('applyTabWindowPatch', () => {
 		expect(aiTab(mirror.session, 'other').logs).toEqual(aiTab(owner, 'other').logs);
 		expect(mirror.tabRefs).toEqual(refs);
 		expect(mirror.seq).toBe(7);
+	});
+
+	it('keeps a popped browser tab its own page across a delta and a snapshot', () => {
+		const owner = agent({ browserTabs: [browserTab()] });
+		const first = attach(owner, [BROWSER_REF]);
+		expect(first.session.browserTabs?.[0]).toMatchObject({ url: 'https://owner.test/' });
+		const navigated: TabWindowMirror<Session> = {
+			...first,
+			session: {
+				...first.session,
+				browserTabs: [browserTab({ url: 'https://here.test/', title: 'Here', webContentsId: 11 })],
+			},
+		};
+
+		// An echo of an older write-back moves nothing.
+		const applied = applyDelta(navigated, {
+			tabs: [
+				{
+					ref: BROWSER_REF,
+					fields: { url: 'https://older.test/', title: 'Older', customTitle: 'Docs' },
+				},
+			],
+		})!;
+		expect(applied.session.browserTabs?.[0]).toMatchObject({
+			url: 'https://here.test/',
+			title: 'Here',
+			webContentsId: 11,
+			customTitle: 'Docs',
+		});
+
+		const again = applyTabWindowPatch(applied, {
+			form: 'snapshot',
+			agentId: AGENT,
+			seq: applied.seq + 1,
+			tabRefs: [BROWSER_REF],
+			session: buildTabWindowSnapshot(owner, [BROWSER_REF]),
+		})!;
+		expect(again.session.browserTabs?.[0]).toMatchObject({
+			url: 'https://here.test/',
+			webContentsId: 11,
+		});
 	});
 
 	it('keeps a popped file tab its own edits across a snapshot, and seeds one that just arrived', () => {

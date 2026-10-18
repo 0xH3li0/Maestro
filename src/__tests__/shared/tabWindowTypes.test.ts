@@ -10,10 +10,13 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	TAB_WINDOW_BROWSER_TAB_WRITE_BACK_FIELDS,
 	TAB_WINDOW_CHANNELS,
 	TAB_WINDOW_FILE_TAB_FIELDS,
 	TAB_WINDOW_INTENT_KINDS,
 	formatTabWindowTitle,
+	isTabWindowBrowserTabField,
+	isTabWindowBrowserTabWriteBackField,
 	isTabWindowIntent,
 	isTabWindowFileTabField,
 	isTabWindowIntentKind,
@@ -70,6 +73,10 @@ describe('TAB_WINDOW_INTENT_KINDS', () => {
 		expect(TAB_WINDOW_INTENT_KINDS).toContain('setFileTabState');
 	});
 
+	it('lets a tab window write a popped browser tab back (D5)', () => {
+		expect(TAB_WINDOW_INTENT_KINDS).toContain('setBrowserTabState');
+	});
+
 	it('is frozen', () => {
 		expect(Object.isFrozen(TAB_WINDOW_INTENT_KINDS)).toBe(true);
 	});
@@ -88,6 +95,44 @@ describe('isTabWindowFileTabField', () => {
 		for (const field of ['id', 'customName', 'isLoading', 'sshRemoteId', 'toString']) {
 			expect(isTabWindowFileTabField(field)).toBe(false);
 		}
+	});
+});
+
+describe('isTabWindowBrowserTabField', () => {
+	it('names what the tab window webview reports while the tab is popped out (D5)', () => {
+		for (const field of [
+			'url',
+			'title',
+			'favicon',
+			'canGoBack',
+			'canGoForward',
+			'isLoading',
+			'webContentsId',
+			'remotePage',
+		]) {
+			expect(isTabWindowBrowserTabField(field)).toBe(true);
+		}
+	});
+
+	it('leaves out what the owner keeps writing: identity, rename, partition, visibility', () => {
+		for (const field of ['id', 'customTitle', 'partition', 'hiddenFromAgent', 'toString']) {
+			expect(isTabWindowBrowserTabField(field)).toBe(false);
+		}
+	});
+});
+
+describe('isTabWindowBrowserTabWriteBackField', () => {
+	it('writes back the page and the agent visibility toggle, never the guest state', () => {
+		expect([...TAB_WINDOW_BROWSER_TAB_WRITE_BACK_FIELDS].sort()).toEqual(
+			['favicon', 'hiddenFromAgent', 'title', 'url'].sort()
+		);
+		expect(
+			TAB_WINDOW_BROWSER_TAB_WRITE_BACK_FIELDS.every(isTabWindowBrowserTabWriteBackField)
+		).toBe(true);
+		for (const field of ['canGoBack', 'webContentsId', 'remotePage', 'partition', 'toString']) {
+			expect(isTabWindowBrowserTabWriteBackField(field)).toBe(false);
+		}
+		expect(Object.isFrozen(TAB_WINDOW_BROWSER_TAB_WRITE_BACK_FIELDS)).toBe(true);
 	});
 });
 

@@ -114,6 +114,7 @@ import { isTabViewedInTabWindow, useTabWindowStore } from '../../../renderer/sto
 import { useCoworkingApprovalStore } from '../../../renderer/stores/coworkingApprovalStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import type { QueuedItem, Session, TerminalTab } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import type {
 	TabWindowIntent,
 	TabWindowIntentKind,
@@ -695,6 +696,7 @@ describe('dispatchTabWindowIntent: refusals', () => {
 			reorderTabs: { tabRefs: [POPPED] },
 			closeTabs: { tabRefs: [FILE] },
 			setFileTabState: { fields: { editMode: true } },
+			setBrowserTabState: { fields: { url: 'https://x.test' } },
 			deleteLog: { logId: 'l' },
 			replayMessage: { text: 't' },
 			forkConversation: { logId: 'l' },
@@ -728,6 +730,109 @@ describe('dispatchTabWindowIntent: refusals', () => {
 		} finally {
 			api.restore();
 		}
+	});
+});
+
+describe('dispatchTabWindowIntent: browser tab write-back (D5)', () => {
+	const BROWSER: TabWindowTabRef = { type: 'browser', id: 'browser-1' };
+	const browserTab = (overrides: Partial<BrowserTab> = {}): BrowserTab => ({
+		id: 'browser-1',
+		url: 'https://old.test/',
+		title: 'Old',
+		createdAt: 1,
+		partition: `persist:maestro-browser-session-${AGENT}`,
+		canGoBack: true,
+		canGoForward: true,
+		isLoading: true,
+		favicon: 'https://old.test/favicon.ico',
+		webContentsId: 7,
+		...overrides,
+	});
+	const held = () => useSessionStore.getState().sessions[0].browserTabs?.[0];
+
+	beforeEach(() => {
+		useSessionStore.setState({
+			sessions: [{ ...agent(), browserTabs: [browserTab()] }],
+			activeSessionId: AGENT,
+		});
+		popOutTabsInStore(AGENT, [POPPED, FILE, TERMINAL, BROWSER]);
+	});
+
+	it('writes the page the tab window shows onto the owner copy, with no live guest state', () => {
+		const outcome = dispatchTabWindowIntent(
+			intent(
+				'setBrowserTabState',
+				{ fields: { url: 'https://new.test/page', title: 'New page', favicon: null } },
+				BROWSER
+			),
+			h
+		);
+
+		expect(outcome).toEqual({ handled: true });
+		// The owner has no webview for the tab: its copy is the one a dock reopens.
+		expect(held()).toMatchObject({
+			url: 'https://new.test/page',
+			title: 'New page',
+			favicon: null,
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+			webContentsId: undefined,
+			remotePage: undefined,
+		});
+	});
+
+	it('takes the agent visibility toggle, and nothing the tab window does not write back', () => {
+		// An incognito tab keeps its own partition (persistence would replace it).
+		const incognito = `maestro-ephemeral-${AGENT}-a1b2c3d4`;
+		useSessionStore.setState({
+			sessions: [
+				{ ...agent(), browserTabs: [browserTab({ partition: incognito, ephemeral: true })] },
+			],
+			activeSessionId: AGENT,
+		});
+		dispatchTabWindowIntent(
+			intent(
+				'setBrowserTabState',
+				{
+					fields: {
+						hiddenFromAgent: true,
+						customTitle: 'Renamed',
+						partition: 'persist:elsewhere',
+					} as never,
+				},
+				BROWSER
+			),
+			h
+		);
+
+		expect(held()).toMatchObject({
+			url: 'https://old.test/',
+			hiddenFromAgent: true,
+			partition: incognito,
+			ephemeral: true,
+		});
+		expect(held()?.customTitle).toBeUndefined();
+	});
+
+	it('refuses a write for a docked tab: the owner webview shows it again', () => {
+		popOutTabsInStore(AGENT, [POPPED]);
+		const outcome = dispatchTabWindowIntent(
+			intent('setBrowserTabState', { fields: { url: 'https://late.test/' } }, BROWSER),
+			h
+		);
+
+		expect(outcome).toEqual({ handled: false, reason: 'the tab is not popped out' });
+		expect(held()).toMatchObject({ url: 'https://old.test/', webContentsId: 7 });
+	});
+
+	it('refuses a write for a tab the owner no longer holds', () => {
+		useSessionStore.setState({ sessions: [agent()], activeSessionId: AGENT });
+		const outcome = dispatchTabWindowIntent(
+			intent('setBrowserTabState', { fields: { url: 'https://x.test/' } }, BROWSER),
+			h
+		);
+		expect(outcome).toEqual({ handled: false, reason: 'the tab is gone' });
 	});
 });
 

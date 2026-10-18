@@ -10,11 +10,10 @@
  * pane gets, built by `useTabWindowChatActions`: each one that writes the agent
  * is an intent to the owner (D2). The file pane's come from
  * `useTabWindowFileTabs`: this window renders the file and owns its edits while
- * the tab is popped out, and writes them back (D5). Terminal tabs render
- * nothing here: `TabWindowTerminals`
- * keeps every terminal of the strip mounted above this content (D5). Browser
- * tabs open a new webview (D5) and land in phase 6; until then they show a
- * notice instead of an empty pane.
+ * the tab is popped out, and writes them back (D5). Terminal and browser tabs
+ * render nothing here: `TabWindowTerminals` keeps every terminal of the strip
+ * mounted above this content, and `TabWindowBrowsers` opens a new webview for
+ * each browser tab (D5).
  */
 
 import type { Session, Theme, UnifiedTab } from '../../types';
@@ -71,13 +70,10 @@ export function TabWindowContent({
 		case 'terminal':
 			// Drawn by TabWindowTerminals, which keeps the xterm alive across tab switches.
 			return null;
+		case 'browser':
+			// Drawn by TabWindowBrowsers, which keeps the page alive across tab switches.
+			return null;
 		default:
-			// Browser tabs, until phase 6 mounts their own view here (D5).
-			return (
-				<PaneMissingTab
-					theme={theme}
-					message="This tab cannot show in a tab window yet. Dock it to see it in the main window."
-				/>
-			);
+			return <PaneMissingTab theme={theme} />;
 	}
 }

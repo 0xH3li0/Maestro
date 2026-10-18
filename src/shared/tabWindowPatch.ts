@@ -18,8 +18,9 @@
  *   window. A delta never carries them, and a snapshot for the agent the tab
  *   window already holds keeps the window's own values. A popped file tab adds
  *   the fields the tab window owns while it renders the file
- *   (`isTabWindowFileTabField`: edits, mode, scroll, disk state), on the same
- *   terms.
+ *   (`isTabWindowFileTabField`: edits, mode, scroll, disk state), and a popped
+ *   browser tab what its own webview reports (`isTabWindowBrowserTabField`:
+ *   page, history flags, loading, guest id), on the same terms.
  * - Tool output crosses capped (`compactLogToolOutputs`), the bound a stored
  *   transcript has. An entry that is already capped goes as it is.
  *
@@ -32,7 +33,7 @@
 
 import { isClientSessionField } from './sessionPersistenceMerge';
 import { compactLogToolOutputs } from './toolOutput';
-import { isTabWindowFileTabField } from './tabWindowTypes';
+import { isTabWindowBrowserTabField, isTabWindowFileTabField } from './tabWindowTypes';
 import type {
 	TabWindowLogSplice,
 	TabWindowSessionDelta,
@@ -183,11 +184,15 @@ function isUnsentSessionField(key: string): boolean {
 
 /**
  * A field of a tab of kind `type` that belongs to the window holding the tab:
- * a per-window field, or, on a file tab, one the tab window owns while it
- * renders the file.
+ * a per-window field, or one the tab window owns while it renders the tab: on
+ * a file tab the file's state, on a browser tab what its webview reports.
  */
 function isOwnTabField(type: SingleTabType, key: string): boolean {
-	return isClientSessionField(key) || (type === 'file' && isTabWindowFileTabField(key));
+	return (
+		isClientSessionField(key) ||
+		(type === 'file' && isTabWindowFileTabField(key)) ||
+		(type === 'browser' && isTabWindowBrowserTabField(key))
+	);
 }
 
 /** Not sent as a tab field: the transcript (it travels as a splice) or a per-window field. */
@@ -379,8 +384,8 @@ function diffLogs(prev: unknown[], next: unknown[]): TabWindowLogSplice | null {
  *
  * A snapshot always applies. For the agent the window already holds, it keeps
  * the window's own per-window fields: the session-level ones (active pointers,
- * input mode, terminal draft) always, and a tab's draft (and a file tab's
- * window-owned state) when that tab was in the previous snapshot's `tabRefs`
+ * input mode, terminal draft) always, and a tab's draft (and a file or browser
+ * tab's window-owned state) when that tab was in the previous snapshot's `tabRefs`
  * and still is. A tab that just arrived takes the owner's draft, which seeds
  * the composer (D2), and so does a tab that left (the owner holds its draft
  * again).
