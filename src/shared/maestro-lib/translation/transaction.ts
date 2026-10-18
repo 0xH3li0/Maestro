@@ -691,6 +691,9 @@ export async function recoverTranslation(
 					),
 					nativeFs
 				);
+				// Codex owns the rollout/index pair. A lost import reply leaves its hash
+				// unknown, but rollback never mutates retained artifacts, so no hash is needed.
+				if (write.cleanup === 'retain') continue;
 				if (write.gitExcludeBlock) {
 					let bytes: Buffer;
 					try {

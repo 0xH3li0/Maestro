@@ -2,6 +2,9 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockSession } from '../helpers/mockSession';
 import { remapTranslationFs } from '../helpers/translationFs';
@@ -13,6 +16,26 @@ import { wrapSpawnWithSsh } from '../../main/utils/ssh-spawn-wrapper';
 import { collectTranslationResources } from '../../shared/maestro-lib/translation/resources';
 import type { TranslationServiceHost } from '../../shared/maestro-lib/translation/service';
 import type { SshRemoteConfig } from '../../shared/types';
+import { openCodexTranslationConnection } from '../../shared/maestro-lib/codex/connection';
+import { stopProcess } from '../../shared/maestro-lib/control/termination';
+import { readCodexThreadItems } from '../../shared/maestro-lib/translation/codex-import';
+import { createTranslationRegistry } from '../../shared/maestro-lib/translation/adapters';
+import { extractNativeConversation } from '../../shared/maestro-lib/translation/native-records';
+import { planTranslation } from '../../shared/maestro-lib/translation/registry';
+import {
+	TranslationArchive,
+	type TranslationJournal,
+} from '../../shared/maestro-lib/translation/archive';
+import {
+	applyTranslation,
+	recoverTranslation,
+} from '../../shared/maestro-lib/translation/transaction';
+
+vi.mock('node:child_process', async (importOriginal) => ({
+	...(await importOriginal<typeof import('node:child_process')>()),
+	spawn: vi.fn(),
+}));
+vi.mock('../../shared/maestro-lib/control/termination', () => ({ stopProcess: vi.fn() }));
 
 vi.mock('../../main/provider-translation-fs', () => ({ createSshTranslationFs: vi.fn() }));
 vi.mock('../../main/utils/remote-git', () => ({
@@ -195,7 +218,278 @@ describe('remote translation identity', () => {
 			expect.anything(),
 			expect.anything()
 		);
-		expect(() => host.assertCanApply!()).toThrow('remote Codex import channel');
+		expect(() => host.assertCanApply!()).toThrow('remote managed knowledge location');
+	});
+
+	describe('Codex import over SSH stdio', () => {
+		let child: ChildProcessWithoutNullStreams;
+		let stdout: PassThrough;
+		let connection: Awaited<ReturnType<typeof openCodexTranslationConnection>> | undefined;
+		let frames: Array<{ id?: number; method: string; params?: any }>;
+		let items: unknown[];
+		let dropAfterInject: boolean;
+		let codexHome: string;
+		const rollout = '/remote/codex/sessions/import.jsonl';
+
+		beforeEach(() => {
+			connection = undefined;
+			frames = [];
+			items = [];
+			dropAfterInject = false;
+			codexHome = '/remote/codex';
+			stdout = new PassThrough();
+			child = Object.assign(new EventEmitter(), {
+				stdin: new PassThrough(),
+				stdout,
+				stderr: new PassThrough(),
+			}) as unknown as ChildProcessWithoutNullStreams;
+			vi.mocked(spawn).mockReturnValue(child);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				exitCode: 0,
+				stdout: 'codex 0.162.1',
+				stderr: '',
+			});
+			child.stdin.on('data', (chunk: Buffer) => {
+				const frame = JSON.parse(chunk.toString('utf8'));
+				frames.push(frame);
+				if (frame.id === undefined) return;
+				void (async () => {
+					let result: unknown;
+					switch (frame.method) {
+						case 'initialize':
+							result = { codexHome };
+							break;
+						case 'thread/start':
+							await fs.mkdir(path.dirname(port.backingPath(rollout)), { recursive: true });
+							await fs.writeFile(port.backingPath(rollout), '');
+							result = { thread: { id: 'remote-thread', path: rollout } };
+							break;
+						case 'thread/inject_items':
+							items = frame.params.items;
+							await fs.writeFile(
+								port.backingPath(rollout),
+								items
+									.map((payload) => JSON.stringify({ type: 'response_item', payload }))
+									.join('\n') + '\n'
+							);
+							if (dropAfterInject) {
+								child.stdout.emit('end');
+								return;
+							}
+							result = {};
+							break;
+						case 'thread/items/list':
+							result = { data: items, nextCursor: null };
+							break;
+						default:
+							throw new Error(`Unexpected RPC: ${frame.method}`);
+					}
+					// Split inside a UTF-8 character when present, otherwise inside the JSON frame.
+					const response = Buffer.from(JSON.stringify({ id: frame.id, result }) + '\n');
+					const unicode = response.indexOf(Buffer.from('🦜'));
+					const split = unicode < 0 ? 5 : unicode + 1;
+					stdout.write(response.subarray(0, split));
+					stdout.write(response.subarray(split));
+				})().catch((error) => child.emit('error', error));
+			});
+		});
+
+		afterEach(() => {
+			connection?.close();
+			vi.unstubAllEnvs();
+		});
+
+		it('keeps the default local connection invocation unchanged', async () => {
+			connection = await openCodexTranslationConnection({
+				binary: '/local/bin/codex',
+				cwd: '/local/project',
+				env: { CODEX_HOME: codexHome },
+			});
+			expect(spawn).toHaveBeenCalledExactlyOnceWith('/local/bin/codex', ['app-server'], {
+				cwd: '/local/project',
+				env: { CODEX_HOME: codexHome },
+				stdio: ['pipe', 'pipe', 'pipe'],
+				windowsHide: true,
+			});
+		});
+
+		it('pins the destination account and uses the remote custom invocation without local env leakage', async () => {
+			vi.stubEnv('CODEX_HOME', '/local/wrong-account');
+			vi.stubEnv('LOCAL_ONLY_SECRET', 'must-not-cross');
+			vi.spyOn(providers, 'providerConfig').mockReturnValue({
+				customPath: '~/bin/custom codex',
+				customArgs: '-c "name=with spaces"',
+				customEnvVars: { CODEX_HOME: '/ignored/unpinned', PROVIDER_ONLY: 'yes' },
+			});
+			const host = (await resolveSshTranslationHost(session, store, providers))!;
+			const destination = await host.resolveIdentity!(session, 'codex', false);
+			vi.mocked(wrapSpawnWithSsh).mockClear();
+			connection = await host.openCodexConnection!(destination);
+			expect(wrapSpawnWithSsh).toHaveBeenCalledWith(
+				{
+					command: '/remote/home/bin/custom codex',
+					agentBinaryName: '/remote/home/bin/custom codex',
+					args: ['app-server', '-c', 'name=with spaces'],
+					cwd: '/remote/worktree',
+					customEnvVars: {
+						GLOBAL_FLAG: 'yes',
+						DEFAULT_FLAG: '1',
+						PROVIDER_ONLY: 'yes',
+						CODEX_HOME: '/remote/codex',
+					},
+				},
+				session.sessionSshRemoteConfig,
+				expect.anything()
+			);
+			expect(spawn).toHaveBeenCalledExactlyOnceWith('ssh', ['remote', 'probe'], {
+				cwd: '/local/home',
+				stdio: ['pipe', 'pipe', 'pipe'],
+				windowsHide: true,
+			});
+			expect(frames.map((frame) => frame.method)).toEqual(['initialize', 'initialized']);
+		});
+
+		it.each([false, true])(
+			'imports and reads remote bytes, with dropped connection = %s',
+			async (drop) => {
+				const host = (await resolveSshTranslationHost(session, store, providers))!;
+				const destination = await host.resolveIdentity!(session, 'codex', false);
+				connection = await host.openCodexConnection!(destination);
+				const source = {
+					...destination,
+					provider: 'claude-code' as const,
+					version: '2.1.296',
+					accountRoot: '/remote/account',
+				};
+				const conversation = extractNativeConversation(
+					source,
+					'tab',
+					'source-id',
+					Buffer.from(
+						JSON.stringify({
+							type: 'user',
+							uuid: 'user-1',
+							message: { role: 'user', content: 'Synthetic remote fact 🦜' },
+						})
+					)
+				);
+				const registry = createTranslationRegistry();
+				const plan = planTranslation({
+					agentId: session.id,
+					source,
+					destination,
+					conversations: [conversation],
+					registry,
+					scope: { projectKnowledge: true, selectedUserResources: [] },
+				});
+				expect(plan.status).toBe('ready');
+				const journal: TranslationJournal = {
+					schemaVersion: 1,
+					plan,
+					state: 'planned',
+					conversations: [conversation],
+					resources: [],
+					mappings: [],
+					resourceWrites: [],
+				};
+				const archive = new TranslationArchive(path.join(root, 'local-archive'));
+				const transactionHost = {
+					nativeFs: host.nativeFs,
+					knowledgeRoot: '/remote/knowledge',
+					codex: connection,
+					assertSourceUnchanged: vi.fn(async () => {}),
+					setMigration: vi.fn(async () => {}),
+					commit: vi.fn(async () => {}),
+					isCommitted: vi.fn(async () => false),
+				};
+				dropAfterInject = drop;
+				const result = await applyTranslation(archive, registry, journal, transactionHost, true);
+				const durable = await archive.read(session.id, plan.id);
+				expect(durable.mappings[0]).toMatchObject({
+					destinationSessionId: 'remote-thread',
+					artifacts: [{ path: rollout, cleanup: 'retain' }],
+				});
+				expect(await fs.readFile(port.backingPath(rollout), 'utf8')).toContain(
+					'Synthetic remote fact'
+				);
+				expect(
+					port.nativeFs.readFile.mock.calls.every(([file]) => file.startsWith('/remote/'))
+				).toBe(true);
+				if (drop) {
+					expect(result.state).toBe('failed');
+					expect(result.error).toContain('stdout ended');
+					expect(transactionHost.commit).not.toHaveBeenCalled();
+					await expect(recoverTranslation(archive, durable, transactionHost)).rejects.toThrow(
+						'Incomplete native staging'
+					);
+					expect((await recoverTranslation(archive, durable, transactionHost, true)).state).toBe(
+						'rolled-back'
+					);
+					// Codex owns its rollout/index pair. Rollback retains the uncertain native import.
+					expect(port.nativeFs.lstat).toHaveBeenCalledWith(rollout);
+					expect(port.nativeFs.unlink).not.toHaveBeenCalledWith(rollout);
+					expect(await fs.readFile(port.backingPath(rollout), 'utf8')).toContain(
+						'Synthetic remote fact'
+					);
+				} else {
+					expect(result.state).toBe('committed');
+					expect(port.nativeFs.readFile).toHaveBeenCalledWith(rollout);
+					expect(await readCodexThreadItems(connection, 'remote-thread')).toEqual(items);
+					expect(transactionHost.commit).toHaveBeenCalledOnce();
+				}
+				expect(frames.filter((frame) => frame.method === 'thread/start')).toHaveLength(1);
+				expect(frames.filter((frame) => frame.method === 'thread/inject_items')).toHaveLength(1);
+			}
+		);
+
+		it('rejects a different remote account and closes the child', async () => {
+			const host = (await resolveSshTranslationHost(session, store, providers))!;
+			const destination = await host.resolveIdentity!(session, 'codex', false);
+			codexHome = '/remote/wrong-account';
+			await expect(host.openCodexConnection!(destination)).rejects.toThrow(
+				'different account root'
+			);
+			expect(stopProcess).toHaveBeenCalledWith({ child }, { from: 'terminate', graceMs: 1000 });
+			expect(frames.map((frame) => frame.method)).toEqual(['initialize']);
+		});
+
+		it.each(['stdin', 'stdout', 'stderr', 'exit', 'close'] as const)(
+			'refuses later RPCs after %s fails',
+			async (event) => {
+				const host = (await resolveSshTranslationHost(session, store, providers))!;
+				const destination = await host.resolveIdentity!(session, 'codex', false);
+				connection = await host.openCodexConnection!(destination);
+				if (event === 'stdin' || event === 'stdout' || event === 'stderr')
+					child[event].emit('error', new Error('synthetic failure'));
+				else child.emit(event, 255);
+				await expect(connection.request('thread/start')).rejects.toThrow('Codex app-server');
+				expect(frames.map((frame) => frame.method)).toEqual(['initialize', 'initialized']);
+			}
+		);
+
+		it('refuses unresolved wrapping, stdin scripts and a changed host without spawning locally', async () => {
+			const host = (await resolveSshTranslationHost(session, store, providers))!;
+			const destination = await host.resolveIdentity!(session, 'codex', false);
+			await expect(
+				host.openCodexConnection!({ ...destination, remoteHost: 'another-host' })
+			).rejects.toThrow('does not match');
+			vi.mocked(wrapSpawnWithSsh).mockResolvedValueOnce({
+				command: 'codex',
+				args: ['app-server'],
+				cwd: '/remote/worktree',
+				sshRemoteUsed: null,
+			});
+			await expect(host.openCodexConnection!(destination)).rejects.toThrow('could not be resolved');
+			vi.mocked(wrapSpawnWithSsh).mockResolvedValueOnce({
+				command: 'ssh',
+				args: [],
+				cwd: '/local/home',
+				sshRemoteUsed: remote,
+				sshStdinScript: 'bootstrap',
+			});
+			await expect(host.openCodexConnection!(destination)).rejects.toThrow('SSH stdio channel');
+			expect(spawn).not.toHaveBeenCalled();
+		});
 	});
 
 	it('finds Codex rollouts through the selected native port and propagates failed discovery', async () => {

@@ -186,6 +186,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Provider translation filesystems:** `TranslationFs` in `src/shared/maestro-lib/translation/fs-port.ts`; `localTranslationFs`, `localTranslationFsSync` in `translation/local-fs.ts`
 - **SSH provider translation:** `createSshTranslationFs()` in `src/main/provider-translation-fs.ts`; `resolveSshTranslationHost()` in `src/main/provider-translation-ssh.ts`
+- **Codex translation import connection:** `openCodexTranslationConnection()` in `src/shared/maestro-lib/codex/connection.ts`
 - **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
 - **Translating context before a send:** `prepareTabForSend()`, `pendingTranslationSource()`, `TranslationSendHeldError` in `src/shared/maestro-lib/translation/send.ts`; `NativeTranslationService` in `translation/service.ts`; `prepareProviderTranslationForSend()` in `src/renderer/services/providerTranslation.ts`
 - **Finding a Codex native transcript:** `findCodexSessionFile()`, `listCodexSessionFiles()`, `extractSessionIdFromFilename()` in `src/shared/maestro-lib/codex/session-files.ts`

@@ -114,6 +114,35 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it.each(['unknown', 'changed'] as const)(
+		'rolls back owned files while preserving a retained native artifact with a %s hash',
+		async (hashState) => {
+			const s = await scenario();
+			try {
+				s.host.commit.mockRejectedValueOnce(new Error('commit interrupted'));
+				expect((await applyTranslation(s.archive, s.registry, s.journal, s.host, true)).state).toBe(
+					'failed'
+				);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				const retained = durable.mappings[0].artifacts[0];
+				retained.cleanup = 'retain';
+				if (hashState === 'unknown') retained.sha256 = '';
+				await writeFile(retained.path, 'provider-owned content after interruption');
+				await s.archive.write(durable);
+				expect((await recoverTranslation(s.archive, durable, s.host, true)).state).toBe(
+					'rolled-back'
+				);
+				expect(await readFile(retained.path, 'utf8')).toBe(
+					'provider-owned content after interruption'
+				);
+				await expect(readFile(durable.mappings[1].artifacts[0].path)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
 	it.each(['commit', 'recover', 'rollback'] as const)(
 		'keeps the archive local and native writes on the injected port during %s',
 		async (action) => {

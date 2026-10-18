@@ -80,6 +80,10 @@ export interface TranslationServiceHost {
 	): Promise<TranslationIdentity>;
 	/** Refuse writes when a host lacks a required transaction transport. */
 	assertCanApply?(): void;
+	/** Native host owns the import transport; SSH must never use the local fallback. */
+	openCodexConnection?(
+		destination: TranslationIdentity
+	): ReturnType<typeof openCodexTranslationConnection>;
 	userDataDir: string;
 	getSession(agentId: string): TranslationServiceSession;
 	persist(
@@ -112,7 +116,12 @@ export interface TranslationServiceHost {
 
 export type TranslationNativeHost = Pick<
 	TranslationServiceHost,
-	'nativeFs' | 'resolveIdentity' | 'execGit' | 'findCodexSessionFile' | 'assertCanApply'
+	| 'nativeFs'
+	| 'resolveIdentity'
+	| 'execGit'
+	| 'findCodexSessionFile'
+	| 'assertCanApply'
+	| 'openCodexConnection'
 >;
 
 export class NativeTranslationService {
@@ -1019,22 +1028,28 @@ export class NativeTranslationService {
 						(limitationsNeedingAcceptance(journal.plan.limitations).length === 0 ||
 							request.acceptLimitations)
 					) {
-						const detected = await this.deps.getProvider('codex');
-						const binary = detected?.path;
-						if (!binary) throw new Error('Codex binary unavailable');
-						const env = buildAgentEnvironment({
-							surface: 'desktop',
-							globalShellEnvVars: this.deps.globalEnv(),
-							defaultEnvVars: detected?.defaultEnvVars,
-							agentCustomEnvVars: this.deps.providerConfig('codex').customEnvVars as
-								| Record<string, string>
-								| undefined,
-						});
-						connection = await openCodexTranslationConnection({
-							binary,
-							cwd: journal.plan.destination.projectRoot,
-							env: { ...env, CODEX_HOME: journal.plan.destination.accountRoot },
-						});
+						if (this.deps.openCodexConnection) {
+							connection = await this.deps.openCodexConnection(journal.plan.destination);
+						} else {
+							if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId)
+								throw new Error('SSH translation requires a remote Codex import channel.');
+							const detected = await this.deps.getProvider('codex');
+							const binary = detected?.path;
+							if (!binary) throw new Error('Codex binary unavailable');
+							const env = buildAgentEnvironment({
+								surface: 'desktop',
+								globalShellEnvVars: this.deps.globalEnv(),
+								defaultEnvVars: detected?.defaultEnvVars,
+								agentCustomEnvVars: this.deps.providerConfig('codex').customEnvVars as
+									| Record<string, string>
+									| undefined,
+							});
+							connection = await openCodexTranslationConnection({
+								binary,
+								cwd: journal.plan.destination.projectRoot,
+								env: { ...env, CODEX_HOME: journal.plan.destination.accountRoot },
+							});
+						}
 						host.codex = connection;
 					}
 					const result = await applyTranslation(

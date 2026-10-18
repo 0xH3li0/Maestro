@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 import { canonicalJson } from '../shared/canonicalJson';
 import { expandTilde } from '../shared/pathUtils';
 import { stripBlankEnvVars } from '../shared/agentEnvironment';
@@ -7,6 +8,8 @@ import { providerOverridesFor } from '../shared/maestro-lib/agents/providerSwap'
 import { applyAgentConfigOverrides } from '../shared/maestro-lib/launch/agent-args';
 import { resolveAgentEnvVars } from '../shared/maestro-lib/launch/env';
 import { findCodexSessionFile } from '../shared/maestro-lib/codex/session-files';
+import { openCodexTranslationConnection } from '../shared/maestro-lib/codex/connection';
+import type { ToolType } from '../shared/types';
 import {
 	discoverClaudeMemoryRoot,
 	resolveMemoryRepositoryRoot,
@@ -42,29 +45,84 @@ export async function resolveSshTranslationHost(
 	const nativeFs = createSshTranslationFs(remote);
 	const execGit: TranslationServiceHost['execGit'] = (args, cwd) =>
 		execGitReadOnly(args, '', remote, cwd);
+	// Probe and import must use the same provider settings, without inheriting local env.
+	const invocation = async (
+		agent: TranslationServiceSession,
+		provider: ToolType,
+		source: boolean,
+		baseArgs: string[]
+	) => {
+		const detected = await providers.getProvider(provider);
+		const providerConfig = providers.providerConfig(provider);
+		const overrides = providerOverridesFor({ ...agent, aiTabs: undefined }, provider);
+		const binary =
+			(source ? overrides.customPath : undefined) ||
+			providerConfig.customPath ||
+			detected?.binaryName;
+		if (!binary) throw new Error(`SSH translation requires the ${provider} binary`);
+		const { args } = applyAgentConfigOverrides(undefined, baseArgs, {
+			agentConfigValues: { customArgs: providerConfig.customArgs },
+			sessionCustomArgs: source ? overrides.customArgs : undefined,
+		});
+		const env = stripBlankEnvVars({
+			...providers.globalEnv(),
+			...resolveAgentEnvVars({
+				defaultEnvVars: detected?.defaultEnvVars,
+				agentCustomEnvVars: providerConfig.customEnvVars,
+				sessionCustomEnvVars: source ? overrides.customEnvVars : undefined,
+			}),
+		});
+		return { binary, args, env };
+	};
 	return {
 		nativeFs,
 		execGit,
 		findCodexSessionFile: (id, root) => findCodexSessionFile(id, root, nativeFs),
 		assertCanApply: () => {
-			// The next playbook tasks supply these transaction transports. Keep this
-			// boundary explicit so enabling remote planning cannot launch local Codex.
-			throw new Error(
-				'SSH translation apply requires the remote Codex import channel and remote managed knowledge location.'
+			// The next task supplies the remote managed knowledge root and launch binding.
+			throw new Error('SSH translation apply requires the remote managed knowledge location.');
+		},
+		openCodexConnection: async (destination) => {
+			if (
+				destination.provider !== 'codex' ||
+				destination.remoteHost !== translationHash(canonicalJson(remote)) ||
+				!destination.remoteHome ||
+				!path.posix.isAbsolute(destination.remoteHome) ||
+				!path.posix.isAbsolute(destination.accountRoot) ||
+				!path.posix.isAbsolute(destination.projectRoot)
+			)
+				throw new Error('Codex import identity does not match the resolved SSH host');
+			const config = await invocation(session, 'codex', false, ['app-server']);
+			const binary = expandTilde(config.binary, destination.remoteHome);
+			const env = { ...config.env, CODEX_HOME: destination.accountRoot };
+			const wrapped = await wrapSpawnWithSsh(
+				{
+					command: binary,
+					agentBinaryName: binary,
+					args: config.args,
+					cwd: destination.projectRoot,
+					customEnvVars: env,
+				},
+				sshConfig,
+				{ getSshRemotes: () => [remote] }
 			);
+			if (!wrapped.sshRemoteUsed) throw new Error(sshUnresolvedRemoteMessage(sshConfig!));
+			// No prompt or stdin bootstrap: stdin belongs exclusively to JSON-RPC.
+			if (wrapped.sshStdinScript) throw new Error('Codex import requires an SSH stdio channel');
+			return openCodexTranslationConnection({
+				binary,
+				cwd: destination.projectRoot,
+				env,
+				spawn: () =>
+					spawn(wrapped.command, wrapped.args, {
+						cwd: wrapped.cwd,
+						stdio: ['pipe', 'pipe', 'pipe'],
+						windowsHide: true,
+					}),
+			});
 		},
 		resolveIdentity: async (agent, provider, source, checkpoint) => {
-			const detected = await providers.getProvider(provider);
-			const providerConfig = providers.providerConfig(provider);
-			const overrides = providerOverridesFor({ ...agent, aiTabs: undefined }, provider);
-			const env = stripBlankEnvVars({
-				...providers.globalEnv(),
-				...resolveAgentEnvVars({
-					defaultEnvVars: detected?.defaultEnvVars,
-					agentCustomEnvVars: providerConfig.customEnvVars,
-					sessionCustomEnvVars: source ? overrides.customEnvVars : undefined,
-				}),
-			});
+			const { binary, args, env } = await invocation(agent, provider, source, ['--version']);
 			// Read only the account identity fields, never dump the remote environment.
 			const probe = await execShellRemote(
 				`command -v base64 >/dev/null 2>&1 || { printf '%s' 'SSH translation requires base64' >&2; exit 127; }; ` +
@@ -106,13 +164,6 @@ export async function resolveSshTranslationHost(
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 			}
-			const customPath = source ? overrides.customPath : undefined;
-			const binary = customPath || providerConfig.customPath || detected?.binaryName;
-			if (!binary) throw new Error(`SSH translation requires the ${provider} binary`);
-			const { args } = applyAgentConfigOverrides(undefined, ['--version'], {
-				agentConfigValues: { customArgs: providerConfig.customArgs },
-				sessionCustomArgs: source ? overrides.customArgs : undefined,
-			});
 			const wrapped = await wrapSpawnWithSsh(
 				{
 					command: expandTilde(binary, home),
