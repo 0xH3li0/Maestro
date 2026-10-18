@@ -954,3 +954,7 @@ Build: `npm run build:main && npm run build:preload && npm run build:renderer` (
 Gates for the fix: `npx vitest run` on `window-registry`, `window-manager`, `handlers/windows`, `handlers/tab-windows`, `multi-window-telemetry`, `window-state-persistence`, `quit-handler`, and the other main tests that build a `WindowRegistry` (9 files, 444 tests, all passed); `tsc -p tsconfig.main.json` and `tsc -p tsconfig.lint.json` with `rc/node_modules`, 0 errors; `npx eslint` on the 3 changed files, 0 errors.
 
 Not covered by this run: background throttling of a hidden owner, multiple displays (the hands-on check below), and terminal, file, and browser tabs in a tab window.
+
+### Hands-on check on a second monitor (2026-10-18)
+
+Hands-on check: no issues. The human gate in TAB-WINDOWS-08 (pop out two tabs of one agent and one of another, drag the windows across displays, restart Maestro, confirm the restore lands on the right displays) was ticked with no findings recorded, so no code or test changes came out of it.
