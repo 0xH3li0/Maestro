@@ -104,7 +104,7 @@ import { logger } from '../utils/logger';
 import { obscuringSeal, safeStorageSeal } from '../utils/safe-storage-seal';
 import type { SealProvider } from '../utils/safe-storage-seal';
 import { countTurnFilesOnDay, isSameFolder, validateAgentFolder } from './layout';
-import type { AgentFolderContext } from './layout';
+import type { AgentFolderContext, AgentWorkspace } from './layout';
 
 // ============================================================================
 // Contract
@@ -1005,13 +1005,14 @@ export function setCotFailureListener(listener: CotFailureListener | null): void
  * directory, and its siblings are one `ls ..` away). An agent on an SSH remote
  * is left out: its paths are paths on another machine.
  */
-export function agentDirsOf(sessions: unknown): string[] {
-	const dirs: string[] = [];
+export function agentDirsOf(sessions: unknown): AgentWorkspace[] {
+	const dirs: AgentWorkspace[] = [];
 	if (!Array.isArray(sessions)) return dirs;
 	for (const session of sessions) {
 		if (!isRecord(session)) continue;
 		const ssh = session.sessionSshRemoteConfig;
 		if (isRecord(ssh) && ssh.enabled === true) continue;
+		const agentName = typeof session.name === 'string' ? session.name : '';
 		const granted = Array.isArray(session.additionalDirectories)
 			? session.additionalDirectories.map((dir) => (isRecord(dir) ? dir.path : undefined))
 			: [];
@@ -1026,7 +1027,7 @@ export function agentDirsOf(sessions: unknown): string[] {
 			session.worktreeParentPath,
 			...granted,
 		]) {
-			if (typeof dir === 'string' && dir.trim() !== '') dirs.push(dir);
+			if (typeof dir === 'string' && dir.trim() !== '') dirs.push({ path: dir, agentName });
 		}
 	}
 	return dirs;
