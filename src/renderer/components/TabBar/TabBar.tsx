@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from '
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
 import { hasDraft, hasUnreadVisibleTab, ownerVisibleAiTabs } from '../../utils/tabHelpers';
+import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
 import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
@@ -60,6 +61,7 @@ function TabBarInner({
 	onCopyContext,
 	onExportHtml,
 	onSnooze,
+	onTabWindowMove,
 	onPublishGist,
 	ghCliAvailable,
 	showUnreadOnly: showUnreadOnlyProp,
@@ -166,6 +168,26 @@ function TabBarInner({
 	// Tabs popped out into a tab window have no chip here (D4). Memo dependency
 	// for the filters below: a pop-out changes this set, not `tabs`.
 	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
+
+	// Tab Windows (TW-11): one stable callback per chip kind, so the chip menus
+	// carry the tab's own type. A hidden consult tab never gets the item (TW-14);
+	// the strip does not draw one today, and the guard keeps it that way.
+	const handleAiTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'ai', id }),
+		[onTabWindowMove]
+	);
+	const handleFileTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'file', id }),
+		[onTabWindowMove]
+	);
+	const handleTerminalTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'terminal', id }),
+		[onTabWindowMove]
+	);
+	const handleBrowserTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'browser', id }),
+		[onTabWindowMove]
+	);
 
 	// Scroll active tab into view
 	useEffect(() => {
@@ -657,6 +679,7 @@ function TabBarInner({
 		onCopyContext: onCopyContext && (tab.logs?.length ?? 0) >= 1 ? onCopyContext : undefined,
 		onExportHtml: onExportHtml || undefined,
 		onSnooze: onSnooze || undefined,
+		onTabWindowMove: onTabWindowMove && !isAiTabHidden(tab) ? handleAiTabWindowMove : undefined,
 		onPublishGist:
 			onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1 ? onPublishGist : undefined,
 		onMoveToFirst:
@@ -838,6 +861,7 @@ function TabBarInner({
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
 										onRename={onFileTabRename}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleFileTabWindowMove : undefined}
 										onPublishGist={ghCliAvailable ? onPublishFileGist : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
@@ -879,6 +903,7 @@ function TabBarInner({
 										isDragOver={dragOverTabId === terminalTab.id}
 										registerRef={(el) => registerTabRef(terminalTab.id, el)}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleTerminalTabWindowMove : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -919,6 +944,7 @@ function TabBarInner({
 										isDragOver={dragOverTabId === browserTab.id}
 										registerRef={(el) => registerTabRef(browserTab.id, el)}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleBrowserTabWindowMove : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}

@@ -20,7 +20,7 @@
 
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import type { TabWindowInfo } from '../../shared/tabWindowTypes';
+import type { TabWindowInfo, TabWindowTabRef } from '../../shared/tabWindowTypes';
 import { tabRefKey, type UnifiedTabRef } from '../../shared/unifiedTabRef';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -108,6 +108,14 @@ export const useTabWindowStore = create<TabWindowStoreState>()((set) => ({
 /** The popped tab keys of one agent; an empty Set when it has none. */
 export function getPoppedOutTabKeys(agentId: string): PoppedOutTabKeys {
 	return useTabWindowStore.getState().poppedByAgent[agentId] ?? EMPTY_KEYS;
+}
+
+/**
+ * The popped tabs of one agent, in its tab window's strip order; empty when it
+ * has none. For lists that name each tab (the Cmd+K "Dock Tab" entries).
+ */
+export function getTabWindowTabRefs(agentId: string): TabWindowTabRef[] {
+	return useTabWindowStore.getState().windows.find((w) => w.agentId === agentId)?.tabRefs ?? [];
 }
 
 /**

@@ -17,11 +17,20 @@ vi.mock('../../../renderer/utils/runtimeContext', async (importOriginal) => ({
 const { captureException } = vi.hoisted(() => ({ captureException: vi.fn() }));
 vi.mock('../../../renderer/utils/sentry', () => ({ captureException }));
 
+const { notifyToast } = vi.hoisted(() => ({ notifyToast: vi.fn() }));
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast,
+}));
+
 import {
 	canUseTabWindows,
 	dockTab,
+	dockTabFromUi,
 	popOutRefusal,
 	popOutTab,
+	popOutTabFromUi,
+	resolvePopOutTarget,
 } from '../../../renderer/services/tabWindowActions';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockAITab, createMockSession, installTabWindowsApi } from '../../helpers';
@@ -82,6 +91,7 @@ beforeEach(() => {
 	runtime.webDesktop = false;
 	runtime.tabWindow = false;
 	captureException.mockClear();
+	notifyToast.mockClear();
 	api = installTabWindowsApi();
 	seed();
 });
@@ -261,5 +271,64 @@ describe('dockTab', () => {
 			error: 'gone',
 		});
 		expect(captureException).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('resolvePopOutTarget', () => {
+	it('is the shown standalone tab', () => {
+		seed({ activeTabId: 'a2' });
+		expect(resolvePopOutTarget(agent())).toEqual({ type: 'ai', id: 'a2' });
+	});
+
+	it('is the focused pane of a shown tiled group (D6)', () => {
+		seed({
+			activeTabId: 'a1',
+			tabGroups: [{ ...group('g1', ['a2', 'a3']), focusedPaneId: 'leaf-a3' }],
+			activeGroupId: 'g1',
+		});
+		expect(resolvePopOutTarget(agent())).toEqual({ type: 'ai', id: 'a3' });
+	});
+
+	it('is null for a hidden consult tab (TW-14)', () => {
+		seed({ activeTabId: 'consult' });
+		expect(resolvePopOutTarget(agent())).toBeNull();
+	});
+
+	it('is null in the web-desktop build and inside a tab window (TW-13, D1)', () => {
+		seed({ activeTabId: 'a2' });
+		runtime.webDesktop = true;
+		expect(resolvePopOutTarget(agent())).toBeNull();
+		runtime.webDesktop = false;
+		runtime.tabWindow = true;
+		expect(resolvePopOutTarget(agent())).toBeNull();
+	});
+});
+
+describe('popOutTabFromUi / dockTabFromUi', () => {
+	it('pops out in the foreground and shows no toast on success', async () => {
+		await popOutTabFromUi(AGENT, { type: 'ai', id: 'a2' });
+		expect(api.popOut).toHaveBeenCalledWith(AGENT, { type: 'ai', id: 'a2' }, { background: false });
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('shows a pop-out refusal as a toast', async () => {
+		await popOutTabFromUi(AGENT, { type: 'ai', id: 'consult' });
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'red',
+				message: 'A hidden consult tab cannot be popped out',
+			})
+		);
+	});
+
+	it('docks and shows a refusal from main as a toast', async () => {
+		await dockTabFromUi(AGENT, { type: 'ai', id: 'a2' });
+		expect(api.dock).toHaveBeenCalledWith(AGENT, { type: 'ai', id: 'a2' });
+		expect(notifyToast).not.toHaveBeenCalled();
+		api.dock.mockResolvedValue({ docked: false, error: 'not popped out' });
+		await dockTabFromUi(AGENT, { type: 'ai', id: 'a2' });
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: 'not popped out' })
+		);
 	});
 });

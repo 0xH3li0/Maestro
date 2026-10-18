@@ -262,18 +262,25 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 	);
 	const activeRef: TabWindowTabRef | null =
 		activeTab && activeTab.type !== 'group' ? { type: activeTab.type, id: activeTab.id } : null;
+	// The two ways out of TW-11 that dock one tab: the header's Dock button and
+	// the chip menu's "Dock to Main Window" (and its shortcut).
+	const dockTabRef = useCallback(
+		(ref: TabWindowTabRef) => {
+			// The owner shows a docked tab with the draft and the file edits it holds
+			// for it, so those go first: main relays this window's messages in order.
+			flushDraft();
+			flushFileTabs();
+			void runTabWindowCall(
+				'dock',
+				() => dockTab(agentId, ref),
+				(result) => (result.docked ? null : result.error)
+			);
+		},
+		[agentId, flushDraft, flushFileTabs]
+	);
 	const dockActiveTab = useCallback(() => {
-		if (!activeRef) return;
-		// The owner shows a docked tab with the draft and the file edits it holds
-		// for it, so those go first: main relays this window's messages in order.
-		flushDraft();
-		flushFileTabs();
-		void runTabWindowCall(
-			'dock',
-			() => dockTab(agentId, activeRef),
-			(result) => (result.docked ? null : result.error)
-		);
-	}, [agentId, activeRef, flushDraft, flushFileTabs]);
+		if (activeRef) dockTabRef(activeRef);
+	}, [activeRef, dockTabRef]);
 
 	// Tab shortcuts: the main window's entries, scoped to this strip (TW-6).
 	useTabWindowKeyboard({
@@ -281,6 +288,7 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		activeTabRef: activeRef,
 		onSelectTab: selectTab,
 		onCloseTab: closeTab,
+		onDockTab: dockTabRef,
 	});
 
 	// Chip menus. Each is the intent the owner runs with its own handler
@@ -389,6 +397,7 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 				onFileTabRename={requestRename}
 				onBrowserTabRename={requestRename}
 				onSnooze={requestSnooze}
+				onTabWindowMove={dockTabRef}
 				onSummarizeAndContinue={summarizeAndContinue}
 				onUnifiedTabReorder={reorderTab}
 				onCloseOtherTabs={(pivot) => closeTabsBy(getRefsExceptActive, pivot)}

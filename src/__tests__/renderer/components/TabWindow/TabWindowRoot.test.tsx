@@ -504,6 +504,21 @@ describe('TabWindowRoot tab switching (TW-6)', () => {
 		});
 	});
 
+	it('docks a tab from its chip menu, not only the shown one (TW-11)', async () => {
+		await renderRoot();
+		fireEvent.mouseEnter(screen.getByText('notes').closest('[data-tab-id]')!);
+		fireEvent.click(
+			await screen.findByTestId('tab-window-menu-item', undefined, { timeout: 2000 })
+		);
+		expect(tabWindowsApi.dock).toHaveBeenCalledWith(AGENT, { type: 'file', id: 'f1' });
+	});
+
+	it('docks the shown tab with the moveTabToTabWindow chord (Opt+Cmd+O)', async () => {
+		await renderRoot();
+		press({ key: 'ø', code: 'KeyO', metaKey: true, altKey: true });
+		expect(tabWindowsApi.dock).toHaveBeenCalledWith(AGENT, { type: 'ai', id: 'a2' });
+	});
+
 	it('leaves agent cycling and the sidebar shortcuts inert', async () => {
 		await renderRoot();
 		// The load-time snapshot request is not a shortcut.

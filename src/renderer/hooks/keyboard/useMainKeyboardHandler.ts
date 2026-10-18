@@ -42,6 +42,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 import { matchTabNavigationShortcut } from '../../utils/tabNavigationShortcuts';
+import { popOutTabFromUi, resolvePopOutTarget } from '../../services/tabWindowActions';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -879,6 +880,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
+			} else if (ctx.isShortcut(e, 'moveTabToTabWindow')) {
+				e.preventDefault();
+				// The shown tab, or the focused pane of a shown tiled group. Never
+				// while a group chat owns the view: `activeSession` still points at
+				// the agent selected before the room opened (see
+				// resolveModelEffortTabId). Inert in web-desktop and for a hidden
+				// consult tab (resolvePopOutTarget answers null).
+				const target =
+					activeSession && !ctx.activeGroupChatId ? resolvePopOutTarget(activeSession) : null;
+				if (activeSession && target) {
+					void popOutTabFromUi(activeSession.id, target);
+					trackShortcut('moveTabToTabWindow');
+				}
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
 				// Only act in AI mode - the composer is AI-only. While it's already

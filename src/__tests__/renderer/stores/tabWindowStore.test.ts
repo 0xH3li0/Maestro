@@ -8,6 +8,7 @@ import {
 	usePoppedOutTabKeys,
 	startTabWindowStoreSync,
 	isTabViewedInTabWindow,
+	getTabWindowTabRefs,
 } from '../../../renderer/stores/tabWindowStore';
 import type { TabWindowInfo } from '../../../shared/tabWindowTypes';
 import type { WindowSessionMovedPayload } from '../../../shared/window-types';
@@ -61,6 +62,28 @@ describe('tabWindowStore', () => {
 			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-1', true);
 			useTabWindowStore.getState().setTabViewed('agent-a', 'tab-2', false);
 			expect(useTabWindowStore.getState().viewedTabs).toBe(before);
+		});
+	});
+
+	describe('getTabWindowTabRefs', () => {
+		it("lists an agent's popped tabs in its tab window's strip order", () => {
+			useTabWindowStore.getState().setWindows([
+				tabWindow({
+					tabRefs: [
+						{ type: 'file', id: 'f1' },
+						{ type: 'ai', id: 'tab-1' },
+					],
+				}),
+				tabWindow({ windowId: 'tw-2', agentId: 'agent-b', tabRefs: [{ type: 'ai', id: 'x' }] }),
+			]);
+			expect(getTabWindowTabRefs('agent-a')).toEqual([
+				{ type: 'file', id: 'f1' },
+				{ type: 'ai', id: 'tab-1' },
+			]);
+		});
+
+		it('is empty for an agent with no tab window', () => {
+			expect(getTabWindowTabRefs('agent-z')).toEqual([]);
 		});
 	});
 

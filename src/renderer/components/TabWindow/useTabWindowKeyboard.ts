@@ -9,7 +9,8 @@
  * navigators themselves are the `tabHelpers` ones; nothing is re-derived.
  *
  * Live: `Cmd+Shift+[` / `Cmd+Shift+]`, `Cmd+1..9` (and `Cmd+0` under
- * `useCmd0AsLastTab`), and `Cmd+W`. Every other shortcut is inert in a tab
+ * `useCmd0AsLastTab`), `Cmd+W`, and `moveTabToTabWindow` (`Opt+Cmd+O`), which
+ * pops a tab out in the app window and docks the shown tab here (TW-11). Every other shortcut is inert in a tab
  * window, because nothing else listens: the Left Bar and Right Bar toggles and
  * tabs, agent cycling (`Cmd+[` / `Cmd+]`), and every surface those open. The
  * full list is in `docs/agent-guides/TAB-WINDOWS.md` ("Keyboard").
@@ -36,6 +37,8 @@ export interface UseTabWindowKeyboardOptions {
 	onSelectTab: (type: SingleTabType, id: string) => void;
 	/** Close a tab of this window (the chip close path). */
 	onCloseTab: (type: SingleTabType, id: string) => void;
+	/** Dock a tab of this window (the chip menu's "Dock to Main Window" path). */
+	onDockTab: (ref: { type: SingleTabType; id: string }) => void;
 }
 
 export function useTabWindowKeyboard({
@@ -43,10 +46,11 @@ export function useTabWindowKeyboard({
 	activeTabRef,
 	onSelectTab,
 	onCloseTab,
+	onDockTab,
 }: UseTabWindowKeyboardOptions): void {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
-	const { isTabShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
+	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
 	const { hasOpenModal } = useLayerStack();
 
 	const handleKeyDown = useCallback(
@@ -70,9 +74,23 @@ export function useTabWindowKeyboard({
 			if (isTabShortcut(e, 'closeTab')) {
 				e.preventDefault();
 				if (activeTabRef) onCloseTab(activeTabRef.type, activeTabRef.id);
+				return;
+			}
+			if (isShortcut(e, 'moveTabToTabWindow')) {
+				e.preventDefault();
+				if (activeTabRef) onDockTab(activeTabRef);
 			}
 		},
-		[hasOpenModal, isTabShortcut, stripSession, activeTabRef, onSelectTab, onCloseTab]
+		[
+			hasOpenModal,
+			isShortcut,
+			isTabShortcut,
+			stripSession,
+			activeTabRef,
+			onSelectTab,
+			onCloseTab,
+			onDockTab,
+		]
 	);
 
 	useEventListener('keydown', handleKeyDown);

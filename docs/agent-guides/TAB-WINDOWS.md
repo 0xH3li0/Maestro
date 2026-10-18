@@ -480,6 +480,20 @@ sequenceDiagram
 - Neither function shows a toast: refusals and IPC rejections come back as the result's `error` (rejections also go to Sentry), so the CLI can report the same words. UI callers show it (the Dock button through `runTabWindowCall`).
 - Tests: `src/__tests__/renderer/services/tabWindowActions.test.ts`. `installTabWindowsApi` now fakes `popOut` too (third argument).
 
+### UI entry points (landed, phase 7)
+
+Every entry point calls `tabWindowActions` and nothing else. The UI forms are `popOutTabFromUi` / `dockTabFromUi`, which show a refusal as a toast; `resolvePopOutTarget(session)` picks the tab the shortcut and Cmd+K act on (the shown tab, or the focused pane of a shown tiled group, via `resolveActiveTabRef`) and answers null in web-desktop, in a tab window, and for a hidden consult tab.
+
+| Entry point                                                                                                                           | App window                                                                                                             | Tab window                                                                                              | Hidden when                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Chip menu, all four kinds (`TabWindowMenuItem`, one component for `AITabOverlayMenu`, `FileTab`, `TerminalTabItem`, `BrowserTabItem`) | "Move to Tab Window": `MainPanel` passes `onTabWindowMove` = `popOutTabFromUi`                                         | "Dock to Main Window": `TabWindowRoot` passes its `dockTabRef` (flushes the draft and file edits first) | `onTabWindowMove` absent (`MainPanel` omits it when `canUseTabWindows()` is false), or the AI tab is `isAiTabHidden` (`TabBar` guard). Pianola's strip does not pass it. |
+| Shortcut `moveTabToTabWindow`, `Opt+Cmd+O` (`DEFAULT_SHORTCUTS`)                                                                      | `useMainKeyboardHandler`: `resolvePopOutTarget`, then `popOutTabFromUi`; inert while a group chat owns the view        | `useTabWindowKeyboard`: docks the shown tab                                                             | `resolvePopOutTarget` answers null                                                                                                                                       |
+| Cmd+K (`tabCommands.ts`)                                                                                                              | "Move Tab to Tab Window" for the shown tab; one "Dock Tab: <name>" per popped tab of the agent (`getTabWindowTabRefs`) | none (DV3)                                                                                              | web-desktop, group chat in view, no target / no popped tab                                                                                                               |
+
+The chip item's `ShortcutHint` reads `shortcuts.moveTabToTabWindow` live, so a rebinding shows at once and an unbound chord shows no hint. `Opt+Cmd+O` was unbound and is not in `RESERVED_SHORTCUT_COMBOS`; no binding moved.
+
+Tests: `TabBar/TabBar.tabWindow.test.tsx` (all four chips, labels, hidden cases), `QuickActionsModal/commands/__tests__/tabCommands.tabWindows.test.ts`, `useMainKeyboardHandler.test.ts` ("moveTabToTabWindow"), `TabWindowRoot.test.tsx` (chip dock, chord dock), `tabWindowActions.test.ts`, `tabWindowStore.test.ts` (`getTabWindowTabRefs`).
+
 ### Persistence and restore (landed, phase 2)
 
 - `MultiWindowState.tabWindows` holds the tab windows; `windows` stays app windows only, so the primary pointer rule holds and an older build ignores them. Each record is a `WindowState` with `kind: 'tab'`, `agentId`, `tabRefs`, `activeTabRef`, bounds, and empty `sessionIds`.
@@ -857,6 +871,9 @@ Tests: `tabNavigationShortcuts.test.ts`, `tabHelpers.poppedOut.test.ts` (`buildT
 - **DV2 (D5, file preview font scale).** The phase 6 task says the font scale travels in the snapshot and is written back on dock.
   - The font scale is not on the tab. It is one app-wide preference, the localStorage key `filePreview.fontScale` (`useFontScale` over `useScalePreference`), and every window of the app shares that storage.
   - Chosen path: nothing travels. `useScalePreference` now follows the `storage` event, so a change in a tab window shows in the owner's mounted preview at once, and the other way around.
+- **DV3 (TW-11, Cmd+K "Dock Tab").** The phase 7 task asks for a "Dock Tab" Cmd+K command in a tab window.
+  - A tab window does not mount the command palette: Cmd+K is inert there (see "Keyboard and chip menus"), and mounting `QuickActionsModal` would need the whole app `ctx`.
+  - Chosen path: the app window's palette offers one "Dock Tab: <name>" per tab of the active agent that is popped out. Inside the tab window the dock paths are the header's Dock button, the chip menu's "Dock to Main Window", and `Opt+Cmd+O`.
 
 ## Phases
 

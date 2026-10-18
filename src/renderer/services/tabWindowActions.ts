@@ -18,9 +18,10 @@
  * the window that owns the agent, never in a tab window (D1). Dock writes
  * nothing here and runs from either side.
  *
- * Refusals come back as the result's `error`; nothing here shows a toast, so
- * the CLI path can report the same words. An IPC rejection is reported to
- * Sentry and returned the same way.
+ * Refusals come back as the result's `error`; `popOutTab` and `dockTab` show
+ * no toast, so the CLI path can report the same words. An IPC rejection is
+ * reported to Sentry and returned the same way. The UI entry points call the
+ * `...FromUi` forms, which show a refusal as a toast.
  */
 
 import type { Session } from '../types';
@@ -30,8 +31,10 @@ import type {
 	TabWindowPopOutResult,
 	TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
+import { isSingleTabRef } from '../../shared/unifiedTabRef';
+import { notifyToast } from '../stores/notificationStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import { promotePaneToStandalone } from '../utils/panelLayout';
+import { promotePaneToStandalone, resolveActiveTabRef } from '../utils/panelLayout';
 import { findGroupPaneForTab } from '../utils/tabHelpers/groupFocus';
 import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
 import { isTabWindow, isWebDesktop } from '../utils/runtimeContext';
@@ -63,6 +66,19 @@ export function popOutRefusal(session: Session, ref: TabWindowTabRef): string | 
 		if (tab && isAiTabHidden(tab)) return 'A hidden consult tab cannot be popped out';
 	}
 	return null;
+}
+
+/**
+ * The tab the keyboard shortcut and the Cmd+K command pop out: the shown tab,
+ * or the focused pane of a shown tiled group (`resolveActiveTabRef`). Null when
+ * this renderer has no tab windows or that tab cannot pop out, which is also
+ * when those entry points stay hidden or inert.
+ */
+export function resolvePopOutTarget(session: Session): TabWindowTabRef | null {
+	if (!canUseTabWindows()) return null;
+	const ref = resolveActiveTabRef(session);
+	if (!ref || !isSingleTabRef(ref)) return null;
+	return popOutRefusal(session, ref) ? null : ref;
 }
 
 /**
@@ -128,4 +144,23 @@ export async function dockTab(agentId: string, ref: TabWindowTabRef): Promise<Ta
 	} catch (error) {
 		return { docked: false, error: reportRejection(error, 'dock', ref) };
 	}
+}
+
+function toastRefusal(error: string): void {
+	notifyToast({ color: 'red', title: 'Tab Window', message: error });
+}
+
+/**
+ * {@link popOutTab} for a UI entry point (chip menu, Cmd+K, shortcut): the
+ * window is raised, and a refusal is shown as a toast.
+ */
+export async function popOutTabFromUi(agentId: string, ref: TabWindowTabRef): Promise<void> {
+	const result = await popOutTab(agentId, ref);
+	if (!result.poppedOut) toastRefusal(result.error);
+}
+
+/** {@link dockTab} for a UI entry point: a refusal is shown as a toast. */
+export async function dockTabFromUi(agentId: string, ref: TabWindowTabRef): Promise<void> {
+	const result = await dockTab(agentId, ref);
+	if (!result.docked) toastRefusal(result.error);
 }
