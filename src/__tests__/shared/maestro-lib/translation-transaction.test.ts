@@ -10,9 +10,11 @@ import {
 	mkdir,
 	symlink,
 	readdir,
+	realpath,
 } from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { remapTranslationFs } from '../../helpers/translationFs';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import {
@@ -112,6 +114,113 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it.each(['commit', 'recover', 'rollback'] as const)(
+		'keeps the archive local and native writes on the injected port during %s',
+		async (action) => {
+			const s = await scenario();
+			try {
+				const virtualRoot = path.join(s.root, 'virtual');
+				const backingRoot = path.join(await realpath(s.root), 'backing');
+				const { nativeFs } = remapTranslationFs(virtualRoot, backingRoot);
+				s.journal.plan.destination.accountRoot = path.join(virtualRoot, 'claude');
+				s.journal.plan.destination.projectRoot = path.join(virtualRoot, 'project');
+				s.host.knowledgeRoot = path.join(virtualRoot, 'knowledge');
+				const host = { ...s.host, nativeFs };
+				const file = path.join(virtualRoot, 'project/.claude/skills/example/SKILL.md');
+				await nativeFs.mkdir(path.dirname(file), { recursive: true });
+				await nativeFs.mkdir(host.knowledgeRoot, { recursive: true });
+				await nativeFs.createExclusive(file, 'original');
+				s.journal.plan.scope.projectResourcesIntoRepo = true;
+				s.journal.projections = [
+					{
+						path: file,
+						sha256: translationHash('incoming'),
+						created: false,
+						expectedHash: translationHash('original'),
+						bytesBase64: Buffer.from('incoming').toString('base64'),
+						resourceKey: '.claude/skills/example/SKILL.md',
+						format: 'markdown',
+						backup: translationArtifact(
+							'skill',
+							file,
+							'.claude/skills/example/SKILL.md',
+							Buffer.from('original')
+						),
+					},
+				];
+				s.journal.resources = [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Remember exactly this.\r\n')
+					),
+				];
+				if (action !== 'commit') host.commit.mockRejectedValueOnce(new Error('commit interrupted'));
+				const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+				expect(result.state).toBe(action === 'commit' ? 'committed' : 'failed');
+				const journal = await s.archive.read(s.journal.plan.agentId, s.journal.plan.id);
+				expect(journal.mappings).toHaveLength(2);
+				expect(journal.resourceWrites.length).toBeGreaterThan(1);
+				expect(await nativeFs.readFile(file)).toEqual(Buffer.from('incoming'));
+				await expect(
+					readFile(s.archive.operationPath(journal.plan.agentId, journal.plan.id))
+				).resolves.toBeInstanceOf(Buffer);
+				await expect(readFile(journal.mappings[0].artifacts[0].path)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+				if (action !== 'commit') {
+					const recovered = await recoverTranslation(
+						s.archive,
+						journal,
+						host,
+						action === 'rollback'
+					);
+					expect(recovered.state).toBe(action === 'rollback' ? 'rolled-back' : 'committed');
+				}
+				if (action === 'rollback') {
+					expect(await nativeFs.readFile(file)).toEqual(Buffer.from('original'));
+					expect(await nativeFs.exists(journal.mappings[0].artifacts[0].path)).toBe(false);
+					expect(nativeFs.unlink).toHaveBeenCalledWith(journal.mappings[0].artifacts[0].path);
+				} else {
+					expect(
+						await nativeFs.readFile(path.join(journal.knowledgeDirectory!, 'memory/MEMORY.md'))
+					).toEqual(Buffer.from('Remember exactly this.\r\n'));
+				}
+				expect(nativeFs.atomicWrite).toHaveBeenCalled();
+				expect(nativeFs.realpath).toHaveBeenCalled();
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('journals a native transport failure locally and never retries through local fs', async () => {
+		const s = await scenario();
+		try {
+			const { nativeFs } = remapTranslationFs(
+				path.join(s.root, 'virtual'),
+				path.join(s.root, 'backing')
+			);
+			nativeFs.lstat.mockRejectedValue(
+				Object.assign(new Error('transport disconnected'), { code: 'ECONNRESET' })
+			);
+			const result = await applyTranslation(
+				s.archive,
+				s.registry,
+				s.journal,
+				{ ...s.host, nativeFs },
+				true
+			);
+			expect(result).toMatchObject({ state: 'failed', error: 'transport disconnected' });
+			expect(nativeFs.createExclusive).not.toHaveBeenCalled();
+			expect((await s.archive.read(s.journal.plan.agentId, s.journal.plan.id)).error).toBe(
+				'transport disconnected'
+			);
+			expect(s.host.commit).not.toHaveBeenCalled();
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
 	it.each([false, true])(
 		'retains deferred checkpoints and resources across sequential scopes (agent-wide: %s)',
 		async (agentWide) => {

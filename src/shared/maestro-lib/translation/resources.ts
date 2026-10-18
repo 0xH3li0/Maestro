@@ -1,6 +1,7 @@
 import { canonicalJson } from '../../canonicalJson';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
@@ -18,9 +19,9 @@ export interface TranslationResources {
 	limitations: TranslationLimitation[];
 }
 
-async function resolveResourceRoot(root: string): Promise<string> {
+async function resolveResourceRoot(root: string, nativeFs: TranslationFs): Promise<string> {
 	try {
-		return await fs.realpath(root);
+		return await nativeFs.realpath(root);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		return path.resolve(root);
@@ -31,11 +32,12 @@ async function resolveResourceRoot(root: string): Promise<string> {
 export async function collectTranslationResources(
 	identity: TranslationIdentity,
 	scope: TranslationScope,
-	managedDirectory?: string
+	managedDirectory?: string,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<TranslationResources> {
 	const projectRoot = managedDirectory ?? identity.projectRoot;
-	const realProjectRoot = await resolveResourceRoot(projectRoot);
-	const realAccountRoot = await resolveResourceRoot(identity.accountRoot);
+	const realProjectRoot = await resolveResourceRoot(projectRoot, nativeFs);
+	const realAccountRoot = await resolveResourceRoot(identity.accountRoot, nativeFs);
 	const artifacts: TranslationArtifact[] = [];
 	const limitations: TranslationLimitation[] = [];
 	const seen = new Map<string, string>();
@@ -94,7 +96,8 @@ export async function collectTranslationResources(
 		const memory = await discoverClaudeMemoryRoot(
 			identity.projectRoot,
 			identity.accountRoot,
-			identity.memoryProjectRoot
+			identity.memoryProjectRoot,
+			nativeFs
 		);
 		if (memory.source === 'account')
 			limitations.push({
@@ -161,7 +164,7 @@ export async function collectTranslationResources(
 	for (const root of roots) {
 		let stat;
 		try {
-			stat = await fs.stat(root.file);
+			stat = await nativeFs.stat(root.file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 				if (root.allowedRoot)
@@ -174,12 +177,12 @@ export async function collectTranslationResources(
 			}
 			throw error;
 		}
-		const realRoot = await fs.realpath(root.file);
+		const realRoot = await nativeFs.realpath(root.file);
 		if (
 			root.allowedRoot &&
 			!isPathAtOrUnderRoot(
 				realRoot.replace(/\\/g, '/'),
-				(await resolveResourceRoot(root.allowedRoot)).replace(/\\/g, '/')
+				(await resolveResourceRoot(root.allowedRoot, nativeFs)).replace(/\\/g, '/')
 			)
 		) {
 			limitations.push({
@@ -205,9 +208,9 @@ export async function collectTranslationResources(
 			((root.scope === 'project' && root.kind !== 'memory') || managedDirectory) &&
 			!isPathAtOrUnderRoot(realRoot.replace(/\\/g, '/'), realProjectRoot.replace(/\\/g, '/'))
 		) {
-			const link = await fs.lstat(root.file);
+			const link = await nativeFs.lstat(root.file);
 			if (link.isSymbolicLink()) {
-				const target = await fs.readlink(root.file);
+				const target = await nativeFs.readlink(root.file);
 				const artifact = translationArtifact(
 					root.kind,
 					root.file,
@@ -227,14 +230,14 @@ export async function collectTranslationResources(
 			continue;
 		}
 		const entries = stat.isDirectory()
-			? (await fs.readdir(root.file, { recursive: true }))
+			? (await nativeFs.readdir(root.file, { recursive: true }))
 					.map((name) => path.join(root.file, name))
 					.sort()
 			: [root.file];
 		for (const file of entries) {
-			const lst = await fs.lstat(file);
+			const lst = await nativeFs.lstat(file);
 			if (lst.isDirectory()) continue;
-			const real = await fs.realpath(file);
+			const real = await nativeFs.realpath(file);
 			// Existing AGENTS.md -> CLAUDE.md loads once, with the original link preserved.
 			if (seen.has(real) && !lst.isSymbolicLink()) continue;
 			if (path.basename(file) === 'memory_summary.md') {
@@ -246,7 +249,7 @@ export async function collectTranslationResources(
 				});
 				continue;
 			}
-			const directoryLink = lst.isSymbolicLink() && (await fs.stat(file)).isDirectory();
+			const directoryLink = lst.isSymbolicLink() && (await nativeFs.stat(file)).isDirectory();
 			const outsideScope = !isPathAtOrUnderRoot(
 				real.replace(/\\/g, '/'),
 				((root.scope === 'project' && root.kind !== 'memory') || managedDirectory
@@ -255,13 +258,15 @@ export async function collectTranslationResources(
 				).replace(/\\/g, '/')
 			);
 			const archiveOnlyLink = lst.isSymbolicLink() && (directoryLink || outsideScope);
-			const data = archiveOnlyLink ? Buffer.from(await fs.readlink(file)) : await fs.readFile(real);
+			const data = archiveOnlyLink
+				? Buffer.from(await nativeFs.readlink(file))
+				: await nativeFs.readFile(real);
 			const relativePath = stat.isDirectory()
 				? `${root.prefix}/${path.relative(root.file, file).replace(/\\/g, '/')}`
 				: root.prefix;
 			const artifact = translationArtifact(root.kind, file, relativePath, data, root.scope);
-			artifact.mode = 0o600 | ((await fs.stat(file)).mode & 0o100);
-			if (lst.isSymbolicLink()) artifact.symlinkTarget = await fs.readlink(file);
+			artifact.mode = 0o600 | ((await nativeFs.stat(file)).mode & 0o100);
+			if (lst.isSymbolicLink()) artifact.symlinkTarget = await nativeFs.readlink(file);
 			if (seen.has(real)) artifact.metadata = { aliasOf: seen.get(real) };
 			else seen.set(real, artifact.id);
 			if (archiveOnlyLink) {

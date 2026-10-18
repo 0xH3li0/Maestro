@@ -1,7 +1,7 @@
-import { atomicWriteFile } from '../storage/atomic-json-store';
 import { assertTranslationTarget } from './resource-projections';
 import { translationKnowledgePrompt, resourceBindingHash } from './resources';
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { canonicalJson } from '../../canonicalJson';
@@ -22,6 +22,8 @@ import { assertTranslationKnowledgeDirectory } from './knowledge-binding';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
 
 export interface TranslationTransactionHost {
+	/** Native provider files; the archive owns a separate, fixed local filesystem. */
+	nativeFs?: TranslationFs;
 	/** Host-owned app-local directory, never a provider home or the user's project. */
 	knowledgeRoot: string;
 	/** Resolve git metadata without coupling the library to the desktop host. */
@@ -45,7 +47,8 @@ async function translationWriteRoot(
 	write: OwnedTranslationWrite,
 	knowledgeRoot: string,
 	allowLegacyKnowledge = false,
-	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<string> {
 	if (!journal.resourceWrites.includes(write)) return journal.plan.destination.accountRoot;
 	if (write.gitExcludeBlock) {
@@ -66,7 +69,7 @@ async function translationWriteRoot(
 		const root = legacy ? legacyRoot : knowledgeRoot;
 		if (path.resolve(directory) !== path.resolve(root, suffix))
 			throw new Error('Unsafe journal knowledge directory');
-		assertTranslationKnowledgeDirectory(directory, root);
+		await assertTranslationKnowledgeDirectory(directory, root, nativeFs);
 		if (
 			isPathAtOrUnderRoot(
 				path.resolve(write.path).replace(/\\/g, '/'),
@@ -85,31 +88,39 @@ async function stageResourceWrite(
 	write: OwnedTranslationWrite,
 	bytes: Buffer,
 	knowledgeRoot: string,
-	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
 	const owned = { ...write, created: false };
 	journal.resourceWrites.push(owned);
 	await archive.write(journal);
-	const root = await translationWriteRoot(journal, owned, knowledgeRoot, false, resolveProjectGit);
-	await assertTranslationTarget(write.path, root);
-	await fs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(write.path, root);
-	if (write.deleted) await fs.unlink(write.path);
+	const root = await translationWriteRoot(
+		journal,
+		owned,
+		knowledgeRoot,
+		false,
+		resolveProjectGit,
+		nativeFs
+	);
+	await assertTranslationTarget(write.path, root, nativeFs);
+	await nativeFs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
+	await assertTranslationTarget(write.path, root, nativeFs);
+	if (write.deleted) await nativeFs.unlink(write.path);
 	else if (write.symlinkTarget && write.created) {
-		await fs.symlink(write.symlinkTarget, write.path);
+		await nativeFs.symlink(write.symlinkTarget, write.path);
 		owned.created = true;
 		await archive.write(journal);
 	} else if (write.created) {
-		const handle = await fs.open(write.path, 'wx', write.mode ?? 0o600);
-		try {
-			owned.created = true;
-			await archive.write(journal);
-			await handle.writeFile(bytes);
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-	} else await atomicWriteFile(write.path, bytes, { mode: write.mode ?? 0o600, durable: true });
+		await nativeFs.createExclusive(write.path, bytes, {
+			mode: write.mode ?? 0o600,
+			durable: true,
+			onCreated: async () => {
+				owned.created = true;
+				await archive.write(journal);
+			},
+		});
+	} else
+		await nativeFs.atomicWrite(write.path, bytes, { mode: write.mode ?? 0o600, durable: true });
 }
 
 async function deferTranslation(
@@ -151,6 +162,7 @@ export async function applyTranslation(
 	host: TranslationTransactionHost,
 	acceptLimitations = false
 ): Promise<TranslationResult> {
+	const nativeFs = host.nativeFs ?? localTranslationFs;
 	return operations.enqueue(journal.plan.agentId, async () => {
 		const plan = journal.plan;
 		assertTabScope(journal);
@@ -250,6 +262,7 @@ export async function applyTranslation(
 					operationId: plan.id,
 					destination: plan.destination,
 					codex: host.codex,
+					nativeFs,
 					recordIntent: async (mapping) => {
 						journal.mappings = [
 							...journal.mappings.filter((m) => m.tabId !== mapping.tabId),
@@ -261,10 +274,10 @@ export async function applyTranslation(
 			}
 			if (git) {
 				const file = path.join(git.commonDirectory, 'info', 'exclude');
-				await assertTranslationTarget(file, git.commonDirectory);
+				await assertTranslationTarget(file, git.commonDirectory, nativeFs);
 				let current: Buffer | undefined;
 				try {
-					current = await fs.readFile(file);
+					current = await nativeFs.readFile(file);
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
@@ -288,7 +301,7 @@ export async function applyTranslation(
 				const backup = current
 					? {
 							...translationArtifact('instruction', file, 'git-info-exclude', current),
-							mode: (await fs.stat(file)).mode & 0o777,
+							mode: (await nativeFs.stat(file)).mode & 0o777,
 						}
 					: undefined;
 				await stageResourceWrite(
@@ -304,15 +317,16 @@ export async function applyTranslation(
 					},
 					bytes,
 					host.knowledgeRoot,
-					host.resolveProjectGit
+					host.resolveProjectGit,
+					nativeFs
 				);
 			}
 			for (const projection of projections) {
 				await host.assertSourceUnchanged(journal);
-				await assertTranslationTarget(projection.path, plan.destination.projectRoot);
+				await assertTranslationTarget(projection.path, plan.destination.projectRoot, nativeFs);
 				let current: Buffer | undefined;
 				try {
-					current = await fs.readFile(projection.path);
+					current = await nativeFs.readFile(projection.path);
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
@@ -324,7 +338,8 @@ export async function applyTranslation(
 					projection,
 					Buffer.from(projection.bytesBase64, 'base64'),
 					host.knowledgeRoot,
-					host.resolveProjectGit
+					host.resolveProjectGit,
+					nativeFs
 				);
 			}
 			journal.resources.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
@@ -356,8 +371,8 @@ export async function applyTranslation(
 			} else if (journal.plan.scope.projectKnowledge) {
 				const directory = path.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
 				journal.knowledgeDirectory = directory;
-				assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot);
-				await fs.mkdir(host.knowledgeRoot, { recursive: true, mode: 0o700 });
+				await assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot, nativeFs);
+				await nativeFs.mkdir(host.knowledgeRoot, { recursive: true, mode: 0o700 });
 				for (const artifact of journal.resources) {
 					const relative = path.normalize(artifact.relativePath);
 					if (
@@ -374,7 +389,8 @@ export async function applyTranslation(
 						{ path: file, sha256: artifact.sha256, created: true, mode: artifact.mode },
 						bytes,
 						host.knowledgeRoot,
-						host.resolveProjectGit
+						host.resolveProjectGit,
+						nativeFs
 					);
 				}
 				const indexPath = path.join(directory, 'knowledge-index.md');
@@ -385,10 +401,17 @@ export async function applyTranslation(
 					{ path: indexPath, sha256: translationHash(index), created: true },
 					Buffer.from(index),
 					host.knowledgeRoot,
-					host.resolveProjectGit
+					host.resolveProjectGit,
+					nativeFs
 				);
 			}
-			await verifyTranslationWrites(journal, host.knowledgeRoot, false, host.resolveProjectGit);
+			await verifyTranslationWrites(
+				journal,
+				host.knowledgeRoot,
+				false,
+				host.resolveProjectGit,
+				nativeFs
+			);
 			journal.state = 'staged';
 			await archive.write(journal);
 			await host.assertSourceUnchanged(journal);
@@ -467,7 +490,8 @@ export async function verifyTranslationWrites(
 	journal: TranslationJournal,
 	knowledgeRoot: string,
 	allowLegacyKnowledge = false,
-	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit']
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
 	assertTabScope(journal);
 	if (journal.mappings.length !== journal.conversations.length)
@@ -480,17 +504,17 @@ export async function verifyTranslationWrites(
 		);
 		if (journal.knowledgeDirectory !== directory)
 			throw new Error('Invalid reused knowledge directory');
-		assertTranslationKnowledgeDirectory(directory, knowledgeRoot);
+		await assertTranslationKnowledgeDirectory(directory, knowledgeRoot, nativeFs);
 		for (const resource of journal.resources) {
 			const file = path.join(directory, resource.relativePath);
-			await assertTranslationTarget(file, directory);
-			if (translationHash(await fs.readFile(file)) !== resource.sha256)
+			await assertTranslationTarget(file, directory, nativeFs);
+			if (translationHash(await nativeFs.readFile(file)) !== resource.sha256)
 				throw new Error('Previously imported resource changed since preflight');
 		}
 		const index = path.join(directory, 'knowledge-index.md');
-		await assertTranslationTarget(index, directory);
+		await assertTranslationTarget(index, directory, nativeFs);
 		if (
-			(await fs.readFile(index, 'utf8')) !==
+			(await nativeFs.readFile(index)).toString('utf8') !==
 			translationKnowledgePrompt(directory, journal.resources)
 		)
 			throw new Error('Previously imported knowledge index changed since preflight');
@@ -507,21 +531,23 @@ export async function verifyTranslationWrites(
 				write,
 				knowledgeRoot,
 				allowLegacyKnowledge,
-				resolveProjectGit
-			)
+				resolveProjectGit,
+				nativeFs
+			),
+			nativeFs
 		);
 		if (write.deleted) {
 			try {
-				await fs.lstat(write.path);
+				await nativeFs.lstat(write.path);
 				throw new Error('Deleted native resource reappeared before commit');
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
 				throw error;
 			}
 		}
-		if (write.symlinkTarget && (await fs.readlink(write.path)) !== write.symlinkTarget)
+		if (write.symlinkTarget && (await nativeFs.readlink(write.path)) !== write.symlinkTarget)
 			throw new Error('Native discovery alias changed before commit');
-		const bytes = await fs.readFile(write.path);
+		const bytes = await nativeFs.readFile(write.path);
 		if (
 			write.gitExcludeBlock
 				? !bytes.includes(Buffer.from(write.gitExcludeBlock))
@@ -605,6 +631,7 @@ export async function recoverTranslation(
 	host: TranslationTransactionHost,
 	rollback = false
 ): Promise<TranslationResult> {
+	const nativeFs = host.nativeFs ?? localTranslationFs;
 	assertTabScope(journal);
 	// A later switch may replace the host's active operation ID, but it does not undo this commit.
 	if (rollback && journal.state === 'committed')
@@ -655,13 +682,15 @@ export async function recoverTranslation(
 						write,
 						host.knowledgeRoot,
 						true,
-						host.resolveProjectGit
-					)
+						host.resolveProjectGit,
+						nativeFs
+					),
+					nativeFs
 				);
 				if (write.gitExcludeBlock) {
 					let bytes: Buffer;
 					try {
-						bytes = await fs.readFile(write.path);
+						bytes = await nativeFs.readFile(write.path);
 					} catch (error) {
 						if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
 						throw error;
@@ -707,12 +736,12 @@ export async function recoverTranslation(
 					continue;
 				}
 				try {
-					await fs.lstat(write.path);
+					await nativeFs.lstat(write.path);
 					if (!write.created && !write.backup)
 						throw new Error('Rollback refused: artifact creation ownership is unproved');
-					if (write.symlinkTarget && (await fs.readlink(write.path)) !== write.symlinkTarget)
+					if (write.symlinkTarget && (await nativeFs.readlink(write.path)) !== write.symlinkTarget)
 						throw new Error('Rollback refused: native alias changed');
-					const hash = translationHash(await fs.readFile(write.path));
+					const hash = translationHash(await nativeFs.readFile(write.path));
 					if (
 						(!write.created && !write.backup) ||
 						!write.sha256 ||
@@ -732,21 +761,21 @@ export async function recoverTranslation(
 				if (write.gitExcludeBlock) {
 					const remaining = excludeRollbacks.get(write);
 					if (!remaining) continue;
-					if (!remaining.length && write.created) await fs.unlink(write.path);
+					if (!remaining.length && write.created) await nativeFs.unlink(write.path);
 					else
-						await atomicWriteFile(write.path, remaining, {
-							mode: (await fs.stat(write.path)).mode & 0o777,
+						await nativeFs.atomicWrite(write.path, remaining, {
+							mode: (await nativeFs.stat(write.path)).mode & 0o777,
 							durable: true,
 						});
 					continue;
 				}
 				if (write.cleanup === 'retain' || (!write.created && !write.backup)) continue;
 				if (write.backup)
-					await atomicWriteFile(write.path, Buffer.from(write.backup.bytesBase64, 'base64'), {
+					await nativeFs.atomicWrite(write.path, Buffer.from(write.backup.bytesBase64, 'base64'), {
 						mode: write.backup.mode ?? 0o600,
 					});
 				else
-					await fs.unlink(write.path).catch((error) => {
+					await nativeFs.unlink(write.path).catch((error) => {
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					});
 			}
@@ -765,7 +794,13 @@ export async function recoverTranslation(
 					'Incomplete native staging requires inspection/rollback; uncertain writes are not retried'
 				);
 			await host.assertSourceUnchanged(journal);
-			await verifyTranslationWrites(journal, host.knowledgeRoot, true, host.resolveProjectGit);
+			await verifyTranslationWrites(
+				journal,
+				host.knowledgeRoot,
+				true,
+				host.resolveProjectGit,
+				nativeFs
+			);
 			await host.commit(journal);
 			await finalizeTranslation(archive, journal);
 		}

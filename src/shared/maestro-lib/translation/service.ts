@@ -14,7 +14,8 @@ import {
 	TRANSLATION_KNOWLEDGE_ENV_VAR,
 } from './knowledge-binding';
 import { estimateTokenCount } from '../../formatters';
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { AgentConfig } from '../providers/definitions';
@@ -65,6 +66,8 @@ export interface TranslationServiceSession extends TranslatableSession {
 }
 
 export interface TranslationServiceHost {
+	/** Defaults to local for existing hosts. Archives always stay in userDataDir. */
+	nativeFs?: TranslationFs;
 	userDataDir: string;
 	getSession(agentId: string): TranslationServiceSession;
 	persist(
@@ -93,10 +96,12 @@ export interface TranslationServiceHost {
 
 export class NativeTranslationService {
 	private readonly knowledgeRoot: string;
+	private readonly nativeFs: TranslationFs;
 	private readonly registry = createTranslationRegistry();
 	private readonly queue = createKeyedWriteQueue();
 	private readonly archive: TranslationArchive;
 	constructor(private readonly deps: TranslationServiceHost) {
+		this.nativeFs = deps.nativeFs ?? localTranslationFs;
 		this.knowledgeRoot = path.join(deps.userDataDir, 'provider-knowledge');
 		this.archive = new TranslationArchive(path.join(deps.userDataDir, 'provider-translations'));
 	}
@@ -138,7 +143,7 @@ export class NativeTranslationService {
 			throw new Error('Cannot resolve selected provider account');
 		let root = accountRoot ? path.resolve(expandTilde(accountRoot)) : '';
 		try {
-			root = await fs.realpath(root);
+			root = await this.nativeFs.realpath(root);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		}
@@ -149,7 +154,7 @@ export class NativeTranslationService {
 			const probe = await this.deps.execFile(binary, ['--version']);
 			if (probe.exitCode === 0) version = /\d+\.\d+\.\d+/.exec(probe.stdout)?.[0] ?? '';
 		}
-		const projectRoot = await fs.realpath(session.projectRoot || session.cwd);
+		const projectRoot = await this.nativeFs.realpath(session.projectRoot || session.cwd);
 		const memoryProjectRoot = await resolveMemoryRepositoryRoot(projectRoot, async (cwd) => {
 			const result = await this.deps.execGit(['rev-parse', '--git-common-dir'], cwd);
 			return result.exitCode === 0 ? result.stdout : undefined;
@@ -158,7 +163,12 @@ export class NativeTranslationService {
 			{ path: path.join(os.homedir(), '.agents', 'skills'), kind: 'skill' },
 		];
 		if (provider === 'claude-code') {
-			const memory = await discoverClaudeMemoryRoot(projectRoot, root, memoryProjectRoot);
+			const memory = await discoverClaudeMemoryRoot(
+				projectRoot,
+				root,
+				memoryProjectRoot,
+				this.nativeFs
+			);
 			if (memory.source === 'account')
 				userResourceRoots.push({ path: memory.path, kind: 'memory' });
 		}
@@ -213,10 +223,10 @@ export class NativeTranslationService {
 					)
 				: await this.deps.findCodexSessionFile(sessionId, identity.accountRoot);
 		if (!file) throw new Error(`Selected native session missing for tab ${tabId}`);
-		await assertTranslationTarget(file, identity.accountRoot);
-		const stat = await fs.stat(file);
-		const bytes = await fs.readFile(file);
-		const after = await fs.stat(file);
+		await assertTranslationTarget(file, identity.accountRoot, this.nativeFs);
+		const stat = await this.nativeFs.stat(file);
+		const bytes = await this.nativeFs.readFile(file);
+		const after = await this.nativeFs.stat(file);
 		if (stat.size !== after.size || stat.mtimeMs !== after.mtimeMs)
 			throw new Error('Native source changed during snapshot');
 		const bundle = adapter.extract(identity, tabId, sessionId, bytes);
@@ -377,7 +387,12 @@ export class NativeTranslationService {
 				message:
 					'Generated Codex account memory is excluded from project migration. Select specific user-level resources; no native scoped project-memory export is declared for this version.',
 			});
-		const nativeResources = await collectTranslationResources(source, scope);
+		const nativeResources = await collectTranslationResources(
+			source,
+			scope,
+			undefined,
+			this.nativeFs
+		);
 		limitations.push(...nativeResources.limitations);
 		const resources = new Map(
 			nativeResources.artifacts
@@ -399,14 +414,16 @@ export class NativeTranslationService {
 		}
 
 		if (checkpoint && session.providerTranslationKnowledgeDirectory) {
-			assertTranslationKnowledgeDirectory(
+			await assertTranslationKnowledgeDirectory(
 				session.providerTranslationKnowledgeDirectory,
-				this.knowledgeRoot
+				this.knowledgeRoot,
+				this.nativeFs
 			);
 			const managedResources = await collectTranslationResources(
 				source,
 				{ projectKnowledge: true, selectedUserResources: [] },
-				session.providerTranslationKnowledgeDirectory
+				session.providerTranslationKnowledgeDirectory,
+				this.nativeFs
 			);
 			limitations.push(...managedResources.limitations);
 			const previousPaths = new Set(checkpoint.resources.map((a) => a.relativePath));
@@ -422,8 +439,12 @@ export class NativeTranslationService {
 					base.relativePath
 				);
 				try {
-					await assertTranslationTarget(managedPath, session.providerTranslationKnowledgeDirectory);
-					const bytes = await fs.readFile(managedPath);
+					await assertTranslationTarget(
+						managedPath,
+						session.providerTranslationKnowledgeDirectory,
+						this.nativeFs
+					);
+					const bytes = await this.nativeFs.readFile(managedPath);
 					managed = {
 						...base,
 						sourcePath: managedPath,
@@ -444,8 +465,8 @@ export class NativeTranslationService {
 					try {
 						const bytes =
 							base.metadata?.directoryLink || base.metadata?.originalDirectoryLink
-								? Buffer.from(await fs.readlink(file))
-								: await fs.readFile(file);
+								? Buffer.from(await this.nativeFs.readlink(file))
+								: await this.nativeFs.readFile(file);
 						original = {
 							...base,
 							sourcePath: file,
@@ -461,8 +482,8 @@ export class NativeTranslationService {
 					if (owned.resourceKey !== base.relativePath) continue;
 					let bytes: Buffer | undefined;
 					try {
-						await assertTranslationTarget(file, source.projectRoot);
-						bytes = await fs.readFile(file);
+						await assertTranslationTarget(file, source.projectRoot, this.nativeFs);
+						bytes = await this.nativeFs.readFile(file);
 					} catch (error) {
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					}
@@ -548,7 +569,8 @@ export class NativeTranslationService {
 			[...resources.values()],
 			destination,
 			checkpoint,
-			scope.projectResourcesIntoRepo
+			scope.projectResourcesIntoRepo,
+			this.nativeFs
 		);
 		limitations.push(...resourceProjections.limitations);
 		if (scope.projectResourcesIntoRepo && !(await this.resolveProjectGit(destination.projectRoot)))
@@ -633,6 +655,7 @@ export class NativeTranslationService {
 	private host(journal: TranslationJournal, recovering = false): TranslationTransactionHost {
 		return {
 			knowledgeRoot: this.knowledgeRoot,
+			nativeFs: this.nativeFs,
 			resolveProjectGit: (root) => this.resolveProjectGit(root),
 			assertSourceUnchanged: async (operation) => {
 				const session = this.session(operation.plan.agentId);
@@ -674,8 +697,12 @@ export class NativeTranslationService {
 							path.resolve(directory).replace(/\\/g, '/'),
 							path.resolve(legacyRoot).replace(/\\/g, '/')
 						);
-					assertTranslationKnowledgeDirectory(directory, legacy ? legacyRoot : this.knowledgeRoot);
-					if (legacy) await assertTranslationTarget(directory, actual.projectRoot);
+					await assertTranslationKnowledgeDirectory(
+						directory,
+						legacy ? legacyRoot : this.knowledgeRoot,
+						this.nativeFs
+					);
+					if (legacy) await assertTranslationTarget(directory, actual.projectRoot, this.nativeFs);
 				}
 				for (const artifact of operation.resources)
 					if (path.isAbsolute(artifact.sourcePath)) {
@@ -688,10 +715,10 @@ export class NativeTranslationService {
 							) &&
 							!artifact.metadata?.directoryLink
 						)
-							await assertTranslationTarget(artifact.sourcePath, managedDirectory);
+							await assertTranslationTarget(artifact.sourcePath, managedDirectory, this.nativeFs);
 						const bytes = artifact.metadata?.directoryLink
-							? Buffer.from(await fs.readlink(artifact.sourcePath))
-							: await fs.readFile(artifact.sourcePath);
+							? Buffer.from(await this.nativeFs.readlink(artifact.sourcePath))
+							: await this.nativeFs.readFile(artifact.sourcePath);
 						if (translationHash(bytes) !== artifact.sha256)
 							throw new Error('Selected resource changed since preflight');
 					}
@@ -709,8 +736,15 @@ export class NativeTranslationService {
 								)
 							);
 							if (!identity) throw new Error('Native source is outside selected provider accounts');
-							await assertTranslationTarget(artifact.sourcePath, identity.accountRoot);
-							if (translationHash(await fs.readFile(artifact.sourcePath)) !== artifact.sha256)
+							await assertTranslationTarget(
+								artifact.sourcePath,
+								identity.accountRoot,
+								this.nativeFs
+							);
+							if (
+								translationHash(await this.nativeFs.readFile(artifact.sourcePath)) !==
+								artifact.sha256
+							)
 								throw new Error('Native source changed since preflight');
 						}
 					}

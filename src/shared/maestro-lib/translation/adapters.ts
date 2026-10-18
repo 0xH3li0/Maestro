@@ -1,4 +1,4 @@
-import * as fs from 'node:fs/promises';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import { generateUUID } from '../../uuid';
 import { encodeClaudeProjectPath } from '../../pathUtils';
@@ -204,6 +204,7 @@ async function stageClaude(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
 	const sessionId = generateUUID();
 	const file = path.join(
 		context.destination.accountRoot,
@@ -230,20 +231,19 @@ async function stageClaude(
 		),
 	};
 	await context.recordIntent(mapping);
-	await assertTranslationTarget(file, context.destination.accountRoot);
-	await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(file, context.destination.accountRoot);
+	await assertTranslationTarget(file, context.destination.accountRoot, nativeFs);
+	await nativeFs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+	await assertTranslationTarget(file, context.destination.accountRoot, nativeFs);
 	// Exclusive new file: a provider or another process can never lose an existing transcript.
-	const handle = await fs.open(file, 'wx', 0o600);
-	try {
-		mapping.artifacts[0].created = true;
-		await context.recordIntent(mapping);
-		await handle.writeFile(bytes);
-		await handle.sync();
-	} finally {
-		await handle.close();
-	}
-	if (translationHash(await fs.readFile(file)) !== mapping.artifacts[0].sha256)
+	await nativeFs.createExclusive(file, bytes, {
+		mode: 0o600,
+		durable: true,
+		onCreated: async () => {
+			mapping.artifacts[0].created = true;
+			await context.recordIntent(mapping);
+		},
+	});
+	if (translationHash(await nativeFs.readFile(file)) !== mapping.artifacts[0].sha256)
 		throw new Error('Claude destination readback failed');
 	return mapping;
 }
@@ -252,6 +252,7 @@ async function stageCodex(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
 	if (!context.codex) throw new Error('Codex native import channel unavailable; no exec fallback');
 	const rows = projectConversation(conversation, 'codex', 'pending');
 	// Intent precedes thread creation. A lost response is an uncertain mutation, never blindly retried.
@@ -279,7 +280,7 @@ async function stageCodex(
 	const relative = path.relative(context.destination.accountRoot, started.thread.path);
 	if (relative.startsWith('..') || path.isAbsolute(relative))
 		throw new Error('Codex returned a rollout outside the selected account');
-	await assertTranslationTarget(started.thread.path, context.destination.accountRoot);
+	await assertTranslationTarget(started.thread.path, context.destination.accountRoot, nativeFs);
 	const mapping: TranslationTabMapping = {
 		...intent,
 		destinationSessionId: sessionId,
@@ -294,7 +295,7 @@ async function stageCodex(
 		items: rows.map((r) => r.item),
 	});
 	// Read persisted bytes, not a successful RPC response or a flattened UI projection.
-	const bytes = await fs.readFile(started.thread.path);
+	const bytes = await nativeFs.readFile(started.thread.path);
 	const readback = extractNativeConversation(
 		context.destination,
 		conversation.tabId,

@@ -1,4 +1,5 @@
-import * as fs from 'node:fs';
+import type { TranslationFs, TranslationFsStat } from './fs-port';
+import { localTranslationFsSync } from './local-fs';
 import * as path from 'node:path';
 import {
 	embedSystemPromptInPrompt,
@@ -10,10 +11,17 @@ import {
 export const TRANSLATION_KNOWLEDGE_ENV_VAR = 'MAESTRO_TRANSLATION_KNOWLEDGE';
 
 /** Only operation directories under the host's root, with no redirected descendants. */
+export function assertTranslationKnowledgeDirectory(directory: string, knowledgeRoot: string): void;
 export function assertTranslationKnowledgeDirectory(
 	directory: string,
-	knowledgeRoot: string
-): void {
+	knowledgeRoot: string,
+	nativeFs: TranslationFs
+): Promise<void>;
+export function assertTranslationKnowledgeDirectory(
+	directory: string,
+	knowledgeRoot: string,
+	nativeFs?: TranslationFs
+): void | Promise<void> {
 	const root = path.resolve(knowledgeRoot);
 	const resolved = path.resolve(directory);
 	const parts = path.relative(root, resolved).split(path.sep);
@@ -23,12 +31,23 @@ export function assertTranslationKnowledgeDirectory(
 		!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(parts[1])
 	)
 		throw new Error('Unsafe provider knowledge binding');
-	for (const candidate of [path.dirname(resolved), resolved]) {
+	const candidates = [path.dirname(resolved), resolved];
+	const check = (stat: TranslationFsStat): void => {
+		if (stat.isSymbolicLink())
+			throw new Error('Provider knowledge escapes its selected root through a symlink');
+	};
+	const allowMissing = (error: unknown): void => {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	};
+	if (nativeFs)
+		return Promise.all(
+			candidates.map((candidate) => nativeFs.lstat(candidate).then(check, allowMissing))
+		).then(() => {});
+	for (const candidate of candidates) {
 		try {
-			if (fs.lstatSync(candidate).isSymbolicLink())
-				throw new Error('Provider knowledge escapes its selected root through a symlink');
+			check(localTranslationFsSync.lstat(candidate));
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			allowMissing(error);
 		}
 	}
 }
@@ -42,10 +61,10 @@ export function bindTranslationKnowledge(
 	if (!directory) return prompt;
 	assertTranslationKnowledgeDirectory(directory, knowledgeRoot);
 	const indexPath = path.join(directory, 'knowledge-index.md');
-	if (fs.lstatSync(indexPath).isSymbolicLink())
+	if (localTranslationFsSync.lstat(indexPath).isSymbolicLink())
 		throw new Error('Unsafe provider knowledge index symlink');
 	if (!prompt) return prompt;
-	const index = fs.readFileSync(indexPath, 'utf8');
+	const index = localTranslationFsSync.readFile(indexPath);
 	if (!index.trim()) return prompt;
 	const userPrompt = stripEmbeddedSystemPrompt(prompt);
 	const existing = hasEmbeddedSystemPrompt(prompt)

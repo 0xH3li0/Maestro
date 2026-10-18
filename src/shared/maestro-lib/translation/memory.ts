@@ -1,5 +1,6 @@
 import { parseJsonWithBom } from '../../jsonUtils';
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import { encodeClaudeProjectPath, expandTilde } from '../../pathUtils';
 
@@ -17,15 +18,18 @@ export function resolveClaudeMemoryPath(
 export async function discoverClaudeMemoryPath(
 	projectRoot: string,
 	accountRoot: string,
-	memoryProjectRoot = projectRoot
+	memoryProjectRoot = projectRoot,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<string> {
-	return (await discoverClaudeMemoryRoot(projectRoot, accountRoot, memoryProjectRoot)).path;
+	return (await discoverClaudeMemoryRoot(projectRoot, accountRoot, memoryProjectRoot, nativeFs))
+		.path;
 }
 
 export async function discoverClaudeMemoryRoot(
 	projectRoot: string,
 	accountRoot: string,
-	memoryProjectRoot = projectRoot
+	memoryProjectRoot = projectRoot,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<{ path: string; source: 'default' | 'account' | 'project' }> {
 	let directory: string | undefined;
 	let source: 'default' | 'account' | 'project' = 'default';
@@ -36,7 +40,7 @@ export async function discoverClaudeMemoryRoot(
 	]) {
 		try {
 			const settings = parseJsonWithBom<Record<string, unknown>>(
-				await fs.readFile(settingsPath, 'utf8')
+				(await nativeFs.readFile(settingsPath)).toString('utf8')
 			);
 			if (typeof settings.autoMemoryDirectory === 'string' && settings.autoMemoryDirectory.trim()) {
 				directory = settings.autoMemoryDirectory;

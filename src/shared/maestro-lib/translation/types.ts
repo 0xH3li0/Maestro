@@ -1,5 +1,6 @@
 import type { ToolType } from '../../types';
 import type { TranslationTab } from './session';
+import type { TranslationFs } from './fs-port';
 
 export interface TranslationIdentity {
 	provider: ToolType;
@@ -286,6 +287,8 @@ export interface TranslationAdapter extends TranslationVersionSupport {
 }
 
 export interface TranslationStageContext {
+	/** Native files only; recordIntent always writes the host's local archive. */
+	nativeFs?: TranslationFs;
 	operationId: string;
 	destination: TranslationIdentity;
 	/** Must journal ownership BEFORE any provider mutation. */

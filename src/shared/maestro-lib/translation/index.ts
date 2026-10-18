@@ -1,5 +1,7 @@
 /** Node translation API. Renderer clients import types/session/support directly, never this barrel. */
 export * from './types';
+export type { TranslationFs, TranslationFsStat, TranslationFsWriteOptions } from './fs-port';
+export { localTranslationFs } from './local-fs';
 export { limitationsNeedingAcceptance, translationWarningsAccepted } from './limitations';
 export {
 	prepareTabForSend,

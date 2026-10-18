@@ -1,4 +1,5 @@
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 import { canonicalJson } from '../../canonicalJson';
@@ -14,7 +15,11 @@ import type {
 } from './types';
 
 /** Refuse symlink escapes before creating native files. This is also used by rollback/readback. */
-export async function assertTranslationTarget(file: string, root: string): Promise<void> {
+export async function assertTranslationTarget(
+	file: string,
+	root: string,
+	nativeFs: TranslationFs = localTranslationFs
+): Promise<void> {
 	const relative = path.relative(path.resolve(root), path.resolve(file));
 	if (
 		!relative ||
@@ -24,9 +29,9 @@ export async function assertTranslationTarget(file: string, root: string): Promi
 	)
 		throw new Error('Unsafe translation target');
 	try {
-		if ((await fs.lstat(file)).isSymbolicLink()) {
-			const real = await fs.realpath(file);
-			const realRoot = await fs.realpath(root);
+		if ((await nativeFs.lstat(file)).isSymbolicLink()) {
+			const real = await nativeFs.realpath(file);
+			const realRoot = await nativeFs.realpath(root);
 			if (!isPathAtOrUnderRoot(real.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/')))
 				throw new Error('Translation target escapes its selected root through a symlink');
 		}
@@ -36,10 +41,10 @@ export async function assertTranslationTarget(file: string, root: string): Promi
 	let ancestor = path.dirname(file);
 	while (ancestor !== path.dirname(ancestor)) {
 		try {
-			const real = await fs.realpath(ancestor);
+			const real = await nativeFs.realpath(ancestor);
 			let realRoot: string;
 			try {
-				realRoot = await fs.realpath(root);
+				realRoot = await nativeFs.realpath(root);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				realRoot = path.resolve(root);
@@ -62,7 +67,8 @@ export async function planResourceProjections(
 	resources: TranslationArtifact[],
 	destination: TranslationIdentity,
 	checkpoint?: TranslationCheckpoint,
-	projectResourcesIntoRepo = false
+	projectResourcesIntoRepo = false,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<{ projections: ResourceProjection[]; limitations: TranslationLimitation[] }> {
 	const projections: ResourceProjection[] = [];
 	const limitations: TranslationLimitation[] = [];
@@ -104,7 +110,7 @@ export async function planResourceProjections(
 			const sibling = path.join(destination.projectRoot, artifact.relativePath);
 			if (sibling !== file) {
 				try {
-					if (translationHash(await fs.readFile(sibling)) === artifact.sha256)
+					if (translationHash(await nativeFs.readFile(sibling)) === artifact.sha256)
 						symlinkTarget = path.basename(sibling);
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -182,11 +188,11 @@ export async function planResourceProjections(
 			omitted.add(path.relative(destination.projectRoot, file).replace(/\\/g, '/'));
 			continue;
 		}
-		await assertTranslationTarget(file, destination.projectRoot);
+		await assertTranslationTarget(file, destination.projectRoot, nativeFs);
 		const hash = translationHash(bytes);
 		let existing: Buffer | undefined;
 		try {
-			existing = await fs.readFile(file);
+			existing = await nativeFs.readFile(file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		}
@@ -222,7 +228,7 @@ export async function planResourceProjections(
 		const backup = existing
 			? translationArtifact(artifact.kind, file, artifact.relativePath, existing)
 			: undefined;
-		if (backup) backup.mode = (await fs.stat(file)).mode & 0o777;
+		if (backup) backup.mode = (await nativeFs.stat(file)).mode & 0o777;
 		const duplicate = projections.find((p) => p.path === file);
 		if (duplicate) {
 			if (duplicate.sha256 !== hash)
@@ -262,10 +268,10 @@ export async function planResourceProjections(
 		const nativeRoots = destination.provider === 'codex' ? ['.agents', '.codex'] : ['.claude'];
 		const relative = path.relative(destination.projectRoot, file).replace(/\\/g, '/');
 		if (!nativeRoots.some((prefix) => relative.startsWith(prefix + '/'))) continue;
-		await assertTranslationTarget(file, destination.projectRoot);
+		await assertTranslationTarget(file, destination.projectRoot, nativeFs);
 		let existing: Buffer;
 		try {
-			existing = await fs.readFile(file);
+			existing = await nativeFs.readFile(file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
 			throw error;
