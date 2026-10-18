@@ -3,7 +3,10 @@ import { formatTimestamp } from '../../shared/formatters';
 import {
 	JOURNEY_MAX_ENTRIES_PER_AGENT,
 	JOURNEY_RETENTION_DAYS,
+	USER_JOURNEY_KINDS,
 	formatJourneyLine,
+	isUserJourneyKind,
+	normalizeJourneyEntry,
 	sanitizeJourneyUrl,
 	shouldCollapseJourneyEntry,
 	type UserJourneyEntry,
@@ -58,6 +61,62 @@ describe('sanitizeJourneyUrl', () => {
 
 	it('leaves about:blank as it is', () => {
 		expect(sanitizeJourneyUrl('about:blank')).toBe('about:blank');
+	});
+});
+
+describe('isUserJourneyKind', () => {
+	it('accepts the nine kinds and nothing else', () => {
+		expect(USER_JOURNEY_KINDS).toHaveLength(9);
+		for (const kind of USER_JOURNEY_KINDS) expect(isUserJourneyKind(kind)).toBe(true);
+		expect(isUserJourneyKind('file.edit')).toBe(false);
+		expect(isUserJourneyKind(42)).toBe(false);
+	});
+});
+
+describe('normalizeJourneyEntry', () => {
+	it('keeps the known fields of a well-formed entry', () => {
+		const full = entry({
+			kind: 'file.save',
+			tabId: 't1',
+			linesAdded: 4,
+			linesRemoved: 0,
+			sshRemoteId: 'remote-1',
+		});
+		expect(normalizeJourneyEntry(full)).toEqual(full);
+	});
+
+	it('drops unknown fields so file contents cannot slip in', () => {
+		const normalized = normalizeJourneyEntry({ ...entry({}), content: 'body', diff: '+x' });
+		expect(normalized).toEqual(entry({}));
+	});
+
+	it('sanitizes browser targets but leaves file paths alone', () => {
+		expect(
+			normalizeJourneyEntry(
+				entry({ kind: 'browser.navigate', target: 'https://a.test/p?token=abc' })
+			)?.target
+		).toBe('https://a.test/p');
+		expect(normalizeJourneyEntry(entry({ target: '/repo/a?b.ts' }))?.target).toBe('/repo/a?b.ts');
+	});
+
+	it('drops malformed optional fields', () => {
+		const normalized = normalizeJourneyEntry({
+			...entry({}),
+			tabId: 7,
+			title: '',
+			dwellMs: -5,
+			linesAdded: Number.NaN,
+		});
+		expect(normalized).toEqual(entry({}));
+	});
+
+	it('rejects entries missing a required field', () => {
+		expect(normalizeJourneyEntry(null)).toBeNull();
+		expect(normalizeJourneyEntry('x')).toBeNull();
+		expect(normalizeJourneyEntry({ ...entry({}), ts: 'now' })).toBeNull();
+		expect(normalizeJourneyEntry({ ...entry({}), agentId: '' })).toBeNull();
+		expect(normalizeJourneyEntry({ ...entry({}), kind: 'file.edit' })).toBeNull();
+		expect(normalizeJourneyEntry({ ...entry({}), target: '' })).toBeNull();
 	});
 });
 

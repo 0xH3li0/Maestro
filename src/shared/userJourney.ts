@@ -37,6 +37,22 @@ export type UserJourneyKind =
 	| 'browser.navigate'
 	| 'browser.close';
 
+export const USER_JOURNEY_KINDS: readonly UserJourneyKind[] = [
+	'file.open',
+	'file.close',
+	'file.save',
+	'file.create',
+	'file.rename',
+	'file.delete',
+	'browser.open',
+	'browser.navigate',
+	'browser.close',
+];
+
+export function isUserJourneyKind(value: unknown): value is UserJourneyKind {
+	return typeof value === 'string' && (USER_JOURNEY_KINDS as readonly string[]).includes(value);
+}
+
 export interface UserJourneyEntry {
 	/** Epoch ms. */
 	ts: number;
@@ -74,6 +90,39 @@ export function sanitizeJourneyUrl(url: string): string {
 	parsed.username = '';
 	parsed.password = '';
 	return parsed.href;
+}
+
+/**
+ * Rebuild an entry from untrusted input (an IPC payload or a line read back
+ * from disk) with only the known fields, each type-checked. Unknown fields are
+ * dropped, so nothing but metadata can reach the log. A `browser.*` target is
+ * sanitized again here, so a recorder that forgot to strip a query cannot leak
+ * a token. Returns null when a required field is missing or malformed.
+ */
+export function normalizeJourneyEntry(raw: unknown): UserJourneyEntry | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.ts !== 'number' || !Number.isFinite(r.ts)) return null;
+	if (typeof r.agentId !== 'string' || !r.agentId) return null;
+	if (!isUserJourneyKind(r.kind)) return null;
+	if (typeof r.target !== 'string' || !r.target) return null;
+
+	const isBrowser = r.kind.startsWith('browser.');
+	const entry: UserJourneyEntry = {
+		ts: r.ts,
+		agentId: r.agentId,
+		kind: r.kind,
+		target: isBrowser ? sanitizeJourneyUrl(r.target) : r.target,
+	};
+	for (const key of ['tabId', 'title', 'fromPath', 'sshRemoteId'] as const) {
+		const value = r[key];
+		if (typeof value === 'string' && value) entry[key] = value;
+	}
+	for (const key of ['dwellMs', 'linesAdded', 'linesRemoved'] as const) {
+		const value = r[key];
+		if (typeof value === 'number' && Number.isFinite(value) && value >= 0) entry[key] = value;
+	}
+	return entry;
 }
 
 /**
