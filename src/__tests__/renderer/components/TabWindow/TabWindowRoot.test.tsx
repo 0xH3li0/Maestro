@@ -39,6 +39,28 @@ describe('TabWindowRoot', () => {
 		});
 	});
 
+	it('subscribes to no process:* event, so no one-shot side effect can run here (D1)', async () => {
+		// Record every `window.maestro.process.on*` subscription the root makes.
+		const subscribed: string[] = [];
+		const original = window.maestro.process;
+		window.maestro.process = new Proxy(original, {
+			get(target, key, receiver) {
+				if (typeof key === 'string' && /^on[A-Z]/.test(key)) {
+					subscribed.push(key);
+					return () => () => {};
+				}
+				return Reflect.get(target, key, receiver);
+			},
+		});
+		try {
+			const view = await renderRoot();
+			view.unmount();
+		} finally {
+			window.maestro.process = original;
+		}
+		expect(subscribed).toEqual([]);
+	});
+
 	it('hosts toasts raised in this window', async () => {
 		await renderRoot();
 		act(() => {

@@ -580,6 +580,14 @@ Phase 4 boots the tab window. `src/renderer/main.tsx` reads `getTabWindowId()` (
 | `PermissionPrompt`, `ThoughtStreamPanel`, `ContextTimelinePanel`, `ThroughputGaugeHost`                                                                        | Each listens to `process:*` or reads stores the denied gates leave empty. Phase 5 decides which ride the patch (TW-7 lists permission prompts).           |
 | `NotificationCenterHost`, plugin panel slots, Concerto, `AppModals`                                                                                            | App-window surfaces that need the sidebars or the full app state.                                                                                         |
 
+### Process event gates (landed, phase 4)
+
+Trap 4 above is closed. In `src/renderer/hooks/agent/internal/useOwnedSessionGate.ts`, `useOwnedSessionGate()` and `useOwnedSideEffectGate()` both answer false for every raw session id when `isTabWindow()` is true, and the initial ref value (the one the first event sees before the effect commits) answers false too. Every listener in the D1 list above returns on its first line, so neither rendering nor a one-shot effect (History entry, synopsis, stats row, git refresh, queue dequeue, spoken notification) can run in a tab window, even if a later phase mounts one of those hooks by mistake.
+
+- The `process:*` listeners that carry no gate (`useAgentExecution`, `useBatchProcessor`, `useAutoRunHandlers`, `useRemoteIntegration`, the wizard and feedback services, `services/shellCommand.ts`, `permissionRequestStore`, `App.tsx`) are either spawn-scoped (they wait on a process their own window started) or app-window only. `TabWindowRoot` mounts none of them; its test proves it subscribes to no `window.maestro.process.on*` event.
+- Terminal output (D5, phase 6) does not use these gates. The tab window's own xterm subscribes to its PTY directly.
+- Tests: `useOwnedSessionGate.test.tsx` ("gates in a tab window"), `useAgentExitListener.test.tsx` ("in a tab window"), `TabWindowRoot.test.tsx`.
+
 ## Deviations
 
 - **DV1 (D2, send path).** The spec says a send uses "the composer's input processing path, or `enqueuePromptForTab()` when the agent is busy".
