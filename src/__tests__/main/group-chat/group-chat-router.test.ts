@@ -1756,8 +1756,18 @@ describe('group-chat-router', () => {
 				// still busy: the waiting delegation must go in on the next poll
 				// rather than sit out the rest of the wait budget.
 				await updateGroupChat(chat.id, { requireIdleParticipants: false });
-				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
-				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+
+				// Wait on real time until the spawn lands. The release path writes its
+				// "No longer waiting" line to the log file before it spawns, and that
+				// write is real I/O: a fixed number of fake-timer passes is a hidden time
+				// budget, and on a slow CI runner it ran out before the write finished.
+				// vi.waitFor advances the fake clock by its interval on every check, so
+				// the next poll still fires; 10 seconds of checks is about 10 seconds of
+				// fake time, well inside the 15 minute wait budget, so a give-up cannot
+				// stand in for the release.
+				await vi.waitFor(() => expect(participantSpawnsFor(chat.id)).toHaveLength(1), {
+					timeout: 10_000,
+				});
 
 				const messages = await readLog(chat.logPath);
 				expect(
