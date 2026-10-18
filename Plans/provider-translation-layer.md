@@ -347,3 +347,9 @@ No tests or provider turns were executed, and no credentials, provider homes or 
 **Certification deferred; native acceptance not executed**. Confirmed `skip: true` in `.maestro/scratch/acceptance-auth/inputs.json` and no `evidence-*.json` files in `.maestro/scratch/provider-translation-acceptance/` for [[ENSEMBLE-07]]. Both Claude Code to Codex and Codex to Claude Code remain `unverified` in `src/shared/maestro-lib/translation/support.ts`; no native certification evidence or tested-version changes were declared.
 
 This completes only the certification skip-handling task. No code or tests changed, no test cases or provider turns ran, and no credentials, provider homes or original-agent data were accessed. No human gate was added; no task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode mapping deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Read `src/shared/maestro-lib/translation/support.ts` and confirmed that Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the first task's deferral handling; OpenCode mapping research and its implementation steps were not executed.
+
+No code or tests changed, no test cases or live provider acceptance ran, and no OpenCode session was exported. No implementation or certification is claimed; no human gate or halt marker was added. No task images were supplied.
