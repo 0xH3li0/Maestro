@@ -209,6 +209,17 @@ export interface TranslationPlan {
 	fingerprint: string;
 }
 
+/** Transcript evidence of a committed import, without private account paths or native content. */
+export interface ContextTranslationRecord {
+	operationId: string;
+	source: Pick<TranslationIdentity, 'provider' | 'version'>;
+	destination: Pick<TranslationIdentity, 'provider' | 'version'>;
+	verification: TranslationPlan['verification'];
+	counts: TranslationPlan['counts'];
+	/** Committed plan warnings have passed the operation's acceptance gate. */
+	limitations: TranslationLimitation[];
+}
+
 export type TranslationOperationState =
 	| 'planned'
 	| 'staging'

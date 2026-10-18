@@ -284,6 +284,18 @@ describe('deferred provider translation client', () => {
 		expect(updated.aiTabs[1]).toBe(other);
 		expect(updated.aiTabs[0].providerSessions?.codex?.agentSessionId).toBe('translated-tab');
 		expect(updated.aiTabs[0].agentSessionId).toBe('source-final');
+		expect(updated.aiTabs[0].logs).toEqual([
+			expect.objectContaining({
+				source: 'system',
+				contextTranslation: expect.objectContaining({
+					operationId: scopedPlan.id,
+					source: { provider: 'claude-code', version: scopedPlan.source.version },
+					destination: { provider: 'codex', version: scopedPlan.destination.version },
+				}),
+			}),
+		]);
+		await requestProviderTranslation({ ...request, tabId: 'tab' });
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual(updated.aiTabs[0].logs);
 		expect(translateProvider).toHaveBeenCalledWith(expect.objectContaining({ tabId: 'tab' }));
 	});
 	it.each([false, true])(
@@ -450,6 +462,7 @@ describe('deferred provider translation client', () => {
 		const completion = requestProviderTranslation(request, { waitForDeferred: true });
 		await vi.runAllTimersAsync();
 		expect((await completion).error).toContain('new migration limitations');
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
 		expect(translateProvider).toHaveBeenCalledTimes(2);
 		expect(useSessionStore.getState().sessions[0]).toMatchObject({
 			toolType: 'claude-code',

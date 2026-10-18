@@ -1,12 +1,175 @@
 import { describe, it, expect } from 'vitest';
 import {
 	commitTranslationSession,
+	recordTranslationCommit,
 	migrationHoldsTurns,
 	translationSessionTabs,
 	translatedHistorySessionId,
 	resolveHistorySession,
 	type TranslatableSession,
 } from '../../../shared/maestro-lib/translation/session';
+import type {
+	TranslationPlan,
+	TranslationReport,
+} from '../../../shared/maestro-lib/translation/types';
+
+describe('committed translation transcript marker', () => {
+	const plan: TranslationPlan = {
+		schemaVersion: 1,
+		id: 'op',
+		agentId: 'agent',
+		tabId: 'one',
+		source: {
+			provider: 'claude-code',
+			version: '2.1.296',
+			accountRoot: '/private/source',
+			projectRoot: '/private/project',
+		},
+		destination: {
+			provider: 'codex',
+			version: '0.162.1',
+			accountRoot: '/private/destination',
+			projectRoot: '/private/project',
+		},
+		scope: { projectKnowledge: true, selectedUserResources: [] },
+		status: 'ready',
+		verification: 'unverified',
+		limitations: [
+			{ code: 'unverified', severity: 'warning', message: 'Native resume is unverified.' },
+		],
+		tabs: [{ tabId: 'one', sourceSessionId: 'source', records: 2, newRecords: 2 }],
+		counts: { records: 2, artifacts: 1, bytes: 128 },
+		fingerprint: 'synthetic',
+	};
+	const mapping = {
+		tabId: 'one',
+		sourceSessionId: 'source',
+		destinationSessionId: 'destination',
+		artifacts: [],
+		lineage: {},
+	};
+	const report: TranslationReport = {
+		success: true,
+		plan,
+		result: { success: true, state: 'committed', plan, mappings: [mapping] },
+	};
+
+	it.each(['claude-code', 'codex'] as const)(
+		'records one marker with %s selected, including report replay',
+		(live) => {
+			const previous = { id: 'user', timestamp: 1, source: 'user' as const, text: 'Continue' };
+			const other = { id: 'other', agentSessionId: null, logs: [] };
+			const session: TranslatableSession = {
+				id: 'agent',
+				toolType: live,
+				aiTabs: [
+					{
+						id: 'one',
+						logs: [previous],
+						...(live === 'claude-code'
+							? { agentSessionId: 'source' }
+							: {
+									agentSessionId: null,
+									providerSessions: { 'claude-code': { agentSessionId: 'source' } },
+								}),
+					},
+					other,
+				],
+			};
+			const imported = commitTranslationSession(
+				session,
+				'codex',
+				'op',
+				[mapping],
+				undefined,
+				'claude-code',
+				'one'
+			);
+			// Native IDs alone do not prove that journal finalization succeeded.
+			expect(imported.aiTabs[0].logs).toEqual([previous]);
+			const committed = recordTranslationCommit(imported, report);
+			const logs = committed.aiTabs[0].logs!;
+			expect(logs).toHaveLength(2);
+			expect(logs[0]).toBe(previous);
+			expect(logs[1]).toMatchObject({
+				id: 'translation:op:one',
+				source: 'system',
+				text: 'Context translated from Claude Code',
+				contextTranslation: {
+					operationId: 'op',
+					source: { provider: 'claude-code', version: '2.1.296' },
+					destination: { provider: 'codex', version: '0.162.1' },
+					verification: 'unverified',
+					limitations: plan.limitations,
+					counts: plan.counts,
+				},
+			});
+			expect(JSON.stringify(logs[1])).not.toContain('/private/');
+			expect(committed.aiTabs[1]).toBe(other);
+			expect(session.aiTabs[0].logs).toEqual([previous]);
+			expect(recordTranslationCommit(committed, report).aiTabs[0].logs).toEqual(logs);
+		}
+	);
+
+	it.each(['failed', 'deferred', 'staged', 'recovery-required', 'rolled-back', 'noop'] as const)(
+		'does not mark a %s result even when native IDs already committed',
+		(state) => {
+			const session: TranslatableSession = {
+				id: 'agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'one', agentSessionId: 'destination', logs: [] }],
+			};
+			expect(
+				recordTranslationCommit(session, {
+					...report,
+					success: false,
+					result: { ...report.result!, success: false, state },
+				})
+			).toBe(session);
+		}
+	);
+
+	it('retains the marker on closed, snoozed and orphan tabs without copying logs into native inventory', () => {
+		const tab = { id: 'one', agentSessionId: 'destination', logs: [null, { future: true }] };
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'codex',
+			aiTabs: [],
+			closedTabHistory: [{ tab }],
+			orphanedThinkingTabs: [tab],
+			snoozedTabs: [{ type: 'group', members: [{ type: 'ai', tab }] }],
+			providerTranslationTabInventory: [{ id: 'one', agentSessionId: 'destination' }],
+		};
+		const updated = recordTranslationCommit(session, report);
+		const logs = updated.closedTabHistory![0].tab.logs!;
+		expect(logs.slice(0, 2)).toEqual(tab.logs);
+		expect(logs).toHaveLength(3);
+		expect(updated.orphanedThinkingTabs[0].logs).toEqual(logs);
+		expect(updated.snoozedTabs![0].members![0].tab.logs).toEqual(logs);
+		expect(updated.providerTranslationTabInventory).toBe(session.providerTranslationTabInventory);
+	});
+
+	it('does not mark an empty conversation or a report without its plan', () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'codex',
+			aiTabs: [{ id: 'one', agentSessionId: 'destination', logs: [] }],
+		};
+		expect(
+			recordTranslationCommit(session, {
+				...report,
+				result: { ...report.result!, mappings: [{ ...mapping, sourceSessionId: null }] },
+			}).aiTabs[0].logs
+		).toEqual([]);
+		expect(recordTranslationCommit(session, { ...report, plan: undefined })).toBe(session);
+		expect(
+			recordTranslationCommit(session, {
+				...report,
+				result: { ...report.result!, mappings: [{ ...mapping, destinationSessionId: 'stale' }] },
+			}).aiTabs[0].logs
+		).toEqual([]);
+	});
+});
 
 describe('one provider mapping commit', () => {
 	it.each(['claude-code', 'codex'] as const)(

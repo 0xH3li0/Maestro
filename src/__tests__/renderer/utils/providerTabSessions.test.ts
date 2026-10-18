@@ -829,10 +829,18 @@ describe('Ensemble turn captures', () => {
 	});
 
 	it('keeps a queued provider and explicit cloud target after a selection and routing change', () => {
-		const tab = makeTab({ customModel: 'opus', runOn: { type: 'provider' } });
+		const tab = makeTab({ customModel: 'opus', customEffort: 'high', runOn: { type: 'provider' } });
 		const session = makeSession('claude-code');
 		const turnSettings = captureQueuedTurnSettings(tab, session);
 		const switched = switchTabProviderFor(tab, session, 'codex');
+		// Later composer choices apply only to the next send, not this queued message.
+		switched.customModel = 'gpt-next';
+		switched.customEffort = 'low';
+		expect(codifyTurnSettings(switched, session)).toMatchObject({
+			turnProvider: 'codex',
+			turnModel: 'gpt-next',
+			turnEffort: 'low',
+		});
 		const result = codifyQueuedTurnSettings({ turnSettings }, switched, {
 			...session,
 			runOn: { type: 'source', endpointId: 'new-source', model: 'new-model' },
@@ -840,6 +848,7 @@ describe('Ensemble turn captures', () => {
 		expect(result).toMatchObject({
 			turnProvider: 'claude-code',
 			turnModel: 'opus',
+			turnEffort: 'high',
 			turnRunOnTarget: { type: 'provider' },
 		});
 		expect(switched.tabProvider).toBe('codex');

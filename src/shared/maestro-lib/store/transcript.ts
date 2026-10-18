@@ -19,6 +19,7 @@
 
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
+import type { ContextTranslationRecord } from '../translation/types';
 
 /** Every kind of transcript entry, in no particular order. */
 export const LOG_ENTRY_SOURCES = [
@@ -65,6 +66,7 @@ export interface LogEntryRecord extends UnknownFields {
 	turnModel?: string;
 	turnProvider?: string;
 	turnEffort?: string;
+	contextTranslation?: ContextTranslationRecord;
 }
 
 function isLogEntryRecord(value: unknown): value is LogEntryRecord {

@@ -33,6 +33,7 @@ import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
 import { ContextCompactionCard } from '../../ContextCompactionCard';
+import { ContextTranslationCard } from '../../ContextTranslationCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
@@ -433,9 +434,8 @@ export const LogItem = memo(
 			);
 		}
 
-		// Maestro compacted the conversation to get a refused turn through. Same
-		// clean pill row as a hand-off: it marks where it happened and asks nothing.
-		if (log.contextCompaction) {
+		// Context changes share the compact hand-off row, outside response grouping.
+		if (log.contextCompaction || log.contextTranslation) {
 			return (
 				<div
 					ref={logItemRef}
@@ -446,7 +446,11 @@ export const LogItem = memo(
 				>
 					<div className="hidden sm:block w-20 shrink-0" />
 					<div className="flex-1 min-w-0">
-						<ContextCompactionCard log={log} theme={theme} />
+						{log.contextTranslation ? (
+							<ContextTranslationCard translation={log.contextTranslation} theme={theme} />
+						) : (
+							<ContextCompactionCard log={log} theme={theme} />
+						)}
 					</div>
 				</div>
 			);
@@ -1262,6 +1266,7 @@ export const LogItem = memo(
 			prevProps.steerRunContinues === nextProps.steerRunContinues &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.turnProvider === nextProps.log.turnProvider &&
+			prevProps.log.contextTranslation === nextProps.log.contextTranslation &&
 			prevProps.log.turnModel === nextProps.log.turnModel &&
 			prevProps.log.turnEffort === nextProps.log.turnEffort &&
 			prevProps.log.turnRunOn === nextProps.log.turnRunOn &&

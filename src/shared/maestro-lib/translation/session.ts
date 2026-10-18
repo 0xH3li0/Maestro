@@ -1,4 +1,5 @@
 import { canonicalJson } from '../../canonicalJson';
+import { getAgentDisplayName } from '../../agentMetadata';
 import { agentRunOnSupport } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
@@ -7,10 +8,13 @@ import type {
 	ProviderMigrationState,
 	TranslationTabMapping,
 	HistoryTranslationMapping,
+	TranslationReport,
 } from './types';
 
 export interface TranslationTab extends ProviderSwitchTab {
 	id: string;
+	/** Preserve unknown entries from newer clients, as the runtime store does. */
+	logs?: unknown[];
 }
 
 /** Shared parking invariant: live ID belongs to the active provider; its slot is removed. */
@@ -80,6 +84,103 @@ export function translationSessionTabs(
 	const selected = unique.filter((tab) => tab.id === tabId);
 	if (selected.length !== 1) throw new Error(`Translation tab not found: ${tabId}`);
 	return selected;
+}
+
+/** Apply the same mutation to live and retained copies without touching native-only inventory. */
+function mapTranslationSessionTabs<T extends TranslatableSession>(
+	session: T,
+	translate: (tab: TranslationTab) => TranslationTab
+): T {
+	return {
+		...session,
+		aiTabs: session.aiTabs.map(translate),
+		...(session.orphanedThinkingTabs && {
+			orphanedThinkingTabs: session.orphanedThinkingTabs.map(translate),
+		}),
+		...(session.closedTabHistory && {
+			closedTabHistory: session.closedTabHistory.map((c) => ({ ...c, tab: translate(c.tab) })),
+		}),
+		...(session.unifiedClosedTabHistory && {
+			unifiedClosedTabHistory: session.unifiedClosedTabHistory.map((c) =>
+				c.type === 'ai' ? { ...c, tab: translate(c.tab) } : c
+			),
+		}),
+		...(session.snoozedTabs && {
+			snoozedTabs: session.snoozedTabs.map((c) =>
+				c.type === 'ai'
+					? { ...c, tab: translate(c.tab) }
+					: c.type === 'group'
+						? {
+								...c,
+								members: c.members?.map((t) =>
+									t.type === 'ai' ? { ...t, tab: translate(t.tab) } : t
+								),
+							}
+						: c
+			),
+		}),
+	};
+}
+
+/** Record only finalized native imports, once per operation/tab, across desktop and runtime. */
+export function recordTranslationCommit<T extends TranslatableSession>(
+	session: T,
+	report: TranslationReport
+): T {
+	const { plan, result } = report;
+	if (
+		!report.success ||
+		!plan ||
+		!result?.success ||
+		result.state !== 'committed' ||
+		plan.agentId !== session.id ||
+		plan.status !== 'ready' ||
+		plan.source.provider === plan.destination.provider
+	)
+		return session;
+	const mappings = new Map(result.mappings.map((mapping) => [mapping.tabId, mapping]));
+	const timestamp = Date.now();
+	return mapTranslationSessionTabs(session, (tab) => {
+		const mapping = mappings.get(tab.id);
+		const markerId = `translation:${plan.id}:${tab.id}`;
+		const logs = tab.logs ?? [];
+		const liveProvider = resolveTabProvider(tab, session);
+		const destinationId =
+			liveProvider === plan.destination.provider
+				? tab.agentSessionId
+				: tab.providerSessions?.[plan.destination.provider]?.agentSessionId;
+		if (
+			(plan.tabId !== undefined && plan.tabId !== tab.id) ||
+			(plan.tabId === undefined && tab.tabProvider !== undefined) ||
+			!mapping?.sourceSessionId ||
+			!mapping.destinationSessionId ||
+			destinationId !== mapping.destinationSessionId ||
+			logs.some(
+				(log) => typeof log === 'object' && log !== null && 'id' in log && log.id === markerId
+			)
+		)
+			return tab;
+		return {
+			...tab,
+			logs: [
+				...logs,
+				{
+					id: markerId,
+					timestamp,
+					source: 'system',
+					text: `Context translated from ${getAgentDisplayName(plan.source.provider)}`,
+					contextTranslation: {
+						operationId: plan.id,
+						source: { provider: plan.source.provider, version: plan.source.version },
+						destination: { provider: plan.destination.provider, version: plan.destination.version },
+						verification: plan.verification,
+						counts: { ...plan.counts },
+						limitations: plan.limitations.map((limitation) => ({ ...limitation })),
+					},
+				},
+			],
+		};
+	});
 }
 
 export function commitTranslationSession<T extends TranslatableSession>(
@@ -207,7 +308,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			});
 	}
 	return {
-		...session,
+		...mapTranslationSessionTabs(session, translate),
 		toolType: tabId === undefined ? destination : session.toolType,
 		...(tabId === undefined && {
 			providerTranslationQueuedOrigins: Object.fromEntries(
@@ -215,32 +316,6 @@ export function commitTranslationSession<T extends TranslatableSession>(
 					item.id,
 					session.providerTranslationQueuedOrigins?.[item.id] ?? sourceProvider,
 				])
-			),
-		}),
-		aiTabs: session.aiTabs.map(translate),
-		...(session.orphanedThinkingTabs && {
-			orphanedThinkingTabs: session.orphanedThinkingTabs.map(translate),
-		}),
-		...(session.closedTabHistory && {
-			closedTabHistory: session.closedTabHistory.map((c) => ({ ...c, tab: translate(c.tab) })),
-		}),
-		...(session.unifiedClosedTabHistory && {
-			unifiedClosedTabHistory: session.unifiedClosedTabHistory.map((c) =>
-				c.type === 'ai' ? { ...c, tab: translate(c.tab) } : c
-			),
-		}),
-		...(session.snoozedTabs && {
-			snoozedTabs: session.snoozedTabs.map((c) =>
-				c.type === 'ai'
-					? { ...c, tab: translate(c.tab) }
-					: c.type === 'group'
-						? {
-								...c,
-								members: c.members?.map((t) =>
-									t.type === 'ai' ? { ...t, tab: translate(t.tab) } : t
-								),
-							}
-						: c
 			),
 		}),
 		providerMigration: {

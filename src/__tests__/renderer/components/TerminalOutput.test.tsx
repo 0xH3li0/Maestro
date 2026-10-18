@@ -24,6 +24,7 @@ import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -4440,6 +4441,57 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('model / effort pill rendering', () => {
+		it('keeps a translation marker between providers without stealing turn attribution or merging replies', () => {
+			const translation: NonNullable<LogEntry['contextTranslation']> = {
+				operationId: 'op',
+				source: { provider: 'claude-code', version: 'source-version' },
+				destination: { provider: 'codex', version: 'destination-version' },
+				verification: 'unverified',
+				counts: { records: 1, artifacts: 0, bytes: 100 },
+				limitations: [
+					{ code: 'native', severity: 'warning', message: 'Native resume unverified.' },
+				],
+			};
+			const before = createLogEntry({ id: 'a', text: 'Before.', turnProvider: 'claude-code' });
+			const marker = createLogEntry({
+				id: 'marker',
+				source: 'system',
+				text: 'Context translated',
+				contextTranslation: translation,
+			});
+			const after = createLogEntry({ id: 'b', text: 'After.', turnProvider: 'codex' });
+			const logs = [before, marker, after];
+			expect(collapseAiResponseLogs(logs).map((log) => log.id)).toEqual(['a', 'marker', 'b']);
+			const tabs = [createMockAITab({ id: 'tab-1', agentSessionId: 'native', logs })];
+			const session = createDefaultSession({
+				toolType: 'opencode',
+				tabs,
+				activeTabId: 'tab-1',
+			} as never);
+			session.aiTabs = tabs;
+			const props = createDefaultProps({ session }) as React.ComponentProps<typeof TerminalOutput>;
+			const { rerender } = render(<TerminalOutput {...props} />);
+			expect(screen.getByText('Context translated from Claude Code')).toBeInTheDocument();
+			expect(screen.getAllByTestId('turn-provider-pill').map((pill) => pill.textContent)).toEqual([
+				'Claude Code',
+				'Codex',
+			]);
+			// Metadata-only updates must pass LogItem's memo comparison.
+			const updatedTabs = [
+				{
+					...tabs[0],
+					logs: [
+						before,
+						{ ...marker, contextTranslation: { ...translation, source: translation.destination } },
+						after,
+					],
+				},
+			];
+			const updated = { ...session, tabs: updatedTabs, aiTabs: updatedTabs };
+			rerender(<TerminalOutput {...props} session={updated} />);
+			expect(screen.getByText('Context translated from Codex')).toBeInTheDocument();
+		});
+
 		it('shows the first captured owner and changes, skipping legacy and non-response entries', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'a', text: 'first', turnProvider: 'claude-code' }),

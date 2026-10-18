@@ -10,6 +10,7 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import { limitationsNeedingAcceptance } from '../../shared/maestro-lib/translation/limitations';
 import {
 	commitTranslationSession,
+	recordTranslationCommit,
 	translationSessionTabs,
 	migrationHoldsTurns,
 } from '../../shared/maestro-lib/translation/session';
@@ -79,7 +80,7 @@ async function applyReport(agentId: string, report: TranslationReport): Promise<
 	const stored = (await window.maestro.sessions.getAll()).find((s: any) => s.id === agentId) as any;
 	updateSessionWith(agentId, (s) => {
 		// The lifecycle push can reach this renderer before the IPC reply.
-		const updated = commitTranslationSession(
+		const committed = commitTranslationSession(
 			s,
 			report.plan!.destination.provider,
 			report.plan!.id,
@@ -89,6 +90,7 @@ async function applyReport(agentId: string, report: TranslationReport): Promise<
 			report.plan!.tabId,
 			report.plan!.deferredTabs
 		);
+		const updated = recordTranslationCommit(committed, report);
 		return {
 			...updated,
 			customEnvVars: stored?.customEnvVars,

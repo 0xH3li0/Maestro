@@ -212,7 +212,7 @@ describe('SSH provider translation transactions', () => {
 					cwd: project,
 					projectRoot: project,
 					sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
-					aiTabs: [{ id: 'open', agentSessionId: 'original' }] as any,
+					aiTabs: [{ id: 'open', agentSessionId: 'original', logs: [] }] as any,
 					activeTabId: 'open',
 				});
 				let interruptCommit = false;
@@ -398,6 +398,23 @@ describe('SSH provider translation transactions', () => {
 					expect(session.toolType).toBe(destination);
 					expect(session.aiTabs[0].agentSessionId).toBe(journal.mappings[0].destinationSessionId);
 					expect(session.providerMigration?.state).toBe('committed');
+					expect(session.aiTabs[0].logs).toEqual(
+						expect.arrayContaining([
+							expect.objectContaining({
+								source: 'system',
+								contextTranslation: expect.objectContaining({
+									operationId: journal.plan.id,
+									source: {
+										provider: journal.plan.source.provider,
+										version: journal.plan.source.version,
+									},
+									destination: { provider: destination, version: journal.plan.destination.version },
+									verification: journal.plan.verification,
+									limitations: journal.plan.limitations,
+								}),
+							}),
+						])
+					);
 					expect(
 						session.customEnvVars?.[destination === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']
 					).toBe(journal.plan.destination.accountRoot);

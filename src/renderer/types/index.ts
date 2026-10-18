@@ -1,6 +1,7 @@
 import type {
 	ProviderMigrationState,
 	HistoryTranslationMapping,
+	ContextTranslationRecord,
 } from '../../shared/maestro-lib/translation/types';
 // Type definitions for Maestro renderer
 import type { BrowserTab } from '../../shared/browserPage';
@@ -352,6 +353,8 @@ export interface LogEntry {
 	// footer pill is omitted rather than guessed at.
 	turnModel?: string;
 	turnProvider?: ToolType;
+	/** A committed native import, rendered as a standalone transcript marker. */
+	contextTranslation?: ContextTranslationRecord;
 	turnEffort?: string;
 	// Where this turn ran when the agent's Run on target was a source, copied
 	// from `AITab.turnRunOn`. Shown in place of the model pill.

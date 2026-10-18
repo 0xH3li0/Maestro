@@ -39,6 +39,7 @@ import { collectTranslationResources } from './resources';
 import { translationHash, nativeRecordKey } from './identity';
 import {
 	commitTranslationSession,
+	recordTranslationCommit,
 	translationSessionTabs,
 	type TranslatableSession,
 } from './session';
@@ -817,7 +818,15 @@ export class NativeTranslationService {
 							previous.warnings = [...new Set([...previous.warnings, ...entry.warnings])];
 						else acceptedDirections.push(entry);
 					}
-					return { ...s, providerMigration: { ...state, acceptedDirections } };
+					const updated =
+						state.state === 'committed' && journal.result
+							? recordTranslationCommit(s, {
+									success: journal.result.success,
+									plan: journal.plan,
+									result: journal.result,
+								})
+							: s;
+					return { ...updated, providerMigration: { ...state, acceptedDirections } };
 				});
 			},
 			isCommitted: async (id) =>
