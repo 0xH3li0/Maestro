@@ -1,6 +1,8 @@
 /**
  * The Dataview index for ONE vault root (M2, D2, DV-3). It implements the vendored `FullIndex` contract, so
- * the vendored source resolver, query engine, and `PageMetadata.serialize` run against it unchanged:
+ * the vendored source resolver, query engine, and `PageMetadata.serialize` run against it unchanged. The
+ * in-memory members come from the shared `PageIndex` (`src/shared/dataview/pageIndex.ts`), which the
+ * DataviewJS guest builds from a snapshot too, so a source matches the same pages in both:
  *
  * - `pages`: path to `PageMetadata`, built by `parsePage` (M1, the vendored parser, then M3 link resolution).
  * - `tags`: path to its tags plus their parent tags (`fullTags()`), with a case-insensitive inverse.
@@ -8,8 +10,8 @@
  * - `prefix`: the folder index over every vault file, any extension.
  * - `metadataCache`, `vault`, `csv`, `starred`: the Obsidian services the engine reaches for.
  *
- * Indexing mirrors upstream `FullIndex.finish`; source resolution is upstream's `matchingSourcePaths`,
- * vendored as-is. File access goes through a `VaultFs`, so a local root and an SSH root index the same way.
+ * This class adds what only main has: file access through a `VaultFs` (so a local root and an SSH root index
+ * the same way), the disk cache, and the watcher or poller.
  *
  * Freshness (DV-5, M4, M5): `open()` serves the disk cache at once and reconciles in the background,
  * re-parsing only pages whose `mtime` or `size` changed. A local root is then watched with chokidar (one
@@ -19,29 +21,20 @@
  */
 
 import {
-	IndexMap,
-	ValueCaseInsensitiveIndexMap,
+	PageIndex,
 	VaultPaths,
-	Result,
 	Transferable,
-	buildResolvedLinks,
 	createLinkResolver,
 	finishPage,
 	isMarkdownPagePath,
 	linkPathKey,
 	linkTargetKeys,
-	matchingSourcePaths,
-	parseCsv,
 	parseRawPage,
 	starredPathsFromBookmarks,
-	type DataObject,
-	type DataviewIndexReader,
 	type DataviewWatchMode,
-	type FullIndex,
 	type LinkResolver,
 	type PageMetadata,
 	type PageParseWarning,
-	type Source,
 } from '../../shared/dataview';
 import {
 	LOCAL_SESSION_READ_CONCURRENCY,
@@ -77,9 +70,6 @@ export const DATAVIEW_PARSE_BATCH_SIZE = 16;
  * text is never read, so one huge export cannot stall the main thread.
  */
 export const DATAVIEW_MAX_INDEXED_FILE_BYTES = 2 * 1024 * 1024;
-
-/** How long a parsed CSV source is reused before it is read again (upstream `CsvCache.CACHE_EXPIRY_SECONDS`). */
-export const DATAVIEW_CSV_CACHE_MS = 5 * 60 * 1000;
 
 /** Pages re-resolved per batch (decode the cached parse, resolve links) between event-loop yields. */
 export const DATAVIEW_FINISH_BATCH_SIZE = 256;
@@ -140,18 +130,7 @@ interface IndexUpdate {
 	persist: boolean;
 }
 
-export class VaultIndex implements DataviewIndexReader {
-	readonly pages = new Map<string, PageMetadata>();
-	readonly tags = new ValueCaseInsensitiveIndexMap();
-	readonly links = new IndexMap();
-	revision = 0;
-
-	prefix: VaultPaths = new VaultPaths();
-	readonly csv: FullIndex['csv'];
-	readonly starred: FullIndex['starred'];
-	readonly metadataCache: FullIndex['metadataCache'];
-	readonly vault: FullIndex['vault'];
-
+export class VaultIndex extends PageIndex {
 	/** Stats of the last finished full scan, or null before the first one. */
 	lastScan: VaultScanStats | null = null;
 	/** Whether `open()` served the disk cache instead of waiting for a scan. */
@@ -159,12 +138,8 @@ export class VaultIndex implements DataviewIndexReader {
 	/** The cache file of this root, or null when the index keeps nothing on disk. */
 	readonly cacheFile: string | null;
 
-	private resolver: LinkResolver | null = null;
-	private resolvedLinks: Record<string, Record<string, number>> | null = null;
-	private stars = new Set<string>();
 	/** Path to its cached raw parse, the source of truth the pages are finished from. */
 	private readonly entries = new Map<string, CachedPage>();
-	private readonly csvCache = new Map<string, { data: DataObject[]; loadedAt: number }>();
 	private readonly listeners = new Set<VaultIndexListener>();
 	private readonly onWarning: (warning: PageParseWarning) => void;
 	private readonly watchEnabled: boolean;
@@ -182,6 +157,7 @@ export class VaultIndex implements DataviewIndexReader {
 		readonly fs: VaultFs,
 		options: VaultIndexOptions = {}
 	) {
+		super((path) => fs.readText(path));
 		this.cacheFile = options.cacheDir
 			? dataviewCacheFilePath(options.cacheDir, fs.root, fs.sshRemoteId)
 			: null;
@@ -193,24 +169,6 @@ export class VaultIndex implements DataviewIndexReader {
 					`Dataview parse warning in ${warning.path}:${warning.line + 1}: ${warning.message}`,
 					LOG_CONTEXT
 				));
-
-		// The `FullIndex` members the vendored code reads as plain objects. Arrow functions keep `this`
-		// stable however the engine calls them; the getter recomputes `resolvedLinks` only after a change.
-		const resolvedLinkTable = () => this.resolvedLinkTable();
-		this.csv = { get: (path) => this.loadCsv(path) };
-		this.starred = { starred: (path) => this.stars.has(path) };
-		this.metadataCache = {
-			getFirstLinkpathDest: (linkpath, sourcePath) => {
-				const target = this.linkResolver().resolve(linkpath, sourcePath);
-				return target === null ? null : { path: target };
-			},
-			get resolvedLinks() {
-				return resolvedLinkTable();
-			},
-		};
-		this.vault = {
-			getMarkdownFiles: () => Array.from(this.pages.keys(), (path) => ({ path })),
-		};
 	}
 
 	/** The vault root as the platform spells it. */
@@ -227,32 +185,6 @@ export class VaultIndex implements DataviewIndexReader {
 	/** Resolves once the watcher has finished its initial walk (at once when there is no watcher). */
 	get watcherReady(): Promise<void> {
 		return this.watcher?.ready ?? Promise.resolve();
-	}
-
-	getPage(path: string): PageMetadata | undefined {
-		return this.pages.get(path);
-	}
-
-	/** Every page that links to `path` (the inlink index). */
-	inlinks(path: string): string[] {
-		return Array.from(this.links.getInverse(path));
-	}
-
-	/**
-	 * The vault paths a query source matches: tags, folders, `[[link]]` (incoming) and `outgoing([[link]])`,
-	 * `csv(...)`, and their `and`, `or`, and negation, exactly as upstream resolves them. `originFile` is the
-	 * querying page, which relative links and CSV paths resolve against. A failure carries Dataview's error.
-	 */
-	pagesForSource(source: Source, originFile = ''): Result<Set<string>, string> {
-		return matchingSourcePaths(source, this, originFile);
-	}
-
-	/**
-	 * The vault path an Obsidian link path names from `sourcePath` (M3), or null when nothing matches. The
-	 * same resolution the query engine reaches through `metadataCache.getFirstLinkpathDest`.
-	 */
-	resolveLink(linkpath: string, sourcePath: string): string | null {
-		return this.linkResolver().resolve(linkpath, sourcePath);
 	}
 
 	/** Subscribe to index changes. Returns the unsubscribe function. */
@@ -596,9 +528,7 @@ export class VaultIndex implements DataviewIndexReader {
 
 		for (const path of update.removed) {
 			noteLinkTargets(path);
-			this.pages.delete(path);
-			this.tags.delete(path);
-			this.links.delete(path);
+			this.unindexPage(path);
 			this.entries.delete(path);
 			changed.add(path);
 		}
@@ -670,18 +600,6 @@ export class VaultIndex implements DataviewIndexReader {
 		}
 	}
 
-	/** Upstream `FullIndex.finish`, after canonicalization: fill the tag and link indexes for one page. */
-	private indexPage(path: string, page: PageMetadata): void {
-		this.pages.set(path, page);
-		// Delete first: upstream `IndexMap.set` keeps every old inverse entry when the new values contain
-		// the key itself (it tests `values.has(key)`, not `values.has(value)`), so a page with a self link
-		// (`[[#Heading]]`) would keep stale inlinks forever once it is re-indexed.
-		this.tags.delete(path);
-		this.tags.set(path, page.fullTags());
-		this.links.delete(path);
-		this.links.set(path, new Set<string>(page.links.map((link) => link.path)));
-	}
-
 	/** Bump the revision and tell every listener which paths changed. */
 	private touch(changedPaths: string[]): void {
 		this.revision += 1;
@@ -694,44 +612,6 @@ export class VaultIndex implements DataviewIndexReader {
 				// One broken subscriber must not starve the others; report it and keep going.
 				logger.error(`Dataview change listener failed: ${String(error)}`, LOG_CONTEXT);
 			}
-		}
-	}
-
-	private linkResolver(): LinkResolver {
-		if (!this.resolver) this.resolver = createLinkResolver(this.prefix.allFiles());
-		return this.resolver;
-	}
-
-	private resolvedLinkTable(): Record<string, Record<string, number>> {
-		if (!this.resolvedLinks) {
-			this.resolvedLinks = buildResolvedLinks(this.pages, (path) => this.prefix.hasFile(path));
-		}
-		return this.resolvedLinks;
-	}
-
-	/**
-	 * Upstream `CsvCache.get`, limited to files inside the vault (the guide's CSV trap): URL sources are
-	 * refused, and only a path the scan listed is read, so a query cannot reach outside the root.
-	 */
-	private async loadCsv(path: string): Promise<Result<DataObject[], string>> {
-		if (/^(https?|file):\/\//i.test(path)) {
-			return Result.failure(
-				`Loading CSV data from a URL is not supported in Maestro ('${path}'); use a CSV file inside the vault.`
-			);
-		}
-		const now = Date.now();
-		const cached = this.csvCache.get(path);
-		if (cached && now - cached.loadedAt <= DATAVIEW_CSV_CACHE_MS)
-			return Result.success(cached.data);
-
-		if (!this.prefix.hasFile(path))
-			return Result.failure(`Failed to load data from path '${path}'.`);
-		try {
-			const data = parseCsv(await this.fs.readText(path));
-			this.csvCache.set(path, { data, loadedAt: now });
-			return Result.success(data);
-		} catch {
-			return Result.failure(`Failed to load data from path '${path}'.`);
 		}
 	}
 }

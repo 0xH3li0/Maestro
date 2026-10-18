@@ -21,11 +21,11 @@ import React, { createContext, memo, useContext, useMemo } from 'react';
 import type { Theme } from '../../../types';
 import {
 	DataviewSettings,
-	Link,
 	Values,
 	Widgets,
 	currentLocale,
-	getFileTitle,
+	dataviewLinkLabel,
+	mayContainMarkdown,
 	renderMinimalDate,
 	renderMinimalDuration,
 	reviveDataviewInlineResult,
@@ -125,13 +125,10 @@ export function DataviewValueProvider({
 	return <DataviewValueContext.Provider value={scope}>{children}</DataviewValueContext.Provider>;
 }
 
-/** Strings with none of these characters are plain text and skip the markdown parse. */
-const MARKDOWN_SYNTAX = /[\\`*_~[\]<>|#!&]|https?:|www\.|^\s*(?:[-+]|\d+[.)])\s/;
-
 /** A markdown string rendered compact (inline when it is one paragraph), as Dataview does. */
 export const DataviewMarkdown = memo(function DataviewMarkdown({ text }: { text: string }) {
 	const scope = useContext(DataviewValueContext);
-	if (!scope || !MARKDOWN_SYNTAX.test(text)) return <>{text}</>;
+	if (!scope || !mayContainMarkdown(text)) return <>{text}</>;
 	return (
 		<Markdown
 			preset="document"
@@ -144,13 +141,6 @@ export const DataviewMarkdown = memo(function DataviewMarkdown({ text }: { text:
 		/>
 	);
 });
-
-/** The text Dataview shows for a link: its display, or the file title plus the section. */
-export function dataviewLinkLabel(link: Link): string {
-	if (link.display) return link.display;
-	const title = getFileTitle(link.path);
-	return link.type === 'header' || link.type === 'block' ? `${title} > ${link.subpath}` : title;
-}
 
 export interface DataviewValueProps {
 	value: Literal;

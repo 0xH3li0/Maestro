@@ -35,6 +35,48 @@ export const SANDBOX_MAX_GUEST_MESSAGE_BYTES = 1024 * 1024;
 export type SandboxSender = 'guest' | 'host';
 
 // ---------------------------------------------------------------------------------------------------------
+// Transport
+// ---------------------------------------------------------------------------------------------------------
+
+/**
+ * The `<webview>` IPC channel a guest's preload forwards guest messages to the host on
+ * (`ipcRenderer.sendToHost`), and the channel those messages carry inside the guest page.
+ */
+export const SANDBOX_TO_HOST_CHANNEL = 'maestro:dataview-sandbox:to-host';
+
+/**
+ * The `<webview>` IPC channel the host sends host messages on (`webview.send`), and the channel the preload
+ * gives them when it posts them into the guest page.
+ */
+export const SANDBOX_TO_GUEST_CHANNEL = 'maestro:dataview-sandbox:to-guest';
+
+export type SandboxChannel = typeof SANDBOX_TO_HOST_CHANNEL | typeof SANDBOX_TO_GUEST_CHANNEL;
+
+/**
+ * A message as it travels inside the guest page, between the page and its preload: posted with
+ * `window.postMessage(envelope, '*')` on the page's own window, which both sides listen on. The channel
+ * names the direction, so neither side takes its own posts for the other's.
+ */
+export interface SandboxEnvelope {
+	channel: SandboxChannel;
+	message: unknown;
+}
+
+export function sandboxEnvelope(channel: SandboxChannel, message: unknown): SandboxEnvelope {
+	return { channel, message };
+}
+
+/**
+ * The message inside `data` when `data` is an envelope on `channel`, else undefined. The message itself is
+ * not checked here: pass it to {@link parseSandboxMessage}.
+ */
+export function openSandboxEnvelope(data: unknown, channel: SandboxChannel): unknown {
+	if (typeof data !== 'object' || data === null) return undefined;
+	const envelope = data as Partial<SandboxEnvelope>;
+	return envelope.channel === channel ? envelope.message : undefined;
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // Guest to host
 // ---------------------------------------------------------------------------------------------------------
 

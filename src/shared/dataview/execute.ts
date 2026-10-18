@@ -28,7 +28,7 @@ import type {
 } from './types';
 
 /** Upstream's prefix for a block error (`Dataview: <error>`). */
-const BLOCK_ERROR_PREFIX = 'Dataview: ';
+export const DATAVIEW_BLOCK_ERROR_PREFIX = 'Dataview: ';
 
 /**
  * Deprecated task aliases (`subtasks` is `children`, `header` is `section`, `real` is `task`).
@@ -123,7 +123,10 @@ export async function executeDql(
 ): Promise<DataviewResult> {
 	const parsed = parseQuery(source);
 	if (!parsed.successful) {
-		return errorResult(BLOCK_ERROR_PREFIX + parsed.error, parseErrorLine(parsed.error, source));
+		return errorResult(
+			DATAVIEW_BLOCK_ERROR_PREFIX + parsed.error,
+			parseErrorLine(parsed.error, source)
+		);
 	}
 	const query = parsed.value;
 	try {
@@ -132,7 +135,7 @@ export async function executeDql(
 				return { kind: 'unsupported', feature: 'CALENDAR' };
 			case 'table': {
 				const result = await executeTable(query, index, thisPath, DataviewSettings);
-				if (!result.successful) return errorResult(BLOCK_ERROR_PREFIX + result.error);
+				if (!result.successful) return errorResult(DATAVIEW_BLOCK_ERROR_PREFIX + result.error);
 				const { core, names, data, idMeaning } = result.value;
 				return {
 					kind: 'table',
@@ -144,7 +147,7 @@ export async function executeDql(
 			}
 			case 'list': {
 				const result = await executeList(query, index, thisPath, DataviewSettings);
-				if (!result.successful) return errorResult(BLOCK_ERROR_PREFIX + result.error);
+				if (!result.successful) return errorResult(DATAVIEW_BLOCK_ERROR_PREFIX + result.error);
 				const { core, data, primaryMeaning } = result.value;
 				return {
 					kind: 'list',
@@ -155,7 +158,7 @@ export async function executeDql(
 			}
 			case 'task': {
 				const result = await executeTask(query, thisPath, index, DataviewSettings);
-				if (!result.successful) return errorResult(BLOCK_ERROR_PREFIX + result.error);
+				if (!result.successful) return errorResult(DATAVIEW_BLOCK_ERROR_PREFIX + result.error);
 				const { core, tasks } = result.value;
 				const encodeTask = createTaskWireEncoder(index);
 				return {
@@ -170,7 +173,7 @@ export async function executeDql(
 			}
 		}
 	} catch (error) {
-		return errorResult(BLOCK_ERROR_PREFIX + describeError(error));
+		return errorResult(DATAVIEW_BLOCK_ERROR_PREFIX + describeError(error));
 	}
 }
 

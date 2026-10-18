@@ -26,7 +26,7 @@ export { Result, Success, Failure } from './vendor/api/result';
 export { DataArray } from './vendor/api/data-array';
 export type { ArrayFunc, ArrayComparator, LowestKey, Ingrouped } from './vendor/api/data-array';
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
-export type { QuerySettings } from './vendor/settings';
+export type { QuerySettings, ExportSettings } from './vendor/settings';
 export { DataviewSettings } from './settings';
 export { renderMinimalDate, renderMinimalDuration, getFileTitle } from './vendor/util/normalize';
 export { currentLocale } from './vendor/util/locale';
@@ -83,11 +83,21 @@ export type {
 
 export { Context } from './vendor/expression/context';
 export type { LinkHandler } from './vendor/expression/context';
-export { DEFAULT_FUNCTIONS } from './vendor/expression/functions';
-export type { FunctionImpl } from './vendor/expression/functions';
+export { DEFAULT_FUNCTIONS, Functions } from './vendor/expression/functions';
+export type { FunctionImpl, BoundFunctionImpl } from './vendor/expression/functions';
+export { defaultLinkHandler } from './vendor/query/engine';
 export { evaluateField, UNRESOLVED_LINK_HANDLER } from './evaluate';
 
 export { PageMetadata, ListItem } from './vendor/data-model/markdown';
+export type {
+	SMarkdownPage,
+	SListItem,
+	SListEntry,
+	STask,
+} from './vendor/data-model/serialized/markdown';
+export { nestItems, nestGroups } from './vendor/ui/views/task-view';
+export { markdownTable, markdownList, markdownTaskList } from './vendor/ui/export/markdown';
+export { dataviewLinkLabel, mayContainMarkdown } from './display';
 export { Transferable } from './vendor/data-model/transferable';
 export { dataviewJsonReplacer, dataviewJsonReviver } from './json';
 export { parsePage, parseRawPage, finishPage } from './page';
@@ -107,8 +117,15 @@ export {
 	starredPathsFromBookmarks,
 	buildResolvedLinks,
 } from './vault';
+export { PageIndex, DATAVIEW_CSV_CACHE_MS } from './pageIndex';
+export type { VaultTextReader } from './pageIndex';
 
-export { executeDql, executeInlineDql, parseErrorLine } from './execute';
+export {
+	executeDql,
+	executeInlineDql,
+	parseErrorLine,
+	DATAVIEW_BLOCK_ERROR_PREFIX,
+} from './execute';
 export { extractDataviewBlocks } from './blocks';
 export type { DataviewBlock, DataviewBlockLanguage } from './blocks';
 export {
@@ -148,9 +165,18 @@ export type {
 	DataviewChangeEvent,
 } from './types';
 
-export { parseSandboxMessage, SANDBOX_MAX_GUEST_MESSAGE_BYTES } from './sandboxProtocol';
+export {
+	parseSandboxMessage,
+	sandboxEnvelope,
+	openSandboxEnvelope,
+	SANDBOX_MAX_GUEST_MESSAGE_BYTES,
+	SANDBOX_TO_HOST_CHANNEL,
+	SANDBOX_TO_GUEST_CHANNEL,
+} from './sandboxProtocol';
 export type {
 	SandboxSender,
+	SandboxChannel,
+	SandboxEnvelope,
 	SandboxMessage,
 	SandboxGuestMessage,
 	SandboxHostMessage,
