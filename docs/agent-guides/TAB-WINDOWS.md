@@ -319,6 +319,12 @@ The draft lives in the tab window while the tab is popped out (D2):
 - `resolveWindowSizeConstraints` enforces a minimum of `DESIGN_MIN_WINDOW_WIDTH` x `DESIGN_MIN_WINDOW_HEIGHT` = 1000 x 600 (`window-position.ts:11`), capped by the display work area. `reclampMinimumSize` re-asserts it on `moved`. So a 900-wide tab window is impossible without a per-kind minimum. Phase 2 needs a `minSize` option on the factory, or must accept 1000 wide.
 - Windows use `titleBarStyle: 'hiddenInset'` unless `useNativeTitleBar`, so the slim header must leave room for the macOS traffic lights. `document.title` is still the OS title (TW-3).
 - A crashed renderer reloads (`attachWindowCrashHandlers`). A reloaded tab window must request a fresh snapshot.
+- Landed (phase 2): `WindowManager.createTabWindow({ agentId, tabRefs, activeTabRef?, bounds?, background? })`.
+  - Builds through `createBrowserWindow` with `mode: 'tab'` (loads `?tabWindow=<id>`), `minSize` 480 x 360 (`TAB_WINDOW_MIN_*` in `window-position.ts`, also used by the live re-clamp), and `background` (`show: false` plus `showInactive()`).
+  - A new window opens at 900 x 700 through `resolveTabWindowPlacement`: beside the owner (right, else left, else flush right), or centered on the cursor's display when that is not the owner's. A restore passes saved `bounds`.
+  - Throws with no registry, with no tabs, or when the agent already has a tab window (checked before any `BrowserWindow` exists).
+  - `close` docks every tab (`removeTabFromTabWindow`, one `tab-window-changed` each); `closed` docks again (for `destroy()`) and removes the entry. While quitting it does neither, so the final snapshot keeps the tabs for TW-10.
+  - A `tab-window-changed` that leaves the window empty closes it.
 
 ### Precedent feature windows
 
