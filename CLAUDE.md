@@ -46,6 +46,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)           |
 | Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)             |
 | App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)         |
+| Tab window, pop-out, or dock                       | [TAB-WINDOWS.md](docs/agent-guides/TAB-WINDOWS.md)               |
 | Plugin, sandbox capability, or contribution        | [PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) |
 | React context, renderer type, or Symphony runner   | [REMAINING-SYSTEMS.md](docs/agent-guides/REMAINING-SYSTEMS.md)   |
 | Release step, tag, bump, or announcement           | [RELEASE-RUNBOOK.md](docs/agent-guides/RELEASE-RUNBOOK.md)       |
