@@ -112,6 +112,7 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { isTabViewedInTabWindow, useTabWindowStore } from '../../../renderer/stores/tabWindowStore';
 import { useCoworkingApprovalStore } from '../../../renderer/stores/coworkingApprovalStore';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import type { QueuedItem, Session, TerminalTab } from '../../../renderer/types';
 import type {
 	TabWindowIntent,
@@ -121,7 +122,11 @@ import type {
 import { TAB_WINDOW_INTENT_KINDS } from '../../../shared/tabWindowTypes';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab, createMockFileTab } from '../../helpers/mockTab';
-import { installTabWindowsApi, popOutTabsInStore } from '../../helpers/tabWindows';
+import {
+	createTabWindowOwnerHandlers,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers/tabWindows';
 
 const AGENT = 'agent-1';
 const POPPED: TabWindowTabRef = { type: 'ai', id: 'popped' };
@@ -158,29 +163,6 @@ function agent(): Session {
 	});
 }
 
-function handlers(): TabWindowOwnerHandlers {
-	return {
-		processInput: vi.fn(() => Promise.resolve()),
-		interruptAgent: vi.fn(() => Promise.resolve()),
-		performTabClose: vi.fn(),
-		closeTabRefs: vi.fn(),
-		forceSendQueuedItem: vi.fn(),
-		steerQueuedItem: vi.fn(() => Promise.resolve()),
-		deleteLog: vi.fn(() => null),
-		forkConversation: vi.fn(),
-		recoverSession: vi.fn(() => Promise.resolve()),
-		summarizeAndContinue: vi.fn(),
-		cancelSummarize: vi.fn(),
-		cancelMerge: vi.fn(),
-		stopBatchRun: vi.fn(),
-		cancelWizardTurn: vi.fn(() => Promise.resolve(true)),
-		clearAgentError: vi.fn(),
-		openFileLink: vi.fn(() => Promise.resolve()),
-		showAgent: vi.fn(),
-		raiseWindow: vi.fn(),
-	};
-}
-
 /** One intent for the popped AI tab (or `tabRef`). */
 function intent<K extends TabWindowIntentKind>(
 	kind: K,
@@ -196,9 +178,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	web.value = false;
 	useSessionStore.setState({ sessions: [agent()], activeSessionId: AGENT });
+	useComposerInputStore.setState(useComposerInputStore.getInitialState(), true);
 	popOutTabsInStore(AGENT, [POPPED, FILE, TERMINAL]);
 	useTabWindowStore.setState({ viewedTabs: new Set() });
-	h = handlers();
+	h = createTabWindowOwnerHandlers();
 });
 
 afterEach(() => {
@@ -319,6 +302,53 @@ describe('dispatchTabWindowIntent: every intent runs the function the owner UI r
 			h
 		);
 		expect(useSessionStore.getState().sessions).toBe(before);
+	});
+
+	it("setDraft: leaves this window's composer alone while it drafts for another tab", () => {
+		useComposerInputStore.getState().loadAiDraft('home', 'typed for home', 'off');
+		dispatchTabWindowIntent(
+			intent('setDraft', { inputValue: 'new draft', commandMode: 'off', stagedImages: [] }),
+			h
+		);
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValueTabId: 'home',
+			aiValue: 'typed for home',
+		});
+	});
+
+	it('setDraft after the tab docked: the composer showing the copy it loaded takes the newer draft', () => {
+		// A closed tab window docks in main before its page sends the last draft,
+		// so this window has shown the tab, with the copy it held, already.
+		useComposerInputStore.getState().loadAiDraft('popped', 'old draft', 'off');
+		dispatchTabWindowIntent(
+			intent('setDraft', {
+				inputValue: 'old draft, finished',
+				commandMode: 'shell',
+				stagedImages: [],
+			}),
+			h
+		);
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValueTabId: 'popped',
+			aiValue: 'old draft, finished',
+			aiCommandMode: 'shell',
+		});
+		const tab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'popped')!;
+		expect(tab.inputValue).toBe('old draft, finished');
+	});
+
+	it('setDraft after the tab docked: text typed here since the dock stays in the composer', () => {
+		useComposerInputStore.getState().loadAiDraft('popped', 'old draft', 'off');
+		useComposerInputStore.getState().setAiValue('old draft, typed here');
+		dispatchTabWindowIntent(
+			intent('setDraft', {
+				inputValue: 'old draft, finished',
+				commandMode: 'off',
+				stagedImages: [],
+			}),
+			h
+		);
+		expect(useComposerInputStore.getState().aiValue).toBe('old draft, typed here');
 	});
 
 	// The queue (table B).
@@ -688,7 +718,10 @@ describe('dispatchTabWindowIntent: refusals', () => {
 		try {
 			expect(Object.keys(payloads).sort()).toEqual([...TAB_WINDOW_INTENT_KINDS].sort());
 			for (const kind of TAB_WINDOW_INTENT_KINDS) {
-				const outcome = dispatchTabWindowIntent(intent(kind, payloads[kind] as never), handlers());
+				const outcome = dispatchTabWindowIntent(
+					intent(kind, payloads[kind] as never),
+					createTabWindowOwnerHandlers()
+				);
 				if (!outcome.handled) expect(outcome.reason).not.toMatch(/unknown intent/);
 			}
 		} finally {
@@ -706,7 +739,7 @@ describe('startTabWindowIntentDispatcher', () => {
 			api.emitIntent(intent('markUnread', {}));
 			expect(services.markAiTabUnread).toHaveBeenCalledWith(TARGET);
 
-			current = handlers();
+			current = createTabWindowOwnerHandlers();
 			api.emitIntent(intent('interrupt', {}));
 			expect(current.interruptAgent).toHaveBeenCalled();
 			expect(h.interruptAgent).not.toHaveBeenCalled();

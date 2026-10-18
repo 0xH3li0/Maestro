@@ -22,6 +22,7 @@ import {
 	useSessionStore,
 } from '../../../renderer/stores/sessionStore';
 import { useTabWindowStore } from '../../../renderer/stores/tabWindowStore';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { captureException } from '../../../renderer/utils/sentry';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 import {
@@ -171,6 +172,7 @@ beforeEach(() => {
 	publisher = null;
 	useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
 	useSessionStore.setState({ sessions: [agent()], sessionsLoaded: true, sessionsReadOk: true });
+	useComposerInputStore.setState(useComposerInputStore.getInitialState(), true);
 });
 
 afterEach(() => {
@@ -428,6 +430,73 @@ describe('startTabWindowPublisher', () => {
 		it('leaves every other intent to the intent dispatcher', () => {
 			api.emitIntent({ kind: 'closeTab', agentId: AGENT, tabRef: POPPED });
 			api.emitIntent({ kind: 'requestSnapshot', agentId: 'someone-else', tabRef: POPPED });
+			expect(api.sendSessionPatch).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('the draft seed (D2)', () => {
+		beforeEach(() => {
+			updateAiTab(AGENT, 'popped', (tab) => ({
+				...tab,
+				inputValue: 'Stored draft',
+				commandMode: 'off',
+			}));
+			publisher = startTabWindowPublisher();
+		});
+
+		it('seeds a popped tab with the draft stored on it, staged images included', () => {
+			updateAiTab(AGENT, 'popped', (tab) => ({
+				...tab,
+				stagedImages: ['data:image/png;base64,AA'],
+			}));
+			useComposerInputStore.getState().loadAiDraft('home', 'typed for home', 'off');
+			setWindows([tabWindow()]);
+			expect(tabOf(snapshots()[0].session, 'popped')).toMatchObject({
+				inputValue: 'Stored draft',
+				commandMode: 'off',
+				stagedImages: ['data:image/png;base64,AA'],
+			});
+		});
+
+		it('seeds it with the text still in the composer, which the typing pause has not written back yet', () => {
+			// The owner shows the tab, and its composer holds what the user typed last.
+			useComposerInputStore
+				.getState()
+				.loadAiDraft('popped', 'Stored draft, then more typing', 'shell');
+			const stored = ownerSession();
+			setWindows([tabWindow()]);
+
+			expect(tabOf(snapshots()[0].session, 'popped')).toMatchObject({
+				inputValue: 'Stored draft, then more typing',
+				commandMode: 'shell',
+			});
+			// The store is the composer's to write: the snapshot read it, nothing more.
+			expect(ownerSession()).toBe(stored);
+			expect(tabOf(stored, 'popped').inputValue).toBe('Stored draft');
+		});
+
+		it("never puts the composer's text on a tab the composer does not hold, or on one that is not popped", () => {
+			useComposerInputStore.getState().loadAiDraft('home', 'typed for home', 'off');
+			setWindows([tabWindow([POPPED, SECOND])]);
+			const snapshot = snapshots()[0].session;
+			expect(tabOf(snapshot, 'popped').inputValue).toBe('Stored draft');
+			expect(tabOf(snapshot, 'second').inputValue).toBe(tabOf(ownerSession(), 'second').inputValue);
+			expect(tabOf(snapshot, 'home').inputValue).toBe(tabOf(ownerSession(), 'home').inputValue);
+		});
+
+		it('sends no delta for the draft written back after the snapshot', () => {
+			useComposerInputStore
+				.getState()
+				.loadAiDraft('popped', 'Stored draft, then more typing', 'off');
+			setWindows([tabWindow()]);
+			api.sendSessionPatch.mockClear();
+			// The composer lets go of the tab and writes its draft back, as useInputSync does.
+			updateAiTab(AGENT, 'popped', (tab) => ({
+				...tab,
+				inputValue: 'Stored draft, then more typing',
+			}));
+			flushDue();
+			vi.advanceTimersByTime(TAB_WINDOW_FRAME_WAIT_MS);
 			expect(api.sendSessionPatch).not.toHaveBeenCalled();
 		});
 	});

@@ -1,12 +1,14 @@
 /**
  * Shared Tab Windows test helpers: put tabs into `tabWindowStore` as popped
  * out, install a fake `window.maestro.tabWindows` (the global setup mock has
- * none, which is also what the web-desktop build looks like, TW-13), and play
- * an owner's patch stream into a tab window.
+ * none, which is also what the web-desktop build looks like, TW-13), play an
+ * owner's patch stream into a tab window, and stand in for the owner's
+ * hook-bound intent handlers.
  */
 
 import { vi } from 'vitest';
 import { useTabWindowStore } from '../../renderer/stores/tabWindowStore';
+import type { TabWindowOwnerHandlers } from '../../renderer/services/tabWindowIntents';
 import type { Session } from '../../renderer/types';
 import { buildTabWindowSnapshot, diffTabWindowSession } from '../../shared/tabWindowPatch';
 import type {
@@ -101,6 +103,33 @@ export function installTabWindowsApi(
 			if (previous === undefined) delete maestro.tabWindows;
 			else maestro.tabWindows = previous;
 		},
+	};
+}
+
+/**
+ * The owner window's hook-bound intent handlers (`TabWindowOwnerHandlers`), as
+ * mocks: each answers the way its real function does when it succeeds.
+ */
+export function createTabWindowOwnerHandlers(): TabWindowOwnerHandlers {
+	return {
+		processInput: vi.fn(() => Promise.resolve()),
+		interruptAgent: vi.fn(() => Promise.resolve()),
+		performTabClose: vi.fn(),
+		closeTabRefs: vi.fn(),
+		forceSendQueuedItem: vi.fn(),
+		steerQueuedItem: vi.fn(() => Promise.resolve()),
+		deleteLog: vi.fn(() => null),
+		forkConversation: vi.fn(),
+		recoverSession: vi.fn(() => Promise.resolve()),
+		summarizeAndContinue: vi.fn(),
+		cancelSummarize: vi.fn(),
+		cancelMerge: vi.fn(),
+		stopBatchRun: vi.fn(),
+		cancelWizardTurn: vi.fn(() => Promise.resolve(true)),
+		clearAgentError: vi.fn(),
+		openFileLink: vi.fn(() => Promise.resolve()),
+		showAgent: vi.fn(),
+		raiseWindow: vi.fn(),
 	};
 }
 

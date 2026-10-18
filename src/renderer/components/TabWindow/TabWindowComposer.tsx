@@ -11,11 +11,12 @@
  * draft (text, command mode, staged images) and the AI command proposal,
  * which asks the tab's model for a command line from this window.
  *
- * The draft lives on the shown tab's per-window fields in this window's copy
- * of the agent (`inputValue`, `commandMode`, `stagedImages`), which the
- * owner's patches never overwrite. Switching tabs saves the outgoing tab's
- * draft there and loads the incoming one; a newly popped tab starts from the
- * draft the owner had for it.
+ * The draft lives in this window while the tab is popped out: the text and
+ * mode in this window's composer store, the staged images on its copy of the
+ * tab. `useTabWindowDraft` (mounted by `TabWindowRoot`) loads it when the tab
+ * shows, keeps it when another tab shows, and writes it back to the owner
+ * with the `setDraft` intent. After a send, the cleared draft goes back at
+ * once (`flushDraft`).
  *
  * Reduced here (an app-window concern): the inline wizard and the `/history`,
  * `/wizard`, `/skills` built-ins, the Auto Run row of the thinking pill, the
@@ -24,7 +25,7 @@
  * the owner's store only.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import type { AITab, Session, Theme, ThinkingMode } from '../../types';
 import type { TabWindowIntent, TabWindowTabRef } from '../../../shared/tabWindowTypes';
 import type { SingleTabType } from '../../../shared/unifiedTabRef';
@@ -57,8 +58,6 @@ import {
 } from '../../services/codexFollowup';
 import { buildSlashCommandList } from '../../slashCommands';
 import { buildTabWindowThinkingItems } from '../../utils/thinkingItems';
-import { normalizeComposerCommandMode } from '../../utils/shellCommandInput';
-import { setLiveDraft } from '../../utils/liveDraftStore';
 import { imageFilesIn, readBlobAsDataUrl } from '../../utils/imageData';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { APP_WINDOW_ONLY_SLASH_COMMANDS, tabWindowSendRefusal } from '../../utils/tabWindowSend';
@@ -80,6 +79,8 @@ export interface TabWindowComposerProps {
 	inputRef: React.RefObject<HTMLTextAreaElement>;
 	/** Show a tab of this window (a name clicked in the thinking pill). */
 	onSelectTab: (type: SingleTabType, id: string) => void;
+	/** Send the draft waiting for its typing pause to the owner now (`useTabWindowDraft`). */
+	flushDraft: () => void;
 }
 
 export function TabWindowComposer(props: TabWindowComposerProps) {
@@ -100,6 +101,7 @@ function TabWindowComposerInner({
 	tabRefs,
 	inputRef,
 	onSelectTab,
+	flushDraft,
 }: TabWindowComposerProps) {
 	const agentId = session.id;
 	const tabId = tab.id;
@@ -130,8 +132,6 @@ function TabWindowComposerInner({
 		},
 		[agentId, tabId]
 	);
-
-	useTabWindowDraft(agentId, tabId);
 
 	// --- Draft ---
 	const setAiValue = useMemo(() => useComposerInputStore.getState().setAiValue, []);
@@ -201,9 +201,12 @@ function TabWindowComposerInner({
 			});
 			setInputValue('');
 			if (images.length > 0) setStagedImages([]);
+			// The owner's copy of the draft must not keep the text it just sent,
+			// even for the length of a typing pause (a dock then would bring it back).
+			flushDraft();
 			if (inputRef.current) inputRef.current.style.height = 'auto';
 		},
-		[agentId, tabId, input, sendIntent, setInputValue, setStagedImages, inputRef]
+		[agentId, tabId, input, sendIntent, setInputValue, setStagedImages, flushDraft, inputRef]
 	);
 
 	// An accepted proposal runs in the owner, which runs every command for the agent.
@@ -435,40 +438,3 @@ function TabWindowComposerInner({
 }
 
 function noop(): void {}
-
-/**
- * Hold the shown tab's draft in this window's composer: load it when the tab
- * is shown (a newly popped tab starts from the owner's draft for it), keep it
- * on the tab's per-window fields when another tab is shown, and keep the live
- * draft marker (`liveDraftStore`) current for the strip and the close confirm.
- */
-function useTabWindowDraft(agentId: string, tabId: string): void {
-	useEffect(() => {
-		const tab = useSessionStore
-			.getState()
-			.sessions.find((s) => s.id === agentId)
-			?.aiTabs.find((t) => t.id === tabId);
-		useComposerInputStore
-			.getState()
-			.loadAiDraft(tabId, tab?.inputValue ?? '', normalizeComposerCommandMode(tab?.commandMode));
-		return () => {
-			const composer = useComposerInputStore.getState();
-			if (composer.aiValueTabId !== tabId) return;
-			updateAiTab(agentId, tabId, (t) =>
-				t.inputValue === composer.aiValue &&
-				normalizeComposerCommandMode(t.commandMode) === composer.aiCommandMode
-					? t
-					: { ...t, inputValue: composer.aiValue, commandMode: composer.aiCommandMode }
-			);
-		};
-	}, [agentId, tabId]);
-
-	useEffect(
-		() =>
-			useComposerInputStore.subscribe((next, prev) => {
-				if (next.aiValue === prev.aiValue && next.aiValueTabId === prev.aiValueTabId) return;
-				if (next.aiValueTabId) setLiveDraft(next.aiValueTabId, next.aiValue);
-			}),
-		[]
-	);
-}

@@ -472,7 +472,10 @@ describe('TabWindowRoot tab switching (TW-6)', () => {
 		expect(
 			await screen.findByText('This tab has an unsent draft. Are you sure you want to close it?')
 		).toBeInTheDocument();
-		expect(tabWindowsApi.sendIntent).not.toHaveBeenCalled();
+		// The typed draft may go back to the owner meanwhile; the close may not.
+		expect(tabWindowsApi.sendIntent).not.toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'closeTab' })
+		);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
@@ -531,13 +534,16 @@ describe('TabWindowRoot composer sends intents to the owner (phase 5)', () => {
 		tabWindowsApi.getState.mockResolvedValue(WINDOW_INFO);
 	});
 
-	it('sends the draft as one send intent for the shown tab, and clears it', async () => {
+	it('sends the draft as one send intent for the shown tab, and clears it here and in the owner', async () => {
 		await renderRoot();
 		tabWindowsApi.sendIntent.mockClear();
 		typeDraft('Ship it');
 		submit();
 
-		expect(tabWindowsApi.sendIntent).toHaveBeenCalledTimes(1);
+		expect(tabWindowsApi.sendIntent.mock.calls.map(([intent]) => intent.kind)).toEqual([
+			'send',
+			'setDraft',
+		]);
 		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith(
 			expect.objectContaining({
 				kind: 'send',
@@ -546,6 +552,14 @@ describe('TabWindowRoot composer sends intents to the owner (phase 5)', () => {
 				text: 'Ship it',
 				images: [],
 				commandMode: 'off',
+			})
+		);
+		// The owner's copy of the draft must not keep the sent text.
+		expect(tabWindowsApi.sendIntent).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				kind: 'setDraft',
+				tabRef: { type: 'ai', id: 'a2' },
+				inputValue: '',
 			})
 		);
 		expect(draftBox()).toHaveValue('');

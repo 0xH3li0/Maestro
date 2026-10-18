@@ -14,6 +14,10 @@
  * A registry change that only moves the shown tab or reorders the strip sends
  * nothing: the tab window derives both from its own registry record.
  *
+ * A snapshot also seeds the tab window's composer: a tab new to the tab window
+ * takes the draft this window has for it, including text still in this
+ * window's composer and not yet written back to the tab.
+ *
  * The patch logic is pure and lives in `src/shared/tabWindowPatch.ts`; this
  * module adds only the transport and the timing. Main relays a patch to the
  * agent's tab window, and only from the agent's CURRENT owner, so a window the
@@ -26,9 +30,11 @@
 import type { Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTabWindowStore } from '../stores/tabWindowStore';
+import { useComposerInputStore } from '../stores/composerInputStore';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { normalizeComposerCommandMode } from '../utils/shellCommandInput';
 import {
 	buildTabWindowSnapshot,
 	diffTabWindowSession,
@@ -85,6 +91,36 @@ function poppedSetKey(tabRefs: readonly TabWindowTabRef[]): string {
 
 function isDocumentHidden(): boolean {
 	return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+/**
+ * `session` with this window's live composer draft on the popped AI tab it
+ * belongs to. The composer writes its draft back to the tab only after a
+ * typing pause (`useInputSync`), and it lets go of a tab that pops out only
+ * after the snapshot that pops it has gone out. Without this, a tab popped
+ * out while the user types would seed the tab window with the text from
+ * before the last pause. The store is not written: the composer's own
+ * write-back lands the same text there.
+ *
+ * Only the seed reads it. The tab window keeps its own draft for a tab it
+ * already holds, whatever a snapshot says (`applyTabWindowPatch`).
+ */
+function withLiveComposerDraft(session: Session, tabRefs: readonly TabWindowTabRef[]): Session {
+	const { aiValueTabId, aiValue, aiCommandMode } = useComposerInputStore.getState();
+	if (!aiValueTabId || !tabRefs.some((ref) => ref.type === 'ai' && ref.id === aiValueTabId)) {
+		return session;
+	}
+	const index = session.aiTabs.findIndex((tab) => tab.id === aiValueTabId);
+	const tab = session.aiTabs[index];
+	if (
+		!tab ||
+		(tab.inputValue === aiValue && normalizeComposerCommandMode(tab.commandMode) === aiCommandMode)
+	) {
+		return session;
+	}
+	const aiTabs = session.aiTabs.slice();
+	aiTabs[index] = { ...tab, inputValue: aiValue, commandMode: aiCommandMode };
+	return { ...session, aiTabs };
 }
 
 /**
@@ -181,7 +217,8 @@ export function startTabWindowPublisher(ownsSession?: OwnsSession): TabWindowPub
 			agentId: win.agentId,
 			seq: channel.seq,
 			tabRefs: win.tabRefs,
-			session: buildTabWindowSnapshot(session, win.tabRefs),
+			// `prev` stays the stored session: a draft never rides a delta.
+			session: buildTabWindowSnapshot(withLiveComposerDraft(session, win.tabRefs), win.tabRefs),
 		});
 	};
 

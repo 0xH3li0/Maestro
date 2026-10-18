@@ -37,6 +37,7 @@ import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessi
 import { isTabPoppedOut, useTabWindowStore } from '../stores/tabWindowStore';
 import { cancelRetry, retryNow } from '../stores/retryStore';
 import { useCoworkingApprovalStore } from '../stores/coworkingApprovalStore';
+import { useComposerInputStore } from '../stores/composerInputStore';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -172,6 +173,14 @@ function poppedRefsOnly(agentId: string, refs: TabWindowTabRef[]): TabWindowTabR
  * Write a tab window's draft back onto its tab: the same fields the app
  * window's composer keeps on a tab (`inputValue`, `commandMode`,
  * `stagedImages`). A draft that already matches writes nothing.
+ *
+ * This window's composer holds a tab's draft only while the tab shows here,
+ * which for a tab from a tab window means after it docked. The tab window's
+ * last write can arrive after the dock: a closed tab window docks in main
+ * before its page can send it. While the composer still shows the copy it
+ * loaded on the dock, it takes the newer draft too; otherwise its next
+ * write-back would put the old text back on the tab. Text typed here since
+ * the dock is the user's latest word and stays.
  */
 function writeTabWindowDraft(
 	target: AiTabTarget,
@@ -191,12 +200,18 @@ function writeTabWindowDraft(
 	) {
 		return HANDLED;
 	}
+	const composer = useComposerInputStore.getState();
+	const composerShowsStoredCopy =
+		composer.aiValueTabId === target.tabId &&
+		composer.aiValue === (tab.inputValue ?? '') &&
+		composer.aiCommandMode === normalizeComposerCommandMode(tab.commandMode);
 	updateAiTab(target.sessionId, target.tabId, (t) => ({
 		...t,
 		inputValue: draft.inputValue,
 		commandMode,
 		stagedImages: [...draft.stagedImages],
 	}));
+	if (composerShowsStoredCopy) composer.loadAiDraft(target.tabId, draft.inputValue, commandMode);
 	return HANDLED;
 }
 

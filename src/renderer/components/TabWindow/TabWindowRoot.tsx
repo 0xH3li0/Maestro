@@ -75,6 +75,7 @@ import { TabWindowContent } from './TabWindowContent';
 import { TabWindowComposer } from './TabWindowComposer';
 import { TabWindowModals } from './TabWindowModals';
 import { useTabWindowChatActions } from './useTabWindowChatActions';
+import { useTabWindowDraft } from './useTabWindowDraft';
 import { useTabWindowViewState } from './useTabWindowViewState';
 import { useTabWindowInfo } from './useTabWindowInfo';
 import { useTabWindowKeyboard } from './useTabWindowKeyboard';
@@ -244,16 +245,23 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		},
 		[agentId]
 	);
+	// The shown AI tab: its draft, its transcript's actions, its composer, its view state.
+	const shownAiTab = activeTab?.type === 'ai' ? activeTab.data : null;
+	// Its draft lives here while it is popped out, and is written back to the owner (D2).
+	const { flushDraft } = useTabWindowDraft(agentId, shownAiTab?.id ?? null);
 	const activeRef: TabWindowTabRef | null =
 		activeTab && activeTab.type !== 'group' ? { type: activeTab.type, id: activeTab.id } : null;
 	const dockActiveTab = useCallback(() => {
 		if (!activeRef) return;
+		// The owner shows a docked tab with the draft it holds for it, so the
+		// draft goes first: main relays this window's messages in order.
+		flushDraft();
 		void runTabWindowCall(
 			'dock',
 			() => tabWindows.dock(agentId, activeRef),
 			(result) => (result.docked ? null : result.error)
 		);
-	}, [tabWindows, agentId, activeRef]);
+	}, [tabWindows, agentId, activeRef, flushDraft]);
 
 	// Tab shortcuts: the main window's entries, scoped to this strip (TW-6).
 	useTabWindowKeyboard({
@@ -329,8 +337,6 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		[tabWindows, agentId]
 	);
 
-	// The shown AI tab: its transcript's actions, its composer, its view state.
-	const shownAiTab = activeTab?.type === 'ai' ? activeTab.data : null;
 	const composerInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatActions = useTabWindowChatActions(
 		viewSession,
@@ -397,6 +403,7 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 						tabRefs={tabRefs}
 						inputRef={composerInputRef}
 						onSelectTab={selectTab}
+						flushDraft={flushDraft}
 					/>
 				</div>
 			)}
