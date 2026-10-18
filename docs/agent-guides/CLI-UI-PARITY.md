@@ -514,7 +514,8 @@ deliberate design constraints, including protected host consent, are noted below
     exists for unattended servers, where nobody opens the desktop.
 17. **Run a DataviewJS block again, or Run once** (Run again on a block whose
     script timed out, crashed its sandbox, or failed to load; Run once on the
-    trust prompt of a block in a vault that is not trusted). The CLI can trust
+    trust prompt of a block in a vault that is not trusted, and Run on an
+    inline `$=` span there). The CLI can trust
     the vault (`dataview trust <root>`), which is what Run once avoids, but it
     cannot run one block. Deliberate: DataviewJS renders
     in the desktop app only (spec D8), so the CLI never runs note scripts, and

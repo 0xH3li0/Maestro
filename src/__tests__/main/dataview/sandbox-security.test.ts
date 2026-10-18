@@ -7,8 +7,9 @@
  * `src/__tests__/main/preload/dataview-guest.test.ts`, `vault-fs.test.ts`, `DataviewJsFrame.test.tsx`) cover
  * behavior in depth; this file asserts the production wiring end to end:
  *
- * - **The `<webview>` tag** (`DataviewJsFrame.tsx`, read from its AST): only `partition` and `src` carry
- *   meaning, no Node or preload attribute, the partition is the per-root one, the document the guest URL.
+ * - **The `<webview>` tag** (`DataviewJsFrame.tsx` and the inline host `DataviewJsInlineHost.tsx`, read from
+ *   their ASTs): only `partition` and `src` carry meaning, no Node or preload attribute, the partition is the
+ *   per-root one, the document the guest URL.
  * - **Partitions**: one in-memory session per vault root and host, never `persist:`, never another surface's.
  * - **The CSP** string, and the guest document carrying it as both a header and a meta tag.
  * - **Attachment** (the live `attachGuestWebviewSecurity()`): renderer-supplied web preferences are replaced,
@@ -19,8 +20,8 @@
  * - **`dataview:readInRoot`** (the real `DataviewService` over the real local file system): traversal,
  *   absolute paths, drive paths, and symlinks that resolve outside the root are refused; a symlink that stays
  *   inside is followed.
- * - **The watchdog** (`DataviewJsFrame.tsx`, AST): a 5 s wall-clock watchdog per run whose expiry, like a
- *   dead guest process, destroys the guest by remounting the tag under a new key.
+ * - **The watchdog** (both hosts, AST): a 5 s wall-clock watchdog (per block run, per inline expression) whose
+ *   expiry, like a dead guest process, destroys the guest by remounting the tag under a new key.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -85,6 +86,15 @@ import {
 
 const SRC = path.join(__dirname, '../../../');
 const FRAME_PATH = path.join(SRC, 'renderer/components/Markdown/components/DataviewJsFrame.tsx');
+const INLINE_HOST_PATH = path.join(
+	SRC,
+	'renderer/components/Markdown/components/DataviewJsInlineHost.tsx'
+);
+/** Every component that renders a DataviewJS guest. A new one belongs in this list. */
+const GUEST_HOSTS: Array<[string, string]> = [
+	['DataviewJsFrame.tsx', FRAME_PATH],
+	['DataviewJsInlineHost.tsx', INLINE_HOST_PATH],
+];
 const PRELOAD_PATH = path.join(SRC, 'main/preload/dataview-guest.ts');
 
 function parse(filePath: string): ts.SourceFile {
@@ -115,13 +125,31 @@ function isCallTo(node: ts.Node, name: string): node is ts.CallExpression {
 	);
 }
 
-const frameSource = parse(FRAME_PATH);
-
 // ---------------------------------------------------------------------------
 // The <webview> tag
 // ---------------------------------------------------------------------------
 
-describe('the guest <webview> tag (DataviewJsFrame.tsx)', () => {
+describe('only the guest hosts render a DataviewJS <webview>', () => {
+	it('lists every renderer file that loads the guest document', () => {
+		const found: string[] = [];
+		const visit = (dir: string): void => {
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				const full = path.join(dir, entry.name);
+				if (entry.isDirectory()) visit(full);
+				else if (
+					/\.tsx?$/.test(entry.name) &&
+					fs.readFileSync(full, 'utf-8').includes('DATAVIEW_GUEST_URL')
+				)
+					found.push(full);
+			}
+		};
+		visit(path.join(SRC, 'renderer'));
+		expect(found.sort()).toEqual(GUEST_HOSTS.map(([, file]) => file).sort());
+	});
+});
+
+describe.each(GUEST_HOSTS)('the guest <webview> tag (%s)', (_name, hostPath) => {
+	const frameSource = parse(hostPath);
 	const tags = findAll(
 		frameSource,
 		(node): node is ts.JsxSelfClosingElement | ts.JsxOpeningElement =>
@@ -661,7 +689,9 @@ describe('dataview:readInRoot (DataviewService over the local file system)', () 
 // The watchdog
 // ---------------------------------------------------------------------------
 
-describe('the run watchdog (DataviewJsFrame.tsx)', () => {
+describe.each(GUEST_HOSTS)('the run watchdog (%s)', (_name, hostPath) => {
+	const frameSource = parse(hostPath);
+	const isInlineHost = hostPath === INLINE_HOST_PATH;
 	function functionBody(name: string): ts.Node {
 		const declarations = findAll(
 			frameSource,
@@ -713,12 +743,26 @@ describe('the run watchdog (DataviewJsFrame.tsx)', () => {
 			findAll(stopGuest, (node): node is ts.CallExpression => isCallTo(node, 'setGuestKey')),
 			'stopGuest remounts the <webview>'
 		).toHaveLength(1);
-		expect(
-			findAll(stopGuest, (node): node is ts.CallExpression => isCallTo(node, 'setHalted')).map(
-				(call) => call.arguments[0]?.getText()
-			),
-			'and halts the block until the source changes or Run again'
-		).toEqual(['true']);
+		if (isInlineHost) {
+			// The expression the run was on is halted (the last argument of resolve) until it registers afresh.
+			const resolves = findAll(
+				stopGuest,
+				(node): node is ts.CallExpression =>
+					ts.isCallExpression(node) &&
+					ts.isPropertyAccessExpression(node.expression) &&
+					node.expression.name.text === 'resolve'
+			);
+			expect(resolves.map((call) => call.arguments[call.arguments.length - 1]?.getText())).toEqual([
+				'true',
+			]);
+		} else {
+			expect(
+				findAll(stopGuest, (node): node is ts.CallExpression => isCallTo(node, 'setHalted')).map(
+					(call) => call.arguments[0]?.getText()
+				),
+				'and halts the block until the source changes or Run again'
+			).toEqual(['true']);
+		}
 
 		const goneListeners = findAll(
 			frameSource,

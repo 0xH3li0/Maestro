@@ -45,6 +45,12 @@ const VALID_GUEST: Record<SandboxGuestMessage['type'], Raw> = {
 	'toggle.task': { type: 'toggle.task', path: 'Tasks.md', line: 3, text: 'Ship it' },
 	'render.done': { type: 'render.done', blockId: 'b-1', runId: 'run-1', height: 240 },
 	'render.error': { type: 'render.error', blockId: 'b-1', runId: 'run-1', message: 'boom' },
+	'eval.result': {
+		type: 'eval.result',
+		runId: 'inline-run-1',
+		id: 'expr-1',
+		outcome: { kind: 'value', value: 3 },
+	},
 };
 
 function snapshot(overrides: Raw = {}): Raw {
@@ -70,9 +76,24 @@ function run(overrides: Raw = {}): Raw {
 	};
 }
 
+function evalRun(overrides: Raw = {}): Raw {
+	return {
+		type: 'eval',
+		runId: 'inline-run-1',
+		thisPath: 'People/Ada.md',
+		snapshot: snapshot(),
+		expressions: [
+			{ id: 'expr-1', source: 'dv.pages().length' },
+			{ id: 'expr-2', source: 'dv.current().file.name' },
+		],
+		...overrides,
+	};
+}
+
 /** One valid message of every host type, keyed by type. */
 const VALID_HOST: Record<SandboxHostMessage['type'], Raw> = {
 	run: run(),
+	eval: evalRun(),
 	'query.dql.result': {
 		type: 'query.dql.result',
 		requestId: 'q1',
@@ -338,6 +359,77 @@ describe('parseSandboxMessage: unknown and malformed messages', () => {
 		);
 		expect(hostReason({ ...VALID_HOST['io.load.result'], text: 42 })).toBe(
 			'io.load.result.text is not a string'
+		);
+	});
+});
+
+describe('parseSandboxMessage: inline eval (DEV-5)', () => {
+	const evalResult = (outcome: unknown): Raw => ({
+		type: 'eval.result',
+		runId: 'inline-run-1',
+		id: 'expr-1',
+		outcome,
+	});
+
+	it('accepts every outcome kind', () => {
+		expect(guestOk(evalResult({ kind: 'empty' }))).toEqual(evalResult({ kind: 'empty' }));
+		expect(guestOk(evalResult({ kind: 'value', value: null }))).toMatchObject({
+			outcome: { kind: 'value', value: null },
+		});
+		expect(guestOk(evalResult({ kind: 'error', message: 'Error: boom' }))).toMatchObject({
+			outcome: { kind: 'error', message: 'Error: boom' },
+		});
+	});
+
+	it('copies a value as plain JSON, without __proto__ keys or anything JSON cannot hold', () => {
+		const value = JSON.parse('{"a":[1,{"b":"c"}],"__proto__":{"polluted":true}}');
+		value.when = new Date(0);
+		const message = guestOk(evalResult({ kind: 'value', value }));
+		if (message.type !== 'eval.result' || message.outcome.kind !== 'value') throw new Error('kind');
+		expect(message.outcome.value).not.toBe(value);
+		expect(message.outcome.value).toEqual({ a: [1, { b: 'c' }], when: '1970-01-01T00:00:00.000Z' });
+		expect(Object.prototype.hasOwnProperty.call(message.outcome.value, '__proto__')).toBe(false);
+	});
+
+	it('refuses a malformed outcome', () => {
+		expect(guestReason(evalResult({ kind: 'value' }))).toBe(
+			'eval.result.outcome of kind "value" has no value'
+		);
+		expect(guestReason(evalResult({ kind: 'value', value: 1, message: 'x' }))).toBe(
+			'eval.result.outcome of kind "value" has a message'
+		);
+		expect(guestReason(evalResult({ kind: 'empty', value: 1 }))).toBe(
+			'eval.result.outcome of kind "empty" has fields'
+		);
+		expect(guestReason(evalResult({ kind: 'error', value: 1, message: 'x' }))).toBe(
+			'eval.result.outcome of kind "error" has a value'
+		);
+		expect(guestReason(evalResult({ kind: 'error', message: 7 }))).toBe(
+			'eval.result.outcome.message is not a string'
+		);
+		expect(guestReason(evalResult({ kind: 'html' }))).toBe(
+			'eval.result.outcome.kind is not "value", "empty", or "error"'
+		);
+		expect(guestReason(evalResult({ kind: 'value', value: 1, extra: 1 }))).toBe(
+			'eval.result.outcome has an unexpected field "extra"'
+		);
+		expect(guestReason({ ...evalResult({ kind: 'empty' }), id: 'not an id!' })).toBe(
+			'eval.result.id is not a valid id'
+		);
+	});
+
+	it('refuses a malformed eval run', () => {
+		expect(hostReason(evalRun({ expressions: 'dv.pages()' }))).toBe(
+			'eval.expressions is not an array'
+		);
+		expect(hostReason(evalRun({ expressions: [{ id: 'expr-1' }] }))).toBe(
+			'eval.expressions[] is missing source'
+		);
+		expect(hostReason(evalRun({ expressions: [{ id: '', source: 'x' }] }))).toBe(
+			'eval.expressions[].id is not a valid id'
+		);
+		expect(hostReason(evalRun({ thisPath: '/etc/passwd' }))).toBe(
+			'eval.thisPath is not a path inside the vault root: "/etc/passwd"'
 		);
 	});
 });

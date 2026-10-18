@@ -112,25 +112,42 @@ function InlineQueryView({
 	}
 	const message = data?.result.kind === 'error' ? data.result.message : !loading ? error : null;
 	if (message) {
-		// Upstream's wording; an inline chip, since a block callout would break the line.
+		// Upstream's wording.
 		return (
-			<span
-				data-dataview-inline-error=""
-				title={message}
-				style={{
-					color: theme.colors.error,
-					fontFamily: 'var(--maestro-font-mono, ui-monospace, SFMono-Regular, monospace)',
-					fontSize: '0.85em',
-				}}
-			>
+			<DataviewInlineError theme={theme} title={message}>
 				Dataview (for inline query &apos;{expression}&apos;): {message}
-			</span>
+			</DataviewInlineError>
 		);
 	}
 	// While the first answer is on its way, the span keeps its source in place, dimmed.
 	return (
 		<span data-dataview-inline-placeholder="" aria-busy="true" style={{ opacity: 0.5 }}>
 			{fallback}
+		</span>
+	);
+}
+
+/** An inline span's error text: a themed chip, since a block callout would break the line. */
+export function DataviewInlineError({
+	theme,
+	title,
+	children,
+}: {
+	theme: Theme;
+	title: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<span
+			data-dataview-inline-error=""
+			title={title}
+			style={{
+				color: theme.colors.error,
+				fontFamily: 'var(--maestro-font-mono, ui-monospace, SFMono-Regular, monospace)',
+				fontSize: '0.85em',
+			}}
+		>
+			{children}
 		</span>
 	);
 }

@@ -70,10 +70,8 @@ import { isAutoRunRunDocument } from '../../utils/autoRunDraft';
 import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
-import {
-	DataviewDocumentContext,
-	type DataviewDocumentScope,
-} from '../Markdown/components/DataviewDocumentContext';
+import type { DataviewDocumentScope } from '../Markdown/components/DataviewDocumentContext';
+import { DataviewDocumentProvider } from '../Markdown/components/DataviewDocumentProvider';
 import { useDataviewEnabled } from '../Markdown/components/dataviewSurface';
 import { normalizeWorktreePath } from '../../../shared/worktreePaths';
 import { joinPath } from '../../../shared/formatters';
@@ -974,7 +972,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							}}
 						>
 							<style>{proseStyles}</style>
-							<DataviewDocumentContext.Provider value={dataviewScope}>
+							<DataviewDocumentProvider value={dataviewScope}>
 								<MemoizedMarkdownPreview
 									remarkPlugins={remarkPlugins}
 									components={markdownComponents}
@@ -982,7 +980,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 										localContent || '*No content yet. Switch to Edit mode to start writing.*'
 									}
 								/>
-							</DataviewDocumentContext.Provider>
+							</DataviewDocumentProvider>
 						</div>
 					)}
 				</div>

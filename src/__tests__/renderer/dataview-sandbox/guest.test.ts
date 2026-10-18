@@ -17,12 +17,15 @@ import {
 	executeDql,
 	parseSandboxMessage,
 	sandboxEnvelope,
+	type SandboxEvalResultMessage,
 	type SandboxGuestMessage,
 	type SandboxIndexSnapshot,
 } from '../../../shared/dataview';
 import {
+	INLINE_ELEMENT_MESSAGE,
 	blockScriptBody,
 	createDataviewGuest,
+	inlineScriptBody,
 	startDataviewGuest,
 	type DataviewGuest,
 } from '../../../renderer/dataview-sandbox/guestRuntime';
@@ -92,6 +95,8 @@ interface Harness {
 		source: string,
 		options?: { thisPath?: string; blockId?: string; runId?: string }
 	): Promise<{ block: HTMLElement; outcome: SandboxGuestMessage | undefined }>;
+	/** Evaluate inline `$=` expressions as one `eval` run; the guest's `eval.result` answers, in order. */
+	evaluate(sources: string[], options?: { thisPath?: string }): Promise<SandboxEvalResultMessage[]>;
 }
 
 /** A guest and a fake host over the fixture vault snapshot. */
@@ -131,6 +136,15 @@ function createHarness(): Harness {
 					message.runId === id
 			);
 			return { block, outcome };
+		},
+		async evaluate(sources, { thisPath = 'Scripts/JS Demo.md' } = {}) {
+			const runId = `inline-run-${++runCount}`;
+			const expressions = sources.map((source, index) => ({ id: `expr-${index + 1}`, source }));
+			await guest.receive({ type: 'eval', runId, thisPath, snapshot, expressions });
+			return sent.filter(
+				(message): message is SandboxEvalResultMessage =>
+					message.type === 'eval.result' && message.runId === runId
+			);
 		},
 	};
 }
@@ -648,6 +662,85 @@ describe('the markdown step', () => {
 		expect(container.querySelectorAll('img')).toHaveLength(1);
 		expect(container.querySelector('a')!.getAttribute('data-vault')).toBe('pics/photo.png');
 		expect(container.querySelector('a')!.textContent).toBe('photo');
+	});
+});
+
+describe('inline $= expressions (eval)', () => {
+	it("builds upstream's inline body: return the expression, or an async body with await", () => {
+		expect(inlineScriptBody('dv.current()')).toBe('return dv.current()');
+		expect(inlineScriptBody('return await dv.query("LIST")')).toBe(
+			'return (async () => { return await dv.query("LIST")\n})();'
+		);
+	});
+
+	it('answers each expression in order, with dv in scope and this bound to the note', async () => {
+		const results = await harness.evaluate([
+			'1 + 2',
+			'dv.current().file.name',
+			'dataview.current().file.name',
+		]);
+		expect(results.map((result) => result.id)).toEqual(['expr-1', 'expr-2', 'expr-3']);
+		expect(results.map((result) => result.outcome)).toEqual([
+			{ kind: 'value', value: 3 },
+			{ kind: 'value', value: 'JS Demo' },
+			{ kind: 'value', value: 'JS Demo' },
+		]);
+	});
+
+	it('sends data arrays as plain lists and Dataview values in the wire form', async () => {
+		const [names, date, link] = await harness.evaluate([
+			"dv.pages('#meeting').file.name",
+			"dv.date('2026-10-01')",
+			'dv.current().file.link',
+		]);
+		expect(names.outcome.kind).toBe('value');
+		const list = (names.outcome as { value: unknown }).value;
+		expect(Array.isArray(list) && list.length > 0 && list.every((n) => typeof n === 'string')).toBe(
+			true
+		);
+		expect((date.outcome as { value: Record<string, unknown> }).value).toMatchObject({
+			'___transfer-type': 'date',
+		});
+		expect((link.outcome as { value: Record<string, unknown> }).value).toMatchObject({
+			'___transfer-type': 'link',
+		});
+	});
+
+	it('answers undefined with nothing, and awaits an async body', async () => {
+		const [nothing, awaited] = await harness.evaluate([
+			'undefined',
+			'return (await dv.query("LIST FROM #meeting")).successful',
+		]);
+		expect(nothing.outcome).toEqual({ kind: 'empty' });
+		expect(awaited.outcome).toEqual({ kind: 'value', value: true });
+	});
+
+	it("answers errors with upstream's text, and keeps going", async () => {
+		const results = await harness.evaluate([
+			'app.vault',
+			"dv.el('b', 'bold')",
+			'(() => { const a = {}; a.self = a; return a; })()',
+			'nope(',
+			'2 * 21',
+		]);
+		const outcomes = results.map((result) => result.outcome);
+		expect(outcomes[0]).toEqual({
+			kind: 'error',
+			message: `Error: ${OBSIDIAN_API_UNAVAILABLE}`,
+		});
+		expect(outcomes[1]).toEqual({ kind: 'error', message: `Error: ${INLINE_ELEMENT_MESSAGE}` });
+		expect(outcomes[2]).toEqual({
+			kind: 'error',
+			message: 'Error: The value nests too deeply to show.',
+		});
+		expect(outcomes[3]).toMatchObject({ kind: 'error' });
+		expect((outcomes[3] as { message: string }).message).toMatch(/^SyntaxError/);
+		expect(outcomes[4]).toEqual({ kind: 'value', value: 42 });
+	});
+
+	it('draws nothing into the guest page', async () => {
+		await harness.evaluate(["dv.paragraph('hidden'); 1"]);
+		expect(harness.root.textContent).toBe('');
 	});
 });
 

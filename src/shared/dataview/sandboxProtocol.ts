@@ -26,7 +26,7 @@
 
 import { serializedJsonByteLength } from '../jsonUtils';
 import { normalizeRootRelativePath } from '../pathContainment';
-import type { DataviewResult } from './types';
+import type { DataviewResult, DataviewWireValue } from './types';
 
 /** The largest message a guest may send, as UTF-8 JSON (1 MB). */
 export const SANDBOX_MAX_GUEST_MESSAGE_BYTES = 1024 * 1024;
@@ -129,6 +129,24 @@ export interface SandboxRenderErrorMessage {
 	message: string;
 }
 
+/**
+ * What one inline `$=` expression came to: a value (the wire form, as `dataview:queryInline` answers), nothing
+ * (the expression gave `undefined`, and upstream then draws nothing), or the error it threw.
+ */
+export type SandboxEvalOutcome =
+	| { kind: 'value'; value: DataviewWireValue }
+	| { kind: 'empty' }
+	| { kind: 'error'; message: string };
+
+/** One expression of an `eval` run finished. The guest sends one per expression, in the order the run lists them. */
+export interface SandboxEvalResultMessage {
+	type: 'eval.result';
+	runId: string;
+	/** The expression's id in the run. */
+	id: string;
+	outcome: SandboxEvalOutcome;
+}
+
 /** Everything a guest may send. */
 export type SandboxGuestMessage =
 	| SandboxQueryDqlMessage
@@ -136,7 +154,8 @@ export type SandboxGuestMessage =
 	| SandboxOpenLinkMessage
 	| SandboxToggleTaskMessage
 	| SandboxRenderDoneMessage
-	| SandboxRenderErrorMessage;
+	| SandboxRenderErrorMessage
+	| SandboxEvalResultMessage;
 
 // ---------------------------------------------------------------------------------------------------------
 // Host to guest
@@ -173,6 +192,26 @@ export interface SandboxRunMessage {
 	snapshot: SandboxIndexSnapshot;
 }
 
+/** One inline `$=` expression of an `eval` run. */
+export interface SandboxEvalExpression {
+	id: string;
+	/** The expression, without its `$=` prefix. */
+	source: string;
+}
+
+/**
+ * Evaluate the inline `$=` expressions of one note against a snapshot (DEV-5), one after another, in order.
+ * Each answers `eval.result`; a script that never answers is the host's watchdog's to stop.
+ */
+export interface SandboxEvalMessage {
+	type: 'eval';
+	runId: string;
+	/** The note the spans sit in: `dv.current()`, and the origin of relative links and paths. */
+	thisPath: string;
+	snapshot: SandboxIndexSnapshot;
+	expressions: SandboxEvalExpression[];
+}
+
 /** The answer to `query.dql`. A query that fails is a result too (`kind: 'error'`, DV-9). */
 export interface SandboxQueryDqlResultMessage {
 	type: 'query.dql.result';
@@ -197,6 +236,7 @@ export interface SandboxRequestFailedMessage {
 /** Everything the host may send. */
 export type SandboxHostMessage =
 	| SandboxRunMessage
+	| SandboxEvalMessage
 	| SandboxQueryDqlResultMessage
 	| SandboxIoLoadResultMessage
 	| SandboxRequestFailedMessage;
@@ -359,6 +399,41 @@ function readSnapshot(value: unknown, what: string): SandboxIndexSnapshot {
 	};
 }
 
+/**
+ * A value as plain JSON, copied: whatever else the guest attached (prototypes, `Map`s, `Date`s, accessors) is
+ * gone, and so is every `__proto__` key, which `fromWireValue()` would otherwise assign as a prototype.
+ */
+function readJsonValue(value: unknown, what: string): DataviewWireValue {
+	let text: string | undefined;
+	try {
+		text = JSON.stringify(value);
+	} catch {
+		reject(`${what} is not JSON`);
+	}
+	if (typeof text !== 'string') reject(`${what} is not JSON`);
+	return JSON.parse(text, (key, item: unknown) =>
+		key === '__proto__' ? undefined : item
+	) as DataviewWireValue;
+}
+
+function readEvalOutcome(value: unknown, what: string): SandboxEvalOutcome {
+	const fields = readFields(value, what, ['kind'], ['value', 'message']);
+	switch (fields.kind) {
+		case 'value':
+			if (!('value' in fields)) reject(`${what} of kind "value" has no value`);
+			if ('message' in fields) reject(`${what} of kind "value" has a message`);
+			return { kind: 'value', value: readJsonValue(fields.value, `${what}.value`) };
+		case 'empty':
+			if ('value' in fields || 'message' in fields) reject(`${what} of kind "empty" has fields`);
+			return { kind: 'empty' };
+		case 'error':
+			if ('value' in fields) reject(`${what} of kind "error" has a value`);
+			return { kind: 'error', message: readString(fields.message, `${what}.message`) };
+		default:
+			return reject(`${what}.kind is not "value", "empty", or "error"`);
+	}
+}
+
 function readResult(value: unknown, what: string): DataviewResult {
 	const kind = readPlainObject(value, what).kind;
 	if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(RESULT_KINDS, kind)) {
@@ -437,6 +512,15 @@ function parseGuestMessage(raw: unknown): SandboxGuestMessage {
 				message: readString(fields.message, `${type}.message`),
 			};
 		}
+		case 'eval.result': {
+			const fields = readFields(raw, type, ['type', 'runId', 'id', 'outcome']);
+			return {
+				type,
+				runId: readId(fields.runId, `${type}.runId`),
+				id: readId(fields.id, `${type}.id`),
+				outcome: readEvalOutcome(fields.outcome, `${type}.outcome`),
+			};
+		}
 		default:
 			return reject(`not a guest message type: ${quote(type)}`);
 	}
@@ -461,6 +545,28 @@ function parseHostMessage(raw: unknown): SandboxHostMessage {
 				source: readString(fields.source, `${type}.source`),
 				thisPath: readVaultPath(fields.thisPath, `${type}.thisPath`),
 				snapshot: readSnapshot(fields.snapshot, `${type}.snapshot`),
+			};
+		}
+		case 'eval': {
+			const fields = readFields(raw, type, [
+				'type',
+				'runId',
+				'thisPath',
+				'snapshot',
+				'expressions',
+			]);
+			return {
+				type,
+				runId: readId(fields.runId, `${type}.runId`),
+				thisPath: readVaultPath(fields.thisPath, `${type}.thisPath`),
+				snapshot: readSnapshot(fields.snapshot, `${type}.snapshot`),
+				expressions: readArray(fields.expressions, `${type}.expressions`, (item, itemWhat) => {
+					const expression = readFields(item, itemWhat, ['id', 'source']);
+					return {
+						id: readId(expression.id, `${itemWhat}.id`),
+						source: readString(expression.source, `${itemWhat}.source`),
+					};
+				}),
 			};
 		}
 		case 'query.dql.result': {

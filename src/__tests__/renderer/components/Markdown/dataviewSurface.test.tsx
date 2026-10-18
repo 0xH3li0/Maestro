@@ -21,10 +21,13 @@ import {
 	type LanguageRenderers,
 } from '../../../../renderer/components/Markdown/components/dataviewSurface';
 import { DataviewBlock } from '../../../../renderer/components/Markdown/components/DataviewBlock';
+import { DataviewJsBlock } from '../../../../renderer/components/Markdown/components/DataviewJsBlock';
 import {
 	DataviewDocumentContext,
 	type DataviewDocumentScope,
 } from '../../../../renderer/components/Markdown/components/DataviewDocumentContext';
+import { DataviewDocumentProvider } from '../../../../renderer/components/Markdown/components/DataviewDocumentProvider';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -43,6 +46,8 @@ vi.mock('highlight.js', () => ({
 }));
 
 const FENCE = '# Notes\n\n```dataview\nLIST FROM "People"\n```\n';
+const JS_FENCE = '```dataviewjs\ndv.paragraph(dv.current().file.name)\n```\n';
+const JS_SPAN = 'Pages: `$= dv.pages().length`\n';
 
 let noteCounter = 0;
 function scope(): DataviewDocumentScope {
@@ -72,7 +77,7 @@ function renderDocumentSurface(
 	});
 	const doc = options.doc === undefined ? scope() : options.doc;
 	return render(
-		<DataviewDocumentContext.Provider value={doc}>
+		<DataviewDocumentProvider value={doc}>
 			<ReactMarkdown
 				remarkPlugins={REMARK_GFM_PLUGINS}
 				rehypePlugins={[rehypeSourceLine]}
@@ -80,24 +85,48 @@ function renderDocumentSurface(
 			>
 				{content}
 			</ReactMarkdown>
-		</DataviewDocumentContext.Provider>
+		</DataviewDocumentProvider>
 	);
 }
 
 describe('dataviewSurface', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		clearCachedResources();
 		setDataviewEnabled(true);
+		useSettingsStore.setState({ dataviewJsEnabled: false, dataviewJsTrustedRoots: [] });
+		vi.mocked(window.maestro.dataview.jsRoot).mockResolvedValue({
+			root: '/vault',
+			sshRemoteId: null,
+		});
 	});
 
+	/** DataviewJS on and the vault trusted: anything that could run a script would. */
+	function trustEverything() {
+		useSettingsStore.setState({ dataviewJsEnabled: true, dataviewJsTrustedRoots: ['/vault'] });
+	}
+
 	describe('registration helpers', () => {
-		it('adds the dataview renderer only while the feature is on', () => {
+		it('adds the dataview and dataviewjs renderers only while the feature is on', () => {
 			const base: LanguageRenderers = { mermaid: () => null };
 			expect(withDataviewLanguageRenderers(base, false)).toBe(base);
 			const on = withDataviewLanguageRenderers(base, true);
 			expect(on.mermaid).toBe(base.mermaid);
 			expect(on.dataview).toBe(DataviewBlock);
-			expect(DATAVIEW_LANGUAGE_RENDERERS).toEqual({ dataview: DataviewBlock });
+			expect(on.dataviewjs).toBe(DataviewJsBlock);
+			expect(DATAVIEW_LANGUAGE_RENDERERS).toEqual({
+				dataview: DataviewBlock,
+				dataviewjs: DataviewJsBlock,
+			});
+		});
+
+		it('claims `= expr` and `$= expr` spans, and nothing else', () => {
+			const renderSpan = dataviewInlineCodeRenderer(mockTheme, true)!;
+			const fallback = <code>x</code>;
+			expect(renderSpan('= this.file.name', fallback)).not.toBeNull();
+			expect(renderSpan('$= dv.current()', fallback)).not.toBeNull();
+			expect(renderSpan('const x = 1', fallback)).toBeNull();
+			expect(renderSpan('$=', fallback)).toBeNull();
 		});
 
 		it('offers the inline renderer only while the feature is on', () => {
@@ -147,6 +176,30 @@ describe('dataviewSurface', () => {
 			expect(window.maestro.dataview.queryInline).not.toHaveBeenCalled();
 		});
 
+		it('renders a dataviewjs fence as ordinary code while DataviewJS is off', () => {
+			const { container } = renderDocumentSurface(JS_FENCE, { enabled: true });
+			expect(container.querySelector('.dataview-js')).toBeNull();
+			expect(container.textContent).toContain('dv.paragraph(dv.current().file.name)');
+			expect(window.maestro.dataview.jsRoot).not.toHaveBeenCalled();
+		});
+
+		it('hands a dataviewjs fence to the DataviewJS block once DataviewJS is on', async () => {
+			trustEverything();
+			const { container } = renderDocumentSurface(JS_FENCE, { enabled: true });
+			// The block asks main for the note's root, then (trusted) mounts the frame, which waits for a slot.
+			expect(window.maestro.dataview.jsRoot).toHaveBeenCalled();
+			await vi.waitFor(() =>
+				expect(container.querySelector('[data-dataview-js-block]')).not.toBeNull()
+			);
+		});
+
+		it('leaves an inline `$= expr` span as code, with no guest, while DataviewJS is off', () => {
+			const { container } = renderDocumentSurface(JS_SPAN, { enabled: true });
+			expect(container.querySelector('code')?.textContent).toBe('$= dv.pages().length');
+			expect(container.querySelector('[data-dataview-js-inline]')).toBeNull();
+			expect(container.querySelector('webview')).toBeNull();
+		});
+
 		it('tags an ordinary highlighted code block with its line', () => {
 			const { container } = renderDocumentSurface('intro\n\n```js\nconst x = 1;\n```\n', {
 				enabled: true,
@@ -182,6 +235,27 @@ describe('dataviewSurface', () => {
 			expect(container.textContent).toContain('LIST FROM "People"');
 			expect(window.maestro.dataview.query).not.toHaveBeenCalled();
 			expect(window.maestro.dataview.queryInline).not.toHaveBeenCalled();
+		});
+
+		it('never mounts a DataviewJS guest for a dataviewjs fence or a `$=` span, even fully trusted', async () => {
+			trustEverything();
+			const { container } = render(
+				<DataviewDocumentProvider value={scope()}>
+					<Markdown
+						preset="chat"
+						content={`${JS_FENCE}\n${JS_SPAN}`}
+						theme={mockTheme}
+						onCopy={() => {}}
+					/>
+				</DataviewDocumentProvider>
+			);
+			await Promise.resolve();
+			expect(container.querySelector('webview')).toBeNull();
+			expect(container.querySelector('.dataview-js')).toBeNull();
+			expect(container.querySelector('[data-dataview-js-inline]')).toBeNull();
+			expect(container.textContent).toContain('dv.paragraph(dv.current().file.name)');
+			expect(window.maestro.dataview.jsRoot).not.toHaveBeenCalled();
+			expect(window.maestro.dataview.jsSnapshot).not.toHaveBeenCalled();
 		});
 
 		it('the document preset does not register Dataview on its own either', () => {

@@ -108,10 +108,8 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
-import {
-	DataviewDocumentContext,
-	type DataviewDocumentScope,
-} from '../Markdown/components/DataviewDocumentContext';
+import type { DataviewDocumentScope } from '../Markdown/components/DataviewDocumentContext';
+import { DataviewDocumentProvider } from '../Markdown/components/DataviewDocumentProvider';
 import {
 	DATAVIEW_LANGUAGE_RENDERERS,
 	dataviewInlineCodeRenderer,
@@ -2620,7 +2618,7 @@ export const FilePreview = React.memo(
 								</div>
 							}
 						>
-							<DataviewDocumentContext.Provider value={dataviewScope}>
+							<DataviewDocumentProvider value={dataviewScope}>
 								<MarkdownPreviewFast
 									ref={markdownFastRef}
 									content={markdownSource}
@@ -2634,7 +2632,7 @@ export const FilePreview = React.memo(
 									onExternalLinkClick={handleExternalLinkClick}
 									fenceRenderers={dataviewScope ? DATAVIEW_LANGUAGE_RENDERERS : undefined}
 								/>
-							</DataviewDocumentContext.Provider>
+							</DataviewDocumentProvider>
 						</Suspense>
 					) : isMarkdown ? (
 						<div
@@ -2673,7 +2671,7 @@ export const FilePreview = React.memo(
               .file-preview-content.prose em { font-style: italic; }
               .file-preview-content.prose img { display: block; max-width: 100%; height: auto; }
             `}</style>
-							<DataviewDocumentContext.Provider value={dataviewScope}>
+							<DataviewDocumentProvider value={dataviewScope}>
 								<ReactMarkdown
 									remarkPlugins={remarkPlugins}
 									rehypePlugins={rehypePlugins}
@@ -2682,7 +2680,7 @@ export const FilePreview = React.memo(
 								>
 									{markdownSource}
 								</ReactMarkdown>
-							</DataviewDocumentContext.Provider>
+							</DataviewDocumentProvider>
 						</div>
 					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (
 						<Suspense

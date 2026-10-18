@@ -49,12 +49,7 @@ import {
 	SANDBOX_TO_HOST_CHANNEL,
 	dataviewGuestPartition,
 	parseSandboxMessage,
-	type DataviewQueryResponse,
 	type SandboxGuestMessage,
-	type SandboxHostMessage,
-	type SandboxIndexSnapshot,
-	type SandboxIoLoadMessage,
-	type SandboxQueryDqlMessage,
 } from '../../../../shared/dataview';
 import {
 	buildPanelThemePayload,
@@ -67,32 +62,34 @@ import {
 } from '../../../../shared/maestro-lib/control/idle-watchdog';
 import { joinPath } from '../../../../shared/formatters';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
-import { useDebouncedCallback } from '../../../hooks/utils/useThrottle';
-import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../hooks/file/useLiveDataviewResult';
-import { isDataviewChangeFor, subscribeDataviewChanges } from '../../../services/dataviewChanges';
 import { toggleDataviewResultTask } from '../../../services/dataviewTaskToggle';
 import { claimDataviewJsGuestSlot } from '../../../services/dataviewJsGuestSlots';
-import { ipcErrorMessage } from '../../../utils/ipcErrorMessage';
-import { isDetachedWebviewError } from '../../../utils/webviewErrors';
 import { openUrl } from '../../../utils/openUrl';
 import { logger } from '../../../utils/logger';
-import { captureException } from '../../../utils/sentry';
 import { AlertCallout } from './AlertCallout';
 import type { DataviewDocumentScope } from './DataviewDocumentContext';
+import {
+	ERR_ABORTED,
+	answerGuestRequest,
+	createGuestRequestQueue,
+	dataviewJsGuestFailureText,
+	pushToGuest,
+	useDataviewJsSnapshot,
+	type DataviewJsGuestFailure,
+	type GuestIpcMessageEvent,
+	type GuestLoadFailEvent,
+	type GuestWebviewElement,
+} from './dataviewJsGuestBridge';
+
+export { DATAVIEW_JS_MAX_REQUESTS_IN_FLIGHT } from './dataviewJsGuestBridge';
 
 const LOG_CONTEXT = 'DataviewJsFrame';
-
-/** Requests a guest may have in flight at once. More wait in line, so a script cannot flood main. */
-export const DATAVIEW_JS_MAX_REQUESTS_IN_FLIGHT = 4;
 
 /** Height of the loading placeholder, as `DataviewBlock` uses. */
 const PLACEHOLDER_HEIGHT = '2.5em';
 
 /** How far past the viewport a block starts asking for a guest (clipping scroll containers still apply). */
 const NEAR_VIEWPORT_MARGIN = '600px 0px';
-
-/** What the refusal of a request outside a run says to the script. */
-const NO_RUN_MESSAGE = 'DataviewJS answers requests only while a script runs.';
 
 export interface DataviewJsFrameProps {
 	/** The block's script. */
@@ -102,32 +99,11 @@ export interface DataviewJsFrameProps {
 	doc: DataviewDocumentScope;
 }
 
-/** The `<webview>` element surface this component uses (structural; Electron's type is not in the renderer). */
-interface GuestWebviewElement extends HTMLElement {
-	send(channel: string, ...args: unknown[]): void;
-}
-
-/** The `ipc-message` event the guest preload raises through `sendToHost`. */
-interface GuestIpcMessageEvent extends Event {
-	channel?: string;
-	args?: unknown[];
-}
-
-/** The `did-fail-load` event of a `<webview>`. */
-interface GuestLoadFailEvent extends Event {
-	errorCode?: number;
-	isMainFrame?: boolean;
-}
-
-type Snapshot = DataviewQueryResponse<SandboxIndexSnapshot>;
-
 /** Why the block shows an error instead of (or above) its output. */
 type FrameProblem =
 	| { kind: 'script'; message: string }
 	| { kind: 'snapshot'; message: string }
-	| { kind: 'timeout' }
-	| { kind: 'crashed' }
-	| { kind: 'loadFailed' };
+	| { kind: DataviewJsGuestFailure };
 
 interface Run {
 	runId: string;
@@ -138,36 +114,8 @@ interface Run {
 	watchdog: IdleWatchdog;
 }
 
-interface QueuedRequest {
-	runId: string;
-	requestId: string;
-	/** The guest that asked; the answer goes back to it alone. */
-	guest: GuestWebviewElement;
-	answer(): Promise<SandboxHostMessage>;
-}
-
-/** Chromium's code for a load that was cancelled rather than failed. */
-const ERR_ABORTED = -3;
-
 let blockCount = 0;
 let runCount = 0;
-
-function requestFailed(requestId: string, message: string): SandboxHostMessage {
-	return { type: 'request.failed', requestId, message };
-}
-
-/** Push one message into a guest. False when the guest is gone or not attached yet (expected races). */
-function pushToGuest(guest: GuestWebviewElement, channel: string, message: unknown): boolean {
-	try {
-		guest.send(channel, message);
-		return true;
-	} catch (error) {
-		if (!isDetachedWebviewError(error)) {
-			captureException(error, { extra: { where: 'DataviewJsFrame.pushToGuest', channel } });
-		}
-		return false;
-	}
-}
 
 /** The frame height for a reported output height. */
 function frameHeight(height: number): number {
@@ -187,8 +135,9 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 	const blockId = useMemo(() => `block-${++blockCount}`, []);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [hasSlot, setHasSlot] = useState(false);
-	const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-	const [problem, setProblem] = useState<FrameProblem | null>(null);
+	const { snapshot, error: snapshotError, snapshotRef } = useDataviewJsSnapshot(doc, hasSlot);
+	/** What stopped the last run; a refused snapshot is shown from `snapshotError` instead. */
+	const [runProblem, setProblem] = useState<FrameProblem | null>(null);
 	/** After a timeout, crash, or failed load: no run until the source changes or the user asks. */
 	const [halted, setHalted] = useState(false);
 	const [guestKey, setGuestKey] = useState(0);
@@ -199,32 +148,23 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 	/** Bumped to run again with the same snapshot (a task toggle that did not write). */
 	const [rerunToken, setRerunToken] = useState(0);
 
-	const snapshotRef = useRef(snapshot);
-	snapshotRef.current = snapshot;
 	const runRef = useRef<Run | null>(null);
-	const requestsRef = useRef<{ active: number; queue: QueuedRequest[] }>({ active: 0, queue: [] });
-	const fetchGenerationRef = useRef(0);
+	const [requests] = useState(createGuestRequestQueue);
 
 	const attachWebview = useCallback((element: HTMLElement | null) => {
 		setWebview(element as GuestWebviewElement | null);
 	}, []);
 
 	/** End a run: stop its watchdog and refuse what it still has waiting in line. Safe to call twice. */
-	const settleRun = useCallback((run: Run) => {
-		if (run.settled) return;
-		run.settled = true;
-		run.watchdog.disarm();
-		const requests = requestsRef.current;
-		const dropped = requests.queue.filter((request) => request.runId === run.runId);
-		requests.queue = requests.queue.filter((request) => request.runId !== run.runId);
-		for (const request of dropped) {
-			pushToGuest(
-				request.guest,
-				SANDBOX_TO_GUEST_CHANNEL,
-				requestFailed(request.requestId, NO_RUN_MESSAGE)
-			);
-		}
-	}, []);
+	const settleRun = useCallback(
+		(run: Run) => {
+			if (run.settled) return;
+			run.settled = true;
+			run.watchdog.disarm();
+			requests.dropRun(run.runId);
+		},
+		[requests]
+	);
 
 	/** Throw the guest away (a new key remounts the tag) and wait for a source change or Run again. */
 	const stopGuest = useCallback(
@@ -263,35 +203,11 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 		};
 	}, []);
 
-	// --- The index snapshot, fetched while the block holds a slot and again on every change to its root. ---
-	const loadSnapshot = useCallback(async () => {
-		const generation = ++fetchGenerationRef.current;
-		try {
-			const next = await window.maestro.dataview.jsSnapshot({
-				filePath: doc.filePath,
-				agentId: doc.agentId,
-			});
-			if (generation !== fetchGenerationRef.current) return;
-			setSnapshot(next);
-			setProblem((current) => (current?.kind === 'snapshot' ? null : current));
-		} catch (error) {
-			if (generation !== fetchGenerationRef.current) return;
-			// Main refused (DataviewJS turned off, the vault no longer trusted) or failed: the guest goes too,
-			// so nothing runs on the snapshot it still holds.
-			setSnapshot(null);
-			setProblem({ kind: 'snapshot', message: ipcErrorMessage(error) });
-		}
-	}, [doc.filePath, doc.agentId]);
-
-	useEffect(() => {
-		if (hasSlot) {
-			void loadSnapshot();
-			return;
-		}
-		// Evicted (or never granted): drop the guest's data and ignore an answer still on its way.
-		fetchGenerationRef.current++;
-		setSnapshot(null);
-	}, [hasSlot, loadSnapshot]);
+	// The index snapshot comes from `useDataviewJsSnapshot()` above: fetched while the block holds a slot, again
+	// on every change to its root, and dropped on eviction or when main refuses it (DataviewJS turned off, the
+	// vault no longer trusted), which unmounts the guest too.
+	const problem: FrameProblem | null =
+		snapshotError !== null ? { kind: 'snapshot', message: snapshotError } : runProblem;
 
 	// No snapshot means no guest: end the run it was rendering, so its watchdog cannot fire on nothing.
 	useEffect(() => {
@@ -299,19 +215,6 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 		const run = runRef.current;
 		if (run) settleRun(run);
 	}, [snapshot, settleRun]);
-
-	const { debouncedCallback: scheduleReload } = useDebouncedCallback(() => {
-		void loadSnapshot();
-	}, DATAVIEW_REFRESH_DEBOUNCE_MS);
-
-	useEffect(
-		() =>
-			subscribeDataviewChanges((event) => {
-				const shown = snapshotRef.current;
-				if (shown && isDataviewChangeFor(event, shown)) scheduleReload();
-			}),
-		[scheduleReload]
-	);
 
 	// --- Guest lifecycle: ready, theme, crash, failed load. ---
 	const ready = webview !== null && readyGuest === webview;
@@ -355,7 +258,7 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 		codeRef.current = code;
 		// A changed script deserves a fresh try, whatever stopped the last one.
 		setHalted(false);
-		setProblem((current) => (current?.kind === 'snapshot' ? current : null));
+		setProblem(null);
 	}, [code]);
 
 	useEffect(() => {
@@ -409,57 +312,7 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 		[settleRun]
 	);
 
-	// --- Requests: answered only within a run, a few at a time. ---
-	const drainRequests = useCallback(() => {
-		const requests = requestsRef.current;
-		while (requests.active < DATAVIEW_JS_MAX_REQUESTS_IN_FLIGHT && requests.queue.length > 0) {
-			const request = requests.queue.shift()!;
-			requests.active += 1;
-			void request
-				.answer()
-				.catch((error: unknown) => requestFailed(request.requestId, ipcErrorMessage(error)))
-				.then((reply) => {
-					requests.active -= 1;
-					pushToGuest(request.guest, SANDBOX_TO_GUEST_CHANNEL, reply);
-					drainRequests();
-				});
-		}
-	}, []);
-
-	const enqueueRequest = (
-		guest: GuestWebviewElement,
-		requestId: string,
-		answer: () => Promise<SandboxHostMessage>
-	) => {
-		const run = runRef.current;
-		if (!run || run.settled) {
-			pushToGuest(guest, SANDBOX_TO_GUEST_CHANNEL, requestFailed(requestId, NO_RUN_MESSAGE));
-			return;
-		}
-		requestsRef.current.queue.push({ runId: run.runId, requestId, guest, answer });
-		drainRequests();
-	};
-
-	const answerQuery = async (message: SandboxQueryDqlMessage): Promise<SandboxHostMessage> => {
-		const origin = snapshotRef.current;
-		const filePath =
-			origin && message.originPath ? joinPath(origin.root, message.originPath) : doc.filePath;
-		const response = await window.maestro.dataview.query({
-			filePath,
-			source: message.source,
-			agentId: doc.agentId,
-		});
-		return { type: 'query.dql.result', requestId: message.requestId, result: response.result };
-	};
-
-	const answerLoad = async (message: SandboxIoLoadMessage): Promise<SandboxHostMessage> => {
-		const response = await window.maestro.dataview.readInRoot({
-			filePath: doc.filePath,
-			agentId: doc.agentId,
-			path: message.path,
-		});
-		return { type: 'io.load.result', requestId: message.requestId, text: response.text };
-	};
+	// --- Requests: answered only within a run, a few at a time (`createGuestRequestQueue()`). ---
 
 	/** Whether a render answer is for `run`, from the guest the run was sent to, for this block. */
 	const answersRun = (
@@ -484,10 +337,13 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 				setHeight(null);
 				return;
 			case 'query.dql':
-				enqueueRequest(guest, message.requestId, () => answerQuery(message));
-				return;
 			case 'io.load':
-				enqueueRequest(guest, message.requestId, () => answerLoad(message));
+				requests.enqueue(run && !run.settled ? run.runId : null, guest, message.requestId, () =>
+					answerGuestRequest(doc, snapshotRef.current, message)
+				);
+				return;
+			case 'eval.result':
+				// Inline `$=` answers belong to the note's inline host, never to a block.
 				return;
 			case 'open.link': {
 				if (message.kind === 'url') {
@@ -595,24 +451,11 @@ function DataviewJsProblem({
 	theme: Theme;
 	onRunAgain: () => void;
 }) {
-	let message: string;
-	let canRunAgain = true;
-	switch (problem.kind) {
-		case 'script':
-		case 'snapshot':
-			message = problem.message;
-			canRunAgain = false;
-			break;
-		case 'timeout':
-			message = `DataviewJS: the script did not finish within ${DATAVIEW_JS_RUN_TIMEOUT_MS / 1000} seconds, so it was stopped.`;
-			break;
-		case 'crashed':
-			message = 'DataviewJS: the sandbox stopped unexpectedly.';
-			break;
-		case 'loadFailed':
-			message = 'DataviewJS: the sandbox could not load.';
-			break;
-	}
+	const canRunAgain = problem.kind !== 'script' && problem.kind !== 'snapshot';
+	const message =
+		problem.kind === 'script' || problem.kind === 'snapshot'
+			? problem.message
+			: dataviewJsGuestFailureText(problem.kind);
 	return (
 		<AlertCallout type="caution" theme={theme}>
 			<div
