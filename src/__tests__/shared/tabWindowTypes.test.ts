@@ -11,9 +11,11 @@
 import { describe, it, expect } from 'vitest';
 import {
 	TAB_WINDOW_CHANNELS,
+	TAB_WINDOW_FILE_TAB_FIELDS,
 	TAB_WINDOW_INTENT_KINDS,
 	formatTabWindowTitle,
 	isTabWindowIntent,
+	isTabWindowFileTabField,
 	isTabWindowIntentKind,
 	isTabWindowSessionPatch,
 	type TabWindowIntent,
@@ -64,8 +66,28 @@ describe('TAB_WINDOW_INTENT_KINDS', () => {
 		expect(TAB_WINDOW_INTENT_KINDS).toContain('requestSnapshot');
 	});
 
+	it('lets a tab window write a popped file tab back (D5)', () => {
+		expect(TAB_WINDOW_INTENT_KINDS).toContain('setFileTabState');
+	});
+
 	it('is frozen', () => {
 		expect(Object.isFrozen(TAB_WINDOW_INTENT_KINDS)).toBe(true);
+	});
+});
+
+describe('isTabWindowFileTabField', () => {
+	it('names the file tab fields a tab window owns while the tab is popped out (D5)', () => {
+		for (const field of ['editContent', 'editMode', 'scrollTop', 'content', 'path']) {
+			expect(isTabWindowFileTabField(field)).toBe(true);
+		}
+		expect(TAB_WINDOW_FILE_TAB_FIELDS.every(isTabWindowFileTabField)).toBe(true);
+		expect(Object.isFrozen(TAB_WINDOW_FILE_TAB_FIELDS)).toBe(true);
+	});
+
+	it('leaves out what the owner keeps writing: identity, name, loading state', () => {
+		for (const field of ['id', 'customName', 'isLoading', 'sshRemoteId', 'toString']) {
+			expect(isTabWindowFileTabField(field)).toBe(false);
+		}
 	});
 });
 

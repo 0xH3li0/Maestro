@@ -237,6 +237,71 @@ export function isTabWindowSessionPatch(value: unknown): value is TabWindowSessi
 }
 
 // ============================================================================
+// File tabs (D5)
+// ============================================================================
+
+/**
+ * The fields of a popped file tab that its tab window owns while the tab is
+ * popped out, as the renderer's `FilePreviewTab` holds them: the unsaved
+ * edits, the preview or edit mode, the scroll position and find query, the
+ * per-tab preview settings, and what the window last read from or wrote to
+ * disk (content, mtime, path, visit history).
+ *
+ * The tab window renders the file itself and does every disk read and write
+ * for it, so these change only there. The owner's snapshot seeds them, a delta
+ * never carries them (an echo of an older write would undo a newer one), and
+ * the tab window writes them back with the `setFileTabState` intent.
+ */
+export interface TabWindowFileTabState {
+	content: string;
+	/** Unsaved edits; `undefined` when the tab matches the disk. */
+	editContent: string | undefined;
+	editMode: boolean;
+	scrollTop: number;
+	searchQuery: string;
+	lastModified: number;
+	path: string;
+	name: string;
+	extension: string;
+	navigationHistory?: Array<{ path: string; name: string; scrollTop?: number }>;
+	navigationIndex?: number;
+	previewTierOverride?: 'rich' | 'fast' | 'giant';
+	htmlRenderMode?: boolean;
+	pendingScrollToLine?: number;
+}
+
+/** A field of {@link TabWindowFileTabState}. */
+export type TabWindowFileTabField = keyof TabWindowFileTabState;
+
+// A record, so a field added to the state without listing it here fails the type check.
+const FILE_TAB_FIELD_SET: Record<TabWindowFileTabField, true> = {
+	content: true,
+	editContent: true,
+	editMode: true,
+	scrollTop: true,
+	searchQuery: true,
+	lastModified: true,
+	path: true,
+	name: true,
+	extension: true,
+	navigationHistory: true,
+	navigationIndex: true,
+	previewTierOverride: true,
+	htmlRenderMode: true,
+	pendingScrollToLine: true,
+};
+
+/** Every field a tab window owns on a popped file tab. */
+export const TAB_WINDOW_FILE_TAB_FIELDS = Object.freeze(
+	Object.keys(FILE_TAB_FIELD_SET) as TabWindowFileTabField[]
+);
+
+/** True for a field a tab window owns on a popped file tab. */
+export function isTabWindowFileTabField(key: string): key is TabWindowFileTabField {
+	return Object.prototype.hasOwnProperty.call(FILE_TAB_FIELD_SET, key);
+}
+
+// ============================================================================
 // Intents (tab window to owner)
 // ============================================================================
 
@@ -342,6 +407,15 @@ export interface TabWindowIntentPayloads {
 	/** Close Other / Left / Right, scoped to the tab window's strip. */
 	closeTabs: { tabRefs: TabWindowTabRef[] };
 
+	// D'. File tab (D5)
+	/**
+	 * Write back what changed on a popped file tab since the last write: after
+	 * a pause, at once after a save, and before a dock. `undefined` clears a
+	 * field. `refreshFileTree` asks the owner to refresh its Files panel (a
+	 * save put the file at a new path).
+	 */
+	setFileTabState: { fields: Partial<TabWindowFileTabState>; refreshFileTree?: boolean };
+
 	// E. Transcript
 	deleteLog: { logId: string };
 	replayMessage: { text: string; images?: string[] };
@@ -433,6 +507,7 @@ const INTENT_KIND_SET: Record<TabWindowIntentKind, true> = {
 	sendToAgent: true,
 	reorderTabs: true,
 	closeTabs: true,
+	setFileTabState: true,
 	deleteLog: true,
 	replayMessage: true,
 	forkConversation: true,

@@ -2,7 +2,7 @@
 
 A tab window is an ordinary OS window that holds one agent's popped-out tabs and nothing else: a slim header with the agent name, a tab strip, and the active tab's content. It is a view. The app window that owns the agent (the primary, or the secondary it was moved to) stays the only writer of that agent's `Session` and the only runner of its one-time side effects. The owner streams the agent's state to the tab window as patches, and the tab window sends every user action back as an intent that the owner runs through the same function its own UI calls. The main-process `WindowRegistry` holds the truth of which tab is popped into which window (a new `'tab'` window kind, one per agent). The owner keeps a popped tab in its tab arrays and in `unifiedTabOrder`, hides it from its own strip and tab-picking math, and sends any navigation that targets it to the tab window. Closing a tab window docks its tabs. Tab windows survive a restart. The feature exists only in the Electron desktop build.
 
-Status: phase 5 (AI tab sync) landed; phase 6 (terminal, file preview, and browser tabs) is next. The spec is `TAB-WINDOWS-SPEC.md` in the `2026-09-30-Tab-Windows` playbook folder. Requirement IDs (TW-n) and decisions (Dn) below refer to it. Line numbers are as of `c3cd1d2e1b` (`origin/rc`, 2026-10-18). When they drift, search by symbol.
+Status: phase 5 (AI tab sync) landed; phase 6 terminal and file preview tabs landed, browser tabs are next. The spec is `TAB-WINDOWS-SPEC.md` in the `2026-09-30-Tab-Windows` playbook folder. Requirement IDs (TW-n) and decisions (Dn) below refer to it. Line numbers are as of `c3cd1d2e1b` (`origin/rc`, 2026-10-18). When they drift, search by symbol.
 
 ```mermaid
 flowchart LR
@@ -312,6 +312,10 @@ Rules for `TabWindowIntent` (`src/shared/tabWindowTypes.ts`, phase 2):
 | `closeTabs`                | Close Other / Left / Right                                                                                                                                                  | refs               | `closeRefs` (`hooks/tabs/internal/useUnifiedTabHandlers.ts`), then `applyUnifiedTabClosures` with `excludePreservedRefs`                                                                        | Scope is the tab window's strip, not the agent's.                                                                                                                                |
 | local                      | Copy Session ID, Copy Deep Link, Export as HTML, Context: Copy (with or without reasoning), Publish Gist (`GistPublishModal`, IPC `createGist`), hover and long-press menus |                    | `useTabExportHandlers` reads the owner's active session today: point it at the mirror tab                                                                                                       | No `Session` writes. Reduced view for now: Copy Session ID and Copy Deep Link work; Export as HTML, Context: Copy, and Publish Gist are not offered.                             |
 | none                       | drag to tile                                                                                                                                                                |                    |                                                                                                                                                                                                 | Disabled in a tab window (no tiling inside it in v1).                                                                                                                            |
+
+#### D'. File tab (added in phase 6)
+
+- `setFileTabState { fields, refreshFileTree? }`: the file tab write-back. `fields` holds only what changed since the last write, from `TabWindowFileTabState` (`src/shared/tabWindowTypes.ts`); `undefined` clears a field. The owner writes them with sessionStore `updateFileTab` (`writeTabWindowFileTab` in `services/tabWindowIntents.ts`), drops any other key, and calls `requestFileTreeRefresh(agentId)` when `refreshFileTree` is set. It accepts a write for a docked tab too, because a closed tab window's last write lands after the dock. See "File preview (landed, phase 6)".
 
 #### E. Transcript (`TerminalOutput`; prop names as in `PaneChatActions`)
 
@@ -664,15 +668,20 @@ sequenceDiagram
 - The PTY id helpers moved to `src/shared/terminalSessionId.ts` so main names the same id; `utils/terminalTabHelpers.ts` re-exports them.
 - Tests: `src/__tests__/main/terminal-handoff.test.ts` (the record, expiry, cap, IPC), `src/__tests__/renderer/components/XTerminal.handoff.test.tsx` (routing by process id, held output, the replay call, release on unmount and unload, StrictMode), `src/__tests__/renderer/services/terminalHandoff.test.ts`, `TerminalView.test.tsx` ("Tab Windows terminal handoff"), `TabWindowRoot.test.tsx` (terminal tabs), `useRemoteTerminalBufferResponder.test.ts`, `data-listener.test.ts`, `tab-windows.test.ts` and `window-manager.test.ts` (the announcements), `terminalReplay.test.ts`.
 
-### File preview
+### File preview (landed, phase 6)
 
-- **Type:** `FilePreviewTab` (`types/index.ts`) holds `content`, `editContent` (unsaved edits, `undefined` when clean), `editMode`, `scrollTop`, `searchQuery`, `sshRemoteId`, `navigationHistory`, `previewTierOverride`, `htmlRenderMode`, and more. Font scale is not on the tab: it is the localStorage key `filePreview.fontScale` (`useFontScale`).
-- **Content flow:** `FilePreview` never fetches the file. Content is written onto the tab by `handleFileClick` (`hooks/ui/useAppHandlers.ts`) and `handleOpenFileTab`.
-- **Save:** `handleFilePreviewSave` (`hooks/mainPanel/useFilePreviewHandlers.ts:82`) writes with `fs.writeFile`, then either updates the tab through sessionStore `updateFileTab` (when the path changed) or through `onFileTabEditContentChange`.
-- **Explicit-tab precedent:** `TiledFilePane` (`components/MainPanel/TiledLayout.tsx:302`) runs `useFilePreviewHandlers` against its own tab id. The tab window should do the same.
-- **Active-session-bound code to avoid:** the private `updateFileTab` in `tabStore.ts` (behind `updateFileTabScrollPosition`, `setFileTabPreviewTier`, and others) and the session-less handlers in `useFilePreviewTabHandlers`.
-- **File tree refresh:** `requestFileTreeRefresh` (`utils/fileTreeRefresh.ts`) is a DOM event that stays inside one window. A save in a tab window must be forwarded to the owner.
-- **IPC:** `fs:readFile`, `fs:stat`, and `fs:writeFile` are window-agnostic and SSH-aware. Keep the unsaved-edits confirm on close, and `fs.cancelReadFile` for an SSH tab that is still loading.
+A file tab moves by value. The tab window renders the file itself, from its own copy of the tab, and does every disk read and write for it through the same SSH-aware `fs` IPC (`fs:readFile`, `fs:stat`, `fs:writeFile`, all window-agnostic) and the same functions the owner uses.
+
+- **Who owns what.** While a file tab is popped out, its tab window owns `TabWindowFileTabState` (`src/shared/tabWindowTypes.ts`): `content`, `editContent`, `editMode`, `scrollTop`, `searchQuery`, `lastModified`, `path`, `name`, `extension`, `navigationHistory`, `navigationIndex`, `previewTierOverride`, `htmlRenderMode`, `pendingScrollToLine`. In `src/shared/tabWindowPatch.ts` they count as per-window fields of a popped file tab (`isOwnTabField`): the owner's snapshot seeds them, a delta never carries them, and a snapshot keeps the window's values for a tab that stayed popped. Reason: an owner echo of an older write (save twice, or reload then edit) would undo a newer local change. Everything else on the tab (`customName`, `isLoading`, `sshRemoteId`) still follows the owner.
+- **Actions.** The file tab actions live once in `services/fileTabActions.ts` with an explicit agent and tab: `setFileTabEditMode`, `setFileTabEditContent`, `setFileTabScrollTop`, `setFileTabSearchQuery`, `reloadFileTab`, `refreshFileTabIfChanged`, `navigateFileTabToIndex`. The owner's `useFilePreviewTabHandlers` calls them with the active agent; the tab window calls them with its own agent, on its own copy. The preview tier and HTML render mode setters in `tabStore` stay active-session-bound, which is right in a tab window (its store's active agent is its own).
+- **Rendering.** `TabWindowContent` renders `TiledFilePane` with `fileActions` from `useTabWindowFileTabs` (`components/TabWindow/`). The pane runs `useFilePreviewHandlers` against its own tab id, so the save is the owner's own function.
+- **Write-back.** `useTabWindowFileTabs` keeps, per strip tab, what the owner holds (the seed plus every write since) and sends `setFileTabState` with only the fields that differ: after a pause (`DRAFT_FLUSH_DELAY_MS`, through `useDraftPersistence`), at once after a save (`onFileTabSaved`, a new `useFilePreviewHandlers` callback), when the tab leaves the strip, on blur, hide, and `pagehide`, and from `flushFileTabs()` before a Dock (after `flushDraft()`; main relays in order).
+- **Save and the Files panel.** `requestFileTreeRefresh` is a DOM event inside one window. The save asks for a refresh only when the file went to a new path (untitled save, or a redirect after it moved or vanished); from a tab window that request rides the same write as `refreshFileTree: true`, and the owner raises it. An in-place save refreshes nothing, as in the owner.
+- **Disk on show.** Showing a file tab runs `refreshFileTabIfChanged` (the owner's tab-select auto refresh). A tab popped out while its SSH read was in flight is read here with `reloadFileTab` (which now also clears `isLoading`), because the owner's read lands on the owner's copy only.
+- **Font scale** is not tab state (DV2).
+- **Close.** The strip's close runs `closeFileTabWithConfirm` on this window's copy, so the unsaved-edits confirm sees the edits made here.
+- **Open.** File and wiki links resolve without a file tree in a tab window (none is mounted); a link click sends `openFileLink`, as from a transcript (Q3).
+- Tests: `TabWindowRoot.file.test.tsx` (seed, write-back, an owner patch that leaves an edit alone, edit then dock, close then late write, save in place, save to a new path with the owner refresh, a tab that popped out mid-load, owner refusals), `tabWindowPatch.test.ts` (owned file fields in deltas and snapshots), `useFilePreviewHandlers.test.ts` (`onFileTabSaved`), `useFontScale.test.tsx` (another window's change), `tabWindowTypes.test.ts`, `tabWindowIntents.test.ts`.
 
 ### Browser
 
@@ -820,6 +829,9 @@ Tests: `tabNavigationShortcuts.test.ts`, `tabHelpers.poppedOut.test.ts` (`buildT
   - The code makes the second option lossy. `processInput` already decides queue versus dispatch itself, and it is the only path that carries `hold`, `steer`, `forceParallel`, the mention routing override, `!` command modes, the `/history` `/wizard` `/skills` built-ins, and the wizard branch.
   - `enqueuePromptForTab` (`services/queuedPrompt.ts:134`) builds its item with `buildQueuedMessageItem` and carries none of them.
   - Chosen path: every `send` intent runs `processInput` with explicit inputs, busy or idle. `enqueuePromptForTab` is not used for tab window sends.
+- **DV2 (D5, file preview font scale).** The phase 6 task says the font scale travels in the snapshot and is written back on dock.
+  - The font scale is not on the tab. It is one app-wide preference, the localStorage key `filePreview.fontScale` (`useFontScale` over `useScalePreference`), and every window of the app shares that storage.
+  - Chosen path: nothing travels. `useScalePreference` now follows the `storage` event, so a change in a tab window shows in the owner's mounted preview at once, and the other way around.
 
 ## Phases
 

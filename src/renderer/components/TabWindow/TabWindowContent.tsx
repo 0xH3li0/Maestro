@@ -8,8 +8,10 @@
  *
  * The AI transcript's controls come in `chatActions`, the same bundle a tiled
  * pane gets, built by `useTabWindowChatActions`: each one that writes the agent
- * is an intent to the owner (D2). The file pane's bundle is still null (file
- * tabs land in phase 6). Terminal tabs render nothing here: `TabWindowTerminals`
+ * is an intent to the owner (D2). The file pane's come from
+ * `useTabWindowFileTabs`: this window renders the file and owns its edits while
+ * the tab is popped out, and writes them back (D5). Terminal tabs render
+ * nothing here: `TabWindowTerminals`
  * keeps every terminal of the strip mounted above this content (D5). Browser
  * tabs open a new webview (D5) and land in phase 6; until then they show a
  * notice instead of an empty pane.
@@ -21,6 +23,7 @@ import {
 	TiledAiPane,
 	TiledFilePane,
 	type PaneChatActions,
+	type PaneFileActions,
 } from '../MainPanel/TiledLayout';
 
 export interface TabWindowContentProps {
@@ -30,6 +33,8 @@ export interface TabWindowContentProps {
 	activeTab: UnifiedTab | null;
 	/** The AI transcript's controls (each one that writes the agent is an intent). */
 	chatActions: PaneChatActions | null;
+	/** The file preview's controls (each one runs on this window's copy of the tab). */
+	fileActions: PaneFileActions | null;
 }
 
 export function TabWindowContent({
@@ -37,6 +42,7 @@ export function TabWindowContent({
 	session,
 	activeTab,
 	chatActions,
+	fileActions,
 }: TabWindowContentProps) {
 	if (!activeTab) return <PaneMissingTab theme={theme} />;
 	switch (activeTab.type) {
@@ -59,7 +65,7 @@ export function TabWindowContent({
 					fileTabId={activeTab.id}
 					session={session}
 					theme={theme}
-					actions={null}
+					actions={fileActions}
 				/>
 			);
 		case 'terminal':

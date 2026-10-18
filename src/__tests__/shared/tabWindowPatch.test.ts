@@ -392,12 +392,36 @@ describe('diffTabWindowSession', () => {
 		const prev = agent();
 		const next = {
 			...prev,
-			filePreviewTabs: [{ ...fileTab(prev, 'file-1'), content: 'v2', lastModified: 99 }],
+			filePreviewTabs: [{ ...fileTab(prev, 'file-1'), customName: 'Notes', isLoading: false }],
 		};
 
 		expect(diff(prev, next)?.tabs).toEqual([
-			{ ref: FILE_REF, fields: { content: 'v2', lastModified: 99 } },
+			{ ref: FILE_REF, fields: { customName: 'Notes', isLoading: false } },
 		]);
+	});
+
+	it('never sends the file tab fields the tab window owns while the tab is popped (D5)', () => {
+		const prev = agent();
+		const owned: Partial<FilePreviewTab> = {
+			content: 'v2',
+			editContent: 'unsaved',
+			editMode: true,
+			scrollTop: 120,
+			searchQuery: 'needle',
+			lastModified: 99,
+			path: '/moved/notes.md',
+			previewTierOverride: 'fast',
+		};
+		const next = {
+			...prev,
+			filePreviewTabs: [{ ...fileTab(prev, 'file-1'), ...owned }],
+		};
+
+		// An echo of the owner's copy would undo a newer edit in the tab window.
+		expect(diff(prev, next)).toBeNull();
+		// The same field names on an AI tab are not the tab window's.
+		const ai = withAiTab(prev, 'popped', (tab) => ({ ...tab, scrollTop: 120 }));
+		expect(diff(prev, ai)?.tabs).toEqual([{ ref: POPPED_REF, fields: { scrollTop: 120 } }]);
 	});
 
 	it('caps tool output in a splice', () => {
@@ -492,6 +516,35 @@ describe('applyTabWindowPatch', () => {
 		});
 	});
 
+	it('never lets a delta overwrite what the tab window owns on a popped file tab', () => {
+		const mirror = attach(agent());
+		const edited: TabWindowMirror<Session> = {
+			...mirror,
+			session: {
+				...mirror.session,
+				filePreviewTabs: [
+					{ ...fileTab(mirror.session, 'file-1'), editContent: 'typed here', editMode: true },
+				],
+			},
+		};
+
+		const applied = applyDelta(edited, {
+			tabs: [
+				{
+					ref: FILE_REF,
+					fields: { editContent: undefined, editMode: false, content: 'v0', customName: 'Notes' },
+				},
+			],
+		})!;
+
+		expect(fileTab(applied.session, 'file-1')).toMatchObject({
+			editContent: 'typed here',
+			editMode: true,
+			content: 'v1',
+			customName: 'Notes',
+		});
+	});
+
 	it('drops a tab the owner removed and adds a tab it did not hold', () => {
 		const prev = agent();
 		const without: Session = { ...prev, aiTabs: prev.aiTabs.filter((tab) => tab.id !== 'popped') };
@@ -570,6 +623,40 @@ describe('applyTabWindowPatch', () => {
 		expect(aiTab(mirror.session, 'other').logs).toEqual(aiTab(owner, 'other').logs);
 		expect(mirror.tabRefs).toEqual(refs);
 		expect(mirror.seq).toBe(7);
+	});
+
+	it('keeps a popped file tab its own edits across a snapshot, and seeds one that just arrived', () => {
+		const first = attach(agent(), [FILE_REF]);
+		const edited: TabWindowMirror<Session> = {
+			...first,
+			session: {
+				...first.session,
+				filePreviewTabs: [
+					{ ...fileTab(first.session, 'file-1'), editContent: 'typed here', scrollTop: 40 },
+				],
+			},
+		};
+		const owner = agent({
+			filePreviewTabs: [
+				createMockFileTab({ id: 'file-1', content: 'v1', editContent: 'stale', scrollTop: 0 }),
+				createMockFileTab({ id: 'file-2', content: 'two', editContent: 'owner edit' }),
+			],
+		});
+		const refs: TabWindowTabRef[] = [FILE_REF, { type: 'file', id: 'file-2' }];
+
+		const mirror = applyTabWindowPatch(edited, {
+			form: 'snapshot',
+			agentId: AGENT,
+			seq: 3,
+			tabRefs: refs,
+			session: buildTabWindowSnapshot(owner, refs),
+		})!;
+
+		expect(fileTab(mirror.session, 'file-1')).toMatchObject({
+			editContent: 'typed here',
+			scrollTop: 40,
+		});
+		expect(fileTab(mirror.session, 'file-2')).toMatchObject({ editContent: 'owner edit' });
 	});
 
 	it('takes the owner draft for a tab that was docked, and again when it comes back', () => {
@@ -681,7 +768,7 @@ describe('round trip', () => {
 				),
 			(s) => ({
 				...s,
-				filePreviewTabs: s.filePreviewTabs.map((tab) => ({ ...tab, content: 'v2' })),
+				filePreviewTabs: s.filePreviewTabs.map((tab) => ({ ...tab, customName: 'Notes' })),
 			}),
 			// The turn ends.
 			(s) => {

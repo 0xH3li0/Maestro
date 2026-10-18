@@ -77,6 +77,7 @@ import { TabWindowComposer } from './TabWindowComposer';
 import { TabWindowModals } from './TabWindowModals';
 import { useTabWindowChatActions } from './useTabWindowChatActions';
 import { useTabWindowDraft } from './useTabWindowDraft';
+import { useTabWindowFileTabs } from './useTabWindowFileTabs';
 import { useTabWindowViewState } from './useTabWindowViewState';
 import { useTabWindowInfo } from './useTabWindowInfo';
 import { useTabWindowKeyboard } from './useTabWindowKeyboard';
@@ -250,19 +251,27 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 	const shownAiTab = activeTab?.type === 'ai' ? activeTab.data : null;
 	// Its draft lives here while it is popped out, and is written back to the owner (D2).
 	const { flushDraft } = useTabWindowDraft(agentId, shownAiTab?.id ?? null);
+	// This window renders its file tabs and owns their edits while they are here (D5).
+	const { fileActions, flushFileTabs } = useTabWindowFileTabs(
+		agentId,
+		tabRefs,
+		activeTab?.type === 'file' ? activeTab.id : null,
+		closeTab
+	);
 	const activeRef: TabWindowTabRef | null =
 		activeTab && activeTab.type !== 'group' ? { type: activeTab.type, id: activeTab.id } : null;
 	const dockActiveTab = useCallback(() => {
 		if (!activeRef) return;
-		// The owner shows a docked tab with the draft it holds for it, so the
-		// draft goes first: main relays this window's messages in order.
+		// The owner shows a docked tab with the draft and the file edits it holds
+		// for it, so those go first: main relays this window's messages in order.
 		flushDraft();
+		flushFileTabs();
 		void runTabWindowCall(
 			'dock',
 			() => tabWindows.dock(agentId, activeRef),
 			(result) => (result.docked ? null : result.error)
 		);
-	}, [tabWindows, agentId, activeRef, flushDraft]);
+	}, [tabWindows, agentId, activeRef, flushDraft, flushFileTabs]);
 
 	// Tab shortcuts: the main window's entries, scoped to this strip (TW-6).
 	useTabWindowKeyboard({
@@ -392,6 +401,7 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 					session={viewSession}
 					activeTab={activeTab}
 					chatActions={chatActions}
+					fileActions={fileActions}
 				/>
 				<TabWindowTerminals
 					theme={theme}

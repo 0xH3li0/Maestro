@@ -50,7 +50,10 @@ import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
-import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
+import {
+	useFilePreviewHandlers,
+	type FileTabSaveResult,
+} from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { FileNode } from '../../types/fileTree';
 import type {
@@ -176,11 +179,14 @@ export interface PaneFileActions {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
 	onReloadFileTab?: (tabId: string) => void;
+	/** A save landed on disk (`useFilePreviewHandlers`); a tab window tells the owner. */
+	onFileTabSaved?: (tabId: string, saved: FileTabSaveResult) => void;
 	/** Breadcrumb history jump, addressed by tab id so a pane drives its own. */
 	onFileTabNavigateToIndex?: (index: number, tabId?: string) => void;
 	fileTree?: FileNode[];
@@ -354,6 +360,7 @@ export function TiledFilePane({
 		onFileTabScrollPositionChange: actions?.onFileTabScrollPositionChange,
 		onFileTabSearchQueryChange: actions?.onFileTabSearchQueryChange,
 		onReloadFileTab: actions?.onReloadFileTab,
+		onFileTabSaved: actions?.onFileTabSaved,
 	});
 
 	// Breadcrumb history, derived from THIS tab (the single view derives the same

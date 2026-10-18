@@ -694,6 +694,7 @@ describe('dispatchTabWindowIntent: refusals', () => {
 			sendToAgent: { targetSessionId: 'b', options: { groomContext: false, targetSessionId: 'b' } },
 			reorderTabs: { tabRefs: [POPPED] },
 			closeTabs: { tabRefs: [FILE] },
+			setFileTabState: { fields: { editMode: true } },
 			deleteLog: { logId: 'l' },
 			replayMessage: { text: 't' },
 			forkConversation: { logId: 'l' },

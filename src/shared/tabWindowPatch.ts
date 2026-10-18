@@ -16,7 +16,10 @@
  * - Per-window fields (`isClientSessionField`: active pointers, input mode, the
  *   composer and terminal drafts, PTY attachment) belong to the receiving
  *   window. A delta never carries them, and a snapshot for the agent the tab
- *   window already holds keeps the window's own values.
+ *   window already holds keeps the window's own values. A popped file tab adds
+ *   the fields the tab window owns while it renders the file
+ *   (`isTabWindowFileTabField`: edits, mode, scroll, disk state), on the same
+ *   terms.
  * - Tool output crosses capped (`compactLogToolOutputs`), the bound a stored
  *   transcript has. An entry that is already capped goes as it is.
  *
@@ -29,6 +32,7 @@
 
 import { isClientSessionField } from './sessionPersistenceMerge';
 import { compactLogToolOutputs } from './toolOutput';
+import { isTabWindowFileTabField } from './tabWindowTypes';
 import type {
 	TabWindowLogSplice,
 	TabWindowSessionDelta,
@@ -153,11 +157,18 @@ function assignFields(target: Fields, fields: Fields, skip: (key: string) => boo
 	return result ?? target;
 }
 
-/** `target` with the per-window fields of `source`, present or absent alike. */
-function withClientFieldsOf(target: Fields, source: Fields): Fields {
+/**
+ * `target` with the per-window fields of `source` (`isOwn`), present or absent
+ * alike.
+ */
+function withClientFieldsOf(
+	target: Fields,
+	source: Fields,
+	isOwn: (key: string) => boolean = isClientSessionField
+): Fields {
 	let result: Fields | null = null;
 	for (const key of keysOf(target, source)) {
-		if (!isClientSessionField(key) || target[key] === source[key]) continue;
+		if (!isOwn(key) || target[key] === source[key]) continue;
 		result ??= { ...target };
 		if (key in source) result[key] = source[key];
 		else delete result[key];
@@ -170,9 +181,18 @@ function isUnsentSessionField(key: string): boolean {
 	return TAB_LIST_KEY_SET.has(key) || isClientSessionField(key);
 }
 
+/**
+ * A field of a tab of kind `type` that belongs to the window holding the tab:
+ * a per-window field, or, on a file tab, one the tab window owns while it
+ * renders the file.
+ */
+function isOwnTabField(type: SingleTabType, key: string): boolean {
+	return isClientSessionField(key) || (type === 'file' && isTabWindowFileTabField(key));
+}
+
 /** Not sent as a tab field: the transcript (it travels as a splice) or a per-window field. */
-function isUnsentTabField(key: string): boolean {
-	return key === 'logs' || isClientSessionField(key);
+function unsentTabFieldOf(type: SingleTabType): (key: string) => boolean {
+	return (key) => key === 'logs' || isOwnTabField(type, key);
 }
 
 // ============================================================================
@@ -326,7 +346,7 @@ function diffTab(
 			? { ref, fields, logSplice: { start: 0, entries: capLogs(Array.isArray(logs) ? logs : []) } }
 			: { ref, fields };
 	}
-	const fields = changedFields(prev, next, isUnsentTabField);
+	const fields = changedFields(prev, next, unsentTabFieldOf(ref.type));
 	const logSplice = ref.type === 'ai' ? diffLogs(logsOf(prev), logsOf(next)) : null;
 	if (!fields && !logSplice) return null;
 	return { ref, ...(fields ? { fields } : {}), ...(logSplice ? { logSplice } : {}) };
@@ -359,10 +379,11 @@ function diffLogs(prev: unknown[], next: unknown[]): TabWindowLogSplice | null {
  *
  * A snapshot always applies. For the agent the window already holds, it keeps
  * the window's own per-window fields: the session-level ones (active pointers,
- * input mode, terminal draft) always, and a tab's draft when that tab was in
- * the previous snapshot's `tabRefs` and still is. A tab that just arrived takes
- * the owner's draft, which seeds the composer (D2), and so does a tab that left
- * (the owner holds its draft again).
+ * input mode, terminal draft) always, and a tab's draft (and a file tab's
+ * window-owned state) when that tab was in the previous snapshot's `tabRefs`
+ * and still is. A tab that just arrived takes the owner's draft, which seeds
+ * the composer (D2), and so does a tab that left (the owner holds its draft
+ * again).
  *
  * A delta applies only to the same agent, right after the previous patch
  * (`seq + 1`), and only when every log splice lands inside the transcript the
@@ -423,7 +444,7 @@ function keepOwnFields<S extends TabWindowPatchSession>(
 			const refKey = tabRefKey(ref);
 			if (!before.has(refKey) || !now.has(refKey)) return tab;
 			const own = findTab(held.session, ref);
-			return own ? withClientFieldsOf(tab, own) : tab;
+			return own ? withClientFieldsOf(tab, own, (field) => isOwnTabField(type, field)) : tab;
 		});
 		if (kept !== tabs) session = { ...session, [key]: kept };
 	}
@@ -458,7 +479,7 @@ function applyTabDelta(session: Fields, delta: unknown): Fields | null {
 		return { ...session, [key]: [...tabs, added] };
 	}
 	let tab = tabs[index];
-	if (fields) tab = assignFields(tab, fields, isUnsentTabField);
+	if (fields) tab = assignFields(tab, fields, unsentTabFieldOf(ref.type));
 	if (splice) {
 		const logs = logsOf(tab);
 		if (!isLandingSplice(splice, logs.length)) return null;

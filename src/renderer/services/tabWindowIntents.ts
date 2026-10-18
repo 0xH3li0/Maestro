@@ -33,7 +33,12 @@
 import type { Session, UnifiedTabRef } from '../types';
 import type { ProcessInputOptions } from '../hooks/input/useInputProcessing';
 import type { InterruptTarget } from '../hooks/agent/useInterruptHandler';
-import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateFileTab,
+	useSessionStore,
+} from '../stores/sessionStore';
 import { isTabPoppedOut, useTabWindowStore } from '../stores/tabWindowStore';
 import { cancelRetry, retryNow } from '../stores/retryStore';
 import { useCoworkingApprovalStore } from '../stores/coworkingApprovalStore';
@@ -44,6 +49,7 @@ import { captureException } from '../utils/sentry';
 import { normalizeComposerCommandMode } from '../utils/shellCommandInput';
 import { openMaestroLink } from '../utils/openMaestroLink';
 import { openInMaestroBrowser } from '../utils/openUrl';
+import { requestFileTreeRefresh } from '../utils/fileTreeRefresh';
 import {
 	cycleAiTabShowThinking,
 	markAiTabUnread,
@@ -73,10 +79,12 @@ import { jumpToAgent } from './agentNavigation';
 import { sessionHasTab } from './tabWindowNavigation';
 import { loadEarlierTranscriptForTab } from './transcriptBackfill';
 import { tabRefKey } from '../../shared/unifiedTabRef';
-import type {
-	TabWindowIntent,
-	TabWindowIntentOf,
-	TabWindowTabRef,
+import {
+	isTabWindowFileTabField,
+	type TabWindowFileTabState,
+	type TabWindowIntent,
+	type TabWindowIntentOf,
+	type TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
 
 /**
@@ -212,6 +220,35 @@ function writeTabWindowDraft(
 		stagedImages: [...draft.stagedImages],
 	}));
 	if (composerShowsStoredCopy) composer.loadAiDraft(target.tabId, draft.inputValue, commandMode);
+	return HANDLED;
+}
+
+/**
+ * Write what a tab window changed on a popped file tab onto the owner's copy:
+ * its edits, mode, scroll, find query, preview settings, and disk state. The
+ * tab window renders the file and owns those fields while the tab is popped
+ * out (D5); this copy is what the owner shows once it docks, so a write that
+ * arrives after the dock (a closed tab window) still lands. Only those fields
+ * are taken. A save that moved the file refreshes this window's Files panel,
+ * as the same save does when it runs here.
+ */
+function writeTabWindowFileTab(
+	session: Session,
+	intent: TabWindowIntentOf<'setFileTabState'>
+): TabWindowIntentOutcome {
+	const { tabRef } = intent;
+	if (tabRef.type !== 'file' || !session.filePreviewTabs.some((tab) => tab.id === tabRef.id)) {
+		return refuse('the tab is gone');
+	}
+	const fields: Partial<TabWindowFileTabState> = {};
+	const sent = typeof intent.fields === 'object' && intent.fields !== null ? intent.fields : {};
+	for (const [key, value] of Object.entries(sent)) {
+		if (isTabWindowFileTabField(key)) (fields as Record<string, unknown>)[key] = value;
+	}
+	if (Object.keys(fields).length > 0) {
+		updateFileTab(session.id, tabRef.id, (tab) => ({ ...tab, ...fields }));
+	}
+	if (intent.refreshFileTree) requestFileTreeRefresh(session.id);
 	return HANDLED;
 }
 
@@ -459,6 +496,10 @@ export function dispatchTabWindowIntent(
 			handlers.closeTabRefs(session.id, refs);
 			return HANDLED;
 		}
+
+		// D'. File tab
+		case 'setFileTabState':
+			return writeTabWindowFileTab(session, intent);
 
 		// E. Transcript
 		case 'deleteLog':
