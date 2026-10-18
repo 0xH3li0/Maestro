@@ -571,6 +571,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		turnSessionId: tab.agentSessionId || undefined,
 		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
 	};
 }
@@ -597,7 +598,7 @@ export function recordTabSession(
 	if (update.agentSessionId !== undefined) fields.agentSessionId = update.agentSessionId;
 	if (update.addUsage !== undefined) {
 		const slot = (
-			owningProvider === agent.toolType
+			owningProvider === (tab.tabProvider ?? agent.toolType)
 				? tab
 				: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
 		) as { usageStats?: UsageStats } | undefined;

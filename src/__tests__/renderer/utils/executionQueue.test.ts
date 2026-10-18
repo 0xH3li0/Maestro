@@ -862,6 +862,20 @@ describe('getSteerEligibility', () => {
 	}
 	const item = { tabId: 'tab-1', text: 'change course' };
 
+	it('cannot steer a queued provider capture into another running harness', () => {
+		const session = steerableSession();
+		expect(getSteerEligibility(session, { ...item, turnSettings: { provider: 'codex' } })).toEqual({
+			canSteer: false,
+			blockedReason: 'provider-mismatch',
+		});
+	});
+
+	it('uses the running provider rather than the next selected harness for steering', () => {
+		const session = steerableSession();
+		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
+		expect(getSteerEligibility(session, item).canSteer).toBe(true);
+	});
+
 	it('allows steering a Claude interactive turn that is running', () => {
 		const eligibility = getSteerEligibility(steerableSession(), item);
 		expect(eligibility).toEqual({ canSteer: true });

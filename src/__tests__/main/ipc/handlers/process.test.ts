@@ -640,6 +640,22 @@ describe('process IPC handlers', () => {
 				});
 			}
 
+			it('does not apply the default harness gateway to a foreign tab provider', async () => {
+				storeAgent({
+					id: 'agent-gw',
+					toolType: 'codex',
+					gatewayUrl,
+					aiTabs: [{ id: 'tab-1', tabProvider: 'claude-code', agentSessionId: null }],
+				});
+				await spawnClaude();
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith('agent-gw', undefined);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.not.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+			});
+
 			it('reads the gateway from the stored agent and sets its base-URL variable', async () => {
 				storeAgent({ id: 'agent-gw', gatewayUrl });
 
@@ -1881,6 +1897,12 @@ describe('process IPC handlers', () => {
 				);
 			};
 
+			it('ignores transport settings owned by a different default harness', async () => {
+				persist([{ id: 'codex-agent', toolType: 'claude-code', codexTransport: 'app-server' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
 			it('passes app-server when the persisted agent opted in', async () => {
 				persist([{ id: 'codex-agent', codexTransport: 'app-server' }]);
 				const spawnCall = await spawnCodex();
@@ -1947,6 +1969,33 @@ describe('process IPC handlers', () => {
 				interactiveModeArgs: ['--dangerously-skip-permissions'],
 				requiresPty: true,
 			};
+
+			it('reads Claude token mode from its parked provider overrides', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4244, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, fallback: unknown) =>
+					key === 'sessions'
+						? [
+								{
+									id: 'pinned-agent',
+									toolType: 'codex',
+									enableMaestroP: true,
+									maestroPMode: 'interactive',
+									providerOverrides: { 'claude-code': { enableMaestroP: false } },
+								},
+							]
+						: fallback
+				);
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'pinned-agent-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+				expect(mockProcessManager.spawn.mock.calls[0][0].args).toContain('--print');
+			});
 
 			it('leaves API-mode args intact when Batch Mode is off (default)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);

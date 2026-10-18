@@ -1,3 +1,7 @@
+import {
+	providerOverridesFor,
+	type ProviderSwitchAgent,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import Store from 'electron-store';
 import type { AgentConfig } from '../../../agents/definitions';
 import { resolveClaudeSpawnMode } from '../../../agents/resolveClaudeSpawnMode';
@@ -39,6 +43,8 @@ export interface ClaudeSpawnContext {
 
 type PersistedSessionRecord = {
 	id?: string;
+	toolType?: import('../../../../shared/types').ToolType;
+	providerOverrides?: ProviderSwitchAgent['providerOverrides'];
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
@@ -138,11 +144,21 @@ export async function resolveClaudeSpawnContext(
 	// dynamic/interactive selection, the direct-maestro-p-Path power-user
 	// case, and stale `claudeInteractive` cleanup.
 	if (isClaudeCode) {
-		const persistedSession = findOwningSessionRecord(
+		const owner = findOwningSessionRecord(
 			deps.sessionsStore.get('sessions', []) as PersistedSessionRecord[],
 			config.sessionId,
 			baseSessionId
 		);
+		const persistedSession =
+			owner?.toolType && owner.toolType !== 'claude-code'
+				? {
+						id: owner.id,
+						...providerOverridesFor(
+							owner as PersistedSessionRecord & ProviderSwitchAgent,
+							'claude-code'
+						),
+					}
+				: owner;
 		if (persistedSession?.id) tokenSourceSessionId = persistedSession.id;
 
 		// Over SSH, warm the remote maestro-p probe BEFORE resolving so the

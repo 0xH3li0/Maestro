@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTurnProvider } from './providerTabSessions';
 /**
  * Helpers for the per-session AI execution queue, centralizing the rules for
  * user-paused items and connection-held items.
@@ -710,6 +711,7 @@ export type SteerBlockedReason =
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
+	| 'provider-mismatch'
 	| 'codex-exec'
 	| 'api-token-source'
 	| 'nothing-to-type'
@@ -805,6 +807,7 @@ export function getSteerEligibility(
 	item: Pick<
 		QueuedItem,
 		| 'tabId'
+		| 'turnSettings'
 		| 'text'
 		| 'images'
 		| 'awaitingConsult'
@@ -829,6 +832,11 @@ export function getSteerEligibility(
 	// SSH Codex turn always runs on exec. Main would refuse every attempt, so the
 	// button would be a control that can only decline.
 	if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
+	const runningTab = findQueueTargetTab(session, target.tabId);
+	const provider = resolveTurnProvider(runningTab, session);
+	if (item.turnSettings?.provider && item.turnSettings.provider !== provider)
+		return { canSteer: false, blockedReason: 'provider-mismatch' };
+	session = projectTabProvider(session, runningTab, resolveTurnProvider(runningTab, session)).agent;
 	if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
 		// accepts `turn/steer` while a turn runs. `codex exec` (the default) accepts
@@ -930,6 +938,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'no-target-tab': 'The tab this message was queued on is gone.',
 	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
 	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'provider-mismatch':
+		'This message was queued for another provider and must wait for its own turn.',
 	'codex-exec':
 		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
 	'api-token-source':

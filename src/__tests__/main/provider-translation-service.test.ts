@@ -657,7 +657,10 @@ describe('single-tab provider translation service', () => {
 			let session = createMockSession({
 				id: 'agent',
 				toolType: 'codex',
-				aiTabs: [{ id: 'open', agentSessionId: 'open-native' }] as any,
+				aiTabs: [
+					{ id: 'open', agentSessionId: 'open-native' },
+					{ id: 'pinned', tabProvider: 'claude-code', agentSessionId: 'pinned-native' },
+				] as any,
 				closedTabHistory: [
 					{ tab: { id: 'blocked', agentSessionId: 'missing-closed' }, index: 1, closedAt: 1 },
 				] as any,
@@ -725,6 +728,10 @@ describe('single-tab provider translation service', () => {
 			expect(applied.error).toBeUndefined();
 			expect(applied.result?.state).toBe('committed');
 			expect(read.mock.calls.every(([, tabId]) => tabId === 'open')).toBe(true);
+			expect(session.aiTabs.find((tab) => tab.id === 'pinned')).toMatchObject({
+				tabProvider: 'claude-code',
+				agentSessionId: 'pinned-native',
+			});
 			expect(session.closedTabHistory[0].tab).toMatchObject({
 				agentSessionId: null,
 				providerSessions: { codex: { agentSessionId: 'missing-closed' } },

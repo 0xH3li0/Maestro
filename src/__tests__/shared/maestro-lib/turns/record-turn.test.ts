@@ -421,3 +421,10 @@ describe('turn records', () => {
 		});
 	});
 });
+
+it('stamps the transcript with the assembled turn provider', () => {
+	const recorded = turn();
+	recorded.assembled.settings.provider = 'codex';
+	const entries = buildTurnTranscript(recorded, context());
+	expect(entries.find((entry) => entry.source === 'stdout')?.turnProvider).toBe('codex');
+});

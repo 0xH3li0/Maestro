@@ -29,7 +29,7 @@ import { canonicalJson } from '../../canonicalJson';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { createTranslationRegistry } from './adapters';
-import { providerOverridesFor } from '../agents/providerSwap';
+import { providerOverridesFor, resolveTabProvider } from '../agents/providerSwap';
 import { TranslationArchive, type TranslationJournal } from './archive';
 import { planTranslation } from './registry';
 import { activeContextRecords } from './context-window';
@@ -164,7 +164,7 @@ export class NativeTranslationService {
 			surface: 'desktop',
 			globalShellEnvVars: this.deps.globalEnv(),
 			defaultEnvVars: detected?.defaultEnvVars,
-			sessionCustomEnvVars: source ? overrides.customEnvVars : undefined,
+			sessionCustomEnvVars: overrides.customEnvVars,
 			agentCustomEnvVars: providerConfig.customEnvVars as Record<string, string> | undefined,
 		});
 		const selectedRoot =
@@ -181,7 +181,7 @@ export class NativeTranslationService {
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		}
-		const customBinary = source ? overrides.customPath : undefined;
+		const customBinary = overrides.customPath;
 		const binary = customBinary || detected?.path;
 		let version = '';
 		if (binary) {
@@ -272,11 +272,15 @@ export class NativeTranslationService {
 		const checkpoint = await this.archive.checkpoint(session.id);
 		const inventory = translationSessionTabs(session);
 		const tabs =
-			request.tabId === undefined ? session.aiTabs : translationSessionTabs(session, request.tabId);
+			request.tabId === undefined
+				? session.aiTabs.filter((tab) => tab.tabProvider === undefined)
+				: translationSessionTabs(session, request.tabId);
 		const deferredTabs =
 			request.tabId === undefined
 				? inventory
-						.filter((tab) => !tabs.some((open) => open.id === tab.id))
+						.filter(
+							(tab) => tab.tabProvider === undefined && !tabs.some((open) => open.id === tab.id)
+						)
 						.map((tab) => ({
 							id: tab.id,
 							agentSessionId: tab.agentSessionId,
@@ -318,7 +322,7 @@ export class NativeTranslationService {
 				: undefined;
 		if (pendingSource === 'ambiguous')
 			throw new Error('Multiple parked source providers; select the source before translation');
-		const sourceProvider = pendingSource ?? session.toolType;
+		const sourceProvider = pendingSource ?? resolveTabProvider(tabs[0], session);
 		const source = await this.identity(session, sourceProvider, true, checkpoint);
 		const destination = await this.identity(session, request.destination, false, checkpoint);
 		const knowledgeRoot = translationKnowledgeRoot(this.deps.userDataDir, source);
@@ -345,7 +349,7 @@ export class NativeTranslationService {
 		if (!busy && source.provider !== destination.provider) {
 			for (const tab of tabs) {
 				const sourceId =
-					sourceProvider === session.toolType
+					sourceProvider === resolveTabProvider(tab, session)
 						? tab.agentSessionId
 						: (tab.providerSessions?.[sourceProvider]?.agentSessionId ?? null);
 				const native = await this.conversation(source, tab.id, sourceId);
@@ -363,7 +367,7 @@ export class NativeTranslationService {
 				const reconciled = reconcileConversation(native, checkpoint);
 				// A parked destination with independently authored deltas is a real fork, not an overwrite warrant.
 				const parkedId =
-					destination.provider === session.toolType
+					destination.provider === resolveTabProvider(tab, session)
 						? tab.agentSessionId
 						: tab.providerSessions?.[destination.provider]?.agentSessionId;
 				if (parkedId) {
@@ -400,7 +404,7 @@ export class NativeTranslationService {
 				conversations.push({
 					tabId: tab.id,
 					nativeSessionId:
-						sourceProvider === session.toolType
+						sourceProvider === resolveTabProvider(tab, session)
 							? tab.agentSessionId
 							: (tab.providerSessions?.[sourceProvider]?.agentSessionId ?? null),
 					identity: source,
@@ -701,7 +705,7 @@ export class NativeTranslationService {
 				if (operation.plan.tabId !== undefined) {
 					const [tab] = translationSessionTabs(session, operation.plan.tabId);
 					const sourceId =
-						session.toolType === operation.plan.source.provider
+						resolveTabProvider(tab, session) === operation.plan.source.provider
 							? tab.agentSessionId
 							: tab.providerSessions?.[operation.plan.source.provider]?.agentSessionId;
 					if (sourceId !== operation.plan.tabs[0].sourceSessionId)
@@ -709,8 +713,12 @@ export class NativeTranslationService {
 				}
 				if (
 					operation.plan.deferredTabs !== undefined &&
-					canonicalJson(session.aiTabs.map((tab) => tab.id).sort()) !==
-						canonicalJson(operation.plan.tabs.map((tab) => tab.tabId).sort())
+					canonicalJson(
+						session.aiTabs
+							.filter((tab) => tab.tabProvider === undefined)
+							.map((tab) => tab.id)
+							.sort()
+					) !== canonicalJson(operation.plan.tabs.map((tab) => tab.tabId).sort())
 				)
 					throw new Error('Open tabs changed since preflight');
 				if (this.deps.isBusy(session)) throw new TranslationSourceBusyError();

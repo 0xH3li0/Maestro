@@ -1342,6 +1342,43 @@ describe('agentStore', () => {
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
+		it('drains a captured provider slot without reselecting a pinned tab', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customPath: '/bin/claude',
+			});
+			const tab = session.aiTabs[0];
+			tab.tabProvider = 'codex';
+			tab.agentSessionId = 'codex-live';
+			tab.providerSessions = { 'claude-code': { agentSessionId: 'claude-parked' } };
+			useSessionStore.setState({ sessions: [session] });
+			const item = createQueuedItem({
+				tabId: tab.id,
+				turnSettings: {
+					provider: 'claude-code',
+					model: 'opus',
+					effort: 'high',
+					runOn: { type: 'provider' },
+				},
+			});
+			await useAgentStore.getState().processQueuedItem(session.id, item, defaultDeps);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'claude-code',
+					agentSessionId: 'claude-parked',
+					sessionCustomPath: '/bin/claude',
+					sessionCustomModel: 'opus',
+					runOnOverride: { type: 'provider' },
+				})
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+				tabProvider: 'codex',
+				agentSessionId: 'codex-live',
+				turnProvider: 'claude-code',
+			});
+		});
+
 		it('spawns agent with queued message text', async () => {
 			const session = createMockSession({
 				id: 'session-1',

@@ -1,3 +1,8 @@
+import {
+	projectTabProvider,
+	type ProviderSwitchAgent,
+	type ProviderSwitchTab,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -255,6 +260,9 @@ async function handleProcessSpawnImpl(
 	const launchAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{
 			id?: string;
+			toolType?: import('../../../../shared/types').ToolType;
+			aiTabs?: Array<ProviderSwitchTab & { id: string }>;
+			providerOverrides?: ProviderSwitchAgent['providerOverrides'];
 			gatewayUrl?: string;
 			runOn?: unknown;
 			// The three sources of its peer roster (see the consult chain below).
@@ -263,7 +271,18 @@ async function handleProcessSpawnImpl(
 			worktreePeerAccess?: PeerAccess;
 		}>
 	).find((s) => s?.id === launchAgentId);
-	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, launchAgent?.runOn);
+	const launchTabId = config.sessionId.startsWith(`${launchAgentId}-ai-`)
+		? config.sessionId.slice(`${launchAgentId}-ai-`.length)
+		: undefined;
+	const launchTab = launchAgent?.aiTabs?.find((tab) => tab.id === launchTabId);
+	const providerAgent = launchAgent?.toolType
+		? projectTabProvider(
+				launchAgent as typeof launchAgent & ProviderSwitchAgent,
+				launchTab,
+				config.toolType as import('../../../../shared/types').ToolType
+			).agent
+		: launchAgent;
+	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, providerAgent?.runOn);
 
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
@@ -374,7 +393,7 @@ async function handleProcessSpawnImpl(
 	// traffic direct with nothing to show for it. Every surface that edits a
 	// gateway flushes the agent to this store before reporting success.
 	const gatewayAgentId = launchAgentId;
-	const gatewayAgent = launchAgent;
+	const gatewayAgent = providerAgent;
 
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	// What the agent's Run on target did to this launch, when it has one.

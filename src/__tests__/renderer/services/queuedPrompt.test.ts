@@ -214,7 +214,7 @@ describe('enqueuePromptForTab', () => {
 
 		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'tidy up' });
 
-		expect(item!.turnSettings).toEqual({
+		expect(item!.turnSettings).toMatchObject({
 			provider: 'claude-code',
 			model: 'auto',
 			effort: undefined,
@@ -464,4 +464,20 @@ describe('sendQueuedItemNow', () => {
 		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(true);
 		await Promise.resolve();
 	});
+});
+
+it('preserves a submitted provider capture across asynchronous queueing', () => {
+	seed({ customModel: 'opus' });
+	const settings = {
+		provider: 'codex' as const,
+		model: 'gpt-frozen',
+		runOn: { type: 'provider' as const },
+	};
+	const item = enqueuePromptForTab({
+		sessionId: 'session-1',
+		tabId: 'b',
+		text: 'keep this capture',
+		turnSettings: settings,
+	});
+	expect(item?.turnSettings).toBe(settings);
 });

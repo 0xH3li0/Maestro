@@ -86,6 +86,7 @@ describe('codifyTurnSettings', () => {
 		const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'low' });
 
 		expect(codifyTurnSettings(tab, session)).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: 'opus',
 			turnEffort: 'xhigh',
@@ -96,6 +97,7 @@ describe('codifyTurnSettings', () => {
 		const session = makeSession('codex', { customModel: 'gpt-5', customEffort: 'medium' });
 
 		expect(codifyTurnSettings(makeTab(), session)).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'codex',
 			turnModel: 'gpt-5',
 			turnEffort: 'medium',
@@ -106,6 +108,7 @@ describe('codifyTurnSettings', () => {
 		// Undefined is meaningful: consumers render no pill rather than labeling
 		// the turn with a model name nobody chose.
 		expect(codifyTurnSettings(makeTab(), makeSession('claude-code'))).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: undefined,
 			turnEffort: undefined,
@@ -119,6 +122,8 @@ describe('captureQueuedTurnSettings', () => {
 		const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'low' });
 
 		expect(captureQueuedTurnSettings(tab, session)).toEqual({
+			runOn: { type: 'provider' },
+			routing: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			provider: 'claude-code',
 			model: 'opus',
 			effort: 'xhigh',
@@ -131,7 +136,13 @@ describe('captureQueuedTurnSettings', () => {
 		// values and the item inherits a model the user picked afterwards.
 		const captured = captureQueuedTurnSettings(makeTab(), makeSession('codex'));
 
-		expect(captured).toEqual({ provider: 'codex', model: undefined, effort: undefined });
+		expect(captured).toEqual({
+			provider: 'codex',
+			model: undefined,
+			effort: undefined,
+			runOn: { type: 'provider' },
+			routing: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
+		});
 	});
 });
 
@@ -154,6 +165,7 @@ describe('codifyQueuedTurnSettings', () => {
 			customEffort: 'high',
 		});
 		expect(codifyQueuedTurnSettings(item, undefined, session)).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'codex',
 			turnModel: 'gpt-6',
 			turnEffort: 'high',
@@ -167,6 +179,7 @@ describe('codifyQueuedTurnSettings', () => {
 		const session = makeSession('claude-code');
 
 		expect(codifyQueuedTurnSettings(item, tab, session)).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: 'haiku',
 			turnEffort: 'low',
@@ -178,6 +191,7 @@ describe('codifyQueuedTurnSettings', () => {
 		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
 
 		expect(codifyQueuedTurnSettings(item, tab, makeSession('claude-code'))).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: undefined,
 			turnEffort: undefined,
@@ -188,6 +202,7 @@ describe('codifyQueuedTurnSettings', () => {
 		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
 
 		expect(codifyQueuedTurnSettings({}, tab, makeSession('claude-code'))).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: 'opus',
 			turnEffort: 'xhigh',
@@ -211,6 +226,7 @@ describe('codifyQueuedTurnSettings', () => {
 		const tab = makeTab({ customModel: 'sonnet', customEffort: 'medium' });
 
 		expect(codifyQueuedTurnSettings(edited, tab, makeSession('claude-code'))).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: 'opus',
 			turnEffort: 'xhigh',
@@ -224,6 +240,7 @@ describe('codifyQueuedTurnSettings', () => {
 		const tab = makeTab({ customModel: 'sonnet', customEffort: 'medium' });
 
 		expect(codifyQueuedTurnSettings(cleared, tab, makeSession('claude-code'))).toEqual({
+			turnRunOnTarget: { type: 'provider' },
 			turnProvider: 'claude-code',
 			turnModel: undefined,
 			turnEffort: 'xhigh',
@@ -406,11 +423,13 @@ describe('a turn sent on the Auto model', () => {
 	describe('codifyTurnSettings: the turn takes the tab before the router answers', () => {
 		it('never freezes the word auto as the model, and marks the turn pending', () => {
 			expect(codifyTurnSettings(makeTab(), AUTO)).toEqual({
+				turnRunOnTarget: { type: 'provider' },
 				turnProvider: 'claude-code',
 				turnModel: undefined,
 				turnEffort: 'high',
 				turnRunOn: undefined,
 				turnAuto: { status: 'pending' },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 		});
 
@@ -457,6 +476,7 @@ describe('a turn sent on the Auto model', () => {
 			expect(codifyTurnSettings(liveTab(COLD), AUTO)).toMatchObject({
 				turnModel: undefined,
 				turnAuto: { status: 'pending' },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 			expect(codifyTurnSettings(liveTab(COLD), AUTO).turnAuto?.hold).toBeUndefined();
 		});
@@ -470,11 +490,13 @@ describe('a turn sent on the Auto model', () => {
 
 		it('with the answer in hand the stamp is final at once', () => {
 			expect(codifyTurnSettings(makeTab(), AUTO, route('medium', 'low'))).toEqual({
+				turnRunOnTarget: { type: 'provider' },
 				turnProvider: 'claude-code',
 				turnModel: 'sonnet',
 				turnEffort: 'low',
 				turnRunOn: undefined,
 				turnAuto: { status: 'routed', route: route('medium', 'low') },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 		});
 	});
@@ -570,6 +592,7 @@ describe('a turn sent on the Auto model', () => {
 				turnModel: 'sonnet',
 				turnEffort: 'low',
 				turnAuto: { status: 'routed', route: route('medium', 'low') },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 			expect(autoTurnLaunch(tab)).toEqual({
 				model: 'sonnet',
@@ -586,11 +609,15 @@ describe('a turn sent on the Auto model', () => {
 	describe('a queued item', () => {
 		it('keeps the word, and the answer when the caller has one', () => {
 			expect(captureQueuedTurnSettings(makeTab(), AUTO)).toEqual({
+				runOn: { type: 'provider' },
+				routing: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 				provider: 'claude-code',
 				model: 'auto',
 				effort: 'high',
 			});
 			expect(captureQueuedTurnSettings(makeTab(), AUTO, route('low', 'low'))).toEqual({
+				runOn: { type: 'provider' },
+				routing: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 				provider: 'claude-code',
 				model: 'auto',
 				effort: 'high',
@@ -601,6 +628,8 @@ describe('a turn sent on the Auto model', () => {
 		it('carries no answer on a named model', () => {
 			const session = makeSession('claude-code', { customModel: 'opus' });
 			expect(captureQueuedTurnSettings(makeTab(), session, route('low', 'low'))).toEqual({
+				runOn: { type: 'provider' },
+				routing: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 				provider: 'claude-code',
 				model: 'opus',
 				effort: undefined,
@@ -614,11 +643,13 @@ describe('a turn sent on the Auto model', () => {
 			// The agent has since moved to a named model. The item is still Auto.
 			const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'max' });
 			expect(codifyQueuedTurnSettings(item, makeTab(), session)).toEqual({
+				turnRunOnTarget: { type: 'provider' },
 				turnProvider: 'claude-code',
 				turnModel: 'opus',
 				turnEffort: 'high',
 				turnRunOn: undefined,
 				turnAuto: { status: 'routed', route: route('high', 'medium') },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 		});
 
@@ -638,6 +669,7 @@ describe('a turn sent on the Auto model', () => {
 				turnModel: undefined,
 				turnEffort: 'low',
 				turnAuto: { status: 'pending' },
+				turnRouting: { harnessDefaults: useSettingsStore.getState().harnessTierDefaults },
 			});
 		});
 
@@ -696,4 +728,73 @@ describe('a turn sent on the Auto model', () => {
 			expect(queuedTurnPills({ model: 'Auto' }).auto).toEqual({ status: 'pending' });
 		});
 	});
+});
+
+describe('Ensemble turn captures', () => {
+	it('freezes a tab pin and its provider defaults while the feature controls are hidden', () => {
+		const session = makeSession('claude-code', {
+			customModel: 'opus',
+			customEffort: 'max',
+			providerOverrides: { codex: { customModel: 'gpt-default', customEffort: 'high' } },
+		});
+		const tab = makeTab({ tabProvider: 'codex' });
+		expect(codifyTurnSettings(tab, session)).toMatchObject({
+			turnProvider: 'codex',
+			turnModel: 'gpt-default',
+			turnEffort: 'high',
+			turnRunOnTarget: { type: 'provider' },
+		});
+	});
+
+	it('keeps a queued provider and explicit cloud target after a selection and routing change', () => {
+		const tab = makeTab({ customModel: 'opus', runOn: { type: 'provider' } });
+		const session = makeSession('claude-code');
+		const turnSettings = captureQueuedTurnSettings(tab, session);
+		const switched = switchTabProviderFor(tab, session, 'codex');
+		const result = codifyQueuedTurnSettings({ turnSettings }, switched, {
+			...session,
+			runOn: { type: 'source', endpointId: 'new-source', model: 'new-model' },
+		});
+		expect(result).toMatchObject({
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+			turnRunOnTarget: { type: 'provider' },
+		});
+		expect(switched.tabProvider).toBe('codex');
+	});
+
+	it('does not reuse another provider cache and keeps Auto inside the pinned harness', () => {
+		const session = makeSession('claude-code', {
+			tierTargets: { high: { type: 'provider-model', model: 'opus' } },
+		});
+		const tab = makeTab({
+			tabProvider: 'codex',
+			customModel: 'auto',
+			agentSessionId: 'codex-id',
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+		});
+		expect(tabSessionLaunch(tab, session)).toBeUndefined();
+		const answer = {
+			tier: 'high',
+			effort: 'high',
+			engine: 'Embedding router',
+			calibrated: false,
+		} satisfies AutoRouteStamp;
+		const settings = codifyTurnSettings(tab, session, answer);
+		expect(settings.turnProvider).toBe('codex');
+		expect(settings.turnModel).not.toBe('opus');
+		expect(settings.turnModel).not.toBe('auto');
+	});
+});
+
+it('does not retain an Auto cache hold after native translation replaces the session', () => {
+	const session = makeSession('claude-code', { customModel: 'auto' });
+	const tab = makeTab({
+		agentSessionId: 'translated-native',
+		turnSessionId: 'original-native',
+		turnProvider: 'claude-code',
+		turnModel: 'opus',
+	});
+	expect(tabSessionLaunch(tab, session)).toBeUndefined();
 });

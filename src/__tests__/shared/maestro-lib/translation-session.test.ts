@@ -320,6 +320,7 @@ describe('one provider mapping commit', () => {
 			turnProvider: 'claude-code',
 		});
 		expect(result.aiTabs[0].providerSessions?.codex).toBeUndefined();
+		expect(result.aiTabs[0].turnSessionId).toBe('stale-codex');
 		expect(result.aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe('claude-open');
 		expect(result.executionQueue).toBe(session.executionQueue);
 		expect(result.providerTranslationQueuedOrigins).toEqual({ queued: 'claude-code' });
@@ -470,5 +471,53 @@ describe('provider-specific model routing after translation', () => {
 		expect(updated.tokenProxyMode).toBeUndefined();
 		expect(updated.backgroundRequests).toBeUndefined();
 		expect(session.gatewayUrl).toBe('http://127.0.0.1:48123/anthropic');
+	});
+});
+
+describe('Ensemble translation commits', () => {
+	it('keeps a single-tab destination live when its pin differs from the agent default', () => {
+		const pinned = {
+			id: 'tab',
+			tabProvider: 'codex' as const,
+			agentSessionId: 'stale-codex',
+			pendingTranslation: 'claude-code' as const,
+			providerSessions: { 'claude-code': { agentSessionId: 'source' } },
+		};
+		const session: TranslatableSession = { id: 'agent', toolType: 'claude-code', aiTabs: [pinned] };
+		const result = commitTranslationSession(
+			session,
+			'codex',
+			'operation',
+			[
+				{
+					tabId: 'tab',
+					sourceSessionId: 'source',
+					destinationSessionId: 'fresh-codex',
+					artifacts: [],
+					lineage: {},
+				},
+			],
+			undefined,
+			'claude-code',
+			'tab'
+		);
+		expect(result.toolType).toBe('claude-code');
+		expect(result.aiTabs[0]).toMatchObject({ tabProvider: 'codex', agentSessionId: 'fresh-codex' });
+		expect(result.aiTabs[0].providerSessions?.codex).toBeUndefined();
+		expect(result.aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe('source');
+		expect(resolveHistorySession(result, 'fresh-codex').provider).toBe('codex');
+	});
+
+	it('leaves explicit pins alone during agent-wide commits, including closed tabs', () => {
+		const pinned = { id: 'pin', tabProvider: 'codex' as const, agentSessionId: 'codex-live' };
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [pinned],
+			closedTabHistory: [{ tab: pinned }],
+		};
+		const result = commitTranslationSession(session, 'codex', 'operation', []);
+		expect(result.aiTabs[0]).toBe(pinned);
+		expect(result.closedTabHistory?.[0].tab).toBe(pinned);
 	});
 });

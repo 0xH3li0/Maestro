@@ -351,6 +351,7 @@ export interface LogEntry {
 	// response. Undefined means the agent's own default was in force, and the
 	// footer pill is omitted rather than guessed at.
 	turnModel?: string;
+	turnProvider?: ToolType;
 	turnEffort?: string;
 	// Where this turn ran when the agent's Run on target was a source, copied
 	// from `AITab.turnRunOn`. Shown in place of the model pill.
@@ -479,6 +480,8 @@ export type QueuedItemType = 'message' | 'command';
  * model the user picked afterwards.
  */
 export interface QueuedTurnSettings {
+	runOn?: RunOnTarget;
+	routing?: import('../../shared/modelTiers').TierRouting;
 	provider?: ToolType;
 	/**
 	 * Model in force when the item was queued, or undefined for the default.
@@ -974,6 +977,9 @@ export interface AITab {
 	 * written into another's slot. Undefined on a tab that has never sent.
 	 */
 	turnProvider?: ToolType;
+	turnSessionId?: string;
+	turnRunOnTarget?: RunOnTarget;
+	turnRouting?: import('../../shared/modelTiers').TierRouting;
 	/**
 	 * The model and effort the most recent turn from this tab was sent with,
 	 * captured at send time next to `turnProvider` and for the same reason:

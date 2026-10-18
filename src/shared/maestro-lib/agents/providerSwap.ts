@@ -31,6 +31,7 @@
 
 import { getAgentDisplayName, getAgentPickerMeta } from '../../agentMetadata';
 import type { RunOnTarget } from '../../local-models/run-on';
+import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType, UsageStats } from '../../types';
 import { switchTabProvider } from '../translation/session';
 
@@ -67,6 +68,8 @@ export interface ProviderSwitchTab extends ProviderTabSession {
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
 	/** The provider that owns the tab's most recent turn, captured at send. */
 	turnProvider?: ToolType;
+	/** Native identity used by the captured turn; replacement invalidates its cache. */
+	turnSessionId?: string;
 }
 
 /**
@@ -242,12 +245,25 @@ export function updateProviderSlot<T extends ProviderSwitchTab>(
 	update: Partial<ProviderTabSession>
 ): T {
 	if (owningProvider === resolveTabProvider(tab, agent)) {
-		return { ...tab, ...update };
+		return {
+			...tab,
+			...update,
+			...(update.agentSessionId && tab.turnProvider === owningProvider
+				? { turnSessionId: update.agentSessionId }
+				: {}),
+		};
 	}
 
 	const existing = tab.providerSessions?.[owningProvider];
 	return {
 		...tab,
+		...(update.agentSessionId && tab.turnProvider === owningProvider
+			? { turnSessionId: update.agentSessionId }
+			: {}),
+		...(update.agentSessionId ||
+		(update.usageStats && !update.usageStats.contextWindowCorrectionOnly)
+			? { pendingTranslation: owningProvider }
+			: {}),
 		providerSessions: {
 			...(tab.providerSessions ?? {}),
 			[owningProvider]: {
@@ -284,6 +300,56 @@ export function providerOverridesFor(
 ): ProviderAgentOverrides {
 	if (provider === agent.toolType) return liveProviderOverrides(agent);
 	return { ...agent.providerOverrides?.[provider] };
+}
+
+/** Launch-only view of one provider. Never persist this projection as the agent. */
+export function projectTabProvider<
+	A extends ProviderAgentOverrides & Pick<ProviderSwitchAgent, 'toolType' | 'providerOverrides'>,
+	T extends ProviderSwitchTab & { id?: string },
+>(
+	agent: A,
+	tab: T | undefined,
+	provider: ToolType = resolveTabProvider(tab, agent)
+): { agent: A; tab: T | undefined } {
+	const overrides = providerOverridesFor(
+		{ ...agent, aiTabs: undefined, executionQueue: undefined },
+		provider
+	);
+	const cleared = Object.fromEntries(PROVIDER_OVERRIDE_KEYS.map((key) => [key, undefined]));
+	const foreign = provider !== agent.toolType;
+	const projectedTab = tab
+		? { ...switchTabProvider(tab, resolveTabProvider(tab, agent), provider), tabProvider: provider }
+		: undefined;
+	const tabs = (agent as A & { aiTabs?: Array<ProviderSwitchTab & { id?: string }> }).aiTabs;
+	return {
+		agent: {
+			...agent,
+			...cleared,
+			...overrides,
+			toolType: provider,
+			...(foreign && {
+				tierTargets: undefined,
+				runOn: undefined,
+				gatewayUrl: undefined,
+				...OFF_TOKEN_PROXY_FIELDS,
+				codexTransport: undefined,
+				agentCommands: undefined,
+			}),
+			...(Array.isArray(tabs) &&
+				projectedTab && {
+					aiTabs: tabs.map((candidate) =>
+						candidate.id === projectedTab.id ? projectedTab : candidate
+					),
+				}),
+			...(tab?.runOn !== undefined && provider === resolveTabProvider(tab, agent)
+				? { runOn: tab.runOn }
+				: provider !== resolveTabProvider(tab, agent) &&
+					  tab?.providerSessions?.[provider]?.runOn !== undefined
+					? { runOn: tab.providerSessions[provider]!.runOn }
+					: {}),
+		} as A,
+		tab: projectedTab,
+	};
 }
 
 function describeClearedQueuedSettings(

@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTurnProvider } from '../../../utils/providerTabSessions';
 /**
  * useAgentExitListener - registers `window.maestro.process.onExit`
  *
@@ -280,6 +281,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession) ||
 							currentSession.orphanedThinkingTabs?.find((tab) => tab.id === tabIdFromSession)
 						: getActiveTab(currentSession);
+					const completedProvider = resolveTurnProvider(completedTab, currentSession);
+					const completed = projectTabProvider(currentSession, completedTab, completedProvider);
 					const logs = completedTab?.logs || [];
 					const lastUserLog = logs.filter((log) => log.source === 'user').pop();
 					const lastAiLog = logs
@@ -317,7 +320,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 					const summary = summarizeAnswer(lastAiLog?.text) || 'Completed successfully';
 
-					const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
+					const agentSessionId =
+						completed.tab?.agentSessionId ||
+						(completedProvider === currentSession.toolType
+							? currentSession.agentSessionId
+							: undefined);
 					// Same label the tab strip draws, via the one formatter. A hand-rolled
 					// `substring(0, 8)` agrees with it on a UUID and disagrees on a Codex
 					// thread id (`THREAD_A` vs the strip's `THR_ABC1`), so the history
@@ -334,13 +341,13 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						duration,
 						agentSessionId: agentSessionId || undefined,
 						tabName,
-						usageStats: currentSession.usageStats,
+						usageStats: completed.tab?.usageStats ?? currentSession.usageStats,
 						prompt: lastUserLog?.text,
 						response: lastAiLog?.text,
 						sessionSizeKB,
 						sessionId: actualSessionId,
 						tabId: completedTab?.id,
-						agentType: currentSession.toolType,
+						agentType: completedProvider,
 						projectPath: currentSession.cwd,
 						startTime: completedTabData?.thinkingStartTime || currentSession.thinkingStartTime,
 						isRemote: !!(
@@ -377,7 +384,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
 							projectRoot: currentSession.projectRoot,
-							agentSessionId: completedTab?.agentSessionId || currentSession.agentSessionId!,
+							agentSessionId:
+								completed.tab?.agentSessionId ||
+								(completedProvider === currentSession.toolType
+									? currentSession.agentSessionId
+									: undefined)!,
 							command: currentSession.pendingAICommandForSynopsis || 'Save to History',
 							groupName,
 							projectName,
@@ -385,18 +396,20 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							tabId: completedTab?.id,
 							lastSynopsisTime: completedTab?.lastSynopsisTime,
 							taskDuration: duration,
-							toolType: currentSession.toolType,
+							toolType: completedProvider,
 							sessionConfig: {
-								customPath: currentSession.customPath,
-								customArgs: currentSession.customArgs,
-								customEnvVars: currentSession.customEnvVars,
-								customModel: runModelOverride ?? currentSession.customModel,
-								customContextWindow: currentSession.customContextWindow,
+								customPath: completed.agent.customPath,
+								customArgs: completed.agent.customArgs,
+								customEnvVars: completed.agent.customEnvVars,
+								customModel: runModelOverride ?? completed.agent.customModel,
+								customContextWindow: completed.agent.customContextWindow,
+								runOnOverride: completedTab?.turnRunOnTarget ??
+									completed.agent.runOn ?? { type: 'provider' },
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
 								// Shared extractor guarantees the SAME complete triple - no
 								// partial/drifting forward possible.
-								...getClaudeTokenSourceFields(currentSession),
+								...getClaudeTokenSourceFields(completed.agent),
 							},
 						};
 					}

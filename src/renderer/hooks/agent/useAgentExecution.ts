@@ -146,6 +146,7 @@ export interface UseAgentExecutionReturn {
 			customModel?: string;
 			customEffort?: string;
 			customContextWindow?: number;
+			runOnOverride?: RunOnTarget;
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
 			maestroPPath?: string;
@@ -769,6 +770,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customModel?: string;
 				customEffort?: string;
 				customContextWindow?: number;
+				runOnOverride?: RunOnTarget;
 				// Claude token-source selection. The synopsis spawns under a synthetic
 				// sessionId, so the process:spawn handler can't resolve the token mode
 				// from the persisted session - forward these fields explicitly instead.
@@ -1006,6 +1008,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								? sessionConfig?.customEffort
 								: synopsisTurn.effort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
+							runOnOverride: sessionConfig?.runOnOverride,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
 							// token mode from the persisted session - it falls back to these.

@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTabProvider } from '../utils/providerTabSessions';
 /**
  * retryStore - Agent Resilience auto-retry engine (renderer).
  *
@@ -737,9 +738,9 @@ export function scheduleRetryForError(
  *
  * Text, images, and slash-command expansion are untouched: the prompt resent is
  * still the one the user typed. Only the knobs they can reach while the
- * countdown runs are re-read. The provider was always taken live (see
- * `codifyQueuedTurnSettings`), so model and effort are all that needed
- * unfreezing.
+ * countdown runs are re-read. A captured provider remains authoritative; only
+ * legacy items without a provider capture follow the effective tab. Model and effort are refreshed
+ * inside that provider's own slot.
  *
  * What the model router answered for the prompt is not one of those knobs. A
  * turn that went out on the Auto model and is resent on it keeps its answer:
@@ -750,9 +751,18 @@ function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
 	const session = selectSessionById(entry.sessionId)(useSessionStore.getState());
 	if (!session) return item;
 	const tab = session.aiTabs?.find((t) => t.id === entry.tabId);
+	const projected = projectTabProvider(
+		session,
+		tab,
+		item.turnSettings?.provider ?? resolveTabProvider(tab, session)
+	);
 	return {
 		...item,
-		turnSettings: captureQueuedTurnSettings(tab, session, item.turnSettings?.route),
+		turnSettings: captureQueuedTurnSettings(
+			projected.tab,
+			projected.agent,
+			item.turnSettings?.route
+		),
 	};
 }
 

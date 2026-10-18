@@ -34,11 +34,12 @@ import {
 import type { TierRouting } from '../../shared/modelTiers';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
-	switchAgentProvider,
-	switchTabProvider,
+	projectTabProvider,
+	resolveTabProvider,
 } from '../../shared/maestro-lib/agents/providerSwap';
 
 export {
+	projectTabProvider,
 	providerOverridesFor,
 	resolveTabProvider,
 	resolveTurnProvider,
@@ -51,7 +52,15 @@ export {
 /** The tab fields a send freezes: who owns the turn and what it runs under. */
 export type CodifiedTurn = Pick<
 	AITab,
-	'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn' | 'turnRunOnSource' | 'turnAuto'
+	| 'turnProvider'
+	| 'turnModel'
+	| 'turnEffort'
+	| 'turnRunOn'
+	| 'turnRunOnSource'
+	| 'turnAuto'
+	| 'turnRunOnTarget'
+	| 'turnRouting'
+	| 'turnSessionId'
 >;
 
 /**
@@ -86,14 +95,18 @@ export function codifyTurnSettings(
 	session: Session,
 	route?: AutoRouteStamp
 ): CodifiedTurn {
+	({ agent: session, tab } = projectTabProvider(session, tab));
 	const model = tab?.customModel ?? session.customModel;
 	const effort = tab?.customEffort ?? session.customEffort;
 	if (isAutoModel(model)) return codifyAutoTurn(tab, session, effort, route);
 	return {
 		turnProvider: session.toolType,
+		turnSessionId: tab?.agentSessionId || undefined,
 		turnModel: model,
 		turnEffort: effort,
 		...codifiedRunOn(session),
+		turnRunOnTarget: session.runOn ?? { type: 'provider' },
+		turnRouting: undefined,
 		turnAuto: undefined,
 	};
 }
@@ -114,7 +127,8 @@ export function tabSessionLaunch(
 	now: number = Date.now()
 ): AutoSessionLaunch | undefined {
 	if (!tab?.agentSessionId) return undefined;
-	if (tab.turnProvider && tab.turnProvider !== session.toolType) return undefined;
+	if (tab.turnSessionId && tab.turnSessionId !== tab.agentSessionId) return undefined;
+	if (tab.turnProvider && tab.turnProvider !== resolveTabProvider(tab, session)) return undefined;
 	const lastEntryAt = tab.logs[tab.logs.length - 1]?.timestamp;
 	const lastActiveAt = tab.state === 'busy' ? now : lastEntryAt;
 	return {
@@ -147,6 +161,8 @@ function codifiedAutoTurn(
 		turnModel: turn.model,
 		turnEffort: turn.effort,
 		...codifiedRunOn({ runOn: turn.runOn ?? session.runOn }),
+		turnRunOnTarget: turn.runOn ?? session.runOn ?? { type: 'provider' },
+		turnRouting: tierRoutingOf(session),
 		turnAuto: turn.stamp,
 	};
 }
@@ -159,14 +175,15 @@ function resolveTabAutoTurn(
 	session: Session,
 	hold: AutoModelHold | undefined,
 	agentEffort: string | undefined,
-	route: AutoRouteStamp | undefined
+	route: AutoRouteStamp | undefined,
+	routing?: TierRouting
 ): AutoTurn {
 	return resolveAutoTurn({
 		toolType: session.toolType,
 		...(route ? { route } : {}),
 		...(hold ? { hold } : {}),
 		agentEffort,
-		routing: tierRoutingOf(session),
+		routing: routing ?? tierRoutingOf(session),
 	});
 }
 
@@ -175,13 +192,18 @@ function codifyAutoTurn(
 	tab: AITab | undefined,
 	session: Session,
 	agentEffort: string | undefined,
-	route: AutoRouteStamp | undefined
+	route: AutoRouteStamp | undefined,
+	routing?: TierRouting
 ): CodifiedTurn {
 	const hold = autoModelHold(session.toolType, tabSessionLaunch(tab, session), Date.now());
-	const turn = resolveTabAutoTurn(session, hold, agentEffort, route);
+	const turn = resolveTabAutoTurn(session, hold, agentEffort, route, routing);
 	// No answer yet: the fields are the no-decision resolution (what the session
 	// keeps, the agent's own effort), and the stamp says the router is still out.
-	return codifiedAutoTurn(route ? turn : { ...turn, stamp: pendingAutoTurnStamp(hold) }, session);
+	return {
+		...codifiedAutoTurn(route ? turn : { ...turn, stamp: pendingAutoTurnStamp(hold) }, session),
+		turnSessionId: tab?.agentSessionId || undefined,
+		turnRouting: routing ?? tierRoutingOf(session),
+	};
 }
 
 /**
@@ -193,8 +215,20 @@ function codifyAutoTurn(
  */
 export function settleAutoTurnOnTab(tab: AITab, session: Session, route: AutoRouteStamp): AITab {
 	if (tab.turnAuto?.status !== 'pending') return tab;
-	const turn = resolveTabAutoTurn(session, tab.turnAuto.hold, tab.turnEffort, route);
-	return { ...tab, ...codifiedAutoTurn(turn, session) };
+	session = projectTabProvider(
+		session,
+		tab,
+		tab.turnProvider ?? resolveTabProvider(tab, session)
+	).agent;
+	session = { ...session, runOn: tab.turnRunOnTarget };
+	const turn = resolveTabAutoTurn(
+		session,
+		tab.turnAuto.hold,
+		tab.turnEffort,
+		route,
+		tab.turnRouting
+	);
+	return { ...tab, ...codifiedAutoTurn(turn, session), turnRouting: tab.turnRouting };
 }
 
 /** What a turn sent on Auto launches with. */
@@ -218,7 +252,11 @@ export function autoTurnLaunch(tab: AITab | undefined): AutoTurnLaunch | null {
 	return {
 		...(tab.turnModel ? { model: tab.turnModel } : {}),
 		...(tab.turnEffort ? { effort: tab.turnEffort } : {}),
-		...(stamp.runOn ? { runOn: stamp.runOn } : {}),
+		...(tab.turnRunOnTarget
+			? { runOn: tab.turnRunOnTarget }
+			: stamp.runOn
+				? { runOn: stamp.runOn }
+				: {}),
 		...(stamp.route ? { route: stamp.route } : {}),
 	};
 }
@@ -274,6 +312,7 @@ export function captureQueuedTurnSettings(
 	session: Session,
 	route?: AutoRouteStamp
 ): QueuedTurnSettings {
+	({ agent: session, tab } = projectTabProvider(session, tab));
 	// The SELECTION in force, not a resolution of it: an item queued on Auto
 	// keeps the word, and what Auto comes to is decided when the turn takes the
 	// tab. `route` is the router's answer when the caller already has it (a
@@ -282,6 +321,8 @@ export function captureQueuedTurnSettings(
 	const effort = tab?.customEffort ?? session.customEffort;
 	return {
 		provider: session.toolType,
+		runOn: structuredClone(session.runOn ?? { type: 'provider' }),
+		routing: structuredClone(tierRoutingOf(session)),
 		model,
 		effort,
 		...(route && isAutoModel(model) ? { route } : {}),
@@ -318,20 +359,22 @@ export function queuedTurnPills(settings: QueuedTurnSettings | undefined): {
  * the bug this exists to prevent.
  *
  * Provider-scoped captures project that provider's parked state for launch.
- * Legacy items follow the live provider. The Run on label reads that provider's
- * current target when the turn spawns, not when it was queued. An item
- * queued on Auto follows the same split: the router's answer was frozen when it
- * was queued, and the tier's target is read when the turn spawns.
+ * Legacy items follow the effective tab provider. New captures freeze Run on and
+ * Auto routing inputs alongside the selection. Dispatch reads only that
+ * snapshot; cache eligibility is checked against the resumed native slot.
  */
 export function codifyQueuedTurnSettings(
 	item: Pick<QueuedItem, 'turnSettings'> & Partial<Pick<QueuedItem, 'id'>>,
 	tab: AITab | undefined,
 	session: Session
 ): CodifiedTurn {
-	if (item.turnSettings?.provider && item.turnSettings.provider !== session.toolType) {
-		if (tab) tab = switchTabProvider(tab, session.toolType, item.turnSettings.provider);
-		session = switchAgentProvider(session, item.turnSettings.provider).agent;
-	}
+	({ agent: session, tab } = projectTabProvider(
+		session,
+		tab,
+		item.turnSettings?.provider ?? resolveTabProvider(tab, session)
+	));
+	if (item.turnSettings?.runOn !== undefined)
+		session = { ...session, runOn: item.turnSettings.runOn };
 	const live = codifyTurnSettings(tab, session);
 	if (
 		!item.turnSettings ||
@@ -345,12 +388,16 @@ export function codifyQueuedTurnSettings(
 	// Queued on Auto: the item's own answer from the router when it has one
 	// (final at once), else a pending stamp the dispatch settles. Rule 1 is
 	// decided now, from the tab as it stands when the turn takes it.
-	if (isAutoModel(model)) return codifyAutoTurn(tab, session, effort, route);
+	if (isAutoModel(model))
+		return codifyAutoTurn(tab, session, effort, route, item.turnSettings.routing);
 	return {
 		turnProvider: session.toolType,
+		turnSessionId: tab?.agentSessionId || undefined,
 		turnModel: model,
 		turnEffort: effort,
 		...codifiedRunOn(session),
+		turnRunOnTarget: session.runOn ?? { type: 'provider' },
+		turnRouting: undefined,
 		turnAuto: undefined,
 	};
 }

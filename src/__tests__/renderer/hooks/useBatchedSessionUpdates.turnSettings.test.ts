@@ -125,3 +125,38 @@ describe('useBatchedSessionUpdates - turn settings stamped on agent output', () 
 		expect(entry.turnAuto).toBeUndefined();
 	});
 });
+
+it('keeps the event owner when selection changes before the batch flush', () => {
+	seed({ turnProvider: 'claude-code', turnModel: 'opus' });
+	const { result } = renderHook(() => useBatchedSessionUpdates());
+	act(() => {
+		result.current.appendLog(SESSION_ID, TAB_ID, true, 'Claude answer');
+		result.current.updateUsage(SESSION_ID, TAB_ID, {
+			inputTokens: 10,
+			outputTokens: 2,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0.1,
+			contextWindow: 200000,
+		});
+		useSessionStore.setState(({ sessions }) => ({
+			sessions: sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) => ({
+					...tab,
+					tabProvider: 'codex',
+					usageStats: undefined,
+					providerSessions: { 'claude-code': { agentSessionId: 'claude-native' } },
+				})),
+			})),
+		}));
+		result.current.flushNow();
+	});
+	const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+	expect(tab.logs[0]).toMatchObject({ turnProvider: 'claude-code', turnModel: 'opus' });
+	expect(tab.usageStats).toBeUndefined();
+	expect(tab.providerSessions?.['claude-code']?.usageStats).toMatchObject({
+		inputTokens: 10,
+		outputTokens: 2,
+	});
+});

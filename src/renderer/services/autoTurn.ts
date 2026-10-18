@@ -128,6 +128,7 @@ export async function requestTurnRoute(args: {
 /** A routing asked for a queued item, and the text it was asked about. */
 interface PendingItemRoute {
 	text: string;
+	provider?: Session['toolType'];
 	route: Promise<AutoRouteStamp>;
 }
 
@@ -171,6 +172,7 @@ export function routeQueuedAutoItem(sessionId: string, item: QueuedItem): void {
 					queued.id === item.id &&
 					queued.text?.trim() === text &&
 					queued.turnSettings &&
+					queued.turnSettings.provider === item.turnSettings?.provider &&
 					isAutoModel(queued.turnSettings.model) &&
 					!queued.turnSettings.route
 						? { ...queued, turnSettings: { ...queued.turnSettings, route: answer } }
@@ -180,7 +182,7 @@ export function routeQueuedAutoItem(sessionId: string, item: QueuedItem): void {
 			return answer;
 		}
 	);
-	const pending: PendingItemRoute = { text, route };
+	const pending: PendingItemRoute = { text, route, provider: item.turnSettings?.provider };
 	pendingItemRoutes.set(item.id, pending);
 	void route.finally(() => {
 		if (pendingItemRoutes.get(item.id) === pending) pendingItemRoutes.delete(item.id);
@@ -222,14 +224,24 @@ export async function settleAutoTurn(args: {
 	if (tab.turnAuto.status !== 'pending') return launchOrRefuse(tab);
 
 	const queued = itemId ? pendingItemRoutes.get(itemId) : undefined;
-	const route = await (queued && queued.text === prompt.trim()
+	const route = await (queued &&
+	queued.text === prompt.trim() &&
+	(!queued.provider || queued.provider === tab.turnProvider)
 		? queued.route
 		: requestTurnRoute({ sessionId, tab, prompt }));
+
+	const current = findTab(findSession(sessionId), tabId);
+	if (current && (current.turnAuto !== tab.turnAuto || current.turnProvider !== tab.turnProvider))
+		throw new Error('The pending turn changed while its model was being routed.');
 
 	// The answer took time. Settle the tab as it is NOW: `settleAutoTurnOnTab`
 	// leaves a turn that was settled or replaced in the meantime alone.
 	const settle = (candidate: AITab, owner: Session): AITab =>
-		candidate.id === tabId ? settleAutoTurnOnTab(candidate, owner, route) : candidate;
+		candidate.id === tabId &&
+		candidate.turnAuto === tab.turnAuto &&
+		candidate.turnProvider === tab.turnProvider
+			? settleAutoTurnOnTab(candidate, owner, route)
+			: candidate;
 	updateSessionWith(sessionId, (s) => ({
 		...s,
 		aiTabs: s.aiTabs.map((candidate) => settle(candidate, s)),
@@ -242,6 +254,8 @@ export async function settleAutoTurn(args: {
 	// settle the copy that was read instead.
 	const settled =
 		findTab(findSession(sessionId), tabId) ?? settleAutoTurnOnTab(tab, session, route);
+	if (settled.turnAuto?.status === 'pending')
+		throw new Error('The pending turn changed while its model was being routed.');
 	return launchOrRefuse(settled);
 }
 
@@ -255,14 +269,19 @@ export interface TurnSpawnSettings {
 /**
  * What a spawn passes for its model, effort and place: the settled Auto turn's
  * when the turn was sent on Auto, else the caller's own. `runOnOverride` is set
- * only when Auto decided the place, so every other turn keeps reading the
- * agent's own Run on target from the store.
+ * when Auto decided the place or the sender captured a target, including explicit
+ * provider mode. Legacy callers without a capture retain the stored target.
  */
 export function turnSpawnSettings(
 	auto: AutoTurnLaunch | null,
-	own: { model?: string; effort?: string }
+	own: { model?: string; effort?: string; runOn?: RunOnTarget }
 ): TurnSpawnSettings {
-	if (!auto) return { sessionCustomModel: own.model, sessionCustomEffort: own.effort };
+	if (!auto)
+		return {
+			sessionCustomModel: own.model,
+			sessionCustomEffort: own.effort,
+			...(own.runOn ? { runOnOverride: own.runOn } : {}),
+		};
 	return {
 		sessionCustomModel: auto.model,
 		sessionCustomEffort: auto.effort,

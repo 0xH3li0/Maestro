@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import {
+	pendingTranslationSource,
 	prepareTabForSend,
 	TranslationSendHeldError,
 } from '../../../shared/maestro-lib/translation/send';
@@ -180,5 +181,58 @@ describe('translate at send', () => {
 		session.aiTabs[0].providerSessions!.opencode = { agentSessionId: 'other-branch' };
 		await expect(prepareTabForSend('tab', 'codex', host)).rejects.toThrow('Multiple parked');
 		expect(host.translate).not.toHaveBeenCalled();
+	});
+});
+
+describe('Ensemble send ownership', () => {
+	it('resumes the pinned live slot even when the agent default has a parked id', async () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [
+				{
+					id: 'tab',
+					tabProvider: 'codex',
+					agentSessionId: 'codex-live',
+					providerSessions: { 'claude-code': { agentSessionId: 'claude-parked' } },
+				},
+			],
+		};
+		const translate = vi.fn();
+		expect(pendingTranslationSource(session, 'tab', 'codex')).toBeUndefined();
+		expect(
+			await prepareTabForSend('tab', 'codex', {
+				getSession: () => session,
+				translate,
+				isBusy: () => false,
+			})
+		).toBe('codex-live');
+		expect(translate).not.toHaveBeenCalled();
+	});
+
+	it('holds a busy source before its first native id without treating the conversation as empty', async () => {
+		const session: TranslatableSession = {
+			id: 'agent',
+			toolType: 'claude-code',
+			aiTabs: [
+				{
+					id: 'tab',
+					tabProvider: 'codex',
+					agentSessionId: null,
+					state: 'busy',
+					pendingTranslation: 'claude-code',
+					providerSessions: { 'claude-code': { agentSessionId: null } },
+				},
+			],
+		};
+		const translate = vi.fn();
+		await expect(
+			prepareTabForSend('tab', 'codex', {
+				getSession: () => session,
+				translate,
+				isBusy: () => true,
+			})
+		).rejects.toMatchObject({ deferred: true });
+		expect(translate).not.toHaveBeenCalled();
 	});
 });

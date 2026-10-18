@@ -207,6 +207,45 @@ describe('useInputProcessing', () => {
 		return deps;
 	};
 
+	it('launches the pinned tab harness with its model and native id', async () => {
+		const session = createMockSession({
+			customModel: 'opus',
+			providerOverrides: { codex: { customPath: '/bin/codex', customModel: 'gpt-selected' } },
+		});
+		const tab = session.aiTabs[0];
+		tab.tabProvider = 'codex';
+		tab.agentSessionId = 'codex-native';
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'codex',
+			command: 'codex',
+			path: '/bin/codex',
+			args: ['exec'],
+		} as any);
+		const { result } = renderHook(() =>
+			useInputProcessing(
+				createDeps({
+					activeSession: session,
+					inputValue: 'use this harness',
+					sessionsRef: { current: [session] },
+				})
+			)
+		);
+		await act(async () => {
+			await result.current.processInput();
+		});
+		await vi.waitFor(() =>
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'codex',
+					agentSessionId: 'codex-native',
+					sessionCustomModel: 'gpt-selected',
+					runOnOverride: { type: 'provider' },
+				})
+			)
+		);
+		expect(useSessionStore.getState().sessions[0].toolType).toBe('claude-code');
+	});
+
 	describe('hook initialization', () => {
 		it('returns processInput function', () => {
 			const deps = createDeps();
@@ -1830,7 +1869,12 @@ describe('useInputProcessing', () => {
 			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updated.executionQueue[0]).toMatchObject({
 				text: 'keep context',
-				turnSettings: { provider: 'claude-code', model: 'opus', effort: 'high' },
+				turnSettings: expect.objectContaining({
+					provider: 'claude-code',
+					model: 'opus',
+					effort: 'high',
+					runOn: { type: 'provider' },
+				}),
 			});
 		});
 
@@ -3794,7 +3838,7 @@ describe('useInputProcessing', () => {
 			expect(routeTurn()).toHaveBeenCalledTimes(1);
 			expect(routeTurn().mock.calls[0][0]).toMatchObject({ prompt: 'then rename formatDate' });
 			await vi.waitFor(() =>
-				expect(liveSession().executionQueue[0].turnSettings).toEqual({
+				expect(liveSession().executionQueue[0].turnSettings).toMatchObject({
 					provider: 'claude-code',
 					model: 'auto',
 					effort: 'high',

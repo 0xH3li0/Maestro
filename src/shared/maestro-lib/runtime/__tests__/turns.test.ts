@@ -203,6 +203,49 @@ describe('runtime turns', () => {
 	});
 
 	describe('send', () => {
+		it('holds source-target turns when this host cannot prepare the endpoint', async () => {
+			const runtime = await start([
+				seedAgent({ runOn: { type: 'source', endpointId: 'local', model: 'qwen3' } }),
+			]);
+			const result = await runtime.turns.send('a1', 't1', { text: 'stay on the source' });
+			expect(errorOf(result).message).toContain('cannot prepare a Local Models source');
+			expect(argvFiles).toHaveLength(0);
+		});
+
+		it('never sends the Auto selection as a provider model when no router is installed', async () => {
+			const runtime = await start([seedAgent({ customModel: 'auto' })]);
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'use the default' }));
+			await turn.outcome();
+			const argv = JSON.parse(fs.readFileSync(argvFiles[0], 'utf8')) as string[];
+			expect(argv).not.toContain('auto');
+		});
+
+		it('launches a pinned tab provider and records its owner without changing the default', async () => {
+			const runtime = await start([
+				seedAgent({
+					toolType: 'opencode',
+					customModel: 'wrong-default',
+					aiTabs: [
+						{ id: 't1', tabProvider: 'claude-code', agentSessionId: null, name: null, logs: [] },
+					],
+					providerOverrides: { 'claude-code': { customModel: 'sonnet' } },
+				}),
+			]);
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'use the pinned harness' }));
+			await turn.outcome();
+			expect((await transcript(runtime)).find((entry) => entry.source === 'stdout')).toMatchObject({
+				turnProvider: 'claude-code',
+				turnModel: 'sonnet',
+			});
+			expect((await tabOf(runtime)).agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+			expect(sessions().sessions[0].toolType).toBe('opencode');
+			const argv = JSON.parse(fs.readFileSync(argvFiles[0], 'utf8')) as string[];
+			expect(argv).toContain('sonnet');
+			expect(argv).not.toContain('wrong-default');
+		});
+
 		it('runs a turn on an idle agent, streams it to the tab, and ends on the outcome', async () => {
 			const runtime = await start();
 			const turn = watch(runtime);

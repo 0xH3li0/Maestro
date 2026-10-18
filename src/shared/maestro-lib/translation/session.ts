@@ -2,7 +2,7 @@ import { canonicalJson } from '../../canonicalJson';
 import { agentRunOnSupport } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
-import type { ProviderSwitchTab } from '../agents/providerSwap';
+import { resolveTabProvider, type ProviderSwitchTab } from '../agents/providerSwap';
 import type {
 	ProviderMigrationState,
 	TranslationTabMapping,
@@ -102,6 +102,8 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	const map = new Map(mappings.map((m) => [m.tabId, m]));
 	const translate = (tab: TranslationTab): TranslationTab => {
 		if (tabId !== undefined && tab.id !== tabId) return tab;
+		if (tabId === undefined && tab.tabProvider !== undefined) return tab;
+		const liveProvider = resolveTabProvider(tab, session);
 		const mapping = map.get(tab.id);
 		if (!mapping) {
 			if (session.aiTabs.some((open) => open.id === tab.id))
@@ -125,11 +127,11 @@ export function commitTranslationSession<T extends TranslatableSession>(
 		}
 		if (tabId !== undefined) {
 			const sourceId =
-				sourceProvider === session.toolType
+				sourceProvider === liveProvider
 					? tab.agentSessionId
 					: tab.providerSessions?.[sourceProvider]?.agentSessionId;
 			const destinationId =
-				destination === session.toolType
+				destination === liveProvider
 					? tab.agentSessionId
 					: tab.providerSessions?.[destination]?.agentSessionId;
 			if (sourceId !== mapping.sourceSessionId)
@@ -138,14 +140,15 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				);
 			if (destinationId === mapping.destinationSessionId)
 				return { ...tab, pendingTranslation: undefined };
-			const sourceTab = switchTabProvider(tab, session.toolType, sourceProvider);
+			const sourceTab = switchTabProvider(tab, liveProvider, sourceProvider);
 			const translated = {
 				...switchTabProvider(sourceTab, sourceProvider, destination),
 				agentSessionId: mapping.destinationSessionId,
+				turnSessionId: tab.turnSessionId ?? tab.agentSessionId ?? undefined,
 				pendingTranslation: undefined,
 			};
 			// Until a caller selects the destination, keep its new native ID parked.
-			return switchTabProvider(translated, destination, session.toolType);
+			return switchTabProvider(translated, destination, liveProvider);
 		}
 		if (
 			session.toolType === destination &&
@@ -159,6 +162,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 		return {
 			...switched,
 			agentSessionId: mapping.destinationSessionId,
+			turnSessionId: tab.turnSessionId ?? tab.agentSessionId ?? undefined,
 			pendingTranslation: undefined,
 		};
 	};
@@ -176,7 +180,15 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			previous.tabId,
 			next
 				? { ...previous, destinationSessionId: next.destinationSessionId }
-				: tabId !== undefined
+				: tabId !== undefined ||
+					  translationSessionTabs(session).some(
+							(tab) =>
+								tab.tabProvider !== undefined &&
+								(tab.agentSessionId === previous.destinationSessionId ||
+									Object.values(tab.providerSessions ?? {}).some(
+										(slot) => slot?.agentSessionId === previous.destinationSessionId
+									))
+					  )
 					? previous
 					: { ...previous, destinationSessionId: null }
 		);
@@ -325,21 +337,22 @@ export function resolveHistorySession(
 			ids.has(candidate.agentSessionId) ||
 			Object.values(candidate.providerSessions ?? {}).some((slot) => ids.has(slot?.agentSessionId))
 	);
-	if (tab?.pendingTranslation && tab.pendingTranslation !== session.toolType) {
+	const liveProvider = resolveTabProvider(tab, session);
+	if (tab?.pendingTranslation && tab.pendingTranslation !== liveProvider) {
 		const sourceId = tab.providerSessions?.[tab.pendingTranslation]?.agentSessionId;
 		if (!sourceId) throw new Error('Pending History conversation has no native source identity');
 		return {
 			provider: tab.pendingTranslation,
 			agentSessionId: sourceId,
 			providerSessions: {
-				...switchTabProvider(tab, session.toolType, tab.pendingTranslation).providerSessions,
+				...switchTabProvider(tab, liveProvider, tab.pendingTranslation).providerSessions,
 				[tab.pendingTranslation]: tab.providerSessions?.[tab.pendingTranslation],
 			},
 		};
 	}
 	if (tab?.agentSessionId)
 		return {
-			provider: session.toolType,
+			provider: liveProvider,
 			agentSessionId: tab.agentSessionId,
 			providerSessions: tab.providerSessions,
 		};

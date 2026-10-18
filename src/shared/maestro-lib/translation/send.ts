@@ -1,4 +1,5 @@
 import type { ToolType } from '../../types';
+import { resolveTabProvider } from '../agents/providerSwap';
 import { translationWarningsAccepted } from './limitations';
 import { migrationHoldsTurns, translationSessionTabs, type TranslatableSession } from './session';
 import type { TranslationReport, TranslationRequest } from './types';
@@ -12,18 +13,20 @@ export function pendingTranslationSource(
 	const [tab] = translationSessionTabs(session, tabId);
 	if (tab.pendingTranslation && tab.pendingTranslation !== destination) {
 		const sourceId =
-			tab.pendingTranslation === session.toolType
+			tab.pendingTranslation === resolveTabProvider(tab, session)
 				? tab.agentSessionId
 				: tab.providerSessions?.[tab.pendingTranslation]?.agentSessionId;
-		if (!sourceId) throw new Error('Pending translation has no native source identity');
+		if (!sourceId && tab.state !== 'busy' && !tab.awaitingSessionId)
+			throw new Error('Pending translation has no native source identity');
 		return tab.pendingTranslation;
 	}
 	const destinationId =
-		destination === session.toolType
+		destination === resolveTabProvider(tab, session)
 			? tab.agentSessionId
 			: tab.providerSessions?.[destination]?.agentSessionId;
 	if (destinationId) return undefined;
-	if (tab.agentSessionId && session.toolType !== destination) return session.toolType;
+	if (tab.agentSessionId && resolveTabProvider(tab, session) !== destination)
+		return resolveTabProvider(tab, session);
 	const sources = Object.entries(tab.providerSessions ?? {}).filter(
 		([provider, slot]) => provider !== destination && slot?.agentSessionId
 	);
@@ -75,7 +78,7 @@ export async function prepareTabForSend(
 		const current = host.getSession();
 		const [tab] = translationSessionTabs(current, tabId);
 		return (
-			(provider === current.toolType
+			(provider === resolveTabProvider(tab, current)
 				? tab.agentSessionId
 				: tab.providerSessions?.[provider]?.agentSessionId) || undefined
 		);

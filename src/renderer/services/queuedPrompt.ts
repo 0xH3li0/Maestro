@@ -20,7 +20,7 @@
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, Session } from '../types';
+import type { AITab, QueuedItem, QueuedTurnSettings, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
@@ -52,6 +52,8 @@ export interface QueuedPromptOptions {
 	consultChain?: ConsultChain;
 	/** Resolve a slash command through the command queue when this item drains. */
 	slashCommand?: boolean;
+	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
+	turnSettings?: QueuedTurnSettings;
 }
 
 /**
@@ -75,6 +77,7 @@ export function buildQueuedMessageItem({
 	images,
 	consultChain,
 	slashCommand,
+	turnSettings,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
@@ -93,7 +96,7 @@ export function buildQueuedMessageItem({
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
-		turnSettings: captureQueuedTurnSettings(tab, session),
+		turnSettings: turnSettings ?? captureQueuedTurnSettings(tab, session),
 		...(mentionPlan && {
 			crossAgentMention: true,
 			crossAgentOnly: mentionPlan.suppressLocal,
@@ -147,6 +150,8 @@ export function enqueuePromptForTab(options: {
 	images?: string[];
 	consultChain?: ConsultChain;
 	slashCommand?: boolean;
+	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
+	turnSettings?: QueuedTurnSettings;
 	expandCommands?: boolean;
 }): QueuedItem | null {
 	const { sessionId, tabId, text, images, consultChain, slashCommand, expandCommands } = options;
@@ -163,6 +168,7 @@ export function enqueuePromptForTab(options: {
 		images,
 		consultChain,
 		slashCommand,
+		turnSettings: options.turnSettings,
 	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text) : null;
 	const item: QueuedItem = command

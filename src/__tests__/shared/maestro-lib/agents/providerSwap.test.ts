@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	PROVIDER_OVERRIDE_KEYS,
+	projectTabProvider,
 	providerOverridesFor,
 	resolveTabProvider,
 	resolveTurnProvider,
@@ -790,4 +791,75 @@ describe('providerOverridesFor', () => {
 
 		expect(onCodex.providerOverrides?.['claude-code']?.customModel).toBe('opus');
 	});
+});
+
+describe('one-tab launch projection', () => {
+	it('uses the selected provider slot and overrides without changing the saved agent', () => {
+		const tab = makeTab({
+			tabProvider: 'codex',
+			agentSessionId: 'codex-native',
+			customModel: 'gpt-tab',
+			providerSessions: { 'claude-code': { agentSessionId: 'claude-native', customModel: 'opus' } },
+		});
+		const agent = {
+			...makeAgent('claude-code', {
+				aiTabs: [tab],
+				customPath: '/bin/claude',
+				customArgs: '--claude-only',
+			}),
+			gatewayUrl: 'http://default.invalid',
+			tierTargets: { high: { model: 'opus' } },
+			runOn: { type: 'provider' as const },
+			providerOverrides: {
+				codex: {
+					customPath: '/bin/codex',
+					customArgs: '--codex-only',
+					customEnvVars: { CODEX_HOME: '/accounts/codex' },
+				},
+			},
+		};
+		const selected = projectTabProvider(agent, tab);
+		expect(selected.agent).toMatchObject({
+			toolType: 'codex',
+			customPath: '/bin/codex',
+			customArgs: '--codex-only',
+			customEnvVars: { CODEX_HOME: '/accounts/codex' },
+		});
+		expect(selected.agent.gatewayUrl).toBeUndefined();
+		expect(selected.agent.tierTargets).toBeUndefined();
+		expect(selected.tab?.agentSessionId).toBe('codex-native');
+		const queued = projectTabProvider(agent, tab, 'claude-code');
+		expect(queued.tab).toMatchObject({ agentSessionId: 'claude-native', customModel: 'opus' });
+		expect(queued.agent.customPath).toBe('/bin/claude');
+		expect(agent.toolType).toBe('claude-code');
+		expect(tab.agentSessionId).toBe('codex-native');
+		expect(agent.aiTabs[0]).toBe(tab);
+	});
+
+	it('does not inherit the agent default model, environment or Run on into an unseen harness', () => {
+		const agent = {
+			...makeAgent('claude-code', {
+				customModel: 'opus',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/private/claude' },
+			}),
+			runOn: { type: 'source' as const, endpointId: 'local', model: 'local-model' },
+		};
+		const result = projectTabProvider(agent, makeTab({ tabProvider: 'codex' }));
+		expect(result.agent.customModel).toBeUndefined();
+		expect(result.agent.customEnvVars).toBeUndefined();
+		expect(result.agent.runOn).toBeUndefined();
+	});
+});
+
+it('marks a captured queued provider as the latest source after it runs behind another selection', () => {
+	const tab = makeTab({
+		tabProvider: 'codex',
+		agentSessionId: 'codex-live',
+		pendingTranslation: 'opencode',
+	});
+	const updated = updateProviderSlot(tab, makeAgent('claude-code'), 'claude-code', {
+		agentSessionId: 'fresh-claude',
+	});
+	expect(updated.pendingTranslation).toBe('claude-code');
+	expect(updated.agentSessionId).toBe('codex-live');
 });

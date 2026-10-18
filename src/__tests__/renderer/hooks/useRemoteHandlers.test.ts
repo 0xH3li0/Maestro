@@ -480,6 +480,40 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		it('resolves the requested pinned tab before provider lookup and spawn', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				customModel: 'opus',
+				providerOverrides: { codex: { customPath: '/bin/codex', customModel: 'gpt-selected' } },
+			});
+			const tab = session.aiTabs[0];
+			tab.tabProvider = 'codex';
+			tab.agentSessionId = 'codex-native';
+			useSessionStore.setState({ sessions: [session] });
+			vi.mocked(window.maestro.agents.get).mockResolvedValue({
+				id: 'codex',
+				command: 'codex',
+				args: ['exec'],
+			} as any);
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			await act(async () => {
+				await getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: session.id, tabId: tab.id, command: 'use this harness' },
+					})
+				);
+			});
+			expect(window.maestro.agents.get).toHaveBeenCalledWith('codex');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'codex',
+					agentSessionId: 'codex-native',
+					sessionCustomModel: 'gpt-selected',
+					runOnOverride: { type: 'provider' },
+				})
+			);
+		});
+
 		it('routes a pending tab through the translation queue with its settings and images', async () => {
 			const session = createMockSession({
 				inputMode: 'ai',
@@ -507,7 +541,12 @@ describe('useRemoteHandlers', () => {
 					text: 'keep context',
 					tabId: 'tab-1',
 					images: ['data:image/png;base64,eA=='],
-					turnSettings: { provider: 'claude-code', model: 'opus', effort: 'high' },
+					turnSettings: expect.objectContaining({
+						provider: 'claude-code',
+						model: 'opus',
+						effort: 'high',
+						runOn: { type: 'provider' },
+					}),
 				}),
 			]);
 			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(

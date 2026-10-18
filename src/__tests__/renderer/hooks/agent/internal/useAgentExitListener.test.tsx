@@ -656,6 +656,32 @@ describe('useAgentExitListener', () => {
 		return { deps, spawn };
 	}
 
+	it('records the completed owner when a different provider is selected at exit', async () => {
+		const { deps, spawn } = setupSynopsisRun({ sessionCustomModel: 'agent-model' });
+		const session = useSessionStore.getState().sessions[0];
+		session.aiTabs[0] = {
+			...session.aiTabs[0],
+			tabProvider: 'codex',
+			turnProvider: 'claude-code',
+			turnRunOnTarget: { type: 'source', endpointId: 'local', model: 'frozen-local' },
+			agentSessionId: 'codex-live',
+			providerSessions: { 'claude-code': { agentSessionId: 'claude-parked' } },
+		};
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(spawn).toHaveBeenCalled();
+		expect(spawn.mock.calls[0]).toContain('claude-parked');
+		expect(spawn.mock.calls[0]).toContain('claude-code');
+		expect(spawn.mock.calls[0][5].runOnOverride).toEqual({
+			type: 'source',
+			endpointId: 'local',
+			model: 'frozen-local',
+		});
+	});
+
 	it('spawns the exit-path synopsis under the run model override, not the session model', async () => {
 		const { deps, spawn } = setupSynopsisRun({
 			sessionCustomModel: 'session-sonnet',

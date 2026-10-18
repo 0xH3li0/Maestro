@@ -1,6 +1,9 @@
 import { prepareProviderTranslationForSend } from '../services/providerTranslation';
 import { TranslationSendHeldError } from '../../shared/maestro-lib/translation/send';
-import { switchAgentProvider } from '../../shared/maestro-lib/agents/providerSwap';
+import {
+	projectTabProvider,
+	resolveTabProvider,
+} from '../../shared/maestro-lib/agents/providerSwap';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
  *
@@ -439,7 +442,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return false;
 		}
 
-		const provider = item.turnSettings?.provider ?? session.toolType;
+		const provider = item.turnSettings?.provider ?? resolveTabProvider(targetTab, session);
 		const translationTabId = targetTab.id;
 		try {
 			if (!item.crossAgentOnly)
@@ -447,10 +450,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const fresh = getSession(sessionId);
 			if (!fresh) throw new Error('Agent removed before sending');
 			// Project the captured provider for launch only. Live defaults stay unchanged.
-			session = switchAgentProvider(fresh, provider).agent;
-			targetTab =
-				session.aiTabs.find((tab) => tab.id === translationTabId) ??
-				session.orphanedThinkingTabs?.find((tab) => tab.id === translationTabId);
+			const currentTab =
+				fresh.aiTabs.find((tab) => tab.id === translationTabId) ??
+				fresh.orphanedThinkingTabs?.find((tab) => tab.id === translationTabId);
+			const projected = projectTabProvider(fresh, currentTab, provider);
+			session = projected.agent;
+			targetTab = projected.tab;
 			if (!targetTab) throw new Error('Target tab removed before sending');
 		} catch (error) {
 			const deferred = error instanceof TranslationSendHeldError && error.deferred;
@@ -659,7 +664,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					...turnSpawnSettings(autoLaunch, { model: turnModel, effort: turnEffort }),
+					...turnSpawnSettings(autoLaunch, {
+						model: turnModel,
+						effort: turnEffort,
+						runOn: settings.turnRunOnTarget,
+					}),
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// A turn another agent delegated runs in the chain that agent
@@ -770,7 +779,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						...turnSpawnSettings(autoLaunch, { model: turnModel, effort: turnEffort }),
+						...turnSpawnSettings(autoLaunch, {
+							model: turnModel,
+							effort: turnEffort,
+							runOn: settings.turnRunOnTarget,
+						}),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 						...(item.consultChain ? { consultChain: item.consultChain } : {}),

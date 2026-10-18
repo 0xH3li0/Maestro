@@ -498,6 +498,40 @@ describe('firing the retry', () => {
 	// case that must NOT honor that freeze: the whole reason a user touches the
 	// model (or the agent's provider) during the countdown is to get out from
 	// behind the wall that just failed the turn.
+	it('retains the captured retry provider when another harness is selected', () => {
+		setupSession('s10', 't1', { customModel: 'opus' });
+		const session = useSessionStore.getState().sessions[0];
+		session.aiTabs[0] = {
+			...session.aiTabs[0],
+			tabProvider: 'codex',
+			agentSessionId: 'codex-native',
+			providerSessions: {
+				'claude-code': { agentSessionId: 'claude-native', customModel: 'sonnet' },
+			},
+		};
+		noteDispatch(
+			's10',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { provider: 'claude-code', model: 'opus' },
+			},
+			deps
+		);
+		scheduleRetryForError('s10', 't1', quota());
+		retryNow('s10', 't1');
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10',
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ provider: 'claude-code', model: 'sonnet' }),
+			}),
+			withCancelCheck(deps)
+		);
+	});
+
 	it('resends under the model and effort the agent carries NOW, not the frozen ones', () => {
 		setupSession('s10', 't1', { customModel: 'fable', customEffort: 'low' });
 		noteDispatch(
@@ -520,7 +554,7 @@ describe('firing the retry', () => {
 			's10',
 			expect.objectContaining({
 				text: 'hi',
-				turnSettings: { model: 'fable', effort: 'low' },
+				turnSettings: expect.objectContaining({ model: 'fable', effort: 'low' }),
 			}),
 			withCancelCheck(deps)
 		);
@@ -550,7 +584,9 @@ describe('firing the retry', () => {
 
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's10a',
-			expect.objectContaining({ turnSettings: { model: 'auto', effort: 'low', route } }),
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'auto', effort: 'low', route }),
+			}),
 			deps
 		);
 	});
@@ -576,7 +612,9 @@ describe('firing the retry', () => {
 
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's10b',
-			expect.objectContaining({ turnSettings: { model: 'opus', effort: undefined } }),
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'opus', effort: undefined }),
+			}),
 			deps
 		);
 	});
@@ -593,7 +631,9 @@ describe('firing the retry', () => {
 
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's11',
-			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'sonnet', effort: 'medium' }),
+			}),
 			withCancelCheck(deps)
 		);
 	});

@@ -63,6 +63,7 @@ export interface LogEntryRecord extends UnknownFields {
 	};
 	/** The model and effort the turn ran under; absent means the agent default. */
 	turnModel?: string;
+	turnProvider?: string;
 	turnEffort?: string;
 }
 

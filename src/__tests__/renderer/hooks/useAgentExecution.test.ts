@@ -294,7 +294,7 @@ describe('useAgentExecution', () => {
 			'resume-123',
 			'Summarize session',
 			'claude-code',
-			{ customModel: 'opus' }
+			{ customModel: 'opus', runOnOverride: { type: 'provider' } }
 		);
 
 		await waitFor(() => {
@@ -305,6 +305,7 @@ describe('useAgentExecution', () => {
 		// the expensive model the turn itself ran on.
 		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomModel).toBe('haiku');
 		expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('low');
+		expect(mockProcess.spawn.mock.calls[0][0].runOnOverride).toEqual({ type: 'provider' });
 	});
 
 	it('keeps the tab model when the cheap tier would shrink the context window', async () => {

@@ -449,3 +449,35 @@ describe('turnSpawnSettings', () => {
 		});
 	});
 });
+
+it('rejects a late router answer after a new turn takes the same tab', async () => {
+	seed();
+	let answer!: (value: RouteTurnResult) => void;
+	routeTurn().mockReturnValue(
+		new Promise((resolve) => {
+			answer = resolve;
+		})
+	);
+	const pending = settleAutoTurn({ sessionId: 'agent-1', tabId: 'tab-1', prompt: 'old turn' });
+	const owner = useSessionStore.getState().sessions[0];
+	useSessionStore.setState({
+		sessions: [
+			{
+				...owner,
+				aiTabs: owner.aiTabs.map((tab) => ({ ...tab, ...codifyTurnSettings(tab, owner) })),
+			},
+		],
+	});
+	const freshStamp = liveTab().turnAuto;
+	answer(DECISION);
+	await expect(pending).rejects.toThrow('pending turn changed');
+	expect(liveTab().turnAuto).toBe(freshStamp);
+});
+
+it('passes a captured provider Run on target for a named model', () => {
+	expect(turnSpawnSettings(null, { model: 'opus', runOn: { type: 'provider' } })).toEqual({
+		sessionCustomModel: 'opus',
+		sessionCustomEffort: undefined,
+		runOnOverride: { type: 'provider' },
+	});
+});

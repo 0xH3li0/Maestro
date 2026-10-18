@@ -28,7 +28,11 @@ import {
 } from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	codifyQueuedTurnSettings,
+	projectTabProvider,
+} from '../../utils/providerTabSessions';
 import { settleAutoTurn } from '../../services/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
@@ -218,7 +222,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			let session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
 				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
 				reportDelivery(false, 'session-not-found');
@@ -318,6 +322,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
+			const submittedTab = requestedTabId
+				? session.aiTabs.find((tab) => tab.id === requestedTabId)
+				: getActiveTab(session);
+			if (requestedTabId && !submittedTab) {
+				reportDelivery(false, `tab-not-found:${requestedTabId}`);
+				return;
+			}
+			session = projectTabProvider(session, submittedTab).agent;
+
 			// Handle AI mode for batch-mode agents.
 			//
 			// A cache MISS is not an answer. `hasCapabilityCached` reports one as
@@ -381,6 +394,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 			const targetTab = requestedTab ?? getActiveTab(session);
 			const writeTabId = targetTab?.id;
+			const submittedSettings = captureQueuedTurnSettings(targetTab, session);
 
 			// Cross-agent @mentions, resolved the way the composer does it
 			// (useInputProcessing): a remote prompt is the same message a user would
@@ -551,6 +565,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionId,
 					tabId: targetTab.id,
 					text: promptToSend,
+					turnSettings: submittedSettings,
 					images,
 					consultChain,
 				});
@@ -670,7 +685,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 													// Chat's "Working for", parallel tabs) reads the tab's own start.
 													thinkingStartTime: Date.now(),
 													logs: [...tab.logs, userLogEntry],
-													...codifyTurnSettings(tab, s),
+													...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
 												}
 											: tab
 									)
@@ -785,7 +800,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									sessionCustomEffort: autoLaunch.effort,
 									...(autoLaunch.runOn ? { runOnOverride: autoLaunch.runOn } : {}),
 								}
-							: { sessionCustomModel: session.customModel }),
+							: {
+									sessionCustomModel: submittedSettings.model,
+									sessionCustomEffort: submittedSettings.effort,
+									runOnOverride: submittedSettings.runOn,
+								}),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 						...(consultChain ? { consultChain } : {}),
