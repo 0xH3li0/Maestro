@@ -171,7 +171,7 @@ Rules for `TabWindowIntent` (`src/shared/tabWindowTypes.ts`, phase 2):
 - Confirmations run in the tab window, which hosts its own modals. The intent carries only the confirmed action.
 - Rows marked "local" need no intent: they write no `Session` field and start no process.
 - The owner-side function is what the owner's own UI reaches today. "Explicit target" means the target-threading refactor above.
-- The `kind` names are proposals.
+- The `kind` names are final as of phase 2 (`TabWindowIntentPayloads` holds each payload). The table C "navigation" row is `focusInOwner { targetTabRef }`. `UnifiedTabRef` now lives in `src/shared/unifiedTabRef.ts` (with `SingleTabRef`, `isSingleTabRef`, `isSameTabRef`); the renderer re-exports it.
 
 #### A. Composer (`InputArea` and its subcomponents)
 

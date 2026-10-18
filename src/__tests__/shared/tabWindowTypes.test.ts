@@ -1,0 +1,168 @@
+/**
+ * Tests for shared/tabWindowTypes - the wire contract between a tab window,
+ * the main-process relay, and the owner app window.
+ *
+ * The relay checks every intent and patch envelope with these guards before it
+ * forwards it. A guard that accepts a malformed message lets a tab window act
+ * on a group ref or an empty agent id; one that rejects a valid kind silently
+ * drops a user action (a Stop that never arrives).
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+	TAB_WINDOW_CHANNELS,
+	TAB_WINDOW_INTENT_KINDS,
+	isTabWindowIntent,
+	isTabWindowIntentKind,
+	isTabWindowSessionPatch,
+	type TabWindowIntent,
+	type TabWindowIntentOf,
+	type TabWindowSessionPatch,
+} from '../../shared/tabWindowTypes';
+import { isSameTabRef, isSingleTabRef } from '../../shared/unifiedTabRef';
+
+const aiRef = { type: 'ai', id: 'tab-1' } as const;
+
+describe('isSingleTabRef', () => {
+	it('accepts each single-tab kind', () => {
+		for (const type of ['ai', 'file', 'terminal', 'browser']) {
+			expect(isSingleTabRef({ type, id: 'x' })).toBe(true);
+		}
+	});
+
+	it('rejects a group ref, an unknown kind, and an empty or missing id', () => {
+		expect(isSingleTabRef({ type: 'group', id: 'g' })).toBe(false);
+		expect(isSingleTabRef({ type: 'chat', id: 'x' })).toBe(false);
+		expect(isSingleTabRef({ type: 'ai', id: '' })).toBe(false);
+		expect(isSingleTabRef({ type: 'ai' })).toBe(false);
+		expect(isSingleTabRef(null)).toBe(false);
+		expect(isSingleTabRef('ai:tab-1')).toBe(false);
+	});
+});
+
+describe('isSameTabRef', () => {
+	it('matches on both type and id', () => {
+		expect(isSameTabRef(aiRef, { type: 'ai', id: 'tab-1' })).toBe(true);
+		expect(isSameTabRef(aiRef, { type: 'file', id: 'tab-1' })).toBe(false);
+		expect(isSameTabRef(aiRef, { type: 'ai', id: 'tab-2' })).toBe(false);
+	});
+});
+
+describe('TAB_WINDOW_INTENT_KINDS', () => {
+	it('lists each kind once', () => {
+		expect(new Set(TAB_WINDOW_INTENT_KINDS).size).toBe(TAB_WINDOW_INTENT_KINDS.length);
+	});
+
+	it('covers the actions a popped AI tab must reach (TW-7)', () => {
+		for (const kind of ['send', 'interrupt', 'setDraft', 'setModel', 'setEffort', 'closeTab']) {
+			expect(TAB_WINDOW_INTENT_KINDS).toContain(kind);
+		}
+	});
+
+	it('is frozen', () => {
+		expect(Object.isFrozen(TAB_WINDOW_INTENT_KINDS)).toBe(true);
+	});
+});
+
+describe('isTabWindowIntentKind', () => {
+	it('accepts every listed kind and nothing else', () => {
+		for (const kind of TAB_WINDOW_INTENT_KINDS) expect(isTabWindowIntentKind(kind)).toBe(true);
+		expect(isTabWindowIntentKind('dropDatabase')).toBe(false);
+		expect(isTabWindowIntentKind('toString')).toBe(false);
+		expect(isTabWindowIntentKind(undefined)).toBe(false);
+	});
+});
+
+describe('isTabWindowIntent', () => {
+	it('accepts a well-formed intent', () => {
+		const intent: TabWindowIntent = {
+			kind: 'send',
+			agentId: 'agent-1',
+			tabRef: aiRef,
+			text: 'hello',
+			commandMode: 'off',
+		};
+		expect(isTabWindowIntent(intent)).toBe(true);
+	});
+
+	it('accepts an intent with no payload', () => {
+		const intent: TabWindowIntentOf<'interrupt'> = {
+			kind: 'interrupt',
+			agentId: 'agent-1',
+			tabRef: aiRef,
+		};
+		expect(isTabWindowIntent(intent)).toBe(true);
+	});
+
+	it('rejects an unknown kind', () => {
+		expect(isTabWindowIntent({ kind: 'nope', agentId: 'agent-1', tabRef: aiRef })).toBe(false);
+	});
+
+	it('rejects a missing or empty agent id', () => {
+		expect(isTabWindowIntent({ kind: 'interrupt', tabRef: aiRef })).toBe(false);
+		expect(isTabWindowIntent({ kind: 'interrupt', agentId: '', tabRef: aiRef })).toBe(false);
+	});
+
+	it('rejects a group ref or a missing tab ref', () => {
+		expect(
+			isTabWindowIntent({ kind: 'interrupt', agentId: 'a', tabRef: { type: 'group', id: 'g' } })
+		).toBe(false);
+		expect(isTabWindowIntent({ kind: 'interrupt', agentId: 'a' })).toBe(false);
+	});
+
+	it('rejects non-objects', () => {
+		expect(isTabWindowIntent(null)).toBe(false);
+		expect(isTabWindowIntent('send')).toBe(false);
+	});
+});
+
+describe('isTabWindowSessionPatch', () => {
+	it('accepts a snapshot and a delta', () => {
+		const snapshot: TabWindowSessionPatch = {
+			form: 'snapshot',
+			agentId: 'agent-1',
+			seq: 0,
+			session: { id: 'agent-1' },
+		};
+		const delta: TabWindowSessionPatch = {
+			form: 'delta',
+			agentId: 'agent-1',
+			seq: 1,
+			tabs: [{ ref: aiRef, logSplice: { start: 0, entries: [] } }],
+		};
+		expect(isTabWindowSessionPatch(snapshot)).toBe(true);
+		expect(isTabWindowSessionPatch(delta)).toBe(true);
+	});
+
+	it('rejects a snapshot without a session object', () => {
+		expect(isTabWindowSessionPatch({ form: 'snapshot', agentId: 'a', seq: 0 })).toBe(false);
+		expect(isTabWindowSessionPatch({ form: 'snapshot', agentId: 'a', seq: 0, session: null })).toBe(
+			false
+		);
+	});
+
+	it('rejects a bad sequence number', () => {
+		for (const seq of [-1, 1.5, '1', undefined]) {
+			expect(isTabWindowSessionPatch({ form: 'delta', agentId: 'a', seq })).toBe(false);
+		}
+	});
+
+	it('rejects an unknown form or a missing agent id', () => {
+		expect(isTabWindowSessionPatch({ form: 'full', agentId: 'a', seq: 0 })).toBe(false);
+		expect(isTabWindowSessionPatch({ form: 'delta', agentId: '', seq: 0 })).toBe(false);
+		expect(isTabWindowSessionPatch(null)).toBe(false);
+	});
+});
+
+describe('TAB_WINDOW_CHANNELS', () => {
+	it('uses distinct channel names', () => {
+		const names = Object.values(TAB_WINDOW_CHANNELS);
+		expect(new Set(names).size).toBe(names.length);
+	});
+
+	it('keeps the relay channels on the tabWindow: prefix and the registry verbs on tabWindows:', () => {
+		expect(TAB_WINDOW_CHANNELS.sessionPatch).toBe('tabWindow:sessionPatch');
+		expect(TAB_WINDOW_CHANNELS.intent).toBe('tabWindow:intent');
+		expect(TAB_WINDOW_CHANNELS.popOut).toBe('tabWindows:popOut');
+	});
+});
