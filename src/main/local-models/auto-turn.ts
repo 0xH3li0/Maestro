@@ -35,20 +35,29 @@ import {
 import { MODEL_ROUTING_UNATTENDED_TIMEOUT_MS } from '../../shared/local-models/model-routing-task';
 import { parseHarnessTierDefaults, type TierTargets } from '../../shared/modelTiers';
 import type { ToolType } from '../../shared/types';
+import { parseRunOnTarget } from '../../shared/local-models/run-on';
+import {
+	projectTabProvider,
+	type ProviderAgentOverrides,
+	type ProviderSwitchTab,
+} from '../../shared/maestro-lib/agents/providerSwap';
 import { getSettingsStore } from '../stores/getters';
 import { routeTurn } from './route-turn';
 
 /** The parts of a stored agent an Auto turn is resolved against. Read as data. */
-export interface AutoTurnAgent {
+export interface AutoTurnAgent extends ProviderAgentOverrides {
 	id: string;
 	toolType: ToolType;
 	customEffort?: string;
 	tierTargets?: TierTargets | null;
 	runOn?: unknown;
+	providerOverrides?: Partial<Record<ToolType, ProviderAgentOverrides>>;
 }
 
 export interface AgentAutoTurnRequest {
 	agent: AutoTurnAgent;
+	/** Explicit conversation owner; never inferred from a native session ID. */
+	tab?: ProviderSwitchTab;
 	/** What the turn was asked, as it is sent. The router judges this. */
 	prompt: string;
 	/** The provider session the turn resumes. Absent at a session start. */
@@ -76,7 +85,11 @@ function sessionKey(toolType: ToolType, providerSessionId: string): string {
  * must not launch.
  */
 export async function resolveAgentAutoTurn(request: AgentAutoTurnRequest): Promise<AutoTurn> {
-	const { agent, prompt, providerSessionId, marker, signal } = request;
+	const { prompt, marker, signal } = request;
+	const { agent, tab } = projectTabProvider(request.agent, request.tab);
+	const defaultRunOn = tab ? parseRunOnTarget(agent.runOn) : undefined;
+	if (defaultRunOn && !defaultRunOn.ok) throw new Error(defaultRunOn.error);
+	const providerSessionId = tab ? (tab.agentSessionId ?? undefined) : request.providerSessionId;
 	const route = autoTurnNeedsRoute(marker)
 		? autoRouteStamp(
 				await routeTurn(
@@ -92,11 +105,11 @@ export async function resolveAgentAutoTurn(request: AgentAutoTurnRequest): Promi
 				Date.now()
 			)
 		: undefined;
-	return resolveAutoTurn({
+	const turn = resolveAutoTurn({
 		toolType: agent.toolType,
 		...(route ? { route } : {}),
 		...(hold ? { hold } : {}),
-		agentEffort: agent.customEffort,
+		agentEffort: tab?.customEffort ?? agent.customEffort,
 		routing: {
 			tierTargets: agent.tierTargets,
 			runOn: agent.runOn,
@@ -104,6 +117,8 @@ export async function resolveAgentAutoTurn(request: AgentAutoTurnRequest): Promi
 		},
 		...(marker ? { marker } : {}),
 	});
+	// A tab result must not fall back to the caller's unprojected agent target.
+	return defaultRunOn?.ok && !turn.runOn ? { ...turn, runOn: defaultRunOn.target } : turn;
 }
 
 /**

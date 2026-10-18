@@ -125,6 +125,54 @@ describe('routeTurnViaDesktop', () => {
 });
 
 describe('resolveCliAutoTurn', () => {
+	it('rejects a malformed tab target before requesting a routing decision', async () => {
+		const route = vi.fn();
+		await expect(
+			resolveCliAutoTurn({
+				agent: { ...AGENT, runOn: 'invalid' },
+				tab: { agentSessionId: null },
+				prompt: 'p',
+				route,
+			})
+		).rejects.toThrow('Run on target');
+		expect(route).not.toHaveBeenCalled();
+	});
+
+	it('projects an explicit tab before routing and does not borrow default-provider tiers', async () => {
+		storage.readHarnessTierDefaults.mockReturnValue({
+			codex: { medium: { type: 'provider-model', model: 'gpt-5.4' } },
+		});
+		const turn = await resolveCliAutoTurn({
+			agent: { ...AGENT, tierTargets: { medium: LOCAL }, runOn: LOCAL },
+			tab: {
+				agentSessionId: 'claude-looking-id',
+				tabProvider: 'codex',
+				runOn: { type: 'provider' },
+			},
+			prompt: 'p',
+		});
+		expect(turn).toMatchObject({ model: 'gpt-5.4', tierSource: 'harness-default' });
+		expect(turn.refusal).toBeUndefined();
+	});
+
+	it('keeps no-tab routing on the agent default regardless of foreign native slots', async () => {
+		const turn = await resolveCliAutoTurn({ agent: AGENT, prompt: 'p' });
+		expect(turn.model).toBe('sonnet');
+	});
+
+	it('keeps an explicit tab Run on and effort when the router gives no decision', async () => {
+		const turn = await resolveCliAutoTurn({
+			agent: { ...AGENT, runOn: { type: 'provider' }, customEffort: 'low' },
+			tab: { agentSessionId: null, tabProvider: 'codex', runOn: LOCAL, customEffort: 'high' },
+			prompt: 'p',
+			route: async () => ({ skipped: 'timeout', detail: 'timeout' }),
+		});
+		expect(turn.effort).toBe('high');
+		expect(turn.runOn).toEqual(LOCAL);
+		expect(turn.refusal).toBeUndefined();
+		expect(turn.stamp.status).toBe('no-decision');
+	});
+
 	it('routes the prompt for the agent and launches on the tier and effort chosen', async () => {
 		const turn = await resolveCliAutoTurn({ agent: AGENT, prompt: 'rename the helper' });
 

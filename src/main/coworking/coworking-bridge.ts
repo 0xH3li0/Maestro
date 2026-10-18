@@ -41,6 +41,7 @@ import type {
 	CoworkingBridgeMethod,
 } from './coworking-types';
 import { coworkingRegistry } from './coworking-registry';
+import type { CoworkingBrowserCaller } from '../../shared/coworkingBrowser';
 import {
 	browserInteract,
 	getBrowserUrl,
@@ -85,10 +86,14 @@ async function auditedBrowserCall<T>(
 export type CoworkingSessionFromPidResolver = (pid: number) => Promise<string | null>;
 
 let resolveSessionFromPid: CoworkingSessionFromPidResolver | null = null;
+let resolveCallerFromPid: ((pid: number) => Promise<CoworkingBrowserCaller | null>) | null = null;
 
 /** Per-connection state keyed by socket. The sessionId is set on `hello` and
  *  stays put for the lifetime of the connection. */
-const connections = new WeakMap<net.Socket, { sessionId: string | null }>();
+const connections = new WeakMap<
+	net.Socket,
+	{ sessionId: string | null; caller?: CoworkingBrowserCaller }
+>();
 
 /** Env-var pair to embed in each agent's MCP-server config entry. */
 export function getBridgeEnvVar(): { name: string; value: string } {
@@ -98,10 +103,13 @@ export function getBridgeEnvVar(): { name: string; value: string } {
 /** Start the bridge. Idempotent. Must be called inside `app.whenReady`. */
 export async function startCoworkingBridge(options?: {
 	resolveSessionFromPid?: CoworkingSessionFromPidResolver;
+	resolveCallerFromPid?: (pid: number) => Promise<CoworkingBrowserCaller | null>;
 }): Promise<void> {
 	if (options?.resolveSessionFromPid !== undefined) {
 		resolveSessionFromPid = options.resolveSessionFromPid;
 	}
+	if (options?.resolveCallerFromPid !== undefined)
+		resolveCallerFromPid = options.resolveCallerFromPid;
 	if (server) return;
 
 	const socketPath = getBridgeSocketPath();
@@ -369,7 +377,23 @@ async function dispatch(
 				};
 			}
 
-			if (state) state.sessionId = bound;
+			const caller =
+				resolveCallerFromPid &&
+				typeof params.ppid === 'number' &&
+				Number.isInteger(params.ppid) &&
+				params.ppid > 0
+					? await resolveCallerFromPid(params.ppid)
+					: null;
+			if (caller && caller.sessionId !== bound) {
+				return {
+					id: req.id,
+					error: { code: -32602, message: 'session id does not match caller process' },
+				};
+			}
+			if (state) {
+				state.sessionId = bound;
+				state.caller = caller ?? undefined;
+			}
 			return { id: req.id, result: { ok: true } };
 		}
 
@@ -390,7 +414,7 @@ async function dispatch(
 			const result = await auditedBrowserCall(
 				{
 					sessionId,
-					agentType: coworkingRegistry.getAgentType(sessionId),
+					agentType: state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId),
 					tool: 'list_terminals',
 				},
 				() => listTerminals(sessionId)
@@ -405,7 +429,7 @@ async function dispatch(
 			const result = await auditedBrowserCall(
 				{
 					sessionId,
-					agentType: coworkingRegistry.getAgentType(sessionId),
+					agentType: state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId),
 					tool: 'read_terminal',
 					detail: `id=${params.id}${typeof params.lines === 'number' ? ` lines=${params.lines}` : ''}`,
 				},
@@ -414,7 +438,7 @@ async function dispatch(
 			return { id: req.id, result };
 		}
 		if (method === 'listBrowsers') {
-			const agentType = coworkingRegistry.getAgentType(sessionId);
+			const agentType = state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId);
 			const result = await auditedBrowserCall({ sessionId, agentType, tool: 'list_browsers' }, () =>
 				listBrowsers(sessionId)
 			);
@@ -426,7 +450,7 @@ async function dispatch(
 			if (typeof id !== 'string') {
 				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
 			}
-			const agentType = coworkingRegistry.getAgentType(sessionId);
+			const agentType = state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId);
 			const result = await auditedBrowserCall(
 				{ sessionId, agentType, tool: 'get_browser_url', detail: `id=${id}` },
 				() => getBrowserUrl(sessionId, { id })
@@ -477,7 +501,7 @@ async function dispatch(
 					error: { code: -32602, message: '`selector` must be a string' },
 				};
 			}
-			const agentType = coworkingRegistry.getAgentType(sessionId);
+			const agentType = state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId);
 			const result = await auditedBrowserCall(
 				{
 					sessionId,
@@ -490,8 +514,8 @@ async function dispatch(
 			return { id: req.id, result };
 		}
 		if (method === 'browserInteract') {
-			const agentType = coworkingRegistry.getAgentType(sessionId);
-			if (!coworkingRegistry.isBrowserInteractionEnabled(sessionId)) {
+			const agentType = state?.caller?.provider ?? coworkingRegistry.getAgentType(sessionId);
+			if (!coworkingRegistry.isBrowserInteractionEnabled(sessionId, state?.caller?.provider)) {
 				recordBrowserAudit({
 					ts: Date.now(),
 					sessionId,
@@ -527,7 +551,14 @@ async function dispatch(
 					opKind: op.kind,
 					detail: redactBrowserOpDetail(op),
 				},
-				() => browserInteract(sessionId, { id: typeof id === 'string' ? id : undefined, op })
+				() =>
+					state?.caller
+						? browserInteract(
+								sessionId,
+								{ id: typeof id === 'string' ? id : undefined, op },
+								{ caller: state.caller }
+							)
+						: browserInteract(sessionId, { id: typeof id === 'string' ? id : undefined, op })
 			);
 			return { id: req.id, result };
 		}
@@ -546,5 +577,8 @@ export const __testing = {
 	connections,
 	setResolveSessionFromPid(fn: CoworkingSessionFromPidResolver | null) {
 		resolveSessionFromPid = fn;
+	},
+	setResolveCallerFromPid(fn: typeof resolveCallerFromPid) {
+		resolveCallerFromPid = fn;
 	},
 };

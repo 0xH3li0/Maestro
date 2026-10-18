@@ -79,6 +79,8 @@ import { saveWindowState } from '../../window-state-persistence';
 import { getQuickChatController } from '../../quick-chat';
 import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
 import { startCoworkingBridge } from '../../coworking/coworking-bridge';
+import { resolveOwningMaestroSessionId } from '../../coworking/coworking-session-id';
+import { isValidAgentId } from '../../../shared/agentIds';
 import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
@@ -482,6 +484,20 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		try {
 			await ensureCoworkingServerScript();
 			await startCoworkingBridge({
+				resolveCallerFromPid: (pid) =>
+					resolveSessionFromPidWalk(pid, (candidate) => {
+						const proc = deps
+							.getProcessManager()
+							?.getAll()
+							.find((entry) => entry.pid === candidate && entry.toolType !== 'terminal');
+						return proc && isValidAgentId(proc.toolType)
+							? {
+									sessionId: resolveOwningMaestroSessionId(proc.sessionId),
+									processSessionId: proc.sessionId,
+									provider: proc.toolType,
+								}
+							: null;
+					}),
 				resolveSessionFromPid: (pid) =>
 					resolveSessionFromPidWalk(
 						pid,

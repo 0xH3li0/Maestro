@@ -5126,7 +5126,8 @@ interface MaestroAPI {
 			}>,
 			interactionEnabled: boolean,
 			agentType?: string,
-			confirmPolicy?: 'off' | 'dangerous' | 'all'
+			confirmPolicy?: 'off' | 'dangerous' | 'all',
+			providerPolicies?: import('../shared/coworkingBrowser').CoworkingBrowserPolicies
 		) => Promise<void>;
 		onRequestBrowserOp: (
 			callback: (
@@ -5134,7 +5135,8 @@ interface MaestroAPI {
 				sessionId: string,
 				op: BrowserOp,
 				responseChannel: string,
-				needsConfirm?: boolean
+				needsConfirm?: boolean,
+				caller?: import('../shared/coworkingBrowser').CoworkingBrowserCaller
 			) => void
 		) => () => void;
 		sendBrowserOpResponse: (

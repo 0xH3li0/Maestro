@@ -56,6 +56,45 @@ afterEach(() => {
 });
 
 describe('resolveAgentAutoTurn', () => {
+	it('rejects a malformed tab target before requesting a routing decision', async () => {
+		await expect(
+			resolveAgentAutoTurn({
+				agent: { ...AGENT, runOn: 'invalid' },
+				tab: { agentSessionId: null },
+				prompt: 'p',
+			})
+		).rejects.toThrow('Run on target');
+		expect(routeTurn).not.toHaveBeenCalled();
+	});
+
+	it('freezes an explicit tab target when no routing decision is available', async () => {
+		routeTurn.mockResolvedValue({ skipped: 'timeout', detail: 'timeout', latencyMs: 1 });
+		const turn = await resolveAgentAutoTurn({
+			agent: { ...AGENT, runOn: { type: 'provider' } },
+			tab: { agentSessionId: null, tabProvider: 'codex', runOn: LOCAL },
+			prompt: 'p',
+		});
+		expect(turn.runOn).toEqual(LOCAL);
+		expect(turn.stamp.status).toBe('no-decision');
+	});
+
+	it('uses the supplied tab harness and Run on without inferring ownership from its native ID', async () => {
+		settings.set('harnessTierDefaults', {
+			codex: { medium: { type: 'provider-model', model: 'gpt-5.4' } },
+		});
+		const turn = await resolveAgentAutoTurn({
+			agent: { ...AGENT, tierTargets: { medium: LOCAL }, runOn: LOCAL },
+			tab: {
+				agentSessionId: 'claude-looking-id',
+				tabProvider: 'codex',
+				runOn: { type: 'provider' },
+			},
+			prompt: 'p',
+		});
+		expect(turn).toMatchObject({ model: 'gpt-5.4', tierSource: 'harness-default' });
+		expect(turn.refusal).toBeUndefined();
+	});
+
 	it('asks the router about the prompt, for the agent, with an unattended turn patience', async () => {
 		const turn = await resolveAgentAutoTurn({ agent: AGENT, prompt: 'rename the helper' });
 

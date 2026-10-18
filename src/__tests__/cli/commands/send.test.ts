@@ -146,6 +146,52 @@ describe('send command', () => {
 		vi.unstubAllEnvs();
 	});
 
+	it.each([
+		{ live: false },
+		{ live: true },
+		{ live: false, nativeId: 'native-codex' },
+		{ live: true, nativeId: 'native-codex' },
+	])(
+		'keeps a no-tab send on the agent default with $live and native $nativeId',
+		async ({ live, nativeId }) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const agent = {
+				...mockAgent(),
+				activeTabId: 'foreign',
+				aiTabs: [{ id: 'foreign', tabProvider: 'codex', agentSessionId: 'native-codex' }],
+			};
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'standalone' });
+			if (live) {
+				desktop.connect.mockResolvedValue(undefined);
+				desktop.sendCommand.mockResolvedValue({
+					available: true,
+					success: true,
+					response: 'desktop',
+				});
+			}
+			await send('agent-abc', 'hello', { history: false, session: nativeId });
+			expect(detectAgent).toHaveBeenCalledWith('claude-code');
+			if (live) {
+				expect(desktop.sendCommand.mock.calls[0][0]).toMatchObject({
+					type: 'plugins_send_agent',
+					agentId: 'agent-abc-123',
+				});
+				expect(desktop.sendCommand.mock.calls[0][0]).not.toHaveProperty('tabId');
+				expect(spawnAgent).not.toHaveBeenCalled();
+			} else {
+				expect(spawnAgent).toHaveBeenCalledWith(
+					'claude-code',
+					agent.cwd,
+					'hello',
+					nativeId,
+					expect.any(Object)
+				);
+			}
+		}
+	);
+
 	it('falls back to standalone spawning when an older desktop rejects the host verb', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent());

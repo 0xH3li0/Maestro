@@ -32,6 +32,12 @@ import {
 } from '../../shared/local-models/model-routing-task';
 import type { TierTargets } from '../../shared/modelTiers';
 import type { ToolType } from '../../shared/types';
+import { parseRunOnTarget } from '../../shared/local-models/run-on';
+import {
+	projectTabProvider,
+	type ProviderAgentOverrides,
+	type ProviderSwitchTab,
+} from '../../shared/maestro-lib/agents/providerSwap';
 import { MaestroClient, withMaestroClient } from './maestro-client';
 import { readHarnessTierDefaults } from './storage';
 
@@ -78,15 +84,18 @@ export async function routeTurnViaDesktop(
 }
 
 /** The parts of a stored agent an Auto turn is resolved against. */
-export interface CliAutoTurnAgent {
+export interface CliAutoTurnAgent extends ProviderAgentOverrides {
 	id: string;
 	toolType: ToolType;
 	tierTargets?: TierTargets | null;
 	runOn?: unknown;
+	providerOverrides?: Partial<Record<ToolType, ProviderAgentOverrides>>;
 }
 
 export interface CliAutoTurnRequest {
 	agent: CliAutoTurnAgent;
+	/** An explicit tab, when the caller is routing an existing conversation. */
+	tab?: ProviderSwitchTab;
 	/** What the turn was asked. The router judges this. */
 	prompt: string;
 	/** The effort that stands when the router gives none: the run's own, else the agent's. */
@@ -108,10 +117,14 @@ export interface CliAutoTurnRequest {
  * cannot be used comes back as `refusal`, and the caller must not launch.
  */
 export async function resolveCliAutoTurn(request: CliAutoTurnRequest): Promise<AutoTurn> {
-	const { agent, prompt, agentEffort, marker, client } = request;
+	const { prompt, marker, client } = request;
+	const { agent, tab } = projectTabProvider(request.agent, request.tab);
+	const defaultRunOn = tab ? parseRunOnTarget(agent.runOn) : undefined;
+	if (defaultRunOn && !defaultRunOn.ok) throw new Error(defaultRunOn.error);
+	const agentEffort = request.agentEffort ?? tab?.customEffort ?? agent.customEffort;
 	const ask: TurnRouter = request.route ?? ((routing) => routeTurnViaDesktop(routing, client));
 	const route = autoTurnNeedsRoute(marker) ? await ask({ prompt, agentId: agent.id }) : undefined;
-	return resolveAutoTurn({
+	const turn = resolveAutoTurn({
 		toolType: agent.toolType,
 		...(route ? { route } : {}),
 		agentEffort,
@@ -122,4 +135,6 @@ export async function resolveCliAutoTurn(request: CliAutoTurnRequest): Promise<A
 		},
 		...(marker ? { marker } : {}),
 	});
+	// A tab result must not fall back to the caller's unprojected agent target.
+	return defaultRunOn?.ok && !turn.runOn ? { ...turn, runOn: defaultRunOn.target } : turn;
 }
