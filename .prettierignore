@@ -16,3 +16,7 @@ docs/releases.md
 # undone by the next `npm run fonts:fetch`, breaking the format gate on a
 # routine font refresh.
 src/renderer/generated-fonts.css
+
+# Dataview test vault: tests assert on its exact bytes (line numbers, YAML
+# quoting, tab-indented lists), so formatting must never rewrite it.
+src/__tests__/fixtures/dataview-vault/
