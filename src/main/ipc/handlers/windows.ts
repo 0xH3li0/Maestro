@@ -274,6 +274,10 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 				if (!registry.get(fromWindowId) || !registry.get(toWindowId)) {
 					return { moved: false, error: 'Unknown source or destination window' };
 				}
+				// Only an app window can own an agent (Tab Windows D1).
+				if (registry.get(toWindowId)?.kind !== 'app') {
+					return { moved: false, error: 'Destination window cannot own agents' };
+				}
 				registry.moveSession(sessionId, fromWindowId, toWindowId);
 				return { moved: true };
 			}
@@ -358,7 +362,8 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		(event: Electron.IpcMainInvokeEvent, sessionId: string): { registered: boolean } => {
 			const registry = requireDependency(getWindowRegistry, 'Window registry');
 			const entry = resolveCallingWindow(event, registry);
-			if (!entry) return { registered: false };
+			// A tab window (or any feature window) never claims an agent (Tab Windows D1).
+			if (!entry || entry.kind !== 'app') return { registered: false };
 			registry.registerSession(entry.id, sessionId);
 			return { registered: true };
 		}
@@ -389,7 +394,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			{ context: LOG_CONTEXT, operation: 'setName' },
 			async (windowId: string, name: string): Promise<{ renamed: boolean }> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
-				if (!registry.get(windowId)) return { renamed: false };
+				if (registry.get(windowId)?.kind !== 'app') return { renamed: false };
 				registry.setName(windowId, name);
 				return { renamed: true };
 			}
