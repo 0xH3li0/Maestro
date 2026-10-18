@@ -64,6 +64,28 @@ export const TAB_WINDOW_CHANNELS = {
 
 export type TabWindowChannel = (typeof TAB_WINDOW_CHANNELS)[keyof typeof TAB_WINDOW_CHANNELS];
 
+/** Options of {@link TAB_WINDOW_CHANNELS.popOut}. */
+export interface TabWindowPopOutOptions {
+	/** Add the tab without raising the tab window or taking focus. */
+	background?: boolean;
+}
+
+/** Answer of {@link TAB_WINDOW_CHANNELS.popOut}. */
+export type TabWindowPopOutResult =
+	| {
+			poppedOut: true;
+			/** The agent's tab window, new or reused (TW-4). */
+			windowId: string;
+			/** True when this call opened the window. */
+			created: boolean;
+	  }
+	| { poppedOut: false; error: string };
+
+/** Answer of {@link TAB_WINDOW_CHANNELS.dock}. */
+export type TabWindowDockResult =
+	| { docked: true; windowId: string }
+	| { docked: false; error: string };
+
 // ============================================================================
 // Session patches (owner to tab window)
 // ============================================================================

@@ -69,6 +69,7 @@ import {
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
+	registerTabWindowsHandlers,
 	setupLoggerEventForwarding,
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
@@ -423,6 +424,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// cross-window badges). The registry is a module-scope instance, so pass it
 	// directly rather than through the handlers' lazy getter.
 	wireWindowRegistryBroadcast(deps.windowRegistry);
+	// Tab Windows: pop out, dock, list, and the owner <-> tab window relay.
+	registerTabWindowsHandlers({
+		getWindowRegistry: () => deps.windowRegistry,
+		getWindowManager: () => deps.windowManager,
+		sessionsStore: deps.sessionsStore,
+	});
 	// Close a secondary window as soon as its last agent moves out - an empty
 	// secondary shell can surface nothing (every agent is owned by some window),
 	// so the agent-level move flow tidies it up automatically.

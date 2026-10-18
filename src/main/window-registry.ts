@@ -324,6 +324,17 @@ export class WindowRegistry extends EventEmitter {
 		return null;
 	}
 
+	/**
+	 * The app window that owns `agentId` right now: the window holding it in
+	 * `sessionIds`, else the primary (whose catch-all shows every agent no other
+	 * window claims). Read fresh on every Tab Windows relay message, so an agent
+	 * moved with Move to Window keeps working (D7).
+	 */
+	getOwnerWindowForAgent(agentId: string): RegisteredWindow | undefined {
+		const ownerId = this.getWindowForSession(agentId);
+		return (ownerId ? this.windows.get(ownerId) : undefined) ?? this.getPrimary();
+	}
+
 	/** Replace the full set of sessions owned by a window. No-op if unknown. */
 	setSessionsForWindow(windowId: string, sessionIds: string[]): void {
 		const entry = this.windows.get(windowId);

@@ -844,6 +844,51 @@ describe('Windows IPC Handlers', () => {
 			expect(sendOf(win)).not.toHaveBeenCalled();
 		});
 
+		it('broadcasts tab-window-changed to app windows AND tab windows, with the agent id', () => {
+			const primaryWin = makeFakeWindow();
+			const tabWin = makeFakeWindow();
+			registry.create({ browserWindow: primaryWin, sessionIds: ['a'], isMain: true });
+			const tabWindowId = registry.create({
+				browserWindow: tabWin,
+				kind: 'tab',
+				agentId: 'a',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+			});
+
+			wireWindowRegistryBroadcast(registry);
+			registry.addTabToTabWindow(tabWindowId, 'a', { type: 'file', id: 'f1' });
+
+			const payload = {
+				type: 'tab-window-changed',
+				windowId: tabWindowId,
+				agentId: 'a',
+				sessionId: undefined,
+				fromWindowId: undefined,
+				toWindowId: undefined,
+			};
+			expect(sendOf(primaryWin)).toHaveBeenCalledWith('windows:sessionMoved', payload);
+			expect(sendOf(tabWin)).toHaveBeenCalledWith('windows:sessionMoved', payload);
+		});
+
+		it('keeps every other change type away from tab windows', () => {
+			const primaryWin = makeFakeWindow();
+			const tabWin = makeFakeWindow();
+			const primary = registry.create({ browserWindow: primaryWin, sessionIds: [], isMain: true });
+			registry.create({
+				browserWindow: tabWin,
+				kind: 'tab',
+				agentId: 'a',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+			});
+
+			wireWindowRegistryBroadcast(registry);
+			registry.setName(primary, 'Deploy Watch');
+			registry.setSessionsForWindow(primary, ['a']);
+
+			expect(sendOf(primaryWin)).toHaveBeenCalledTimes(2);
+			expect(sendOf(tabWin)).not.toHaveBeenCalled();
+		});
+
 		it('skips destroyed windows and destroyed webContents', () => {
 			const live = makeFakeWindow();
 			const destroyedWin = makeFakeWindow({ isDestroyed: vi.fn(() => true) });

@@ -144,11 +144,13 @@ export interface WindowInfo {
  * the fields are advisory context rather than a strict diff to apply.
  */
 export interface WindowSessionMovedPayload {
-	type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
+	type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed' | 'tab-window-changed';
 	windowId?: string;
 	sessionId?: string;
 	fromWindowId?: string;
 	toWindowId?: string;
+	/** `tab-window-changed` only: the agent whose tab window changed (Tab Windows). */
+	agentId?: string;
 }
 
 /**

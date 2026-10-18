@@ -326,6 +326,16 @@ The draft lives in the tab window while the tab is popped out (D2):
   - `close` docks every tab (`removeTabFromTabWindow`, one `tab-window-changed` each); `closed` docks again (for `destroy()`) and removes the entry. While quitting it does neither, so the final snapshot keeps the tabs for TW-10.
   - A `tab-window-changed` that leaves the window empty closes it.
 
+### IPC surface (landed, phase 2)
+
+- Logic lives in `src/main/tab-window-service.ts` (`popOutTab`, `dockTab`, `listTabWindows`, `relayTabWindowPatch`, `relayTabWindowIntent`, `isStoredAiTabHidden`). The handlers in `src/main/ipc/handlers/tab-windows.ts` (registered from `setupIpcHandlers()`) are a thin transport, and the CLI verbs of phase 7 must call the same service functions.
+- Preload: `window.maestro.tabWindows` (`createTabWindowsApi` in `src/main/preload/windows.ts`, type `TabWindowsApi` in `global.d.ts`).
+- `popOut(agentId, tabRef, { background? })` reuses the agent's window (adds the tab, shows it, raises the window with `summonAppWindow`) or opens one. With `background` the tab joins the strip, the shown tab does not change, and nothing is raised. A stored AI tab with `hidden: true` is refused (TW-14); the store can lag one debounced write, so the renderer must also not offer it.
+- `dock` removes the ref; the window manager closes an emptied window. `getState` answers only a tab window (null elsewhere).
+- Relay (`ipcRenderer.send`, fire-and-forget): a patch is accepted only from `registry.getOwnerWindowForAgent(agentId)` (the owning app window, else the primary), read fresh per message, so the old owner is refused right after a Move to Window. An intent is accepted only from that agent's own tab window and goes to the current owner. The intent's `tabRef` is NOT checked against the strip, because a draft flush can arrive after its tab docked.
+- `tab-window-changed` now rides `windows:sessionMoved` with `agentId`, to app windows AND tab windows (the only type tab windows receive). `WindowContext` ignores it (no ownership change).
+- None of these channels is on the web bridge allow-list (`bridgeDenyList.ts`), so a browser client is refused by default (TW-13). That includes `maestro-cli`, which is a bridge client: phase 7 needs its own route to the service.
+
 ### Precedent feature windows
 
 - The cadenza HUD (`ensureCadenzaHudWindow` in `src/main/app-lifecycle/cadenza-hud-window.ts`):

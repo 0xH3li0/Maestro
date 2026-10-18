@@ -632,8 +632,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
  * display when that is another display.
  */
 function placeNewTabWindow(registry: WindowRegistry, agentId: string): WindowCreationBounds {
-	const ownerId = registry.getWindowForSession(agentId);
-	const owner = (ownerId ? registry.get(ownerId) : undefined) ?? registry.getPrimary();
+	const owner = registry.getOwnerWindowForAgent(agentId);
 	const ownerBounds =
 		owner && !owner.browserWindow.isDestroyed() ? owner.browserWindow.getBounds() : undefined;
 	return resolveTabWindowPlacement({

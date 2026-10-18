@@ -123,6 +123,47 @@ describe('WindowRegistry', () => {
 		});
 	});
 
+	describe('getOwnerWindowForAgent', () => {
+		it('returns the app window that owns the agent', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			registry.create({ windowId: 'w2', sessionIds: ['s1'], browserWindow: makeWindow() });
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('w2');
+		});
+
+		it('falls back to the primary for an agent no window claims', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			expect(registry.getOwnerWindowForAgent('unclaimed')?.id).toBe('main');
+		});
+
+		it('never answers with the agent tab window', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			registry.create({
+				windowId: 'tw',
+				kind: 'tab',
+				agentId: 's1',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+				browserWindow: makeWindow(),
+			});
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('main');
+		});
+
+		it('follows a Move to Window', () => {
+			registry.create({
+				windowId: 'main',
+				isMain: true,
+				sessionIds: ['s1'],
+				browserWindow: makeWindow(),
+			});
+			registry.create({ windowId: 'w2', browserWindow: makeWindow() });
+			registry.moveSession('s1', 'main', 'w2');
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('w2');
+		});
+
+		it('returns undefined with no owner and no primary', () => {
+			expect(registry.getOwnerWindowForAgent('s1')).toBeUndefined();
+		});
+	});
+
 	describe('setSessionsForWindow', () => {
 		it('replaces the session list and emits a change', () => {
 			const listener = vi.fn();

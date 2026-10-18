@@ -17,6 +17,16 @@ import type {
 	WindowState,
 } from '../../shared/window-types';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import {
+	TAB_WINDOW_CHANNELS,
+	type TabWindowDockResult,
+	type TabWindowInfo,
+	type TabWindowIntent,
+	type TabWindowPopOutOptions,
+	type TabWindowPopOutResult,
+	type TabWindowSessionPatch,
+	type TabWindowTabRef,
+} from '../../shared/tabWindowTypes';
 
 export type { WindowBounds };
 
@@ -190,3 +200,64 @@ export function createWindowsApi() {
  * TypeScript type for the windows API.
  */
 export type WindowsApi = ReturnType<typeof createWindowsApi>;
+
+/**
+ * Creates the `window.maestro.tabWindows` API (Tab Windows), mirroring the
+ * handlers in `src/main/ipc/handlers/tab-windows.ts`. The two relay methods
+ * are fire-and-forget: main forwards a patch to the agent's tab window and an
+ * intent to the agent's CURRENT owner window, and drops either one when the
+ * sender has no right to speak for the agent.
+ */
+export function createTabWindowsApi() {
+	return {
+		/**
+		 * Pop a tab out into its agent's tab window, opening the window if the
+		 * agent has none (one per agent). The window is raised unless `background`.
+		 */
+		popOut: (
+			agentId: string,
+			tabRef: TabWindowTabRef,
+			options?: TabWindowPopOutOptions
+		): Promise<TabWindowPopOutResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.popOut, agentId, tabRef, options),
+
+		/** Return a popped tab to its owner window's strip. */
+		dock: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowDockResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.dock, agentId, tabRef),
+
+		/** Every tab window and its tabs. */
+		list: (): Promise<TabWindowInfo[]> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.list),
+
+		/** The calling tab window's own record; null in any other window. */
+		getState: (): Promise<TabWindowInfo | null> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.getState),
+
+		/** Owner window: publish a patch to the agent's tab window. */
+		sendSessionPatch: (patch: TabWindowSessionPatch): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.sessionPatch, patch);
+		},
+
+		/** Tab window: subscribe to the patches its owner publishes. */
+		onSessionPatch: (callback: (patch: TabWindowSessionPatch) => void): (() => void) => {
+			const handler = (_event: unknown, patch: TabWindowSessionPatch) => callback(patch);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.sessionPatch, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.sessionPatch, handler);
+		},
+
+		/** Tab window: ask the owner window to run an action. */
+		sendIntent: (intent: TabWindowIntent): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.intent, intent);
+		},
+
+		/** Owner window: subscribe to the intents its agents' tab windows send. */
+		onIntent: (callback: (intent: TabWindowIntent) => void): (() => void) => {
+			const handler = (_event: unknown, intent: TabWindowIntent) => callback(intent);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.intent, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.intent, handler);
+		},
+	};
+}
+
+/**
+ * TypeScript type for the tab windows API.
+ */
+export type TabWindowsApi = ReturnType<typeof createTabWindowsApi>;

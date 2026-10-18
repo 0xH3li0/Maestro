@@ -96,7 +96,7 @@ function isBridgeEvent(event: Electron.IpcMainInvokeEvent | undefined): boolean 
  * collapse would silently rewrite a desktop window's persisted state. Reads
  * answering for the primary are defensible; writes landing on it are not.
  */
-function resolveCallingWindow(
+export function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
 	registry: WindowRegistry,
 	{ allowBridge = false }: { allowBridge?: boolean } = {}
@@ -133,6 +133,11 @@ function resolveCallingWindow(
  * because cross-window badges + the window list depend on the full registry;
  * each renderer re-reads it and decides what changed for it.
  *
+ * `tab-window-changed` (a tab popped out, docked, or shown in a tab window) is
+ * forwarded on purpose, with its `agentId`: the owner window hides or shows
+ * the tab, and the tab window redraws its strip. It is the one change type
+ * that also reaches tab windows; every other type stays with app windows.
+ *
  * Returns an unsubscribe function so callers (and tests) can tear the
  * subscription down.
  */
@@ -142,7 +147,8 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 			change.type !== 'session-moved' &&
 			change.type !== 'sessions-changed' &&
 			change.type !== 'name-changed' &&
-			change.type !== 'removed'
+			change.type !== 'removed' &&
+			change.type !== 'tab-window-changed'
 		) {
 			return;
 		}
@@ -153,7 +159,12 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 			fromWindowId: change.fromWindowId,
 			toWindowId: change.toWindowId,
 		};
-		for (const entry of registry.getAppWindows()) {
+		const recipients = registry.getAppWindows();
+		if (change.type === 'tab-window-changed') {
+			payload.agentId = change.agentId;
+			recipients.push(...registry.getTabWindows());
+		}
+		for (const entry of recipients) {
 			const { browserWindow } = entry;
 			if (browserWindow.isDestroyed()) continue;
 			const { webContents } = browserWindow;
