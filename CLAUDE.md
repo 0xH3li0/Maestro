@@ -52,6 +52,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Vulnerability report, advisory, CVE, or credit     | [SECURITY-RUNBOOK.md](docs/agent-guides/SECURITY-RUNBOOK.md)     |
 | Plugin media isolation or a bounded native tool    | [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) |
 | Docs or site screenshot                            | [SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md) |
+| Dataview query, vault index, or DataviewJS sandbox | [DATAVIEW.md](docs/agent-guides/DATAVIEW.md)                     |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
