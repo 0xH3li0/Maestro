@@ -1,9 +1,10 @@
 /**
  * Tests for the main-process `VaultIndex` (src/main/dataview/vault-index.ts): the full scan over a temp copy
- * of the fixture vault, the `FullIndex` members the vendored engine reads, and source resolution.
+ * of the fixture vault, the `FullIndex` members the vendored engine reads, source resolution, the disk
+ * cache, and incremental updates from watcher batches and the remote poll.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
@@ -12,6 +13,7 @@ vi.mock('../../../main/utils/remote-fs', () => ({
 	listFilesWithStatsRemote: vi.fn(),
 	readFileRemote: vi.fn(),
 }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import { EXPRESSION } from '../../../shared/dataview';
 import type { Source } from '../../../shared/dataview';
@@ -23,9 +25,11 @@ import {
 import {
 	DATAVIEW_MAX_INDEXED_FILE_BYTES,
 	DATAVIEW_PARSE_BATCH_SIZE,
+	DATAVIEW_REMOTE_POLL_MS,
 	VaultIndex,
 	type VaultIndexChange,
 } from '../../../main/dataview/vault-index';
+import { DATAVIEW_INDEX_CACHE_VERSION } from '../../../main/dataview/vault-cache';
 
 const FIXTURE_VAULT = path.resolve(__dirname, '..', '..', 'fixtures', 'dataview-vault');
 
@@ -289,14 +293,19 @@ describe('VaultIndex scan behavior', () => {
 		delete files['B.md'];
 		files['C.md'] = 'c';
 		await index.scan();
+		// Nothing differs from the index, so the third scan is not a change at all.
+		await index.scan();
 		unsubscribe();
+		files['A.md'] = 'a, edited';
 		await index.scan();
 
 		expect(changes).toHaveLength(2);
 		expect(changes[0]).toEqual({ revision: 1, changedPaths: ['A.md', 'B.md'] });
+		// A.md is unchanged (same mtime and size), so it is neither re-parsed nor reported.
 		expect(changes[1].revision).toBe(2);
-		expect(sorted(changes[1].changedPaths)).toEqual(['A.md', 'B.md', 'C.md']);
+		expect(sorted(changes[1].changedPaths)).toEqual(['B.md', 'C.md']);
 		expect(index.revision).toBe(3);
+		expect(index.lastScan?.parsedCount).toBe(1);
 		expect(index.getPage('B.md')).toBeUndefined();
 		expect(index.links.get('B.md').size).toBe(0);
 	});
@@ -333,5 +342,256 @@ describe('VaultIndex scan behavior', () => {
 
 		await expect(index.scan()).rejects.toThrow('Directory not found');
 		expect(index.revision).toBe(0);
+	});
+});
+
+describe('VaultIndex disk cache (DV-5)', () => {
+	let cacheDir: string;
+
+	beforeEach(() => {
+		cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dataview-index-cache-'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(cacheDir, { recursive: true, force: true });
+	});
+
+	const markdownReads = (spy: { mock: { calls: unknown[][] } }) =>
+		spy.mock.calls.map(([relPath]) => relPath as string).filter((p) => p.endsWith('.md'));
+
+	it('writes the cache, then serves it on the next open without reading unchanged pages', async () => {
+		const files = { 'A.md': 'Links to [[B]]. #tag', 'B.md': 'b' };
+		const first = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
+		await first.open();
+		expect(first.cacheHit).toBe(false);
+		await first.dispose();
+		expect(fs.existsSync(first.cacheFile!)).toBe(true);
+
+		const vaultFs = memoryFs(files);
+		const readText = vi.spyOn(vaultFs, 'readText');
+		const second = new VaultIndex(vaultFs, { cacheDir, watch: false });
+		await second.open();
+
+		expect(second.cacheHit).toBe(true);
+		expect(sorted(second.pages.keys())).toEqual(['A.md', 'B.md']);
+		expect(second.inlinks('B.md')).toEqual(['A.md']);
+		expect(second.getPage('A.md')!.tags).toEqual(new Set(['#tag']));
+		expect(second.getPage('A.md')!.links.map((link) => link.path)).toEqual(['B.md']);
+		expect(second.revision).toBe(1);
+
+		// The background reconcile is the in-flight scan; it finds nothing to re-parse.
+		const stats = await second.scan();
+		expect(stats.parsedCount).toBe(0);
+		expect(second.revision).toBe(1);
+		expect(markdownReads(readText)).toEqual([]);
+		await second.dispose();
+	});
+
+	it('re-parses in the background only the pages that changed while the index was closed', async () => {
+		const files: Record<string, string> = { 'A.md': '[[B]]', 'B.md': 'b' };
+		const first = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
+		await first.open();
+		await first.dispose();
+
+		files['B.md'] = 'b grew a #tag';
+		const vaultFs = memoryFs(files);
+		const readText = vi.spyOn(vaultFs, 'readText');
+		const second = new VaultIndex(vaultFs, { cacheDir, watch: false });
+		const changes: VaultIndexChange[] = [];
+		second.onChange((change) => changes.push(change));
+		await second.open();
+		await second.scan();
+
+		expect(markdownReads(readText)).toEqual(['B.md']);
+		expect(second.lastScan!.parsedCount).toBe(1);
+		expect(second.getPage('B.md')!.tags).toEqual(new Set(['#tag']));
+		expect(changes.map((change) => change.revision)).toEqual([1, 2]);
+		expect(changes[1].changedPaths).toEqual(['B.md']);
+		await second.dispose();
+	});
+
+	it('discards a cache written by an older version and scans instead', async () => {
+		const files = { 'A.md': 'a' };
+		const first = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
+		await first.open();
+		await first.dispose();
+		const cached = JSON.parse(fs.readFileSync(first.cacheFile!, 'utf8'));
+		fs.writeFileSync(
+			first.cacheFile!,
+			JSON.stringify({ ...cached, version: DATAVIEW_INDEX_CACHE_VERSION - 1 })
+		);
+
+		const second = new VaultIndex(memoryFs(files), { cacheDir, watch: false });
+		await second.open();
+
+		expect(second.cacheHit).toBe(false);
+		expect(second.lastScan!.parsedCount).toBe(1);
+		expect(sorted(second.pages.keys())).toEqual(['A.md']);
+		await second.dispose();
+	});
+
+	it('keeps nothing on disk without a cache folder', async () => {
+		const index = new VaultIndex(memoryFs({ 'A.md': 'a' }), { watch: false });
+		await index.open();
+		expect(index.cacheFile).toBeNull();
+		await index.dispose();
+		expect(fs.readdirSync(cacheDir)).toEqual([]);
+	});
+});
+
+describe('VaultIndex incremental updates (DV-5)', () => {
+	let tempDir: string;
+	let index: VaultIndex;
+	const file = (relPath: string) => path.join(tempDir, ...relPath.split('/'));
+
+	beforeEach(async () => {
+		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dataview-vault-updates-'));
+		fs.cpSync(FIXTURE_VAULT, tempDir, { recursive: true });
+		index = new VaultIndex(createLocalVaultFs(tempDir), { onWarning: () => {}, watch: false });
+		await index.open();
+	});
+
+	afterEach(async () => {
+		await index.dispose();
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it('re-parses an edited page, bumps the revision, and reports the page', async () => {
+		const changes: VaultIndexChange[] = [];
+		index.onChange((change) => changes.push(change));
+		const review = 'meetings/2026-09-15 Review.md';
+		fs.appendFileSync(file(review), '\nAlso #meeting.\n');
+
+		await index.applyChangedPaths([review]);
+
+		expect(index.revision).toBe(2);
+		expect(changes).toHaveLength(1);
+		expect(changes[0].changedPaths).toContain(review);
+		const meeting = index.pagesForSource(source('#meeting'));
+		expect(meeting.successful && meeting.value.has(review)).toBe(true);
+	});
+
+	it('ignores a batch whose pages did not change', async () => {
+		await index.applyChangedPaths([
+			'People/Lee Outsider.md',
+			'.obsidian/app.json',
+			'node_modules/x.md',
+		]);
+		expect(index.revision).toBe(1);
+	});
+
+	it('drops a deleted page and its outlinks from the inlink index', async () => {
+		const kickoff = 'meetings/2026-09-01 Kickoff.md';
+		expect(index.inlinks('People/Pedram Amini.md')).toContain(kickoff);
+		fs.rmSync(file(kickoff));
+
+		await index.applyChangedPaths([kickoff]);
+
+		expect(index.getPage(kickoff)).toBeUndefined();
+		expect(index.prefix.pathExists(kickoff)).toBe(false);
+		expect(index.inlinks('People/Pedram Amini.md')).not.toContain(kickoff);
+	});
+
+	it('moves inlinks with a renamed page', async () => {
+		fs.renameSync(file('Notes/Standup.md'), file('Notes/Daily.md'));
+
+		await index.applyChangedPaths(['Notes/Standup.md', 'Notes/Daily.md']);
+
+		const inlinks = index.inlinks('People/Pedram Amini.md');
+		expect(inlinks).toContain('Notes/Daily.md');
+		expect(inlinks).not.toContain('Notes/Standup.md');
+		const meeting = index.pagesForSource(source('#meeting'));
+		expect(meeting.successful && meeting.value.has('Notes/Daily.md')).toBe(true);
+		expect(meeting.successful && meeting.value.has('Notes/Standup.md')).toBe(false);
+	});
+
+	// Projects/Links.md also links to itself (`[[#Links]]`), which pins the IndexMap.set workaround.
+	it('resolves links again when the file they name appears or vanishes', async () => {
+		const linkPaths = () => index.getPage('Projects/Links.md')!.links.map((link) => link.path);
+		expect(linkPaths()).toContain('Missing Note');
+		const changes: VaultIndexChange[] = [];
+		index.onChange((change) => changes.push(change));
+
+		fs.writeFileSync(file('Missing Note.md'), 'Found.');
+		await index.applyChangedPaths(['Missing Note.md']);
+
+		expect(linkPaths()).toContain('Missing Note.md');
+		expect(index.inlinks('Missing Note.md')).toEqual(['Projects/Links.md']);
+		expect(changes[0].changedPaths).toEqual(
+			expect.arrayContaining(['Missing Note.md', 'Projects/Links.md'])
+		);
+
+		fs.rmSync(file('Missing Note.md'));
+		await index.applyChangedPaths(['Missing Note.md']);
+
+		expect(linkPaths()).toContain('Missing Note');
+		expect(index.inlinks('Missing Note.md')).toEqual([]);
+	});
+
+	it('drops every page under a deleted folder', async () => {
+		fs.rmSync(file('meetings'), { recursive: true });
+
+		await index.applyChangedPaths(['meetings']);
+
+		expect([...index.pages.keys()].filter((p) => p.startsWith('meetings/'))).toEqual([]);
+		expect(index.prefix.nodeExists('meetings')).toBe(false);
+		expect(index.inlinks('People/Pedram Amini.md')).not.toContain('meetings/2026-09-15 Review.md');
+	});
+
+	it('re-reads the bookmarks when they change', async () => {
+		expect(index.starred.starred('People/Lee Outsider.md')).toBe(false);
+		fs.writeFileSync(
+			file('.obsidian/bookmarks.json'),
+			JSON.stringify({ items: [{ type: 'file', path: 'People/Lee Outsider.md', title: '' }] })
+		);
+
+		await index.applyChangedPaths(['.obsidian/bookmarks.json']);
+
+		expect(index.starred.starred('People/Lee Outsider.md')).toBe(true);
+		expect(index.revision).toBe(2);
+	});
+
+	it('picks up a change on disk through the chokidar watcher', async () => {
+		const watched = new VaultIndex(createLocalVaultFs(tempDir), { onWarning: () => {} });
+		await watched.open();
+		expect(watched.watchMode).toBe('chokidar');
+		await watched.watcherReady;
+
+		fs.writeFileSync(file('Notes/Watched.md'), 'Seen by the watcher. #meeting');
+
+		await vi.waitFor(() => expect(watched.getPage('Notes/Watched.md')).toBeDefined(), {
+			timeout: 5000,
+			interval: 50,
+		});
+		await watched.dispose();
+		expect(watched.watchMode).toBe('none');
+	});
+});
+
+describe('VaultIndex remote poll (DV-5, DV-6)', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it(`reconciles a remote root every ${DATAVIEW_REMOTE_POLL_MS / 1000} s instead of watching it`, async () => {
+		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+		const files: Record<string, string> = { 'A.md': 'a' };
+		const index = new VaultIndex(memoryFs(files, { sshRemoteId: 'remote-1' }), { watch: true });
+		await index.open();
+		expect(index.watchMode).toBe('poll');
+
+		files['A.md'] = 'a, edited #tag';
+		const scan = vi.spyOn(index, 'scan');
+		vi.advanceTimersByTime(DATAVIEW_REMOTE_POLL_MS);
+		expect(scan).toHaveBeenCalledTimes(1);
+		await scan.mock.results[0].value;
+
+		expect(index.revision).toBe(2);
+		expect(index.getPage('A.md')!.tags).toEqual(new Set(['#tag']));
+
+		await index.dispose();
+		expect(index.watchMode).toBe('none');
+		vi.advanceTimersByTime(DATAVIEW_REMOTE_POLL_MS);
+		expect(scan).toHaveBeenCalledTimes(1);
 	});
 });

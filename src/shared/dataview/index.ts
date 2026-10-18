@@ -86,11 +86,13 @@ export type { FunctionImpl } from './vendor/expression/functions';
 export { evaluateField, UNRESOLVED_LINK_HANDLER } from './evaluate';
 
 export { PageMetadata, ListItem } from './vendor/data-model/markdown';
-export { parsePage } from './page';
+export { Transferable } from './vendor/data-model/transferable';
+export { dataviewJsonReplacer, dataviewJsonReviver } from './json';
+export { parsePage, parseRawPage, finishPage } from './page';
 export type { PageInput, PageParseWarning, ParsePageOptions } from './page';
 export { extractMetadata } from './metadata';
 export type { ExtractedMetadata, MetadataWarning } from './metadata';
-export { createLinkResolver } from './resolve';
+export { createLinkResolver, linkTargetKeys, linkPathKey } from './resolve';
 export type { LinkResolver } from './resolve';
 
 export { matchingSourcePaths } from './vendor/data-index/resolver';

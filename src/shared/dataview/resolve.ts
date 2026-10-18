@@ -46,6 +46,21 @@ function lastSegment(path: string): string {
 }
 
 /**
+ * The keys under which `filePath` can be the target of a link: its lowercased last segment, with and
+ * without `.md` for a markdown file. A link can only resolve to a file whose keys contain
+ * {@link linkPathKey} of the link, so an index that adds or removes a file needs to re-resolve only the
+ * pages holding a link with one of these keys.
+ */
+export function linkTargetKeys(filePath: string): string[] {
+	return linkableNames(filePath).map((name) => lastSegment(name).toLowerCase());
+}
+
+/** The key of a link path, written or resolved; see {@link linkTargetKeys}. */
+export function linkPathKey(linkPath: string): string {
+	return lastSegment(linkPath.replace(/\\/g, '/')).toLowerCase();
+}
+
+/**
  * Order duplicate matches: the source's own folder first, then the fewest path segments, then the shortest
  * path, then lexical order, so the same vault always resolves the same way.
  */

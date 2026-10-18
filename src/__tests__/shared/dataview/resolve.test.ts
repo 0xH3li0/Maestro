@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createLinkResolver } from '../../../shared/dataview';
+import { createLinkResolver, linkPathKey, linkTargetKeys } from '../../../shared/dataview';
 
 const VAULT = [
 	'Note.md',
@@ -74,5 +74,23 @@ describe('createLinkResolver', () => {
 	it('returns null for a link that matches nothing', () => {
 		expect(resolve('Missing Note')).toBeNull();
 		expect(createLinkResolver([]).resolve('Note', 'x.md')).toBeNull();
+	});
+});
+
+describe('linkTargetKeys and linkPathKey', () => {
+	it('key a file by its last segment, with and without .md for a markdown file', () => {
+		expect(linkTargetKeys('Folder/Deep/Note.md')).toEqual(['note.md', 'note']);
+		expect(linkTargetKeys('views/sample/view.js')).toEqual(['view.js']);
+	});
+
+	it('give every link that can resolve to a file a key that file holds', () => {
+		for (const file of VAULT) {
+			const keys = linkTargetKeys(file);
+			for (const written of [file, file.replace(/\.md$/, ''), file.split('/').pop()!]) {
+				if (resolve(written) !== file) continue;
+				expect(keys).toContain(linkPathKey(written));
+			}
+		}
+		expect(linkPathKey('Folder\\Note')).toBe('note');
 	});
 });

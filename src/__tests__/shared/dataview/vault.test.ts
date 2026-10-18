@@ -24,6 +24,19 @@ describe('isMarkdownPagePath', () => {
 });
 
 describe('VaultPaths', () => {
+	it('lists every folder and clones into an independent copy', () => {
+		const paths = new VaultPaths(['a/b/Note.md'], ['empty']);
+		expect(paths.allFolders().sort()).toEqual(['a', 'a/b', 'empty']);
+
+		const copy = paths.clone();
+		copy.addFile('c/New.md');
+		copy.removeFolder('a');
+		expect(paths.allFiles()).toEqual(['a/b/Note.md']);
+		expect(paths.nodeExists('a/b')).toBe(true);
+		expect(copy.allFiles()).toEqual(['c/New.md']);
+		expect(copy.allFolders().sort()).toEqual(['c', 'empty']);
+	});
+
 	const paths = new VaultPaths(
 		[
 			'People/Pedram Amini.md',

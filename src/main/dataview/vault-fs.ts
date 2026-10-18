@@ -24,8 +24,11 @@ import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/con
  */
 export const VAULT_PRUNED_NAMES = ['.*', 'node_modules'] as const;
 
-/** Deepest folder level a local walk descends to. */
-const VAULT_MAX_DEPTH = 64;
+/** Obsidian's Bookmarks core plugin file, the source of `file.starred`: the one dot-folder file read. */
+export const VAULT_BOOKMARKS_PATH = '.obsidian/bookmarks.json';
+
+/** Deepest folder level a local walk (and the local watcher) descends to. */
+export const VAULT_MAX_DEPTH = 64;
 
 /** The stat of one markdown file, in milliseconds and bytes. */
 export interface VaultFileStat {
@@ -34,6 +37,9 @@ export interface VaultFileStat {
 	/** Creation time: `birthtime`, falling back to the change time when the filesystem has none. */
 	ctime: number;
 }
+
+/** What a single path is now: a file with its stat, or a folder. */
+export type VaultEntryStat = ({ kind: 'file' } & VaultFileStat) | { kind: 'folder' };
 
 /** Everything a full scan needs from the file system. */
 export interface VaultListing {
@@ -53,7 +59,15 @@ export interface VaultFs {
 	list(): Promise<VaultListing>;
 	/** Read a vault-relative file as UTF-8 text. Throws when it cannot be read. */
 	readText(relPath: string): Promise<string>;
+	/**
+	 * Stat one vault-relative path; null when it no longer exists. Only a local vault has it: the watcher
+	 * that needs it is local, and a remote vault is polled through `list()` instead.
+	 */
+	stat?(relPath: string): Promise<VaultEntryStat | null>;
 }
+
+/** Errors that mean the path is gone rather than that the file system is broken. */
+const GONE_CODES = new Set(['ENOENT', 'ENOTDIR']);
 
 /**
  * Whether a vault-relative path belongs in the index: no dot-prefixed segment, no `node_modules`
@@ -131,6 +145,23 @@ export function createLocalVaultFs(root: string): VaultFs {
 		},
 		readText(relPath) {
 			return fs.readFile(absolute(relPath), 'utf8');
+		},
+		async stat(relPath) {
+			let stat;
+			try {
+				stat = await fs.stat(absolute(relPath));
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code && GONE_CODES.has(code)) return null;
+				throw error;
+			}
+			if (stat.isDirectory()) return { kind: 'folder' };
+			return {
+				kind: 'file',
+				size: stat.size,
+				mtime: stat.mtimeMs,
+				ctime: creationTime(stat.birthtimeMs, stat.ctimeMs),
+			};
 		},
 	};
 }

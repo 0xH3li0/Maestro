@@ -66,6 +66,16 @@ export class VaultPaths implements Readonly<FullIndex['prefix']> {
 		return [...this.files];
 	}
 
+	/** Every folder path, in insertion order. */
+	allFolders(): string[] {
+		return [...this.folders];
+	}
+
+	/** An independent copy, for building the next file set while queries still read this one. */
+	clone(): VaultPaths {
+		return new VaultPaths(this.files, this.folders);
+	}
+
 	get fileCount(): number {
 		return this.files.size;
 	}

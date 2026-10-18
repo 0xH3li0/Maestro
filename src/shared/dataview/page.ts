@@ -50,18 +50,36 @@ export function parsePage(
 	resolver: LinkResolver,
 	options: ParsePageOptions = {}
 ): PageMetadata {
+	return finishPage(parseRawPage(input, options), resolver);
+}
+
+/**
+ * The first half of {@link parsePage}: M1 plus the vendored parser, with every link still as written. This
+ * is what the disk cache stores (as upstream's persister does), because how a link resolves depends on the
+ * other files in the vault, which can change while the file itself does not.
+ */
+export function parseRawPage(input: PageInput, options: ParsePageOptions = {}): PageMetadata {
 	const content = input.content.replace(/\r\n?/g, '\n');
 	const { metadata, warnings } = extractMetadata(content);
 	for (const warning of warnings) options.onWarning?.({ path: input.path, ...warning });
 
-	const parsed = parseVendoredPage(
+	return parseVendoredPage(
 		input.path,
 		content,
 		{ ctime: input.ctime, mtime: input.mtime, size: input.size },
 		metadata
 	);
-	return PageMetadata.canonicalize(parsed, (link: Link) => {
-		const target = resolver.resolve(link.path, input.path);
+}
+
+/**
+ * The second half of {@link parsePage}: resolve every link of a raw page through M3, as upstream's `finish`
+ * does through `getFirstLinkpathDest`. `PageMetadata.canonicalize` MUTATES `raw`, so pass a fresh copy (a
+ * decoded cache entry, or a page nothing else holds).
+ */
+export function finishPage(raw: Partial<PageMetadata>, resolver: LinkResolver): PageMetadata {
+	const path = raw.path ?? '';
+	return PageMetadata.canonicalize(raw, (link: Link) => {
+		const target = resolver.resolve(link.path, path);
 		return target ? link.withPath(target) : link;
 	});
 }
