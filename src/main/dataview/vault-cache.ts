@@ -154,3 +154,11 @@ export function writeVaultCache(file: string, cache: VaultCacheFile): Promise<vo
 		}
 	});
 }
+
+/**
+ * Delete a root's cache file (a rebuild). It queues behind any write to the same file, so a pending write
+ * cannot land after the delete and bring the old index back.
+ */
+export function deleteVaultCache(file: string): Promise<void> {
+	return writes.enqueue(file, () => fs.rm(file, { force: true }));
+}

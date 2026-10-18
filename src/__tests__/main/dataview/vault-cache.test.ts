@@ -15,6 +15,7 @@ import { Link, Transferable } from '../../../shared/dataview';
 import {
 	DATAVIEW_INDEX_CACHE_VERSION,
 	dataviewCacheFilePath,
+	deleteVaultCache,
 	readVaultCache,
 	writeVaultCache,
 	type VaultCacheFile,
@@ -115,5 +116,15 @@ describe('vault cache', () => {
 			JSON.stringify({ version: DATAVIEW_INDEX_CACHE_VERSION, root: '/vault' })
 		);
 		expect(await readVaultCache(malformed, '/vault', null)).toBeNull();
+	});
+
+	it('deletes a cache after the write queued before it, and tolerates a missing file', async () => {
+		const file = path.join(dir, 'rebuild.json');
+		const write = writeVaultCache(file, cacheFile());
+		const remove = deleteVaultCache(file);
+		await Promise.all([write, remove]);
+
+		expect(fs.existsSync(file)).toBe(false);
+		await expect(deleteVaultCache(file)).resolves.toBeUndefined();
 	});
 });
