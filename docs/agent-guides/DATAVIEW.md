@@ -374,13 +374,17 @@ No build config changed. The CLI esbuild bundle and an esbuild browser bundle bo
 
 ### What is vendored so far
 
-| Phase 02 task | Landed under `src/shared/dataview/vendor/`                                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2             | `LICENSE`, `obsidian-shim.ts` (all E2 types), `settings.ts`, `api/result.ts`, `util/normalize.ts`, `data-model/value.ts`, `data-model/serialized/markdown.ts` |
-| 3             | `expression/parse.ts`, `expression/field.ts`, `query/parse.ts`, `query/query.ts`, `data-index/source.ts` (the Source AST both parsers import; pure, K)        |
+| Phase 02 task | Landed under `src/shared/dataview/vendor/`                                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2             | `LICENSE`, `obsidian-shim.ts` (all E2 types), `settings.ts`, `api/result.ts`, `util/normalize.ts`, `data-model/value.ts`, `data-model/serialized/markdown.ts`  |
+| 3             | `expression/parse.ts`, `expression/field.ts`, `query/parse.ts`, `query/query.ts`, `data-index/source.ts` (the Source AST both parsers import; pure, K)         |
+| 4             | `expression/functions.ts`, `expression/binaryop.ts`, `expression/context.ts`, plus their import closure: `api/data-array.ts`, `util/hash.ts`, `util/locale.ts` |
 
 - `src/shared/dataview/index.ts` is the one import site. After task 3 it exports the value model, `Result`, `DEFAULT_QUERY_SETTINGS`, `parseQuery`, `parseField`, `EXPRESSION` (M1 reuses its `link` and `embedLink` parsers), the builders `Fields`, `QueryFields`, and `Sources`, and the `Query`, `Field`, and `Source` AST types with their variants. It deliberately does not re-export upstream's `DataviewSettings` type or `DEFAULT_SETTINGS`, so task 4's Maestro `DataviewSettings` constant has the name to itself.
 - `parseQuery` attaches `DEFAULT_QUERY_SETTINGS` to every `Query` as an untyped `settings` property (upstream's `Query` interface omits it). A parse failure is a `Failure` whose message is parsimmon's `-- PARSING FAILED --` block with a caret and an `Expected ...` list; `src/__tests__/shared/dataview/parse.test.ts` pins that.
+- Task 4 added the Maestro-side `src/shared/dataview/settings.ts` and `src/shared/dataview/evaluate.ts`. `DataviewSettings` is both the type (upstream's) and a frozen constant holding upstream's `DEFAULT_SETTINGS`; every evaluation and query passes it, never ad-hoc settings. `evaluateField(field, row, thisPage, linkHandler?)` builds a vendored `Context` with `{ this: thisPage }`, exactly as upstream's `executeInline` does, and returns a `Result`. Without a link handler it uses `UNRESOLVED_LINK_HANDLER` (links resolve to nothing, keep their written path, and do not exist); phase 04 passes the index-backed handler. `index.ts` also exports `Context`, `LinkHandler`, `DEFAULT_FUNCTIONS`, and `FunctionImpl`.
+- `functions.ts` imports `DataArray`, so `api/data-array.ts` landed in task 4 with its E-unused and E-generic edits. Task 5 exports and tests it; it does not need to vendor it again.
+- `util/locale.ts` carries E-env: `currentLocale()` reads `globalThis.navigator.language` and falls back to the `Intl` system locale. Node 21+ defines `navigator`, so main and the CLI get the process locale either way.
 - `.prettierignore`, the global `ignores` of `eslint.config.mjs`, the `files` of `eslint.dashes.config.mjs`, and the `lint:eslint` script all cover `src/shared/dataview/vendor/` now.
 - Upstream quirk pinned by `src/__tests__/shared/dataview/value.test.ts`: `Values.compareValue` compares durations with luxon's unit-by-unit `equals`, so `1 hour` versus `60 minutes` returns 1, not 0. Kept for fidelity (DV-2).
 

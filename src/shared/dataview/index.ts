@@ -25,6 +25,7 @@ export type {
 export { Result, Success, Failure } from './vendor/api/result';
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
 export type { QuerySettings } from './vendor/settings';
+export { DataviewSettings } from './settings';
 
 export { parseQuery } from './vendor/query/parse';
 export { QueryFields } from './vendor/query/query';
@@ -75,3 +76,9 @@ export type {
 	EmptySource,
 	BinaryOpSource,
 } from './vendor/data-index/source';
+
+export { Context } from './vendor/expression/context';
+export type { LinkHandler } from './vendor/expression/context';
+export { DEFAULT_FUNCTIONS } from './vendor/expression/functions';
+export type { FunctionImpl } from './vendor/expression/functions';
+export { evaluateField, UNRESOLVED_LINK_HANDLER } from './evaluate';
