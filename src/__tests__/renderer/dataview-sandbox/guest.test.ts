@@ -4,7 +4,7 @@
  * fake host that answers `query.dql` with the shared executor and `io.load` from the fixture files.
  *
  * Under vitest, inline scripts run in jsdom's own realm, not the test's `globalThis`, exactly as the
- * guest runs them in its page (DEV-6). `scriptRealm()` reaches that realm's global.
+ * guest runs them in its page (DEV-6). `dataviewGuestRealm()` reaches that realm's global.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -33,6 +33,7 @@ import { compileInlineScript } from '../../../renderer/dataview-sandbox/inlineSc
 import { renderMarkdown } from '../../../renderer/dataview-sandbox/markdownDom';
 import { OBSIDIAN_API_UNAVAILABLE } from '../../../renderer/dataview-sandbox/dvApi';
 import { fixtureSnapshot, fixtureText } from '../../helpers/dataviewFixtureVault';
+import { dataviewGuestRealm, type DataviewGuestRealm } from '../../helpers/dataviewGuestRealm';
 
 /** The `dv` members D5 lists, top level (`io` holds `load`, `csv`, and `normalize`). */
 const D5_MEMBERS = [
@@ -75,22 +76,11 @@ const D5_MEMBERS = [
 	'container',
 ];
 
-type Realm = Record<string, unknown>;
-
-/** The global object inline scripts run against (jsdom's own window under vitest). */
-function scriptRealm(): Realm {
-	return compileInlineScript(document, {
-		params: [],
-		body: 'return globalThis;',
-		strict: true,
-	})() as Realm;
-}
-
 interface Harness {
 	guest: DataviewGuest;
 	root: HTMLElement;
 	sent: SandboxGuestMessage[];
-	realm: Realm;
+	realm: DataviewGuestRealm;
 	run(
 		source: string,
 		options?: { thisPath?: string; blockId?: string; runId?: string }
@@ -106,7 +96,7 @@ function createHarness(): Harness {
 	const root = document.createElement('div');
 	document.body.append(root);
 	const sent: SandboxGuestMessage[] = [];
-	const realm = scriptRealm();
+	const realm = dataviewGuestRealm();
 	let guest: DataviewGuest;
 	const send = (message: SandboxGuestMessage) => {
 		sent.push(message);
@@ -554,7 +544,9 @@ describe('startDataviewGuest', () => {
 			...{},
 		};
 		startDataviewGuest(fakeWindow as unknown as Window);
-		expect(() => (fakeWindow as unknown as Realm).app).toThrow(OBSIDIAN_API_UNAVAILABLE);
+		expect(() => (fakeWindow as unknown as DataviewGuestRealm).app).toThrow(
+			OBSIDIAN_API_UNAVAILABLE
+		);
 
 		const snapshot = fixtureSnapshot();
 		const message = {
@@ -767,7 +759,7 @@ describe('compileInlineScript', () => {
 			sourceUrl: 'views/evil\nglobalThis.__pwned = 1;//',
 		});
 		expect(run()).toBe(1);
-		expect(scriptRealm().__pwned).toBeUndefined();
+		expect(dataviewGuestRealm().__pwned).toBeUndefined();
 	});
 });
 
