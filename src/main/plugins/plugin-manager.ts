@@ -795,21 +795,25 @@ export class PluginManager {
 	 * Errors reject; a later run retries even after the package was archived. */
 	retireBundledAgentFlow(
 		authorization: Pick<AuthorizationStore, 'uninstall'>
-	): Promise<{ recoveryPath?: string }> {
+	): Promise<{ recoveryPath?: string; preserved?: string }> {
 		const id = RETIRED_AGENT_FLOW_ID;
 		return this.mutatePlugin(id, async () => {
 			if (!this.deps.isEnabled()) return {};
-			inspectRetiredAgentFlow();
+			let inspection = inspectRetiredAgentFlow();
+			if (inspection.kind === 'preserved') return { preserved: inspection.reason };
 			await this.stopAndDrain(id);
 			if (!this.deps.isEnabled()) return {};
 			// Recheck after the asynchronous drain: a changed copy must be preserved.
-			inspectRetiredAgentFlow();
+			inspection = inspectRetiredAgentFlow();
+			if (inspection.kind === 'preserved') return { preserved: inspection.reason };
+			// Inspection, revocation and archive are synchronous from here on.
 			// A failed archive/purge must not restart a cached enabled record when
 			// mutatePlugin releases its barrier. The next refresh verifies the tombstone.
 			this.registry = setEnabled(this.registry, id, false);
 			// Revoke before moving/purging: cleanup failure must never retain access.
 			authorization.uninstall(id);
-			const recoveryPath = archiveRetiredAgentFlow();
+			const recoveryPath =
+				inspection.kind === 'bundle' ? archiveRetiredAgentFlow(inspection.path) : undefined;
 			this.purgeUninstalledPlugin(id);
 			return { recoveryPath };
 		});

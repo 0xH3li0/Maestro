@@ -15,13 +15,16 @@ const BUNDLE_FILES = ['README.md', 'main.js', 'panel.html', 'plugin.json'];
 
 /** Absent is eligible for orphan-state cleanup. Anything ambiguous fails closed.
  * lstat also catches dangling symlinks (existsSync would call them absent). */
-export function inspectRetiredAgentFlow(): string | null {
+export function inspectRetiredAgentFlow():
+	| { kind: 'absent' }
+	| { kind: 'bundle'; path: string }
+	| { kind: 'preserved'; reason: string } {
 	const root = pluginsDir();
 	const source = path.join(root, RETIRED_AGENT_FLOW_ID);
 	try {
 		if (!fs.lstatSync(root).isDirectory()) throw new Error('plugin root is not a directory');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
 		throw error;
 	}
 	// Discovery accepts manifests in differently named folders. Such a copy is
@@ -47,13 +50,13 @@ export function inspectRetiredAgentFlow(): string | null {
 			'id' in manifest &&
 			manifest.id === RETIRED_AGENT_FLOW_ID
 		) {
-			throw new Error('preserving Agent Flow: installed in a user-managed folder');
+			return { kind: 'preserved', reason: 'installed in a user-managed folder' };
 		}
 	}
 	try {
 		if (!fs.lstatSync(source).isDirectory()) throw new Error('Agent Flow is not a directory');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
 		throw error;
 	}
 	const entries = fs.readdirSync(source, { withFileTypes: true });
@@ -64,17 +67,15 @@ export function inspectRetiredAgentFlow(): string | null {
 		) ||
 		computePluginContentHash(source) !== BUNDLE_CONTENT_HASH
 	) {
-		throw new Error('preserving Agent Flow: not the unchanged retired 0.3.0 bundle');
+		return { kind: 'preserved', reason: 'not the unchanged retired 0.3.0 bundle' };
 	}
-	return source;
+	return { kind: 'bundle', path: source };
 }
 
-/** Move the verified package intact to recovery, outside plugin discovery.
+/** Move the package verified by the caller's post-drain inspection to recovery.
  * Unique directories never overwrite an earlier backup. Rename failure leaves
  * the installed package intact; the host reports failure and retries later. */
-export function archiveRetiredAgentFlow(): string | undefined {
-	const source = inspectRetiredAgentFlow();
-	if (!source) return undefined;
+export function archiveRetiredAgentFlow(source: string): string {
 	const recoveryRoot = path.join(path.dirname(pluginsDir()), 'retired-plugins');
 	fs.mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
 	if (!fs.lstatSync(recoveryRoot).isDirectory()) {

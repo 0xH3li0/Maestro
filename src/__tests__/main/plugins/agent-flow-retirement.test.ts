@@ -3,15 +3,20 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { gunzipSync } from 'zlib';
+import * as ts from 'typescript';
 
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return { ...actual, renameSync: vi.fn(actual.renameSync) };
 });
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }));
-vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
+import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import { PluginManager, type PluginSandboxLifecycle } from '../../../main/plugins/plugin-manager';
 import {
 	pluginsDir,
@@ -224,12 +229,30 @@ it.each([
 		else manifest.version = '0.4.0';
 		fs.writeFileSync(path.join(source, 'plugin.json'), JSON.stringify(manifest));
 	}
+	setPluginEnabled('agent-flow', true);
+	setGrants('agent-flow', grantsFromRequests([{ capability: 'events:subscribe' }]));
+	kvStore.set('agent-flow', 'state', 'saved');
+	bindings.remember('agent-flow', 'agent-a', 'session-a');
+	eventBus.subscribe('agent-flow', ['tool.executed']);
 	const ledger = fs.readFileSync(authorizationDeps.ledgerPath);
-	await expect(manager.retireBundledAgentFlow(authorization)).rejects.toThrow(/preserving/);
+	const state = readPluginState();
+	const revoke = vi.spyOn(authorization, 'uninstall');
+	vi.mocked(fs.renameSync).mockClear();
+	await expect(manager.retireBundledAgentFlow(authorization)).resolves.toEqual({
+		preserved: 'not the unchanged retired 0.3.0 bundle',
+	});
 	expect(fs.existsSync(source)).toBe(true);
 	expect(fs.readFileSync(authorizationDeps.ledgerPath)).toEqual(ledger);
+	expect(readPluginState()).toEqual(state);
+	expect(readGrants('agent-flow')).toHaveLength(1);
+	expect(kvStore.get('agent-flow', 'state')).toBe('saved');
+	expect(bindings.isOwned('agent-flow', 'agent-a', 'session-a')).toBe(true);
+	expect(eventBus.topicsFor('agent-flow')).toEqual(['tool.executed']);
 	expect(settings.get('plugins.agent-flow.layout')).toBe('saved layout');
 	expect(sandbox.stop).not.toHaveBeenCalled();
+	expect(revoke).not.toHaveBeenCalled();
+	expect(fs.renameSync).not.toHaveBeenCalled();
+	expect(fs.existsSync(path.join(dataDir, 'retired-plugins'))).toBe(false);
 });
 
 it.each(['plugin root', 'package', 'file', 'dangling package', 'recovery root'])(
@@ -252,7 +275,13 @@ it.each(['plugin root', 'package', 'file', 'dangling package', 'recovery root'])
 		} else {
 			fs.symlinkSync(outside, path.join(dataDir, 'retired-plugins'), 'junction');
 		}
-		await expect(manager.retireBundledAgentFlow(authorization)).rejects.toThrow();
+		if (location === 'file') {
+			await expect(manager.retireBundledAgentFlow(authorization)).resolves.toEqual({
+				preserved: 'not the unchanged retired 0.3.0 bundle',
+			});
+		} else {
+			await expect(manager.retireBundledAgentFlow(authorization)).rejects.toThrow();
+		}
 		expect(fs.readFileSync(path.join(outside, 'sentinel'), 'utf8')).toBe('unrelated');
 		expect(fs.readdirSync(outside).sort()).toEqual(
 			location === 'package' || location === 'plugin root' ? ['original', 'sentinel'] : ['sentinel']
@@ -262,6 +291,7 @@ it.each(['plugin root', 'package', 'file', 'dangling package', 'recovery root'])
 
 it('awaits the sandbox drain and rechecks changed bytes before revoking or archiving', async () => {
 	let finish!: () => void;
+	vi.mocked(fs.renameSync).mockClear();
 	vi.mocked(sandbox.stop).mockImplementation(
 		() =>
 			new Promise<void>((resolve) => {
@@ -274,9 +304,14 @@ it('awaits the sandbox drain and rechecks changed bytes before revoking or archi
 	const source = path.join(pluginsDir(), 'agent-flow');
 	fs.appendFileSync(path.join(source, 'main.js'), '\n// changed during drain');
 	finish();
-	await expect(pending).rejects.toThrow(/preserving/);
+	await expect(pending).resolves.toEqual({
+		preserved: 'not the unchanged retired 0.3.0 bundle',
+	});
 	expect(authorization.readGrants('agent-flow')).toHaveLength(4);
 	expect(fs.existsSync(source)).toBe(true);
+	expect(authorization.isTombstoned('agent-flow')).toBe(false);
+	expect(fs.renameSync).not.toHaveBeenCalled();
+	expect(settings.get('plugins.agent-flow.layout')).toBe('saved layout');
 });
 
 it('reports a failed drain and leaves the package and authorization intact for retry', async () => {
@@ -330,15 +365,119 @@ it('leaves disk and authorization untouched while Plugins is switched off', asyn
 	expect(sandbox.stop).not.toHaveBeenCalled();
 });
 
-it('preserves a user-managed copy in a different folder and its authorization', async () => {
-	fs.renameSync(path.join(pluginsDir(), 'agent-flow'), path.join(pluginsDir(), 'custom-flow'));
-	const ledger = fs.readFileSync(authorizationDeps.ledgerPath);
-	await expect(manager.retireBundledAgentFlow(authorization)).rejects.toThrow(
-		/user-managed folder/
-	);
-	expect(fs.existsSync(path.join(pluginsDir(), 'custom-flow', 'main.js'))).toBe(true);
-	expect(fs.readFileSync(authorizationDeps.ledgerPath)).toEqual(ledger);
-});
+it.each(['moved', 'additional'])(
+	'preserves an %s user-managed copy in a different folder and its authorization',
+	async (mode) => {
+		const source = path.join(pluginsDir(), 'agent-flow');
+		const custom = path.join(pluginsDir(), 'custom-flow');
+		if (mode === 'moved') fs.renameSync(source, custom);
+		else fs.cpSync(source, custom, { recursive: true });
+		vi.mocked(fs.renameSync).mockClear();
+		const ledger = fs.readFileSync(authorizationDeps.ledgerPath);
+		const revoke = vi.spyOn(authorization, 'uninstall');
+		await expect(manager.retireBundledAgentFlow(authorization)).resolves.toEqual({
+			preserved: 'installed in a user-managed folder',
+		});
+		expect(fs.existsSync(path.join(pluginsDir(), 'custom-flow', 'main.js'))).toBe(true);
+		expect(fs.readFileSync(authorizationDeps.ledgerPath)).toEqual(ledger);
+		expect(fs.existsSync(source)).toBe(mode === 'additional');
+		expect(sandbox.stop).not.toHaveBeenCalled();
+		expect(revoke).not.toHaveBeenCalled();
+		expect(fs.renameSync).not.toHaveBeenCalled();
+	}
+);
+
+it.each(['preserved', 'read failure', 'archive failure', 'purge failure'])(
+	'startup reports %s at the appropriate level and continues discovery',
+	async (outcome) => {
+		const error = new Error(outcome);
+		if (outcome === 'preserved') {
+			fs.appendFileSync(path.join(pluginsDir(), 'agent-flow', 'main.js'), '\n// user change');
+			vi.spyOn(authorization, 'isSessionOnly').mockReturnValue(true);
+		} else if (outcome === 'read failure') {
+			vi.spyOn(fs, 'readdirSync').mockImplementationOnce(() => {
+				throw error;
+			});
+		} else if (outcome === 'archive failure') {
+			vi.mocked(fs.renameSync).mockImplementation((from, to) => {
+				if (String(from) === path.join(pluginsDir(), 'agent-flow')) throw error;
+				return originalRename(from, to);
+			});
+		} else {
+			vi.spyOn(kvStore, 'purge').mockImplementationOnce(() => {
+				throw error;
+			});
+		}
+		// Exercise the shipped startup callback, following the host wiring tests,
+		// without booting Electron or replacing the retirement implementation.
+		const source = fs.readFileSync(path.join(__dirname, '../../../main/index.ts'), 'utf8');
+		const sf = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isPropertyAssignment(node) &&
+				node.name.getText(sf) === 'reconcile' &&
+				ts.isArrowFunction(node.initializer) &&
+				node.initializer.getText(sf).includes('retireBundledAgentFlow')
+			) {
+				callback = node.initializer;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback).toBeDefined();
+		const js = ts.transpileModule(`const reconcile = ${callback!.getText(sf)}`, {
+			compilerOptions: { target: ts.ScriptTarget.ES2024 },
+		}).outputText;
+		const refresh = vi.spyOn(manager, 'refresh').mockImplementation(() => {});
+		const watch = vi.spyOn(manager, 'startWatching').mockImplementation(() => {});
+		const seed = vi.fn();
+		const scheduler = { start: vi.fn() };
+		const reconcile = new Function(
+			'pluginManager',
+			'authStore',
+			'logger',
+			'captureException',
+			'store',
+			'seedBundledPlugins',
+			'pluginScheduler',
+			'trustedKeysFor',
+			`${js}\nreturn reconcile;`
+		)(
+			manager,
+			authorization,
+			logger,
+			captureException,
+			{ get: () => ({ plugins: true }) },
+			seed,
+			scheduler,
+			() => []
+		);
+		reconcile();
+		await vi.waitFor(() => expect(scheduler.start).toHaveBeenCalledOnce());
+		expect(seed).toHaveBeenCalledOnce();
+		expect(refresh).toHaveBeenCalledOnce();
+		expect(watch).toHaveBeenCalledOnce();
+		if (outcome === 'preserved') {
+			expect(logger.info).toHaveBeenCalledWith(
+				'Agent Flow preserved: not the unchanged retired 0.3.0 bundle',
+				'Plugins'
+			);
+			expect(logger.warn).not.toHaveBeenCalled();
+			expect(logger.error).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+			expect(sandbox.stop).not.toHaveBeenCalled();
+		} else {
+			expect(logger.error).toHaveBeenCalledWith(
+				`Agent Flow retirement incomplete: ${error}`,
+				'Plugins'
+			);
+			expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+				operation: 'plugins:retire-agent-flow',
+			});
+		}
+	}
+);
 
 it('ignores an unrelated invalid manifest when cleaning an absent package', async () => {
 	fs.rmSync(path.join(pluginsDir(), 'agent-flow'), { recursive: true });

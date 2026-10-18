@@ -15,9 +15,12 @@ with the package; eligibility does not depend on user-added publisher keys.
 
 Changed, older/newer, incomplete, differently named or extra-file copies are
 preserved with their state and grants. Symlinks and unexpected file types are
-refused, including a symlinked plugin root or recovery root. These cases log an
-incomplete retirement for review through the existing plugin management UI;
-other plugins still start normally.
+refused, including a symlinked plugin root or recovery root. Expected preservation
+resolves normally and logs an informational reason, without reporting to Sentry
+or draining, revoking, archiving or purging the preserved copy. A copy changed
+during the drain is rechecked and preserved before revocation or cleanup.
+Unexpected filesystem, archive or purge failures still report an incomplete
+retirement. Other plugins still start normally.
 
 An eligible package is moved intact into a unique, private directory:
 

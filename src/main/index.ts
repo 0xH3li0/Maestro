@@ -1621,7 +1621,11 @@ app
 					const manager = pluginManager;
 					void manager
 						.retireBundledAgentFlow(authStore)
-						.then(({ recoveryPath }) => {
+						.then(({ recoveryPath, preserved }) => {
+							if (preserved) {
+								logger.info(`Agent Flow preserved: ${preserved}`, 'Plugins');
+								return;
+							}
 							if (recoveryPath) logger.info(`Agent Flow retired to ${recoveryPath}`, 'Plugins');
 							if (authStore.isSessionOnly()) {
 								logger.warn(
