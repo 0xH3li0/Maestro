@@ -15,14 +15,15 @@
  * `docs/agent-guides/TAB-WINDOWS.md` ("Tab window providers and hosts").
  *
  * Layout, top to bottom: `TabWindowHeader` (status dot, agent name, Dock), the
- * shared `TabBar` fed with only this window's tabs, and `TabWindowContent`.
- * Which tabs, and which one is shown, come from this window's registry record
- * (`useTabWindowInfo`). The agent's `Session` comes from the renderer
- * `sessionStore`, which the owner's patches fill (phase 5). Tab shortcuts and
+ * shared `TabBar` fed with only this window's tabs, `TabWindowContent`, and,
+ * under an AI tab, the thinking pill. Which tabs, and which one is shown, come
+ * from this window's registry record (`useTabWindowInfo`). The agent's
+ * `Session` comes from the renderer `sessionStore`, which holds only this agent,
+ * applied from the owner's patches (`useTabWindowMirror`). Tab shortcuts and
  * chip menus work as in the main window (TW-6, `useTabWindowKeyboard`).
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { LayerStackProvider } from '../../contexts/LayerStackContext';
 import { useWindowSettingsSync } from '../../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../../hooks/ui/useResolvedTheme';
@@ -41,11 +42,7 @@ import {
 	getRefsRightOfActive,
 } from '../../hooks/tabs/internal/unifiedCloseHelpers';
 import { isSessionRemote } from '../../utils/sessionHelpers';
-import {
-	formatTabWindowTitle,
-	type TabWindowInfo,
-	type TabWindowTabRef,
-} from '../../../shared/tabWindowTypes';
+import { formatTabWindowTitle, type TabWindowTabRef } from '../../../shared/tabWindowTypes';
 import {
 	isSameTabRef,
 	isSingleTabRef,
@@ -60,11 +57,12 @@ import { ZoomViewerHost } from '../ZoomViewer';
 import { TabBar } from '../TabBar';
 import { TabWindowHeader } from './TabWindowHeader';
 import { TabWindowContent } from './TabWindowContent';
+import { TabWindowThinkingPill } from './TabWindowThinkingPill';
 import { useTabWindowInfo } from './useTabWindowInfo';
 import { useTabWindowKeyboard } from './useTabWindowKeyboard';
+import { useTabWindowMirror } from './useTabWindowMirror';
 import { useTabWindowSelection } from './useTabWindowSelection';
 import { runTabWindowCall } from './runTabWindowCall';
-import { requestTabWindowSnapshot } from './requestTabWindowSnapshot';
 
 export interface TabWindowRootProps {
 	/** Registry id of this tab window (the `?tabWindow=<id>` query value). */
@@ -88,12 +86,13 @@ function TabWindowShell({ windowId }: TabWindowRootProps) {
 	const theme = useResolvedTheme();
 
 	const { info } = useTabWindowInfo();
+	// The owner's patches are this window's only source of the agent (D2).
+	useTabWindowMirror(info);
 	const agentId = info?.agentId ?? null;
 	const session = useSessionStore((s) =>
 		agentId ? (s.sessions.find((x) => x.id === agentId) ?? null) : null
 	);
 	useTabWindowTitle(session?.name);
-	useSnapshotRequestOnLoad(info);
 
 	return (
 		<div
@@ -125,19 +124,6 @@ function useTabWindowTitle(agentName: string | undefined): void {
 	useEffect(() => {
 		document.title = formatTabWindowTitle(agentName);
 	}, [agentName]);
-}
-
-/**
- * Ask the owner for a snapshot once the record names the agent, once per agent
- * for this page load: a new or reloaded tab window holds nothing yet (D2).
- * Later record changes (a tab switch, a reorder) need no snapshot.
- */
-function useSnapshotRequestOnLoad(info: TabWindowInfo | null): void {
-	const requestedFor = useRef<string | null>(null);
-	useEffect(() => {
-		if (!info || requestedFor.current === info.agentId) return;
-		if (requestTabWindowSnapshot(info)) requestedFor.current = info.agentId;
-	}, [info]);
 }
 
 interface TabWindowBodyProps {
@@ -301,6 +287,10 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 			<div className="flex-1 min-h-0 flex flex-col">
 				<TabWindowContent theme={theme} session={viewSession} activeTab={activeTab} />
 			</div>
+			{/* Where the composer sits in an app window, and like it, under an AI tab only. */}
+			{activeTab?.type === 'ai' && (
+				<TabWindowThinkingPill theme={theme} session={viewSession} tabRefs={tabRefs} />
+			)}
 		</>
 	);
 }

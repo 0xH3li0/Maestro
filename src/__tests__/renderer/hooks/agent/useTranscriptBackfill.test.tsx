@@ -10,6 +10,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+
+const runtime = vi.hoisted(() => ({ tabWindow: false }));
+vi.mock('../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/utils/runtimeContext')>()),
+	isTabWindow: () => runtime.tabWindow,
+}));
+
 import { useTranscriptBackfill } from '../../../../renderer/hooks/agent/useTranscriptBackfill';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -72,6 +79,7 @@ function storedLogs(): string[] {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	runtime.tabWindow = false;
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -311,5 +319,24 @@ describe('useTranscriptBackfill', () => {
 		expect(storedLogs()).toEqual([]);
 		// hasMore was false on that stale page, but it belonged to the old tab.
 		expect(result.current.reachedStart).toBe(false);
+	});
+
+	it('reads and prepends nothing in a tab window, whose transcript the owner splices (D2)', () => {
+		runtime.tabWindow = true;
+		const session = seedStore(makeTab({ logs: [] }));
+		read.mockResolvedValue(page(4, 4));
+		const onPrepend = vi.fn();
+
+		const { result } = renderHook(() =>
+			useTranscriptBackfill(session, useSessionStore.getState().sessions[0].aiTabs![0], {
+				onPrepend,
+			})
+		);
+		act(() => result.current.loadEarlier());
+
+		expect(read).not.toHaveBeenCalled();
+		expect(result.current.isLoading).toBe(false);
+		expect(onPrepend).not.toHaveBeenCalled();
+		expect(storedLogs()).toEqual([]);
 	});
 });

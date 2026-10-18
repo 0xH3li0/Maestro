@@ -32,6 +32,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AITab, Session } from '../../types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { isTabWindow } from '../../utils/runtimeContext';
 import {
 	TRANSCRIPT_RESUME_READ_LIMIT,
 	selectOlderEntries,
@@ -122,6 +123,11 @@ export function useTranscriptBackfill(
 	const loadEarlier = useCallback(() => {
 		if (inFlightRef.current || reachedStart) return;
 		if (!tabId || !agentSessionId || !projectRoot) return;
+		// A tab window's transcript is its owner's, kept in step by patches that
+		// splice it at an index (Tab Windows, D2). A page prepended here would
+		// shift every later splice, so the history it holds is what the owner
+		// sends (`loadEarlierTranscript` in docs/agent-guides/TAB-WINDOWS.md).
+		if (isTabWindow()) return;
 
 		inFlightRef.current = true;
 		setIsLoading(true);

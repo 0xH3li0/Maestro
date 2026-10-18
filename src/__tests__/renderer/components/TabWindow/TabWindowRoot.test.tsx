@@ -71,11 +71,14 @@ const WINDOW_INFO: TabWindowInfo = {
 };
 
 let broadcast: ((payload: WindowSessionMovedPayload) => void) | null = null;
+// No patch ever arrives here: these tests seed the store the mirror would fill
+// (TabWindowRoot.mirror.test.tsx plays a real patch stream).
 const tabWindowsApi = {
 	getState: vi.fn(),
 	dock: vi.fn(),
 	focus: vi.fn(),
 	sendIntent: vi.fn(),
+	onSessionPatch: vi.fn(),
 };
 
 beforeEach(() => {
@@ -87,6 +90,7 @@ beforeEach(() => {
 	tabWindowsApi.dock.mockReset().mockResolvedValue({ docked: true, windowId: 'tw-7' });
 	tabWindowsApi.focus.mockReset().mockResolvedValue({ focused: true, windowId: 'tw-7' });
 	tabWindowsApi.sendIntent.mockReset();
+	tabWindowsApi.onSessionPatch.mockReset().mockReturnValue(() => {});
 	(window.maestro as unknown as { tabWindows: typeof tabWindowsApi }).tabWindows = tabWindowsApi;
 	vi.mocked(window.maestro.windows.onSessionMoved).mockImplementation((callback) => {
 		broadcast = callback;
