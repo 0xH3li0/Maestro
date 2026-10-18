@@ -28,7 +28,7 @@ import {
 	restoreOrphanedTab,
 	setActiveTab,
 	toggleReadOnlyModeFields,
-	visibleAiTabs,
+	ownerVisibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
@@ -196,27 +196,28 @@ export function useAITabHandlers(
 
 	// "Close all" means every tab the user can see. Hidden consult tabs (unopened
 	// cross-agent @mentions) have no chip, so closing one here would silently
-	// destroy a transcript and its resume id the user was never shown.
+	// destroy a transcript and its resume id the user was never shown. Tabs popped
+	// out into a tab window are not in this window's strip either (D4).
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
 		if (isWebDesktop()) {
 			void requestDesktopTabCloses(
 				activeSessionId,
-				visibleAiTabs(activeSession?.aiTabs).map((tab) => tab.id),
+				ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs).map((tab) => tab.id),
 				endInlineWizard
 			);
 			return;
 		}
-		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
+		ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
-		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)
+		const wizardTabIds = ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs)
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
-			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
+			const tabIds = ownerVisibleAiTabs(s.id, s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
 				// Filter state is irrelevant: no tab survives to be selected.
@@ -241,7 +242,7 @@ export function useAITabHandlers(
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const hasAnyDraft = visibleAiTabs(session.aiTabs).some((tab) => hasDraft(tab));
+		const hasAnyDraft = ownerVisibleAiTabs(session.id, session.aiTabs).some((tab) => hasDraft(tab));
 		if (hasAnyDraft) {
 			useModalStore.getState().openModal('confirm', {
 				message: 'Some tabs have unsent drafts. Are you sure you want to close all tabs?',

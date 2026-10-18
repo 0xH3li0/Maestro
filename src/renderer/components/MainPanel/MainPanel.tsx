@@ -16,6 +16,7 @@ import {
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
 import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
 	breakApartGroup,
@@ -346,7 +347,10 @@ export const MainPanel = React.memo(
 
 		// PERF: Tab strip / file-nav paint derived here from the full session this
 		// panel already subscribes to - not from App chrome equality (which would
-		// wake MaestroConsoleInner on every busy/tab-state flip).
+		// wake MaestroConsoleInner on every busy/tab-state flip). The popped set is a
+		// dependency: popping out a tab drops its chip without changing
+		// `activeSession` (Tab Windows, D4).
+		const poppedOutTabKeys = usePoppedOutTabKeys(activeSession?.id);
 		const {
 			activeTab: derivedActiveTab,
 			unifiedTabs,
@@ -356,7 +360,7 @@ export const MainPanel = React.memo(
 			fileTabCanGoBack,
 			fileTabCanGoForward,
 			activeFileTabNavIndex,
-		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession, poppedOutTabKeys]);
 		const activeFileTabId = activeSession?.activeFileTabId ?? null;
 		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
 		const fileGistUrls = useTabStore((s) => s.fileGistUrls);

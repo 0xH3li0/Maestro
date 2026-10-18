@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
-import { hasDraft, hasUnreadVisibleTab, visibleAiTabs } from '../../utils/tabHelpers';
+import { hasDraft, hasUnreadVisibleTab, ownerVisibleAiTabs } from '../../utils/tabHelpers';
+import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
 import {
@@ -162,6 +163,9 @@ function TabBarInner({
 	// doesn't own. Outside a WindowProvider (isolation tests) or without a
 	// sessionId, this resolves to true - single-window behaviour is unchanged.
 	const ownsActiveAgent = useWindowOwnsSession(sessionId);
+	// Tabs popped out into a tab window have no chip here (D4). Memo dependency
+	// for the filters below: a pop-out changes this set, not `tabs`.
+	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
 
 	// Scroll active tab into view
 	useEffect(() => {
@@ -245,9 +249,10 @@ function TabBarInner({
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
-		// Hidden consult tabs never get a chip, in either filter state. The unified
-		// path drops them in buildUnifiedTabs; this legacy path has to drop them itself.
-		const visible = visibleAiTabs(tabs);
+		// Hidden consult tabs and popped-out tabs never get a chip, in either filter
+		// state. The unified path drops them in buildUnifiedTabs; this legacy path
+		// has to drop them itself.
+		const visible = ownerVisibleAiTabs(sessionId, tabs);
 		return showUnreadOnly
 			? visible.filter(
 					(t) =>
@@ -269,6 +274,8 @@ function TabBarInner({
 		stuckTabIds,
 		ownsActiveAgent,
 		queuedTabIds,
+		sessionId,
+		poppedOutTabKeys,
 	]);
 
 	const displayedUnifiedTabs = useMemo(() => {
@@ -726,7 +733,7 @@ function TabBarInner({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{hasUnreadVisibleTab(tabs) && (
+					{hasUnreadVisibleTab(ownerVisibleAiTabs(sessionId, tabs)) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}
