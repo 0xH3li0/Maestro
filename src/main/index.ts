@@ -222,6 +222,7 @@ import {
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
+import { listTabWindows } from './tab-window-service';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
@@ -771,6 +772,7 @@ const createWebServer = createWebServerFactory({
 	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,
+	getTabWindows: () => listTabWindows(windowRegistry),
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	// Cue writes refuse while Maestro Cue is off (the IPC handlers do the same),

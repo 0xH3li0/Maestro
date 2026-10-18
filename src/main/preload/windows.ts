@@ -29,6 +29,10 @@ import {
 	type TabWindowSessionPatch,
 	type TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
+import type {
+	TabWindowCommandRequest,
+	TabWindowCommandResult,
+} from '../../shared/tabWindowCommands';
 
 export type { WindowBounds };
 
@@ -302,6 +306,27 @@ export function createTabWindowsApi() {
 				callback(processId, text);
 			ipcRenderer.on(TAB_WINDOW_CHANNELS.terminalReplay, handler);
 			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.terminalReplay, handler);
+		},
+
+		/**
+		 * Owner window: subscribe to a remote `tab pop-out` / `tab dock`
+		 * (`maestro-cli`). Main sends it to the agent's owner window. A round
+		 * trip: the caller is told the window and tabs, or why nothing moved.
+		 */
+		onRemoteCommand: (
+			callback: (request: TabWindowCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				request: TabWindowCommandRequest,
+				responseChannel: string
+			) => callback(request, responseChannel);
+			ipcRenderer.on('remote:tabWindowCommand', handler);
+			return () => ipcRenderer.removeListener('remote:tabWindowCommand', handler);
+		},
+
+		sendRemoteCommandResponse: (responseChannel: string, result: TabWindowCommandResult): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

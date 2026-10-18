@@ -19,7 +19,8 @@
  * nothing here and runs from either side.
  *
  * Refusals come back as the result's `error`; `popOutTab` and `dockTab` show
- * no toast, so the CLI path can report the same words. An IPC rejection is
+ * no toast, so the CLI path ({@link runRemoteTabWindowCommand}) can report the
+ * same words. An IPC rejection is
  * reported to Sentry and returned the same way. The UI entry points call the
  * `...FromUi` forms, which show a refusal as a toast.
  */
@@ -31,6 +32,11 @@ import type {
 	TabWindowPopOutResult,
 	TabWindowTabRef,
 } from '../../shared/tabWindowTypes';
+import {
+	resolveTabIdInSessions,
+	type TabWindowCommandRequest,
+	type TabWindowCommandResult,
+} from '../../shared/tabWindowCommands';
 import { isSingleTabRef } from '../../shared/unifiedTabRef';
 import { notifyToast } from '../stores/notificationStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -163,4 +169,69 @@ export async function popOutTabFromUi(agentId: string, ref: TabWindowTabRef): Pr
 export async function dockTabFromUi(agentId: string, ref: TabWindowTabRef): Promise<void> {
 	const result = await dockTab(agentId, ref);
 	if (!result.docked) toastRefusal(result.error);
+}
+
+/**
+ * The tabs `windowId` holds now; empty when the window is gone (a dock of its
+ * last tab). Undefined when the list call fails: the verb itself already ran,
+ * so the failure is reported to Sentry and the answer goes out without it.
+ */
+async function tabRefsOfWindow(windowId: string): Promise<TabWindowTabRef[] | undefined> {
+	try {
+		const windows = await window.maestro.tabWindows.list();
+		return windows.find((info) => info.windowId === windowId)?.tabRefs ?? [];
+	} catch (error) {
+		captureException(error instanceof Error ? error : new Error(String(error)), {
+			extra: { operation: 'tabWindows.list' },
+		});
+		return undefined;
+	}
+}
+
+/**
+ * Answer `maestro-cli tab pop-out` and `tab dock` (the `tab_window_command`
+ * message) in the agent's owner window, through {@link popOutTab} and
+ * {@link dockTab}. Main has already resolved the agent; the tab id (exact or a
+ * unique prefix, any tab kind) is resolved here against the live session, so
+ * a tab the sessions store has not caught up with yet still resolves. `list`
+ * is answered by main from the registry and never reaches the renderer.
+ */
+export async function runRemoteTabWindowCommand(
+	request: TabWindowCommandRequest
+): Promise<TabWindowCommandResult> {
+	if (request.action === 'list') {
+		return { success: false, error: 'Tab windows are listed by the main process' };
+	}
+	const agentId = request.sessionId;
+	if (!agentId || !request.tabId) {
+		return { success: false, error: 'An agent id and a tab id are required' };
+	}
+	const session = selectSessionById(agentId)(useSessionStore.getState());
+	if (!session) return { success: false, error: `Agent not found: ${agentId}` };
+	const found = resolveTabIdInSessions([session], request.tabId);
+	if (!found.ok) return { success: false, error: found.error };
+	const { tabRef } = found.resolved;
+
+	if (request.action === 'pop-out') {
+		const result = await popOutTab(agentId, tabRef, { background: request.background === true });
+		if (!result.poppedOut) return { success: false, error: result.error };
+		return {
+			success: true,
+			agentId,
+			tabRef,
+			windowId: result.windowId,
+			created: result.created,
+			tabRefs: await tabRefsOfWindow(result.windowId),
+		};
+	}
+
+	const result = await dockTab(agentId, tabRef);
+	if (!result.docked) return { success: false, error: result.error };
+	return {
+		success: true,
+		agentId,
+		tabRef,
+		windowId: result.windowId,
+		tabRefs: await tabRefsOfWindow(result.windowId),
+	};
 }

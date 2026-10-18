@@ -31,6 +31,7 @@ import {
 	popOutTab,
 	popOutTabFromUi,
 	resolvePopOutTarget,
+	runRemoteTabWindowCommand,
 } from '../../../renderer/services/tabWindowActions';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockAITab, createMockSession, installTabWindowsApi } from '../../helpers';
@@ -330,5 +331,136 @@ describe('popOutTabFromUi / dockTabFromUi', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'red', message: 'not popped out' })
 		);
+	});
+});
+
+describe('runRemoteTabWindowCommand (maestro-cli tab pop-out / tab dock)', () => {
+	it('pops out a tab named by a unique prefix and reports the window and its tabs', async () => {
+		seed({ terminalTabs: [{ id: 'term-xyz' }] as never });
+		api.list.mockResolvedValue([
+			{
+				windowId: 'tw-1',
+				agentId: AGENT,
+				tabRefs: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 'term-xyz' },
+				],
+				activeTabRef: { type: 'terminal', id: 'term-xyz' },
+			},
+		]);
+
+		const result = await runRemoteTabWindowCommand({
+			action: 'pop-out',
+			sessionId: AGENT,
+			tabId: 'term-x',
+			background: true,
+		});
+
+		expect(api.popOut).toHaveBeenCalledWith(
+			AGENT,
+			{ type: 'terminal', id: 'term-xyz' },
+			{ background: true }
+		);
+		expect(result).toEqual({
+			success: true,
+			agentId: AGENT,
+			tabRef: { type: 'terminal', id: 'term-xyz' },
+			windowId: 'tw-1',
+			created: true,
+			tabRefs: [
+				{ type: 'ai', id: 'a1' },
+				{ type: 'terminal', id: 'term-xyz' },
+			],
+		});
+	});
+
+	it('pops out in the foreground unless background is set', async () => {
+		await runRemoteTabWindowCommand({ action: 'pop-out', sessionId: AGENT, tabId: 'a2' });
+		expect(api.popOut).toHaveBeenCalledWith(AGENT, { type: 'ai', id: 'a2' }, { background: false });
+	});
+
+	it('answers with the same refusal words the UI toasts (TW-14)', async () => {
+		const result = await runRemoteTabWindowCommand({
+			action: 'pop-out',
+			sessionId: AGENT,
+			tabId: 'consult',
+		});
+		expect(result).toEqual({ success: false, error: 'A hidden consult tab cannot be popped out' });
+		expect(api.popOut).not.toHaveBeenCalled();
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('refuses in the web-desktop build (TW-13)', async () => {
+		runtime.webDesktop = true;
+		const result = await runRemoteTabWindowCommand({
+			action: 'pop-out',
+			sessionId: AGENT,
+			tabId: 'a2',
+		});
+		expect(result.success).toBe(false);
+		expect(api.popOut).not.toHaveBeenCalled();
+	});
+
+	it('docks a tab and reports an empty strip when that closed the window', async () => {
+		const result = await runRemoteTabWindowCommand({
+			action: 'dock',
+			sessionId: AGENT,
+			tabId: 'a2',
+		});
+		expect(api.dock).toHaveBeenCalledWith(AGENT, { type: 'ai', id: 'a2' });
+		expect(result).toEqual({
+			success: true,
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			windowId: 'tw-1',
+			tabRefs: [],
+		});
+	});
+
+	it('passes a dock refusal from main through', async () => {
+		api.dock.mockResolvedValue({ docked: false, error: 'The agent has no tab window' });
+		expect(
+			await runRemoteTabWindowCommand({ action: 'dock', sessionId: AGENT, tabId: 'a2' })
+		).toEqual({ success: false, error: 'The agent has no tab window' });
+	});
+
+	it('refuses an unknown agent, an unknown tab, and an ambiguous prefix', async () => {
+		expect(
+			await runRemoteTabWindowCommand({ action: 'dock', sessionId: 'ghost', tabId: 'a2' })
+		).toEqual({ success: false, error: 'Agent not found: ghost' });
+		expect(
+			await runRemoteTabWindowCommand({ action: 'dock', sessionId: AGENT, tabId: 'zz' })
+		).toEqual({ success: false, error: 'Tab not found: zz' });
+		const ambiguous = await runRemoteTabWindowCommand({
+			action: 'pop-out',
+			sessionId: AGENT,
+			tabId: 'a',
+		});
+		expect(ambiguous.success).toBe(false);
+		expect(ambiguous.error).toMatch(/Ambiguous/);
+		expect(api.popOut).not.toHaveBeenCalled();
+		expect(api.dock).not.toHaveBeenCalled();
+	});
+
+	it('still reports the verb as done when the window list fails afterwards', async () => {
+		api.list.mockRejectedValue(new Error('list failed'));
+		const result = await runRemoteTabWindowCommand({
+			action: 'pop-out',
+			sessionId: AGENT,
+			tabId: 'a2',
+		});
+		expect(result).toEqual({
+			success: true,
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			windowId: 'tw-1',
+			created: true,
+			tabRefs: undefined,
+		});
+		expect(captureException).toHaveBeenCalledTimes(1);
+	});
+
+	it('never lists in the renderer', async () => {
+		expect((await runRemoteTabWindowCommand({ action: 'list' })).success).toBe(false);
 	});
 });

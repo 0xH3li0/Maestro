@@ -32,9 +32,11 @@ import {
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteTabWindowCommand } from '../../services/tabWindowActions';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { TabWindowCommandResult } from '../../../shared/tabWindowCommands';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
@@ -1125,6 +1127,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle a remote `tab pop-out` / `tab dock` (`maestro-cli`). Main sends it
+		// to the agent's owner window, which answers through the same service the
+		// chip menu, Cmd+K, and the shortcut call. No tab windows API (the
+		// web-desktop build) means no subscription: main never routes there.
+		const unsubscribeTabWindowCommand = window.maestro.tabWindows?.onRemoteCommand(
+			(request, responseChannel) => {
+				const reply = (result: TabWindowCommandResult) =>
+					window.maestro.tabWindows.sendRemoteCommandResponse(responseChannel, result);
+				runRemoteTabWindowCommand(request).then(reply, (error: unknown) => {
+					logger.error('[useRemoteIntegration] Tab window command failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
@@ -1420,6 +1440,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
+			unsubscribeTabWindowCommand?.();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

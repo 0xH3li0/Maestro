@@ -12,7 +12,12 @@ import type { TabWindowOwnerHandlers } from '../../renderer/services/tabWindowIn
 import type { Session } from '../../renderer/types';
 import { buildTabWindowSnapshot, diffTabWindowSession } from '../../shared/tabWindowPatch';
 import type {
+	TabWindowCommandRequest,
+	TabWindowCommandResult,
+} from '../../shared/tabWindowCommands';
+import type {
 	TabWindowDockResult,
+	TabWindowInfo,
 	TabWindowFocusResult,
 	TabWindowIntent,
 	TabWindowPopOutResult,
@@ -37,7 +42,10 @@ export function clearTabWindowStore(): void {
 /**
  * Install a fake `window.maestro.tabWindows` whose `focus` answers `result`,
  * whose `dock` answers `dockResult`, whose `popOut` answers `popOutResult`, and whose `getState` (a tab window's own
- * record) answers null until a test says otherwise. The relay half records
+ * record) answers null until a test says otherwise. `list` answers no tab
+ * windows until a test says otherwise. `emitRemoteCommand` plays a
+ * `maestro-cli tab pop-out` / `tab dock` the way main sends it, and resolves
+ * with what the renderer answered on `sendRemoteCommandResponse`. The relay half records
  * what is sent (`sendSessionPatch`, `sendIntent`). As main's relay would,
  * `emitIntent` delivers an intent to every `onIntent` subscriber, and
  * `emitPatch` delivers a patch to every `onSessionPatch` subscriber, cloned
@@ -52,12 +60,16 @@ export function installTabWindowsApi(
 	dock: ReturnType<typeof vi.fn>;
 	popOut: ReturnType<typeof vi.fn>;
 	getState: ReturnType<typeof vi.fn>;
+	list: ReturnType<typeof vi.fn>;
 	sendSessionPatch: ReturnType<typeof vi.fn>;
 	sendIntent: ReturnType<typeof vi.fn>;
 	onIntent: ReturnType<typeof vi.fn>;
 	onSessionPatch: ReturnType<typeof vi.fn>;
+	onRemoteCommand: ReturnType<typeof vi.fn>;
+	sendRemoteCommandResponse: ReturnType<typeof vi.fn>;
 	emitIntent: (intent: TabWindowIntent) => void;
 	emitPatch: (patch: TabWindowSessionPatch) => void;
+	emitRemoteCommand: (request: TabWindowCommandRequest) => Promise<TabWindowCommandResult>;
 	restore: () => void;
 } {
 	const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
@@ -66,6 +78,7 @@ export function installTabWindowsApi(
 	const dock = vi.fn().mockResolvedValue(dockResult);
 	const popOut = vi.fn().mockResolvedValue(popOutResult);
 	const getState = vi.fn().mockResolvedValue(null);
+	const list = vi.fn().mockResolvedValue([] as TabWindowInfo[]);
 	const sendSessionPatch = vi.fn();
 	const sendIntent = vi.fn();
 	const intentListeners = new Set<(intent: TabWindowIntent) => void>();
@@ -78,25 +91,55 @@ export function installTabWindowsApi(
 		patchListeners.add(callback);
 		return () => patchListeners.delete(callback);
 	});
+	const commandListeners = new Set<
+		(request: TabWindowCommandRequest, responseChannel: string) => void
+	>();
+	const onRemoteCommand = vi.fn(
+		(callback: (request: TabWindowCommandRequest, responseChannel: string) => void) => {
+			commandListeners.add(callback);
+			return () => commandListeners.delete(callback);
+		}
+	);
+	const replies = new Map<string, (result: TabWindowCommandResult) => void>();
+	const sendRemoteCommandResponse = vi.fn(
+		(responseChannel: string, result: TabWindowCommandResult) => {
+			replies.get(responseChannel)?.(result);
+			replies.delete(responseChannel);
+		}
+	);
+	let commandSeq = 0;
 	maestro.tabWindows = {
 		focus,
 		dock,
 		popOut,
 		getState,
+		list,
 		sendSessionPatch,
 		sendIntent,
 		onIntent,
 		onSessionPatch,
+		onRemoteCommand,
+		sendRemoteCommandResponse,
 	};
 	return {
 		focus,
 		dock,
 		popOut,
 		getState,
+		list,
 		sendSessionPatch,
 		sendIntent,
 		onIntent,
 		onSessionPatch,
+		onRemoteCommand,
+		sendRemoteCommandResponse,
+		emitRemoteCommand: (request) =>
+			new Promise((resolve) => {
+				commandSeq += 1;
+				const responseChannel = `remote:tabWindowCommand:response:${commandSeq}`;
+				replies.set(responseChannel, resolve);
+				for (const listener of [...commandListeners]) listener(request, responseChannel);
+			}),
 		emitIntent: (intent) => {
 			for (const listener of [...intentListeners]) listener(intent);
 		},

@@ -494,6 +494,16 @@ The chip item's `ShortcutHint` reads `shortcuts.moveTabToTabWindow` live, so a r
 
 Tests: `TabBar/TabBar.tabWindow.test.tsx` (all four chips, labels, hidden cases), `QuickActionsModal/commands/__tests__/tabCommands.tabWindows.test.ts`, `useMainKeyboardHandler.test.ts` ("moveTabToTabWindow"), `TabWindowRoot.test.tsx` (chip dock, chord dock), `tabWindowActions.test.ts`, `tabWindowStore.test.ts` (`getTabWindowTabRefs`).
 
+### CLI verbs (landed, phase 7)
+
+`maestro-cli tab pop-out <tab-id> [--agent] [--background]`, `tab dock <tab-id> [--agent]`, and `tab windows [--json]` (`src/cli/commands/tab.ts`) ride one WS message, `tab_window_command` (`action: 'pop-out' | 'dock' | 'list'`). The wire shape, the request parser, the result narrowing, and the tab id resolver are in `src/shared/tabWindowCommands.ts`.
+
+- **Tab ids.** Any kind (AI, file, terminal, browser), exact or a unique prefix: `resolveTabIdInSessions(sessions, tabId)`. The other `tab` verbs resolve AI tabs only, through `list_desktop_sessions`; these do not use that path.
+- **Main** (`web-server/handlers/messageHandlers/tabWindows.ts`, then `callbacks/tabWindowCommandCallbacks.ts`). `list` is answered in main from `listTabWindows(registry)` (factory dep `getTabWindows`), with each agent's name from the sessions store. For `pop-out` / `dock` without `--agent`, the owner comes from the tab id in the sessions store: popped tabs stay in their agent's arrays. The request then goes to `getWindowForSession(agentId)` on `remote:tabWindowCommand`.
+- **Owner window.** `useRemoteIntegration` subscribes through `tabWindows.onRemoteCommand` and answers with `runRemoteTabWindowCommand(request)` in `tabWindowActions.ts`, which re-resolves the id against the live session (so a tab the store has not caught up with resolves when `--agent` is passed) and calls `popOutTab` / `dockTab`. The answer carries the agent, the tab ref, the window id, `created`, and the tabs left in the window (`tabWindows.list()` after the verb; empty after a dock that closed it).
+- **Placement.** `tab-pop-out` is in `CLI_BACKGROUND_DEFAULTS` (focuses by default, like every UI entry point). `tab dock` takes no `--background`: a dock makes the docked tab the owner's active tab, and there is no channel for a placement bit yet (gap 17 in `CLI-UI-PARITY.md`).
+- Tests: `src/__tests__/shared/tabWindowCommands.test.ts`, `src/__tests__/main/web-server/handlers/tabWindowHandler.test.ts`, `src/__tests__/main/web-server/callbacks/tabWindowCommandCallbacks.test.ts`, `src/__tests__/cli/commands/tab.test.ts` ("tab windows verbs"), `tabWindowActions.test.ts` ("runRemoteTabWindowCommand"), `useRemoteIntegration.test.ts`, `preload/windows.test.ts`. `installTabWindowsApi` now fakes `list` and the remote command pair, with `emitRemoteCommand`.
+
 ### Persistence and restore (landed, phase 2)
 
 - `MultiWindowState.tabWindows` holds the tab windows; `windows` stays app windows only, so the primary pointer rule holds and an older build ignores them. Each record is a `WindowState` with `kind: 'tab'`, `agentId`, `tabRefs`, `activeTabRef`, bounds, and empty `sessionIds`.

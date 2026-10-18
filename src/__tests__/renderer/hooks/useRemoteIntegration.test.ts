@@ -1139,6 +1139,52 @@ describe('useRemoteIntegration', () => {
 			clearTabWindowStore();
 		});
 
+		it('maestro-cli tab pop-out runs the pop-out service and answers on the response channel', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab(), createMockTab({ id: 'tab-2' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			const result = await tabWindows.emitRemoteCommand({
+				action: 'pop-out',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+				background: true,
+			});
+
+			expect(tabWindows.popOut).toHaveBeenCalledWith(
+				'session-1',
+				{ type: 'ai', id: 'tab-2' },
+				{ background: true }
+			);
+			expect(result).toMatchObject({
+				success: true,
+				agentId: 'session-1',
+				tabRef: { type: 'ai', id: 'tab-2' },
+				windowId: 'tw-1',
+			});
+		});
+
+		it('maestro-cli tab dock answers a refusal on the response channel', async () => {
+			tabWindows.dock.mockResolvedValue({ docked: false, error: 'The agent has no tab window' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab(), createMockTab({ id: 'tab-2' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			const result = await tabWindows.emitRemoteCommand({
+				action: 'dock',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+			});
+
+			expect(result).toEqual({ success: false, error: 'The agent has no tab window' });
+		});
+
 		it('focus-agent --tab focuses the tab window and leaves the owner view alone', () => {
 			const tab = createMockTab({ id: 'tab-2' });
 			const session = createMockSession({ id: 'session-1', aiTabs: [createMockTab(), tab] });

@@ -292,4 +292,22 @@ describe('Tab Windows Preload API', () => {
 		unsubscribe();
 		expect(mockRemoveListener).toHaveBeenCalledWith(channel, handler);
 	});
+
+	it('onRemoteCommand hands over the request and its response channel, and the answer goes back on it', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onRemoteCommand(callback);
+
+		const handler = mockOn.mock.calls.find(([name]) => name === 'remote:tabWindowCommand')?.[1];
+		const request = { action: 'pop-out' as const, sessionId: 'a', tabId: 't1' };
+		handler({}, request, 'remote:tabWindowCommand:response:1');
+		expect(callback).toHaveBeenCalledWith(request, 'remote:tabWindowCommand:response:1');
+
+		api.sendRemoteCommandResponse('remote:tabWindowCommand:response:1', { success: true });
+		expect(mockSend).toHaveBeenCalledWith('remote:tabWindowCommand:response:1', {
+			success: true,
+		});
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('remote:tabWindowCommand', handler);
+	});
 });
