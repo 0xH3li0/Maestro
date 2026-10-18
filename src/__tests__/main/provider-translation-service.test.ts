@@ -16,7 +16,10 @@ import {
 	TRANSLATION_KNOWLEDGE_ENV_VAR,
 	TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR,
 } from '../../shared/maestro-lib/translation/knowledge-binding';
-import { NativeTranslationService } from '../../shared/maestro-lib/translation/service';
+import {
+	NativeTranslationService,
+	type TranslationNativeHost,
+} from '../../shared/maestro-lib/translation/service';
 import { getHistoryManager } from '../../main/history-manager';
 import {
 	ProviderTranslationService,
@@ -27,7 +30,10 @@ import {
 	type TranslationJournal,
 } from '../../shared/maestro-lib/translation/archive';
 import { openCodexTranslationConnection } from '../../shared/maestro-lib/codex/connection';
-import { applyTranslation } from '../../shared/maestro-lib/translation/transaction';
+import {
+	applyTranslation,
+	recoverTranslation,
+} from '../../shared/maestro-lib/translation/transaction';
 import * as translationResources from '../../shared/maestro-lib/translation/resources';
 import { captureMessage } from '../../main/utils/sentry';
 import { capabilitySnapshots } from '../../main/agents/capability-snapshot';
@@ -36,6 +42,11 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import { estimateTokenCount } from '../../shared/formatters';
 import { resolveSshTranslationHost } from '../../main/provider-translation-ssh';
 import { remapTranslationFs } from '../helpers/translationFs';
+import { createSshTranslationFs } from '../../main/provider-translation-fs';
+import * as remoteFs from '../../main/utils/remote-fs';
+import { localTranslationFs } from '../../shared/maestro-lib/translation/local-fs';
+import type { TranslationRpc } from '../../shared/maestro-lib/translation/types';
+import type { SshRemoteConfig } from '../../shared/types';
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -60,6 +71,451 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 }));
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('SSH provider translation transactions', () => {
+	it.each(['commit', 'recover', 'rollback'] as const)(
+		'round-trips Claude and Codex through the SSH port with %s and a local archive',
+		async (outcome) => {
+			const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-ssh-transaction-'));
+			try {
+				// Keep the real service, adapters, resource discovery and transaction engine.
+				const transaction = await vi.importActual<
+					typeof import('../../shared/maestro-lib/translation/transaction')
+				>('../../shared/maestro-lib/translation/transaction');
+				vi.mocked(applyTranslation).mockReset().mockImplementation(transaction.applyTranslation);
+				vi.mocked(recoverTranslation)
+					.mockReset()
+					.mockImplementation(transaction.recoverTranslation);
+				vi.mocked(openCodexTranslationConnection).mockClear();
+				vi.mocked(getHistoryManager).mockReturnValue({ getEntries: async () => [] } as any);
+				const root = await fs.realpath(temporary);
+				const data = path.join(root, 'local-data');
+				const virtualRoot = `/fake-ssh/${generateUUID()}`;
+				const backingRoot = path.join(root, 'remote');
+				const disk = remapTranslationFs(virtualRoot, backingRoot, path.posix);
+				const remote: SshRemoteConfig = {
+					id: 'fake-remote',
+					name: 'Isolated translation remote',
+					host: 'translation.invalid',
+					port: 22,
+					username: 'tester',
+					privateKeyPath: '',
+					enabled: true,
+				};
+				// Replace only the transport primitives. The production SSH adapter still
+				// handles binary decoding, metadata, ownership callbacks and native paths.
+				vi.spyOn(remoteFs, 'readBinaryFileRemoteAsBase64').mockImplementation(async (file) => ({
+					success: true,
+					data: (await disk.nativeFs.readFile(file)).toString('base64'),
+				}));
+				vi.spyOn(remoteFs, 'readDirNamesRemote').mockImplementation(
+					async (file, _remote, options) => ({
+						success: true,
+						data: await disk.nativeFs.readdir(file, options),
+					})
+				);
+				vi.spyOn(remoteFs, 'lstatRemote').mockImplementation(async (file) => {
+					const stat = await disk.nativeFs.lstat(file);
+					return {
+						success: true,
+						data: {
+							type: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : 'file',
+							isDirectory: stat.isDirectory(),
+							size: stat.size,
+							mtime: stat.mtimeMs,
+							mode: stat.mode,
+						},
+					};
+				});
+				vi.spyOn(remoteFs, 'realpathRemote').mockImplementation(async (file) => ({
+					success: true,
+					data: await disk.nativeFs.realpath(file),
+				}));
+				vi.spyOn(remoteFs, 'mkdirRemote').mockImplementation(
+					async (file, _remote, _recursive, _deps, options) => {
+						await disk.nativeFs.mkdir(file, { recursive: true, ...options });
+						return { success: true };
+					}
+				);
+				vi.spyOn(remoteFs, 'createExclusiveRemote').mockImplementation(
+					async (file, bytes, _remote, _deps, options) => {
+						await disk.nativeFs.createExclusive(file, bytes, {
+							mode: options?.mode,
+							durable: options?.sync,
+						});
+						return { success: true };
+					}
+				);
+				vi.spyOn(remoteFs, 'writeFileAtomicRemote').mockImplementation(
+					async (file, bytes, _remote, options) => {
+						await disk.nativeFs.atomicWrite(file, bytes, {
+							mode: options?.mode,
+							durable: options?.sync,
+						});
+						return { success: true };
+					}
+				);
+				vi.spyOn(remoteFs, 'deleteRemote').mockImplementation(async (file) => {
+					await disk.nativeFs.unlink(file);
+					return { success: true };
+				});
+				vi.spyOn(remoteFs, 'readlinkRemote').mockImplementation(async (file) => ({
+					success: true,
+					data: await disk.nativeFs.readlink(file),
+				}));
+				vi.spyOn(remoteFs, 'symlinkRemote').mockImplementation(async (target, file) => {
+					await disk.nativeFs.symlink(target, file);
+					return { success: true };
+				});
+				const nativeFs = createSshTranslationFs(remote);
+				const project = `${virtualRoot}/project`;
+				const claudeRoot = `${virtualRoot}/.claude`;
+				const codexRoot = `${virtualRoot}/.codex`;
+				const claudeProject = `${claudeRoot}/projects/${encodeClaudeProjectPath(project)}`;
+				const sourceFile = `${claudeProject}/original.jsonl`;
+				const originalText = 'Keep the SSH fact: café, π, and two  spaces.';
+				const newText = 'A new Codex turn must survive the return hop.';
+				const sourceBytes = Buffer.from(
+					JSON.stringify({
+						type: 'user',
+						uuid: 'original-message',
+						sessionId: 'original',
+						cwd: project,
+						message: { role: 'user', content: originalText },
+					}) + '\r\n'
+				);
+				const memoryBytes = Buffer.from('Remember this exact memory.\r\nSecond line.\r\n');
+				await disk.nativeFs.mkdir(`${claudeProject}/memory`, { recursive: true });
+				await disk.nativeFs.mkdir(project, { recursive: true });
+				await disk.nativeFs.mkdir(codexRoot, { recursive: true });
+				await disk.nativeFs.createExclusive(sourceFile, sourceBytes);
+				await disk.nativeFs.createExclusive(`${claudeProject}/memory/MEMORY.md`, memoryBytes);
+				const unrelated = `${codexRoot}/unrelated.txt`;
+				await disk.nativeFs.createExclusive(unrelated, 'Unrelated provider data');
+				vi.spyOn(app, 'getPath').mockReturnValue(data);
+
+				const localWrites = [
+					vi.spyOn(localTranslationFs, 'mkdir'),
+					vi.spyOn(localTranslationFs, 'createExclusive'),
+					vi.spyOn(localTranslationFs, 'atomicWrite'),
+					vi.spyOn(localTranslationFs, 'unlink'),
+				];
+				const nativeWrites = [
+					vi.spyOn(nativeFs, 'mkdir'),
+					vi.spyOn(nativeFs, 'createExclusive'),
+					vi.spyOn(nativeFs, 'atomicWrite'),
+					vi.spyOn(nativeFs, 'unlink'),
+				];
+				let session = createMockSession({
+					id: 'ssh-round-trip',
+					toolType: 'claude-code',
+					cwd: project,
+					projectRoot: project,
+					sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
+					aiTabs: [{ id: 'open', agentSessionId: 'original' }] as any,
+					activeTabId: 'open',
+				});
+				let interruptCommit = false;
+				const persist = vi.fn((_key: string, sessions: (typeof session)[]) => {
+					if (interruptCommit && sessions[0].toolType !== session.toolType) {
+						interruptCommit = false;
+						throw new Error('Synthetic session-store interruption before commit');
+					}
+					session = sessions[0];
+				});
+				const dependencies = {
+					sessionsStore: { get: () => [session], set: persist },
+					settingsStore: { get: (_key: string, fallback: unknown) => fallback },
+					agentConfigsStore: { get: () => ({}) },
+					getProcessManager: () => ({ get: () => undefined }),
+					getAgentDetector: vi.fn(() => {
+						throw new Error('Local provider detection is forbidden');
+					}),
+				} as unknown as ProviderTranslationDependencies;
+				const rollouts = new Map<string, string>();
+				const rpcMethods: string[] = [];
+				const request: TranslationRpc['request'] = async <T>(
+					method: string,
+					params?: unknown
+				): Promise<T> => {
+					rpcMethods.push(method);
+					if (method === 'thread/start') {
+						expect(params).toMatchObject({
+							cwd: project,
+							approvalPolicy: 'never',
+							sandbox: 'read-only',
+						});
+						const id = generateUUID();
+						const file = `${codexRoot}/sessions/rollout-${id}.jsonl`;
+						rollouts.set(id, file);
+						await nativeFs.mkdir(path.posix.dirname(file), { recursive: true });
+						await nativeFs.createExclusive(
+							file,
+							JSON.stringify({ type: 'session_meta', payload: { id, cwd: project } }) + '\n'
+						);
+						return { thread: { id, path: file } } as T;
+					}
+					if (method === 'thread/inject_items') {
+						const { threadId, items } = params as { threadId: string; items: unknown[] };
+						const file = rollouts.get(threadId)!;
+						await nativeFs.atomicWrite(
+							file,
+							Buffer.concat([
+								await nativeFs.readFile(file),
+								Buffer.from(
+									items
+										.map((payload) => JSON.stringify({ type: 'response_item', payload }))
+										.join('\n') + '\n'
+								),
+							])
+						);
+						return {} as T;
+					}
+					throw new Error(`Unexpected translation RPC: ${method}`);
+				};
+				const connection = { request, onNotification: () => () => {}, close: vi.fn() };
+				const remoteHost = {
+					nativeFs,
+					resolveIdentity: vi.fn<NonNullable<TranslationNativeHost['resolveIdentity']>>(
+						async (_session, provider) => ({
+							provider,
+							version: provider === 'codex' ? '0.162.1' : '2.1.296',
+							accountRoot: provider === 'codex' ? codexRoot : claudeRoot,
+							projectRoot: project,
+							remoteHome: virtualRoot,
+							remoteHost: translationHash(canonicalJson(remote)),
+						})
+					),
+					execGit: vi.fn(async () => ({
+						exitCode: 128,
+						stdout: '',
+						stderr: 'not a git repository',
+					})),
+					findCodexSessionFile: vi.fn(async (id: string, accountRoot: string) => {
+						expect(accountRoot).toBe(codexRoot);
+						return rollouts.get(id) ?? null;
+					}),
+					openCodexConnection: vi.fn(async () => connection),
+				};
+				vi.mocked(resolveSshTranslationHost).mockReset().mockResolvedValue(remoteHost);
+				const archive = new TranslationArchive(path.join(data, 'provider-translations'));
+				for (const destination of ['codex', 'claude-code'] as const) {
+					const service = new ProviderTranslationService(dependencies);
+					const before = structuredClone(session);
+					const checkpointBefore = await archive.checkpoint(session.id);
+					const planned = await service.run({ agentId: session.id, destination, action: 'plan' });
+					expect(planned).toMatchObject({ success: true, plan: { status: 'ready' } });
+					const planId = planned.plan!.id;
+					const planJournal = await archive.read(session.id, planId);
+					expect(planJournal.state).toBe('planned');
+					if (destination === 'codex') {
+						expect(
+							await fs.readFile(
+								path.join(
+									path.dirname(archive.operationPath(session.id, planId)),
+									`${translationHash(sourceBytes)}.bytes`
+								)
+							)
+						).toEqual(sourceBytes);
+					}
+					expect(planJournal.resources).toEqual(
+						expect.arrayContaining([
+							expect.objectContaining({
+								kind: 'memory',
+								bytesBase64: memoryBytes.toString('base64'),
+							}),
+						])
+					);
+					interruptCommit = outcome !== 'commit';
+					let applied = await service.run({
+						agentId: session.id,
+						destination,
+						action: 'apply',
+						planId,
+						acceptLimitations: true,
+					});
+					expect(applied.result?.state, applied.error).toBe(
+						outcome === 'commit' ? 'committed' : 'failed'
+					);
+					let journal = await archive.read(session.id, planId);
+					expect(journal.mappings).toHaveLength(1);
+					expect(journal.resourceWrites.length).toBeGreaterThan(0);
+					const nativeFiles = [
+						...journal.resourceWrites,
+						...journal.mappings.flatMap((mapping) => mapping.artifacts),
+					];
+					for (const write of nativeFiles) {
+						expect(write.path.startsWith(virtualRoot + '/')).toBe(true);
+						expect(translationHash(await fs.readFile(disk.backingPath(write.path)))).toBe(
+							write.sha256
+						);
+					}
+					if (outcome !== 'commit') {
+						expect(journal.failurePhase).toBe('committing');
+						expect(session.toolType).toBe(before.toolType);
+						expect(session.aiTabs).toEqual(before.aiTabs);
+						const writeCounts = nativeWrites.map((write) => write.mock.calls.length);
+						const rpcCount = rpcMethods.length;
+						// A fresh service must recover solely from the local journal and remote bytes.
+						applied = await new ProviderTranslationService(dependencies).run({
+							agentId: session.id,
+							destination,
+							action: outcome,
+							planId,
+						});
+						expect(applied.result?.state, applied.error).toBe(
+							outcome === 'recover' ? 'committed' : 'rolled-back'
+						);
+						expect(rpcMethods).toHaveLength(rpcCount);
+						if (outcome === 'recover') {
+							expect(nativeWrites.map((write) => write.mock.calls.length)).toEqual(writeCounts);
+						} else {
+							expect(session.toolType).toBe(before.toolType);
+							expect(session.aiTabs).toEqual(before.aiTabs);
+							expect(await archive.checkpoint(session.id)).toEqual(checkpointBefore);
+							for (const write of nativeFiles) {
+								if (write.cleanup === 'retain') {
+									expect(translationHash(await nativeFs.readFile(write.path))).toBe(write.sha256);
+								} else {
+									expect(await nativeFs.exists(write.path)).toBe(false);
+									expect(nativeFs.unlink).toHaveBeenCalledWith(write.path);
+								}
+							}
+							expect((await archive.read(session.id, planId)).state).toBe('rolled-back');
+							// Retry as a new operation so this case also exercises the return hop.
+							applied = await new ProviderTranslationService(dependencies).run({
+								agentId: session.id,
+								destination,
+								action: 'apply',
+								acceptLimitations: true,
+							});
+							expect(applied.result?.state, applied.error).toBe('committed');
+							expect(applied.plan!.id).not.toBe(planId);
+						}
+					}
+					journal = await archive.read(session.id, applied.plan!.id);
+					expect(journal.state).toBe('committed');
+					expect(session.toolType).toBe(destination);
+					expect(session.aiTabs[0].agentSessionId).toBe(journal.mappings[0].destinationSessionId);
+					expect(session.providerMigration?.state).toBe('committed');
+					expect(
+						session.customEnvVars?.[destination === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']
+					).toBe(journal.plan.destination.accountRoot);
+					expect(session.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR]).toBe(
+						journal.knowledgeDirectory
+					);
+					expect(JSON.parse(session.customEnvVars![TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR])).toEqual({
+						remoteHome: virtualRoot,
+						remoteHost: translationHash(canonicalJson(remote)),
+					});
+					expect(
+						journal.knowledgeDirectory!.startsWith(`${virtualRoot}/.maestro/provider-knowledge/`)
+					).toBe(true);
+					expect(await nativeFs.readFile(`${journal.knowledgeDirectory}/memory/MEMORY.md`)).toEqual(
+						memoryBytes
+					);
+					expect((await archive.checkpoint(session.id))?.operationId).toBe(journal.plan.id);
+					for (const artifact of journal.conversations.flatMap(
+						(conversation) => conversation.artifacts
+					)) {
+						expect(
+							await fs.readFile(
+								path.join(
+									path.dirname(archive.operationPath(session.id, journal.plan.id)),
+									`${artifact.sha256}.bytes`
+								)
+							)
+						).toEqual(Buffer.from(artifact.bytesBase64, 'base64'));
+					}
+					const file = journal.mappings[0].artifacts[0].path;
+					const translated = extractNativeConversation(
+						journal.plan.destination,
+						'open',
+						journal.mappings[0].destinationSessionId!,
+						await nativeFs.readFile(file)
+					);
+					expect(
+						translated.records
+							.filter((record) => record.role === 'user' || record.role === 'assistant')
+							.flatMap((record) => record.blocks)
+					).toEqual([
+						{ kind: 'text', text: originalText },
+						...(destination === 'claude-code' ? [{ kind: 'text', text: newText }] : []),
+					]);
+					if (destination === 'codex') {
+						await nativeFs.atomicWrite(
+							file,
+							Buffer.concat([
+								await nativeFs.readFile(file),
+								Buffer.from(
+									JSON.stringify({
+										type: 'response_item',
+										payload: {
+											type: 'message',
+											id: 'new-codex-message',
+											role: 'user',
+											content: [{ type: 'input_text', text: newText }],
+										},
+									}) + '\n'
+								),
+							])
+						);
+					}
+					expect(await nativeFs.readFile(sourceFile)).toEqual(sourceBytes);
+					expect(await nativeFs.readFile(unrelated)).toEqual(
+						Buffer.from('Unrelated provider data')
+					);
+				}
+				// A native path never exists on the local host; all actual disk mutations
+				// belong to either Maestro's archive or the isolated remote backing tree.
+				await expect(fs.stat(virtualRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+				await expect(fs.stat(path.join(data, 'provider-knowledge'))).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+				for (const write of nativeWrites) {
+					for (const [file] of write.mock.calls)
+						expect(file.startsWith(virtualRoot + '/')).toBe(true);
+				}
+				for (const write of localWrites) {
+					for (const [file] of write.mock.calls) {
+						expect(
+							[data, backingRoot].some(
+								(directory) => file === directory || file.startsWith(directory + path.sep)
+							),
+							file
+						).toBe(true);
+					}
+				}
+				expect(remoteFs.createExclusiveRemote).toHaveBeenCalledWith(
+					expect.any(String),
+					expect.anything(),
+					remote,
+					undefined,
+					expect.any(Object)
+				);
+				expect(remoteFs.writeFileAtomicRemote).toHaveBeenCalledWith(
+					expect.any(String),
+					expect.anything(),
+					remote,
+					expect.any(Object),
+					undefined
+				);
+				expect(openCodexTranslationConnection).not.toHaveBeenCalled();
+				expect(dependencies.getAgentDetector).not.toHaveBeenCalled();
+				expect(connection.close).toHaveBeenCalledTimes(
+					remoteHost.openCodexConnection.mock.calls.length
+				);
+			} finally {
+				vi.mocked(applyTranslation).mockReset();
+				vi.mocked(recoverTranslation).mockReset();
+				vi.mocked(resolveSshTranslationHost).mockReset();
+				vi.restoreAllMocks();
+				await fs.rm(temporary, { recursive: true, force: true });
+			}
+		},
+		30_000
+	);
+});
 
 describe('single-tab provider translation service', () => {
 	it.each(['gated', 'connected', 'missing-channel'] as const)(
