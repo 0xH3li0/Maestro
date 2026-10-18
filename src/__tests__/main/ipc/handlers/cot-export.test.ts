@@ -534,7 +534,7 @@ describe('cot-export IPC handlers', () => {
 
 			expect(result).toEqual({
 				ok: false,
-				reason: 'The folder is inside an agent workspace, where that agent could read it.',
+				reason: `The folder is inside the workspace of Backend (${workspace}), where that agent could read it.`,
 			});
 			expect(await fromWindow<CotAgentConfig>(COT_EXPORT_CHANNELS.get, AGENT)).toEqual({
 				enabled: false,
@@ -632,7 +632,7 @@ describe('cot-export IPC handlers', () => {
 				)
 			).toEqual({
 				ok: false,
-				reason: 'The folder is inside an agent workspace, where that agent could read it.',
+				reason: `The folder is inside the workspace of Backend (${workspace}), where that agent could read it.`,
 			});
 
 			expect(await fromWindow<CotAgentConfig>(COT_EXPORT_CHANNELS.get, AGENT)).toEqual({

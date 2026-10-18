@@ -375,7 +375,7 @@ describe('validateAgentFolder', () => {
 		}
 		const around = validateAgentFolder(sandbox, {
 			...named,
-			userDataPath: path.join(home, 'data'),
+			userDataPath: path.join(path.dirname(sandbox), 'cot-layout-elsewhere', 'data'),
 		});
 		expect(around.ok).toBe(false);
 		if (!around.ok) expect(around.reason).toMatch(/contains the workspace of Pianola/);
