@@ -360,9 +360,36 @@ versions and warning details match. Held messages stay in the draft or queue,
 and queued messages keep the provider, model and effort selected when queued.
 The headless runtime uses the same conversion checks and retains held messages.
 
-Carried knowledge stays outside your project in Maestro's local data directory:
-`<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. Maestro connects its
-knowledge index to each turn, including resumed sessions. Claude also receives
+### SSH agents
+
+SSH translation infrastructure is implemented, but **the live check was skipped
+on 2026-10-17**. Both Claude Code to Codex and Codex to Claude Code remain
+unverified over SSH. SSH Ensemble provider choices must remain disabled until
+live evidence is recorded; certification is deferred.
+
+The source and destination providers run on the agent's configured remote host.
+Provider versions, accounts, project paths and memory are resolved there, and
+native transcript reads, destination writes and readback stay there. Maestro
+keeps original-byte archives, checkpoints, recovery journals and agent mappings
+in its local data directory. Status can inspect the local journal offline;
+recovery or rollback that touches native files needs the same remote host.
+An unresolved SSH target fails without using a local provider instead.
+
+The remote needs the supported provider binaries, POSIX `sh`, `base64` decoding
+with `-d`, `realpath` or a working `readlink -f`, Git, and GNU/BSD filesystem
+tools for listing, metadata, links and durable writes. Missing tools or a failed
+provider version probe stop translation. Codex imports also need the remote
+`codex app-server` history APIs; ordinary SSH messages still use `codex exec`.
+The destination account is pinned during import. A dropped connection requires
+inspection of migration status before another attempt.
+
+### Knowledge and project resources
+
+Carried knowledge stays outside your project. Local agents use Maestro's data
+directory at `<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. SSH
+agents use `<remote HOME>/.maestro/provider-knowledge/<agent-hash>/<operation-id>/`
+on their configured host. Maestro connects its knowledge index to each turn,
+including resumed sessions. Claude also receives
 access to that directory and a memory setting for it. These bindings do not yet
 certify native recall or repeated round-trip continuity.
 
@@ -378,12 +405,13 @@ To install them, select **Also install skills and subagents into the project
 and supported subagents under `.codex/agents` or `.claude/agents`. Unsupported
 definitions remain listed as limitations.
 
-Maestro adds each installed path to a marked block in Git's local
-`info/exclude`, using the shared Git directory for worktrees. It does not change
+Maestro adds each installed path to a marked block in Git's repository-local
+`info/exclude`, using the shared Git directory for worktrees. For SSH agents,
+this file and the installed resources are on the remote host. It does not change
 your committed `.gitignore` or untrack files already in Git. Rollback before
 commit removes its own exclude entries while preserving entries you add later;
 changed ownership or markers require inspection. Outside a Git repository,
 installation still works, but Notes report that local Git exclusions are
 unavailable. Older operations that stored knowledge under
 `.maestro/provider-knowledge` remain recoverable or reversible; new switches
-and launch bindings use the local data directory.
+and launch bindings use the knowledge root for the provider host.
