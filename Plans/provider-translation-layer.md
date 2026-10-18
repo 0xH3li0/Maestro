@@ -409,3 +409,9 @@ env -u MAESTRO_USER_DATA -u MAESTRO_CLAUDE_BIN -u MAESTRO_QUERY_SOURCE -u CLAUDE
 ```
 
 `rtk proxy npm run lint` and `rtk proxy npm run lint:eslint` exited 0. `npm run docs:verify` checked 1,399 asserted paths and 456 index entries with zero findings. Focused Prettier and `command git diff --check` passed. Vitest printed the existing advisory about `__dirname` compatibility with Vite's future native config loader; no test failed. This task changed documentation only, reused the existing probe and tests, and executed no native provider import or resume. No task images were supplied.
+
+### 2026-10-17: Ensemble 06 live SSH acceptance awaiting target
+
+The live SSH check in [[ENSEMBLE-06]] could not start: `.maestro/scratch/ssh-acceptance.json` is absent from the `acappella` worktree, although the preceding human step is checked. No approved remote target or explicit skip was available. The live-check task remains unchecked with a new human gate requesting either `{"skip": true}` or `{"sshRemoteId": "<configured-test-host-id>", "projectPath": "<disposable-remote-project>"}` in that file.
+
+SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** No hop was attempted, so plan status, limitations, fact recall and remote write-boundary verification have no live results. Phase 08 must not treat this entry as evidence to enable the Ensemble pill on SSH agents. No scratch agent was created, no SSH command ran, and no provider home or remote file was modified. This is a pending prerequisite, not an explicit skip or a failed translation.
