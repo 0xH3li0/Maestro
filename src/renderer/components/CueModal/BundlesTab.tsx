@@ -8,7 +8,7 @@
 
 import { useMemo } from 'react';
 import type { Theme } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useLiveSessions } from '../../hooks/session/useLiveSessions';
 import { BundleExportSection } from './bundles/BundleExportSection';
 import { BundleImportSection } from './bundles/BundleImportSection';
 
@@ -20,7 +20,8 @@ export interface BundlesTabProps {
 }
 
 export function BundlesTab({ theme, pipelines, onImported }: BundlesTabProps) {
-	const sessions = useSessionStore((s) => s.sessions);
+	// Live agents only: a dormant Pianola (flag off) is never bundled.
+	const sessions = useLiveSessions();
 	const agents = useMemo(
 		() =>
 			sessions

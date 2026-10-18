@@ -90,6 +90,10 @@ let resolveSessionFromPid: CoworkingSessionFromPidResolver | null = null;
  *  stays put for the lifetime of the connection. */
 const connections = new WeakMap<net.Socket, { sessionId: string | null }>();
 
+/** Every open connection, so stopping the bridge can drop them too (a WeakMap
+ *  cannot be walked). Closing the server alone only stops NEW connections. */
+const openSockets = new Set<net.Socket>();
+
 /** Env-var pair to embed in each agent's MCP-server config entry. */
 export function getBridgeEnvVar(): { name: string; value: string } {
 	return { name: COWORKING_SOCKET_ENV_VAR, value: getBridgeSocketPath() };
@@ -153,18 +157,26 @@ export async function startCoworkingBridge(options?: {
 	logger.info(`${LOG_CTX} listening on ${socketPath}`, 'Coworking');
 }
 
-/** Stop the bridge. Idempotent. Called on app quit. */
+/**
+ * Stop the bridge. Idempotent. Called on app quit and when the coworking Encore
+ * flag turns off: live MCP-server connections are dropped as well, so an agent
+ * that connected while the feature was on cannot keep calling tools after it.
+ */
 export async function stopCoworkingBridge(): Promise<void> {
 	if (!server) return;
 	const srv = server;
 	server = null;
-	await new Promise<void>((resolve) => {
+	const closed = new Promise<void>((resolve) => {
 		srv.close(() => resolve());
 	});
+	for (const socket of openSockets) socket.destroy();
+	openSockets.clear();
+	await closed;
 }
 
 function handleConnection(conn: net.Socket): void {
 	connections.set(conn, { sessionId: null });
+	openSockets.add(conn);
 	conn.setEncoding('utf8');
 	let buffer = '';
 	conn.on('data', (chunk) => {
@@ -184,6 +196,7 @@ function handleConnection(conn: net.Socket): void {
 	});
 	conn.on('close', () => {
 		connections.delete(conn);
+		openSockets.delete(conn);
 	});
 }
 

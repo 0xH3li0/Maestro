@@ -28,6 +28,7 @@ import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
+import { isPianolaEnabled } from '../../shared/agentVisibility';
 
 const LOG_CONTEXT = '[MaestroSystemPrompt]';
 
@@ -211,7 +212,12 @@ export async function buildMaestroSystemPromptForSession(
 		maestroCliPath: resolvedCliPath(),
 	};
 
-	const roleSections = record.isPianola ? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// The Pianola role only while its Encore flag is on: a dormant Pianola gets
+	// no manager instructions even if something manages to spawn it.
+	const roleSections =
+		record.isPianola && isPianolaEnabled(encoreFeatures)
+			? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)]
+			: [];
 
 	return assembleMaestroSystemPrompt({
 		template,

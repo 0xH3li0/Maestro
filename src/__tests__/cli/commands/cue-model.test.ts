@@ -16,6 +16,7 @@ const mockReadSessions = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => mockReadSessions(),
+	readLiveSessions: () => mockReadSessions(),
 	// Exact id or exact name is all these tests need from the real resolver.
 	resolveAgentId: (input: string) => {
 		const sessions = mockReadSessions() as Array<{ id: string; name: string }>;

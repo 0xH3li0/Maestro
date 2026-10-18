@@ -15,7 +15,8 @@ import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
 import type Store from 'electron-store';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { getProductionDataPath } from '../../stores/getters';
+import { getProductionDataPath, getSettingsStore } from '../../stores/getters';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { SessionsData } from '../../stores/types';
 import type { SessionInfo } from '../../../shared/types';
 import {
@@ -91,7 +92,12 @@ export function registerCueBundleHandlers(deps: CueBundleHandlerDependencies): v
 		dataDir: app.getPath('userData'),
 		agentConfigsDir: getProductionDataPath(),
 		version: app.getVersion(),
-		getSessions: () => sessionsStore.get('sessions', []) as SessionInfo[],
+		// Live agents only: a dormant Pianola (flag off) is never bundled.
+		getSessions: () =>
+			filterLiveAgents(
+				sessionsStore.get('sessions', []) as SessionInfo[],
+				getSettingsStore().get('encoreFeatures')
+			),
 		applyAgents: (change) => applyAgentsInRenderer(getMainWindow, change),
 	};
 	const ctx = appContext;

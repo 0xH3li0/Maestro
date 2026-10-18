@@ -77,6 +77,7 @@ import type { CueRunResult } from '../../shared/cue/contracts';
 import type { CueExternalNotification } from '../../main/cue/cue-notify-webhook';
 import { formatJsonLogLine } from '../../shared/jsonLogLine';
 import {
+	readLiveSessions,
 	readSessions,
 	readSshRemotes,
 	getAgentCustomPath,
@@ -430,7 +431,7 @@ export function buildStandaloneCueEngineDeps(
 	// stopping it is aborting the signal its runner was handed.
 	const autoRunStops = new Map<string, AbortController>();
 	return {
-		getSessions: () => readSessions(),
+		getSessions: () => readLiveSessions(),
 		onCueRun: buildOnCueRun(
 			onLog,
 			options.onExternalNotification,

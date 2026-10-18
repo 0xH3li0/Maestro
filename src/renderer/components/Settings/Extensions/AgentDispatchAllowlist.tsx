@@ -16,7 +16,7 @@ import { Send } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { parseAllowlistScope, type PermissionGrant } from '../../../../shared/plugins/permissions';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { useLiveSessions } from '../../../hooks/session/useLiveSessions';
 import { notifyToast } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import { FilterInput } from '../../ui/FilterInput';
@@ -40,7 +40,8 @@ export function AgentDispatchAllowlist({
 	grant,
 	onSaved,
 }: AgentDispatchAllowlistProps) {
-	const sessions = useSessionStore((s) => s.sessions);
+	// Live agents only: a dormant Pianola (flag off) cannot be granted dispatch.
+	const sessions = useLiveSessions();
 	const sessionIds = useMemo(() => new Set(sessions.map((s) => s.id)), [sessions]);
 
 	// The persisted allow list from the ledger grant. Recomputed only when the

@@ -130,12 +130,19 @@ describe('reads (from disk)', () => {
 		expect(lastJson()).toMatchObject({ success: false });
 	});
 
-	it('reads still work with the flag off, with a note on stderr', async () => {
+	it.each([
+		['query', () => computerHistoryQuery({ since: '1h', json: true })],
+		['list', () => computerHistoryList({ since: '1h', json: true })],
+		['apps', () => computerHistoryApps({ since: '1h', json: true })],
+		['digests', () => computerHistoryDigests({ since: '1d', json: true })],
+		['status', () => computerHistoryStatus({ json: true })],
+		['rules list', () => computerHistoryRulesList({ json: true })],
+		['config', () => computerHistoryConfig({ json: true })],
+	])('%s refuses with the flag off, recorded history included', async (_verb, run) => {
 		h.flags = {};
-		await computerHistoryQuery({ since: '1h', json: true });
-		expect(lastJson().count).toBe(2);
-		await computerHistoryList({ since: '1h' });
-		expect(errSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/off/);
+		await expect(run()).rejects.toThrow('__exit__');
+		expect(lastJson()).toMatchObject({ success: false, code: 'COMPUTER_HISTORY_DISABLED' });
+		expect(String(lastJson().error)).toContain('Settings > Plugins');
 	});
 
 	it('list shows the open segment; apps aggregates by app', async () => {

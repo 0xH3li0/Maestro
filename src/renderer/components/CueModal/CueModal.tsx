@@ -24,6 +24,7 @@ import type { CueGraphTarget } from '../CuePipelineEditor/CuePipelineEditor';
 import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useLiveSessions } from '../../hooks/session/useLiveSessions';
 import { getModalActions, useModalStore, selectModalData } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
@@ -78,7 +79,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		refresh,
 	} = useCue();
 
-	const allSessions = useSessionStore((state) => state.sessions);
+	// Live agents only: a dormant Pianola (flag off) is neither listed nor schedulable.
+	const allSessions = useLiveSessions();
 	const groups = useSessionStore((state) => state.groups);
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
 

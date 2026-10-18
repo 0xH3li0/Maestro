@@ -101,7 +101,6 @@ import {
 	FirstPartyPluginBridge,
 	createFirstPartyGrantMinter,
 	setFirstPartyBridges,
-	type FirstPartySupervisorHooks,
 } from './plugins/first-party-bridge';
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import { pluginIdentity } from './plugins/plugin-identity';
@@ -149,7 +148,14 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
-import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
+import {
+	isEncoreFeatureEnabled,
+	requireEncoreFeature,
+	resolveEncoreFeatures,
+} from '../shared/encoreFeatureDefaults';
+import { createEncoreFeatureLifecycle, type EncoreServiceHooks } from './encore-feature-lifecycle';
+import { startCoworkingService, stopCoworkingService } from './coworking/coworking-lifecycle';
+import { opencodeServerManager } from './opencode-server/OpencodeServerManager';
 import {
 	initializeStores,
 	getEarlySettings,
@@ -162,6 +168,7 @@ import {
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
+	getLiveSessions,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
@@ -667,12 +674,10 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // Disabling either side of the bridge purges any live views immediately. If both
 // are enabled after a flag change, re-sync static data without asking a renderer
 // read path to refresh plugin discovery.
+// (Stopping the community-plugin runtime when `plugins` turns off is the
+// plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
-	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
-	if (encoreFeatures?.plugins !== true) {
-		pluginSandboxHost?.stopAll();
-		pluginGroupingRegistry?.clearAll();
-	}
+	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
 	// Feature changes also invalidate cached settings guests, including changes
 	// made outside this renderer. Reads remain pure; do not refresh discovery.
 	try {
@@ -691,20 +696,21 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
-// Computer History follows its Encore flag live. `maestro-cli encore enable`
-// writes through set_setting rather than the first-party bridge, so this store
-// change is the one signal every enable/disable path produces. reconcile() is
-// idempotent and a no-op before the service exists.
-store.onDidChange('encoreFeatures', () => {
-	void getComputerHistoryService()
-		?.reconcile()
-		.catch((err) => void captureException(err, { operation: 'computerHistory:flagChange' }));
-	// MaestroRun follows the same signal: inspect the launcher when its flag
-	// turns on, stop polling for the grant when it turns off.
-	void getMaestroRunService()
-		?.reconcile()
-		.catch((err) => void captureException(err, { operation: 'maestroRun:flagChange' }));
+// Every Encore Feature's background services follow its flag through ONE path:
+// this store change, which the Extensions toggle, `maestro-cli encore
+// enable|disable` (a plain set_setting that never reaches the first-party
+// bridge), and an external settings edit all produce. A flag that turns off
+// stops the feature's watchers, timers, sockets, and child processes; one that
+// turns on starts them. The hooks are bound at app-ready, where the services
+// exist, and are the same objects the first-party bridges hold. See
+// src/main/encore-feature-lifecycle.ts.
+const encoreLifecycle = createEncoreFeatureLifecycle({
+	onError: (flag, phase, error) => {
+		void captureException(error, { operation: `encore:${flag}:${phase}` });
+		logger.error(`Encore feature "${flag}" failed to ${phase}: ${String(error)}`, 'Encore');
+	},
 });
+store.onDidChange('encoreFeatures', (value) => encoreLifecycle.apply(value));
 
 // Collectors for a support (debug) package. One object shared by the debug and
 // feedback IPC handlers and the CLI bridge, so every path builds the same zip.
@@ -746,6 +752,10 @@ const quickChatController = createQuickChatController({
 	getWindowForSession: resolveWindowForSession,
 });
 
+// What a CLI or web caller is told when it asks a switched-off Cue to act.
+const CUE_DISABLED_MESSAGE =
+	'Maestro Cue is turned off. Run `maestro-cli encore enable cue` first.';
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
@@ -756,7 +766,11 @@ const createWebServer = createWebServerFactory({
 	getWindowForSession: resolveWindowForSession,
 	deliverCadenza,
 	getProcessManager: () => processManager,
+	// Cue writes refuse while Maestro Cue is off (the IPC handlers do the same),
+	// so `maestro-cli cue trigger|enable|disable` cannot act on a disabled
+	// feature. The web handler reports the thrown message to the caller.
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
+		requireEncoreFeature(store, 'maestroCue', CUE_DISABLED_MESSAGE);
 		if (!cueEngine) return false;
 		return cueEngine.triggerSubscription(subscriptionName, prompt, sourceAgentId);
 	},
@@ -765,6 +779,7 @@ const createWebServer = createWebServerFactory({
 		return cueEngine.getGraphData();
 	},
 	setCueSubscriptionEnabled: async (subscriptionId, enabled) => {
+		requireEncoreFeature(store, 'maestroCue', CUE_DISABLED_MESSAGE);
 		if (!cueEngine) return false;
 		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
 	},
@@ -1039,12 +1054,13 @@ app
 		// Initialize core services
 		logger.info('Initializing core services', 'Startup');
 		// Gate the OpenCode SDK-serve path behind the default-off
-		// `encoreFeatures.opencodeServer` plugin. Read live on every spawn so the
-		// Extensions toggle takes effect without an app restart.
-		processManager = new ProcessManager(
-			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true,
-			{ appVersion: app.getVersion() }
-		);
+		// `encoreFeatures.opencodeServer` plugin, and the coworking env vars behind
+		// `encoreFeatures.coworking`. Read live on every spawn so a toggle (UI or
+		// `maestro-cli encore`) takes effect without an app restart.
+		processManager = new ProcessManager(() => isEncoreFeatureEnabled(store, 'opencodeServer'), {
+			appVersion: app.getVersion(),
+			isCoworkingEnabled: () => isEncoreFeatureEnabled(store, 'coworking'),
+		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 
@@ -1278,10 +1294,10 @@ app
 		});
 		// L5 usage-stats lift: the sampling loop is the feature's supervised
 		// `stats.sampler` background service - don't arm it when the user has
-		// explicitly disabled the Usage & Stats tile. `!== false` (not `=== true`)
-		// mirrors the renderer default (usageStats defaults ON and the merged
-		// flag map may never have been persisted main-side).
-		if ((store.get('encoreFeatures', {}) as Record<string, boolean>).usageStats !== false) {
+		// disabled the Usage & Stats tile (resolveEncoreFeatures supplies the
+		// default-ON value when the flag map was never persisted main-side). A
+		// later flag change starts or stops it through the Encore lifecycle.
+		if (isEncoreFeatureEnabled(store, 'usageStats')) {
 			usageRefreshScheduler.start();
 		}
 
@@ -1291,9 +1307,12 @@ app
 		// `maestro-p --status` for the same account at once, and no-ops when the
 		// snapshots already hold renderable data. This is what makes the Usage
 		// Dashboard's Anthropic / OpenAI tabs show up on the first open instead of
-		// only after a close-and-reopen.
+		// only after a close-and-reopen. Skipped while Usage & Stats is off: the
+		// warm-up spawns the same quota probes the sampler does.
 		void startupUsageSampling
-			.then(() => usageRefreshScheduler?.warmUp())
+			.then(() => {
+				if (isEncoreFeatureEnabled(store, 'usageStats')) return usageRefreshScheduler?.warmUp();
+			})
 			.catch((err: unknown) => {
 				logger.warn('Provider quota warm-up failed', 'Startup', {
 					error: err instanceof Error ? err.message : String(err),
@@ -1384,7 +1403,8 @@ app
 		const cueHealthToastAt = new Map<string, number>();
 		cueEngine = new CueEngine({
 			getSessions: () => {
-				const stored = sessionsStore.get('sessions', []);
+				// Live agents only: a dormant Pianola (flag off) is never watched.
+				const stored = getLiveSessions();
 				return stored.map((s: any) => ({
 					id: s.id,
 					name: s.name,
@@ -1534,38 +1554,94 @@ app
 		// clear the flag. Feature workers (L1..L5) look their bridge up via
 		// getFirstPartyBridge(flag) - this is the single construction site.
 		const mintFirstPartyGrants = createFirstPartyGrantMinter(authStore);
-		const firstPartySupervisors: Partial<Record<FirstPartyEncoreFlag, FirstPartySupervisorHooks>> =
-			{
-				pianola: {
-					reconcile: () => pianolaSupervisor?.reconcile(),
-					stopAll: () => pianolaSupervisor?.stopAll(),
+		//
+		// The same hooks drive the Encore lifecycle (encoreLifecycle.attach below),
+		// so a flag flipped from the CLI starts and stops exactly what the
+		// Extensions toggle does. Entries with no first-party bridge (`plugins`)
+		// are lifecycle-only.
+		const firstPartySupervisors: EncoreServiceHooks = {
+			// Pianola: the supervised watchers/orchestrations (plus the store-file
+			// watch that reconciles them) and the scheduled re-learn cadence. Off
+			// = no targets file write, no fs.watch, no timer, no child process.
+			pianola: {
+				reconcile: () => {
+					// start() is a no-op once watching; reconcile() settles children.
+					pianolaSupervisor?.start();
+					pianolaSupervisor?.reconcile();
+					pianolaRelearnScheduler?.start();
 				},
-				// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
-				// flag+grants hold; stopAll halts every watcher/poller/heartbeat.
-				maestroCue: createCueSupervisorHooks(() => cueEngine),
-				// L5 usage-stats: `stats.sampler` - the background provider-quota
-				// sampling loop (UsageRefreshScheduler). Marketplace disable/revoke
-				// stops the timers; enable re-arms from the persisted intervals
-				// (start() is idempotent; it arms nothing until the user picks an
-				// auto-refresh interval in the dashboard).
-				usageStats: {
-					reconcile: () => usageRefreshScheduler?.start(),
-					stopAll: () => usageRefreshScheduler?.stop(),
+				stopAll: () => {
+					pianolaSupervisor?.stopAll();
+					pianolaRelearnScheduler?.stop();
 				},
-				// Computer History: `computerHistory.observer` - the accessibility
-				// helper plus the segment writer. Disable/revoke stops both.
-				computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
-				// MaestroRun: no long-running service, only the bounded poll that
-				// watches for the Full Disk Access grant. Disable/revoke stops it.
-				maestroRun: {
-					reconcile: () => {
-						void getMaestroRunService()
-							?.reconcile()
-							.catch((err) => void captureException(err, { operation: 'maestroRun:reconcile' }));
-					},
-					stopAll: () => getMaestroRunService()?.stopWatching(),
+			},
+			// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
+			// flag+grants hold; stopAll halts every watcher/poller/heartbeat.
+			maestroCue: createCueSupervisorHooks(() => cueEngine),
+			// L5 usage-stats: `stats.sampler` - the background provider-quota
+			// sampling loop (UsageRefreshScheduler). Marketplace disable/revoke
+			// stops the timers; enable re-arms from the persisted intervals
+			// (start() is idempotent; it arms nothing until the user picks an
+			// auto-refresh interval in the dashboard).
+			usageStats: {
+				reconcile: () => usageRefreshScheduler?.start(),
+				stopAll: () => usageRefreshScheduler?.stop(),
+			},
+			// Computer History: `computerHistory.observer` - the accessibility
+			// helper plus the segment writer. Disable/revoke stops both.
+			computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
+			// MaestroRun: no long-running service, only the bounded poll that
+			// watches for the Full Disk Access grant. Disable/revoke stops it.
+			maestroRun: {
+				reconcile: () => {
+					void getMaestroRunService()
+						?.reconcile()
+						.catch((err) => void captureException(err, { operation: 'maestroRun:reconcile' }));
 				},
-			};
+				stopAll: () => getMaestroRunService()?.stopWatching(),
+			},
+			// Coworking: the bundled MCP-server script and the bridge socket the
+			// agents' MCP subprocesses dial. Off also drops live connections.
+			coworking: {
+				reconcile: () => void startCoworkingService(() => processManager),
+				stopAll: () => void stopCoworkingService(),
+			},
+			// OpenCode serve: the shared server spawns lazily on the first OpenCode
+			// turn, so there is nothing to start. Off tears down every server.
+			opencodeServer: {
+				reconcile: () => {},
+				stopAll: () => opencodeServerManager.shutdown(),
+			},
+			// Community plugins: bundled-plugin seeding, plugin-dir hot reload, the
+			// trigger scheduler, and every running sandbox. Lifecycle-only.
+			plugins: {
+				reconcile: () => {
+					if (!pluginManager) return;
+					// Copy trusted bundled first-party plugins into the plugins dir
+					// before discovery. Trust-gated + idempotent.
+					seedBundledPlugins({
+						trustedKeys: trustedKeysFor,
+						onLog: (message) => logger.info(message, 'Plugins'),
+						onError: (error) => void captureException(error),
+					});
+					pluginManager.refresh();
+					pluginManager.startWatching();
+					pluginScheduler?.start();
+				},
+				stopAll: () => {
+					pluginManager?.stopWatching();
+					pluginScheduler?.stop();
+					pluginManager?.stopAllSandboxes();
+					// After the sandboxes, so per-plugin onStop hooks fire first.
+					pluginBackgroundSupervisor?.stopAll();
+					pluginGroupingRegistry?.clearAll();
+					// The flag is off now, so this empties the registry: no contribution
+					// outlives the feature.
+					pluginManager?.refresh();
+				},
+			},
+		};
+		encoreLifecycle.attach(firstPartySupervisors, store.get('encoreFeatures'));
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS) as FirstPartyEncoreFlag[]) {
 			firstPartyBridges[flag] = new FirstPartyPluginBridge(FIRST_PARTY_PLUGINS[flag], {
@@ -1817,7 +1893,7 @@ app
 			pluginSettingsStore.delete(prefix.replace(/\.$/, ''));
 		const pluginSessionsList = (): PluginSessionMetadata[] => {
 			const cliBusySessionIds = getSessionIdsBusyWithCli();
-			const sessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+			const sessions = getLiveSessions() as Array<Record<string, unknown>>;
 			return sessions
 				.filter((s) => typeof s?.id === 'string')
 				.map((s) => ({
@@ -2282,7 +2358,7 @@ app
 			agentId: string,
 			prompt: string
 		): { dispatched: true; sessionId: string } => {
-			const sessions = sessionsStore.get('sessions', []) as Array<{
+			const sessions = getLiveSessions() as Array<{
 				id?: string;
 				name?: string;
 			}>;
@@ -2345,9 +2421,7 @@ app
 		pluginGroupingRegistry = groupingRegistry;
 		const runHeadlessAgent: HeadlessAgentRunner = createPluginHeadlessAgentRunner({
 			getAgent: (agentId) =>
-				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
-					(session) => session.id === agentId
-				),
+				(getLiveSessions() as SessionInfo[]).find((session) => session.id === agentId),
 			detectAgent: async (type) => {
 				const detected = await agentDetector?.getAgent(type);
 				return { available: detected?.available === true, path: detected?.path };
@@ -2518,7 +2592,7 @@ app
 					safeSend('plugins:panel-visibility', { pluginId, panelId, action });
 				},
 				listAgents: () => {
-					const sessions = sessionsStore.get('sessions', []) as Array<{
+					const sessions = getLiveSessions() as Array<{
 						id?: string;
 						name?: string;
 						cwd?: string;
@@ -2551,7 +2625,7 @@ app
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {
-					const session = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+					const session = (getLiveSessions() as SessionInfo[]).find(
 						(candidate) => candidate.id === agentId
 					);
 					if (!session) throw new Error(`agents.generateTitle: no agent "${agentId}"`);
@@ -2901,7 +2975,7 @@ app
 				// Intersect the submitted ids with the live session set (only a real
 				// agent is dispatchable) and drop any token that could corrupt the
 				// comma-joined scope. Deduped, order-stable.
-				const sessions = sessionsStore.get('sessions', []) as Array<{ id?: string }>;
+				const sessions = getLiveSessions() as Array<{ id?: string }>;
 				const existing = new Set(
 					sessions.map((s) => s?.id).filter((id): id is string => typeof id === 'string')
 				);
@@ -3021,7 +3095,11 @@ app
 			}
 		);
 
-		// Initialize stats database for usage tracking
+		// Initialize stats database for usage tracking. Opened whatever the
+		// usageStats flag says: Cue's dashboard token attribution reads it too, and
+		// its readers throw on an unopened database. Nothing is WRITTEN
+		// while Usage & Stats is off - every recorder goes through
+		// isStatsCollectionEnabled(), which requires the flag.
 		logger.info('Initializing stats database', 'Startup');
 		try {
 			initializeStatsDB();
@@ -3162,8 +3240,7 @@ app
 		}
 
 		// Start Cue engine if the Encore Feature flag is enabled
-		const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
-		if (encoreFeatures.maestroCue && cueEngine) {
+		if (isEncoreFeatureEnabled(store, 'maestroCue') && cueEngine) {
 			logger.info('Maestro Cue Encore Feature enabled - starting Cue engine', 'Startup');
 			try {
 				cueEngine.start('system-boot');
@@ -3194,49 +3271,14 @@ app
 				logger.error(`MaestroRun check failed at boot: ${err}`, 'Startup');
 			});
 
-		// Start the Pianola supervisor unconditionally: it self-gates on the
-		// pianola Encore flag (reconcile kills everything and spawns nothing when
-		// off), and starting it always means its file-watch reconcile picks up
-		// CLI/renderer changes the moment the feature is enabled, plus enabled
-		// targets are relaunched on every app start.
-		if (pianolaSupervisor) {
-			try {
-				pianolaSupervisor.start();
-			} catch (err) {
-				void captureException(err);
-				logger.error(`Pianola supervisor failed to start at boot: ${err}`, 'Startup');
-			}
-		}
-
-		// Start the Pianola re-learn scheduler unconditionally: it self-gates per
-		// tick on the pianola Encore flag, so enabling the feature later begins the
-		// cadence without a restart. Each run only PROPOSES (stages suggestions) and
-		// relaunches stale supervised targets; it never overwrites live state.
-		pianolaRelearnScheduler?.start();
-
-		// Prime the plugin registry from disk, then watch the plugin directory so
-		// manual/plugin-fixture edits hot-reload through the same refresh() path.
-		// refresh() is a no-op (empty registry) when the plugins Encore flag is off,
-		// so this is safe to call unconditionally.
-		if (pluginManager) {
-			try {
-				// Copy trusted bundled first-party plugins into the plugins dir before
-				// discovery. Trust-gated + idempotent, so it is safe to run every boot.
-				seedBundledPlugins({
-					trustedKeys: trustedKeysFor,
-					onLog: (message) => logger.info(message, 'Startup'),
-					onError: (error) => void captureException(error),
-				});
-				pluginManager.refresh();
-				pluginManager.startWatching();
-			} catch (err) {
-				void captureException(err);
-				logger.error(`Plugin manager failed to start at boot: ${err}`, 'Startup');
-			}
-		}
-		// Start the plugin scheduler unconditionally: it self-gates per tick on the
-		// plugins flag, so enabling the feature later begins firing without a restart.
-		pluginScheduler?.start();
+		// Start Pianola (the supervisor's store-file watch + relaunch of enabled
+		// targets, and the scheduled re-learn cadence) and the community-plugin
+		// runtime (bundled seeding, discovery, hot reload, trigger scheduler) only
+		// while their flags are on. Off, neither touches disk nor arms a timer; a
+		// later flag change starts or stops them through the Encore lifecycle.
+		const bootEncoreFeatures = store.get('encoreFeatures');
+		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
+		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the

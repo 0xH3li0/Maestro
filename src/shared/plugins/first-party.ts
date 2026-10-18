@@ -877,6 +877,10 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				'Cue engine runtime: file watchers, GitHub pollers, schedule timers, and the recovery heartbeat. Stops fully on disable.',
 		},
 	],
+	// Scheduling, triggers, and the duty lookup reach agents only while Cue is
+	// on. In the base prompt they told every agent to inspect Cue, so one with
+	// Cue off still answered "what do you do?" in terms of a switched-off feature.
+	systemPromptSection: { promptId: 'cue-system' },
 };
 
 /** Broker capabilities Concerto actually touches. The feature lets an agent

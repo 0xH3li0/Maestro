@@ -11,7 +11,7 @@
  * file is the I/O shell: WebSocket polling, dispatch, and console output.
  */
 
-import { readSettingValue } from '../services/storage';
+import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import {
 	readPianolaRules,
 	readPianolaRulesResult,
@@ -91,15 +91,7 @@ interface SessionHistoryResponse {
 
 /** Exit with a clear message if the Pianola Encore feature is disabled. */
 export function ensurePianolaEnabled(json?: boolean): void {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	if (flags?.pianola === true) return;
-	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message, code: 'PIANOLA_DISABLED' }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
+	requireEncore('pianola', json);
 }
 
 /**
@@ -108,8 +100,7 @@ export function ensurePianolaEnabled(json?: boolean): void {
  * only runs once).
  */
 function pianolaEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true;
+	return isEncoreEnabled('pianola');
 }
 
 /** Build the desktop toast for a blocking ask the user must see. */

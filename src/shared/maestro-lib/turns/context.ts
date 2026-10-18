@@ -31,6 +31,7 @@ import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
+import { isPianolaEnabled } from '../../agentVisibility';
 import {
 	buildAgentSystemPrompt,
 	buildPluginSectionsSystemPrompt,
@@ -183,7 +184,11 @@ async function readSystemPromptContext(
 		...shared,
 		prompts: {
 			maestroSystem: loader?.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT),
-			pianolaSystem: agent.isPianola ? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM) : undefined,
+			// Only while the `pianola` flag is on: a dormant Pianola gets no manager role.
+			pianolaSystem:
+				agent.isPianola && isPianolaEnabled(settingsData.encoreFeatures)
+					? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM)
+					: undefined,
 			pluginSections: shared.prompts.pluginSections,
 		},
 		gitBranch,
@@ -339,6 +344,7 @@ export async function loadTurnContext(
 				copilotPreamble,
 			},
 			userDataDir: sources.paths.userDataDir,
+			pianolaEnabled: isPianolaEnabled(settingsData.encoreFeatures),
 			autoRunHoldsTree: false,
 			isWindowsHost: sources.isWindowsHost ?? process.platform === 'win32',
 		},

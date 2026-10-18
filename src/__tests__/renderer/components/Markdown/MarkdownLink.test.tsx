@@ -17,6 +17,7 @@ vi.mock('../../../../renderer/stores/notificationStore', () => ({
 import { openUrl } from '../../../../renderer/utils/openUrl';
 import { openMaestroLink } from '../../../../renderer/utils/openMaestroLink';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 const theme = { colors: { accent: '#3366ff', accentText: '#88aaff' } } as any;
 
@@ -49,8 +50,26 @@ beforeEach(() => {
 	};
 });
 
+const setConcertoEnabled = (concerto: boolean) =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, concerto },
+	});
+
 describe('createMarkdownLink - shared targets', () => {
+	it('renders a Concerto link as plain text while Concerto is off', () => {
+		setConcertoEnabled(false);
+		const el = renderLink(
+			{ theme },
+			{ href: 'maestro://concerto/movement/board', children: 'the board' }
+		);
+
+		expect(el.type).not.toBe('button');
+		expect(el.props.onClick).toBeUndefined();
+		expect(el.props.children).toBe('the board');
+	});
+
 	it('reports when a Concerto chip points to an unavailable Movement', async () => {
+		setConcertoEnabled(true);
 		const el = renderLink(
 			{ theme },
 			{ href: 'maestro://concerto/movement/missing', children: 'open it' }

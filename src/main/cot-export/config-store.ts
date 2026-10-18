@@ -97,7 +97,7 @@ import type {
 	CotPastChain,
 } from '../../shared/cotExport/types';
 import { corruptStorePath, createStoreDeserializer } from '../stores/corrupt-store-recovery';
-import { getSessionsStore, getSyncPath } from '../stores/getters';
+import { getLiveSessions, getSessionsStore, getSyncPath } from '../stores/getters';
 import { createKeyringAnchor, noAnchor } from '../utils/keyring-anchor';
 import type { AnchorStore } from '../utils/keyring-anchor';
 import { logger } from '../utils/logger';
@@ -1065,7 +1065,9 @@ export function getCotConfigStore(): CotConfigStore {
 			cwd: userDataPath,
 			seal: safeStorageSeal(safeStorage),
 			getFolderContext: () => ({
-				agentDirs: agentDirsOf(getSessionsStore().get('sessions', [])),
+				// Live agents only: a dormant Pianola (flag off) keeps its home-folder
+				// cwd in the store and must not claim folders it cannot use.
+				agentDirs: agentDirsOf(getLiveSessions()),
 				userDataPath,
 				syncPath: movedSyncPath(userDataPath),
 				homeDir: os.homedir(),
@@ -1073,6 +1075,8 @@ export function getCotConfigStore(): CotConfigStore {
 			// Read at each failure, so a listener set after this point is heard.
 			onError: (agentId, error) => _failureListener?.(agentId, error),
 			anchor: lateBoundAnchor,
+			// The FULL list on purpose: this asks whether the profile was reset,
+			// and a dormant agent's persisted record means it was not.
 			isFreshProfile: () => {
 				const sessions: unknown = getSessionsStore().get('sessions', []);
 				return !Array.isArray(sessions) || sessions.length === 0;
