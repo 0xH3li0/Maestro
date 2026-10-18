@@ -1,19 +1,16 @@
-<!-- Verified 2026-10-18 against feat/dataview at c3cd1d2e1b (the origin/rc tip it was cut from) -->
+<!-- Verified 2026-10-18 against feat/dataview at 4a891368e2 (cut from origin/rc at c3cd1d2e1b) -->
 
 # Dataview and DataviewJS
 
 Maintainer guide for rendering Obsidian Dataview blocks in Maestro's document surfaces. Every DATAVIEW phase reads this before writing code. The spec (requirement IDs DV-n, decisions Dn) and the phase documents live outside the repository, in the Auto Run folder: `/Users/pedram/Projects/Maestro/.maestro/playbooks/2026-10-02-Dataview/` (`DATAVIEW-SPEC.md`, `DATAVIEW-01.md` to `DATAVIEW-08.md`).
 
-<!-- doc-refs-ignore:start -->
-
 How to read this guide:
 
 - Paths are relative to the repository root. Symbols are the stable reference; line numbers are at `c3cd1d2e1b` and drift.
-- Files that do not exist yet sit inside `doc-refs-ignore` regions, so `npm run lint:doc-refs` stays green. When a phase creates a file, move its mentions out of the region. Phase 08 removes the rest.
+- Every repository path outside section 2 is checked by `npm run lint:doc-refs`. Section 2 stays inside a `doc-refs-ignore` region because its paths are upstream's, and two of its rows describe the plan, not the result (see DEV-17).
 - In section 2, upstream paths are relative to upstream's `src/`, and `vendor/` means `src/shared/dataview/vendor/`. A kept upstream file lands at the same relative path under `vendor/`.
 - Codes: Dn and DV-n come from the spec; M1 to M8 are the adapter roles from section 2; DEV-n are the deviations in section 4; R-n are the risks at the end of section 3.
-
-<!-- doc-refs-ignore:end -->
+- Start with section 3's "Architecture as built" for the picture, then section 5 before changing the parser, the cache, or the vendored code.
 
 ---
 
@@ -415,64 +412,137 @@ No build config changed. The CLI esbuild bundle and an esbuild browser bundle bo
 
 ## 3. Maestro integration map
 
-What each decision touches in the existing code, verified by reading it at `c3cd1d2e1b`. Each subsection lists the existing code first (cited paths are real and checked by `npm run lint:doc-refs`), then the planned files.
+What each decision touches in the existing code, verified by reading it at `c3cd1d2e1b`. Each subsection lists the existing code first, then what was built ("Built" notes, in phase order). Every cited path is checked by `npm run lint:doc-refs`.
 
-<!-- doc-refs-ignore:start -->
+### Architecture as built
 
-### Planned layout
+```mermaid
+flowchart LR
+	subgraph renderer["Renderer: File Preview (Rich, Fast) and Auto Run"]
+		surface["dataviewSurface.ts<br/>DataviewDocumentProvider"]
+		dql["DataviewBlock<br/>DataviewInlineQuery"]
+		gate["DataviewJsBlock, DataviewJsTrustGate<br/>DataviewJsInlineQuery<br/>(useDataviewJsRunPolicy)"]
+		hosts["DataviewJsFrame (one per fence)<br/>DataviewJsInlineHost (one per note)<br/>dataviewJsGuestBridge.ts"]
+		changes["subscribeDataviewChanges()"]
+	end
+	subgraph guest["Guest webview: dataview-guest://, one partition per root"]
+		runtime["guestRuntime, dvApi, renderDom<br/>PageIndex.fromSnapshot()"]
+	end
+	subgraph main["Main process"]
+		ipc["ipc/handlers/dataview.ts"]
+		ws["messageHandlers/dataview.ts"]
+		svc["DataviewService"]
+		idx["VaultIndex extends PageIndex"]
+		vfs["VaultFs: local fs or remote-fs"]
+		watch["vault-watcher (local)<br/>30 s poll (SSH)"]
+		cache["vault-cache<br/>userData/dataview-cache"]
+		ghost["guest-host.ts<br/>isolated-guest.ts"]
+	end
+	shared["src/shared/dataview<br/>parseQuery, executeDql, parsePage<br/>vendored Dataview 0.5.68"]
+	cli["maestro-cli dataview"]
+	browser["web-desktop build"]
+
+	surface --> dql
+	surface --> gate
+	gate -->|policy run| hosts
+	dql -->|dataview:query, queryInline| ipc
+	hosts -->|jsSnapshot, readInRoot, query| ipc
+	hosts <-->|parseSandboxMessage| runtime
+	browser -->|bridge allowlist: DQL only| ipc
+	cli -->|dataview_command over WS| ws
+	ipc --> svc
+	ws --> svc
+	svc --> idx
+	svc -->|executeDql| shared
+	idx -->|parseRawPage, finishPage| shared
+	idx --> vfs
+	watch --> idx
+	idx <--> cache
+	svc -->|dataview:changed| changes
+	changes --> dql
+	changes --> hosts
+	ghost -->|serves guest.html, CSP, lockdown| runtime
+	runtime -.->|bundled| shared
+	classDef maestro fill:#9146FF,stroke:#5a2aa8,color:#ffffff
+	class svc,idx maestro
+```
+
+Three paths cross this picture:
+
+| Path       | From                                                       | Through                                                                                                                                                                    | Answer                                                                                                                   |
+| ---------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| DQL        | A `dataview` fence or `` `= expr` `` span in a document    | `window.maestro.dataview.query` (desktop IPC, or the WS bridge in the browser build) to `DataviewService.query()`, which resolves the root and runs `executeDql()` in main | `DataviewQueryResponse` (`root`, `sshRemoteId`, `revision`, `path`, wire `result`), revived and drawn by `DataviewValue` |
+| DataviewJS | A `dataviewjs` fence or `` `$= expr` `` span, policy `run` | The host fetches `jsSnapshot()` from main, mounts a locked `<webview>`, and sends `run` (or `eval`); the guest asks back with `query.dql` and `io.load`                    | `render.done` with a height (fences) or `eval.result` values the host draws with `DataviewValue` (inline)                |
+| CLI        | `maestro-cli dataview query`, `eval`, `index`, `trust`     | `dataview_command` over the desktop's WS server to the same `DataviewService` methods (`queryFile()` reads the note in main, so SSH notes work)                            | Text tables (`formatTextTable()`) or `--json`; the CLI never runs DataviewJS                                             |
+
+Rules the picture encodes:
+
+- The index never leaves main (D2). The renderer, the browser build, and the CLI all reach it through `DataviewService`; only a guest holds a copy, the snapshot main sends it for one run.
+- The service is the gate. The Encore check, the DataviewJS setting check, and the trust check all run there, so a new caller cannot skip them (D3).
+- Every guest message passes `parseSandboxMessage(raw, 'guest')` before a host handler sees it, and every file read a guest asks for is re-checked in main on real paths (`readInRoot()`, D4).
+- One `dataview:changed` listener per window fans out to every mounted block, span, and guest host; each re-runs only for its own root and host at a newer revision (DV-7).
+
+### Layout as built
 
 ```text
 src/shared/dataview/
-  vendor/                  upstream files (section 2), LICENSE, obsidian-shim.ts         phase 02
-  index.ts                 the ONE import site for the rest of Maestro                    phase 02
-  settings.ts              DataviewSettings constant (upstream defaults)                  phase 02
-  metadata.ts              M1: markdown text to CachedMetadata (markdown-it)              phase 03 (name is a suggestion)
-  page.ts                  parsePage(input, resolver): M1 + vendored parsePage + canonicalize  phase 03
-                           (split into parseRawPage + finishPage in phase 04 task 3)
-  json.ts                  JSON replacer/reviver for Map and Set (disk cache, WS bridge)  phase 04 task 3 (done)
-  resolve.ts               M3 Obsidian link resolver                                      phase 03
-  vault.ts                 VaultPaths (prefix), starred flattening, resolvedLinks (pure)  phase 04 task 2 (done)
-  pageIndex.ts             PageIndex: the in-memory FullIndex half; VaultIndex extends it,
-                           the guest builds one from a snapshot                           phase 07 task 2 (done)
-  display.ts               dataviewLinkLabel, mayContainMarkdown (preview and guest)      phase 07 task 2 (done)
-  types.ts                 DataviewResult union; DataviewIndexReader = FullIndex (DEV-3)  phase 05
-  blocks.ts                extractDataviewBlocks(markdown) over markdown-it fence tokens  phase 05
-  trust.ts                 isTrustedDataviewRoot (task 3, done); dataviewJsRunPolicy(...)  phase 07 task 4
-  sandboxProtocol.ts       parseSandboxMessage(raw, from)                                 phase 07 task 1 (done)
-  sandboxHost.ts           guest scheme, URL, partition, CSP, attachment gate, run limits  phase 07 task 3 (done)
-src/shared/fileLinkPatterns.ts   moved from src/renderer/utils/fileLinks/patterns.ts      phase 03 task 1 (done)
+  vendor/                  upstream files (section 2), LICENSE, obsidian-shim.ts
+  index.ts                 the ONE import site for the rest of Maestro
+  settings.ts              DataviewSettings constant (upstream defaults)
+  evaluate.ts              evaluateField(field, row, thisPage, linkHandler?)
+  metadata.ts              M1: markdown text to CachedMetadata (markdown-it); tokenizeMarkdownLines
+  page.ts                  parsePage = finishPage(parseRawPage(input), resolver)
+  resolve.ts               M3 Obsidian link resolver; linkTargetKeys, linkPathKey
+  json.ts                  JSON replacer and reviver for Map and Set (disk cache)
+  vault.ts                 VaultPaths, starred flattening, resolvedLinks (pure)
+  pageIndex.ts             PageIndex: the in-memory FullIndex; VaultIndex extends it, the guest builds one
+  display.ts               dataviewLinkLabel, mayContainMarkdown (preview and guest)
+  types.ts                 wire requests and responses; DataviewResult; DataviewIndexReader (DEV-3)
+  execute.ts               executeDql, executeInlineDql
+  wire.ts                  toWireValue, fromWireValue, revive helpers (DEV-8)
+  blocks.ts                extractDataviewBlocks(markdown)
+  trust.ts                 dataviewJsRunPolicy, isTrustedDataviewRoot, list edits
+  sandboxProtocol.ts       the bridge's closed message set; parseSandboxMessage(raw, from)
+  sandboxHost.ts           guest scheme, URL, partition, CSP, attachment gate, run limits
+src/shared/fileLinkPatterns.ts   moved from src/renderer/utils/fileLinks/patterns.ts (re-exported there)
+src/shared/pathContainment.ts    normalizeRootRelativePath, isPathInsideRoot
+src/shared/cspMeta.ts            withCspMetaTag (plugin panels and the guest)
 src/main/dataview/
-  vault-root.ts            resolveVaultRoot(filePath, { agentCwd, sshRemoteId? })         phase 04
-  vault-index.ts           VaultIndex: implements the FullIndex contract                  phase 04
-  vault-fs.ts              VaultFs: local fs or remote-fs behind one list/read interface  phase 04 task 2 (done)
-  vault-cache.ts           M4: the per-root cache file (read, atomic write, version)      phase 04 task 3 (done)
-  vault-watcher.ts         M5: chokidar over a local root, 250 ms batches                  phase 04 task 3 (done)
-  dataview-service.ts      singleton owning one VaultIndex per (root, sshRemoteId)        phase 04
-  guest-host.ts            protocol handler + session hardening for the JS guest          phase 07 task 3 (done)
-src/main/ipc/handlers/dataview.ts                      IPC handlers                       phase 05
-src/main/preload/dataview.ts                           window.maestro.dataview            phase 05
-src/main/preload/dataview-guest.ts                     guest bridge preload (exposes nothing)  phase 07 task 3 (done)
-src/main/utils/isolated-guest.ts                       the isolated-guest lockdown (panels too) phase 07 task 3 (done)
-src/main/utils/real-path-containment.ts                realpath containment (hoisted)     phase 07 task 3 (done)
-src/main/web-server/handlers/messageHandlers/dataview.ts   CLI WS handler                 phase 05
-src/cli/commands/dataview.ts                           maestro-cli dataview               phase 05, 07
+  agent-context.ts         resolveDataviewAgentContext(agentId): cwd and SSH target
+  vault-root.ts            resolveVaultRoot(filePath, { agentCwd, sshRemoteId })
+  vault-fs.ts              VaultFs: local fs or remote-fs behind list, read, stat, readTextInRoot
+  vault-index.ts           VaultIndex: scan, reconcile, apply watcher batches, jsSnapshot
+  vault-cache.ts           M4: the per-root cache file (DATAVIEW_INDEX_CACHE_VERSION)
+  vault-watcher.ts         M5: chokidar over a local root, 250 ms batches
+  dataview-service.ts      DataviewService: one VaultIndex per (root, sshRemoteId); the request methods
+  guest-host.ts            serves the guest document; DataviewJS on/off for the attach gate
+src/main/ipc/handlers/dataview.ts                          IPC handlers (one service method each)
+src/main/preload/dataview.ts                               window.maestro.dataview
+src/main/preload/dataview-guest.ts                         guest bridge preload (exposes nothing)
+src/main/utils/isolated-guest.ts                           the isolated-guest lockdown (plugin panels too)
+src/main/utils/real-path-containment.ts                    realpath containment (hoisted from the bridge guard)
+src/main/web-server/handlers/messageHandlers/dataview.ts   the CLI's WS handler
+src/cli/commands/dataview.ts                               maestro-cli dataview
 src/renderer/components/Markdown/components/
-  DataviewDocumentContext.tsx   document scope context (D7)                               phase 06
-  DataviewBlock.tsx, DataviewValue.tsx                                                    phase 06
-  DataviewJsFrame.tsx                                                                     phase 07 task 3 (done)
-src/renderer/services/dataviewJsGuestSlots.ts          guests per window (R-3)            phase 07 task 3 (done)
-src/renderer/dataview-sandbox/                         guest page (M7)                    phase 07 task 2 (done)
-  guest.ts, guest.html     entry and page template (built into dist/main/dataview-guest.html)
-  guestRuntime.ts          runs, request bridge, heights, link and task routing, globals
-  dvApi.ts, renderDom.ts   the D5 dv object; values and table, list, task views as DOM
-  markdownDom.ts           D6 markdown to DOM
-  inlineScript.ts          DEV-6 script compiler
-src/renderer/components/Settings/tabs/EncoreTab/components/DataviewSection.tsx  tile body phase 06
-src/__tests__/fixtures/dataview-vault/                 shared test vault                  phase 01 task 4
-docs/dataview.md                                       user docs                          phase 08
+  dataviewSurface.ts                 the opt-in for a document surface (renderers, inline option, flag)
+  DataviewDocumentContext.tsx        document scope (D7)
+  DataviewDocumentProvider.tsx       scope plus the inline JS host, one tree for every value
+  DataviewBlock.tsx, DataviewValue.tsx, DataviewInlineQuery.tsx       DQL
+  DataviewJsBlock.tsx, DataviewJsTrustGate.tsx, DataviewJsInlineQuery.tsx   DataviewJS policy and trust
+  DataviewJsFrame.tsx, DataviewJsInlineHost.tsx, dataviewJsGuestBridge.ts   the two guest hosts
+src/renderer/components/Markdown/remarkDataviewCell.ts     cell markdown plugins
+src/renderer/hooks/file/useLiveDataviewResult.ts           cached result plus live refresh
+src/renderer/hooks/file/useDataviewJsRunPolicy.ts          the policy in the renderer
+src/renderer/services/dataviewChanges.ts                   one dataview:changed listener per window
+src/renderer/services/dataviewJsGuestSlots.ts              guests per window (R-3)
+src/renderer/services/dataviewTaskToggle.ts                task toggles in another file
+src/renderer/services/dataviewTrust.ts                     trust edits through main
+src/renderer/dataview-sandbox/                             guest page (M7), built into dist/main/dataview-guest.html
+  guest.ts, guest.html, guestRuntime.ts, dvApi.ts, renderDom.ts, markdownDom.ts, inlineScript.ts
+src/renderer/components/Settings/tabs/EncoreTab/components/DataviewSection.tsx  tile body
+src/__tests__/fixtures/dataview-vault/                     shared test vault
+docs/dataview.md                                           user docs
 ```
-
-<!-- doc-refs-ignore:end -->
 
 ### D1. Vendor, do not depend
 
@@ -964,8 +1034,6 @@ DataviewJS in the document surfaces (D7, DV-11, DV-12, DV-14) and inline `$=` (D
 
 Each entry names the spec decision or phase text, what the code forces, and the path taken. Later phases add entries here; never delete one.
 
-<!-- doc-refs-ignore:start -->
-
 | ID     | Spec or phase text                                                                                                                              | What the code shows                                                                                                                                                                                                                                               | Chosen path                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | DEV-1  | D7 and DV-1 say "the document preset"; DATAVIEW-06 task 4 says to register "in the document preset only".                                       | File Preview and the Auto Run preview never use `<Markdown preset="document">`; they call `createMarkdownComponents()` directly. The preset itself renders agent output (Thought Stream, digests, the streaming wizard document) and third-party repository docs. | Register the renderers at the File Preview (Rich and Fast tiers) and Auto Run call sites only, behind `DataviewDocumentContext`; never in `createMarkdownComponents()` defaults or the preset. "Document preset" in the phase docs means these surfaces.                                                                                                                                                                                                                                                                  |
@@ -980,12 +1048,53 @@ Each entry names the spec decision or phase text, what the code forces, and the 
 | DEV-10 | DATAVIEW-05 task 4: the CLI calls "the SAME service functions the IPC handlers call", and `--block n` picks a fence of the note.                | The CLI cannot read a note that lives on an SSH agent's remote, and splitting the note on the CLI side would make `query` local-only.                                                                                                                             | `DataviewService.queryFile({ filePath, agentId, block? })` reads the note through the vault's own `VaultFs` (local or remote), runs `extractDataviewBlocks()`, and runs each `dataview` fence through `executeDql()` inside the same `runForNote()` path `query()` uses. It answers `DataviewQueryResponse<DataviewFileQueryResult>` (`{ kind: 'blocks', blockCount, blocks }` or the outside-root error). It is a CLI-only action on the WS handler; no IPC channel needs it, since the renderer already holds the note. |
 | DEV-11 | DATAVIEW-07 task 1: `parseSandboxMessage(raw)` refuses any payload over 1 MB, and `run` carries the index snapshot.                             | The snapshot of a vault with a few thousand notes is several MB (each page carries its lists, tasks, and links), so a cap on every message would stop DataviewJS in any large vault.                                                                              | The 1 MB cap (`SANDBOX_MAX_GUEST_MESSAGE_BYTES`) applies to messages the guest sends, the untrusted direction. Host messages are checked for shape only. The validator is `parseSandboxMessage(raw, from)`: the second argument names the sender, so the host's `'guest'` call can never accept `run` or a reply from a guest.                                                                                                                                                                                            |
 | DEV-12 | D4 lists the bridge's closed message set (`index.snapshot`, `query.dql`, `io.load`, `open.link`, `toggle.task`, `render.done`, `render.error`). | DEV-5 evaluates inline `$=` spans in a hidden guest and renders their VALUES in the host, which none of those messages can carry: `render.done` reports a height, `query.dql` runs DQL.                                                                           | Two messages join the closed union, validated like the rest: host `eval` (`runId`, `thisPath`, `snapshot`, `expressions`) and guest `eval.result` (`runId`, `id`, `outcome`). The outcome value is copied as plain JSON with every `__proto__` key dropped (`readJsonValue()`), inside the 1 MB guest cap. No sandbox restriction changes.                                                                                                                                                                                |
-
-<!-- doc-refs-ignore:end -->
+| DEV-13 | D2 names the per-root index `DataviewIndex`.                                                                                                    | The in-memory half of the `FullIndex` contract also has to run in the DataviewJS guest, which has no file system, no cache, and no watcher.                                                                                                                       | `PageIndex` (`src/shared/dataview/pageIndex.ts`) is the in-memory index; `VaultIndex` (`src/main/dataview/vault-index.ts`) extends it with the scan, cache, and watcher. No type is named `DataviewIndex`; `DataviewService` owns one `VaultIndex` per `(root, sshRemoteId)`.                                                                                                                                                                                                                                             |
+| DEV-14 | D4: `index.snapshot` is its own message, "sent once per run".                                                                                   | A separate message can arrive out of step with the run it belongs to, and the host would have to pair them.                                                                                                                                                       | The snapshot is the `snapshot` field of `run` and `eval`, so every run carries exactly the index it runs against. Same data, same direction, one message fewer in the closed set.                                                                                                                                                                                                                                                                                                                                         |
+| DEV-15 | D3: clicking "Run" on an untrusted block offers "Run once" and "Always trust this vault".                                                       | DATAVIEW-07 task 4 asks for the source, an explanation, and the two buttons directly. An inline `$=` span sits inside a line of text, with no room for a prompt.                                                                                                  | An untrusted fence shows "Run once" and "Always trust this vault" at once (no intermediate "Run" click). An untrusted `$=` span shows its code and one "Run" button, which is "Run once" for that span; the vault is trusted from a fence's "Always trust this vault" or `maestro-cli dataview trust`.                                                                                                                                                                                                                    |
+| DEV-16 | DV-4 and the D2 plan: when `.obsidian/` appears or disappears, the root changes; the 30 s remote poll should notice.                            | `listFilesWithStatsRemote()` prunes every dot folder, so the poll cannot see the marker, and testing it would add one SSH round trip per poll per open root (R-5).                                                                                                | Local roots re-resolve on the marker folder's `addDir` and `unlinkDir` events. A remote root does not: a vault created or removed on an SSH host while the app runs keeps its old root until the app restarts. Known gap, not a sandbox or correctness risk for an unchanged vault.                                                                                                                                                                                                                                       |
+| DEV-17 | Section 2's per-file table: vendor upstream's 18 test files to a `vendor/` folder under the Dataview tests as the DV-2 regression suite.        | No phase task vendored them; DATAVIEW-02 to 05 asked for Maestro tests per module instead. Upstream's suite passed 395 of 395 on the vendored set in the DATAVIEW-01 trial, outside the repository.                                                               | DV-2 is pinned by Maestro's own tests under `src/__tests__/shared/dataview/` (value, functions, parse, data-array, engine, page, and the rest) over the fixture vault. Upstream's suite is run from the trial harness when the vendored code is updated (section 5).                                                                                                                                                                                                                                                      |
 
 ---
 
-## 5. Phases
+## 5. Maintenance
+
+### Cache version rule
+
+Bump `DATAVIEW_INDEX_CACHE_VERSION` in `src/main/dataview/vault-cache.ts` by one whenever the output of `parsePage` changes for an unchanged file.
+
+The cache keeps, per page, the raw parse (`Transferable.transferable(parseRawPage(...))`) behind a `mtime` and `size` fingerprint. A warm cache re-parses a page only when that fingerprint changes, so a code change that alters what a page parses to is invisible to every unchanged file until the version changes. `readVaultCache()` returns null for any other version, the root is scanned in full once, and the next write replaces the file (same name, a hash of root and host). The cost of a needless bump is one cold scan per root; the cost of a missed bump is stale fields that no save of the user's own fixes.
+
+| Change                                                                                                                                        | Bump?                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| M1: `extractMetadata()` and its helpers in `src/shared/dataview/metadata.ts` (links, tags, lists, frontmatter, line numbers, what is blanked) | Yes                                                                                                        |
+| `parseRawPage()` in `src/shared/dataview/page.ts`, or the `PageInput` it reads                                                                | Yes                                                                                                        |
+| Vendored `data-import/` (`markdown-file.ts`, `inline-field.ts`, `common.ts`) or `data-model/` (`markdown.ts`, `value.ts`, `transferable.ts`)  | Yes                                                                                                        |
+| The `VaultCacheFile` or `CachedPage` layout, or `dataviewJsonReplacer` / `dataviewJsonReviver` in `src/shared/dataview/json.ts`               | Yes                                                                                                        |
+| What the index skips or how it reads a file (`isIndexedVaultPath()`, `DATAVIEW_MAX_INDEXED_FILE_BYTES`, the `ctime` source)                   | Yes: an unchanged file's cached entry would keep the old answer                                            |
+| M3 (`src/shared/dataview/resolve.ts`) or `finishPage()`                                                                                       | No. A cached page is finished afresh against the current file set every time the cache is installed        |
+| The engine, the wire codec (`wire.ts`), the IPC shapes, the renderer, the guest                                                               | No. None of them is cached. Check that the guest still reads the snapshot's raw pages, which ARE the cache |
+
+The signal in review: a change that alters an expectation in `src/__tests__/shared/dataview/metadata.test.ts` or `page.test.ts` needs a bump in the same commit, and `src/__tests__/main/dataview/vault-cache.test.ts` should keep passing with the new number (it reads the constant, never a literal).
+
+### Updating the vendored code from a newer upstream tag
+
+The vendored set is pinned to `0.5.68` at `29b1ad87e1f2b964b4fa0c209f11d0622469bdb0` (section 2). The helper scripts named below are throwaway recon tools kept in the Auto Run Working folder (`/Users/pedram/Projects/Maestro/.maestro/playbooks/Working/`), not in the repository; every step also says how to do it without them.
+
+1. **Fetch.** Clone `https://github.com/blacksmithgu/obsidian-dataview` and check out the new tag. Record its commit SHA.
+2. **Read the upstream diff for the keep set.** `git diff 0.5.68 <tag> -- <path>` for each file in the section 2 keep set (paths under upstream's `src/`). New imports grow the closure: rerun `dataview-import-graph.cjs <src> <seeds...>`, or follow every new relative import by hand and classify each new file with the section 2 codes (K, KE, S, A).
+3. **Copy.** `dataview-vendor.cjs <dataview-src> <worktree> <paths...>` writes each file with the header (tag, SHA, upstream path, the edit classes), the E1 import rewrite, tab indentation, and the per-line edits, each keyed by its 1-based upstream line and the text that must sit there. Update its `SHA` constant and move every `EDITS` line number to the new tag; a drifted line fails loudly instead of patching the wrong line. Without the script: copy the file, write the header from the template in section 2, rewrite imports per E1, convert leading spaces to tabs (keep spaces inside template literals, as `query/engine.ts` does), and reapply every Maestro edit (`grep -rn MAESTRO src/shared/dataview/vendor/` lists them; the edit table in section 2 lists the mechanical classes).
+4. **Re-cut the splits.** `data-index/index.ts` and `ui/views/task-view.ts` keep only part of their upstream file (section 2, "Per-file decisions"). Copy the same functions from the new tag by hand and keep the split comment.
+5. **Dependencies.** A new runtime import goes in `dependencies` with its `@types` in `devDependencies` (D1, DEV-2). Stay on the majors the new tag's lockfile uses.
+6. **Type-check and lint.** `./node_modules/.bin/tsc -p tsconfig.main.json --noEmit`, `-p tsconfig.cli.json`, and `-p tsconfig.lint.json`: vendored code must stay inside lib ES2020 with no DOM globals (section 3, D1). `npx eslint` on the Maestro files that import from `src/shared/dataview/index.ts`; the vendor folder itself is ignored by ESLint and Prettier.
+7. **Upstream's own suite.** Copy upstream's `test/` next to a scratch copy of the new vendored tree with `dataview-vendor-trial-tests.cjs <dataview-src> <trial-root>` and run it with vitest in a node environment (the DATAVIEW-01 trial ran 395 of 395). This suite is not in the repository (DEV-17).
+8. **Maestro's suites.** `npx vitest run src/__tests__/shared/dataview src/__tests__/main/dataview src/__tests__/renderer/dataview-sandbox` and the renderer Dataview component tests. A changed expectation is either an upstream behavior change (keep it for DV-2 and say so in the commit) or a broken edit (fix the edit).
+9. **Cache.** Any change under `data-import/` or `data-model/` bumps `DATAVIEW_INDEX_CACHE_VERSION` (rule above).
+10. **The `dv` surface.** D5 is a fixed list. A new upstream `dv` member is not exposed in the guest without a new decision; check `Object.keys(dv)` in `src/__tests__/renderer/dataview-sandbox/guest.test.ts` still matches D5.
+11. **Record it.** Update the "Upstream pin" table, the header of every vendored file, the `LICENSE` if its text changed, and add a deviation row for anything the new tag forces.
+
+---
+
+## 6. Phases
 
 | Phase       | Scope                                                                                                                                                                                          |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
