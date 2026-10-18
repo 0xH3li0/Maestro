@@ -55,6 +55,21 @@ function lastAddedEntry(): Record<string, unknown> {
 }
 
 describe('useAgentSessionManagement - history token source capture', () => {
+	it('preserves an explicit background owner without borrowing the active tab', async () => {
+		seedActiveSession(createMockSession({ toolType: 'claude-code' }));
+		const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+		await act(async () => {
+			await result.current.addHistoryEntry({
+				type: 'USER',
+				summary: 'background',
+				agentSessionId: 'untracked-native',
+				provider: 'codex',
+			});
+		});
+		expect(lastAddedEntry().provider).toBe('codex');
+		expect(lastAddedEntry().tokenSource).toBeUndefined();
+	});
+
 	it('keeps a closed tab turn owner when recording History', async () => {
 		const tab = createMockAITab({
 			id: 'closed',
@@ -72,6 +87,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 			await result.current.addHistoryEntry({ type: 'USER', summary: 'closed turn', tabId: tab.id });
 		});
 		expect(lastAddedEntry().tokenSource).toBeUndefined();
+		expect(lastAddedEntry().provider).toBe('codex');
 	});
 
 	it.each(['codex', 'claude-code'] as const)(
@@ -97,6 +113,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 				});
 			});
 			expect(lastAddedEntry().tokenSource).toBe(provider === 'claude-code' ? 'api' : undefined);
+			expect(lastAddedEntry().provider).toBe(provider);
 		}
 	);
 

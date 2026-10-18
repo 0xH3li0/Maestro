@@ -1353,6 +1353,36 @@ describe('HistoryManager', () => {
 	// updateSessionNameByClaudeSessionId(agentSessionId, sessionName)
 	// ----------------------------------------------------------------
 	describe('updateSessionNameByClaudeSessionId()', () => {
+		it('does not rename another provider with the same native ID', async () => {
+			mockExistsSync.mockReturnValue(true);
+			const entries = [
+				createMockEntry({
+					id: 'codex',
+					agentSessionId: 'shared',
+					provider: 'codex',
+					sessionName: 'old',
+				}),
+				createMockEntry({
+					id: 'claude',
+					agentSessionId: 'shared',
+					provider: 'claude-code',
+					sessionName: 'old',
+				}),
+				createMockEntry({ id: 'legacy', agentSessionId: 'shared', sessionName: 'old' }),
+			];
+			mockReadFileSync.mockReturnValue(createJsonlFileData(entries));
+			const count = await manager.updateSessionNameByClaudeSessionId(
+				'shared',
+				'Owned',
+				'codex',
+				'sess_a'
+			);
+			expect(count).toBe(2);
+			const written = parseJsonlWrite(mockWriteFileSync.mock.calls[0][1]);
+			expect(written.find((entry) => entry.id === 'claude')?.sessionName).toBe('old');
+			expect(written.find((entry) => entry.id === 'codex')?.sessionName).toBe('Owned');
+		});
+
 		it('should update sessionName for matching entries and return count', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.jsonl' as unknown as fs.Dirent]);

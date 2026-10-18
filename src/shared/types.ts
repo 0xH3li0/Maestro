@@ -590,6 +590,8 @@ export interface HistoryEntry {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	/** Native provider captured when this History entry was recorded. */
+	provider?: ToolType;
 	sessionName?: string;
 	projectPath: string;
 	sessionId?: string;

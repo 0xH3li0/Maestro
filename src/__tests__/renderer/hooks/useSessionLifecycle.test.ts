@@ -1013,6 +1013,46 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('handleRenameTab', () => {
+		it.each([false, true])('renames the native owner with pending translation %s', (pending) => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				tabProvider: pending ? 'claude-code' : 'codex',
+				agentSessionId: pending ? 'stale-claude' : 'codex-native',
+				...(pending
+					? {
+							pendingTranslation: 'codex' as const,
+							providerSessions: { codex: { agentSessionId: 'codex-native' } },
+						}
+					: {}),
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			useModalStore.getState().openModal('renameTab', { tabId: tab.id, initialName: '' });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			act(() => result.current.handleRenameTab('Owned name'));
+			expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+				'codex',
+				session.projectRoot,
+				'codex-native',
+				'Owned name'
+			);
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(window.maestro.history.updateSessionName).toHaveBeenCalledWith(
+				'codex-native',
+				'Owned name',
+				'codex',
+				session.id
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].agentSessionId).toBe(
+				tab.agentSessionId
+			);
+		});
+
 		it('renames tab and persists to claude session storage', () => {
 			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123', name: 'Old' });
 			const session = createMockSession({
@@ -1037,11 +1077,15 @@ describe('useSessionLifecycle', () => {
 			expect(window.maestro.claude.updateSessionName).toHaveBeenCalledWith(
 				'/projects/myapp',
 				'agent-123',
-				'New Tab Name'
+				'New Tab Name',
+				'claude-code',
+				'session-1'
 			);
 			expect(window.maestro.history.updateSessionName).toHaveBeenCalledWith(
 				'agent-123',
-				'New Tab Name'
+				'New Tab Name',
+				'claude-code',
+				'session-1'
 			);
 		});
 

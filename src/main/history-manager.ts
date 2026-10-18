@@ -24,7 +24,7 @@ import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
-import { HistoryEntry } from '../shared/types';
+import { HistoryEntry, type ToolType } from '../shared/types';
 import {
 	HISTORY_VERSION,
 	HISTORY_JSONL_EXT,
@@ -805,9 +805,11 @@ export class HistoryManager {
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
-		sessionName: string
+		sessionName: string,
+		provider?: ToolType,
+		ownerSessionId?: string
 	): Promise<number> {
-		const sessions = await this.listSessionsWithHistory();
+		const sessions = ownerSessionId ? [ownerSessionId] : await this.listSessionsWithHistory();
 		let updatedCount = 0;
 
 		// Per session, run the read-modify-write through the per-session write
@@ -821,7 +823,13 @@ export class HistoryManager {
 					let perSessionUpdates = 0;
 
 					for (const entry of entries) {
-						if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
+						if (
+							entry.agentSessionId === agentSessionId &&
+							entry.sessionName !== sessionName &&
+							(provider === undefined ||
+								entry.provider === provider ||
+								(entry.provider === undefined && ownerSessionId !== undefined))
+						) {
 							entry.sessionName = sessionName;
 							perSessionUpdates++;
 						}

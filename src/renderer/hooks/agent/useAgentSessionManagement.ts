@@ -38,6 +38,8 @@ export interface HistoryEntryInput {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	/** Native owner supplied by a background turn when its tab is unavailable. */
+	provider?: ToolType;
 	usageStats?: UsageStats;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	sessionId?: string;
@@ -203,6 +205,20 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
+			const entryTab = entrySession
+				? translationSessionTabs(entrySession).find((tab) =>
+						entry.tabId
+							? tab.id === entry.tabId
+							: entry.agentSessionId
+								? tab.agentSessionId === entry.agentSessionId ||
+									tab.turnSessionId === entry.agentSessionId
+								: tab.id === entrySession.activeTabId
+					)
+				: undefined;
+			const provider =
+				entry.provider ??
+				(entrySession && entryTab ? resolveTurnProvider(entryTab, entrySession) : undefined);
+
 			// Resolve the Claude token source for this turn. Token source belongs on
 			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
 			// across turns, so we snapshot the resolved mode at write time. An explicit
@@ -219,12 +235,7 @@ export function useAgentSessionManagement(
 						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
 					};
 				}
-				const entryTab = entrySession
-					? translationSessionTabs(entrySession).find(
-							(tab) => tab.id === (entry.tabId ?? entrySession.activeTabId)
-						)
-					: undefined;
-				if (entrySession && resolveTurnProvider(entryTab, entrySession) === 'claude-code') {
+				if (entrySession && (provider ?? entrySession.toolType) === 'claude-code') {
 					const ci = entrySession.claudeInteractive;
 					return {
 						tokenSource: ci?.mode ?? 'api',
@@ -242,6 +253,7 @@ export function useAgentSessionManagement(
 					summary: entry.summary,
 					fullResponse: entry.fullResponse,
 					agentSessionId: entry.agentSessionId,
+					...(provider ? { provider } : {}),
 					sessionId: targetSessionId,
 					// Lets main resolve which Web Login account started this turn.
 					...(entry.tabId ? { tabId: entry.tabId } : {}),

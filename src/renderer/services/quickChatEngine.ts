@@ -63,6 +63,7 @@ import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queu
 import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRouter';
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { projectTabProvider } from '../utils/providerTabSessions';
 
 /**
  * The name a tab Quick Chat creates carries when automatic tab naming is off.
@@ -485,7 +486,7 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 			id: s.id,
 			name: s.name,
 			groupName: (s.groupId && groupNames.get(s.groupId)) || undefined,
-			provider: getAgentDisplayName(s.toolType),
+			provider: getAgentDisplayName(projectTabProvider(s, currentTab(s)).agent.toolType),
 		})),
 		error,
 	};

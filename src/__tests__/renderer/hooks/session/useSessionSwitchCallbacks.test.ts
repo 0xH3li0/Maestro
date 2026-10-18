@@ -61,6 +61,23 @@ describe('useSessionSwitchCallbacks', () => {
 		return { result, setActiveSessionId, handleResumeSession, handleFileClick };
 	}
 
+	it('passes a named native session owner and path into resume options', () => {
+		setupSession();
+		const { result, handleResumeSession } = renderCallbacks();
+		act(() =>
+			result.current.handleNamedSessionSelect('native', '/other/project', 'Owned', true, 'codex')
+		);
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'native',
+			[],
+			'Owned',
+			true,
+			undefined,
+			'/other/project',
+			{ provider: 'codex' }
+		);
+	});
+
 	it('keeps Lite toast navigation local without declaring host notification readiness', () => {
 		vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
 		const sessionId = setupSession({

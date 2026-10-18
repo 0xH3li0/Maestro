@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback } from 'react';
 import type React from 'react';
+import type { ToolType } from '../../types';
 import type {
 	Theme,
 	Session,
@@ -248,7 +249,8 @@ export interface AppUtilityModalsProps {
 		agentSessionId: string,
 		projectPath: string,
 		sessionName: string,
-		starred?: boolean
+		starred?: boolean,
+		provider?: ToolType
 	) => void;
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;

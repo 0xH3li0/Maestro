@@ -33,6 +33,7 @@ import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 	HistoryDetailModal: ({
 		entry,
+		agentId,
 		onClose,
 		onDelete,
 		onNavigate,
@@ -41,6 +42,7 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 		currentIndex,
 	}: {
 		entry: HistoryEntry;
+		agentId?: string;
 		onClose: () => void;
 		onDelete?: (id: string) => void;
 		onNavigate?: (entry: HistoryEntry, index: number) => void;
@@ -51,6 +53,7 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 		<div data-testid="history-detail-modal">
 			<span data-testid="modal-entry-id">{entry.id}</span>
 			<span data-testid="modal-entry-summary">{entry.summary}</span>
+			<span data-testid="modal-provider">{agentId}</span>
 			<span data-testid="modal-current-index">{currentIndex}</span>
 			<button onClick={onClose} data-testid="modal-close">
 				Close
@@ -1452,7 +1455,7 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should open detail modal with Enter', async () => {
-			const entry = createMockEntry({ summary: 'Detail entry' });
+			const entry = createMockEntry({ summary: 'Detail entry', provider: 'codex' });
 			mockHistoryGetAll.mockResolvedValue([entry]);
 
 			const { container } = render(
@@ -1470,6 +1473,7 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
 				expect(screen.getByTestId('modal-entry-summary')).toHaveTextContent('Detail entry');
+				expect(screen.getByTestId('modal-provider')).toHaveTextContent('codex');
 			});
 		});
 
@@ -1479,6 +1483,7 @@ describe('HistoryPanel', () => {
 				summary: 'Jump entry',
 				agentSessionId: 'abc12345-def-789',
 				sessionName: 'Jump Session',
+				provider: 'codex',
 			});
 			mockHistoryGetAll.mockResolvedValue([entry]);
 
@@ -1503,7 +1508,8 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
-				'Jump Session'
+				'Jump Session',
+				'codex'
 			);
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
@@ -1834,6 +1840,7 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
+				undefined,
 				undefined
 			);
 		});

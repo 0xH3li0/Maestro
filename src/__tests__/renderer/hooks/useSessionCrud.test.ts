@@ -1218,6 +1218,43 @@ describe('useSessionCrud', () => {
 	});
 
 	describe('finishRenamingSession', () => {
+		it.each([false, true])(
+			'pairs the tab fallback with its native owner (pending %s)',
+			(pending) => {
+				const session = createSession({
+					id: 'sess-1',
+					toolType: 'claude-code',
+					agentSessionId: undefined,
+					projectRoot: '/my/project',
+					activeTabId: 'foreign',
+					aiTabs: [
+						{
+							...createSession().aiTabs[0],
+							id: 'foreign',
+							tabProvider: pending ? 'claude-code' : 'codex',
+							agentSessionId: pending ? null : 'native-codex',
+							...(pending
+								? {
+										pendingTranslation: 'codex' as const,
+										providerSessions: { codex: { agentSessionId: 'native-codex' } },
+									}
+								: {}),
+						},
+					],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+				act(() => result.current.finishRenamingSession(session.id, 'Owned name'));
+				expect(mockMaestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+					'codex',
+					'/my/project',
+					'native-codex',
+					'Owned name'
+				);
+				expect(mockMaestro.claude.updateSessionName).not.toHaveBeenCalled();
+			}
+		);
+
 		it('renames the session in store', () => {
 			useSessionStore.setState({
 				sessions: [createSession({ id: 'sess-1', name: 'Old Name' })],

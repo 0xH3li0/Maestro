@@ -2737,6 +2737,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2766,6 +2767,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2801,6 +2803,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2826,7 +2829,12 @@ interface MaestroAPI {
 			},
 			sessionId?: string
 		) => Promise<boolean>;
-		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
+		updateSessionName: (
+			agentSessionId: string,
+			sessionName: string,
+			provider?: import('../shared/types').ToolType,
+			ownerSessionId?: string
+		) => Promise<number>;
 		getFilePath: (sessionId: string) => Promise<string | null>;
 		listSessions: () => Promise<string[]>;
 		getGraphData: (

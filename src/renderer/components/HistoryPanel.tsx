@@ -1,3 +1,5 @@
+import type { ToolType } from '../types';
+import { resolveHistorySession } from '../../shared/maestro-lib/translation/session';
 import React, {
 	useState,
 	useEffect,
@@ -53,8 +55,13 @@ interface HistoryPanelProps {
 	session: Session;
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: (agentSessionId: string, provider?: ToolType) => void;
+	onOpenSessionAsTab?: (
+		agentSessionId: string,
+		projectPath?: string,
+		sessionName?: string,
+		provider?: ToolType
+	) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -143,6 +150,15 @@ export const HistoryPanel = React.memo(
 		// skipped, since useState already initialized from the right key).
 		const activeFiltersAgentIdRef = useRef(session.id);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
+		const detailProvider = useMemo(() => {
+			if (detailModalEntry?.provider) return detailModalEntry.provider;
+			if (!detailModalEntry?.agentSessionId) return undefined;
+			try {
+				return resolveHistorySession(session, detailModalEntry.agentSessionId).provider;
+			} catch {
+				return undefined;
+			}
+		}, [detailModalEntry, session]);
 		const [searchFilter, setSearchFilter] = useState('');
 		// Whether a text search is running at all - deliberately a BOOLEAN and
 		// not the search text, because it feeds `loadPage`'s identity (see
@@ -684,7 +700,12 @@ export const HistoryPanel = React.memo(
 					return;
 				}
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath, entry.sessionName);
+				onOpenSessionAsTab?.(
+					entry.agentSessionId,
+					entry.projectPath,
+					entry.sessionName,
+					entry.provider
+				);
 			},
 			[allFilteredEntries, onOpenSessionAsTab]
 		);
@@ -1244,13 +1265,21 @@ export const HistoryPanel = React.memo(
 					<HistoryDetailModal
 						theme={theme}
 						entry={detailModalEntry}
-						agentId={session.toolType}
+						agentId={detailProvider}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
 						// Prefer the open-as-tab path: it carries the entry's projectPath and
 						// sessionName, so a resume from the modal names the tab exactly like a
 						// resume from the row behind it.
-						onResumeSession={onOpenSessionAsTab ?? onResumeSession}
+						onResumeSession={
+							onOpenSessionAsTab || onResumeSession
+								? (id, path, name) => {
+										if (onOpenSessionAsTab)
+											onOpenSessionAsTab(id, path, name, detailModalEntry.provider);
+										else onResumeSession?.(id, detailModalEntry.provider);
+									}
+								: undefined
+						}
 						onDelete={handleDeleteEntry}
 						onUpdate={async (entryId, updates) => {
 							// Pass sessionId for efficient lookup in per-session storage

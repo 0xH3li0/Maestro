@@ -31,6 +31,8 @@ import {
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
+import type { ToolType } from '../../../types';
+import { projectTabProvider, resolveTabNativeProvider } from '../../../utils/providerTabSessions';
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -244,15 +246,19 @@ export function useAITabHandlers(
 	}, []);
 
 	const handleUpdateTabByClaudeSessionId = useCallback(
-		(agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => {
+		(
+			agentSessionId: string,
+			updates: { name?: string | null; starred?: boolean },
+			provider?: ToolType,
+			sessionId?: string
+		) => {
 			const { activeSessionId } = useSessionStore.getState();
-			updateSessionWith(activeSessionId, (s) => {
-				const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
-				if (tabIndex === -1) return s;
+			updateSessionWith(sessionId ?? activeSessionId, (s) => {
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((tab) =>
-						tab.agentSessionId === agentSessionId
+						projectTabProvider(s, tab, provider ?? resolveTabNativeProvider(tab, s)).tab
+							?.agentSessionId === agentSessionId
 							? {
 									...tab,
 									...(updates.name !== undefined ? { name: updates.name } : {}),

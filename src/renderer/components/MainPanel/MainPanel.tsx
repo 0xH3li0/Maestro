@@ -58,7 +58,7 @@ import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
-import { projectTabProvider } from '../../utils/providerTabSessions';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 
 /**
@@ -1092,6 +1092,7 @@ export const MainPanel = React.memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<AgentSessionsBrowser
+							key={`${activeSession?.id}:${activeSession ? resolveTabNativeProvider(activeTab ?? undefined, activeSession) : ''}`}
 							theme={theme}
 							activeSession={activeSession || undefined}
 							activeAgentSessionId={activeAgentSessionId}

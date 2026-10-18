@@ -1,4 +1,5 @@
 import { requestProviderTranslation } from '../../services/providerTranslation';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 /**
  * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
@@ -407,7 +408,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			updateSessionWith(activeSession.id, (s) => {
 				// Find the tab to get its agentSessionId for persistence
-				const tab = s.aiTabs.find((t) => t.id === renameTabId);
+				const selectedTab = s.aiTabs.find((t) => t.id === renameTabId);
+				const { agent, tab } = projectTabProvider(
+					s,
+					selectedTab,
+					resolveTabNativeProvider(selectedTab, s)
+				);
 				const oldName = tab?.name;
 
 				window.maestro.logger.log(
@@ -426,7 +432,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				if (tab?.agentSessionId) {
 					// Persist name to agent session metadata (async, fire and forget)
 					// Use projectRoot (not cwd) for consistent session storage access
-					const agentId = s.toolType || 'claude-code';
+					const agentId = agent.toolType;
 					if (agentId === 'claude-code') {
 						window.maestro.claude
 							.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
@@ -455,7 +461,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					}
 					// Also update past history entries with this agentSessionId
 					window.maestro.history
-						.updateSessionName(tab.agentSessionId, newName || '')
+						.updateSessionName(tab.agentSessionId, newName || '', agentId, s.id)
 						.catch((err) => {
 							captureException(err, {
 								extra: {

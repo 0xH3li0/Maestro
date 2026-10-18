@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import type { AdditionalDirectory, ToolType, Session } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -475,13 +476,17 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			setSessions((prev) => {
 				const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
 				const session = updated.find((s) => s.id === sessId);
-				// Derive provider session ID: prefer session-level (legacy), fall back to active/first aiTab
-				const providerSessionId =
-					session?.agentSessionId ||
-					session?.aiTabs?.find((t) => t.id === session.activeTabId)?.agentSessionId ||
-					session?.aiTabs?.[0]?.agentSessionId;
+				const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId);
+				const fallback =
+					session &&
+					[activeTab, session.aiTabs?.[0]]
+						.filter((tab) => tab !== undefined)
+						.map((tab) => projectTabProvider(session, tab, resolveTabNativeProvider(tab, session)))
+						.find((native) => native.tab?.agentSessionId);
+				// The legacy ID belongs to the agent default; a tab fallback carries its own owner.
+				const providerSessionId = session?.agentSessionId || fallback?.tab?.agentSessionId;
 				if (providerSessionId && session?.projectRoot) {
-					const agentId = session.toolType || 'claude-code';
+					const agentId = session.agentSessionId ? session.toolType : fallback!.agent.toolType;
 					if (agentId === 'claude-code') {
 						(window as any).maestro.claude
 							.updateSessionName(session.projectRoot, providerSessionId, newName)
