@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	readDirRemote,
+	readDirNamesRemote,
 	readFileRemote,
 	readBinaryFileRemoteAsBase64,
 	readBinaryFileBlockRemoteAsBase64,
@@ -57,6 +58,40 @@ describe('remote-fs', () => {
 				]),
 		};
 	}
+
+	describe('readDirNamesRemote', () => {
+		it('preserves hidden names, newlines, whitespace and quotes without following links', async () => {
+			const deps = createMockDeps({
+				stdout: "./.hidden\0./a\nb\0./ with space \0./quote'\0",
+				stderr: '',
+				exitCode: 0,
+			});
+			const file = "/remote/a user's folder";
+			expect(await readDirNamesRemote(file, baseConfig, {}, deps)).toEqual({
+				success: true,
+				data: ['.hidden', 'a\nb', ' with space ', "quote'"],
+			});
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain(shellEscapeRemotePath(file));
+			expect(command).toContain('find . -mindepth 1 -maxdepth 1');
+			expect(command).not.toContain('find -L');
+			await readDirNamesRemote(file, baseConfig, { recursive: true }, deps);
+			expect(vi.mocked(deps.execSsh).mock.calls[1][1].at(-1)).not.toContain('-maxdepth');
+		});
+		it('rejects truncated listings and propagates permissions instead of returning no files', async () => {
+			const deps = createMockDeps({ stdout: './partial', stderr: '', exitCode: 0 });
+			expect((await readDirNamesRemote('/remote', baseConfig, {}, deps)).success).toBe(false);
+			vi.mocked(deps.execSsh).mockResolvedValue({
+				stdout: '',
+				stderr: 'Permission denied',
+				exitCode: 1,
+			});
+			expect(await readDirNamesRemote('/remote', baseConfig, {}, deps)).toMatchObject({
+				success: false,
+				error: 'Permission denied',
+			});
+		});
+	});
 
 	describe('readDirRemote', () => {
 		it('parses ls output correctly for regular files and directories', async () => {
@@ -1341,6 +1376,13 @@ describe('remote-fs', () => {
 	});
 
 	describe('writeFileAtomicRemote', () => {
+		it('preserves explicitly requested permission bits before replacing the target', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await writeFileAtomicRemote('/file', 'data', baseConfig, { mode: 0o700 }, deps);
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain('chmod 700 "$tmp" || exit 1');
+			expect(command.indexOf('chmod 700')).toBeLessThan(command.indexOf('mv -fT'));
+		});
 		it.each(['text with quotes: \' and "\n', 'caf\u00e9', Buffer.from([0, 255, 128, 10]), ''])(
 			'stages payload %j over stdin and cleans up on failure',
 			async (content) => {
@@ -1396,6 +1438,17 @@ describe('remote-fs', () => {
 	});
 
 	describe('createExclusiveRemote', () => {
+		it('honors durable writes and permissions without widening the default directory mode', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await createExclusiveRemote('/file', 'data', baseConfig, deps, { mode: 0o700, sync: true });
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain('chmod 700 "$target" || exit 1');
+			expect(command.indexOf('sync || exit 1')).toBeGreaterThan(command.indexOf('chmod 700'));
+			await mkdirRemote('/private', baseConfig, true, deps, { mode: 0o700 });
+			expect(vi.mocked(deps.execSsh).mock.calls[1][1].at(-1)).toContain(
+				'umask 077; mkdir -p -m 700'
+			);
+		});
 		it('holds a noclobber descriptor while decoding stdin, without reopening for write', async () => {
 			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
 			const filePath = "/home/a user's folder/file";

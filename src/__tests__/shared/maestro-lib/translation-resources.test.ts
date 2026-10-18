@@ -282,6 +282,9 @@ describe('project resource translation', () => {
 	});
 
 	it('resolves account and actual memory directory overrides', () => {
+		expect(
+			resolveClaudeMemoryPath('/project/worktree', '/remote/account', '~/memory', '/home/remote')
+		).toBe('/home/remote/memory');
 		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toBe(
 			path.join('/selected/account', 'projects', '-project-worktree', 'memory')
 		);

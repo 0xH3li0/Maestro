@@ -1,3 +1,5 @@
+import type { PlatformPath } from 'node:path';
+
 /** Filesystem operations on the host where the provider runs. Archives stay local. */
 export interface TranslationFsStat {
 	size: number;
@@ -13,6 +15,8 @@ export interface TranslationFsWriteOptions {
 }
 
 export interface TranslationFs {
+	/** Remote paths remain POSIX even when Maestro runs on Windows. */
+	paths?: PlatformPath;
 	readFile(file: string): Promise<Buffer>;
 	/** Relative names, including descendants when recursive, without traversing directory links. */
 	readdir(directory: string, options?: { recursive?: boolean }): Promise<string[]>;

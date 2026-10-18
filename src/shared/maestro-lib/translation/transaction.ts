@@ -50,30 +50,31 @@ async function translationWriteRoot(
 	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<string> {
+	const paths = nativeFs?.paths ?? path;
 	if (!journal.resourceWrites.includes(write)) return journal.plan.destination.accountRoot;
 	if (write.gitExcludeBlock) {
 		const git = await resolveProjectGit?.(journal.plan.destination.projectRoot);
-		if (!git || path.resolve(write.path) !== path.join(git.commonDirectory, 'info', 'exclude'))
+		if (!git || paths.resolve(write.path) !== paths.join(git.commonDirectory, 'info', 'exclude'))
 			throw new Error('Unsafe journal git exclude path');
 		return git.commonDirectory;
 	}
 	const directory = journal.knowledgeDirectory;
 	if (directory) {
-		const suffix = path.join(translationHash(journal.plan.agentId), journal.plan.id);
-		const legacyRoot = path.join(
+		const suffix = paths.join(translationHash(journal.plan.agentId), journal.plan.id);
+		const legacyRoot = paths.join(
 			journal.plan.destination.projectRoot,
 			'.maestro/provider-knowledge'
 		);
 		const legacy =
-			allowLegacyKnowledge && path.resolve(directory) === path.resolve(legacyRoot, suffix);
+			allowLegacyKnowledge && paths.resolve(directory) === paths.resolve(legacyRoot, suffix);
 		const root = legacy ? legacyRoot : knowledgeRoot;
-		if (path.resolve(directory) !== path.resolve(root, suffix))
+		if (paths.resolve(directory) !== paths.resolve(root, suffix))
 			throw new Error('Unsafe journal knowledge directory');
 		await assertTranslationKnowledgeDirectory(directory, root, nativeFs);
 		if (
 			isPathAtOrUnderRoot(
-				path.resolve(write.path).replace(/\\/g, '/'),
-				path.resolve(directory).replace(/\\/g, '/')
+				paths.resolve(write.path).split(paths.sep).join('/'),
+				paths.resolve(directory).split(paths.sep).join('/')
 			)
 		)
 			return legacy ? journal.plan.destination.projectRoot : root;
@@ -91,6 +92,7 @@ async function stageResourceWrite(
 	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
+	const paths = nativeFs?.paths ?? path;
 	const owned = { ...write, created: false };
 	journal.resourceWrites.push(owned);
 	await archive.write(journal);
@@ -103,7 +105,7 @@ async function stageResourceWrite(
 		nativeFs
 	);
 	await assertTranslationTarget(write.path, root, nativeFs);
-	await nativeFs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
+	await nativeFs.mkdir(paths.dirname(write.path), { recursive: true, mode: 0o700 });
 	await assertTranslationTarget(write.path, root, nativeFs);
 	if (write.deleted) await nativeFs.unlink(write.path);
 	else if (write.symlinkTarget && write.created) {
@@ -163,6 +165,7 @@ export async function applyTranslation(
 	acceptLimitations = false
 ): Promise<TranslationResult> {
 	const nativeFs = host.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	return operations.enqueue(journal.plan.agentId, async () => {
 		const plan = journal.plan;
 		assertTabScope(journal);
@@ -273,7 +276,7 @@ export async function applyTranslation(
 				});
 			}
 			if (git) {
-				const file = path.join(git.commonDirectory, 'info', 'exclude');
+				const file = paths.join(git.commonDirectory, 'info', 'exclude');
 				await assertTranslationTarget(file, git.commonDirectory, nativeFs);
 				let current: Buffer | undefined;
 				try {
@@ -281,22 +284,22 @@ export async function applyTranslation(
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
-				const paths = projections
+				const excludePaths = projections
 					.filter((p) => !p.deleted)
 					.map((p) => {
-						const relative = path.relative(git.root, p.path).replace(/\\/g, '/');
+						const relative = paths.relative(git.root, p.path).split(paths.sep).join('/');
 						if (
 							!relative ||
 							relative === '..' ||
 							relative.startsWith('../') ||
-							path.isAbsolute(relative) ||
+							paths.isAbsolute(relative) ||
 							/[\r\n]/.test(relative)
 						)
 							throw new Error('Unsafe git exclude resource path');
 						// Anchored literal patterns, including names with gitignore metacharacters.
 						return '/' + relative.replace(/([\\*?\[\] ])/g, '\\$1');
 					});
-				const block = `${current?.length && current[current.length - 1] !== 10 ? '\n' : ''}# Maestro provider resources ${plan.id} begin\n${[...new Set(paths)].join('\n')}\n# Maestro provider resources ${plan.id} end\n`;
+				const block = `${current?.length && current[current.length - 1] !== 10 ? '\n' : ''}# Maestro provider resources ${plan.id} begin\n${[...new Set(excludePaths)].join('\n')}\n# Maestro provider resources ${plan.id} end\n`;
 				const bytes = Buffer.concat([current ?? Buffer.alloc(0), Buffer.from(block)]);
 				const backup = current
 					? {
@@ -363,25 +366,25 @@ export async function applyTranslation(
 					? previousImport
 					: { key: resourceKey, operationId: plan.id };
 			if (journal.resourceImport.operationId !== plan.id) {
-				journal.knowledgeDirectory = path.resolve(
+				journal.knowledgeDirectory = paths.resolve(
 					host.knowledgeRoot,
 					translationHash(plan.agentId),
 					journal.resourceImport.operationId
 				);
 			} else if (journal.plan.scope.projectKnowledge) {
-				const directory = path.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
+				const directory = paths.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
 				journal.knowledgeDirectory = directory;
 				await assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot, nativeFs);
 				await nativeFs.mkdir(host.knowledgeRoot, { recursive: true, mode: 0o700 });
 				for (const artifact of journal.resources) {
-					const relative = path.normalize(artifact.relativePath);
+					const relative = paths.normalize(artifact.relativePath);
 					if (
-						path.isAbsolute(relative) ||
+						paths.isAbsolute(relative) ||
 						relative === '..' ||
-						relative.startsWith('..' + path.sep)
+						relative.startsWith('..' + paths.sep)
 					)
 						throw new Error('Unsafe resource projection path');
-					const file = path.join(directory, relative);
+					const file = paths.join(directory, relative);
 					const bytes = Buffer.from(artifact.bytesBase64, 'base64');
 					await stageResourceWrite(
 						archive,
@@ -393,7 +396,7 @@ export async function applyTranslation(
 						nativeFs
 					);
 				}
-				const indexPath = path.join(directory, 'knowledge-index.md');
+				const indexPath = paths.join(directory, 'knowledge-index.md');
 				const index = translationKnowledgePrompt(directory, journal.resources);
 				await stageResourceWrite(
 					archive,
@@ -493,11 +496,12 @@ export async function verifyTranslationWrites(
 	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
+	const paths = nativeFs?.paths ?? path;
 	assertTabScope(journal);
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
 	if (journal.resourceImport && journal.resourceImport.operationId !== journal.plan.id) {
-		const directory = path.resolve(
+		const directory = paths.resolve(
 			knowledgeRoot,
 			translationHash(journal.plan.agentId),
 			journal.resourceImport.operationId
@@ -506,12 +510,12 @@ export async function verifyTranslationWrites(
 			throw new Error('Invalid reused knowledge directory');
 		await assertTranslationKnowledgeDirectory(directory, knowledgeRoot, nativeFs);
 		for (const resource of journal.resources) {
-			const file = path.join(directory, resource.relativePath);
+			const file = paths.join(directory, resource.relativePath);
 			await assertTranslationTarget(file, directory, nativeFs);
 			if (translationHash(await nativeFs.readFile(file)) !== resource.sha256)
 				throw new Error('Previously imported resource changed since preflight');
 		}
-		const index = path.join(directory, 'knowledge-index.md');
+		const index = paths.join(directory, 'knowledge-index.md');
 		await assertTranslationTarget(index, directory, nativeFs);
 		if (
 			(await nativeFs.readFile(index)).toString('utf8') !==

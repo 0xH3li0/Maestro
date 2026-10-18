@@ -90,6 +90,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **Safe remote file writes and links:** `writeFileAtomicRemote()`, `createExclusiveRemote()`, `lstatRemote()`, `realpathRemote()`, `readlinkRemote()`, `symlinkRemote()` in `src/main/utils/remote-fs.ts`
+- **Remote native directory names:** `readDirNamesRemote()` in `src/main/utils/remote-fs.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **Reading standard input in a CLI verb:** `readStdinText()`, `readStdinIfReady(timeoutMs?)`, `isStdinTerminal()` in `src/cli/services/stdin.ts` (never a bare `fs.readFileSync(0)` for input nobody was told to pipe)
 - **The per-agent setting flags of a CLI verb (`--model`, `--env`, `--tier`, ...):** `buildConfigPatch()`, `buildSshPatch()`, `hasSshFlags()` in `src/cli/services/agent-setting-flags.ts`; peers in `peer-flags.ts`
@@ -184,6 +185,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Providers, accounts, and auth
 
 - **Provider translation filesystems:** `TranslationFs` in `src/shared/maestro-lib/translation/fs-port.ts`; `localTranslationFs`, `localTranslationFsSync` in `translation/local-fs.ts`
+- **SSH provider translation:** `createSshTranslationFs()` in `src/main/provider-translation-fs.ts`; `resolveSshTranslationHost()` in `src/main/provider-translation-ssh.ts`
 - **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
 - **Translating context before a send:** `prepareTabForSend()`, `pendingTranslationSource()`, `TranslationSendHeldError` in `src/shared/maestro-lib/translation/send.ts`; `NativeTranslationService` in `translation/service.ts`; `prepareProviderTranslationForSend()` in `src/renderer/services/providerTranslation.ts`
 - **Finding a Codex native transcript:** `findCodexSessionFile()`, `listCodexSessionFiles()`, `extractSessionIdFromFilename()` in `src/shared/maestro-lib/codex/session-files.ts`

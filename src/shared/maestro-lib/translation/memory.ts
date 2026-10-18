@@ -8,11 +8,13 @@ import { encodeClaudeProjectPath, expandTilde } from '../../pathUtils';
 export function resolveClaudeMemoryPath(
 	projectRoot: string,
 	accountRoot: string,
-	autoMemoryDirectory?: string
+	autoMemoryDirectory?: string,
+	remoteHome?: string
 ): string {
+	const paths = remoteHome ? path.posix : path;
 	return autoMemoryDirectory
-		? path.resolve(projectRoot, expandTilde(autoMemoryDirectory))
-		: path.join(accountRoot, 'projects', encodeClaudeProjectPath(projectRoot), 'memory');
+		? paths.resolve(projectRoot, expandTilde(autoMemoryDirectory, remoteHome))
+		: paths.join(accountRoot, 'projects', encodeClaudeProjectPath(projectRoot), 'memory');
 }
 
 export async function discoverClaudeMemoryPath(
@@ -29,14 +31,16 @@ export async function discoverClaudeMemoryRoot(
 	projectRoot: string,
 	accountRoot: string,
 	memoryProjectRoot = projectRoot,
-	nativeFs: TranslationFs = localTranslationFs
+	nativeFs: TranslationFs = localTranslationFs,
+	remoteHome?: string
 ): Promise<{ path: string; source: 'default' | 'account' | 'project' }> {
+	const paths = remoteHome ? path.posix : path;
 	let directory: string | undefined;
 	let source: 'default' | 'account' | 'project' = 'default';
 	for (const settingsPath of [
-		path.join(accountRoot, 'settings.json'),
-		path.join(projectRoot, '.claude', 'settings.json'),
-		path.join(projectRoot, '.claude', 'settings.local.json'),
+		paths.join(accountRoot, 'settings.json'),
+		paths.join(projectRoot, '.claude', 'settings.json'),
+		paths.join(projectRoot, '.claude', 'settings.local.json'),
 	]) {
 		try {
 			const settings = parseJsonWithBom<Record<string, unknown>>(
@@ -44,7 +48,7 @@ export async function discoverClaudeMemoryRoot(
 			);
 			if (typeof settings.autoMemoryDirectory === 'string' && settings.autoMemoryDirectory.trim()) {
 				directory = settings.autoMemoryDirectory;
-				source = settingsPath === path.join(accountRoot, 'settings.json') ? 'account' : 'project';
+				source = settingsPath === paths.join(accountRoot, 'settings.json') ? 'account' : 'project';
 			}
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -54,7 +58,8 @@ export async function discoverClaudeMemoryRoot(
 		path: resolveClaudeMemoryPath(
 			directory ? projectRoot : memoryProjectRoot,
 			accountRoot,
-			directory
+			directory,
+			remoteHome
 		),
 		source,
 	};
@@ -112,10 +117,11 @@ export function analyzeMemoryLinks(contents: Map<string, string>): {
 /** Keep a worktree's native session cwd separate from Claude's repository memory identity. */
 export async function resolveMemoryRepositoryRoot(
 	projectRoot: string,
-	readCommonDirectory: (cwd: string) => Promise<string | undefined>
+	readCommonDirectory: (cwd: string) => Promise<string | undefined>,
+	paths: path.PlatformPath = path
 ): Promise<string> {
 	const common = await readCommonDirectory(projectRoot);
 	if (!common) return projectRoot;
-	const resolved = path.resolve(projectRoot, common.trim());
-	return path.basename(resolved) === '.git' ? path.dirname(resolved) : projectRoot;
+	const resolved = paths.resolve(projectRoot, common.trim());
+	return paths.basename(resolved) === '.git' ? paths.dirname(resolved) : projectRoot;
 }

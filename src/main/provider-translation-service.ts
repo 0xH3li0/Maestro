@@ -18,6 +18,10 @@ import {
 	type TranslationServiceSession,
 } from '../shared/maestro-lib/translation/service';
 import type { TranslationLimitation } from '../shared/maestro-lib/translation/types';
+import type { TranslationServiceHost } from '../shared/maestro-lib/translation/service';
+import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
+import { resolveSshTranslationHost } from './provider-translation-ssh';
+import { getAgentDefinition } from '../shared/maestro-lib/providers/definitions';
 
 export interface ProviderTranslationDependencies {
 	sessionsStore: Store<SessionsData>;
@@ -35,7 +39,7 @@ export class ProviderTranslationService extends NativeTranslationService {
 			if (!found) throw new Error('Agent not found');
 			return found as StoredSession & TranslationServiceSession;
 		};
-		super({
+		const host: TranslationServiceHost = {
 			userDataDir: app.getPath('userData'),
 			getSession: session,
 			persist: async (agentId, update) => {
@@ -94,6 +98,17 @@ export class ProviderTranslationService extends NativeTranslationService {
 					status: plan.status,
 					verification: plan.verification,
 					limitationCounts,
+				});
+			},
+		};
+		super({
+			...host,
+			resolveNativeHost: (agent) => {
+				if (!agent.sessionSshRemoteConfig?.enabled && !agent.sshRemoteId)
+					return Promise.resolve(undefined);
+				return resolveSshTranslationHost(agent, createSshRemoteStoreAdapter(deps.settingsStore), {
+					...host,
+					getProvider: async (provider) => getAgentDefinition(provider),
 				});
 			},
 		});

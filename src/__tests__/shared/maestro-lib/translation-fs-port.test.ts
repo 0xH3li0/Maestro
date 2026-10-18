@@ -28,6 +28,20 @@ import type { TranslationRpc } from '../../../shared/maestro-lib/translation/typ
 afterEach(() => vi.restoreAllMocks());
 
 describe('translation filesystem boundary', () => {
+	it('uses native POSIX paths and does not treat literal backslashes as containment separators', async () => {
+		const nativeFs: TranslationFs = {
+			...localTranslationFs,
+			paths: path.posix,
+			lstat: vi.fn().mockResolvedValue({ isSymbolicLink: () => true }),
+			realpath: vi.fn(async (file) =>
+				file === '/remote/root/link' ? '/remote/root\\outside/file' : file
+			),
+		};
+		await expect(
+			assertTranslationTarget('/remote/root/link', '/remote/root', nativeFs)
+		).rejects.toThrow('escapes');
+		expect(nativeFs.lstat).toHaveBeenCalledWith('/remote/root/link');
+	});
 	it('keeps direct Node filesystem access inside the local port and local archive', async () => {
 		const directory = path.resolve('src/shared/maestro-lib/translation');
 		const violations: string[] = [];

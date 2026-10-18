@@ -30,6 +30,8 @@ import { capabilitySnapshots } from '../../main/agents/capability-snapshot';
 import { extractNativeConversation } from '../../shared/maestro-lib/translation/native-records';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { estimateTokenCount } from '../../shared/formatters';
+import { resolveSshTranslationHost } from '../../main/provider-translation-ssh';
+import { remapTranslationFs } from '../helpers/translationFs';
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
 	...(await importOriginal<typeof import('node:fs/promises')>()),
@@ -41,6 +43,7 @@ vi.mock('../../main/agents/capability-snapshot', () => ({ capabilitySnapshots: {
 vi.mock('../../main/storage/codex-session-storage', () => ({ CodexSessionStorage: vi.fn() }));
 vi.mock('../../main/utils/remote-git', () => ({ execGitReadOnly: vi.fn() }));
 vi.mock('../../main/utils/execFile', () => ({ execFileNoThrow: vi.fn() }));
+vi.mock('../../main/provider-translation-ssh', () => ({ resolveSshTranslationHost: vi.fn() }));
 vi.mock('../../main/utils/sentry', () => ({
 	captureMessage: vi.fn().mockResolvedValue(undefined),
 }));
@@ -55,6 +58,78 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('single-tab provider translation service', () => {
+	it('plans with a per-agent remote host while keeping its archive local and preventing local apply', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-remote-plan-'));
+		try {
+			vi.spyOn(app, 'getPath').mockReturnValue(path.join(root, 'data'));
+			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: async () => [] } as any);
+			vi.spyOn(translationResources, 'collectTranslationResources').mockResolvedValue({
+				artifacts: [],
+				limitations: [],
+			});
+			const native = remapTranslationFs('/remote', path.join(root, 'remote'));
+			const session = createMockSession({
+				id: 'remote-agent',
+				toolType: 'claude-code',
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
+				aiTabs: [{ id: 'open', agentSessionId: null }] as any,
+			});
+			const remoteHost = {
+				nativeFs: native.nativeFs,
+				resolveIdentity: vi.fn(async (_session, provider) => ({
+					provider,
+					version: provider === 'codex' ? '0.162.1' : '2.1.296',
+					accountRoot: `/remote/${provider}`,
+					projectRoot: '/remote/project',
+					remoteHome: '/remote',
+					remoteHost: 'remote-host',
+				})),
+				execGit: vi.fn(),
+				findCodexSessionFile: vi.fn(),
+				assertCanApply: () => {
+					throw new Error('Remote import channel unavailable');
+				},
+			};
+			vi.mocked(resolveSshTranslationHost).mockResolvedValue(remoteHost);
+			const service = new ProviderTranslationService({
+				sessionsStore: { get: () => [session] },
+				settingsStore: { get: () => [] },
+				agentConfigsStore: { get: () => ({}) },
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			const report = await service.run({
+				agentId: session.id,
+				destination: 'codex',
+				action: 'plan',
+			});
+			expect(report.error).toBeUndefined();
+			expect(report.plan?.status).toBe('ready');
+			expect(report.plan?.limitations.some((entry) => entry.code === 'remote-translation')).toBe(
+				false
+			);
+			expect(translationResources.collectTranslationResources).toHaveBeenCalledWith(
+				expect.objectContaining({ remoteHost: 'remote-host' }),
+				expect.anything(),
+				undefined,
+				native.nativeFs
+			);
+			const archive = new TranslationArchive(path.join(root, 'data/provider-translations'));
+			expect((await archive.read(session.id, report.plan!.id)).plan.source.remoteHome).toBe(
+				'/remote'
+			);
+			const applied = await service.run({
+				agentId: session.id,
+				destination: 'codex',
+				action: 'apply',
+			});
+			expect(applied).toMatchObject({ success: false, error: 'Remote import channel unavailable' });
+			expect(native.nativeFs.atomicWrite).not.toHaveBeenCalled();
+		} finally {
+			vi.mocked(resolveSshTranslationHost).mockReset();
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 	it('translates only open tabs, leaving blocked closed and missing History sources for next use', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-open-tabs-'));
 		try {

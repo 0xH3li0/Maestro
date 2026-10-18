@@ -20,26 +20,29 @@ export async function assertTranslationTarget(
 	root: string,
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
-	const relative = path.relative(path.resolve(root), path.resolve(file));
+	const paths = nativeFs?.paths ?? path;
+	const relative = paths.relative(paths.resolve(root), paths.resolve(file));
 	if (
 		!relative ||
 		relative === '..' ||
-		relative.startsWith('..' + path.sep) ||
-		path.isAbsolute(relative)
+		relative.startsWith('..' + paths.sep) ||
+		paths.isAbsolute(relative)
 	)
 		throw new Error('Unsafe translation target');
 	try {
 		if ((await nativeFs.lstat(file)).isSymbolicLink()) {
 			const real = await nativeFs.realpath(file);
 			const realRoot = await nativeFs.realpath(root);
-			if (!isPathAtOrUnderRoot(real.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/')))
+			if (
+				!isPathAtOrUnderRoot(real.split(paths.sep).join('/'), realRoot.split(paths.sep).join('/'))
+			)
 				throw new Error('Translation target escapes its selected root through a symlink');
 		}
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 	}
-	let ancestor = path.dirname(file);
-	while (ancestor !== path.dirname(ancestor)) {
+	let ancestor = paths.dirname(file);
+	while (ancestor !== paths.dirname(ancestor)) {
 		try {
 			const real = await nativeFs.realpath(ancestor);
 			let realRoot: string;
@@ -47,17 +50,20 @@ export async function assertTranslationTarget(
 				realRoot = await nativeFs.realpath(root);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-				realRoot = path.resolve(root);
+				realRoot = paths.resolve(root);
 			}
 			if (
-				!isPathAtOrUnderRoot(real.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/')) &&
-				ancestor !== path.dirname(root)
+				!isPathAtOrUnderRoot(
+					real.split(paths.sep).join('/'),
+					realRoot.split(paths.sep).join('/')
+				) &&
+				ancestor !== paths.dirname(root)
 			)
 				throw new Error('Translation target escapes its selected root through a symlink');
 			return;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			ancestor = path.dirname(ancestor);
+			ancestor = paths.dirname(ancestor);
 		}
 	}
 }
@@ -70,6 +76,7 @@ export async function planResourceProjections(
 	projectResourcesIntoRepo = false,
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<{ projections: ResourceProjection[]; limitations: TranslationLimitation[] }> {
+	const paths = nativeFs?.paths ?? path;
 	const projections: ResourceProjection[] = [];
 	const limitations: TranslationLimitation[] = [];
 	const omitted = new Set<string>();
@@ -102,16 +109,16 @@ export async function planResourceProjections(
 		let format: ResourceProjection['format'] = 'binary';
 		let symlinkTarget: string | undefined;
 		if (artifact.kind === 'instruction' && artifact.scope === 'project') {
-			file = path.join(
+			file = paths.join(
 				destination.projectRoot,
 				destination.provider === 'codex' ? 'AGENTS.md' : 'CLAUDE.md'
 			);
 			format = 'markdown';
-			const sibling = path.join(destination.projectRoot, artifact.relativePath);
+			const sibling = paths.join(destination.projectRoot, artifact.relativePath);
 			if (sibling !== file) {
 				try {
 					if (translationHash(await nativeFs.readFile(sibling)) === artifact.sha256)
-						symlinkTarget = path.basename(sibling);
+						symlinkTarget = paths.basename(sibling);
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
@@ -127,7 +134,7 @@ export async function planResourceProjections(
 				});
 				continue;
 			}
-			file = path.join(
+			file = paths.join(
 				destination.projectRoot,
 				destination.provider === 'codex' ? '.agents' : '.claude',
 				'skills',
@@ -158,7 +165,7 @@ export async function planResourceProjections(
 			const name =
 				typeof definition.metadata.name === 'string'
 					? definition.metadata.name
-					: path.basename(artifact.relativePath, path.extname(artifact.relativePath));
+					: paths.basename(artifact.relativePath, paths.extname(artifact.relativePath));
 			if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
 				limitations.push({
 					code: 'unsafe-subagent-name',
@@ -168,7 +175,7 @@ export async function planResourceProjections(
 				});
 				continue;
 			}
-			file = path.join(
+			file = paths.join(
 				destination.projectRoot,
 				destination.provider === 'codex' ? '.codex' : '.claude',
 				'agents',
@@ -185,7 +192,7 @@ export async function planResourceProjections(
 				bytes = Buffer.from(artifact.bytesBase64, 'base64');
 		} else continue;
 		if (!projectResourcesIntoRepo) {
-			omitted.add(path.relative(destination.projectRoot, file).replace(/\\/g, '/'));
+			omitted.add(paths.relative(destination.projectRoot, file).split(paths.sep).join('/'));
 			continue;
 		}
 		await assertTranslationTarget(file, destination.projectRoot, nativeFs);
@@ -208,7 +215,7 @@ export async function planResourceProjections(
 		}
 		if (existing && !checkpoint?.ownedResources?.[file]) {
 			// Preserve equivalent user-native definitions without rewriting their formatting.
-			const candidate = translationArtifact(artifact.kind, file, path.basename(file), existing);
+			const candidate = translationArtifact(artifact.kind, file, paths.basename(file), existing);
 			const candidateDefinition = projectResourceDefinition(candidate, destination.provider);
 			const incomingDefinition = projectResourceDefinition(artifact, destination.provider);
 			if (
@@ -266,7 +273,7 @@ export async function planResourceProjections(
 	for (const [file, owned] of Object.entries(checkpoint?.ownedResources ?? {})) {
 		if (selected.has(owned.resourceKey)) continue;
 		const nativeRoots = destination.provider === 'codex' ? ['.agents', '.codex'] : ['.claude'];
-		const relative = path.relative(destination.projectRoot, file).replace(/\\/g, '/');
+		const relative = paths.relative(destination.projectRoot, file).split(paths.sep).join('/');
 		if (!nativeRoots.some((prefix) => relative.startsWith(prefix + '/'))) continue;
 		await assertTranslationTarget(file, destination.projectRoot, nativeFs);
 		let existing: Buffer;

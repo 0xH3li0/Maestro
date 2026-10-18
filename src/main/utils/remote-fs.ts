@@ -417,6 +417,32 @@ export async function readDirRemote(
 	};
 }
 
+/** Byte-preserving names for native migrations; never follow directory links or hide errors. */
+export async function readDirNamesRemote(
+	dirPath: string,
+	sshRemote: SshRemoteConfig,
+	options: { recursive?: boolean } = {},
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string[]>> {
+	const script =
+		`cd "$1" || exit 1; ` +
+		`find . -mindepth 1 ${options.recursive ? '' : '-maxdepth 1 '}` +
+		`-exec printf '%s\\0' {} +`;
+	const result = await execRemoteCommand(
+		sshRemote,
+		`sh -c ${shellEscape(script)} sh ${shellEscapeRemotePath(dirPath)}`,
+		deps
+	);
+	if (result.exitCode !== 0)
+		return { success: false, error: result.stderr || `Cannot list remote directory: ${dirPath}` };
+	if (result.stdout && !result.stdout.endsWith('\0'))
+		return { success: false, error: `Incomplete remote directory listing: ${dirPath}` };
+	const names = result.stdout ? result.stdout.slice(0, -1).split('\0') : [];
+	if (names.some((name) => !name.startsWith('./')))
+		return { success: false, error: `Invalid remote directory listing: ${dirPath}` };
+	return { success: true, data: names.map((name) => name.slice(2)) };
+}
+
 /**
  * Directory entry with stat metadata. Returned by {@link listDirWithStatsRemote}.
  */
@@ -1207,7 +1233,7 @@ export async function writeFileAtomicRemote(
 	filePath: string,
 	content: string | Buffer,
 	sshRemote: SshRemoteConfig,
-	options: { sync?: boolean } = {},
+	options: { sync?: boolean; mode?: number } = {},
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
 	const script =
@@ -1221,6 +1247,7 @@ export async function writeFileAtomicRemote(
 		`byte_count=$(wc -c < "$tmp") || exit 1; ` +
 		`[ "$byte_count" -eq "$2" ] || { ` +
 		`printf '%s\\n' 'Incomplete atomic write payload' >&2; exit 1; }; ` +
+		`chmod ${((options.mode ?? 0o600) & 0o777).toString(8)} "$tmp" || exit 1; ` +
 		(options.sync ? `sync || exit 1; ` : '') +
 		// BSD mv follows directory symlinks unless -h is set; GNU uses -T.
 		`if mv --version >/dev/null 2>&1; then mv -fT -- "$tmp" "$target"; ` +
@@ -1248,7 +1275,8 @@ export async function createExclusiveRemote(
 	filePath: string,
 	content: string | Buffer,
 	sshRemote: SshRemoteConfig,
-	deps: RemoteFsDeps = defaultDeps
+	deps: RemoteFsDeps = defaultDeps,
+	options: { sync?: boolean; mode?: number } = {}
 ): Promise<RemoteFsResult<void>> {
 	const script =
 		`umask 077; target=$1; ` +
@@ -1257,7 +1285,10 @@ export async function createExclusiveRemote(
 		`if (set -C; { base64 -d >&3 || exit 74; } 3> "$target"); then ` +
 		`byte_count=$(wc -c < "$target") || exit 1; ` +
 		`[ "$byte_count" -eq "$2" ] || { ` +
-		`printf '%s\\n' 'Incomplete exclusive create payload' >&2; exit 1; }; exit 0; ` +
+		`printf '%s\\n' 'Incomplete exclusive create payload' >&2; exit 1; }; ` +
+		`chmod ${((options.mode ?? 0o600) & 0o777).toString(8)} "$target" || exit 1; ` +
+		(options.sync ? `sync || exit 1; ` : '') +
+		`exit 0; ` +
 		`else status=$?; ` +
 		// Decode failed AFTER the open: the file's existence is not a collision.
 		`if [ "$status" -eq 74 ]; then exit 1; fi; ` +
@@ -1322,11 +1353,13 @@ export async function mkdirRemote(
 	dirPath: string,
 	sshRemote: SshRemoteConfig,
 	recursive: boolean = true,
-	deps: RemoteFsDeps = defaultDeps
+	deps: RemoteFsDeps = defaultDeps,
+	options: { mode?: number } = {}
 ): Promise<RemoteFsResult<void>> {
 	const escapedPath = shellEscapeRemotePath(dirPath);
 	const mkdirFlag = recursive ? '-p' : '';
-	const remoteCommand = `mkdir ${mkdirFlag} ${escapedPath}`;
+	const mode = options.mode === undefined ? '' : `-m ${(options.mode & 0o777).toString(8)} `;
+	const remoteCommand = `${options.mode === undefined ? '' : 'umask 077; '}mkdir ${mkdirFlag} ${mode}${escapedPath}`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
@@ -1402,7 +1435,8 @@ export async function deleteRemote(
 	const rmFlags = recursive ? '-rf' : '-f';
 	const remoteCommand = `rm ${rmFlags} ${escapedPath}`;
 
-	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	// A lost reply may follow a successful unlink; retrying could delete a new owner's file.
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps, undefined, false);
 
 	if (result.exitCode !== 0) {
 		const error = result.stderr || `Failed to delete: ${targetPath}`;

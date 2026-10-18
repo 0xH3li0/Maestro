@@ -7,6 +7,9 @@ export interface TranslationIdentity {
 	version: string;
 	accountRoot: string;
 	projectRoot: string;
+	/** Remote identity binds preflight to the selected host and its home, never the local user's. */
+	remoteHost?: string;
+	remoteHome?: string;
 	/** Repository identity for default project memory; session cwd remains projectRoot. */
 	memoryProjectRoot?: string;
 	/** Host-approved user resource roots, e.g. ~/.agents/skills. Never provider home defaults. */

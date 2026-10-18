@@ -18,6 +18,7 @@ export function remapTranslationFs(virtualRoot: string, backingRoot: string) {
 			: path.join(virtualRoot, relative);
 	};
 	const nativeFs = {
+		paths: path as path.PlatformPath,
 		readFile: vi.fn<TranslationFs['readFile']>((file) =>
 			localTranslationFs.readFile(backingPath(file))
 		),

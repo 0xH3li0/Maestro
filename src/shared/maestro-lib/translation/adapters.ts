@@ -205,8 +205,9 @@ async function stageClaude(
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
 	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	const sessionId = generateUUID();
-	const file = path.join(
+	const file = paths.join(
 		context.destination.accountRoot,
 		'projects',
 		encodeClaudeProjectPath(context.destination.projectRoot),
@@ -232,7 +233,7 @@ async function stageClaude(
 	};
 	await context.recordIntent(mapping);
 	await assertTranslationTarget(file, context.destination.accountRoot, nativeFs);
-	await nativeFs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+	await nativeFs.mkdir(paths.dirname(file), { recursive: true, mode: 0o700 });
 	await assertTranslationTarget(file, context.destination.accountRoot, nativeFs);
 	// Exclusive new file: a provider or another process can never lose an existing transcript.
 	await nativeFs.createExclusive(file, bytes, {
@@ -253,6 +254,7 @@ async function stageCodex(
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
 	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	if (!context.codex) throw new Error('Codex native import channel unavailable; no exec fallback');
 	const rows = projectConversation(conversation, 'codex', 'pending');
 	// Intent precedes thread creation. A lost response is an uncertain mutation, never blindly retried.
@@ -277,8 +279,8 @@ async function stageCodex(
 	const sessionId = started.thread?.id;
 	if (!sessionId || !started.thread.path)
 		throw new Error('Codex did not return a durable native thread identity');
-	const relative = path.relative(context.destination.accountRoot, started.thread.path);
-	if (relative.startsWith('..') || path.isAbsolute(relative))
+	const relative = paths.relative(context.destination.accountRoot, started.thread.path);
+	if (relative.startsWith('..') || paths.isAbsolute(relative))
 		throw new Error('Codex returned a rollout outside the selected account');
 	await assertTranslationTarget(started.thread.path, context.destination.accountRoot, nativeFs);
 	const mapping: TranslationTabMapping = {

@@ -68,6 +68,18 @@ export interface TranslationServiceSession extends TranslatableSession {
 export interface TranslationServiceHost {
 	/** Defaults to local for existing hosts. Archives always stay in userDataDir. */
 	nativeFs?: TranslationFs;
+	/** Resolve per request, so concurrent agents cannot share another host's filesystem. */
+	resolveNativeHost?(
+		session: TranslationServiceSession
+	): Promise<TranslationNativeHost | undefined>;
+	resolveIdentity?(
+		session: TranslationServiceSession,
+		provider: ToolType,
+		source: boolean,
+		checkpoint?: TranslationCheckpoint
+	): Promise<TranslationIdentity>;
+	/** Refuse writes when a host lacks a required transaction transport. */
+	assertCanApply?(): void;
 	userDataDir: string;
 	getSession(agentId: string): TranslationServiceSession;
 	persist(
@@ -76,7 +88,11 @@ export interface TranslationServiceHost {
 	): Promise<void>;
 	getProvider(
 		provider: ToolType
-	): Promise<Pick<AgentConfig, 'path' | 'defaultEnvVars'> | null | undefined>;
+	): Promise<
+		| (Pick<AgentConfig, 'path' | 'defaultEnvVars'> & Partial<Pick<AgentConfig, 'binaryName'>>)
+		| null
+		| undefined
+	>;
 	providerConfig(provider: ToolType): Record<string, any>;
 	globalEnv(): Record<string, string>;
 	isBusy(session: TranslationServiceSession): boolean;
@@ -94,14 +110,21 @@ export interface TranslationServiceHost {
 	reportPlan?(plan: TranslationJournal['plan']): void;
 }
 
+export type TranslationNativeHost = Pick<
+	TranslationServiceHost,
+	'nativeFs' | 'resolveIdentity' | 'execGit' | 'findCodexSessionFile' | 'assertCanApply'
+>;
+
 export class NativeTranslationService {
 	private readonly knowledgeRoot: string;
 	private readonly nativeFs: TranslationFs;
+	private readonly paths: path.PlatformPath;
 	private readonly registry = createTranslationRegistry();
 	private readonly queue = createKeyedWriteQueue();
 	private readonly archive: TranslationArchive;
 	constructor(private readonly deps: TranslationServiceHost) {
 		this.nativeFs = deps.nativeFs ?? localTranslationFs;
+		this.paths = this.nativeFs.paths ?? path;
 		this.knowledgeRoot = path.join(deps.userDataDir, 'provider-knowledge');
 		this.archive = new TranslationArchive(path.join(deps.userDataDir, 'provider-translations'));
 	}
@@ -120,6 +143,8 @@ export class NativeTranslationService {
 		source: boolean,
 		checkpoint?: TranslationCheckpoint
 	): Promise<TranslationIdentity> {
+		if (this.deps.resolveIdentity)
+			return this.deps.resolveIdentity(session, provider, source, checkpoint);
 		const detected = await this.deps.getProvider(provider);
 		const providerConfig = this.deps.providerConfig(provider);
 		const overrides = providerOverridesFor(
@@ -141,7 +166,7 @@ export class NativeTranslationService {
 			selectedRoot ?? resolveAgentAccountKey(provider, env as Record<string, string>, os.homedir());
 		if (!accountRoot && this.registry.get(provider))
 			throw new Error('Cannot resolve selected provider account');
-		let root = accountRoot ? path.resolve(expandTilde(accountRoot)) : '';
+		let root = accountRoot ? this.paths.resolve(expandTilde(accountRoot)) : '';
 		try {
 			root = await this.nativeFs.realpath(root);
 		} catch (error) {
@@ -160,7 +185,7 @@ export class NativeTranslationService {
 			return result.exitCode === 0 ? result.stdout : undefined;
 		});
 		const userResourceRoots: NonNullable<TranslationIdentity['userResourceRoots']> = [
-			{ path: path.join(os.homedir(), '.agents', 'skills'), kind: 'skill' },
+			{ path: this.paths.join(os.homedir(), '.agents', 'skills'), kind: 'skill' },
 		];
 		if (provider === 'claude-code') {
 			const memory = await discoverClaudeMemoryRoot(
@@ -215,7 +240,7 @@ export class NativeTranslationService {
 		if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) throw new Error('Unsafe native session ID');
 		const file =
 			identity.provider === 'claude-code'
-				? path.join(
+				? this.paths.join(
 						identity.accountRoot,
 						'projects',
 						encodeClaudeProjectPath(identity.projectRoot),
@@ -294,13 +319,6 @@ export class NativeTranslationService {
 		};
 		const busy = this.deps.isBusy(session);
 		const limitations: TranslationLimitation[] = [];
-		if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId)
-			limitations.push({
-				code: 'remote-translation',
-				severity: 'block',
-				message:
-					'Remote native translation requires an SSH adapter; local roots cannot stand in for remote accounts.',
-			});
 		const conversations: PortableConversation[] = [];
 		const newRecords: Record<string, number> = {};
 		const nextCheckpoint: TranslationCheckpoint = checkpoint
@@ -434,7 +452,7 @@ export class NativeTranslationService {
 				}
 			for (const base of checkpoint.resources) {
 				let managed: TranslationArtifact | null = null;
-				const managedPath = path.join(
+				const managedPath = this.paths.join(
 					session.providerTranslationKnowledgeDirectory,
 					base.relativePath
 				);
@@ -648,8 +666,8 @@ export class NativeTranslationService {
 		const top = await this.deps.execGit(['rev-parse', '--show-toplevel'], projectRoot);
 		if (top.exitCode !== 0) throw new Error('Cannot resolve the repository root');
 		return {
-			root: path.resolve(top.stdout.trim()),
-			commonDirectory: path.resolve(projectRoot, common.stdout.trim()),
+			root: this.paths.resolve(top.stdout.trim()),
+			commonDirectory: this.paths.resolve(projectRoot, common.stdout.trim()),
 		};
 	}
 	private host(journal: TranslationJournal, recovering = false): TranslationTransactionHost {
@@ -690,12 +708,12 @@ export class NativeTranslationService {
 					throw new Error('Source account, project root or provider version changed');
 				if (session.providerTranslationKnowledgeDirectory) {
 					const directory = session.providerTranslationKnowledgeDirectory;
-					const legacyRoot = path.join(actual.projectRoot, '.maestro/provider-knowledge');
+					const legacyRoot = this.paths.join(actual.projectRoot, '.maestro/provider-knowledge');
 					const legacy =
 						recovering &&
 						isPathAtOrUnderRoot(
-							path.resolve(directory).replace(/\\/g, '/'),
-							path.resolve(legacyRoot).replace(/\\/g, '/')
+							this.paths.resolve(directory).split(this.paths.sep).join('/'),
+							this.paths.resolve(legacyRoot).split(this.paths.sep).join('/')
 						);
 					await assertTranslationKnowledgeDirectory(
 						directory,
@@ -705,13 +723,13 @@ export class NativeTranslationService {
 					if (legacy) await assertTranslationTarget(directory, actual.projectRoot, this.nativeFs);
 				}
 				for (const artifact of operation.resources)
-					if (path.isAbsolute(artifact.sourcePath)) {
+					if (this.paths.isAbsolute(artifact.sourcePath)) {
 						const managedDirectory = session.providerTranslationKnowledgeDirectory;
 						if (
 							managedDirectory &&
 							isPathAtOrUnderRoot(
-								path.resolve(artifact.sourcePath).replace(/\\/g, '/'),
-								path.resolve(managedDirectory).replace(/\\/g, '/')
+								this.paths.resolve(artifact.sourcePath).split(this.paths.sep).join('/'),
+								this.paths.resolve(managedDirectory).split(this.paths.sep).join('/')
 							) &&
 							!artifact.metadata?.directoryLink
 						)
@@ -724,15 +742,15 @@ export class NativeTranslationService {
 					}
 				for (const conversation of operation.conversations)
 					for (const artifact of conversation.artifacts) {
-						if (artifact.kind === 'transcript' && path.isAbsolute(artifact.sourcePath)) {
+						if (artifact.kind === 'transcript' && this.paths.isAbsolute(artifact.sourcePath)) {
 							const identity = [
 								operation.plan.source,
 								operation.plan.destination,
 								...Object.values(operation.checkpoint?.providerRoots ?? {}),
 							].find((root) =>
 								isPathAtOrUnderRoot(
-									path.resolve(artifact.sourcePath).replace(/\\/g, '/'),
-									path.resolve(root.accountRoot).replace(/\\/g, '/')
+									this.paths.resolve(artifact.sourcePath).split(this.paths.sep).join('/'),
+									this.paths.resolve(root.accountRoot).split(this.paths.sep).join('/')
 								)
 							);
 							if (!identity) throw new Error('Native source is outside selected provider accounts');
@@ -866,6 +884,25 @@ export class NativeTranslationService {
 			return { success: false, error: 'Malformed provider translation request' };
 		return this.queue.enqueue(request.agentId, async () => {
 			try {
+				const session = this.session(request.agentId);
+				if (request.action !== 'status' && this.deps.resolveNativeHost) {
+					const nativeHost = await this.deps.resolveNativeHost(session);
+					if (nativeHost)
+						return new NativeTranslationService({
+							...this.deps,
+							...nativeHost,
+							resolveNativeHost: undefined,
+						}).run(request);
+				}
+				if (
+					request.action !== 'status' &&
+					(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) &&
+					!this.deps.resolveIdentity
+				)
+					throw new Error(
+						'SSH translation requires a remote native host; local fallback is forbidden.'
+					);
+				if (['apply', 'recover', 'rollback'].includes(request.action)) this.deps.assertCanApply?.();
 				if (
 					request.action === 'status' ||
 					request.action === 'recover' ||

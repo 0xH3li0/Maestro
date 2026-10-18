@@ -22,16 +22,17 @@ export function assertTranslationKnowledgeDirectory(
 	knowledgeRoot: string,
 	nativeFs?: TranslationFs
 ): void | Promise<void> {
-	const root = path.resolve(knowledgeRoot);
-	const resolved = path.resolve(directory);
-	const parts = path.relative(root, resolved).split(path.sep);
+	const paths = nativeFs?.paths ?? path;
+	const root = paths.resolve(knowledgeRoot);
+	const resolved = paths.resolve(directory);
+	const parts = paths.relative(root, resolved).split(paths.sep);
 	if (
 		parts.length !== 2 ||
 		!/^[a-f0-9]{64}$/.test(parts[0]) ||
 		!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(parts[1])
 	)
 		throw new Error('Unsafe provider knowledge binding');
-	const candidates = [path.dirname(resolved), resolved];
+	const candidates = [paths.dirname(resolved), resolved];
 	const check = (stat: TranslationFsStat): void => {
 		if (stat.isSymbolicLink())
 			throw new Error('Provider knowledge escapes its selected root through a symlink');

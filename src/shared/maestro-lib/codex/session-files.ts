@@ -1,5 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { TranslationFs } from '../translation/fs-port';
+import { assertTranslationTarget } from '../translation/resource-projections';
 
 export function extractSessionIdFromFilename(filename: string): string | null {
 	// Match pattern: rollout-YYYYMMDD_HHMMSS_MMM-UUID.jsonl or similar
@@ -12,63 +14,72 @@ export function extractSessionIdFromFilename(filename: string): string | null {
 }
 
 export async function listCodexSessionFiles(
-	sessionsDir: string
+	sessionsDir: string,
+	nativeFs?: TranslationFs
 ): Promise<Array<{ filePath: string; filename: string }>> {
+	const paths = nativeFs?.paths ?? path;
+	const filesystem = nativeFs ?? fs;
 	const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 	try {
-		await fs.access(sessionsDir);
-	} catch {
+		if (nativeFs) {
+			if (!(await nativeFs.exists(sessionsDir))) return [];
+		} else await fs.access(sessionsDir);
+	} catch (error) {
+		if (nativeFs) throw error;
 		return [];
 	}
 
 	// Scan YYYY directories
-	const years = await fs.readdir(sessionsDir);
+	const years = await filesystem.readdir(sessionsDir);
 	for (const year of years) {
 		if (!/^\d{4}$/.test(year)) continue;
 
-		const yearDir = path.join(sessionsDir, year);
+		const yearDir = paths.join(sessionsDir, year);
 		try {
-			const yearStat = await fs.stat(yearDir);
+			const yearStat = await (nativeFs ? nativeFs.lstat(yearDir) : fs.stat(yearDir));
 			if (!yearStat.isDirectory()) continue;
-		} catch {
+		} catch (error) {
+			if (nativeFs) throw error;
 			continue;
 		}
 
 		// Scan MM directories
-		const months = await fs.readdir(yearDir);
+		const months = await filesystem.readdir(yearDir);
 		for (const month of months) {
 			if (!/^\d{2}$/.test(month)) continue;
 
-			const monthDir = path.join(yearDir, month);
+			const monthDir = paths.join(yearDir, month);
 			try {
-				const monthStat = await fs.stat(monthDir);
+				const monthStat = await (nativeFs ? nativeFs.lstat(monthDir) : fs.stat(monthDir));
 				if (!monthStat.isDirectory()) continue;
-			} catch {
+			} catch (error) {
+				if (nativeFs) throw error;
 				continue;
 			}
 
 			// Scan DD directories
-			const days = await fs.readdir(monthDir);
+			const days = await filesystem.readdir(monthDir);
 			for (const day of days) {
 				if (!/^\d{2}$/.test(day)) continue;
 
-				const dayDir = path.join(monthDir, day);
+				const dayDir = paths.join(monthDir, day);
 				try {
-					const dayStat = await fs.stat(dayDir);
+					const dayStat = await (nativeFs ? nativeFs.lstat(dayDir) : fs.stat(dayDir));
 					if (!dayStat.isDirectory()) continue;
 
 					// Find session files
-					const files = await fs.readdir(dayDir);
+					const files = await filesystem.readdir(dayDir);
 					for (const file of files) {
 						if (file.endsWith('.jsonl')) {
 							sessionFiles.push({
-								filePath: path.join(dayDir, file),
+								filePath: paths.join(dayDir, file),
 								filename: file,
 							});
 						}
 					}
-				} catch {
+				} catch (error) {
+					if (nativeFs) throw error;
 					continue;
 				}
 			}
@@ -80,9 +91,11 @@ export async function listCodexSessionFiles(
 
 export async function findCodexSessionFile(
 	sessionId: string,
-	accountRoot: string
+	accountRoot: string,
+	nativeFs?: TranslationFs
 ): Promise<string | null> {
-	const allFiles = await listCodexSessionFiles(path.join(accountRoot, 'sessions'));
+	const paths = nativeFs?.paths ?? path;
+	const allFiles = await listCodexSessionFiles(paths.join(accountRoot, 'sessions'), nativeFs);
 
 	for (const { filePath, filename } of allFiles) {
 		const fileSessionId = extractSessionIdFromFilename(filename);
@@ -92,7 +105,10 @@ export async function findCodexSessionFile(
 
 		// Also check by reading first line for session ID
 		try {
-			const content = await fs.readFile(filePath, 'utf-8');
+			if (nativeFs) await assertTranslationTarget(filePath, accountRoot, nativeFs);
+			const content = nativeFs
+				? (await nativeFs.readFile(filePath)).toString('utf8')
+				: await fs.readFile(filePath, 'utf-8');
 			const firstLine = content.split('\n')[0];
 			if (firstLine) {
 				const metadata = JSON.parse(firstLine) as { payload?: { id?: string }; id?: string };
@@ -101,8 +117,9 @@ export async function findCodexSessionFile(
 					return filePath;
 				}
 			}
-		} catch {
-			// Skip files that can't be read
+		} catch (error) {
+			if (nativeFs && !(error instanceof SyntaxError)) throw error;
+			// Skip malformed metadata; local History also skips unreadable files
 		}
 	}
 
