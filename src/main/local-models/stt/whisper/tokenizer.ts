@@ -1,10 +1,9 @@
 /**
- * Whisper's byte-level BPE, decode side only.
+ * Whisper's byte-level BPE: native decoding plus vocabulary context encoding.
  *
- * The provider never needs to ENCODE: the decoder is primed with three known
- * special-token ids and everything after that comes back as ids to be turned
- * into text. Decoding is a vocabulary lookup plus a byte-level unmapping, which
- * is why this is ~60 lines and not a tokenizer library.
+ * Generated ids decode by vocabulary lookup and byte-level unmapping. Optional
+ * vocabulary context uses the shared Hugging Face tokenizer to encode exactly
+ * the checkpoint's BPE, rather than implementing a second encoder here.
  *
  * **The byte-level part is not decoration.** GPT-2 style BPE, which Whisper
  * inherits, cannot put a raw control byte in a vocabulary key, so it maps the
@@ -15,6 +14,8 @@
  * invisible in English and mangles every accented character, quote, and emoji.
  */
 
+import { createLocalTokenizer, type LocalTokenizer } from '../../tokenizer';
+
 /** Ids the model emits as control, never as text. */
 export interface WhisperSpecialTokens {
 	/** `<|startoftranscript|>` - primes the decoder. */
@@ -23,6 +24,8 @@ export interface WhisperSpecialTokens {
 	readonly endOfText: number;
 	/** `<|notimestamps|>` - asks for plain text rather than timestamped segments. */
 	readonly noTimestamps: number;
+	/** `<|startofprev|>` introduces vocabulary context before the transcript. */
+	readonly startOfPrevious?: number;
 }
 
 /**
@@ -36,6 +39,7 @@ export const WHISPER_EN_SPECIAL_TOKENS: WhisperSpecialTokens = Object.freeze({
 	startOfTranscript: 50257,
 	endOfText: 50256,
 	noTimestamps: 50362,
+	startOfPrevious: 50360,
 });
 
 /**
@@ -83,8 +87,12 @@ interface TokenizerFile {
 export class WhisperTokenizer {
 	/** Dense id -> token string. An array because ids are contiguous from zero. */
 	private readonly tokens: string[];
+	private encoder: LocalTokenizer | null = null;
 
-	private constructor(tokens: string[]) {
+	private constructor(
+		tokens: string[],
+		private readonly definition: TokenizerFile
+	) {
 		this.tokens = tokens;
 	}
 
@@ -102,7 +110,16 @@ export class WhisperTokenizer {
 		if (tokens.length === 0) {
 			throw new Error('WhisperTokenizer: tokenizer.json vocabulary is empty');
 		}
-		return new WhisperTokenizer(tokens);
+		return new WhisperTokenizer(tokens, parsed);
+	}
+
+	/** Use the checkpoint's BPE implementation, never approximate word token ids. */
+	encode(text: string, maxTokens = 223): number[] {
+		this.encoder ??= createLocalTokenizer('.', this.definition, {});
+		return Array.from(
+			this.encoder.encode(text, { addSpecialTokens: false, truncation: false }).inputIds,
+			Number
+		).slice(0, maxTokens);
 	}
 
 	/** How many ids the vocabulary covers. */

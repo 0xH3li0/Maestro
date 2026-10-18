@@ -52,6 +52,7 @@ import {
 } from './voice-controls';
 import { isAssignedBrainProviderId } from './voice-routing';
 import { DEFAULT_STUN_URLS } from './webrtc-host';
+import { DEFAULT_VOICE_STUDIO_CONFIG, voiceStudioConfigProblem } from './voice-studio';
 
 /** The settings key holding everything A Cappella persists. */
 export const VOICE_SETTINGS_KEY = 'acappella';
@@ -125,6 +126,23 @@ const providerField = (slot: VoiceProviderSlot, what: string): VoiceSettingField
  * bookkeeping, and a writer that could set it could skip a migration.
  */
 export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> = Object.freeze({
+	'voiceStudio.baseUrl': {
+		kind: 'string',
+		default: DEFAULT_VOICE_STUDIO_CONFIG.baseUrl,
+		description: 'Local VoiceStudio source URL.',
+	},
+	'voiceStudio.engine': {
+		kind: 'string',
+		default: DEFAULT_VOICE_STUDIO_CONFIG.engine,
+		description: 'VoiceStudio synthesis engine id.',
+	},
+	'voiceStudio.seed': {
+		kind: 'number',
+		default: DEFAULT_VOICE_STUDIO_CONFIG.seed,
+		min: 0,
+		max: 2_147_483_647,
+		description: 'Deterministic VoiceStudio sampling seed.',
+	},
 	'providers.stt': providerField('stt', 'Speech-to-Text provider.'),
 	'providers.tts': providerField('tts', 'Text-to-Speech provider.'),
 	'providers.brain': providerField(
@@ -253,6 +271,11 @@ export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> =
 		default: formatSendPhrases(DEFAULT_SEND_PHRASES),
 		allowEmpty: true,
 		description: 'Comma-separated phrases that mean "send it". Empty turns the spoken send off.',
+	},
+	'providers.vocabulary': {
+		kind: 'string-list',
+		default: [],
+		description: 'Custom speech recognition terms, added to the live agent and tab names.',
 	},
 	'controls.idleTimeoutMs': {
 		kind: 'number',
@@ -474,7 +497,14 @@ function fieldProblem(path: string, field: VoiceSettingField, value: unknown): s
  */
 export function voiceSettingProblem(path: string, value: unknown): string | null {
 	const field = VOICE_SETTING_FIELDS[path];
-	if (field) return fieldProblem(path, field, value);
+	if (field) {
+		const problem = fieldProblem(path, field, value);
+		if (problem || !path.startsWith('voiceStudio.')) return problem;
+		return voiceStudioConfigProblem({
+			...DEFAULT_VOICE_STUDIO_CONFIG,
+			[path.slice('voiceStudio.'.length)]: value,
+		});
+	}
 
 	const prefix = path ? `${path}.` : '';
 	const children = VOICE_SETTING_PATHS.filter((candidate) => candidate.startsWith(prefix));
@@ -497,7 +527,7 @@ function objectProblem(path: string, value: Record<string, unknown>): string | n
 		if (field) {
 			// An absent field in a section write is "unset", which is always legal.
 			if (entry === undefined) continue;
-			const problem = fieldProblem(childPath, field, entry);
+			const problem = voiceSettingProblem(childPath, entry);
 			if (problem) return problem;
 			continue;
 		}

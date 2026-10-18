@@ -51,7 +51,14 @@ import type { RouteDecision } from '../../../../shared/acappella/route-decision'
 import { ROUTE_DECISION_JSON_SCHEMA } from '../../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../../shared/acappella/sentences';
 import { logger } from '../../../utils/logger';
-import { buildRouteUserPrompt, parseRouteDecision, routeSystemPrompt } from '../brain-prompt';
+import {
+	buildRouteUserPrompt,
+	buildConverseUserPrompt,
+	converseSystemPrompt,
+	parseRouteDecision,
+	routeSystemPrompt,
+} from '../brain-prompt';
+import { prepareSpeechText } from '../../../../shared/acappella/speech-text';
 import { getCredential } from '../credentials';
 import { requireCredential } from '../hosted/http';
 import { resampleLinear } from '../pcm';
@@ -319,7 +326,6 @@ export class RealtimeVoiceAdapter implements SttProvider, TtsProvider, BrainProv
 		this.pendingResponse = pending;
 		this.building = newResponseBuilder();
 
-		const limit = context.maxSentences ?? 2;
 		this.send({
 			type: 'conversation.item.create',
 			item: {
@@ -328,9 +334,7 @@ export class RealtimeVoiceAdapter implements SttProvider, TtsProvider, BrainProv
 				content: [
 					{
 						type: 'input_text',
-						text: `An agent answered. Say this out loud in at most ${limit} sentence${
-							limit === 1 ? '' : 's'
-						}, plainly, with no code or file paths:\n\n${agentText}`,
+						text: `${converseSystemPrompt()}\n\n${buildConverseUserPrompt(prepareSpeechText(agentText), context)}`,
 					},
 				],
 			},

@@ -42,6 +42,7 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
+import { normalizeSpeechVocabulary } from '../../../shared/acappella/speech-vocabulary';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import {
 	VOICE_ROUTING_TASK_ID,
@@ -70,6 +71,7 @@ import {
 	OPENAI_TTS_PROVIDER_ID,
 	QWEN3_BRAIN_PROVIDER_ID,
 	SYSTEM_TTS_PROVIDER_ID,
+	VOICE_STUDIO_TTS_PROVIDER_ID,
 	WHISPER_STT_PROVIDER_ID,
 } from '../../../shared/acappella/provider-catalog';
 import type {
@@ -102,6 +104,11 @@ import { OpenAiTtsProvider } from './hosted/openai-tts';
 import { KokoroTtsProvider } from './local/kokoro-tts';
 import { AssignedBrainProvider } from './local/assigned-brain';
 import { SystemVoiceTtsProvider } from './local/system-tts';
+import { VoiceStudioClient, VoiceStudioTtsProvider } from './local/voice-studio-tts';
+import {
+	readVoiceStudioConfig,
+	type VoiceStudioConfig,
+} from '../../../shared/acappella/voice-studio';
 import { ParakeetSttProvider } from './local/parakeet-stt';
 import { WhisperSttProvider } from './local/whisper-stt';
 import { MockBrainProvider, MockSttProvider, MockTtsProvider } from './mock';
@@ -134,6 +141,9 @@ interface VoiceProviderByRole {
 
 /** What the user picked in Voice Setup. Absent means "whatever is default". */
 export interface VoiceProviderSettings {
+	voiceStudio?: VoiceStudioConfig;
+	/** Extra literal recognition hints, added to the live agent and tab names. */
+	vocabulary?: string[];
 	stt?: string;
 	tts?: string;
 	/**
@@ -396,6 +406,15 @@ registerVoiceProvider({
 	// model catalog, and handing it an id chosen for ElevenLabs would point it at
 	// a pack that was never downloaded.
 	create: () => new KokoroTtsProvider(),
+});
+
+registerVoiceProvider({
+	role: 'tts',
+	id: VOICE_STUDIO_TTS_PROVIDER_ID,
+	label: 'VoiceStudio (local voices)',
+	tier: 'local',
+	create: ({ settings }) =>
+		new VoiceStudioTtsProvider(new VoiceStudioClient(readVoiceStudioConfig(settings.voiceStudio))),
 });
 
 // -- The Local Models Brains ------------------------------------------------
@@ -828,6 +847,7 @@ export function readVoiceProviderSettings(store: {
 				voice?: unknown;
 				speech?: unknown;
 				audio?: unknown;
+				voiceStudio?: unknown;
 				controls?: unknown;
 		  }
 		| undefined;
@@ -846,7 +866,9 @@ export function readVoiceProviderSettings(store: {
 	);
 
 	return {
+		voiceStudio: readVoiceStudioConfig(stored?.voiceStudio),
 		speakBackgroundCompletions: asAnnouncementSetting(speech.speakBackgroundCompletions),
+		vocabulary: normalizeSpeechVocabulary(providers.vocabulary),
 		// Clamped rather than passed through: this becomes a timer in front of every
 		// dispatch, and a hand-edited settings file holding a NaN or a 600000 would
 		// be a voice assistant that never answers.
@@ -899,6 +921,9 @@ export function pipelineKey(settings: VoiceProviderSettings): string {
 		// A different model on the same kind of source is a different Brain: the
 		// provider id alone would not notice llama3 becoming qwen3 on one endpoint.
 		settings.brainSource?.spec ?? '',
+		...(settings.tts === VOICE_STUDIO_TTS_PROVIDER_ID
+			? Object.values(readVoiceStudioConfig(settings.voiceStudio))
+			: []),
 		settings.voiceId ?? '',
 		settings.rate ?? '',
 	].join('|');

@@ -47,6 +47,8 @@ export const TOKENIZER_CONFIG_FILENAME = 'tokenizer_config.json';
 const UNBOUNDED_MODEL_MAX_LENGTH = 1_000_000;
 
 export interface TokenizerEncodeOptions {
+	/** False returns only content ids, for decoder prefix context such as Whisper. */
+	addSpecialTokens?: boolean;
 	/**
 	 * Longest sequence to produce, special tokens included. Defaults to the
 	 * tokenizer's own `model_max_length` when it records one.
@@ -188,7 +190,10 @@ export function createLocalTokenizer(
 		encode(text, options = {}) {
 			const maxLength = options.maxLength ?? modelMaxLength;
 			const truncation = options.truncation ?? true;
-			const full = tokenizer.encode(text, { return_token_type_ids: true });
+			const full = tokenizer.encode(text, {
+				return_token_type_ids: true,
+				add_special_tokens: options.addSpecialTokens ?? true,
+			});
 			if (!truncation || maxLength === undefined || full.ids.length <= maxLength) {
 				return toTokenizedInput(full.ids, full.token_type_ids);
 			}

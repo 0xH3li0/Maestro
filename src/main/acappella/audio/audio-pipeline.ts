@@ -393,6 +393,12 @@ export class AudioPipeline {
 	 * cancelled.
 	 */
 	private handleDuplex(result: VadFrameResult): void {
+		// The session accepts this only when Force Send is on and delivery was
+		// acknowledged. The same pre-roll replay preserves the first word.
+		if (this.lastState === 'dispatching' && result.event?.type === 'speech-start') {
+			this.bargeIn();
+			return;
+		}
 		if (this.lastState !== 'speaking') {
 			// Playback ended on its own while a duck was in place. Nothing will
 			// restore the gain if this does not: `flush()` only runs on barge-in.

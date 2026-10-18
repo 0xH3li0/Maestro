@@ -23,6 +23,7 @@
  */
 
 import type { TtsChunk, TtsProvider } from '../../../shared/acappella/providers';
+import { prepareSpeechText } from '../../../shared/acappella/speech-text';
 import {
 	splitCompleteSentences,
 	splitIntoSpokenSentences,
@@ -145,7 +146,7 @@ export class SpeechScheduler {
 		);
 		this.lookahead = Math.max(0, options.lookahead ?? DEFAULT_LOOKAHEAD);
 		this.queueLimit = Math.max(1, options.queueLimit ?? DEFAULT_QUEUE_LIMIT);
-		this.wrapUpText = options.wrapUpText ?? DEFAULT_WRAP_UP;
+		this.wrapUpText = prepareSpeechText(options.wrapUpText ?? DEFAULT_WRAP_UP);
 	}
 
 	get isSpeaking(): boolean {
@@ -178,7 +179,7 @@ export class SpeechScheduler {
 		this.ended = false;
 		this.endReason = 'completed';
 
-		if (seed) this.enqueue(splitIntoSpokenSentences(seed));
+		if (seed) this.enqueue(splitIntoSpokenSentences(prepareSpeechText(seed)));
 
 		this.options.onStart({
 			utteranceId,
@@ -252,7 +253,7 @@ export class SpeechScheduler {
 
 	private enqueue(sentences: readonly string[]): void {
 		for (const raw of sentences) {
-			const sentence = raw.trim();
+			const sentence = prepareSpeechText(raw);
 			if (!sentence) continue;
 			if (this.queue.length >= this.queueLimit) {
 				// The queue is already longer than anyone will listen to. Dropping the

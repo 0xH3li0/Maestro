@@ -49,6 +49,18 @@ describe('readVoiceSettingsBlob', () => {
 });
 
 describe('patchVoiceSettingsSection', () => {
+	it('saves a VoiceStudio source while preserving the selected voice and provider', async () => {
+		const store = fakeStore({
+			providers: { tts: 'voicestudio-tts' },
+			voice: { voiceId: 'Pedram VoxCPM2' },
+		});
+		await patchVoiceSettingsSection('voiceStudio', { engine: 'voxcpm2', seed: 11 });
+		expect(store.read()).toEqual({
+			providers: { tts: 'voicestudio-tts' },
+			voice: { voiceId: 'Pedram VoxCPM2' },
+			voiceStudio: { engine: 'voxcpm2', seed: 11 },
+		});
+	});
 	it('writes only the patched field and keeps the rest of the blob', async () => {
 		const store = fakeStore({
 			providers: { stt: 'parakeet-local' },

@@ -23,6 +23,7 @@ import { OPENAI_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-ca
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type { SttCallbacks, SttProvider } from '../../../../shared/acappella/providers';
 import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
+import { normalizeSpeechVocabulary } from '../../../../shared/acappella/speech-vocabulary';
 import { getCredential } from '../credentials';
 import { PcmBuffer } from '../pcm';
 import { hostedRequest, requireCredential, type HostedFetch } from './http';
@@ -65,6 +66,7 @@ export class OpenAiSttProvider implements SttProvider {
 	private readonly language?: string;
 
 	private callbacks: SttCallbacks | null = null;
+	private vocabulary: string[] = [];
 	private buffer = new PcmBuffer();
 	/** Aborts the in-flight upload. Replaced per utterance, cleared on stop. */
 	private inFlight: AbortController | null = null;
@@ -95,6 +97,10 @@ export class OpenAiSttProvider implements SttProvider {
 		// floor that is not open, which is the one thing this provider must not do.
 		if (!this.callbacks) return;
 		this.buffer.push(pcm);
+	}
+
+	setVocabulary(terms: readonly string[]): void {
+		this.vocabulary = normalizeSpeechVocabulary(terms);
 	}
 
 	/** Endpoint: upload what was said and stream the transcript back. */
@@ -140,6 +146,7 @@ export class OpenAiSttProvider implements SttProvider {
 		form.append('response_format', 'json');
 		form.append('stream', 'true');
 		if (this.language) form.append('language', this.language);
+		if (this.vocabulary.length) form.append('prompt', this.vocabulary.join(', '));
 		// The cast is safe by construction: `encodeUtterance` allocates its own
 		// ArrayBuffer, so the widened `ArrayBufferLike` can never be a SharedArrayBuffer.
 		const wav = encodeUtterance(pcm);

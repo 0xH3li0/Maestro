@@ -24,6 +24,7 @@
 
 import type { AudioHostCommand, AudioHostStatus } from '../../../shared/acappella/audio-host';
 import type { TtsProvider } from '../../../shared/acappella/providers';
+import { prepareSpeechText } from '../../../shared/acappella/speech-text';
 import type { SpokenNoticeSkipCode } from '../../../shared/spokenNotices';
 import type { NoticeSpeaker } from '../../local-models/spoken-notices';
 import { speechChunkToPlayCommand } from './audio-bridge';
@@ -111,6 +112,8 @@ export class NoticeSpeech implements NoticeSpeaker {
 
 	async speak(text: string, signal: AbortSignal): Promise<void> {
 		if (signal.aborted) throw aborted();
+		text = prepareSpeechText(text);
+		if (!text) return;
 		if (!this.deps.ensureAudioHost()) {
 			throw new Error('There is no audio host to play the notice through.');
 		}

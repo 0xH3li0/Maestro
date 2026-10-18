@@ -43,11 +43,14 @@ import type {
 } from '../../shared/local-models/dictation';
 import { resolveTaskReadiness } from './task-readiness';
 import { runSpeechToTextTask, type SpeechToTextTaskResult } from './task-router';
+import { normalizeSpeechVocabulary } from '../../shared/acappella/speech-vocabulary';
+import { correctSpeechVocabulary } from './speech-vocabulary';
 
 /** The task every dictation runs on. */
 const DICTATION_TASK_ID = 'dictation';
 
 export interface TranscribeClipOptions {
+	vocabulary?: readonly string[];
 	/** In-process callers only: an abort signal cannot cross IPC. */
 	signal?: AbortSignal;
 }
@@ -59,16 +62,23 @@ export interface TranscribeClipOptions {
  * the service). Answers `off` when the task has no source and `unavailable`
  * when the source cannot run; it never falls back to another one.
  */
-export function transcribeClip(
+export async function transcribeClip(
 	audio: Float32Array,
 	sampleRate: number,
 	options: TranscribeClipOptions = {}
 ): Promise<SpeechToTextTaskResult> {
-	return runSpeechToTextTask(DICTATION_TASK_ID, {
+	const vocabulary = normalizeSpeechVocabulary(options.vocabulary ?? (await getVocabulary?.()));
+	const result = await runSpeechToTextTask(DICTATION_TASK_ID, {
 		audio,
 		sampleRate,
 		...(options.signal ? { signal: options.signal } : {}),
+		...(vocabulary.length ? { vocabulary } : {}),
 	});
+	if (result.status !== 'ok' || !vocabulary.length) return result;
+	return {
+		...result,
+		text: await correctSpeechVocabulary(result.text, vocabulary, options.signal),
+	};
 }
 
 /**
@@ -147,6 +157,7 @@ interface ActiveDictation {
 }
 
 let microphone: DictationMicrophone | null = null;
+let getVocabulary: (() => readonly string[] | Promise<readonly string[]>) | undefined;
 let releaseMicrophoneListener: (() => void) | null = null;
 let active: ActiveDictation | null = null;
 /** Transcriptions still running, by owner, so a cancel can reach them. */
@@ -159,9 +170,13 @@ const interruptionListeners = new Set<InterruptionListener>();
  *
  * @returns Unregister, which also ends a recording made through it.
  */
-export function registerDictationMicrophone(device: DictationMicrophone): () => void {
+export function registerDictationMicrophone(
+	device: DictationMicrophone,
+	vocabulary?: () => readonly string[] | Promise<readonly string[]>
+): () => void {
 	releaseMicrophoneListener?.();
 	microphone = device;
+	getVocabulary = vocabulary;
 	releaseMicrophoneListener = device.onInterrupted((interruption) => {
 		const dictation = active;
 		if (!dictation || dictation.microphone !== device) return;
@@ -172,6 +187,7 @@ export function registerDictationMicrophone(device: DictationMicrophone): () => 
 		releaseMicrophoneListener?.();
 		releaseMicrophoneListener = null;
 		microphone = null;
+		getVocabulary = undefined;
 		if (active?.microphone === device) {
 			active = null;
 			void device.cancel();
@@ -323,6 +339,7 @@ export function __resetDictation(): void {
 	releaseMicrophoneListener?.();
 	releaseMicrophoneListener = null;
 	microphone = null;
+	getVocabulary = undefined;
 	active = null;
 	transcribing.clear();
 	interruptionListeners.clear();

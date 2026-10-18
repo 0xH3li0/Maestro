@@ -203,6 +203,7 @@ export type ClassifierTaskResult =
 
 /** What a speech-to-text task hands the router. */
 export interface SpeechToTextTaskInput extends LocalTaskAttribution {
+	vocabulary?: readonly string[];
 	/** One whole clip of mono audio, normalised to -1..1. */
 	audio: Float32Array;
 	/** The rate `audio` was captured at. Resampled to 16 kHz by the service. */
@@ -352,12 +353,10 @@ export async function runSpeechToTextTask(
 	const verdict = await runThroughAssignment(
 		taskId,
 		(source) =>
-			transcribeSpeech(
-				source,
-				input.audio,
-				input.sampleRate,
-				input.signal ? { signal: input.signal } : {}
-			),
+			transcribeSpeech(source, input.audio, input.sampleRate, {
+				...(input.signal ? { signal: input.signal } : {}),
+				...(input.vocabulary ? { vocabulary: input.vocabulary } : {}),
+			}),
 		{ agentId: input.agentId }
 	);
 	if (verdict.status === 'use-utility-agent') {

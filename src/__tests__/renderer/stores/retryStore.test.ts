@@ -587,7 +587,7 @@ describe('firing the retry', () => {
 			expect.objectContaining({
 				turnSettings: expect.objectContaining({ model: 'auto', effort: 'low', route }),
 			}),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 
@@ -615,7 +615,7 @@ describe('firing the retry', () => {
 			expect.objectContaining({
 				turnSettings: expect.objectContaining({ model: 'opus', effort: undefined }),
 			}),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 

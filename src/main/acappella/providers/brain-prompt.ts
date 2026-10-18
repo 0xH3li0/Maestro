@@ -29,7 +29,7 @@ import {
 } from '../../../shared/acappella/voice-routing-system-one';
 import { PROMPT_IDS } from '../../../shared/promptDefinitions';
 import { extractJsonObject } from '../../../shared/jsonUtils';
-import { stripMarkdown } from '../../../shared/markdown';
+import { prepareSpeechText } from '../../../shared/acappella/speech-text';
 import { getPrompt } from '../../prompt-manager';
 
 /** Spoken replies stay short unless the caller asks for more. */
@@ -103,6 +103,7 @@ export const CONVERSE_SYSTEM_PROMPT = [
 	'- Speak the outcome, not the transcript. The listener has no screen.',
 	'- Never read code, diffs, file paths, URLs, or command output aloud. Say what changed instead.',
 	'- Plain sentences. No markdown, no bullet points, no headings.',
+	'- Omit emoji and decorative symbols. Never describe an emoji aloud.',
 	'- If the answer is a question for the user, ask it directly.',
 	'- Answer with the spoken text only. No preamble, no quotes around it.',
 ].join('\n');
@@ -325,8 +326,12 @@ function clampConfidence(value: unknown): number {
  * would leave a client's "3 of 2" progress permanently wrong.
  */
 export function limitSpokenReply(text: string, maxSentences?: number): string {
-	const plain = stripMarkdown(text).replace(/\s+/g, ' ').trim();
+	const plain = prepareSpeechText(text);
 	if (!plain) return '';
 	const limit = Math.max(1, maxSentences ?? DEFAULT_SPOKEN_SENTENCES);
-	return splitIntoSpokenSentences(plain).slice(0, limit).join(' ');
+	return splitIntoSpokenSentences(plain)
+		.map(prepareSpeechText)
+		.filter(Boolean)
+		.slice(0, limit)
+		.join(' ');
 }

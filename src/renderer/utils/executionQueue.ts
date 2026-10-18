@@ -836,6 +836,7 @@ export function getSteerEligibility(
 	const provider = resolveTurnProvider(runningTab, session);
 	if (item.turnSettings?.provider && item.turnSettings.provider !== provider)
 		return { canSteer: false, blockedReason: 'provider-mismatch' };
+	const runningClaudeMode = session.claudeInteractive?.mode;
 	session = projectTabProvider(session, runningTab, resolveTurnProvider(runningTab, session)).agent;
 	if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
@@ -848,7 +849,7 @@ export function getSteerEligibility(
 		}
 	} else if (session.toolType !== 'claude-code') {
 		return { canSteer: false, blockedReason: 'not-claude' };
-	} else if (session.claudeInteractive?.mode !== 'interactive') {
+	} else if (runningClaudeMode !== 'interactive') {
 		return { canSteer: false, blockedReason: 'api-token-source' };
 	}
 	// Steering TYPES text into the composer, so an item with nothing to type has

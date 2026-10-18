@@ -33,6 +33,12 @@ const ROSTER: RosterAgent[] = [
 
 const CONTEXT: VoiceRouteContext = { roster: ROSTER, scope: { kind: 'conductor' } };
 
+it('removes emoji before counting the spoken sentence budget', () => {
+	expect(limitSpokenReply('🎉. ✅ **Pedro Sidián** is ready. More.', 1)).toBe(
+		'Pedro Sidián is ready.'
+	);
+});
+
 describe('parseRouteDecision', () => {
 	it('accepts a well-formed decision for a running agent', () => {
 		const decision = parseRouteDecision(

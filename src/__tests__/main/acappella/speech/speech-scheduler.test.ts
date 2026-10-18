@@ -149,6 +149,16 @@ describe('sentence segmentation', () => {
 });
 
 describe('SpeechScheduler', () => {
+	it('normalizes announcements and streamed sentences before synthesis and transcript events', async () => {
+		const h = harness();
+		h.scheduler.begin('speech', '✅ **Backend** is ready.');
+		h.scheduler.pushSentence('🧑🏽‍💻 Ask [Pedro Sidián](https://example.com).');
+		h.scheduler.pushSentence('🇺🇸 1️⃣');
+		h.scheduler.close();
+		await h.scheduler.drained();
+		expect(h.tts.requested).toEqual(['Backend is ready.', 'Ask Pedro Sidián.']);
+		expect(h.sentences.map((sentence) => sentence.text)).toEqual(h.tts.requested);
+	});
 	it('announces a streaming run with the count it has, not a count it invented', async () => {
 		const h = harness();
 		h.scheduler.begin('u1');
@@ -191,7 +201,7 @@ describe('SpeechScheduler', () => {
 		h.scheduler.close();
 		await h.scheduler.drained();
 
-		expect(h.tts.requested).toEqual(['The file is index .ts and it is fine.']);
+		expect(h.tts.requested).toEqual(['The file is index.ts and it is fine.']);
 	});
 
 	it('synthesizes the next sentence while the current one is still playing', async () => {

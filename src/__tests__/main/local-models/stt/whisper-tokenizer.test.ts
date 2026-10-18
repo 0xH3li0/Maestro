@@ -66,6 +66,24 @@ function tokenizerFor(pieces: string[]): { tokenizer: WhisperTokenizer; ids: num
 }
 
 describe('WhisperTokenizer', () => {
+	it('encodes vocabulary with the checkpoint tokenizer and bounds context without splitting ids', () => {
+		const tokenizer = WhisperTokenizer.fromJson(
+			JSON.stringify({
+				model: {
+					type: 'WordLevel',
+					vocab: { '[UNK]': 0, Pedro: 1, Sidián: 2 },
+					unk_token: '[UNK]',
+				},
+				pre_tokenizer: { type: 'WhitespaceSplit' },
+				decoder: { type: 'WordPiece', prefix: '##', cleanup: true },
+				post_processor: null,
+				normalizer: null,
+				added_tokens: [],
+			})
+		);
+		expect(tokenizer.encode('Pedro Sidián')).toEqual([1, 2]);
+		expect(tokenizer.encode('Pedro Sidián', 1)).toEqual([1]);
+	});
 	it('joins tokens into the sentence they spell', () => {
 		const { tokenizer, ids } = tokenizerFor([' Open', ' the', ' auth', ' tab', '.']);
 		expect(tokenizer.decode(ids)).toBe(' Open the auth tab.');
@@ -128,6 +146,7 @@ describe('WhisperTokenizer', () => {
 			startOfTranscript: 50257,
 			endOfText: 50256,
 			noTimestamps: 50362,
+			startOfPrevious: 50360,
 		});
 	});
 });

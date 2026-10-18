@@ -104,6 +104,20 @@ beforeEach(() => {
 });
 
 describe('RealtimeVoiceAdapter', () => {
+	it('uses spoken-rewrite instructions and removes emoji before requesting audio', async () => {
+		const adapter = await startAdapter();
+		const pending = adapter.converse('🏢 **Pedro Sidián** finished ✅.', {
+			agentSessionId: 'a',
+			tabId: 't',
+		});
+		const sent = JSON.stringify(socket.sent);
+		expect(sent).toContain('Omit emoji');
+		expect(sent).toContain('Pedro Sidián finished.');
+		expect(sent).not.toContain('🏢');
+		socket.server({ type: 'response.audio_transcript.delta', delta: 'Finished.' });
+		socket.server({ type: 'response.done' });
+		await pending;
+	});
 	it('declares the routing tool on the session', async () => {
 		await startAdapter();
 

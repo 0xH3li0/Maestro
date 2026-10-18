@@ -232,7 +232,14 @@ describe('QueuedItemEditModal model + effort override', () => {
 			metaKey: true,
 		});
 		expect(onSave).toHaveBeenCalledWith(
-			expect.objectContaining({ turnSettings: { model: 'opus', effort: 'ultrathink' } })
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({
+					provider: 'claude-code',
+					model: 'opus',
+					effort: 'ultrathink',
+					runOn: { type: 'provider' },
+				}),
+			})
 		);
 	});
 
@@ -332,7 +339,14 @@ describe('QueuedItemEditModal model + effort override', () => {
 
 			save();
 			expect(onSave).toHaveBeenCalledWith(
-				expect.objectContaining({ turnSettings: { model: 'auto', effort: 'think' } })
+				expect.objectContaining({
+					turnSettings: expect.objectContaining({
+						provider: 'claude-code',
+						model: 'auto',
+						effort: 'think',
+						runOn: { type: 'provider' },
+					}),
+				})
 			);
 		});
 

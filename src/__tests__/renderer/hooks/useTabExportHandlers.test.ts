@@ -466,7 +466,7 @@ describe('useTabExportHandlers', () => {
 			});
 
 			expect(mockDownloadTabExport).toHaveBeenCalledWith(
-				tab,
+				{ ...tab, tabProvider: 'claude-code' },
 				{
 					name: 'My Project',
 					cwd: '/projects/myapp',

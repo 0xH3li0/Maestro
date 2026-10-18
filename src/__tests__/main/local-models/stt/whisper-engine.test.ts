@@ -27,7 +27,10 @@ import {
 	type OnnxSession,
 	type OnnxTensor,
 } from '../../../../main/local-models/stt/whisper/engine';
-import { WHISPER_EN_SPECIAL_TOKENS } from '../../../../main/local-models/stt/whisper/tokenizer';
+import {
+	WHISPER_EN_SPECIAL_TOKENS,
+	WhisperTokenizer,
+} from '../../../../main/local-models/stt/whisper/tokenizer';
 
 const { layers, heads, headDim } = WHISPER_BASE_GEOMETRY;
 
@@ -170,6 +173,28 @@ function engineFor(pieces: string[]): WhisperEngine {
 const AUDIO = Float32Array.from({ length: 16000 }, (_, i) => Math.sin(i / 10) * 0.2);
 
 describe('WhisperEngine', () => {
+	it('prefixes vocabulary before start-of-transcript and never returns it as recognized speech', async () => {
+		const encode = vi.spyOn(WhisperTokenizer.prototype, 'encode').mockReturnValue([33, 34]);
+		try {
+			const fake = fakeOnnx([0, 1]);
+			const engine = engineFor([' actual', ' speech']);
+			await engine.load(fake.module);
+			expect(await engine.transcribe(AUDIO, { vocabulary: ['🏢 Pedro Sidián'] })).toBe(
+				'actual speech'
+			);
+			expect(encode).toHaveBeenCalledWith(' Pedro Sidián');
+			expect(fake.calls[0].inputIds).toEqual([
+				WHISPER_EN_SPECIAL_TOKENS.startOfPrevious,
+				33,
+				34,
+				WHISPER_EN_SPECIAL_TOKENS.startOfTranscript,
+				WHISPER_EN_SPECIAL_TOKENS.noTimestamps,
+			]);
+			await engine.unload();
+		} finally {
+			encode.mockRestore();
+		}
+	});
 	it('keeps the cross-attention cache from the first pass and never overwrites it', async () => {
 		// The regression test. Every pass after the first must still see the full
 		// 1500-frame encoder cache; seeing the length-1 placeholder means the audio

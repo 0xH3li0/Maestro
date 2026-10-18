@@ -3750,7 +3750,7 @@ describe('useInputProcessing', () => {
 			const spawned = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
 			expect(spawned.sessionCustomModel).toBe('sonnet');
 			expect(spawned.sessionCustomEffort).toBe('low');
-			expect(spawned.runOnOverride).toBeUndefined();
+			expect(spawned.runOnOverride).toEqual({ type: 'provider' });
 			// The router judged what the user typed, not the nudge appended for the agent.
 			expect(routeTurn()).toHaveBeenCalledTimes(1);
 			expect(routeTurn().mock.calls[0][0]).toMatchObject({

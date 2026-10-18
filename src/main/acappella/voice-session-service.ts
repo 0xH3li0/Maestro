@@ -14,7 +14,10 @@
  *     Phase 05 can swap Whisper/Kokoro/OpenAI in without touching this file.
  */
 
+import { canonicalJson } from '../../shared/canonicalJson';
+import { buildSpeechVocabulary } from '../../shared/acappella/speech-vocabulary';
 import type {
+	VoiceSendState,
 	DispatchAction,
 	DocumentVoiceScope,
 	InterruptSource,
@@ -140,6 +143,16 @@ export class VoiceDispatchError extends Error {
 	}
 }
 
+/** A busy destination is retryable and must retain its exact tab. */
+export class VoiceDispatchBusyError extends VoiceDispatchError {
+	constructor(
+		public readonly agentSessionId: string,
+		public readonly tabId: string
+	) {
+		super('Session is busy, send is pending. Feel free to keep adding to it.');
+	}
+}
+
 /**
  * Performs a `RouteDecision` against the renderer. Injected rather than imported
  * because main has no tab authority: the executor forwards `remote:*` messages
@@ -147,7 +160,7 @@ export class VoiceDispatchError extends Error {
  */
 export type VoiceRouteExecutor = (
 	decision: RouteDecision,
-	context: { roster: RosterAgent[]; scope: VoiceScope }
+	context: { roster: RosterAgent[]; scope: VoiceScope; force?: boolean }
 ) => Promise<VoiceDispatchResult>;
 
 /**
@@ -184,8 +197,18 @@ export interface VoiceSessionServiceOptions {
 	pipelineShape?: VoicePipelineShape;
 	/** Current agents and their tabs. Defaults to an empty roster. */
 	getRoster?: () => RosterAgent[] | Promise<RosterAgent[]>;
+	/** Custom terms; agent and tab names are added automatically. */
+	getVocabulary?: () => readonly string[];
+	/** Optional bounded vocabulary correction. Runs only on finalized speech. */
+	refineTranscript?: (
+		text: string,
+		vocabulary: readonly string[],
+		signal: AbortSignal
+	) => Promise<string>;
 	/** Executes route decisions. Absent until the executor is wired. */
 	executeRoute?: VoiceRouteExecutor;
+	/** Read at every send, including retries, so revoking the setting takes effect. */
+	getForceSendAllowed?: () => boolean;
 	/** Spoken-form budget handed to the translator for one rewritten chunk. */
 	maxSpokenSentences?: number;
 	/** Hard cap on sentences spoken per turn, across every chunk of one reply. */
@@ -318,6 +341,7 @@ export interface VoiceSessionSnapshot {
 	lastDecision: RouteDecision | null;
 	/** Where that decision actually landed, once it was performed. */
 	lastDispatch: VoiceDispatchResult | null;
+	sendState?: VoiceSendState;
 }
 
 /** The body of an event before the service stamps `sessionId`, `seq`, and `ts`. */
@@ -331,8 +355,24 @@ type VoiceEventBody<T extends VoiceEventType> = Omit<
 // ---------------------------------------------------------------------------
 
 export class VoiceSessionService {
+	private readonly getForceSendAllowed: () => boolean;
+	private forceSend = false;
+	private pendingSends: {
+		decision: RouteDecision;
+		scope: VoiceScope;
+		agentSessionId: string;
+		tabId: string;
+	}[] = [];
+	private pendingSendTimer: ReturnType<typeof setTimeout> | null = null;
+	private partialInFlight = false;
+	private speechActive = false;
+	private dispatchReadyForInput = false;
 	private readonly providers: VoiceProviderTrio;
 	private readonly getRoster: () => RosterAgent[] | Promise<RosterAgent[]>;
+	private readonly getVocabulary?: VoiceSessionServiceOptions['getVocabulary'];
+	private readonly refineTranscript?: VoiceSessionServiceOptions['refineTranscript'];
+	private vocabulary: string[] = [];
+	private transcriptAbort: AbortController | null = null;
 	private readonly executeRoute?: VoiceRouteExecutor;
 	private readonly maxSpokenSentences: number;
 	private readonly maxSentencesPerTurn?: number;
@@ -458,8 +498,11 @@ export class VoiceSessionService {
 	private timer: TurnTimer | null = null;
 
 	constructor(options: VoiceSessionServiceOptions) {
+		this.getForceSendAllowed = options.getForceSendAllowed ?? (() => false);
 		this.providers = options.providers;
 		this.getRoster = options.getRoster ?? (() => []);
+		this.getVocabulary = options.getVocabulary;
+		this.refineTranscript = options.refineTranscript;
 		this.executeRoute = options.executeRoute;
 		this.maxSpokenSentences = options.maxSpokenSentences ?? DEFAULT_MAX_SPOKEN_SENTENCES;
 		this.maxSentencesPerTurn = options.maxSentencesPerTurn;
@@ -573,6 +616,7 @@ export class VoiceSessionService {
 			},
 			lastDecision: this.lastDecision,
 			lastDispatch: this.lastDispatch?.result ?? null,
+			sendState: this.getSendState(),
 		};
 	}
 
@@ -710,6 +754,11 @@ export class VoiceSessionService {
 
 	private async runStopSession(reason: VoiceStopReason): Promise<void> {
 		this.turn += 1;
+		this.clearPendingSends();
+		this.forceSend = false;
+		this.partialInFlight = false;
+		this.speechActive = false;
+		this.dispatchReadyForInput = false;
 		this.cancelSpeech();
 		// A half-collected thought belongs to the session that is ending. Letting it
 		// settle afterwards would dispatch a fragment into a session nobody is in.
@@ -772,6 +821,19 @@ export class VoiceSessionService {
 	 *          no-op rather than an error.
 	 */
 	interrupt(source: InterruptSource = 'voice'): boolean {
+		// Force Send keeps the microphone usable while an accepted request is
+		// still running. Never interrupt a renderer delivery that has no receipt.
+		if (
+			this.state === 'dispatching' &&
+			this.dispatchReadyForInput &&
+			this.getSendState().forceSend
+		) {
+			this.turn += 1;
+			this.stopStreaming();
+			this.transition('listening');
+			this.emitListenStart();
+			return true;
+		}
 		if (this.state !== 'speaking') return false;
 		// The guard window, which applies to voice and not to a button press: echo
 		// cancellation is at its worst in the first moments of playback, so the
@@ -989,6 +1051,7 @@ export class VoiceSessionService {
 	 * level that belongs to no session belongs nowhere.
 	 */
 	publishAudioLevel(level: number, speech: boolean): void {
+		this.speechActive = speech;
 		this.emit('audio-level', { level: clampLevel(level), speech });
 	}
 
@@ -1037,6 +1100,12 @@ export class VoiceSessionService {
 	/** Re-read the roster and push it to every client. */
 	async publishRoster(): Promise<RosterAgent[]> {
 		const roster = await this.getRoster();
+		this.vocabulary = buildSpeechVocabulary(
+			roster,
+			this.getVocabulary?.(),
+			voiceScopeAgentId(this.scope ?? { kind: 'conductor' })
+		);
+		this.providers.stt.setVocabulary?.(this.vocabulary);
 		this.emit('agent-roster', { agents: roster });
 		return roster;
 	}
@@ -1071,11 +1140,15 @@ export class VoiceSessionService {
 	private sttCallbacks(): SttCallbacks {
 		return {
 			onPartial: (text, stability) => {
+				if (this.state === 'dispatching') this.interrupt('voice');
 				if (this.state !== 'listening') return;
+				this.partialInFlight = text.trim().length > 0;
 				this.timer?.mark('firstPartial');
 				this.emit('partial-transcript', { text, stability });
 			},
 			onFinal: (text, confidence, durationMs) => {
+				if (this.state === 'dispatching') this.interrupt('voice');
+				this.partialInFlight = false;
 				if (this.state !== 'listening') {
 					// Logged because a sentence that vanished here looks, from outside,
 					// exactly like a recogniser that heard nothing.
@@ -1111,14 +1184,46 @@ export class VoiceSessionService {
 	 */
 	private async runTurn(text: string, confidence: number, durationMs?: number): Promise<void> {
 		const turn = ++this.turn;
+		this.transcriptAbort?.abort();
+		this.dispatchReadyForInput = false;
 
 		try {
 			this.timer?.mark('finalTranscript');
-			this.emit('final-transcript', { text, confidence, durationMs });
 			this.transition('transcribing');
+			if (
+				this.refineTranscript &&
+				this.providers.stt.acceptsAudio &&
+				this.providers.stt.transcribesSpeech !== false
+			) {
+				const abort = new AbortController();
+				this.transcriptAbort = abort;
+				// Fresh names after composition, not the roster from session startup.
+				await this.publishRoster();
+				if (!this.isCurrentTurn(turn) || abort.signal.aborted) return;
+				text = await this.refineTranscript(text, this.vocabulary, abort.signal);
+				if (!this.isCurrentTurn(turn) || abort.signal.aborted) return;
+				this.transcriptAbort = null;
+			}
+			this.emit('final-transcript', { text, confidence, durationMs });
 
 			const utterance = text.trim();
 			if (!utterance) {
+				this.transition('listening');
+				this.emitListenStart();
+				return;
+			}
+
+			// Keep adding to the collected request in this scope. Its target was
+			// resolved by the first delivery attempt and cannot drift with focus.
+			const pending = this.pendingSends.find(
+				(item) => canonicalJson(item.scope) === canonicalJson(this.scope)
+			);
+			if (pending && this.providers.stt.transcribesSpeech !== false) {
+				pending.decision = {
+					...pending.decision,
+					prompt: `${pending.decision.prompt}\n\n${utterance}`,
+				};
+				this.publishSendState();
 				this.transition('listening');
 				this.emitListenStart();
 				return;
@@ -1299,6 +1404,8 @@ export class VoiceSessionService {
 			return true;
 		}
 
+		this.speechActive = false;
+		if (!options.send) this.partialInFlight = false;
 		if (options.send) this.composer.armImmediateSettle();
 		else this.composer.cancel();
 		this.setListenPaused(true);
@@ -1398,16 +1505,44 @@ export class VoiceSessionService {
 
 		let result: VoiceDispatchResult;
 		try {
-			result = await this.executeRoute(bound, { roster, scope });
+			result = await this.executeRoute(bound, {
+				roster,
+				scope,
+				...(this.forceSend && this.getForceSendAllowed() ? { force: true } : {}),
+			});
 		} catch (error) {
+			if (!this.isCurrentTurn(turn)) return;
 			// Only the executor's own classified failure is an event. Anything else
 			// is a bug and belongs in Sentry.
+			if (error instanceof VoiceDispatchBusyError) {
+				this.pendingSends.push({
+					decision: {
+						...bound,
+						target: { sessionId: error.agentSessionId },
+						tabAction: 'recall',
+						tabId: error.tabId,
+					},
+					scope,
+					agentSessionId: error.agentSessionId,
+					tabId: error.tabId,
+				});
+				this.publishSendState();
+				this.transition('listening');
+				this.emitListenStart();
+				this.schedulePendingSend();
+				return;
+			}
 			if (!(error instanceof VoiceDispatchError)) throw error;
 			this.fail('dispatch-failed', error.message);
 			return;
 		}
 
+		this.finishDispatch(bound, result, turn);
+	}
+
+	private finishDispatch(bound: RouteDecision, result: VoiceDispatchResult, turn: number): void {
 		if (!this.isCurrentTurn(turn)) return;
+		this.dispatchReadyForInput = true;
 		// Remembered so "no, the other one" has something to move, and so the HUD
 		// can show where the last thing went. The BOUND decision, because that is
 		// the one that ran: a correction replays its prompt, and in a document
@@ -1421,6 +1556,108 @@ export class VoiceSessionService {
 		// Follow the tab from here, so the reply is spoken as it is written rather
 		// than after it is finished.
 		this.beginStreaming(result, turn);
+	}
+
+	getSendState(): VoiceSendState {
+		return {
+			forceSend: this.forceSend && this.getForceSendAllowed(),
+			pending: this.pendingSends.map(({ agentSessionId, tabId, decision }) => ({
+				agentSessionId,
+				tabId,
+				text: decision.prompt,
+			})),
+		};
+	}
+
+	setForceSend(enabled: boolean): boolean {
+		if (
+			!this.sessionId ||
+			this.state === 'idle' ||
+			this.state === 'error' ||
+			(enabled && !this.getForceSendAllowed())
+		)
+			return false;
+		this.forceSend = enabled;
+		this.publishSendState();
+		this.schedulePendingSend(0);
+		return true;
+	}
+
+	private publishSendState(): void {
+		this.emit('send-state', this.getSendState());
+	}
+
+	private clearPendingSends(): void {
+		if (this.pendingSendTimer !== null) clearTimeout(this.pendingSendTimer);
+		this.pendingSendTimer = null;
+		this.pendingSends = [];
+	}
+
+	private schedulePendingSend(delayMs = 750): void {
+		if (
+			!this.pendingSends.length ||
+			this.state === 'idle' ||
+			this.state === 'error' ||
+			this.stopping
+		)
+			return;
+		if (this.pendingSendTimer !== null) clearTimeout(this.pendingSendTimer);
+		this.pendingSendTimer = setTimeout(() => {
+			this.pendingSendTimer = null;
+			void this.retryPendingSend();
+		}, delayMs);
+	}
+
+	private async retryPendingSend(): Promise<void> {
+		const pending = this.pendingSends[0];
+		if (!pending || !this.executeRoute) return;
+		if (
+			this.state !== 'listening' ||
+			this.composer.composing ||
+			this.partialInFlight ||
+			this.speechActive
+		) {
+			this.schedulePendingSend();
+			return;
+		}
+		const sessionId = this.sessionId;
+		try {
+			const roster = await this.getRoster();
+			if (
+				this.sessionId !== sessionId ||
+				this.state !== 'listening' ||
+				this.composer.composing ||
+				this.partialInFlight ||
+				this.speechActive
+			)
+				return;
+			const turn = ++this.turn;
+			this.dispatchReadyForInput = false;
+			this.walkTo(['transcribing', 'routing', 'dispatching']);
+			try {
+				const result = await this.executeRoute(pending.decision, {
+					roster,
+					scope: pending.scope,
+					...(this.getSendState().forceSend ? { force: true } : {}),
+				});
+				if (!this.isCurrentTurn(turn)) return;
+				this.pendingSends.shift();
+				this.publishSendState();
+				this.finishDispatch(pending.decision, result, turn);
+			} catch (error) {
+				if (!this.isCurrentTurn(turn)) return;
+				if (!(error instanceof VoiceDispatchBusyError)) throw error;
+				this.transition('listening');
+				this.emitListenStart();
+			}
+		} catch (error) {
+			if (this.sessionId !== sessionId) return;
+			if (error instanceof VoiceDispatchError) this.fail('dispatch-failed', error.message);
+			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.pendingSend');
+		} finally {
+			if (this.sessionId === sessionId && this.getState() !== 'idle' && this.getState() !== 'error')
+				this.schedulePendingSend();
+		}
 	}
 
 	/**
@@ -1984,6 +2221,8 @@ export class VoiceSessionService {
 	 * to be released. Barge-in does not come through here - it wants the events.
 	 */
 	private cancelSpeech(): void {
+		this.transcriptAbort?.abort();
+		this.transcriptAbort = null;
 		this.abortTranslation();
 		this.stopStreaming();
 

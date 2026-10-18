@@ -156,8 +156,11 @@ Four rules the executor holds to, all of them about refusing to guess:
 - **A `conductor` target resolves to the session's bound agent, then the agent the desktop is
   showing, then the only agent there is.** With several agents and no signal, it fails: a spoken
   instruction in the wrong repository is worse than an error.
-- **A rejected delivery receipt is a failure, not a `promptSent: false` footnote.** The session
-  holds the floor open waiting for a reply, so a dropped prompt has to be reported as one.
+- **A busy target is retained for retry.** `VoiceDispatchBusyError` pins the exact agent and tab;
+  the session publishes `send-state`, accepts additions in that scope, and retries only when
+  listening with no speech or composition in flight. Force Send bypasses other tabs' activity
+  only with the global opt-in; the target tab's live process still blocks delivery. Other rejected
+  receipts remain dispatch failures, never a `promptSent: false` footnote.
 
 The renderer round trip sits behind a `VoiceRendererBridge` interface, for the same reason the
 session service takes its providers injected: the routing rules are testable without an Electron

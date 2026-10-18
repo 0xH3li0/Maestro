@@ -70,6 +70,7 @@ import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
+import { VoiceStudioSourceSection } from './VoiceStudioSourceSection';
 import { MODELS_SETTINGS_PANEL_ICONS, ModelsOverview } from './ModelsOverview';
 import { SystemOneAgentsSection } from './SystemOneAgentsSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
@@ -144,6 +145,7 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 			)}
 
 			{panel === 'sources' && <LocalModelsServerSection theme={theme} />}
+			{panel === 'sources' && <VoiceStudioSourceSection theme={theme} />}
 
 			{panel === 'sources' && (
 				<div data-testid="local-models-cloud-only">

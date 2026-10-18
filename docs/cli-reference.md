@@ -1767,6 +1767,10 @@ Start the Cue engine in this process and block until Ctrl+C / stopped. Agents in
 | `--drain-timeout <seconds>` | On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once | `90`     |
 | `--notify-webhook <url>`    | POST a JSON notice for every notify action and every expired agent login to this http(s) URL                   | -        |
 
+```bash
+maestro-cli cue engine start
+```
+
 ## `maestro-cli cue engine check`
 
 Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)
@@ -1777,7 +1781,7 @@ Check that every agent, secret, workspace, cue.yaml and tool the engine needs is
 | `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ```bash
-maestro-cli cue engine start
+maestro-cli cue engine check --json
 ```
 
 ## `maestro-cli cue engine stop`
@@ -1816,6 +1820,10 @@ List every agent with a readable .maestro/cue.yaml and its subscription counts
 | `--json`            | Output as JSON (for scripting)                                                  | -       |
 | `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
+```bash
+maestro-cli cue engine inspect --json
+```
+
 ## `maestro-cli bundle`
 
 Export, validate, inspect, and import portable Cue pipeline and agent bundles
@@ -1837,6 +1845,10 @@ Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, wri
 | `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted) | -       |
 | `--json`                   | Output as JSON (for scripting)                                                            | -       |
 
+```bash
+maestro-cli bundle export --agent <agent-id> --output agent.maestro-bundle.zip
+```
+
 ## `maestro-cli bundle validate <bundle>`
 
 Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version
@@ -1845,6 +1857,10 @@ Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and en
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
 | `--check-env` | Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings | -       |
 | `--json`      | Output as JSON (for scripting)                                                                                                                                     | -       |
+
+```bash
+maestro-cli bundle validate agent.maestro-bundle.zip
+```
 
 ## `maestro-cli bundle inspect <bundle>`
 
@@ -1855,7 +1871,7 @@ Describe a bundle from its manifest and README without unpacking the rest
 | `--json` | Output as JSON (for scripting) | -       |
 
 ```bash
-maestro-cli cue engine inspect --json
+maestro-cli bundle inspect agent.maestro-bundle.zip --json
 ```
 
 ## `maestro-cli bundle import <bundle>`
@@ -1871,6 +1887,10 @@ Import a bundle into the running app, or with it closed into a data directory, p
 | `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths                | -       |
 | `--reject-shell-commands`    | Refuse the import, before anything is written, if any subscription runs a shell command | -       |
 | `--json`                     | Output as JSON (for scripting): one document, after the import                          | -       |
+
+```bash
+maestro-cli bundle import agent.maestro-bundle.zip --dry-run
+```
 
 ## `maestro-cli director-notes`
 
@@ -2267,13 +2287,13 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                                                                                                                                                                                   | `[]`    |
 | `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's .maestro/history/ (true/false; for an agent another Maestro controls; agent must be stopped)                                                                                                                                                                                                                | -       |
 | `--provider <type>`                     | Translate owned conversations and selected project knowledge to another provider                                                                                                                                                                                                                                                                            | -       |
+| `--project-resources`                   | Install native project resources and add local git exclude entries                                                                                                                                                                                                                                                                                          | -       |
 | `--force`                               | Alias for --accept-translation-limitations                                                                                                                                                                                                                                                                                                                  | -       |
 | `--dry-run`                             | Plan provider migration without native writes (requires --provider)                                                                                                                                                                                                                                                                                         | -       |
 | `--accept-translation-limitations`      | Accept the reported unverified or partial conversion limitations                                                                                                                                                                                                                                                                                            | -       |
 | `--migration <action>`                  | Migration operation: plan \| apply \| status \| recover \| rollback                                                                                                                                                                                                                                                                                         | -       |
 | `--migration-plan <id>`                 | Use the reviewed plan or inspect/recover a specific operation ID                                                                                                                                                                                                                                                                                            | -       |
 | `--translation-resource <path>`         | Select one user-level resource (repeatable; no account-global import)                                                                                                                                                                                                                                                                                       | `[]`    |
-| `--project-resources`                   | Install native project resources and add local git exclude entries                                                                                                                                                                                                                                                                                          | -       |
 | `--json`                                | Output as JSON (for scripting)                                                                                                                                                                                                                                                                                                                              | -       |
 
 ```bash
@@ -2487,38 +2507,35 @@ maestro-cli tab show active --agent <agent-id>
 
 ## `maestro-cli tab provider <tab-id> [provider]`
 
-Read or select the provider for one Ensemble tab. Requires Ensemble in Encore Features for reads and writes. Provider, model, effort and Run on edits are validated before parking any native state. `--inherit` clears the provider pin. Selection does not accept translation warnings or start a native import.
+Read or select the provider for one Ensemble tab
 
-| Option              | Description                                                          |
-| ------------------- | -------------------------------------------------------------------- |
-| `-a, --agent <id>`  | Whose active tab, when `<tab-id>` is `active`                        |
-| `--inherit`         | Follow the agent default provider; cannot accompany a named provider |
-| `--model <model>`   | Set the destination model, including `auto`, or `inherit`            |
-| `--effort <effort>` | Set a supported destination effort, or `inherit`                     |
-| `--run-on <target>` | Explicit `provider`, `<source id>:<model>`, or `inherit`             |
-| `--json`            | Return authoritative provider and selection state                    |
+| Option              | Description                                         | Default |
+| ------------------- | --------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Whose active tab, when &lt;tab-id> is "active"      | -       |
+| `--json`            | Output as JSON (for scripting)                      | -       |
+| `--inherit`         | Use the agent default provider                      | -       |
+| `--model <model>`   | Set the destination model, or inherit               | -       |
+| `--effort <effort>` | Set the destination effort, or inherit              | -       |
+| `--run-on <target>` | Use provider, &lt;source id>:&lt;model>, or inherit | -       |
 
 ```bash
 maestro-cli tab provider <tab-id>
-maestro-cli tab provider <tab-id> codex --model auto --effort high --json
+maestro-cli tab provider <tab-id> codex --model auto
 maestro-cli tab provider <tab-id> --inherit
-maestro-cli tab provider active --agent <agent-id> --json
-maestro-cli tab provider <tab-id> --model auto --effort high
-maestro-cli session show <tab-id> --json
 ```
-
-Without a named provider or `--inherit`, model, effort and Run on edits apply to the current provider slot without changing its pin. With no edit options, the command reads the authoritative bridge state. Reads and writes keep the current view; no background flag is needed.
 
 ## `maestro-cli tab run-on <tab-id> [target]`
 
-Read or set the Run on target for one Ensemble tab through the same selection operation. `provider` explicitly selects its cloud; `inherit` clears the override. Source IDs use the existing `<source id>:<model>` syntax. SSH provider choices remain disabled pending live acceptance.
+Read or set where this Ensemble tab runs: provider, &lt;source id>:&lt;model>, or inherit
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
 
 ```bash
 maestro-cli tab run-on <tab-id> provider
-maestro-cli tab run-on <tab-id> local-source:qwen3:latest --json
 ```
-
-`tab show`, `session list` and `session show --json` expose `provider` (effective), `tabProvider` (explicit pin or null), `agentProvider` (default), `turnProvider` (captured owner or null), pending translation, effective model/effort overrides and Run on. Generic inspection works with Ensemble off. Existing `toolType`, `model` and `effort` fields retain their prior meanings. A null effective model/effort means the provider's configured default applies. Environment secrets and parked native data are excluded.
 
 ## `maestro-cli tab thinking <tab-id> <mode>`
 
@@ -2992,7 +3009,7 @@ maestro-cli encore list
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, aCappella, throughputGauge)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, aCappella, throughputGauge, ensemble)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -5323,6 +5340,10 @@ Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat return
+```
 
 ## `maestro-cli quick-chat toggle`
 

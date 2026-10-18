@@ -42,6 +42,8 @@ import {
 	type WhisperSpecialTokens,
 } from './tokenizer';
 import type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
+import type { SpeechToTextDecodeOptions } from '../engines';
+import { normalizeSpeechVocabulary } from '../../../../shared/acappella/speech-vocabulary';
 
 // The ONNX Runtime surface is shared with the Parakeet engine. Re-exported so
 // existing importers keep their one import site.
@@ -153,7 +155,7 @@ export class WhisperEngine {
 	 *
 	 * Returns trimmed text, empty when the model produced nothing.
 	 */
-	async transcribe(audio: Float32Array): Promise<string> {
+	async transcribe(audio: Float32Array, options?: SpeechToTextDecodeOptions): Promise<string> {
 		const encoder = this.encoder;
 		const decoder = this.decoder;
 		const tokenizer = this.tokenizer;
@@ -188,6 +190,13 @@ export class WhisperEngine {
 		// Priming sequence. `noTimestamps` is what makes the model emit plain words
 		// instead of interleaved `<|0.00|>` segment markers.
 		const prompt = [this.special.startOfTranscript, this.special.noTimestamps];
+		const vocabulary = normalizeSpeechVocabulary(options?.vocabulary);
+		if (vocabulary.length && this.special.startOfPrevious !== undefined) {
+			prompt.unshift(
+				this.special.startOfPrevious,
+				...tokenizer.encode(` ${vocabulary.join(', ')}`)
+			);
+		}
 		const generated: number[] = [];
 		let usingCache = false;
 
@@ -200,6 +209,7 @@ export class WhisperEngine {
 		const seconds = audio.length / WHISPER_SAMPLE_RATE;
 		const budget = Math.min(
 			this.maxTokens,
+			DEFAULT_MAX_TOKENS - prompt.length,
 			TOKEN_BUDGET_FLOOR + Math.ceil(seconds) * TOKENS_PER_SECOND_BUDGET
 		);
 

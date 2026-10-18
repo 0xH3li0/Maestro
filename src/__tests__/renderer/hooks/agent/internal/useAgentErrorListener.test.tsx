@@ -258,7 +258,7 @@ describe('useAgentErrorListener', () => {
 
 		renderHook(() => useAgentErrorListener(makeDeps()));
 		handler!('sess-claude-ai-tab-1', baseError);
-		handler!('sess-codex-ai-tab-2', baseError);
+		handler!('sess-codex-ai-tab-2', { ...baseError, agentId: 'codex' });
 
 		const outages = useAuthOutageStore.getState().outages;
 		expect(Object.keys(outages).sort()).toEqual(['claude-code', 'codex']);

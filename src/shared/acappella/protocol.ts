@@ -579,6 +579,22 @@ export interface AgentRosterEvent extends VoiceEventBase {
 	agents: RosterAgent[];
 }
 
+/** A collected prompt stays bound to its original destination until delivered. */
+export interface VoicePendingSend {
+	agentSessionId: string;
+	tabId: string;
+	text: string;
+}
+
+export interface VoiceSendState {
+	forceSend: boolean;
+	pending: VoicePendingSend[];
+}
+
+export interface SendStateEvent extends VoiceEventBase, VoiceSendState {
+	type: 'send-state';
+}
+
 /** The whole protocol, discriminated on `type`. */
 export type VoiceEvent =
 	| WakeEvent
@@ -602,7 +618,8 @@ export type VoiceEvent =
 	| TabStateEvent
 	| ScopeChangeEvent
 	| ListenGateEvent
-	| AgentRosterEvent;
+	| AgentRosterEvent
+	| SendStateEvent;
 
 export type VoiceEventType = VoiceEvent['type'];
 
@@ -650,6 +667,7 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'scope-change': 'service-to-client',
 	'listen-gate': 'service-to-client',
 	'agent-roster': 'service-to-client',
+	'send-state': 'service-to-client',
 };
 
 /** The four events a client is allowed to originate. */

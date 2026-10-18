@@ -588,6 +588,7 @@ describe('useRemoteIntegration', () => {
 	afterEach(() => {
 		clearConcertoDesignerFramesForTests();
 		window.maestro = originalMaestro;
+		vi.useRealTimers();
 	});
 
 	const createDeps = (
@@ -4414,6 +4415,7 @@ describe('useRemoteIntegration', () => {
 		});
 
 		it('broadcasts provider-only selection changes with separate default and turn owners', () => {
+			vi.useFakeTimers();
 			const tab = createMockTab({ id: 'tab-1', tabProvider: 'codex', turnProvider: 'claude-code' });
 			const session = createMockSession({
 				id: 'session-1',

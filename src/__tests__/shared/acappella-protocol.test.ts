@@ -60,6 +60,7 @@ const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'scope-change',
 	'listen-gate',
 	'agent-roster',
+	'send-state',
 ];
 
 function makeEvent(type: VoiceEventType): VoiceEvent {

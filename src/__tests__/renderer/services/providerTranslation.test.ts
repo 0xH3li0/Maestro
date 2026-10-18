@@ -141,25 +141,27 @@ describe('deferred provider translation client', () => {
 				},
 			]);
 			useSessionStore.setState({ sessions: [switched] });
-			useTabStore.getState().reopenClosedTab();
-			useTabStore.getState().unsnoozeTab('agent', 'snooze');
+			const reopenedTabId = useTabStore.getState().reopenClosedTab()!.tabId;
+			const wokenTabId = useTabStore.getState().unsnoozeTab('agent', 'snooze')!.tabId;
 			expect(translateProvider).not.toHaveBeenCalled();
 			const reopened = useSessionStore.getState().sessions[0];
-			expect(reopened.aiTabs.find((tab) => tab.id === 'closed')?.agentSessionId).toBe(
+			expect(reopened.aiTabs.find((tab) => tab.id === reopenedTabId)?.agentSessionId).toBe(
 				olderDestination ? 'older-codex' : null
 			);
-			expect(reopened.aiTabs.find((tab) => tab.id === 'closed')?.pendingTranslation).toBe(
+			expect(reopened.aiTabs.find((tab) => tab.id === reopenedTabId)?.pendingTranslation).toBe(
 				'claude-code'
 			);
 			expect(
-				reopened.aiTabs.find((tab) => tab.id === 'sleeping')?.providerSessions?.['claude-code']
+				reopened.aiTabs.find((tab) => tab.id === wokenTabId)?.providerSessions?.['claude-code']
 					?.agentSessionId
 			).toBe('sleep-source');
 			const scoped = {
 				...plan,
 				status: 'ready' as const,
-				tabId: 'closed',
-				tabs: [{ tabId: 'closed', sourceSessionId: 'closed-source', records: 2, newRecords: 2 }],
+				tabId: reopenedTabId,
+				tabs: [
+					{ tabId: reopenedTabId, sourceSessionId: 'closed-source', records: 2, newRecords: 2 },
+				],
 			};
 			translateProvider.mockImplementation(async (request) =>
 				request.action === 'plan'
@@ -173,7 +175,7 @@ describe('deferred provider translation client', () => {
 								plan: scoped,
 								mappings: [
 									{
-										tabId: 'closed',
+										tabId: reopenedTabId,
 										sourceSessionId: 'closed-source',
 										destinationSessionId: 'closed-codex',
 										artifacts: [],
@@ -183,7 +185,7 @@ describe('deferred provider translation client', () => {
 							},
 						}
 			);
-			expect(await prepareProviderTranslationForSend('agent', 'closed', 'codex')).toBe(
+			expect(await prepareProviderTranslationForSend('agent', reopenedTabId, 'codex')).toBe(
 				'closed-codex'
 			);
 			expect(translateProvider.mock.calls.map(([request]) => request.action)).toEqual([
@@ -191,7 +193,8 @@ describe('deferred provider translation client', () => {
 				'apply',
 			]);
 			expect(
-				useSessionStore.getState().sessions[0].aiTabs.find((tab) => tab.id === 'closed')?.inputValue
+				useSessionStore.getState().sessions[0].aiTabs.find((tab) => tab.id === reopenedTabId)
+					?.inputValue
 			).toBe('closed draft');
 		}
 	);

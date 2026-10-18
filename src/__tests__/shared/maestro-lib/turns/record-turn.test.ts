@@ -164,6 +164,7 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
+				turnProvider: 'claude-code',
 			},
 		]);
 		// The desktop reads the same file.

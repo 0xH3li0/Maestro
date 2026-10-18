@@ -26,6 +26,12 @@ const FIXTURE_DIR = path.resolve(__dirname, '../../fixtures/tokenizers/bge-small
 const ids = (values: BigInt64Array | undefined) => Array.from(values ?? [], Number);
 
 describe('loadTokenizer', () => {
+	it('can encode decoder context without adding classifier special tokens', async () => {
+		const tokenizer = await loadTokenizer(FIXTURE_DIR);
+		expect(
+			ids(tokenizer.encode('How do I rename a tab?', { addSpecialTokens: false }).inputIds)
+		).toEqual([2129, 2079, 1045, 14916, 14074, 1037, 21628, 1029]);
+	});
 	beforeEach(() => clearTokenizerCache());
 
 	it('encodes a known sentence to the WordPiece ids the model was trained on', async () => {

@@ -194,7 +194,7 @@ describe('hardened acceptance preflight', () => {
 				async () => ({ success: true, state: 'committed', plan, mappings: [] }),
 				true
 			)
-		).rejects.toThrow('single-tab commit');
+		).rejects.toThrow(/single-tab commit/i);
 	});
 });
 
@@ -265,7 +265,7 @@ describe('acceptance memory delta checkpoint', () => {
 				operationId: checkpoint.operationId,
 				observed: checkpoint.observed,
 				lineage: checkpoint.lineage,
-				conversations: checkpoint.conversations,
+				conversations: JSON.parse(JSON.stringify(checkpoint.conversations)),
 			});
 			expect(updated!.resources.map((resource) => resource.relativePath)).toEqual(
 				expect.arrayContaining(['memory/MEMORY.md', 'memory/acceptance-delta.md'])

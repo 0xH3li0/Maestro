@@ -310,6 +310,13 @@ describe('splitSpeechWindows', () => {
 });
 
 describe('transcribeSpeech', () => {
+	it("passes vocabulary per lease call without storing another consumer's hints on the engine", async () => {
+		const { pool, engine } = makePool();
+		__setSpeechToTextPool(pool);
+		const vocabulary = ['Pedro Sidián'];
+		await transcribeSpeech(LOCAL, seconds(2), RATE, { vocabulary });
+		expect(engine.transcribe).toHaveBeenCalledWith(expect.any(Float32Array), { vocabulary });
+	});
 	beforeEach(() => {
 		endpoints.transcribe.mockReset();
 	});

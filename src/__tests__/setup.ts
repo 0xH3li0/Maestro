@@ -483,6 +483,7 @@ const mockMaestro = {
 		}),
 		search: vi.fn().mockResolvedValue([]),
 		searchSessions: vi.fn().mockResolvedValue([]),
+		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		getPath: vi.fn().mockResolvedValue(null),
 		deleteMessagePair: vi.fn().mockResolvedValue({ success: true }),
 		hasStorage: vi.fn().mockResolvedValue(true),
@@ -654,6 +655,7 @@ const mockMaestro = {
 		// True means "there was a live session to gate". A test that wants the
 		// start-a-session branch overrides it with false.
 		setListening: vi.fn().mockResolvedValue(true),
+		setForceSend: vi.fn().mockResolvedValue(true),
 		getSendWait: vi.fn().mockResolvedValue({
 			waitMs: 900,
 			defaultMs: 900,
@@ -680,6 +682,7 @@ const mockMaestro = {
 		applyProviders: vi.fn().mockResolvedValue({ status: 'swapped' }),
 		lastTurn: vi.fn().mockResolvedValue(null),
 		listVoices: vi.fn().mockResolvedValue([]),
+		voiceStudioStatus: vi.fn().mockResolvedValue({ connected: true, profiles: [] }),
 		previewVoice: vi.fn().mockResolvedValue(true),
 		setVolume: vi.fn().mockResolvedValue(true),
 		// Bound by default, because that is what a fresh install really does: main

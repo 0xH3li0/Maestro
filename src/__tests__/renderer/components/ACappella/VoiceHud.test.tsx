@@ -176,6 +176,7 @@ function switchToTab(agentId: string, tabId: string): void {
 
 beforeEach(() => {
 	seq = 0;
+	useSettingsStore.setState({ forcedParallelExecution: false });
 	vi.clearAllMocks();
 	vi.mocked(window.maestro.voice.onEvent).mockReturnValue(() => {});
 	vi.mocked(window.maestro.voice.getState).mockResolvedValue(null);
@@ -1726,5 +1727,87 @@ describe('VoiceHud keyboard passivity', () => {
 		expect(stack!.getLayers().some((l) => l.ariaLabel === 'Voice HUD')).toBe(true);
 		expect(stack!.hasOpenLayers()).toBe(false);
 		expect(stack!.hasOpenModal()).toBe(false);
+	});
+});
+
+describe('VoiceHud pending and Force Send', () => {
+	it('shows a pending request as collected context while continuing to listen', () => {
+		renderHud();
+		startSession();
+		emit(
+			event('send-state', {
+				forceSend: false,
+				pending: [
+					{
+						agentSessionId: 'agent-1',
+						tabId: 'tab-1',
+						text: 'Fix the bug.\n\nKeep the current API.',
+					},
+				],
+			})
+		);
+		expect(screen.getByTestId('voice-hud-pending-send').textContent).toContain(
+			'Session is busy, send is pending.'
+		);
+		expect(screen.getByTestId('voice-hud-pending-send').textContent).toContain(
+			'Keep the current API.'
+		);
+		expect(screen.getByTestId('voice-hud-talk').textContent).toContain('Listening');
+		expect(useVoiceSessionStore.getState().error).toBeNull();
+		emit(event('send-state', { forceSend: false, pending: [] }));
+		expect(screen.queryByTestId('voice-hud-pending-send')).toBeNull();
+	});
+
+	it('disables Force Send until forced parallel execution is enabled in Settings', () => {
+		renderHud();
+		startSession();
+		const toggle = screen.getByRole('switch', { name: 'Force Send voice requests' });
+		expect(toggle).toHaveProperty('disabled', true);
+		fireEvent.click(toggle);
+		expect(window.maestro.voice.setForceSend).not.toHaveBeenCalled();
+		expect(screen.getByText('Enable forced parallel execution in Settings.')).toBeTruthy();
+	});
+
+	it('changes Force Send through main and reflects the confirmed state', async () => {
+		useSettingsStore.setState({ forcedParallelExecution: true });
+		renderHud();
+		startSession();
+		const toggle = screen.getByRole('switch', { name: 'Force Send voice requests' });
+		fireEvent.click(toggle);
+		expect(window.maestro.voice.setForceSend).toHaveBeenCalledWith(true);
+		expect(toggle.getAttribute('aria-checked')).toBe('false');
+		emit(event('send-state', { forceSend: true, pending: [] }));
+		expect(toggle.getAttribute('aria-checked')).toBe('true');
+		act(() => useSettingsStore.setState({ forcedParallelExecution: false }));
+		expect(toggle).toHaveProperty('disabled', true);
+		expect(toggle.getAttribute('aria-checked')).toBe('false');
+	});
+
+	it('restores pending state from a snapshot and clears it on close', async () => {
+		vi.mocked(window.maestro.voice.getState).mockResolvedValueOnce({
+			sessionId: SESSION,
+			state: 'listening',
+			scope: { kind: 'conductor' },
+			origin: { kind: 'local' },
+			windowId: null,
+			seq: 1,
+			listenPaused: false,
+			startedAt: 0,
+			providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			lastDecision: null,
+			lastDispatch: null,
+			sendState: {
+				forceSend: false,
+				pending: [{ agentSessionId: 'agent-1', tabId: 'tab-1', text: 'Collected request' }],
+			},
+		});
+		await act(async () => {
+			renderHud();
+		});
+		expect(screen.getByTestId('voice-hud-pending-send').textContent).toContain('Collected request');
+		// The snapshot's sequence is the baseline for later events.
+		seq = 1;
+		emit(event('listen-stop', { reason: 'stopped' }));
+		expect(screen.queryByTestId('voice-hud-pending-send')).toBeNull();
 	});
 });

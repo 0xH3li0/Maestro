@@ -69,7 +69,9 @@ describe('headless translate at send', () => {
 	});
 
 	it('holds warnings, then uses the shared native transaction and resumes its output', async () => {
-		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'runtime-translation-'));
+		const root = await fs.realpath(
+			await fs.mkdtemp(path.join(os.tmpdir(), 'runtime-translation-'))
+		);
 		roots.push(root);
 		const paths = resolveMaestroPaths({
 			env: { MAESTRO_USER_DATA: root },
@@ -172,7 +174,9 @@ describe('headless translate at send', () => {
 			destination: 'claude-code',
 			action: 'plan',
 		});
-		expect(planned.plan?.status, planned.error).toBe('ready');
+		expect(planned.plan?.status, JSON.stringify(planned.plan?.limitations ?? planned.error)).toBe(
+			'ready'
+		);
 		const plan = planned.plan!;
 		await repository.updateTranslation('agent', (agent) => ({
 			...agent,
@@ -207,7 +211,13 @@ describe('headless translate at send', () => {
 				effort: 'high',
 			});
 			expect(tab.providerSessions).toMatchObject({ codex: { agentSessionId: 'source' } });
-			expect(tab.logs).toHaveLength(1);
+			expect(tab.logs).toHaveLength(2);
+			expect(tab.logs?.[1]).toMatchObject({
+				contextTranslation: {
+					source: { provider: 'codex' },
+					destination: { provider: 'claude-code' },
+				},
+			});
 			expect(await fs.readFile(sourceFile, 'utf8')).toBe(native);
 			expect(
 				(repository.getAgent('agent')!.providerMigration as ProviderMigrationState)

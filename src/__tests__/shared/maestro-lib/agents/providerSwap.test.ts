@@ -213,6 +213,17 @@ describe('switchTabProvider', () => {
 });
 
 describe('tab provider selection', () => {
+	it('preserves legacy Claude identities and overrides when the agent has no stored provider', () => {
+		const agent = makeAgent(undefined as unknown as ToolType, { customModel: 'sonnet' });
+		const tab = makeTab({ agentSessionId: 'legacy-claude' });
+		expect(resolveTabProvider(tab, agent)).toBe('claude-code');
+		const projected = projectTabProvider(agent, tab);
+		expect(projected.agent.toolType).toBe('claude-code');
+		expect(projected.agent.customModel).toBe('sonnet');
+		expect(projected.tab?.agentSessionId).toBe('legacy-claude');
+		expect(resolveTabProvider(makeTab({ tabProvider: 'codex' }), agent)).toBe('codex');
+	});
+
 	it('inherits an absent provider and keeps explicit pins independent of the agent', () => {
 		const agent = makeAgent('claude-code');
 		expect(resolveTabProvider(undefined, agent)).toBe('claude-code');

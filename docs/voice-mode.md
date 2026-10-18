@@ -48,6 +48,7 @@ Each slot is configured and validated on its own. A missing speech model does no
 | Whisper (local)                        | Speech-to-Text  | Nothing                           |
 | OpenAI (hosted)                        | Speech-to-Text  | **Your audio**, to OpenAI         |
 | System voice (built in)                | Text-to-Speech  | Nothing                           |
+| VoiceStudio (local service)            | Text-to-Speech  | Nothing                           |
 | OpenAI (hosted)                        | Text-to-Speech  | The reply text, to OpenAI         |
 | ElevenLabs (hosted)                    | Text-to-Speech  | The reply text, to ElevenLabs     |
 | Built-in (keyword routing)             | Conductor Brain | Nothing                           |
@@ -63,6 +64,16 @@ Each slot is configured and validated on its own. A missing speech model does no
 **Realtime is a pipeline shape, not a fourth slot.** Choosing it replaces all three slots with one speech-to-speech API: the lowest latency available, in exchange for your audio going to OpenAI and the assistant speaking in that provider's voice.
 
 Hosted providers need an API key, entered in **Voice Providers**. Keys are stored per service and validated when you add them.
+
+### VoiceStudio voices
+
+Configure VoiceStudio under **Settings > Models > Sources**. Set the local service URL, speech engine, and sampling seed, then use **Check connection** and **Save source**. The default URL is `http://127.0.0.1:3900`; only loopback addresses are accepted. Maestro connects to an existing VoiceStudio service and does not start it.
+
+Choose **VoiceStudio** as Text-to-Speech in **Voice Providers**, then select a profile in **Voice Output**. **Refresh voices** reloads the profiles. A profile name must be unique; Maestro stores the name so it survives profile exports and imports. If the service or selected profile is unavailable, the session reports the problem instead of switching voices. Source changes made during a voice session apply after it ends.
+
+### Recognition vocabulary
+
+Agent names and tab titles provide recognition hints automatically. Custom vocabulary can also be stored in the voice provider settings. Recognizers that support vocabulary prompts receive these terms; this does not change where recognition runs. The optional **Dictation vocabulary correction** assignment under **Models > Assignments** also checks finalized voice transcripts. It is off by default and preserves the original text when correction fails or is ambiguous.
 
 <Note>
 	The **wake word is always local and never optional**. While only the wake detector is running, no
@@ -278,6 +289,8 @@ The indicator has six states, told apart by shape and motion as well as colour: 
 The same panel has the **send phrase** field. "go maestro" is the only phrase that ships, because it is not something you say by accident; everyday phrases such as "send it" or "go ahead" end ordinary sentences and would send a request early. Type your own phrase, or several separated by commas, and press `Enter`. Unlike the wait this is the stored setting, the same list as **Send phrases** in **Voice Controls**, so it stays after the HUD closes. A phrase is heard only at the end of a sentence and is removed before the request is sent. Empty the field to send on the pause alone.
 
 **Push-to-talk** opens the microphone only while the talk button is held. A pause in the middle of the sentence sends nothing; letting go sends all of it. A session started some other way in this mode (the composer microphone, the palette) opens with the microphone closed and waits for the first hold.
+
+When the destination is busy, the HUD keeps the request pending for that exact tab. You can keep speaking to add to it in the same scope, and Maestro retries when the destination is free. **Force Send** allows delivery beside other working tabs when **forced parallel execution** is enabled in Settings. It still waits if the destination tab itself is busy. The toggle resets when the voice session ends.
 
 - **Only `Esc` closes the HUD**, from the keyboard or the ESC pill, and closing ends the session. Shutting the microphone with the talk button keeps the session, its transcript, and its mode. A session that ends on its own (the idle timeout, the stop word) leaves the HUD where it was, showing a closed microphone one click from open.
 - **Minimize collapses the HUD and leaves the session running**, microphone included. The Left Bar shows the indicator, and the composer microphone brings the HUD back; it does not end the session.

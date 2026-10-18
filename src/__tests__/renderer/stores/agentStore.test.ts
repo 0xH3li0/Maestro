@@ -2824,7 +2824,7 @@ describe('agentStore', () => {
 				const spawned = mockSpawn.mock.calls[0][0];
 				expect(spawned.sessionCustomModel).toBe('sonnet');
 				expect(spawned.sessionCustomEffort).toBe('low');
-				expect(spawned.runOnOverride).toBeUndefined();
+				expect(spawned.runOnOverride).toEqual({ type: 'provider' });
 				expect(liveTab()).toMatchObject({
 					turnModel: 'sonnet',
 					turnEffort: 'low',

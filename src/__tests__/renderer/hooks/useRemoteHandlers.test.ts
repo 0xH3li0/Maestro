@@ -727,7 +727,7 @@ describe('useRemoteHandlers', () => {
 
 				expect(routeTurn).not.toHaveBeenCalled();
 				expect(spawned.sessionCustomModel).toBe('sonnet');
-				expect('sessionCustomEffort' in spawned).toBe(false);
+				expect(spawned.sessionCustomEffort).toBe('low');
 			});
 		});
 

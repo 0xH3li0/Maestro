@@ -194,6 +194,7 @@ type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
 /** Settings the gate and the provider registry both read. */
 interface FakeSettings {
+	forcedParallelExecution?: boolean;
 	encoreFeatures?: Record<string, unknown>;
 	acappella?: { providers?: Record<string, string>; controls?: Record<string, unknown> };
 }
@@ -332,6 +333,7 @@ describe('A Cappella IPC handlers - registration', () => {
 				'acappella:submit-utterance',
 				'acappella:interrupt',
 				'acappella:set-listening',
+				'acappella:set-force-send',
 				'acappella:get-send-wait',
 				'acappella:set-send-wait',
 				'acappella:stop-word',
@@ -413,10 +415,20 @@ describe('A Cappella IPC handlers - Encore gate', () => {
 		settings.encoreFeatures = { aCappella: false };
 	});
 
+	it('allows source configuration while voice mode is off and refuses remote URLs', async () => {
+		await expect(
+			handlerFor('acappella:voice-studio-status')(
+				{},
+				{ baseUrl: 'http://example.com:3900', engine: 'voxcpm2', seed: 11 }
+			)
+		).resolves.toEqual({ connected: false, message: expect.stringContaining('this computer') });
+	});
+
 	it.each([
 		['acappella:start-session'],
 		['acappella:submit-utterance'],
 		['acappella:interrupt'],
+		['acappella:set-force-send'],
 		['acappella:stop-word'],
 		['acappella:get-roster'],
 		['acappella:get-state'],
@@ -983,6 +995,21 @@ describe('A Cappella IPC handlers - microphone gate', () => {
 		await expect(handlerFor('acappella:set-listening')({}, { listening: true })).rejects.toThrow(
 			'ACappellaDisabled'
 		);
+	});
+});
+
+describe('A Cappella IPC handlers - Force Send', () => {
+	it('requires a live session, a boolean and the existing Settings opt-in', async () => {
+		await expect(handlerFor('acappella:set-force-send')({}, true)).resolves.toBe(false);
+		await handlerFor('acappella:start-session')({});
+		await expect(handlerFor('acappella:set-force-send')({}, true)).resolves.toBe(false);
+		settings.forcedParallelExecution = true;
+		await expect(handlerFor('acappella:set-force-send')({}, 'true')).resolves.toBe(false);
+		await expect(handlerFor('acappella:set-force-send')({}, true)).resolves.toBe(true);
+		expect(getVoiceSessionService()?.getSnapshot().sendState?.forceSend).toBe(true);
+		expect(voiceEvents().filter((event) => event.type === 'send-state')).toHaveLength(1);
+		await expect(handlerFor('acappella:set-force-send')({}, false)).resolves.toBe(true);
+		expect(getVoiceSessionService()?.getSnapshot().sendState?.forceSend).toBe(false);
 	});
 });
 

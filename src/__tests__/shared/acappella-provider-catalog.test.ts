@@ -35,6 +35,15 @@ import {
 } from '../../shared/acappella/provider-catalog';
 
 describe('the provider catalog', () => {
+	it('offers VoiceStudio as a native local speech source without a cloud key', () => {
+		expect(getVoiceProvider('voicestudio-tts')).toMatchObject({
+			role: 'tts',
+			tier: 'local',
+			requires: { kind: 'voice-studio' },
+			egress: 'none',
+		});
+		expect(voiceProviderCredential('voicestudio-tts')).toBeNull();
+	});
 	it('has a unique id per provider', () => {
 		const ids = VOICE_PROVIDER_CATALOG.map((entry) => entry.id);
 		expect(new Set(ids).size).toBe(ids.length);

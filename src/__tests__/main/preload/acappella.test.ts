@@ -26,6 +26,11 @@ import type { VoiceEvent } from '../../../shared/acappella/protocol';
 import type { WakeEnrollmentEvent } from '../../../shared/acappella/wake-enrollment';
 
 describe('A Cappella Preload API', () => {
+	it('checks a VoiceStudio source without starting a voice session', async () => {
+		const config = { baseUrl: 'http://127.0.0.1:3900', engine: 'voxcpm2', seed: 11 };
+		await createVoiceApi().voiceStudioStatus(config);
+		expect(mockInvoke).toHaveBeenCalledWith('acappella:voice-studio-status', config);
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});

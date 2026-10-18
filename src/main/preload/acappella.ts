@@ -43,6 +43,7 @@ import type { IceTransportSettings } from '../acappella/transport/ice-config';
 import type { DiscoveryStatus } from '../acappella/pairing/discovery';
 import type { PairingRequest } from '../acappella/pairing/pairing-service';
 import type { IceProbeResult } from '../../shared/acappella/webrtc-host';
+import type { VoiceStudioConfig, VoiceStudioStatus } from '../../shared/acappella/voice-studio';
 
 /**
  * `window.maestro.voice.models.*` - the model manager.
@@ -357,6 +358,10 @@ export function createVoiceApi() {
 		routingLog: (): Promise<{ entries: RoutingLogEntry[]; quality: RoutingQuality }> =>
 			ipcRenderer.invoke('acappella:routing-log'),
 
+		/** Read the local source without enabling voice mode or making sound. */
+		voiceStudioStatus: (config: VoiceStudioConfig): Promise<VoiceStudioStatus> =>
+			ipcRenderer.invoke('acappella:voice-studio-status', config),
+
 		/**
 		 * Voices the configured TTS provider offers. Empty for a provider with one
 		 * voice or none, which the picker shows as "Provider default".
@@ -497,6 +502,10 @@ export function createVoiceApi() {
 			hold?: boolean;
 			send?: boolean;
 		}): Promise<boolean> => ipcRenderer.invoke('acappella:set-listening', payload),
+
+		/** Opt this voice session into Force Send, subject to the existing setting. */
+		setForceSend: (enabled: boolean): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:set-force-send', enabled),
 
 		/** The send wait in force: the stored default, or what the HUD picked over it. */
 		getSendWait: (): Promise<VoiceSendWait> => ipcRenderer.invoke('acappella:get-send-wait'),

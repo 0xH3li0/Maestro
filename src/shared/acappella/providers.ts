@@ -101,6 +101,8 @@ export interface SttProvider extends VoiceProviderInfo {
 	 * and bill the user for the reply.
 	 */
 	readonly transcribesSpeech?: boolean;
+	/** Live names and custom terms. Unsupported decoders may omit this seam. */
+	setVocabulary?(terms: readonly string[]): void;
 	/** Acquire the device or session. Throws when the provider cannot start. */
 	start(callbacks: SttCallbacks): Promise<void>;
 	/**

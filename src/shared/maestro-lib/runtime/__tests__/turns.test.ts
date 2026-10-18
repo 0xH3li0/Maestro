@@ -457,7 +457,16 @@ describe('runtime turns', () => {
 
 	describe('swap and back', () => {
 		it('resumes each provider on the conversation it left, with every tab and transcript intact', async () => {
-			const runtime = await start();
+			// Existing native slots exercise parking, independently of context translation.
+			const runtime = await start([
+				seedAgent({
+					aiTabs: seedAgent().aiTabs.map((tab) => ({
+						...tab,
+						agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+						providerSessions: { opencode: { agentSessionId: CAPTURED_OPENCODE_SESSION_ID } },
+					})),
+				}),
+			]);
 			const turn = watch(runtime);
 
 			value(await runtime.turns.send('a1', 't1', { text: 'on claude' }));
@@ -465,7 +474,7 @@ describe('runtime turns', () => {
 			expect((await tabOf(runtime)).agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
 
 			value(await runtime.agents.update('a1', { provider: 'opencode' }));
-			expect((await tabOf(runtime)).agentSessionId).toBeNull();
+			expect((await tabOf(runtime)).agentSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
 
 			value(await runtime.turns.send('a1', 't1', { text: 'on opencode' }));
 			await turn.outcome(2);

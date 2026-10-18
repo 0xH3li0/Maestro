@@ -27,6 +27,7 @@ import { SpeechBurstSegmenter } from '../audio/speech-burst';
 import { TRANSCRIPTION_WAKE_PROVIDER_ID } from '../models/capability-gate';
 import { getSpeechToTextPool } from '../../local-models/speech-to-text';
 import { PARAKEET_TDT_V2_ID } from '../../../shared/local-models/model-catalog';
+import { normalizedEditSimilarity } from '../../../shared/stringUtils';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
 import { int16ToFloat32 } from '../../../shared/audio/pcm';
@@ -78,28 +79,11 @@ export function scoreWakePhraseInTranscript(phrase: string, transcript: string):
 	let best = 0;
 	for (let start = 0; start + wantedWords <= words.length; start++) {
 		const window = words.slice(start, start + wantedWords).join(' ');
-		best = Math.max(best, similarity(wanted, window));
+		best = Math.max(best, normalizedEditSimilarity(wanted, window));
 		if (best === 1) break;
 	}
-	if (words.length < wantedWords) best = similarity(wanted, heard);
+	if (words.length < wantedWords) best = normalizedEditSimilarity(wanted, heard);
 	return Math.max(0, (best - SIMILARITY_FLOOR) / (1 - SIMILARITY_FLOOR));
-}
-
-/** 1 minus normalised Levenshtein distance. */
-function similarity(a: string, b: string): number {
-	if (a === b) return 1;
-	const longest = Math.max(a.length, b.length);
-	if (longest === 0) return 1;
-	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
-	for (let i = 1; i <= a.length; i++) {
-		const current = [i];
-		for (let j = 1; j <= b.length; j++) {
-			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-			current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
-		}
-		previous = current;
-	}
-	return 1 - previous[b.length] / longest;
 }
 
 /** What the scorer needs of a recogniser. Injected in tests. */

@@ -2,6 +2,12 @@
 
 Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
+## Ensemble tab providers
+
+With the Ensemble Encore Feature enabled, the composer offers a provider pill on desktop and a Provider accordion on phones. `useTabProviderChoice()` shares discovery and selection state; `tabProviderSwitchProblem()` shares refusal reasons with `tabStore.setTabProvider()`. Keep model, effort, and Run on edits scoped to the selected tab. Provider changes use the native translation gate before sending, and unverified directions still require review. SSH provider switching remains disabled because live SSH acceptance was skipped.
+
+A committed native translation adds a **Context translated from ...** marker to the transcript. `ContextTranslationCard` discloses the source and destination versions, verification status, record/resource counts, and accepted limitations. The marker stays separate from subsequent replies and survives transcript persistence.
+
 ## Supported Agents
 
 | ID              | Name            | Status     | Notes                                                                                                                                                                                   |

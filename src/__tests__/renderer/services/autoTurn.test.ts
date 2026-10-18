@@ -214,7 +214,12 @@ describe('settleAutoTurn', () => {
 
 		const launch = await settleAutoTurn({ sessionId: 'agent-1', tabId: 'tab-1', prompt: 'go' });
 
-		expect(launch).toEqual({ model: 'sonnet', effort: 'low', route: STAMP });
+		expect(launch).toEqual({
+			model: 'sonnet',
+			effort: 'low',
+			route: STAMP,
+			runOn: { type: 'provider' },
+		});
 		expect(liveTab()).toMatchObject({
 			turnModel: 'sonnet',
 			turnEffort: 'low',
@@ -245,6 +250,7 @@ describe('settleAutoTurn', () => {
 		expect(launch).toEqual({
 			effort: 'high',
 			route: { skipped: 'off', detail: 'Model routing is off.' },
+			runOn: { type: 'provider' },
 		});
 		expect(liveTab().turnAuto?.status).toBe('router-off');
 		expect(liveTab().turnModel).toBeUndefined();
@@ -280,7 +286,12 @@ describe('settleAutoTurn', () => {
 
 		const launch = await settleAutoTurn({ sessionId: 'agent-1', tabId: 'tab-1', prompt: 'go' });
 
-		expect(launch).toEqual({ model: 'sonnet', effort: 'low', route: STAMP });
+		expect(launch).toEqual({
+			model: 'sonnet',
+			effort: 'low',
+			route: STAMP,
+			runOn: { type: 'provider' },
+		});
 		expect(routeTurn()).not.toHaveBeenCalled();
 	});
 
@@ -323,6 +334,7 @@ describe('settleAutoTurn', () => {
 			model: 'sonnet',
 			effort: 'low',
 			route: STAMP,
+			runOn: { type: 'provider' },
 		});
 	});
 });

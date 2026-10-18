@@ -242,6 +242,14 @@ describe('useSessionSwitchCallbacks', () => {
 			result.current.handleNamedSessionSelect('agent-session-1', '/repo', 'My Session', true);
 		});
 
-		expect(handleResumeSession).toHaveBeenCalledWith('agent-session-1', [], 'My Session', true);
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'agent-session-1',
+			[],
+			'My Session',
+			true,
+			undefined,
+			'/repo',
+			{ provider: undefined }
+		);
 	});
 });

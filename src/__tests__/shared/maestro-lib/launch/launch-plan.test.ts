@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	buildAgentLaunchPlan,
 	type AgentLaunchInput,
@@ -682,27 +685,38 @@ describe('buildAgentLaunchPlan', () => {
 		});
 
 		it('keeps the Run on model when translation adds Claude memory settings', () => {
-			const result = buildAgentLaunchPlan(
-				claudeInput({
-					prompt: undefined,
-					maestroEnvVars: {
-						MAESTRO_TRANSLATION_KNOWLEDGE: '/project/.maestro/provider-knowledge/migrated',
-					},
-				})
-			);
-			if (!result.ok) throw new Error(result.error);
-			expect(result.plan.launchArgs).toEqual([
-				'--print',
-				'--model',
-				'qwen3:latest',
-				'--effort',
-				'high',
-				'--settings',
-				JSON.stringify({
-					autoMemoryDirectory: '/project/.maestro/provider-knowledge/migrated/memory',
-				}),
-			]);
-			expect(result.plan.envVars?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+			const knowledgeRoot = mkdtempSync(join(tmpdir(), 'run-on-knowledge-'));
+			const knowledge = join(knowledgeRoot, 'a'.repeat(64), '11111111-1111-4111-8111-111111111111');
+			mkdirSync(knowledge, { recursive: true });
+			writeFileSync(join(knowledge, 'knowledge-index.md'), '');
+			try {
+				const result = buildAgentLaunchPlan(
+					claudeInput({
+						prompt: undefined,
+						translationKnowledgeRoot: knowledgeRoot,
+						maestroEnvVars: {
+							MAESTRO_TRANSLATION_KNOWLEDGE: knowledge,
+						},
+					})
+				);
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.launchArgs).toEqual([
+					'--print',
+					'--model',
+					'qwen3:latest',
+					'--effort',
+					'high',
+					'--add-dir',
+					knowledge,
+					'--settings',
+					JSON.stringify({
+						autoMemoryDirectory: join(knowledge, 'memory'),
+					}),
+				]);
+				expect(result.plan.envVars?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+			} finally {
+				rmSync(knowledgeRoot, { recursive: true, force: true });
+			}
 		});
 
 		it('takes the place of the gateway, and says which gateway was passed over', () => {

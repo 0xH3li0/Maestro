@@ -67,6 +67,12 @@ import {
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
 import { getStatus, modelFilePath, type ModelStatus } from '../../local-models/model-store';
 import { hasEnrolledWakeModel } from '../wake/wake-enrollment-store';
+import { VoiceStudioClient } from '../providers/local/voice-studio-tts';
+import {
+	readVoiceStudioConfig,
+	type VoiceStudioStatus,
+	type VoiceStudioConfig,
+} from '../../../shared/acappella/voice-studio';
 
 /**
  * Provider ids for the local tier.
@@ -153,6 +159,7 @@ const SLOT_LABELS: Record<VoiceSlot, string> = {
 };
 
 export interface ResolveVoiceReadinessOptions {
+	readVoiceStudioStatus?: (config: VoiceStudioConfig) => Promise<VoiceStudioStatus>;
 	/** The persisted provider selection. Omitted roles take the build default. */
 	settings?: VoiceProviderSettings;
 	/**
@@ -349,6 +356,36 @@ async function resolveSlot(
 
 	if (requirement.kind === 'none') {
 		return { slot, providerId, satisfied: true };
+	}
+	if (requirement.kind === 'voice-studio') {
+		let status: VoiceStudioStatus;
+		try {
+			const config = readVoiceStudioConfig(options.settings?.voiceStudio);
+			status = await (options.readVoiceStudioStatus?.(config) ??
+				new VoiceStudioClient(config).status());
+		} catch (error) {
+			status = {
+				connected: false,
+				message: error instanceof Error ? error.message : 'VoiceStudio source is unavailable.',
+			};
+		}
+		if (
+			status.connected &&
+			status.profiles.filter(({ name }) => name === options.settings?.voiceId).length === 1
+		)
+			return { slot, providerId, satisfied: true };
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'provider-unreachable',
+			detail: status.connected
+				? 'Text-to-Speech: select a unique VoiceStudio voice profile.'
+				: `Text-to-Speech: ${status.message}`,
+			suggestedAction: status.connected
+				? 'Select a profile in A Cappella > Voice Output.'
+				: `Start VoiceStudio and check its connection in ${modelsSettingsLocation('sources')}.`,
+		};
 	}
 
 	if (requirement.kind === 'local-models-task') {

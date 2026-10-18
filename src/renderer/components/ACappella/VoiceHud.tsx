@@ -67,6 +67,8 @@ import { getPlatform } from '../../utils/platformUtils';
 import { selectVoiceRemoteDevice, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { closeVoiceMic, openVoiceMic, toggleVoiceListenMode } from '../../services/voiceListening';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { VoiceDevHarness } from './VoiceDevHarness';
 import { VoiceHudControls } from './VoiceHudControls';
@@ -146,6 +148,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const actions = useVoiceSession(enabled);
 
 	const state = useVoiceSessionStore((s) => s.state);
+	const sendState = useVoiceSessionStore((s) => s.sendState);
+	const forceSendAllowed = useSettingsStore((s) => s.forcedParallelExecution);
 	const partial = useVoiceSessionStore((s) => s.partialTranscript);
 	const speech = useVoiceSessionStore((s) => s.speech);
 	const mic = useVoiceSessionStore((s) => s.mic);
@@ -687,6 +691,46 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 						onSetPhrases={handleSetSendPhrases}
 					/>
 				)}
+
+				{sendState.pending.length > 0 && (
+					<div
+						role="status"
+						data-testid="voice-hud-pending-send"
+						className="px-3 py-2 text-xs border-t select-text"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<div style={{ color: theme.colors.accent }}>Session is busy, send is pending.</div>
+						<div style={{ color: theme.colors.textDim }}>Feel free to keep adding to it.</div>
+						<div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">
+							{sendState.pending.map((item) => item.text).join('\n\n')}
+						</div>
+					</div>
+				)}
+				<div
+					className="flex items-center justify-between gap-2 px-3 py-1.5 border-t text-xs"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				>
+					<div>
+						<div style={{ color: theme.colors.textMain }}>Force Send</div>
+						<div className="text-2xs">
+							{!forceSendAllowed
+								? 'Enable forced parallel execution in Settings.'
+								: sendState.forceSend
+									? 'Send beside other tabs. A busy target waits.'
+									: 'Wait until the session is free.'}
+						</div>
+					</div>
+					<ToggleSwitch
+						theme={theme}
+						size="sm"
+						ariaLabel="Force Send voice requests"
+						checked={forceSendAllowed && sendState.forceSend}
+						disabled={!active || !forceSendAllowed}
+						onChange={(value) => {
+							void window.maestro.voice.setForceSend(value);
+						}}
+					/>
+				</div>
 
 				<VoiceHudControls
 					theme={theme}

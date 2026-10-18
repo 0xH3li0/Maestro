@@ -733,12 +733,14 @@ describe('useAgentSessionManagement', () => {
 				timestamp: new Date('2024-01-01T00:00:00.000Z').getTime(),
 				source: 'user',
 				text: 'Hello',
+				turnProvider: 'claude-code',
 			},
 			{
 				id: 'msg-2',
 				timestamp: new Date('2024-01-01T00:00:01.000Z').getTime(),
 				source: 'stdout',
 				text: 'Hi there',
+				turnProvider: 'claude-code',
 			},
 		]);
 		expect(updatedSession.activeFileTabId).toBeNull();

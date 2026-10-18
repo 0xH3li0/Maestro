@@ -200,6 +200,8 @@ describe('ModelsSettingsTab', () => {
 
 		openPanel('Sources');
 		expect(present('local-models-endpoints')).toBe(true);
+		expect(present('local-models-voice-studio')).toBe(true);
+		expect(window.maestro.voice.voiceStudioStatus).not.toHaveBeenCalled();
 		expect(present('local-models-model-server')).toBe(true);
 		expect(present('local-models-download-source')).toBe(true);
 		expect(screen.getByTestId('local-models-cloud-only')).toHaveTextContent('DeepSeek V4');

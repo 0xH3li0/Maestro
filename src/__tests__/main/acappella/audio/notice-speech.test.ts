@@ -121,6 +121,23 @@ afterEach(() => {
 });
 
 describe('NoticeSpeech', () => {
+	it('removes emoji from agent announcements before passing them to the voice', async () => {
+		const h = harness();
+		const speaking = h.speech.speak(
+			'🏢 **Pedro Sidián** finished ✅',
+			new AbortController().signal
+		);
+		await flush();
+		expect(h.voice.asked[0].text).toBe('Pedro Sidián finished');
+		h.drain();
+		await speaking;
+	});
+	it('does not open an audio host for an emoji-only notice', async () => {
+		const h = harness();
+		await h.speech.speak('🎉', new AbortController().signal);
+		expect(h.commands).toEqual([]);
+		expect(h.voice.asked).toEqual([]);
+	});
 	it('reports whatever keeps it silent (a live voice session)', () => {
 		const refusal = { code: 'voice-session-active' as const, message: 'A session is live.' };
 		expect(harness({ refusal: () => refusal }).speech.refusal()).toBe(refusal);

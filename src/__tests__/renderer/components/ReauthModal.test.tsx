@@ -52,7 +52,7 @@ function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
 }
 
 /** Modal registers itself with the layer stack, so it needs the provider. */
-const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>);
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: LayerStackProvider });
 
 // The real XTerminal needs canvas/WebGL, which jsdom does not have.
 vi.mock('../../../renderer/components/XTerminal', () => {
@@ -158,7 +158,7 @@ describe('ReauthModal', () => {
 		expect(mockSpawnTerminalTab).toHaveBeenCalledWith(
 			expect.objectContaining({
 				toolType: 'codex',
-				customEnvVars: { CODEX_HOME: '/accounts/failed' },
+				sessionCustomEnvVars: { CODEX_HOME: '/accounts/failed' },
 			})
 		);
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);

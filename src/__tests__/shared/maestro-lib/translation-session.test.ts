@@ -483,7 +483,7 @@ describe('one provider mapping commit', () => {
 			turnProvider: 'claude-code',
 		});
 		expect(result.aiTabs[0].providerSessions?.codex).toBeUndefined();
-		expect(result.aiTabs[0].turnSessionId).toBe('stale-codex');
+		expect(result.aiTabs[0].turnSessionId).toBe('claude-open');
 		expect(result.aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe('claude-open');
 		expect(result.executionQueue).toBe(session.executionQueue);
 		expect(result.providerTranslationQueuedOrigins).toEqual({ queued: 'claude-code' });

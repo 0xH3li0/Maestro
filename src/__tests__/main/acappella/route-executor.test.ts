@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockedFunction } from 'vitest';
+import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -37,7 +38,10 @@ import {
 	type NewTabWithPromptResult,
 	type VoiceRendererBridge,
 } from '../../../main/acappella/dispatch/route-executor';
-import { VoiceDispatchError } from '../../../main/acappella/voice-session-service';
+import {
+	VoiceDispatchBusyError,
+	VoiceDispatchError,
+} from '../../../main/acappella/voice-session-service';
 import {
 	dispatchToQuickChat,
 	type QuickChatVoiceHost,
@@ -138,9 +142,11 @@ function makeExecutor(options: {
 	bridge: VoiceRendererBridge;
 	sessions?: StoredSession[];
 	activeSessionId?: string | null;
+	getProcessManager?: () => { get: (id: string) => unknown };
 }) {
 	return createVoiceRouteExecutor({
 		bridge: options.bridge,
+		getProcessManager: options.getProcessManager,
 		getSessions: () => options.sessions ?? makeSessions(),
 		getActiveSessionId: () => options.activeSessionId ?? null,
 	});
@@ -256,13 +262,90 @@ describe('executeRouteDecision - current', () => {
 		expect(result).toMatchObject({ tabId: 'tab-created', action: 'created', promptSent: true });
 	});
 
-	it('treats a rejected delivery receipt as a dispatch failure', async () => {
+	it('reports a busy receipt with the exact destination for a pending retry', async () => {
 		bridge.executeCommand.mockResolvedValue({ accepted: false, reason: 'session-busy' });
 		const execute = makeExecutor({ bridge });
 
-		await expect(execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE })).rejects.toThrow(
-			VoiceDispatchError
+		await expect(
+			execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE })
+		).rejects.toMatchObject({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-auth',
+		});
+	});
+});
+
+describe('executeRouteDecision - busy and force', () => {
+	it('leaves a busy destination alone until the session can deliver', async () => {
+		const bridge = makeBridge();
+		const sessions = makeSessions();
+		const execute = makeExecutor({
+			bridge,
+			sessions,
+			getProcessManager: () => ({
+				get: (id) => (id === 'agent-backend-ai-tab-migrations' ? {} : undefined),
+			}),
+		});
+		await expect(
+			execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE })
+		).rejects.toBeInstanceOf(VoiceDispatchBusyError);
+		expect(bridge.selectSession).not.toHaveBeenCalled();
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('passes explicit Force Send through to the existing command bridge', async () => {
+		const bridge = makeBridge();
+		const sessions = makeSessions();
+		await makeExecutor({
+			bridge,
+			sessions,
+			getProcessManager: () => ({
+				get: (id) => (id === 'agent-backend-ai-tab-migrations' ? {} : undefined),
+			}),
+		})(makeDecision(), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+			force: true,
+		});
+		expect(bridge.executeCommand).toHaveBeenCalledWith(
+			'agent-backend',
+			'tab-auth',
+			'refactor the auth middleware',
+			true
 		);
+	});
+
+	it('keeps a live target pending even with Force Send and persisted idle state', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({
+			bridge,
+			getProcessManager: () => ({
+				get: (id) => (id === 'agent-backend-ai-tab-auth' ? {} : undefined),
+			}),
+		});
+		await expect(
+			execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE, force: true })
+		).rejects.toBeInstanceOf(VoiceDispatchBusyError);
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('retains a process collision as pending when it races the main-side probe', async () => {
+		const bridge = makeBridge();
+		bridge.executeCommand.mockResolvedValue({
+			accepted: false,
+			reason: 'remote-spawn-error:' + agentAlreadyRunningMessage('agent-backend-ai-tab-auth'),
+		});
+		await expect(
+			makeExecutor({ bridge })(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE, force: true })
+		).rejects.toBeInstanceOf(VoiceDispatchBusyError);
+	});
+
+	it('keeps other rejected receipts as errors', async () => {
+		const bridge = makeBridge();
+		bridge.executeCommand.mockResolvedValue({ accepted: false, reason: 'renderer-timeout' });
+		await expect(
+			makeExecutor({ bridge })(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE })
+		).rejects.toThrow(VoiceDispatchError);
 	});
 });
 

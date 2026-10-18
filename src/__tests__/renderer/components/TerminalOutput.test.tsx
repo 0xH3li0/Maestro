@@ -4525,6 +4525,8 @@ describe('TerminalOutput', () => {
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs: [entry], isUnread: false }],
 			});
+			// Keep the legacy mock's tabs aligned with the component's memo dependency.
+			session.aiTabs = session.tabs;
 			const { rerender } = render(<TerminalOutput {...createDefaultProps({ session })} />);
 			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Codex');
 			const updated = createDefaultSession({
@@ -4537,6 +4539,7 @@ describe('TerminalOutput', () => {
 					},
 				],
 			});
+			updated.aiTabs = updated.tabs;
 			rerender(<TerminalOutput {...createDefaultProps({ session: updated })} />);
 			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Claude Code');
 			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('sonnet');

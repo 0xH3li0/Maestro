@@ -122,6 +122,8 @@ describe('provider translation probe', () => {
 					{ ...message, uuid: 'other-2', cwd: path.join(tmpdir(), 'other-project') },
 					{ type: 'attachment', uuid: 'attachment-1', content: 'PRIVATE-MESSAGE-SENTINEL' },
 					{ type: 'attachment', uuid: 'attachment-2', content: 'PRIVATE-MESSAGE-SENTINEL' },
+					null,
+					null,
 				])
 			);
 		}
@@ -134,12 +136,12 @@ describe('provider translation probe', () => {
 			sampled: 4,
 			clean: 0,
 			blocked: 4,
-			blockCodes: { 'native-project-root-mismatch': 4 },
-			warningCodes: { 'native-attachment-state': 4 },
-			infoCodes: {},
+			blockCodes: { 'malformed-native-record': 4 },
+			warningCodes: {},
+			infoCodes: { 'native-cwd-drift': 4, 'native-attachment-state': 4 },
 		});
-		expect(claude.examples['native-project-root-mismatch']).toHaveLength(3);
-		for (const file of claude.examples['native-project-root-mismatch'])
+		expect(claude.examples['malformed-native-record']).toHaveLength(3);
+		for (const file of claude.examples['malformed-native-record'])
 			expect(file.startsWith(path.join('~', '.claude'))).toBe(true);
 		for (const output of [formatProbeReport(report), JSON.stringify(report)]) {
 			expect(output).not.toContain('PRIVATE-MESSAGE-SENTINEL');

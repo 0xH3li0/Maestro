@@ -122,6 +122,18 @@ function request(text: string, overrides: Partial<{ signal: AbortSignal }> = {})
 // ---------------------------------------------------------------------------
 
 describe('ConversationalTranslator', () => {
+	it('removes emoji from status passthroughs and model rewrites without spending their sentence budget', async () => {
+		const brain = fakeBrain({ reply: '🎉. ✅ **Pedro Sidián** is ready.' });
+		const translator = new ConversationalTranslator({ brain, maxSentences: 1 });
+		expect(
+			await collect(
+				translator.translate({ ...request('🏢 Pedro Sidián finished ✅.'), kind: 'status' })
+			)
+		).toEqual(['Pedro Sidián finished.']);
+		expect(
+			await collect(translator.translate(request('**Which agent completed the migration?**')))
+		).toEqual(['Pedro Sidián is ready.']);
+	});
 	it('turns a four hundred line summary into a short, markdown-free reply that offers detail', async () => {
 		const brain = fakeBrain({
 			reply: '**Done.** I refactored the `auth` middleware, it was a stale token check.',

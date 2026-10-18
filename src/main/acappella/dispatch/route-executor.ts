@@ -20,6 +20,12 @@
  */
 
 import type { BrowserWindow } from 'electron';
+import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
+import {
+	isAgentBusy,
+	isAiTabProcessActive,
+	type ProcessLivenessProbe,
+} from '../../utils/agent-busy';
 
 import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
@@ -33,7 +39,7 @@ import { logger } from '../../utils/logger';
 import { requestFromRenderer } from '../../web-server/callbacks/remoteRequest';
 import { buildRoutingRoster } from '../router/routing-context';
 import { resolveRecall } from '../router/tab-recall';
-import { VoiceDispatchError } from '../voice-session-service';
+import { VoiceDispatchBusyError, VoiceDispatchError } from '../voice-session-service';
 import type { VoiceDispatchResult, VoiceRouteExecutor } from '../voice-session-service';
 import { dispatchToQuickChat, type QuickChatVoiceHost } from './quick-chat-dispatch';
 
@@ -132,7 +138,12 @@ export interface VoiceRendererBridge {
 	/** `remote:newAITabWithPrompt` - open a tab and dispatch a prompt atomically. */
 	newTabWithPrompt(agentSessionId: string, prompt: string): Promise<NewTabWithPromptResult>;
 	/** `remote:executeCommand` - send a prompt to an existing tab, awaiting its receipt. */
-	executeCommand(agentSessionId: string, tabId: string, prompt: string): Promise<CommandReceipt>;
+	executeCommand(
+		agentSessionId: string,
+		tabId: string,
+		prompt: string,
+		force?: boolean
+	): Promise<CommandReceipt>;
 }
 
 /**
@@ -224,7 +235,7 @@ export function createRendererVoiceBridge(
 			);
 		},
 
-		async executeCommand(agentSessionId, tabId, prompt) {
+		async executeCommand(agentSessionId, tabId, prompt, force) {
 			return requestFromRenderer<CommandReceipt>(
 				requireWindow('send a prompt', agentSessionId),
 				'remote:executeCommand',
@@ -235,9 +246,8 @@ export function createRendererVoiceBridge(
 					// Positional: (sessionId, command, inputMode, tabId, force, images,
 					// background, consultChain) before the receipt channel. The absent
 					// consult chain must keep its slot or the receipt becomes the chain.
-					// `force: false` keeps the renderer's busy guard: a working agent must not
-					// interleave two prompts in one tab.
-					args: [agentSessionId, prompt, 'ai', tabId, false, undefined, false, undefined],
+					// Only the HUD's explicit opt-in bypasses the busy guard.
+					args: [agentSessionId, prompt, 'ai', tabId, force === true, undefined, false, undefined],
 				}
 			);
 		},
@@ -299,6 +309,7 @@ export interface VoiceRouteExecutorOptions {
 	 * Chat turn fails by name.
 	 */
 	getQuickChat?: () => QuickChatVoiceHost | null;
+	getProcessManager?: () => ProcessLivenessProbe | null;
 }
 
 interface ResolvedExecutorDeps {
@@ -307,6 +318,7 @@ interface ResolvedExecutorDeps {
 	getActiveSessionId: () => string | null;
 	recentDispatches?: DispatchReplayCache;
 	getQuickChat?: () => QuickChatVoiceHost | null;
+	getProcessManager?: () => ProcessLivenessProbe | null;
 }
 
 /**
@@ -368,6 +380,7 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
 		getActiveSessionId: options.getActiveSessionId ?? readActiveSessionId,
 		recentDispatches: createDispatchReplayCache(options.replayWindowMs),
 		getQuickChat: options.getQuickChat,
+		getProcessManager: options.getProcessManager,
 	};
 	return (decision, context) => executeRouteDecision(decision, context, deps);
 }
@@ -384,7 +397,7 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
  */
 export async function executeRouteDecision(
 	decision: RouteDecision,
-	context: { roster: RosterAgent[]; scope: VoiceScope },
+	context: { roster: RosterAgent[]; scope: VoiceScope; force?: boolean },
 	deps: ResolvedExecutorDeps
 ): Promise<VoiceDispatchResult> {
 	// A clarification is a question, not an instruction. Reaching the executor
@@ -421,9 +434,35 @@ export async function executeRouteDecision(
 		return replayed;
 	}
 
-	const result = await performDispatch(decision, agent, roster, sessions, prompt, deps);
+	const result = await performDispatch(
+		decision,
+		agent,
+		roster,
+		sessions,
+		prompt,
+		deps,
+		context.force
+	);
 	deps.recentDispatches?.set(key, result);
 	return result;
+}
+
+/** Force Send skips other tabs, never the target tab's live process. */
+function assertDispatchTargetFree(
+	session: StoredSession | undefined,
+	tabId: string,
+	deps: ResolvedExecutorDeps,
+	force?: boolean
+): void {
+	const processManager = deps.getProcessManager?.();
+	// Without a main-side probe the renderer's receipt remains authoritative.
+	if (!session || !processManager) return;
+	if (
+		isAiTabProcessActive(processManager, session.id, tabId, session.activeTabId === tabId) ||
+		(!force && isAgentBusy(session, processManager))
+	) {
+		throw new VoiceDispatchBusyError(session.id, tabId);
+	}
 }
 
 async function performDispatch(
@@ -432,14 +471,15 @@ async function performDispatch(
 	roster: RosterAgent[],
 	sessions: StoredSession[],
 	prompt: string,
-	deps: ResolvedExecutorDeps
+	deps: ResolvedExecutorDeps,
+	force?: boolean
 ): Promise<VoiceDispatchResult> {
 	if (decision.tabAction === 'new') {
 		return openNewTab(agent, prompt, decision.tabName, deps.bridge);
 	}
 
 	if (decision.tabAction === 'recall') {
-		return recallTab(decision, agent, roster, prompt, deps);
+		return recallTab(decision, agent, roster, prompt, deps, force);
 	}
 
 	// `activeTabId` is deliberately not on `RosterAgent` - the Brain routes by
@@ -456,8 +496,9 @@ async function performDispatch(
 		return openNewTab(agent, prompt, decision.tabName, deps.bridge);
 	}
 
+	if (prompt) assertDispatchTargetFree(stored, tabId, deps, force);
 	deps.bridge.selectSession(agent.sessionId, tabId);
-	const promptSent = await sendPrompt(deps.bridge, agent.sessionId, tabId, prompt);
+	const promptSent = await sendPrompt(deps.bridge, agent.sessionId, tabId, prompt, force);
 
 	return {
 		agentSessionId: agent.sessionId,
@@ -483,7 +524,8 @@ async function recallTab(
 	agent: RosterAgent,
 	roster: RosterAgent[],
 	prompt: string,
-	deps: ResolvedExecutorDeps
+	deps: ResolvedExecutorDeps,
+	force?: boolean
 ): Promise<VoiceDispatchResult> {
 	const resolution = resolveRecall(decision, roster, { confirmed: true });
 	if (resolution.kind === 'missing') {
@@ -501,6 +543,13 @@ async function recallTab(
 		throw new VoiceDispatchError(`That conversation is closed and was not confirmed for reopening`);
 	}
 
+	if (prompt)
+		assertDispatchTargetFree(
+			deps.getSessions().find((session) => session.id === resolution.agentSessionId),
+			resolution.tab.id,
+			deps,
+			force
+		);
 	const focus = await deps.bridge.focusTab(resolution.agentSessionId, resolution.tab.id);
 	if (!focus.ok) {
 		throw new VoiceDispatchError(
@@ -512,7 +561,7 @@ async function recallTab(
 	// conversation is already open focuses the copy that exists rather than
 	// restoring a duplicate.
 	const tabId = focus.tabId ?? resolution.tab.id;
-	const promptSent = await sendPrompt(deps.bridge, resolution.agentSessionId, tabId, prompt);
+	const promptSent = await sendPrompt(deps.bridge, resolution.agentSessionId, tabId, prompt, force);
 
 	return {
 		agentSessionId: resolution.agentSessionId,
@@ -641,12 +690,17 @@ async function sendPrompt(
 	bridge: VoiceRendererBridge,
 	agentSessionId: string,
 	tabId: string,
-	prompt: string
+	prompt: string,
+	force?: boolean
 ): Promise<boolean> {
 	if (!prompt) return false;
 
-	const receipt = await bridge.executeCommand(agentSessionId, tabId, prompt);
+	const receipt = force
+		? await bridge.executeCommand(agentSessionId, tabId, prompt, true)
+		: await bridge.executeCommand(agentSessionId, tabId, prompt);
 	if (!receipt.accepted) {
+		if (receipt.reason === 'session-busy' || isAgentAlreadyRunningError(receipt.reason))
+			throw new VoiceDispatchBusyError(agentSessionId, tabId);
 		throw new VoiceDispatchError(
 			`The prompt was not delivered (${receipt.reason ?? 'no reason given'})`
 		);

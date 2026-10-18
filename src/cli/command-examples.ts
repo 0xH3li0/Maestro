@@ -197,9 +197,16 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	],
 	'cue pipeline remove': ['maestro-cli cue pipeline remove "Nightly review" --force'],
 	'cue engine start': ['maestro-cli cue engine start'],
+	'cue engine check': ['maestro-cli cue engine check --json'],
 	'cue engine stop': ['maestro-cli cue engine stop --wait-ms 5000'],
 	'cue engine status': ['maestro-cli cue engine status --json'],
 	'cue engine inspect': ['maestro-cli cue engine inspect --json'],
+	'bundle export': [
+		'maestro-cli bundle export --agent <agent-id> --output agent.maestro-bundle.zip',
+	],
+	'bundle validate': ['maestro-cli bundle validate agent.maestro-bundle.zip'],
+	'bundle inspect': ['maestro-cli bundle inspect agent.maestro-bundle.zip --json'],
+	'bundle import': ['maestro-cli bundle import agent.maestro-bundle.zip --dry-run'],
 
 	// Director's Notes
 	'director-notes history': [
@@ -542,6 +549,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'maestro-run grant': ['maestro-cli maestro-run grant --reveal'],
 	'quick-chat show': ['maestro-cli quick-chat show'],
 	'quick-chat hide': ['maestro-cli quick-chat hide'],
+	'quick-chat return': ['maestro-cli quick-chat return'],
 	'quick-chat toggle': ['maestro-cli quick-chat toggle'],
 	'quick-chat status': ['maestro-cli quick-chat status --json'],
 	'quick-chat send': ['maestro-cli quick-chat send "What changed on main today?"'],

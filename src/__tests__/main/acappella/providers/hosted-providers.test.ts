@@ -194,6 +194,25 @@ describe('hosted transport', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAiSttProvider', () => {
+	it('sends a bounded literal vocabulary prompt and refreshes it without restarting', async () => {
+		const prompts: unknown[] = [];
+		const provider = new OpenAiSttProvider({
+			readCredential: KEY,
+			fetchImpl: async (_url, init) => {
+				prompts.push((init?.body as FormData).get('prompt'));
+				return sseResponse([{ type: 'transcript.text.done', text: 'Pedro Sidián' }]);
+			},
+		});
+		await provider.start(recorder().callbacks);
+		provider.setVocabulary(['🏢 Pedro Sidián', 'Maestro', 'maestro']);
+		provider.feed(utterancePcm());
+		await provider.flush();
+		provider.setVocabulary(['NorseStar']);
+		provider.feed(utterancePcm());
+		await provider.flush();
+		expect(prompts).toEqual(['Pedro Sidián, Maestro', 'NorseStar']);
+		await provider.stop();
+	});
 	it('refuses to start without a key, before any audio is buffered', async () => {
 		const provider = new OpenAiSttProvider({ readCredential: () => null });
 		const { callbacks } = recorder();

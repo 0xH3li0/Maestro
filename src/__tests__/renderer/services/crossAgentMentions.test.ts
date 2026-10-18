@@ -367,6 +367,7 @@ describe('dispatchCrossAgentMentionsForMessage', () => {
 			source,
 			SOURCE_TAB,
 			undefined,
+			undefined,
 			'parallel'
 		);
 

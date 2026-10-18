@@ -438,6 +438,29 @@ describe('pre-roll', () => {
 });
 
 describe('barge-in', () => {
+	it('replays speech into STT when the session accepts an interruption while dispatching', () => {
+		const h = harness();
+		h.session.state = 'dispatching';
+		vi.spyOn(h.session, 'interrupt').mockImplementation(() => {
+			h.session.state = 'listening';
+			return true;
+		});
+		h.pipeline.start();
+		h.push(tone(), 6);
+		expect(h.session.state).toBe('listening');
+		expect(h.stt.fed.length).toBeGreaterThanOrEqual(6);
+		expect(h.pipeline.getStats().preRollFramesDelivered).toBeGreaterThan(0);
+	});
+
+	it('keeps speech buffered if the dispatching session does not accept interruption', () => {
+		const h = harness();
+		h.session.state = 'dispatching';
+		h.pipeline.start();
+		h.push(tone(), 6);
+		expect(h.session.state).toBe('dispatching');
+		expect(h.stt.fed).toHaveLength(0);
+	});
+
 	it('flushes playback, cancels the speech run, and takes the floor back', () => {
 		const h = harness();
 		h.session.state = 'speaking';

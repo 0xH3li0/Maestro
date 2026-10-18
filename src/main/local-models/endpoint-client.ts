@@ -12,16 +12,16 @@
  * `/api/tags` is the one route every Ollama version has, where `/v1/models` is
  * newer). Ollama's native routes are kept as FALLBACKS for the cases an older
  * Ollama cannot serve on `/v1`: a 404 (the compat layer predates the route) and,
- * for structured output, a 400 (the compat layer predates `json_schema`).
+ * for structured output, a 400 (the compat layer predates `json_schema`). The
+ * endpoint Test uses native chat to bound its context allocation.
  *
  * Speech-to-text (`/v1/audio/transcriptions`) is the one route NOT every server
  * has: an OpenAI-compatible gateway or a speech server offers it, a chat-only
  * server does not. There is no native fallback to reach for, so a 404 there is
  * reported as what it is: this endpoint does not offer speech-to-text.
  *
- * Non-streaming only for now. Note that the timeout covers the response
- * headers; a non-streaming server sends those once generation is done, so for
- * chat the budget is effectively the whole generation.
+ * Non-streaming only for now. The timeout covers headers AND the body: a server
+ * that flushes headers before generating still has to finish within its budget.
  *
  * Whether an endpoint is `enabled` is the CALLER's question, not this module's:
  * a consumer picking a server skips disabled ones, while "Test" in Settings must
@@ -37,7 +37,11 @@ import {
 	type LocalModelEndpoint,
 	type LocalModelEndpointKind,
 } from '../../shared/local-models/endpoints';
-import { fetchWithTimeout, isFetchTimeoutError } from '../utils/fetchWithTimeout';
+import {
+	DEFAULT_FETCH_TIMEOUT_MS,
+	fetchWithTimeout,
+	isFetchTimeoutError,
+} from '../utils/fetchWithTimeout';
 import {
 	LocalModelEndpointError,
 	isLocalModelEndpointError,
@@ -152,6 +156,8 @@ export interface EndpointEmbedResult {
 }
 
 export interface EndpointTranscribeRequest extends EndpointCallOptions {
+	/** Literal context for recognizers that support glossary prompting. */
+	prompt?: string;
 	model: string;
 	/**
 	 * The clip as a WAV file (16-bit PCM, mono). A container rather than raw
@@ -318,6 +324,7 @@ export async function endpointTranscribe(
 	form.append('model', request.model);
 	form.append('response_format', 'json');
 	if (request.language) form.append('language', request.language);
+	if (request.prompt) form.append('prompt', request.prompt);
 	// Copied into its own buffer: `wav` may be a view over a larger one, and a
 	// Blob built from `.buffer` would upload the bytes around it too.
 	form.append(
@@ -466,7 +473,9 @@ export async function listEndpointModelsResult(
  * Listing alone is not enough, since a server can list models it then fails to
  * load, and a gateway can list models the key is not allowed to call. With no
  * `model` named, the first listed model is used; a server that lists none is
- * reported as `no-models` rather than tested against a guess.
+ * reported as `no-models` rather than tested against a guess. Ollama is probed
+ * through native chat with a small context, so a large server-wide context
+ * default does not allocate tens of gigabytes for a one-token check.
  */
 export async function testEndpoint(
 	endpoint: LocalModelEndpoint,
@@ -492,14 +501,19 @@ export async function testEndpoint(
 		}
 
 		const started = performance.now();
-		const reply = await endpointChat(endpoint, {
+		const chatRequest: EndpointChatRequest = {
 			...call,
 			timeoutMs: call.timeoutMs ?? ENDPOINT_TEST_TIMEOUT_MS,
 			model,
 			messages: [{ role: 'user', content: 'Reply with OK.' }],
 			maxTokens: 1,
 			temperature: 0,
-		});
+			disableThinking: endpoint.kind === 'ollama',
+		};
+		const reply =
+			endpoint.kind === 'ollama'
+				? await ollamaNativeChat(endpoint, chatRequest, chatRequest, 2048)
+				: await endpointChat(endpoint, chatRequest);
 		return {
 			ok: true,
 			model: reply.model,
@@ -513,7 +527,7 @@ export async function testEndpoint(
 }
 
 // ---------------------------------------------------------------------------
-// Ollama native fallback
+// Ollama native chat
 // ---------------------------------------------------------------------------
 
 /**
@@ -530,11 +544,13 @@ function shouldUseOllamaChatFallback(error: unknown, request: EndpointChatReques
 async function ollamaNativeChat(
 	endpoint: LocalModelEndpoint,
 	request: EndpointChatRequest,
-	call: EndpointCallOptions
+	call: EndpointCallOptions,
+	contextSize?: number
 ): Promise<EndpointChatResult> {
 	const modelOptions = {
 		...(request.maxTokens !== undefined ? { num_predict: request.maxTokens } : {}),
 		...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+		...(contextSize !== undefined ? { num_ctx: contextSize } : {}),
 	};
 	const payload = await requestJson(
 		endpoint,
@@ -544,6 +560,7 @@ async function ollamaNativeChat(
 			model: request.model,
 			messages: request.messages,
 			stream: false,
+			...(request.disableThinking ? { think: false } : {}),
 			...(request.jsonSchema ? { format: request.jsonSchema } : {}),
 			...(Object.keys(modelOptions).length > 0 ? { options: modelOptions } : {}),
 		},
@@ -635,15 +652,10 @@ function requireVectors(
 }
 
 /**
- * The server's own one-line explanation, when it sent JSON with one. OpenAI
- * shapes it `{ error: { message } }`, Ollama `{ error: "..." }`. A non-JSON body
- * (a proxy's HTML error page) is not quoted.
+ * The server's own one-line explanation. OpenAI shapes it
+ * `{ error: { message } }`, Ollama `{ error: "..." }`. A non-JSON body (a proxy's
+ * HTML error page) is not quoted. Shared with the System One client.
  */
-async function readErrorDetail(response: Response): Promise<string | null> {
-	return errorDetailFromBody(await response.text().catch(() => ''));
-}
-
-/** {@link readErrorDetail} for a body already read. Shared with the System One client. */
 export function errorDetailFromBody(text: string): string | null {
 	let parsed: unknown;
 	try {
@@ -700,7 +712,13 @@ async function requestJson(
 	if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
 	if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
+	// Keep the budget alive while reading the body, as the System One client
+	// does. fetchWithTimeout releases its own timer once headers arrive.
+	const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+	const deadline = AbortSignal.timeout(timeoutMs);
+	const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
 	let response: Response;
+	let text: string;
 	try {
 		response = await fetchWithTimeout(
 			url,
@@ -708,10 +726,11 @@ async function requestJson(
 				method,
 				headers,
 				...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
-				...(options.signal ? { signal: options.signal } : {}),
+				signal,
 			},
-			options.timeoutMs
+			timeoutMs
 		);
+		text = await response.text();
 	} catch (error) {
 		if (options.signal?.aborted) {
 			throw endpointError(
@@ -722,11 +741,11 @@ async function requestJson(
 				{ cause: error }
 			);
 		}
-		if (isFetchTimeoutError(error)) {
+		if (deadline.aborted || isFetchTimeoutError(error)) {
 			throw endpointError(
 				endpoint,
 				'timeout',
-				`${describeEndpoint(endpoint)} did not answer ${path} within ${Math.round((options.timeoutMs ?? 0) / 1000)}s.`,
+				`${describeEndpoint(endpoint)} did not answer ${path} within ${Math.round(timeoutMs / 1000)}s.`,
 				url,
 				{ cause: error }
 			);
@@ -742,7 +761,7 @@ async function requestJson(
 
 	if (!response.ok) {
 		const status = response.status;
-		const detail = await readErrorDetail(response);
+		const detail = errorDetailFromBody(text);
 		const suffix = detail ? `: ${detail}` : '.';
 		const kind: LocalModelEndpointErrorKind =
 			status === 401 || status === 403 ? 'auth' : status === 404 ? 'not-found' : 'http';
@@ -754,7 +773,7 @@ async function requestJson(
 	}
 
 	try {
-		const parsed: unknown = await response.json();
+		const parsed: unknown = JSON.parse(text);
 		if (typeof parsed !== 'object' || parsed === null) {
 			throw new Error('Body is not a JSON object');
 		}

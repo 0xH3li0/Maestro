@@ -21,6 +21,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const router = vi.hoisted(() => ({ runSpeechToTextTask: vi.fn() }));
 const readiness = vi.hoisted(() => ({ resolveTaskReadiness: vi.fn() }));
+const correction = vi.hoisted(() => ({ run: vi.fn() }));
+vi.mock('../../../main/local-models/speech-vocabulary', () => ({
+	correctSpeechVocabulary: correction.run,
+}));
 
 vi.mock('../../../main/local-models/task-router', () => ({
 	runSpeechToTextTask: router.runSpeechToTextTask,
@@ -81,6 +85,7 @@ function fakeMicrophone(
 
 beforeEach(() => {
 	__resetDictation();
+	correction.run.mockReset().mockImplementation(async (text: string) => text);
 	router.runSpeechToTextTask.mockReset().mockResolvedValue({
 		status: 'ok',
 		text: 'Ship it.',
@@ -95,6 +100,26 @@ beforeEach(() => {
 });
 
 describe('transcribeClip', () => {
+	it('shares live dictionary hints with the recognizer and applies optional correction once', async () => {
+		const { microphone } = fakeMicrophone();
+		registerDictationMicrophone(microphone, () => ['🏢 Pedro Sidián']);
+		router.runSpeechToTextTask.mockResolvedValue({
+			status: 'ok',
+			text: 'ask Pet Sidian',
+			audioMs: 1000,
+			source: SOURCE,
+			durationMs: 20,
+		});
+		correction.run.mockResolvedValue('ask Pedro Sidián');
+		await expect(transcribeClip(new Float32Array(8), 16000)).resolves.toMatchObject({
+			text: 'ask Pedro Sidián',
+		});
+		expect(router.runSpeechToTextTask).toHaveBeenCalledWith(
+			'dictation',
+			expect.objectContaining({ vocabulary: ['Pedro Sidián'] })
+		);
+		expect(correction.run).toHaveBeenCalledWith('ask Pet Sidian', ['Pedro Sidián'], undefined);
+	});
 	it('runs the clip through the Dictation task assignment', async () => {
 		const audio = new Float32Array(8);
 		const abort = new AbortController();

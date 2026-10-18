@@ -526,3 +526,19 @@ describe('voiceSessionStore rememberScope (re-binding with no session to re-bind
 		expect(useVoiceSessionStore.getState().scope).toEqual({ kind: 'conductor' });
 	});
 });
+
+describe('voice send state', () => {
+	it('projects pending requests without changing the listening state and clears them at stop', () => {
+		apply(wake(), listenStart());
+		apply(
+			event('send-state', {
+				forceSend: true,
+				pending: [{ agentSessionId: 'agent-1', tabId: 'tab-1', text: 'Keep this context' }],
+			})
+		);
+		expect(useVoiceSessionStore.getState().state).toBe('listening');
+		expect(useVoiceSessionStore.getState().sendState.pending[0].text).toBe('Keep this context');
+		apply(event('listen-stop', { reason: 'stopped' }));
+		expect(useVoiceSessionStore.getState().sendState).toEqual({ forceSend: false, pending: [] });
+	});
+});

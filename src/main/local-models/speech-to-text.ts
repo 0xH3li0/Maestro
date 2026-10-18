@@ -50,8 +50,10 @@ import {
 	resolveInstalledSpeechToTextModel,
 	type InstalledSpeechToTextModel,
 	type SpeechToTextEngine,
+	type SpeechToTextDecodeOptions,
 } from './stt/engines';
 import { sanitizeTranscript } from './stt/transcript';
+import { normalizeSpeechVocabulary } from '../../shared/acappella/speech-vocabulary';
 
 const LOG_CONTEXT = '[LocalModels]';
 
@@ -94,7 +96,7 @@ export interface SpeechToTextLease {
 	 * Transcribe 16 kHz mono audio. Queued behind any decode already running on
 	 * this model, whoever asked for it. Returns the engine's raw text.
 	 */
-	transcribe(audio: Float32Array): Promise<string>;
+	transcribe(audio: Float32Array, options?: SpeechToTextDecodeOptions): Promise<string>;
 	/**
 	 * Give the model back. Waits for a decode still in flight, so the graphs are
 	 * never freed underneath one. Safe to call twice.
@@ -169,14 +171,14 @@ export class SpeechToTextPool {
 			return {
 				modelId,
 				maxSamples: resident.maxSamples,
-				transcribe: (audio) => {
+				transcribe: (audio, options) => {
 					// Checked when the decode is ASKED for, not when it runs: a decode
 					// requested just before `release()` is still owed its answer, and the
 					// release queues behind it.
 					if (released) return Promise.reject(gone());
 					return this.queue.enqueue(modelId, () => {
 						if (this.resident.get(modelId) !== resident) throw gone();
-						return resident.engine.transcribe(audio);
+						return resident.engine.transcribe(audio, options);
 					});
 				},
 				release: () => {
@@ -284,7 +286,7 @@ export function __setSpeechToTextPool(pool: SpeechToTextPool | null): void {
 // One-shot transcription
 // ---------------------------------------------------------------------------
 
-export interface TranscribeSpeechOptions {
+export interface TranscribeSpeechOptions extends SpeechToTextDecodeOptions {
 	signal?: AbortSignal;
 }
 
@@ -350,6 +352,9 @@ async function transcribeOnEndpoint(
 	const reply = await transcribeWithLocalModelEndpoint(source.endpointId, {
 		model: source.model,
 		wav: encodeWav(float32ToInt16(samples), SPEECH_SAMPLE_RATE),
+		...(options.vocabulary?.length
+			? { prompt: normalizeSpeechVocabulary(options.vocabulary).join(', ') }
+			: {}),
 		...(options.signal ? { signal: options.signal } : {}),
 	});
 	return reply.text;
@@ -367,7 +372,7 @@ async function transcribeOnLocalModel(
 			throwIfLocalModelCancelled(options.signal, CONSUMER_ID);
 			// The remainder after a cut can be a sliver of trailing silence.
 			if (samplesToMs(window.length) < MIN_CLIP_MS) continue;
-			const text = (await lease.transcribe(window)).trim();
+			const text = (await lease.transcribe(window, options)).trim();
 			if (text) parts.push(text);
 		}
 		return parts.join(' ');

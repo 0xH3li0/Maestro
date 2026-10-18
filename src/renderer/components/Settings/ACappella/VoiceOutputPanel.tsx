@@ -17,9 +17,12 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Play, RotateCcw, Sliders } from 'lucide-react';
+import { Play, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
 
-import { summariseVoiceEgress } from '../../../../shared/acappella/provider-catalog';
+import {
+	summariseVoiceEgress,
+	VOICE_STUDIO_TTS_PROVIDER_ID,
+} from '../../../../shared/acappella/provider-catalog';
 import type { BackgroundAnnouncementSetting } from '../../../../shared/acappella/announcements';
 import { VOICE_PREVIEW_LINE } from '../../../../shared/acappella/voice-control';
 import type { VoiceHudMinimizeBehavior } from '../../../../shared/acappella/ui-prefs';
@@ -39,6 +42,7 @@ import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
+import { CardButton } from '../tabs/LocalModelsTab/CardButton';
 import { useVoiceControls } from './useVoiceControls';
 import { useVoiceProviderSelection } from './useVoiceProviderSelection';
 
@@ -70,6 +74,9 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 
 	const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
 	const [previewNote, setPreviewNote] = useState<string | null>(null);
+	const [voiceRefresh, setVoiceRefresh] = useState(0);
+	const [voicesLoading, setVoicesLoading] = useState(false);
+	const [voiceListError, setVoiceListError] = useState<string | null>(null);
 
 	const ttsProviderId = selection.providerIds.tts;
 
@@ -82,18 +89,28 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 
 	useEffect(() => {
 		let cancelled = false;
+		setVoices([]);
+		setVoiceListError(null);
 		void (async () => {
 			// Listing voices is an authenticated request for a hosted provider, so it
 			// is not made until the feature is on: drawing a settings panel must not
 			// spend an API call.
 			if (!enabled) return;
-			const listed = await window.maestro.voice.listVoices().catch(() => []);
-			if (!cancelled) setVoices(listed);
+			setVoicesLoading(true);
+			try {
+				const listed = await window.maestro.voice.listVoices();
+				if (!cancelled) setVoices(listed);
+			} catch {
+				if (!cancelled)
+					setVoiceListError('Could not load voices. Check the provider connection and try again.');
+			} finally {
+				if (!cancelled) setVoicesLoading(false);
+			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [enabled, ttsProviderId]);
+	}, [enabled, ttsProviderId, voiceRefresh]);
 
 	const preview = useCallback(async (voiceId?: string) => {
 		setPreviewNote('Speaking...');
@@ -143,7 +160,10 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 
 					{voices.length === 0 ? (
 						<p className="text-xs opacity-70">
-							This engine has one voice. Nothing to choose between.
+							{voiceListError ??
+								(ttsProviderId === VOICE_STUDIO_TTS_PROVIDER_ID
+									? 'No VoiceStudio profiles loaded. Check its source connection and refresh voices.'
+									: 'This engine has one voice. Nothing to choose between.')}
 						</p>
 					) : (
 						<div
@@ -162,14 +182,14 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 									>
 										<input
 											type="radio"
-											id={`acappella-voice-${voice.id}`}
+											id={`acappella-voice-${encodeURIComponent(voice.id)}`}
 											name="acappella-voice"
 											checked={selected}
 											disabled={!enabled}
 											onChange={() => void selection.setVoiceId(voice.id)}
 										/>
 										<label
-											htmlFor={`acappella-voice-${voice.id}`}
+											htmlFor={`acappella-voice-${encodeURIComponent(voice.id)}`}
 											className="flex-1 text-xs truncate cursor-pointer"
 											style={{ color: theme.colors.textMain }}
 										>
@@ -193,6 +213,16 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 						</div>
 					)}
 
+					{(ttsProviderId === VOICE_STUDIO_TTS_PROVIDER_ID || voiceListError) && (
+						<CardButton
+							theme={theme}
+							icon={RefreshCw}
+							label="Refresh voices"
+							onClick={() => setVoiceRefresh((value) => value + 1)}
+							disabled={!enabled || voicesLoading}
+							testId="voice-refresh-voices"
+						/>
+					)}
 					<div className="flex items-center gap-2">
 						<button
 							type="button"

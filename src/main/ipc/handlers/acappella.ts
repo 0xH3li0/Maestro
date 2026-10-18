@@ -27,6 +27,12 @@
  * mid-session can still release the floor.
  */
 
+import type { ProcessLivenessProbe } from '../../utils/agent-busy';
+import { VoiceStudioClient } from '../../acappella/providers/local/voice-studio-tts';
+import {
+	readVoiceStudioConfig,
+	voiceStudioConfigProblem,
+} from '../../../shared/acappella/voice-studio';
 import { app, ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import { hostname } from 'os';
 
@@ -41,6 +47,8 @@ import type {
 	VoiceWindowId,
 } from '../../../shared/acappella/protocol';
 import { getSessionsStore } from '../../stores/getters';
+import { correctSpeechVocabulary } from '../../local-models/speech-vocabulary';
+import { buildSpeechVocabulary } from '../../../shared/acappella/speech-vocabulary';
 import { withSystemOneRouting } from '../../acappella/providers/system-one-brain';
 import { createConductorRouter } from '../../acappella/router/conductor-router';
 import { invalidateRoutingContext } from '../../acappella/router/routing-context';
@@ -337,7 +345,7 @@ export interface ACappellaHandlerDependencies {
 	 * constructed, in which case the session falls back to waiting for a whole
 	 * reply through `submitAgentReply`.
 	 */
-	getProcessManager?: () => AgentOutputSource | null;
+	getProcessManager?: () => (AgentOutputSource & Partial<ProcessLivenessProbe>) | null;
 	/** The agent type behind a session id, for the tap's stream-json parsing. */
 	getAgentType?: (agentSessionId: string) => string | undefined;
 	/**
@@ -748,6 +756,9 @@ async function buildService(
 		},
 		pipelineShape: resolution.shape,
 		getRoster: readAgentRoster,
+		getVocabulary: () => readVoiceProviderSettings(deps.settingsStore).vocabulary ?? [],
+		refineTranscript: correctSpeechVocabulary,
+		getForceSendAllowed: () => deps.settingsStore.get('forcedParallelExecution', false) === true,
 		// The capability gate. The service refuses to start when a required slot is
 		// unsatisfied and names the missing piece; it never asks for, and cannot be
 		// handed, a replacement provider.
@@ -775,6 +786,10 @@ async function buildService(
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
 			getQuickChat: deps.getQuickChat,
+			getProcessManager: () => {
+				const manager = deps.getProcessManager?.();
+				return manager?.get ? { get: manager.get.bind(manager) } : null;
+			},
 		}),
 		// Read through the module variable rather than captured: the bridge cannot
 		// exist yet (it takes the service), and the two are replaced together.
@@ -1220,6 +1235,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	const wrappedListVoices = withIpcErrorLogging(handlerOpts('listVoices'), async () =>
 		listVoiceOptions(deps)
 	);
+	const wrappedVoiceStudioStatus = withIpcErrorLogging(
+		handlerOpts('voiceStudioStatus'),
+		async (value: unknown) => {
+			const config = readVoiceStudioConfig(value);
+			const problem = voiceStudioConfigProblem(config);
+			if (problem) return { connected: false, message: problem };
+			return new VoiceStudioClient(config).status();
+		}
+	);
 
 	const wrappedPreviewVoice = withIpcErrorLogging(
 		handlerOpts('previewVoice'),
@@ -1427,7 +1451,12 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			}
 		},
 	});
-	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture);
+	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture, async () =>
+		buildSpeechVocabulary(
+			await readAgentRoster(),
+			readVoiceProviderSettings(settingsStore).vocabulary
+		)
+	);
 
 	// Wake phrase enrollment borrows the same microphone, under the same rules:
 	// one consumer at a time, and never out from under a live session.
@@ -1684,6 +1713,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		}
 	);
 
+	ipcMain.handle('acappella:set-force-send', async (_event, enabled: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return (
+			typeof enabled === 'boolean' && (getVoiceSessionService()?.setForceSend(enabled) ?? false)
+		);
+	});
+
 	ipcMain.handle('acappella:interrupt', async (event, source: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
 		return wrappedInterrupt(event, source);
@@ -1735,6 +1771,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// be able to add or remove a key while the feature is off, and removing one is
 	// exactly what somebody switching the feature off may want to do.
 	ipcMain.handle('acappella:list-credentials', wrappedListCredentials);
+	// Sources can be configured before the A Cappella Encore Feature is enabled.
+	ipcMain.handle('acappella:voice-studio-status', wrappedVoiceStudioStatus);
 	ipcMain.handle('acappella:set-credential', wrappedSetCredential);
 	ipcMain.handle('acappella:validate-credential', wrappedValidateCredential);
 

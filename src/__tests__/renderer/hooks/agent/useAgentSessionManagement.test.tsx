@@ -368,7 +368,11 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 				})
 			).toBe(true);
 		});
-		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual({ ...tab, origin: 'relay' });
+		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual({
+			...tab,
+			origin: 'relay',
+			tabProvider: 'claude-code',
+		});
 	});
 
 	it('keeps Relay provenance on the tab through a persisted reload', async () => {
@@ -409,7 +413,7 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 });
 
 describe('useAgentSessionManagement - translated History ownership', () => {
-	it('reads a pending History conversation from its original provider and leaves it parked', async () => {
+	it('reads a pending History conversation and pins its original provider', async () => {
 		const session = createMockSession({
 			id: 'pending-agent',
 			toolType: 'codex',
@@ -445,10 +449,11 @@ describe('useAgentSessionManagement - translated History ownership', () => {
 		) => Session[];
 		const resumed = updater([session])[0];
 		expect(resumed.aiTabs[0]).toMatchObject({
-			agentSessionId: null,
-			providerSessions: { 'claude-code': { agentSessionId: 'old-claude' } },
+			agentSessionId: 'old-claude',
+			tabProvider: 'claude-code',
+			providerSessions: { codex: { agentSessionId: null } },
 		});
-		// A second click reuses the pending tab, even though its live destination is empty.
+		// A second click reuses the pinned native tab.
 		expect(updater([resumed])[0].aiTabs).toHaveLength(1);
 	});
 	it('refuses a History entry without a destination native mapping before creating a tab', async () => {

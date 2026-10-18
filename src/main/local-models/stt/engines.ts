@@ -33,7 +33,12 @@ export interface SpeechToTextEngine {
 	load(module: OnnxModule): Promise<void>;
 	unload(): Promise<void>;
 	/** Transcribe 16 kHz mono audio. Returns trimmed text, empty for nothing. */
-	transcribe(audio: Float32Array): Promise<string>;
+	transcribe(audio: Float32Array, options?: SpeechToTextDecodeOptions): Promise<string>;
+}
+
+export interface SpeechToTextDecodeOptions {
+	/** Literal vocabulary hints. Only a decoder with context support consumes them. */
+	vocabulary?: readonly string[];
 }
 
 interface SpeechToTextBinding {

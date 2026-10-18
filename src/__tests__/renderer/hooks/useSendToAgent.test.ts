@@ -9,6 +9,7 @@ import type { Session, AITab, LogEntry, ToolType } from '../../../renderer/types
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type { SendToAgentOptions } from '../../../renderer/components/SendToAgentModal';
 import { createMockAITab } from '../../helpers/mockTab';
+import { useOperationStore } from '../../../renderer/stores/operationStore';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
 
 // Mock the context grooming service
@@ -145,6 +146,7 @@ describe('useSendToAgent', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useOperationStore.getState().resetTransferState();
 
 		// Default mock for successful grooming
 		vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockResolvedValue({

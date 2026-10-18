@@ -721,7 +721,17 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		label: 'Voice',
 		description:
 			'Which voice the active text-to-speech provider speaks in, with a Preview button per voice so you can hear one before you pick it',
-		keywords: ['voice', 'preview', 'which voice', 'voices', 'speaker', 'accent', 'audition'],
+		keywords: [
+			'voice',
+			'preview',
+			'which voice',
+			'voices',
+			'speaker',
+			'accent',
+			'audition',
+			'refresh voices',
+			'voicestudio profiles',
+		],
 	},
 	{
 		id: 'encore-a-cappella-speed-volume',

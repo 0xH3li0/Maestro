@@ -104,6 +104,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
+- **Normalized edit similarity:** `normalizedEditSimilarity()` in `src/shared/stringUtils.ts`
+- **Preparing text for speech:** `prepareSpeechText()` in `src/shared/acappella/speech-text.ts`
+- **Speech recognition vocabulary:** `normalizeSpeechVocabulary()`, `buildSpeechVocabulary()` in `src/shared/acappella/speech-vocabulary.ts`; `correctSpeechVocabulary()` in `src/main/local-models/speech-vocabulary.ts`
 - **Matching error patterns against an agent's exit output:** `stripJsonEventLines()` in `src/shared/agentErrorPatterns.ts`
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen(raw)`, `capturedAlternateScreen(raw)` in `src/maestro-p/screen-replay.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()` in `src/main/utils/file-tree-walk.ts`, wrapped by `loadFileTree()` in `src/renderer/utils/fileExplorer.ts`
@@ -188,6 +191,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **SSH provider translation:** `createSshTranslationFs()` in `src/main/provider-translation-fs.ts`; `resolveSshTranslationHost()` in `src/main/provider-translation-ssh.ts`
 - **Codex translation import connection:** `openCodexTranslationConnection()` in `src/shared/maestro-lib/codex/connection.ts`
 - **Single-tab provider translation:** `planTabTranslation()` in `src/shared/maestro-lib/translation/registry.ts`, `applyTabTranslation()` in `src/shared/maestro-lib/translation/transaction.ts`, `commitTranslationSession()` and `translationSessionTabs()` in `src/shared/maestro-lib/translation/session.ts`
+- **Showing a committed provider translation:** `ContextTranslationRecord` in `src/shared/maestro-lib/translation/types.ts`; `<ContextTranslationCard>` in `src/renderer/components/ContextTranslationCard.tsx`
 - **Translating context before a send:** `prepareTabForSend()`, `pendingTranslationSource()`, `TranslationSendHeldError` in `src/shared/maestro-lib/translation/send.ts`; `NativeTranslationService` in `translation/service.ts`; `prepareProviderTranslationForSend()` in `src/renderer/services/providerTranslation.ts`
 - **Finding a Codex native transcript:** `findCodexSessionFile()`, `listCodexSessionFiles()`, `extractSessionIdFromFilename()` in `src/shared/maestro-lib/codex/session-files.ts`
 
@@ -201,6 +205,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
+- **Choosing a tab provider in the composer:** `useTabProviderChoice()` in `src/renderer/components/InputArea/hooks/useTabProviderChoice.ts`; `tabProviderSwitchProblem()` in `src/renderer/utils/providerAvailability.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
 - **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
@@ -519,6 +524,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which core sections an agent's system prompt carries (System One):** `coreSystemPromptSectionsFor()`, `coreSystemPromptContext()` in `src/shared/maestroSystemPrompt.ts`; `isSystemOneAdvertised()` in `src/shared/local-models/system-one-prompt.ts`
 - **Versioned schema migrations for a SQLite file:** `runSqliteMigrations(db, migrations, logContext)`, `sqliteUserVersion()` in `src/main/utils/sqlite-migrations.ts` (shared by `stats.db` and `embeddings.db`; never copy the runner)
 - **Writing the A Cappella settings blob from the renderer:** `patchVoiceSettingsSection(section, patch)`, `readVoiceSettingsBlob()`, `ACAPPELLA_SETTINGS_KEY` in `src/renderer/services/voiceSettings.ts`
+- **VoiceStudio source configuration:** `readVoiceStudioConfig()`, `voiceStudioConfigProblem()`, `normalizeVoiceStudioConfig()` in `src/shared/acappella/voice-studio.ts`; `VoiceStudioClient` in `src/main/acappella/providers/local/voice-studio-tts.ts`
 - **The voice send phrases (the spoken "send it"):** `DEFAULT_SEND_PHRASES`, `parseSendPhrases()`, `formatSendPhrases()`, `isLegacyDefaultSendPhrases()` in `src/shared/acappella/voice-controls.ts`; matched by `matchSendPhrase()` in `src/main/acappella/speech/send-phrase.ts`; edited in the HUD's send panel
 - **Which agent a voice session is bound to:** `voiceScopeAgentId(scope)` in `src/shared/acappella/document-scope.ts`, alongside `isDocumentScope()`, `documentScopeName()` and `applyDocumentScope()`
 - **Binding a voice session to Quick Chat (locked):** `QUICK_CHAT_VOICE_SCOPE`, `isQuickChatScope()`, `scopeRebindBlocker()` in `src/shared/acappella/quick-chat-scope.ts`; `dispatchToQuickChat()` in `src/main/acappella/dispatch/quick-chat-dispatch.ts`; `useQuickChatVoice()` in `src/renderer/hooks/voice/`

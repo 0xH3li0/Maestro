@@ -1077,9 +1077,7 @@ describe('useSessionLifecycle', () => {
 			expect(window.maestro.claude.updateSessionName).toHaveBeenCalledWith(
 				'/projects/myapp',
 				'agent-123',
-				'New Tab Name',
-				'claude-code',
-				'session-1'
+				'New Tab Name'
 			);
 			expect(window.maestro.history.updateSessionName).toHaveBeenCalledWith(
 				'agent-123',

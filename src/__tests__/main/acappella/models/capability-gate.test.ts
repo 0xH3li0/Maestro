@@ -157,6 +157,50 @@ const ALL_LOCAL = {
 };
 
 describe('capability-gate', () => {
+	it('checks the VoiceStudio service and selected profile before opening a session', async () => {
+		const ready = await resolveVoiceReadiness({
+			settings: { ...ALL_LOCAL, tts: 'voicestudio-tts', voiceId: 'Pedram VoxCPM2' },
+			readModelStatus: statusReader(),
+			readVoiceStudioStatus: async () => ({
+				connected: true,
+				profiles: [{ id: 'imported-id', name: 'Pedram VoxCPM2' }],
+			}),
+		});
+		expect(ready.slots.find(({ slot }) => slot === 'tts')?.satisfied).toBe(true);
+		const unavailable = await resolveVoiceReadiness({
+			settings: { ...ALL_LOCAL, tts: 'voicestudio-tts' },
+			readModelStatus: statusReader(),
+			readVoiceStudioStatus: async () => ({ connected: false, message: 'Service is offline.' }),
+		});
+		expect(unavailable.blocking).toContainEqual(
+			expect.objectContaining({
+				providerId: 'voicestudio-tts',
+				satisfied: false,
+				suggestedAction: expect.stringContaining('Sources'),
+			})
+		);
+	});
+	it('refuses a missing or ambiguous VoiceStudio profile without substituting another voice', async () => {
+		for (const profiles of [
+			[],
+			[
+				{ id: 'a', name: 'Pedram VoxCPM2' },
+				{ id: 'b', name: 'Pedram VoxCPM2' },
+			],
+		]) {
+			const readiness = await resolveVoiceReadiness({
+				settings: { ...ALL_LOCAL, tts: 'voicestudio-tts', voiceId: 'Pedram VoxCPM2' },
+				readModelStatus: statusReader(),
+				readVoiceStudioStatus: async () => ({ connected: true, profiles }),
+			});
+			expect(readiness.blocking).toContainEqual(
+				expect.objectContaining({
+					providerId: 'voicestudio-tts',
+					detail: expect.stringContaining('profile'),
+				})
+			);
+		}
+	});
 	describe('satisfied slots', () => {
 		it('is ready when every local model is installed', async () => {
 			const readiness = await resolveVoiceReadiness({

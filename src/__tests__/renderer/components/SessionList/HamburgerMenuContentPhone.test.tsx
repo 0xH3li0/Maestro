@@ -14,7 +14,6 @@ import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpo
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
-import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({

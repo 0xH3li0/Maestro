@@ -9,7 +9,7 @@
  * synchronously so every assertion is about the service's own sequencing.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/utils/logger', () => ({
@@ -42,6 +42,7 @@ import { captureException } from '../../../main/utils/sentry';
 import {
 	VoiceSessionService,
 	VoiceDispatchError,
+	VoiceDispatchBusyError,
 	type AgentReplyStream,
 	type VoiceDispatchResult,
 	type VoiceFocusTarget,
@@ -80,6 +81,7 @@ class FakeStt implements SttProvider {
 	readonly tier = 'mock' as const;
 	readonly sampleRate = 16_000;
 	readonly acceptsAudio = false;
+	setVocabulary = vi.fn();
 
 	callbacks: SttCallbacks | null = null;
 	started = false;
@@ -210,6 +212,7 @@ interface Harness {
 function makeHarness(
 	overrides: {
 		executeRoute?: VoiceRouteExecutor;
+		getForceSendAllowed?: () => boolean;
 		onSpeechChunk?: (chunk: TtsChunk) => void;
 		checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 		agentReplyStream?: AgentReplyStream;
@@ -220,6 +223,12 @@ function makeHarness(
 		getConversationalMode?: () => boolean;
 		/** Roster override, for the tests that need more than one agent running. */
 		getRoster?: () => RosterAgent[];
+		getVocabulary?: () => readonly string[];
+		refineTranscript?: (
+			text: string,
+			terms: readonly string[],
+			signal: AbortSignal
+		) => Promise<string>;
 	} = {}
 ): Harness {
 	const stt = new FakeStt();
@@ -238,7 +247,10 @@ function makeHarness(
 
 	const service = new VoiceSessionService({
 		providers,
+		getForceSendAllowed: overrides.getForceSendAllowed,
 		getRoster: overrides.getRoster ?? (() => makeRoster()),
+		getVocabulary: overrides.getVocabulary,
+		refineTranscript: overrides.refineTranscript,
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
 		checkReadiness: overrides.checkReadiness,
@@ -286,6 +298,43 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('speech vocabulary context', () => {
+	it('refreshes recognition hints from live names and configured vocabulary', async () => {
+		const roster = makeRoster();
+		const h = makeHarness({ getRoster: () => roster, getVocabulary: () => ['NorseStar'] });
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(h.stt.setVocabulary).toHaveBeenLastCalledWith(
+			expect.arrayContaining(['Backend', 'NorseStar', 'Maestro'])
+		);
+		roster[0].name = '🏢 Pedro Sidián';
+		await h.service.publishRoster();
+		expect(h.stt.setVocabulary).toHaveBeenLastCalledWith(expect.arrayContaining(['Pedro Sidián']));
+		await h.service.stopSession('user');
+	});
+	it('corrects finalized audio before routing and drops correction after session shutdown', async () => {
+		let resolve!: (value: string) => void;
+		const refine = vi.fn(
+			(_text: string, _terms: readonly string[], _signal: AbortSignal) =>
+				new Promise<string>((done) => {
+					resolve = done;
+				})
+		);
+		const h = makeHarness({
+			refineTranscript: refine,
+			getUtteranceComposerConfig: () => ({ settleMs: 0 }),
+		});
+		Object.defineProperty(h.stt, 'acceptsAudio', { value: true });
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.stt.callbacks?.onFinal('ask Pet Sidian', 0.95);
+		await vi.waitFor(() => expect(refine).toHaveBeenCalledTimes(1));
+		await h.service.stopSession('user');
+		resolve('ask Pedro Sidián');
+		await Promise.resolve();
+		expect(refine.mock.calls[0][2].aborted).toBe(true);
+		expect(h.types()).not.toContain('dispatch');
+	});
+});
 
 describe('VoiceSessionService document scope', () => {
 	/** Start a session pinned to a document in the roster's one agent. */
@@ -2489,5 +2538,158 @@ describe('VoiceSessionService background completions', () => {
 
 		expect(h.service.noteAgentCompletion(completion)).toBe(false);
 		expect(h.types()).toEqual([]);
+	});
+});
+
+describe('VoiceSessionService pending sends', () => {
+	let h: Harness;
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(async () => {
+		await h?.service.dispose();
+		vi.useRealTimers();
+	});
+
+	it('keeps listening, joins more context and sends the whole request once free', async () => {
+		let busy = true;
+		const execute = vi.fn<VoiceRouteExecutor>(async () => {
+			if (busy) throw new VoiceDispatchBusyError('agent-backend', 'tab-1');
+			return {
+				agentSessionId: 'agent-backend',
+				agentName: 'Backend',
+				tabId: 'tab-1',
+				action: 'focused',
+				promptSent: true,
+			};
+		});
+		h = makeHarness({ executeRoute: execute });
+		h.brain.decision.prompt = 'first request';
+		await start(h);
+		h.service.submitUtterance('first request');
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.service.getState()).toBe('listening');
+		expect(h.types()).not.toContain('session-error');
+		h.service.submitUtterance('include this context');
+		await vi.advanceTimersByTimeAsync(0);
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(h.service.getSnapshot().sendState?.pending[0].text).toBe(
+			'first request\n\ninclude this context'
+		);
+		busy = false;
+		await vi.advanceTimersByTimeAsync(750);
+		expect(execute).toHaveBeenCalledTimes(2);
+		expect(execute.mock.calls[1][0]).toMatchObject({
+			target: { sessionId: 'agent-backend' },
+			tabAction: 'recall',
+			tabId: 'tab-1',
+			prompt: 'first request\n\ninclude this context',
+		});
+		expect(h.service.getSendState().pending).toEqual([]);
+		expect(h.types().filter((type) => type === 'dispatch')).toHaveLength(1);
+	});
+
+	it('does not retry while speech is still being transcribed', async () => {
+		const execute = vi
+			.fn<VoiceRouteExecutor>()
+			.mockRejectedValue(new VoiceDispatchBusyError('agent-backend', 'tab-1'));
+		h = makeHarness({ executeRoute: execute });
+		await start(h);
+		h.service.submitUtterance('request');
+		await vi.advanceTimersByTimeAsync(0);
+		h.service.publishAudioLevel(0.5, true);
+		await vi.advanceTimersByTimeAsync(1500);
+		expect(execute).toHaveBeenCalledTimes(1);
+		h.service.publishAudioLevel(0, false);
+		h.stt.callbacks?.onFinal('the rest', 1);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.service.getSendState().pending[0].text).toContain('the rest');
+	});
+
+	it('keeps the original tab when the voice scope changes', async () => {
+		const execute = vi
+			.fn<VoiceRouteExecutor>()
+			.mockRejectedValueOnce(new VoiceDispatchBusyError('agent-backend', 'tab-1'))
+			.mockResolvedValue({
+				agentSessionId: 'agent-backend',
+				agentName: 'Backend',
+				tabId: 'tab-1',
+				action: 'focused',
+				promptSent: true,
+			});
+		h = makeHarness({ executeRoute: execute });
+		await start(h);
+		h.service.submitUtterance('request');
+		await vi.advanceTimersByTimeAsync(0);
+		h.service.setScope({ kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-other' });
+		await vi.advanceTimersByTimeAsync(750);
+		expect(execute.mock.calls[1][0]).toMatchObject({
+			target: { sessionId: 'agent-backend' },
+			tabId: 'tab-1',
+		});
+	});
+
+	it('gates Force Send on Settings and immediately retries an enabled pending send', async () => {
+		let allowed = false;
+		const execute = vi.fn<VoiceRouteExecutor>(async (_decision, context) => {
+			if (!context.force) throw new VoiceDispatchBusyError('agent-backend', 'tab-1');
+			return {
+				agentSessionId: 'agent-backend',
+				agentName: 'Backend',
+				tabId: 'tab-1',
+				action: 'focused',
+				promptSent: true,
+			};
+		});
+		h = makeHarness({ executeRoute: execute, getForceSendAllowed: () => allowed });
+		await start(h);
+		expect(h.service.setForceSend(true)).toBe(false);
+		h.service.submitUtterance('request');
+		await vi.advanceTimersByTimeAsync(0);
+		allowed = true;
+		expect(h.service.setForceSend(true)).toBe(true);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(execute.mock.calls[1][1].force).toBe(true);
+		expect(h.service.getSendState().pending).toEqual([]);
+		// Audio callbacks also accept another request while an earlier reply is pending.
+		h.stt.callbacks?.onFinal('next request', 1);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(execute).toHaveBeenCalledTimes(3);
+		expect(execute.mock.calls[2][1].force).toBe(true);
+		allowed = false;
+		h.service.submitUtterance('do not force this');
+		await vi.advanceTimersByTimeAsync(0);
+		expect(execute.mock.calls[3][1].force).toBeUndefined();
+	});
+
+	it('cancels pending delivery and the toggle when the session closes', async () => {
+		const execute = vi
+			.fn<VoiceRouteExecutor>()
+			.mockRejectedValue(new VoiceDispatchBusyError('agent-backend', 'tab-1'));
+		h = makeHarness({ executeRoute: execute, getForceSendAllowed: () => true });
+		await start(h);
+		h.service.submitUtterance('request');
+		await vi.advanceTimersByTimeAsync(0);
+		h.service.setForceSend(true);
+		await h.service.stopSession('user');
+		await vi.advanceTimersByTimeAsync(1500);
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(h.service.getSendState()).toEqual({ forceSend: false, pending: [] });
+	});
+
+	it('ignores a busy receipt that arrives after the session has stopped', async () => {
+		const gate = deferred();
+		h = makeHarness({
+			executeRoute: async () => {
+				await gate.promise;
+				throw new VoiceDispatchBusyError('agent-backend', 'tab-1');
+			},
+		});
+		await start(h);
+		h.service.submitUtterance('request');
+		await vi.advanceTimersByTimeAsync(0);
+		await h.service.stopSession('user');
+		gate.resolve();
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(h.service.getState()).toBe('idle');
+		expect(h.service.getSendState().pending).toEqual([]);
 	});
 });

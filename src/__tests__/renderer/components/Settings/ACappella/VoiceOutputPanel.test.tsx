@@ -59,6 +59,28 @@ describe('VoiceOutputPanel', () => {
 		await waitFor(() => expect(voice().previewVoice).toHaveBeenCalledWith(PREVIEW_LINE, 'am_puck'));
 	});
 
+	it('refreshes VoiceStudio profiles after the source becomes available', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			providers: { tts: 'voicestudio-tts' },
+		});
+		vi.mocked(voice().listVoices).mockRejectedValue(new Error('offline'));
+		render(<VoiceOutputPanel theme={mockTheme} enabled />);
+		await screen.findByText(/Could not load voices/);
+		expect(
+			screen.queryByText('This engine has one voice. Nothing to choose between.')
+		).not.toBeInTheDocument();
+		vi.mocked(voice().listVoices).mockResolvedValue([
+			{ id: 'Pedram VoxCPM2', name: 'Pedram VoxCPM2' },
+		]);
+		fireEvent.click(screen.getByTestId('voice-refresh-voices'));
+		const radio = await screen.findByRole('radio', { name: 'Pedram VoxCPM2' });
+		expect(radio.id).not.toContain(' ');
+		fireEvent.click(screen.getByTestId('voice-preview-Pedram VoxCPM2'));
+		await waitFor(() =>
+			expect(voice().previewVoice).toHaveBeenCalledWith(PREVIEW_LINE, 'Pedram VoxCPM2')
+		);
+	});
+
 	it('previews one fixed line so two voices can be compared on the same words', async () => {
 		render(<VoiceOutputPanel theme={mockTheme} enabled />);
 

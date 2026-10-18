@@ -102,6 +102,7 @@ export function credentialLabel(service: VoiceCredentialService): string {
 export type VoiceProviderRequirement =
 	| { readonly kind: 'none' }
 	| { readonly kind: 'system-voice' }
+	| { readonly kind: 'voice-studio' }
 	| { readonly kind: 'model'; readonly modelId: string; readonly runtimeId: NativeRuntimeId }
 	| { readonly kind: 'api-key'; readonly service: VoiceCredentialService }
 	/**
@@ -159,6 +160,8 @@ export const WHISPER_STT_PROVIDER_ID = 'whisper-local';
  * true on every desktop Maestro ships on.
  */
 export const SYSTEM_TTS_PROVIDER_ID = 'system-tts';
+
+export const VOICE_STUDIO_TTS_PROVIDER_ID = 'voicestudio-tts';
 
 /**
  * Kokoro, the downloadable neural voice. It takes phoneme ids, so it speaks
@@ -369,6 +372,17 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		egressService: null,
 		description:
 			'A neural voice that runs on this machine, in American English. A 326 MB download; nothing leaves this machine.',
+	}),
+	defineProvider({
+		id: VOICE_STUDIO_TTS_PROVIDER_ID,
+		role: 'tts',
+		label: 'VoiceStudio (local voices)',
+		tier: 'local',
+		requires: { kind: 'voice-studio' },
+		egress: 'none',
+		egressService: null,
+		description:
+			'Speaks with your cloned voices through the local VoiceStudio source in Settings > Models > Sources.',
 	}),
 	defineProvider({
 		id: OPENAI_TTS_PROVIDER_ID,

@@ -190,6 +190,47 @@ describe('endpoint-client', () => {
 			expect((await pending).kind).toBe('cancelled');
 		});
 
+		it.each([200, 503])(
+			'times out a stalled response body after HTTP %s headers',
+			async (status) => {
+				globalThis.fetch = vi.fn(async (_url: string, init: RequestInit = {}) => ({
+					ok: status === 200,
+					status,
+					text: () =>
+						new Promise<string>((_resolve, reject) => {
+							init.signal?.addEventListener('abort', () => {
+								// Fetch body reads can report AbortError even for a timeout.
+								reject(new DOMException('Body aborted', 'AbortError'));
+							});
+						}),
+				})) as unknown as typeof fetch;
+
+				const error = await rejection(listEndpointModels(endpoint('ollama'), { timeoutMs: 20 }));
+
+				expect(error.kind).toBe('timeout');
+				expect(error.message).toContain('/api/tags');
+			}
+		);
+
+		it('classifies cancellation during a response body read as cancelled', async () => {
+			const controller = new AbortController();
+			globalThis.fetch = vi.fn(async (_url: string, init: RequestInit = {}) => ({
+				ok: true,
+				status: 200,
+				text: () =>
+					new Promise<string>((_resolve, reject) => {
+						init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+						controller.abort();
+					}),
+			})) as unknown as typeof fetch;
+
+			const error = await rejection(
+				listEndpointModels(endpoint('ollama'), { signal: controller.signal })
+			);
+
+			expect(error.kind).toBe('cancelled');
+		});
+
 		it('classifies a refused connection as network', async () => {
 			globalThis.fetch = vi.fn(async () => {
 				throw new TypeError('fetch failed');
@@ -576,12 +617,12 @@ describe('endpoint-client', () => {
 	});
 
 	describe('testEndpoint', () => {
-		it('sends a one-token chat to the first listed model and reports latency', async () => {
+		it('probes Ollama with a small native context instead of its server-wide default', async () => {
 			const mock = routeFetch({
 				'/api/tags': jsonResponse(200, { models: [{ name: 'llama3.2:3b' }, { name: 'phi' }] }),
-				'/v1/chat/completions': jsonResponse(200, {
+				'/api/chat': jsonResponse(200, {
 					model: 'llama3.2:3b',
-					choices: [{ message: { content: 'OK' } }],
+					message: { content: 'OK' },
 				}),
 			});
 
@@ -593,10 +634,28 @@ describe('endpoint-client', () => {
 				latencyMs: expect.any(Number),
 				modelCount: 2,
 			});
-			expect(requestBody(mock, 1)).toMatchObject({
+			expect(mock).toHaveBeenCalledTimes(2);
+			expect(requestBody(mock, 1)).toEqual({
 				model: 'llama3.2:3b',
-				max_tokens: 1,
-				temperature: 0,
+				messages: [{ role: 'user', content: 'Reply with OK.' }],
+				stream: false,
+				think: false,
+				options: { num_predict: 1, temperature: 0, num_ctx: 2048 },
+			});
+		});
+
+		it('probes a named Ollama model without listing or using the compatibility route', async () => {
+			const mock = routeFetch({
+				'/api/chat': jsonResponse(200, { model: 'phi3:instruct', message: { content: 'OK' } }),
+			});
+
+			const result = await testEndpoint(endpoint('ollama'), { model: 'phi3:instruct' });
+
+			expect(result).toEqual({ ok: true, model: 'phi3:instruct', latencyMs: expect.any(Number) });
+			expect(mock).toHaveBeenCalledTimes(1);
+			expect(requestBody(mock, 0)).toMatchObject({
+				model: 'phi3:instruct',
+				options: { num_ctx: 2048, num_predict: 1 },
 			});
 		});
 
@@ -612,6 +671,11 @@ describe('endpoint-client', () => {
 
 			expect(result).toEqual({ ok: true, model: 'gpt-x', latencyMs: expect.any(Number) });
 			expect(mock).toHaveBeenCalledTimes(1);
+			expect(requestBody(mock, 0)).toMatchObject({
+				max_tokens: 1,
+			});
+			expect(requestBody(mock, 0)).not.toHaveProperty('chat_template_kwargs');
+			expect(requestBody(mock, 0)).not.toHaveProperty('options');
 		});
 
 		it('reports a server with no models as no-models instead of guessing one', async () => {
@@ -676,6 +740,7 @@ describe('endpointTranscribe', () => {
 			model: 'whisper-1',
 			wav: WAV,
 			language: 'en',
+			prompt: 'Pedro Sidián, Maestro',
 		});
 
 		// Raw: sanitizing is the speech-to-text service's job, not the transport's.
@@ -684,6 +749,7 @@ describe('endpointTranscribe', () => {
 		expect(form.get('model')).toBe('whisper-1');
 		expect(form.get('response_format')).toBe('json');
 		expect(form.get('language')).toBe('en');
+		expect(form.get('prompt')).toBe('Pedro Sidián, Maestro');
 		const file = form.get('file') as File;
 		expect(file.name).toBe('clip.wav');
 		expect(file.type).toBe('audio/wav');

@@ -72,6 +72,7 @@ describe('CLI names for the library bridge connection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		vi.mocked(isCliServerRunning).mockReturnValue(true);
 	});
 	it('MaestroClient and withMaestroClient are the library connection and helper', () => {
 		expect(MaestroClient).toBe(BridgeConnection);
@@ -106,7 +107,10 @@ describe('CLI names for the library bridge connection', () => {
 			vi.mocked(isCliServerRunning).mockReturnValue(true);
 			const client = new MaestroClient();
 			const connecting = client.connect();
-			mockWsInstance.emit('error', new Error('Connection refused'));
+			mockWsInstance.emit(
+				'error',
+				Object.assign(new Error('Connection refused'), { code: 'ECONNREFUSED' })
+			);
 			await expect(connecting).rejects.toBeInstanceOf(MaestroNotRunningError);
 		});
 
@@ -120,7 +124,7 @@ describe('CLI names for the library bridge connection', () => {
 			vi.mocked(isCliServerRunning).mockReturnValue(false);
 
 			const client = new MaestroClient();
-			await expect(client.connect()).rejects.toThrow('Maestro discovery file is stale');
+			await expect(client.connect()).rejects.toMatchObject({ reason: 'stale-discovery-file' });
 		});
 
 		it('should connect successfully when server is running', async () => {
@@ -179,7 +183,7 @@ describe('CLI names for the library bridge connection', () => {
 			// Advance past timeout
 			vi.advanceTimersByTime(5001);
 
-			await expect(connectPromise).rejects.toThrow('Connection to Maestro timed out');
+			await expect(connectPromise).rejects.toMatchObject({ reason: 'connect-timeout' });
 		});
 	});
 

@@ -61,8 +61,7 @@ function groupEntry(): SnoozedTabEntry {
 }
 
 beforeEach(() => {
-	snapshot().mockClear();
-	release().mockClear();
+	vi.clearAllMocks();
 });
 
 describe('mirrorSnoozedTranscript', () => {

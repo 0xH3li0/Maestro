@@ -56,10 +56,14 @@ import type {
 	SttProvider,
 } from '../../../../shared/acappella/providers';
 import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
+import { normalizeSpeechVocabulary } from '../../../../shared/acappella/speech-vocabulary';
 import { isLocalModelError } from '../../../local-models/errors';
 import type { OnnxModule } from '../../../local-models/runtime/onnx-types';
 import { getSpeechToTextPool, type SpeechToTextPool } from '../../../local-models/speech-to-text';
-import type { SpeechToTextEngine } from '../../../local-models/stt/engines';
+import type {
+	SpeechToTextEngine,
+	SpeechToTextDecodeOptions,
+} from '../../../local-models/stt/engines';
 import { sanitizeTranscript } from '../../../local-models/stt/transcript';
 import { logger } from '../../../utils/logger';
 import { PcmBuffer } from '../pcm';
@@ -122,7 +126,7 @@ export interface ChunkedLocalSttOptions {
 
 /** The recogniser a session is holding: transcribe, and give it back. */
 interface HeldRecogniser {
-	transcribe(audio: Float32Array): Promise<string>;
+	transcribe(audio: Float32Array, options?: SpeechToTextDecodeOptions): Promise<string>;
 	release(): Promise<void>;
 }
 
@@ -151,6 +155,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	private readonly injectedEngine?: LocalSttEngine;
 
 	private callbacks: SttCallbacks | null = null;
+	private vocabulary: string[] = [];
 	private engine: HeldRecogniser | null = null;
 	private buffer = new PcmBuffer();
 
@@ -180,6 +185,10 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 			: await this.openShared();
 		this.callbacks = callbacks;
 		this.resetUtterance();
+	}
+
+	setVocabulary(terms: readonly string[]): void {
+		this.vocabulary = normalizeSpeechVocabulary(terms);
 	}
 
 	feed(pcm: Int16Array, hint?: SttFeedHint): void {
@@ -273,7 +282,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		const module = await this.loadRuntime<OnnxModule>('onnx', this.id);
 		await engine.load(module);
 		return {
-			transcribe: (audio) => engine.transcribe(audio),
+			transcribe: (audio, options) => engine.transcribe(audio, options),
 			release: () => engine.unload(),
 		};
 	}
@@ -301,7 +310,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 					? samples.subarray(samples.length - this.maxSamples)
 					: samples;
 			const decodeStartedAt = Date.now();
-			const raw = await engine.transcribe(windowed);
+			const raw = await engine.transcribe(windowed, { vocabulary: this.vocabulary });
 			const text = sanitizeTranscript(raw);
 			if (kind === 'final') {
 				// One line per utterance: the decode time is the recogniser's share of

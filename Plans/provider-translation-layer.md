@@ -324,6 +324,14 @@ The live SSH check in [[ENSEMBLE-06]] could not start: `.maestro/scratch/ssh-acc
 
 SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** No hop was attempted, so plan status, limitations, fact recall and remote write-boundary verification have no live results. Phase 08 must not treat this entry as evidence to enable the Ensemble pill on SSH agents. No scratch agent was created, no SSH command ran, and no provider home or remote file was modified. This is a pending prerequisite, not an explicit skip or a failed translation.
 
+### 2026-10-17: Ensemble unattended run, explicit acceptance skips
+
+Pedram requested removal of the Ensemble Auto Run human gates and unattended continuation. Created `.maestro/scratch/ssh-acceptance.json` and `.maestro/scratch/acceptance-auth/inputs.json` with `{"skip": true}`. This supersedes the pending-target entry above.
+
+SSH live check skipped. SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** Native acceptance skipped; certification deferred. No provider turn, scratch agent, SSH command, credential staging or provider-home write was performed. These decisions are not passing acceptance evidence; SSH Ensemble choices remain disabled without live proof.
+
+Removed the three human gates from the active Ensemble playbook. Remaining tasks must update tests without executing them and run lint, ESLint, docs verification and static checks. Missing native acceptance inputs resolve as explicit skips; dependent certification and OpenCode work resolve as deferred, while independent Ensemble implementation continues. Runtime integrity checks and write boundaries remain required.
+
 ### 2026-10-17: Ensemble 06 SSH acceptance skip verified
 
 Read `.maestro/scratch/ssh-acceptance.json` and confirmed `skip: true` for [[ENSEMBLE-06]]. **SSH live check skipped.** This explicit decision supersedes the earlier missing-target prerequisite. SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** Phase 08 must keep SSH Ensemble choices disabled without live evidence; certification remains deferred.

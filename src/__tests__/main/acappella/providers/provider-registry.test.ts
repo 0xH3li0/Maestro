@@ -200,6 +200,7 @@ import {
 	swapVoicePipeline,
 } from '../../../../main/acappella/providers/provider-registry';
 import { unresolvedProviderId } from '../../../../main/acappella/providers/unresolved';
+import { DEFAULT_VOICE_STUDIO_CONFIG } from '../../../../shared/acappella/voice-studio';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
 import {
 	DEFAULT_SEND_HOLD_MS,
@@ -530,6 +531,33 @@ describe('provider registry', () => {
 
 	// -- Settings ------------------------------------------------------------
 
+	it('constructs the native VoiceStudio provider without making a request', () => {
+		const resolution = resolveVoicePipeline({
+			settings: { tts: 'voicestudio-tts', voiceStudio: DEFAULT_VOICE_STUDIO_CONFIG },
+		});
+		expect(resolution.providers.tts.id).toBe('voicestudio-tts');
+		expect(resolution.substitutions).toEqual([]);
+	});
+	it('rebuilds VoiceStudio when its source configuration changes', () => {
+		const settings = { tts: 'voicestudio-tts', voiceStudio: DEFAULT_VOICE_STUDIO_CONFIG };
+		for (const patch of [
+			{ engine: 'omnivoice' },
+			{ seed: 2 },
+			{ baseUrl: 'http://127.0.0.1:3901' },
+		]) {
+			expect(
+				pipelineKey({ ...settings, voiceStudio: { ...DEFAULT_VOICE_STUDIO_CONFIG, ...patch } })
+			).not.toBe(pipelineKey(settings));
+		}
+	});
+
+	it('reads custom recognition vocabulary as literal names without emoji or duplicates', () => {
+		const store = {
+			get: () => ({ providers: { vocabulary: ['🏢 Pedro Sidián', 'Maestro', 'maestro', 42] } }),
+		};
+		expect(readVoiceProviderSettings(store).vocabulary).toEqual(['Pedro Sidián', 'Maestro']);
+	});
+
 	it('reads provider ids out of settings and ignores malformed values', () => {
 		const store = {
 			get: () => ({
@@ -540,6 +568,8 @@ describe('provider registry', () => {
 		};
 
 		expect(readVoiceProviderSettings(store)).toEqual({
+			voiceStudio: DEFAULT_VOICE_STUDIO_CONFIG,
+			vocabulary: [],
 			stt: 'whisper-local',
 			tts: undefined,
 			brain: undefined,
@@ -574,6 +604,8 @@ describe('provider registry', () => {
 		const store = { get: (_key: string, defaultValue: unknown) => defaultValue };
 
 		expect(readVoiceProviderSettings(store)).toEqual({
+			voiceStudio: DEFAULT_VOICE_STUDIO_CONFIG,
+			vocabulary: [],
 			stt: undefined,
 			tts: undefined,
 			brain: undefined,

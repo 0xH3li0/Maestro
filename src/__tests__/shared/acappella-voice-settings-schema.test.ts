@@ -37,7 +37,24 @@ import {
 import { DEFAULT_STUN_URLS } from '../../shared/acappella/webrtc-host';
 
 describe('voiceSettingProblem', () => {
+	it('validates the VoiceStudio source for CLI field, section and whole-blob writes', () => {
+		expect(
+			voiceSettingProblem('voiceStudio', {
+				baseUrl: 'http://127.0.0.1:3900',
+				engine: 'voxcpm2',
+				seed: 11,
+			})
+		).toBeNull();
+		expect(voiceSettingProblem('voiceStudio.baseUrl', 'https://example.com')).toContain(
+			'this computer'
+		);
+		expect(voiceSettingProblem('voiceStudio.seed', 1.5)).toContain('whole number');
+		expect(voiceSettingProblem('', { voiceStudio: { seed: 1.5 } })).toContain('whole number');
+		expect(voiceSettingProblem('voiceStudio.engine', '../engine')).not.toBeNull();
+	});
 	it('accepts a value inside a field its bounds', () => {
+		expect(voiceSettingProblem('providers.vocabulary', ['Pedro Sidián', 'NorseStar'])).toBeNull();
+		expect(voiceSettingProblem('providers.vocabulary', ['Pedro Sidián', 42])).not.toBeNull();
 		expect(voiceSettingProblem('controls.turnSettleMs', DEFAULT_TURN_SETTLE_MS)).toBeNull();
 		expect(voiceSettingProblem('controls.wakeWordEnabled', true)).toBeNull();
 		expect(voiceSettingProblem('controls.wakePhrase', 'hey scout')).toBeNull();

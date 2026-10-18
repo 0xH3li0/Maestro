@@ -284,21 +284,25 @@ describe('LocalModelsModelsSection', () => {
 		const lines: HTMLElement[] = [];
 		for (const label of ['Agent Models', 'Housekeeping', 'Speech', 'Search & Safety']) {
 			openSection(label);
-			lines.push(...screen.getAllByTestId(/^local-model-fit-/));
+			const visibleLines = screen.getAllByTestId(/^local-model-fit-/);
+			lines.push(...visibleLines);
+			const fits = screen.queryByTestId(`local-model-fit-${QWEN3_5_9B_ID}`);
+			if (fits) {
+				expect(fits).toHaveAttribute('data-fit', 'fits');
+				expect(within(fits).getByText('Fits on this computer')).toBeVisible();
+				expect(within(fits).getByText(/^Needs /)).toBeVisible();
+			}
+			for (const line of visibleLines.filter((line) => line.getAttribute('data-fit') === 'tight')) {
+				expect(within(line).getByText('Tight on this computer')).toBeVisible();
+				expect(within(line).getByText(/^Needs /)).toBeVisible();
+			}
 		}
 		expect(lines).toHaveLength(LOCAL_MODEL_CATALOG.length);
-		const fits = lines.find((line) => line.dataset.testid === `local-model-fit-${QWEN3_5_9B_ID}`);
-		expect(fits).toHaveAttribute('data-fit', 'fits');
-		expect(within(fits!).getByText('Fits on this computer')).toBeVisible();
-		expect(within(fits!).getByText(/^Needs /)).toBeVisible();
+		expect(lines.map((line) => line.dataset.testid)).toContain(`local-model-fit-${QWEN3_5_9B_ID}`);
 		// The screenshot's small embedding model gets the same treatment.
 		const embedding = screen.getByTestId(`local-model-fit-${BGE_SMALL_EN_ID}`);
 		expect(within(embedding).getByText('Fits on this computer')).toBeVisible();
 		expect(within(embedding).getByText(/runs on the CPU/)).toBeVisible();
-		for (const line of lines.filter((line) => line.getAttribute('data-fit') === 'tight')) {
-			expect(within(line).getByText('Tight on this computer')).toBeVisible();
-			expect(within(line).getByText(/^Needs /)).toBeVisible();
-		}
 	});
 
 	it('hides models too large for this machine behind a toggle', async () => {

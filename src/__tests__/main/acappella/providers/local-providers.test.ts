@@ -103,6 +103,18 @@ function frame(): Int16Array {
 // ---------------------------------------------------------------------------
 
 describe('WhisperSttProvider', () => {
+	it('passes live vocabulary per decode through the shared lease', async () => {
+		const { pool, engine } = sharedPool();
+		const provider = new WhisperSttProvider({ pool, partialIntervalMs: 0 });
+		await provider.start(recorder().callbacks);
+		provider.setVocabulary(['🏢 Pedro Sidián']);
+		provider.feed(new Int16Array(16000).fill(1000));
+		await provider.flush();
+		expect(engine.transcribe).toHaveBeenCalledWith(expect.any(Float32Array), {
+			vocabulary: ['Pedro Sidián'],
+		});
+		await provider.stop();
+	});
 	/**
 	 * A stand-in for the ONNX engine.
 	 *

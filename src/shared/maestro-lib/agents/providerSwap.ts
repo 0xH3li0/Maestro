@@ -179,7 +179,7 @@ export function resolveTabProvider(
 	tab: Pick<ProviderSwitchTab, 'tabProvider'> | undefined,
 	agent: Pick<ProviderSwitchAgent, 'toolType'>
 ): ToolType {
-	return tab?.tabProvider ?? agent.toolType;
+	return tab?.tabProvider ?? agent.toolType ?? 'claude-code';
 }
 
 /** Native transcript owner, including the latest source awaiting translation. */
@@ -319,7 +319,7 @@ export function providerOverridesFor(
 	agent: ProviderSwitchAgent,
 	provider: ToolType
 ): ProviderAgentOverrides {
-	if (provider === agent.toolType) return liveProviderOverrides(agent);
+	if (provider === resolveTabProvider(undefined, agent)) return liveProviderOverrides(agent);
 	return { ...agent.providerOverrides?.[provider] };
 }
 
@@ -337,7 +337,7 @@ export function projectTabProvider<
 		provider
 	);
 	const cleared = Object.fromEntries(PROVIDER_OVERRIDE_KEYS.map((key) => [key, undefined]));
-	const foreign = provider !== agent.toolType;
+	const foreign = provider !== resolveTabProvider(undefined, agent);
 	const projectedTab = tab
 		? { ...switchTabProvider(tab, resolveTabProvider(tab, agent), provider), tabProvider: provider }
 		: undefined;

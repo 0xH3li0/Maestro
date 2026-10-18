@@ -607,7 +607,10 @@ describe('Ensemble steering attribution', () => {
 		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
 		useSessionStore.setState({ sessions: [session] });
 		steer.mockResolvedValue({ type: 'steering', id: 'ensemble-steer', verdict: 'delivered' });
-		await steerQueuedItem('sess-1', 'item-a');
+		expect(await steerQueuedItem('sess-1', 'item-a')).toEqual({
+			outcome: 'delivered',
+			verdict: 'delivered',
+		});
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringContaining('Claude Code has your message') })
 		);

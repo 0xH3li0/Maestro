@@ -28,7 +28,7 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 export const ACAPPELLA_SETTINGS_KEY = 'acappella';
 
 /** The sections a renderer surface patches field by field. */
-export type VoiceSettingsSection = 'ui' | 'controls';
+export type VoiceSettingsSection = 'ui' | 'controls' | 'voiceStudio';
 
 export interface VoiceSettingsBlob {
 	ui?: Record<string, unknown>;

@@ -26,6 +26,7 @@ import type {
 	VoiceOrigin,
 	VoiceScope,
 	VoiceWindowId,
+	VoiceSendState,
 } from '../../shared/acappella/protocol';
 import type { VoiceProviderSubstitution } from '../../shared/acappella/providers';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
@@ -114,6 +115,7 @@ export interface VoiceSnapshotLike {
 	windowId?: VoiceWindowId;
 	/** Whether the microphone is gated shut. Optional for the same reason. */
 	listenPaused?: boolean;
+	sendState?: VoiceSendState;
 }
 
 interface VoiceSessionStoreState {
@@ -162,6 +164,7 @@ interface VoiceSessionStoreState {
 	 * the settle window). `settlesAt` is epoch ms; the HUD counts down to it and
 	 * says how to send now, so a held request never reads as a dead session.
 	 */
+	sendState: VoiceSendState;
 	heldUtterance: { settlesAt: number; sendPhrases: string[] } | null;
 	/** The last settled utterance. */
 	utterance: string | null;
@@ -274,6 +277,7 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	substitutions: [],
 	partialTranscript: '',
 	heldUtterance: null,
+	sendState: { forceSend: false, pending: [] },
 	utterance: null,
 	decision: null,
 	lastDispatch: null,
@@ -302,6 +306,7 @@ function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> 
 		lostEvents: false,
 		partialTranscript: '',
 		heldUtterance: null,
+		sendState: { forceSend: false, pending: [] },
 		utterance: null,
 		decision: null,
 		lastDispatch: null,
@@ -417,6 +422,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// else (endpoint, interrupted) is mid-conversation and the state
 					// belongs to whichever event comes next.
 					if (event.reason === 'stopped') {
+						patch.sendState = { forceSend: false, pending: [] };
 						patch.state = 'idle';
 						// The gate belongs to the session that just ended.
 						patch.listenPaused = false;
@@ -518,6 +524,9 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 						recoverable: event.recoverable,
 					};
 					break;
+				case 'send-state':
+					patch.sendState = { forceSend: event.forceSend, pending: event.pending };
+					break;
 				case 'agent-roster':
 					patch.roster = event.agents;
 					break;
@@ -589,6 +598,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				state: snapshot.state,
 				scope: snapshot.scope,
 				listenPaused: snapshot.listenPaused === true,
+				sendState: snapshot.sendState ?? { forceSend: false, pending: [] },
 				surfaced: prev.surfaced || isVoiceSessionActive(snapshot.state),
 				windowId: snapshot.windowId ?? null,
 				// Adopt the snapshot's seq as the baseline: a client that joins

@@ -24,7 +24,7 @@ import {
 	splitCompleteSentences,
 	splitIntoSpokenSentences,
 } from '../../../shared/acappella/sentences';
-import { stripMarkdown } from '../../../shared/markdown';
+import { prepareSpeechText } from '../../../shared/acappella/speech-text';
 import type { AgentOutputChunk } from './agent-output-tap';
 
 /** Spoken budget per rewritten chunk. Two sentences and an offer of detail. */
@@ -151,7 +151,10 @@ export class ConversationalTranslator {
 		// a round trip and a chance of the failure being softened into ambiguity.
 		if (request.kind === 'status' || this.isAlreadyConversational(source)) {
 			this.passthroughs += 1;
-			for (const sentence of splitIntoSpokenSentences(source).slice(0, this.maxSentences)) {
+			for (const sentence of splitIntoSpokenSentences(prepareSpeechText(source))
+				.map(prepareSpeechText)
+				.filter(Boolean)
+				.slice(0, this.maxSentences)) {
 				if (request.signal?.aborted) return;
 				yield sentence;
 			}
@@ -174,7 +177,7 @@ export class ConversationalTranslator {
 			// Enforced here rather than trusted from the model: every backend is asked
 			// for plain speech and every backend eventually returns a bullet anyway,
 			// and an asterisk read aloud is the one defect nobody forgives.
-			const sentence = stripMarkdown(raw).replace(/\s+/g, ' ').trim();
+			const sentence = prepareSpeechText(raw);
 			if (!sentence) continue;
 			last = sentence;
 			yield sentence;
