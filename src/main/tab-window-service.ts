@@ -26,6 +26,7 @@ import {
 	isTabWindowIntent,
 	isTabWindowSessionPatch,
 	type TabWindowDockResult,
+	type TabWindowFocusResult,
 	type TabWindowInfo,
 	type TabWindowPopOutOptions,
 	type TabWindowPopOutResult,
@@ -129,6 +130,31 @@ export function dockTab(
 		return { docked: false, error: "The tab is not in the agent's tab window" };
 	}
 	return { docked: true, windowId: entry.id };
+}
+
+/**
+ * Show a popped tab in its agent's tab window and raise that window. This is
+ * the redirect behind every owner-side navigation that names a popped tab (a
+ * toast click, a starred row, `focus-agent --tab`, D4).
+ */
+export function focusTabWindowTab(
+	registry: WindowRegistry,
+	agentId: unknown,
+	tabRef: unknown
+): TabWindowFocusResult {
+	if (typeof agentId !== 'string' || agentId.length === 0) {
+		return { focused: false, error: 'An agent id is required' };
+	}
+	if (!isSingleTabRef(tabRef)) {
+		return { focused: false, error: 'A tab ref ({ type, id }) of one tab is required' };
+	}
+	const entry = registry.getTabWindowForAgent(agentId);
+	if (!entry) return { focused: false, error: 'The agent has no tab window' };
+	if (!registry.setTabWindowActiveTab(entry.id, tabRef)) {
+		return { focused: false, error: "The tab is not in the agent's tab window" };
+	}
+	summonAppWindow(entry.browserWindow);
+	return { focused: true, windowId: entry.id };
 }
 
 /** Every tab window, in the order they were opened. */

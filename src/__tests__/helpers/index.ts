@@ -30,3 +30,4 @@ export { markdownEditorModuleMock } from './mockMarkdownEditor';
 // (`main/cue/cue-history-query.test.ts`) imports `./nodeSqlite` directly and
 // declares `@vitest-environment node`. Keep it that way.
 export { setCoarsePointer, restorePointer } from './mockPointer';
+export { clearTabWindowStore, installTabWindowsApi, popOutTabsInStore } from './tabWindows';

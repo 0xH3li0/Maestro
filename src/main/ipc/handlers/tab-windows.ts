@@ -1,8 +1,8 @@
 /**
  * Tab Windows IPC Handlers
  *
- * The `tabWindows:*` request channels (pop out, dock, list, the calling tab
- * window's state) and the two fire-and-forget relay channels between an
+ * The `tabWindows:*` request channels (pop out, dock, focus, list, the calling
+ * tab window's state) and the two fire-and-forget relay channels between an
  * agent's owner window and its tab window. A thin transport over
  * `src/main/tab-window-service.ts`, which holds the logic so the CLI path runs
  * the same code.
@@ -18,6 +18,7 @@ import type { WindowManager } from '../../app-lifecycle/window-manager';
 import type { SessionsData } from '../../stores/types';
 import {
 	dockTab,
+	focusTabWindowTab,
 	isStoredAiTabHidden,
 	listTabWindows,
 	popOutTab,
@@ -31,6 +32,7 @@ import { resolveCallingWindow } from './windows';
 import {
 	TAB_WINDOW_CHANNELS,
 	type TabWindowDockResult,
+	type TabWindowFocusResult,
 	type TabWindowInfo,
 	type TabWindowPopOutOptions,
 	type TabWindowPopOutResult,
@@ -94,6 +96,18 @@ export function registerTabWindowsHandlers(deps: TabWindowsHandlerDependencies):
 			async (agentId: string, tabRef: unknown): Promise<TabWindowDockResult> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
 				return dockTab(registry, agentId, tabRef);
+			}
+		)
+	);
+
+	// Show a popped tab in its tab window and raise it (owner-side redirect, D4).
+	ipcMain.handle(
+		TAB_WINDOW_CHANNELS.focus,
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'focus' },
+			async (agentId: string, tabRef: unknown): Promise<TabWindowFocusResult> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				return focusTabWindowTab(registry, agentId, tabRef);
 			}
 		)
 	);

@@ -52,6 +52,8 @@ export const TAB_WINDOW_CHANNELS = {
 	popOut: 'tabWindows:popOut',
 	/** Return a tab to its owner window's strip. */
 	dock: 'tabWindows:dock',
+	/** Show a popped tab in its tab window and raise that window. */
+	focus: 'tabWindows:focus',
 	/** Every tab window, as {@link TabWindowInfo}. */
 	list: 'tabWindows:list',
 	/** The calling tab window's own {@link TabWindowInfo}. */
@@ -85,6 +87,11 @@ export type TabWindowPopOutResult =
 export type TabWindowDockResult =
 	| { docked: true; windowId: string }
 	| { docked: false; error: string };
+
+/** Answer of {@link TAB_WINDOW_CHANNELS.focus}. */
+export type TabWindowFocusResult =
+	| { focused: true; windowId: string }
+	| { focused: false; error: string };
 
 // ============================================================================
 // Session patches (owner to tab window)

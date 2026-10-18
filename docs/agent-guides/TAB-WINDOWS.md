@@ -463,6 +463,18 @@ Main also raises a window BEFORE the renderer can redirect, at five points:
 
 With a popped target, each of these raises the owner first and the tab window second. A cleaner fix asks the registry first: if `{ agentId, tabRef }` sits in a tab window, raise that window instead.
 
+### Navigation redirect (landed, phase 3)
+
+- **Main.** `focusTabWindowTab(registry, agentId, tabRef)` in `tab-window-service.ts`, on channel `tabWindows:focus` (preload `window.maestro.tabWindows.focus`). It sets the tab window's shown tab (`setTabWindowActiveTab`) and raises the window with `summonAppWindow`. It refuses an agent with no tab window and a tab the window does not hold.
+- **Renderer.** `focusTabWindowIfPoppedOut(agentId, ref)` in `services/tabWindowNavigation.ts` answers from `tabWindowStore` synchronously. When the tab is popped, it fires the focus call and returns true, and the caller does not touch the owner's view (no agent switch, no pointer write, no group chat dismiss). It returns false with no tab windows API (web-desktop). `findSessionTabRef(session, id)` resolves a bare id across the four arrays; `sessionHasTab(session, ref)` checks one kind.
+- **Wired at:**
+  - N1 `jumpToAgent`, which also gained `tabRef` (any kind; wins over `tabId`) and lands on a live file, terminal, or browser tab with the matching focus helper;
+  - N5 `dispatchToastClickAction` (`jump-session` with a tab, `open-terminal`, `open-browser` with an existing tab);
+  - starred rows in both `sidebarNavStore.activateStarredItem` and `useStarredItems.activateStarredItem` (two copies of one path; both redirect);
+  - `onRemoteSelectSession` (`focus-agent --tab`, any kind through `findSessionTabRef`);
+  - the non-background branches of `onRemoteCommand` (`dispatch --focus --tab`) and of the idle `onRemoteEnqueueCommand` path (`dispatch --queue --focus --tab`).
+- **Not yet wired** (the guard keeps them from showing a popped tab, but the click looks dead): N2 `handleToastSessionClick` when called directly (not through `dispatchToastClickAction`), N4 `handleOpenFileTab` (toast `open-file`, CLI `open-file`), N7 snooze wake, `goToUnreadTab`, and the bypass list above. The main-side raise in `select_session` still raises the owner first, then the tab window comes up on top.
+
 Recommendation for phase 3: put the `focusTabWindowIfPoppedOut(agentId, ref)` helper at N1 to N7 and at each bypass that a user action can reach. Add one safety net in the owner as well: after a session write, if an owned agent's active pointer names a popped tab, re-pick the owner's tab with the `closeTab` neighbor rule. `setSessions` and `updateSession` (`stores/sessionStore.ts`) are the one funnel every renderer write passes through. The helper produces the visible redirect, and the guard keeps a missed bypass from rendering a popped tab in the owner.
 
 ## D5. Per tab type

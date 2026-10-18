@@ -1,5 +1,6 @@
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
+import { findSessionTabRef, focusTabWindowIfPoppedOut } from '../../services/tabWindowNavigation';
 import { startNotificationHistorySync } from '../../stores/notificationStore';
 import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
@@ -433,6 +434,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						undefined,
 						sessionId
 					);
+				} else if (tabId && focusTabWindowIfPoppedOut(sessionId, { type: 'ai', id: tabId })) {
+					// `dispatch --focus --tab <id>` into a tab popped out into a tab
+					// window: show it there, not in the owner (Tab Windows, D4).
+					logger.info('[useRemoteIntegration] Focused the tab window of:', undefined, tabId);
 				} else {
 					setActiveSessionId(sessionId);
 					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
@@ -549,6 +554,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// Check if session exists
 				const session = sessionsRef.current.find((s) => s.id === sessionId);
 				if (!session) {
+					return;
+				}
+
+				// `focus-agent --tab <id>` naming a tab popped out into a tab window
+				// shows it there and leaves the owner view alone (Tab Windows, D4).
+				// The id carries no type, so look it up in all four tab arrays.
+				const tabRef = tabId ? findSessionTabRef(session, tabId) : null;
+				if (focusTabWindowIfPoppedOut(sessionId, tabRef)) {
 					return;
 				}
 
@@ -1193,7 +1206,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// dispatch --focus opt-in via `background`. A held send (Queue Held,
 					// `dispatch --queue --held`) never dispatches now: it waits paused.
 					if (session.state !== 'busy' && !held) {
-						if (!background) {
+						// A popped-out target is focused in its tab window (D4).
+						if (
+							!background &&
+							!focusTabWindowIfPoppedOut(sessionId, { type: 'ai', id: resolvedTabId })
+						) {
 							setActiveSessionId(sessionId);
 						}
 						window.dispatchEvent(

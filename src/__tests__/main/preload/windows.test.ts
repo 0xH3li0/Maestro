@@ -250,12 +250,14 @@ describe('Tab Windows Preload API', () => {
 		expect(result).toEqual({ poppedOut: true, windowId: 'tw', created: true });
 	});
 
-	it('dock, list, and getState forward to their channels', async () => {
+	it('dock, focus, list, and getState forward to their channels', async () => {
 		mockInvoke.mockResolvedValue(null);
 		await api.dock('a', tabRef);
+		await api.focus('a', tabRef);
 		await api.list();
 		await api.getState();
 		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:dock', 'a', tabRef);
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:focus', 'a', tabRef);
 		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:list');
 		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:getState');
 	});

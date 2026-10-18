@@ -20,6 +20,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../../shared/win
 import {
 	TAB_WINDOW_CHANNELS,
 	type TabWindowDockResult,
+	type TabWindowFocusResult,
 	type TabWindowInfo,
 	type TabWindowIntent,
 	type TabWindowPopOutOptions,
@@ -224,6 +225,10 @@ export function createTabWindowsApi() {
 		/** Return a popped tab to its owner window's strip. */
 		dock: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowDockResult> =>
 			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.dock, agentId, tabRef),
+
+		/** Show a popped tab in its tab window and raise that window. */
+		focus: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowFocusResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.focus, agentId, tabRef),
 
 		/** Every tab window and its tabs. */
 		list: (): Promise<TabWindowInfo[]> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.list),

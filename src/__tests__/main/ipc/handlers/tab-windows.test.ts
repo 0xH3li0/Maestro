@@ -5,7 +5,7 @@
  * - Handler and relay listener registration
  * - tabWindows:popOut: a new window, reuse of the agent's window (TW-4),
  *   background, the hidden consult tab refusal (TW-14), bad arguments
- * - tabWindows:dock, tabWindows:list, tabWindows:getState
+ * - tabWindows:dock, tabWindows:focus, tabWindows:list, tabWindows:getState
  * - The relay: patches only from the agent's CURRENT owner, intents only from
  *   the agent's own tab window (TW-5), and both re-addressed after a Move to
  *   Window (D7)
@@ -153,6 +153,7 @@ describe('Tab Windows IPC Handlers', () => {
 		for (const channel of [
 			'tabWindows:popOut',
 			'tabWindows:dock',
+			'tabWindows:focus',
 			'tabWindows:list',
 			'tabWindows:getState',
 		]) {
@@ -271,6 +272,39 @@ describe('Tab Windows IPC Handlers', () => {
 				docked: false,
 				error: "The tab is not in the agent's tab window",
 			});
+		});
+	});
+
+	describe('tabWindows:focus', () => {
+		it('shows the tab in the agent tab window and raises that window', async () => {
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			await invoke('tabWindows:popOut', 'agent-1', FILE_TAB, { background: true });
+			const entry = registry.getTabWindowForAgent('agent-1')!;
+			summonAppWindow.mockClear();
+
+			const result = await invoke('tabWindows:focus', 'agent-1', FILE_TAB);
+
+			expect(result).toEqual({ focused: true, windowId: entry.id });
+			expect(entry.activeTabRef).toEqual(FILE_TAB);
+			expect(summonAppWindow).toHaveBeenCalledWith(entry.browserWindow);
+		});
+
+		it('refuses an agent with no tab window, a tab it does not hold, or bad arguments', async () => {
+			expect(await invoke('tabWindows:focus', 'agent-1', AI_TAB)).toEqual({
+				focused: false,
+				error: 'The agent has no tab window',
+			});
+			await invoke('tabWindows:popOut', 'agent-1', AI_TAB);
+			summonAppWindow.mockClear();
+			expect(await invoke('tabWindows:focus', 'agent-1', FILE_TAB)).toEqual({
+				focused: false,
+				error: "The tab is not in the agent's tab window",
+			});
+			expect((await invoke('tabWindows:focus', '', AI_TAB)).focused).toBe(false);
+			expect(
+				(await invoke('tabWindows:focus', 'agent-1', { type: 'group', id: 'g1' })).focused
+			).toBe(false);
+			expect(summonAppWindow).not.toHaveBeenCalled();
 		});
 	});
 

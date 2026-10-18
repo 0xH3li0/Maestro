@@ -194,7 +194,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Moving an agent to another directory:** `withWorkingDirectory()`, `workingDirectoryChangeBlocker()`, `isSameDirectory()` in `src/renderer/utils/agentWorkingDirectory.ts`
 - **Per-agent git actions:** `useGitAgentActions(session)` in `src/renderer/hooks/git/useGitAgentActions.ts`
 - **Whether a PR is being opened right now:** `usePRCreationActive()`, `startPRCreation()` in `src/renderer/stores/prCreationStore.ts`
-- **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`
+- **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`; a tab popped out into a tab window via `focusTabWindowIfPoppedOut()` in `src/renderer/services/tabWindowNavigation.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()`, `passesHiddenGroupFilter()` in `src/renderer/utils/sidebarMembership.ts`; attention via `sessionNeedsAttention()` in `src/renderer/utils/sessionAttention.ts`
 - **Listing agents in the Left Bar's order:** `leftBarAgentOrder()`, `orderLeftBarGroups()` in `src/renderer/utils/leftBarOrder.ts`
 - **Whether an agent is answering a consult right now:** `useSessionIsBeingConsulted(sessionId)`, `useConsultedSessionIds()` in `src/renderer/stores/crossAgentInFlightStore.ts`
