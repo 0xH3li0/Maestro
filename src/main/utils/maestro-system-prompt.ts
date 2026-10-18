@@ -144,11 +144,13 @@ async function localMaestroRunPath(): Promise<string | undefined> {
 function loadPluginSections(
 	encoreFeatures: unknown,
 	isSsh: boolean,
-	maestroRunPath: string | undefined
+	maestroRunPath: string | undefined,
+	sectionsOnly = false
 ): string[] {
 	return systemPromptSectionsFor(encoreFeatures, {
 		isSsh,
 		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+		sectionsOnly,
 	})
 		.map((ref) => loadPrompt(ref.promptId))
 		.filter((text): text is string => !!text && !!text.trim());
@@ -237,7 +239,7 @@ export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): strin
 	const { encoreFeatures, conductorProfile } = readSettings();
 	// Synchronous by contract, so this reads the last inspection as it stands.
 	const maestroRunPath = opts.isSsh ? undefined : getMaestroRunService()?.readyBinaryPathCached();
-	const sections = loadPluginSections(encoreFeatures, opts.isSsh, maestroRunPath);
+	const sections = loadPluginSections(encoreFeatures, opts.isSsh, maestroRunPath, true);
 	if (sections.length === 0) return undefined;
 	const [first, ...rest] = sections;
 	return assembleMaestroSystemPrompt({

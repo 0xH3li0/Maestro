@@ -128,7 +128,8 @@ function readPluginSectionContext(
 	isSsh: boolean,
 	sources: SystemPromptSources,
 	settingsData: Record<string, unknown>,
-	loader: PromptLoader | undefined
+	loader: PromptLoader | undefined,
+	sectionsOnly = false
 ): SystemPromptContext & { prompts: { pluginSections: string[] }; now: Date } {
 	const maestroRunPath = isSsh
 		? undefined
@@ -138,6 +139,7 @@ function readPluginSectionContext(
 	const pluginSections = systemPromptSectionsFor(settingsData.encoreFeatures, {
 		isSsh,
 		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+		sectionsOnly,
 	})
 		.map((ref) => loader?.get(ref.promptId))
 		.filter((text): text is string => !!text && !!text.trim());
@@ -228,7 +230,8 @@ export function loadPluginSectionsSystemPrompt(
 			opts.isSsh,
 			sources,
 			readSettingsData(sources.paths.settingsFile),
-			promptLoaderOf(sources)
+			promptLoaderOf(sources),
+			true
 		)
 	);
 }

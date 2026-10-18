@@ -58,6 +58,18 @@ describe('systemPromptSectionsFor', () => {
 		expect(ids(CUE_OFF, false)).toEqual([]);
 	});
 
+	// The Cue section is about an agent's own duties; a moderator has none.
+	it('leaves agent-only sections out of a sections-only spawn', () => {
+		const ids = (sectionsOnly: boolean) =>
+			systemPromptSectionsFor(
+				{ maestroCue: true, concerto: true },
+				{ isSsh: false, sectionsOnly }
+			).map((ref) => ref.promptId);
+		expect(ids(false)).toEqual(expect.arrayContaining(['cue-system', 'concerto-system']));
+		expect(ids(true)).toContain('concerto-system');
+		expect(ids(true)).not.toContain('cue-system');
+	});
+
 	it('returns nothing when the flag is off', () => {
 		expect(
 			systemPromptSectionsFor({ ...CUE_OFF, computerHistory: false }, { isSsh: false })

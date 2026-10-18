@@ -374,8 +374,9 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 
 				// Same gate as the Cue stats handler: the dashboard only shows Cue
 				// data when both flags are on.
+				// No settings store means the flags cannot be read: leave Cue out.
 				const ef = resolveEncoreFeatures(settingsStore?.get('encoreFeatures'));
-				const cueEnabled = ef.usageStats && ef.maestroCue;
+				const cueEnabled = !!settingsStore && ef.usageStats && ef.maestroCue;
 				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
 				if (!cueEnabled) {
 					notes.push('Cue runs are not included because Maestro Cue is off.');
