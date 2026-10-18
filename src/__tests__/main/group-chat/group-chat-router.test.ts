@@ -1735,6 +1735,41 @@ describe('group-chat-router', () => {
 			}
 		});
 
+		it('releases a held delegation when the chat opts out mid-wait', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Opt Out Mid Wait Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [busyClientSession]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				await runPollsUntil(() => false, 2);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				// The user flips the toggle off in Edit Group Chat while the agent is
+				// still busy: the waiting delegation must go in on the next poll
+				// rather than sit out the rest of the wait budget.
+				await updateGroupChat(chat.id, { requireIdleParticipants: false });
+				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some((m) => m.from === 'system' && m.content.includes('No longer waiting'))
+				).toBe(true);
+
+				clearPendingParticipants(chat.id);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('stops waiting when the chat is stopped', async () => {
 			vi.useFakeTimers();
 			try {
