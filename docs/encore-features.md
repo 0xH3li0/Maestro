@@ -68,7 +68,7 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 
 Ensemble is an opt-in feature for switching a tab between providers while keeping its conversation. Model and effort are remembered per provider. It starts **off**. Its tile and Help content live in **Settings > Plugins > Ensemble**.
 
-This registration adds the settings toggle and CLI controls. The composer provider pill and per-tab switching are still in development; enabling the flag does not add them yet.
+Enable it to show the composer provider pill and the phone composer options' **Provider** section. The CLI uses the same per-tab switch operation. See [Ensemble](/multi-provider#ensemble) for switching steps, remembered model/effort/Run on choices, conversation carry limits and direction status. Claude Code to Codex and Codex to Claude Code remain unverified; SSH switching is disabled.
 
 ```bash
 maestro-cli encore enable ensemble
