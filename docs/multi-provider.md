@@ -332,8 +332,11 @@ minimums show an `untested-version` warning naming the installed and tested
 versions. Unreadable versions, older versions and providers without a converter
 are blocked by preflight.
 
-Native resume and repeated round-trip continuity remain unverified. Tested
-versions describe schema coverage, not native certification. Untested versions
+Status (2026-10-17): **Claude Code 2.1.296 -> Codex 0.162.1** and
+**Codex 0.162.1 -> Claude Code 2.1.296** remain **unverified**. Native
+acceptance was explicitly skipped; certification is deferred, with no native
+evidence date or verified versions. Tested versions describe schema coverage,
+not native certification. Untested versions
 keep the plan unverified even if the direction later gains certification;
 blocking history or resource limitations still prevent conversion on any version.
 

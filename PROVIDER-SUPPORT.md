@@ -687,7 +687,7 @@ Limitations have three severity tiers. `info` entries need no acceptance and app
 
 CLI migration uses the dedicated WebSocket request/result `provider_translation` / `provider_translation_result`, forwarded to the existing migration callback. Older desktops reject that verb; there is no fallback to a legacy destructive `toolType` settings patch. `--migration-plan <id>` carries a reviewed operation ID through apply, status, recovery or rollback, preserving preflight fingerprint checks. Cue invokes the command through an existing shell Command node, with JSON output and nonzero refusal/failure status; see [Starting Translation from Cue](docs/provider-notes.md#starting-translation-from-cue). This switches the active provider and does not claim independent two-agent or non-switching replica synchronization.
 
-The registered directions are **Claude Code → Codex** and the reverse, both **unverified**. Version support comes from `TRANSLATION_PROVIDER_VERSIONS` in `translation/support.ts`:
+Status (2026-10-17): the registered directions **Claude Code 2.1.296 -> Codex 0.162.1** and **Codex 0.162.1 -> Claude Code 2.1.296** are both **unverified**. Native acceptance was explicitly skipped; certification is deferred, with no native evidence date or verified versions. Version support comes from `TRANSLATION_PROVIDER_VERSIONS` in `translation/support.ts`:
 
 | Provider    | Minimum version (`minVersion`) | Tested versions (`testedVersions`) |
 | ----------- | ------------------------------ | ---------------------------------- |
@@ -696,7 +696,7 @@ The registered directions are **Claude Code → Codex** and the reverse, both **
 
 Unparseable versions and versions below the minimum block with `unknown-version`; providers without an adapter also block. Valid semver versions at or above the minimum are eligible for preflight. Any version absent from `testedVersions` adds an `untested-version` warning naming the installed and tested versions, and keeps the plan unverified even if the direction is certified for its tested versions. Native record/schema checks still block malformed or unsupported content.
 
-Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Tested versions identify synthetic schema coverage, not native certification. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. No native acceptance has been recorded.
+Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Tested versions identify synthetic schema coverage, not native certification. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. The [Hardening log](Plans/provider-translation-layer.md#hardening-log) records the acceptance skip; no native hop evidence was generated.
 
 The renderer-safe declarations in `src/shared/maestro-lib/translation/support.ts` are shared by native registration and the Edit Agent provider picker. Destinations with a declared direction from the agent's current provider show `→ Memory + history (preview)` while unverified. This is an adapter discovery hint; preflight still checks the installed versions and actual contents before allowing a switch. Adding a provider requires updating these declarations and registering its native adapter, rather than maintaining a separate UI support list.
 
