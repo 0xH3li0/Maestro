@@ -232,6 +232,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Changing one AI tab's settings by agent and tab:** `setAiTabModel()`, `setAiTabEffort()`, `setAiTabPermissionMode()`, `setAiTabStarred()`, `markAiTabUnread()` and siblings in `src/renderer/services/aiTabActions.ts`
 - **Closing a tab with the confirm its chip uses:** `closeAiTabWithConfirm()`, `closeFileTabWithConfirm()`, `closeTerminalTabWithConfirm()` in `src/renderer/services/tabCloseConfirm.ts`
 - **A tab window action that writes the agent:** `sendTabWindowIntent()`, `sendShownTabIntent()` in `src/renderer/services/tabWindowIntentSender.ts`; owner side `dispatchTabWindowIntent()` in `src/renderer/services/tabWindowIntents.ts`
+- **Popping a tab out into a tab window, or docking it:** `popOutTab()`, `dockTab()`, `popOutTabFromUi()`, `resolvePopOutTarget()`, `canUseTabWindows()` in `src/renderer/services/tabWindowActions.ts`
+- **Whether a tab is popped out into a tab window:** `isTabPoppedOut()`, `usePoppedOutTabKeys()`, `getTabWindowTabRefs()` in `src/renderer/stores/tabWindowStore.ts`; strip filters `ownerVisibleAiTabs()`, `withoutPoppedOutTabs()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
 
 #### Composer, queue, and transcript
 
