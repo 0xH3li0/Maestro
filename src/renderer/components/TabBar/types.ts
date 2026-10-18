@@ -12,7 +12,8 @@ export interface TabBarProps {
 	sessionAgentSessionId?: string | null;
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
-	onNewTab: () => void;
+	/** Omit to draw no new-tab button (a tab window adds no tabs of its own). */
+	onNewTab?: () => void;
 	onNewFileTab?: () => void;
 	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */

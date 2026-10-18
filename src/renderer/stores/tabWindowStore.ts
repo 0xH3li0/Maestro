@@ -123,6 +123,29 @@ export function usePoppedOutTabKeys(agentId: string | null | undefined): PoppedO
  * land out of order.
  */
 export function startTabWindowStoreSync(): () => void {
+	return watchTabWindowRegistry(
+		(api) => api.list(),
+		(windows) => useTabWindowStore.getState().setWindows(windows ?? []),
+		'tabWindows.list'
+	);
+}
+
+/**
+ * Read something from the tab window registry once, and again on every
+ * `tab-window-changed` broadcast. Returns the unsubscribe function. A no-op
+ * where there is no tab windows API (the web-desktop build, TW-13).
+ *
+ * Only the newest read is applied, so two changes in quick succession cannot
+ * land out of order. A failed read is logged and reported, never thrown.
+ *
+ * Shared by the owner-side mirror above and the tab window's own record
+ * (`useTabWindowInfo`), so both follow the registry the same way.
+ */
+export function watchTabWindowRegistry<T>(
+	read: (api: NonNullable<Window['maestro']['tabWindows']>) => Promise<T>,
+	apply: (value: T) => void,
+	operation: string
+): () => void {
 	const api = window.maestro?.tabWindows;
 	const windowsApi = window.maestro?.windows;
 	if (!api || !windowsApi?.onSessionMoved) return () => {};
@@ -130,17 +153,16 @@ export function startTabWindowStoreSync(): () => void {
 	let latestRead = 0;
 	let stopped = false;
 	const refresh = () => {
-		const read = ++latestRead;
-		api
-			.list()
-			.then((windows) => {
-				if (stopped || read !== latestRead) return;
-				useTabWindowStore.getState().setWindows(windows ?? []);
+		const readId = ++latestRead;
+		read(api)
+			.then((value) => {
+				if (stopped || readId !== latestRead) return;
+				apply(value);
 			})
 			.catch((error: unknown) => {
-				logger.error('[TabWindows] Could not read the tab windows', undefined, error);
+				logger.error('[TabWindows] Could not read the tab window registry', undefined, error);
 				captureException(error instanceof Error ? error : new Error(String(error)), {
-					extra: { operation: 'tabWindows.list' },
+					extra: { operation },
 				});
 			});
 	};

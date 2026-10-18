@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+	buildTabWindowUnifiedTabs,
 	buildUnifiedTabs,
 	closeTab,
 	getActiveTab,
@@ -277,5 +278,50 @@ describe('tabHelpers with popped-out tabs (Tab Windows D4)', () => {
 			expect(next.activeTerminalTabId).toBeNull();
 			expect(next.activeTabId).toBe('a2');
 		});
+	});
+});
+
+describe('buildTabWindowUnifiedTabs (the tab window strip, TW-2)', () => {
+	beforeEach(() => {
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
+	});
+
+	it("holds only the window's tabs, in the window's own order", () => {
+		const tabs = buildTabWindowUnifiedTabs(mixedSession(), [
+			{ type: 'browser', id: 'b1' },
+			{ type: 'ai', id: 'a2' },
+			{ type: 'file', id: 'f1' },
+			{ type: 'terminal', id: 't1' },
+		]);
+		expect(tabs.map((t) => `${t.type}:${t.id}`)).toEqual([
+			'browser:b1',
+			'ai:a2',
+			'file:f1',
+			'terminal:t1',
+		]);
+	});
+
+	it('ignores the owner-side popped filter: every tab here is popped out', () => {
+		popOut([{ type: 'ai', id: 'a2' }]);
+		expect(ids(buildTabWindowUnifiedTabs(mixedSession(), [{ type: 'ai', id: 'a2' }]))).toEqual([
+			'a2',
+		]);
+	});
+
+	it('skips a ref whose tab is gone and a hidden consult tab (TW-14)', () => {
+		const session = mixedSession({
+			aiTabs: [createMockAITab({ id: 'a1' }), createMockAITab({ id: 'a2', hidden: true })],
+		});
+		const tabs = buildTabWindowUnifiedTabs(session, [
+			{ type: 'ai', id: 'a2' },
+			{ type: 'ai', id: 'gone' },
+			{ type: 'ai', id: 'a1' },
+		]);
+		expect(ids(tabs)).toEqual(['a1']);
+	});
+
+	it('answers an empty strip for no session or no refs', () => {
+		expect(buildTabWindowUnifiedTabs(null, [{ type: 'ai', id: 'a1' }])).toEqual([]);
+		expect(buildTabWindowUnifiedTabs(mixedSession(), [])).toEqual([]);
 	});
 });

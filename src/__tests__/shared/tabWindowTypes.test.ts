@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	TAB_WINDOW_CHANNELS,
 	TAB_WINDOW_INTENT_KINDS,
+	formatTabWindowTitle,
 	isTabWindowIntent,
 	isTabWindowIntentKind,
 	isTabWindowSessionPatch,
@@ -164,5 +165,21 @@ describe('TAB_WINDOW_CHANNELS', () => {
 		expect(TAB_WINDOW_CHANNELS.sessionPatch).toBe('tabWindow:sessionPatch');
 		expect(TAB_WINDOW_CHANNELS.intent).toBe('tabWindow:intent');
 		expect(TAB_WINDOW_CHANNELS.popOut).toBe('tabWindows:popOut');
+	});
+});
+
+describe('formatTabWindowTitle (TW-3)', () => {
+	it('puts the agent name before the suffix', () => {
+		expect(formatTabWindowTitle('Maestro Marketing')).toBe('Maestro Marketing - Tab Window');
+	});
+
+	it('trims the name', () => {
+		expect(formatTabWindowTitle('  Docs  ')).toBe('Docs - Tab Window');
+	});
+
+	it('falls back to the bare suffix before the agent name is known', () => {
+		expect(formatTabWindowTitle(undefined)).toBe('Tab Window');
+		expect(formatTabWindowTitle(null)).toBe('Tab Window');
+		expect(formatTabWindowTitle('   ')).toBe('Tab Window');
 	});
 });

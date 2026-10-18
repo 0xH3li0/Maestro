@@ -588,6 +588,23 @@ Trap 4 above is closed. In `src/renderer/hooks/agent/internal/useOwnedSessionGat
 - Terminal output (D5, phase 6) does not use these gates. The tab window's own xterm subscribes to its PTY directly.
 - Tests: `useOwnedSessionGate.test.tsx` ("gates in a tab window"), `useAgentExitListener.test.tsx` ("in a tab window"), `TabWindowRoot.test.tsx`.
 
+### Shell layout (landed, phase 4)
+
+`TabWindowShell` renders three rows, all from existing parts:
+
+| Row     | Component                                   | Fed by                                                                                                                                                                                                                                                                                                                            |
+| ------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Header  | `TabWindowHeader` (`components/TabWindow/`) | `AgentStatusDot` + `useAgentStatusIndicator()` (both shared with the Left Bar row in `SessionItem.tsx`, over `getEnhancedStatusColor()`), the agent name, and a Dock button that calls `tabWindows.dock(agentId, activeRef)`. It is the window's drag strip under the hidden-inset title bar (80px traffic-light inset on macOS). |
+| Strip   | the shared `TabBar`                         | `buildTabWindowUnifiedTabs(session, tabRefs)` (`utils/tabHelpers`): only this window's tabs, in its own order. No `onNewTab`, so no + button (`onNewTab` is now optional on `TabBar`).                                                                                                                                            |
+| Content | `TabWindowContent`                          | `TiledAiPane` (AI) and `TiledFilePane` (file), exported from `MainPanel/TiledLayout.tsx`: the single-tab views a tiled pane already renders by tab id. Action bundles are `null` until phase 5. Terminal and browser tabs show `PaneMissingTab` with a "cannot show yet" message until phase 6.                                   |
+
+- **Where the state comes from.** The registry record (`tabRefs`, `activeTabRef`) comes from `useTabWindowInfo()`: `tabWindows.getState()` on mount and again on every `tab-window-changed`, through `watchTabWindowRegistry()` in `tabWindowStore.ts` (the same newest-read-wins watcher the owner's mirror uses). The `Session` comes from the renderer `sessionStore`, which phase 5 fills from the owner's patches. Until it holds the agent, only the header renders.
+- **The tab window never syncs `tabWindowStore`.** That store feeds the owner's hiding filters (D4). Every tab here is popped out, so filling it would empty the strip. `buildTabWindowUnifiedTabs` reads no store for the same reason.
+- **Active pointers.** The shell builds a view session, `{ ...session, ...focusFieldsForRef(session, activeTab) }`, so the strip and the content read this window's active tab. Its `activeTabId` is always an AI tab of this strip (the first one when a non-AI tab is shown), never the owner's.
+- **Chip actions so far.** A chip click calls `tabWindows.focus(agentId, ref)`, which sets `activeTabRef` in main and broadcasts the change. A chip close sends the `closeTab` intent, which the owner handles in phase 5. A refused or rejected call is a red toast; a rejection also goes to Sentry.
+- **Title (TW-3).** `document.title = formatTabWindowTitle(session?.name)` (`src/shared/tabWindowTypes.ts`), so the OS title is `<agent name> - Tab Window` and follows a rename. Before the agent arrives it is `Tab Window`.
+- Tests: `TabWindowRoot.test.tsx` ("TabWindowRoot shell"), `tabHelpers.poppedOut.test.ts` (`buildTabWindowUnifiedTabs`), `AgentStatusDot.test.tsx`, `tabWindowTypes.test.ts` (`formatTabWindowTitle`).
+
 ## Deviations
 
 - **DV1 (D2, send path).** The spec says a send uses "the composer's input processing path, or `enqueuePromptForTab()` when the agent is busy".

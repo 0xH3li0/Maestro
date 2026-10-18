@@ -1,0 +1,60 @@
+/**
+ * TabWindowContent - the active tab's content in a tab window (TW-2).
+ *
+ * Reuses the single-tab views the main panel's tiled panes render, never a
+ * fork: `TiledAiPane` (the transcript, `TerminalOutput`) for an AI tab and
+ * `TiledFilePane` (`FilePreview`) for a file tab. Both take a session and a tab
+ * id, so they render a tab that is not the session's active one.
+ *
+ * Action bundles are null for now: every control that writes state becomes an
+ * intent to the owner in phase 5, and the composer mounts with the draft round
+ * trip there. Terminal and browser tabs move differently (D5: the tab window
+ * attaches its own xterm to the PTY, and opens a new webview) and land in
+ * phase 6; until then they show a notice instead of an empty pane.
+ */
+
+import type { Session, Theme, UnifiedTab } from '../../types';
+import { PaneMissingTab, TiledAiPane, TiledFilePane } from '../MainPanel/TiledLayout';
+
+export interface TabWindowContentProps {
+	theme: Theme;
+	session: Session;
+	/** The tab this window shows, or null when its record names no live tab. */
+	activeTab: UnifiedTab | null;
+}
+
+export function TabWindowContent({ theme, session, activeTab }: TabWindowContentProps) {
+	if (!activeTab) return <PaneMissingTab theme={theme} />;
+	switch (activeTab.type) {
+		case 'ai':
+			return (
+				<TiledAiPane
+					// One transcript view per tab, as the main panel keys its own.
+					key={activeTab.id}
+					aiTabId={activeTab.id}
+					session={session}
+					theme={theme}
+					isFocused
+					actions={null}
+				/>
+			);
+		case 'file':
+			return (
+				<TiledFilePane
+					key={activeTab.id}
+					fileTabId={activeTab.id}
+					session={session}
+					theme={theme}
+					actions={null}
+				/>
+			);
+		default:
+			// Terminal and browser tabs, until phase 6 mounts their own views here (D5).
+			return (
+				<PaneMissingTab
+					theme={theme}
+					message="This tab cannot show in a tab window yet. Dock it to see it in the main window."
+				/>
+			);
+	}
+}

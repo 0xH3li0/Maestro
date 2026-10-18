@@ -1016,18 +1016,20 @@ function TabBarInner({
 			<PluginUiItemsSlot surface="tabBar" className="shrink-0 self-center mb-1" />
 
 			{/* New tab button + popover */}
-			<NewTabPopover
-				theme={theme}
-				onNewTab={onNewTab}
-				onNewFileTab={onNewFileTab}
-				onNewBrowserTab={onNewBrowserTab}
-				onNewTerminalTab={onNewTerminalTab}
-				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
-				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
-				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
-				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
-				isOverflowing={isOverflowing}
-			/>
+			{onNewTab && (
+				<NewTabPopover
+					theme={theme}
+					onNewTab={onNewTab}
+					onNewFileTab={onNewFileTab}
+					onNewBrowserTab={onNewBrowserTab}
+					onNewTerminalTab={onNewTerminalTab}
+					newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
+					fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
+					browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
+					terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
+					isOverflowing={isOverflowing}
+				/>
+			)}
 		</div>
 	);
 }

@@ -38,7 +38,7 @@ import {
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getPoppedOutTabKeys, isTabPoppedOut } from '../../stores/tabWindowStore';
-import { tabRefKey } from '../../../shared/unifiedTabRef';
+import { tabRefKey, type SingleTabRef } from '../../../shared/unifiedTabRef';
 import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
@@ -200,6 +200,51 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 		const key = `${t.type}:${t.id}`;
 		return !memberKeys.has(key) && !poppedKeys.has(key);
 	});
+}
+
+/**
+ * The strip of a tab window (Tab Windows, TW-2): the tabs its registry record
+ * holds, in the tab window's own order, resolved against the agent's session.
+ *
+ * The tab window's counterpart of {@link buildUnifiedTabs}. It reads no store:
+ * the owner-side filters (tiled members, popped-out tabs) do not apply here,
+ * because a popped tab is never tiled (D6) and every tab in this strip IS a
+ * popped tab. A ref whose tab the session no longer holds is skipped, and so is
+ * a hidden consult tab, which can never be popped out (TW-14).
+ */
+export function buildTabWindowUnifiedTabs(
+	session: Session | null | undefined,
+	tabRefs: readonly SingleTabRef[]
+): UnifiedTab[] {
+	if (!session || tabRefs.length === 0) return [];
+	const result: UnifiedTab[] = [];
+	for (const ref of tabRefs) {
+		const tab = resolveSingleTab(session, ref);
+		if (tab) result.push(tab);
+	}
+	return result;
+}
+
+/** One tab of the session as a unified tab, or null when it is gone or hidden. */
+function resolveSingleTab(session: Session, ref: SingleTabRef): UnifiedTab | null {
+	switch (ref.type) {
+		case 'ai': {
+			const tab = session.aiTabs?.find((t) => t.id === ref.id);
+			return tab && !isAiTabHidden(tab) ? { type: 'ai', id: tab.id, data: tab } : null;
+		}
+		case 'file': {
+			const tab = session.filePreviewTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'file', id: tab.id, data: tab } : null;
+		}
+		case 'browser': {
+			const tab = session.browserTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'browser', id: tab.id, data: tab } : null;
+		}
+		case 'terminal': {
+			const tab = session.terminalTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'terminal', id: tab.id, data: tab } : null;
+		}
+	}
 }
 
 /**

@@ -46,6 +46,18 @@ export interface TabWindowInfo {
 /** URL query parameter that boots the renderer as a tab window. */
 export const TAB_WINDOW_QUERY_PARAM = 'tabWindow';
 
+/** Suffix of a tab window's OS title, after the agent name (TW-3). */
+export const TAB_WINDOW_TITLE_SUFFIX = 'Tab Window';
+
+/**
+ * The OS title of a tab window: `<agent name> - Tab Window` (TW-3). Before the
+ * agent's state arrives there is no name yet, so the title is the bare suffix.
+ */
+export function formatTabWindowTitle(agentName: string | null | undefined): string {
+	const name = agentName?.trim();
+	return name ? `${name} - ${TAB_WINDOW_TITLE_SUFFIX}` : TAB_WINDOW_TITLE_SUFFIX;
+}
+
 /** IPC channels of the Tab Windows feature. */
 export const TAB_WINDOW_CHANNELS = {
 	/** Create or reuse the agent's tab window and add the tab to it. */
