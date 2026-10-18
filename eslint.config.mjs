@@ -25,6 +25,7 @@ export default tseslint.config(
 			'src/web/public/**', // Service worker and static assets
 			'src/renderer/public/**', // Static browser scripts (splash, devtools)
 			'.cue-migration-backup-*/**', // Git-ignored migration backup snapshots
+			'src/shared/dataview/vendor/**', // Vendored Dataview source; upstream style, see docs/agent-guides/DATAVIEW.md
 		],
 	},
 

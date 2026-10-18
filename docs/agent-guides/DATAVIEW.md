@@ -372,6 +372,16 @@ No build config changed. The CLI esbuild bundle and an esbuild browser bundle bo
 
 <!-- doc-refs-ignore:end -->
 
+### What is vendored so far
+
+| Phase 02 task | Landed under `src/shared/dataview/vendor/`                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2             | `LICENSE`, `obsidian-shim.ts` (all E2 types), `settings.ts`, `api/result.ts`, `util/normalize.ts`, `data-model/value.ts`, `data-model/serialized/markdown.ts` |
+
+- `src/shared/dataview/index.ts` exists from task 2 and exports only the value model, `Result`, and `DEFAULT_QUERY_SETTINGS` so far. Later tasks extend it; it deliberately does not re-export upstream's `DataviewSettings` type or `DEFAULT_SETTINGS`, so task 4's Maestro `DataviewSettings` constant has the name to itself.
+- `.prettierignore`, the global `ignores` of `eslint.config.mjs`, the `files` of `eslint.dashes.config.mjs`, and the `lint:eslint` script all cover `src/shared/dataview/vendor/` now.
+- Upstream quirk pinned by `src/__tests__/shared/dataview/value.test.ts`: `Values.compareValue` compares durations with luxon's unit-by-unit `equals`, so `1 hour` versus `60 minutes` returns 1, not 0. Kept for fidelity (DV-2).
+
 ---
 
 ## 3. Maestro integration map
