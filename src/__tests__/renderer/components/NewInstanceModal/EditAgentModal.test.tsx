@@ -1877,7 +1877,10 @@ describe('EditAgentModal', () => {
 			);
 			fireEvent.click(screen.getByLabelText(TOGGLE_LABEL));
 			await waitFor(() =>
-				expect((screen.getByLabelText(TOGGLE_LABEL) as HTMLInputElement).checked).toBe(true)
+				expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).toHaveAttribute(
+					'aria-checked',
+					'true'
+				)
 			);
 
 			// The section saved both changes itself, the moment they were made.
