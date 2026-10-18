@@ -981,6 +981,49 @@ describe('SettingsModal', () => {
 			expect(screen.getByTitle('Models')).not.toHaveClass('font-bold');
 		});
 
+		it('lets the user collapse and expand Models without leaving its current panel', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'models' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByTitle('Sources'));
+			fireEvent.click(screen.getByRole('button', { name: 'Collapse Models' }));
+
+			expect(screen.queryByTitle('Sources')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Expand Models' })).toHaveAttribute(
+				'aria-expanded',
+				'false'
+			);
+			expect(screen.getByTestId('models-settings-tab')).toHaveAttribute('data-panel', 'sources');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand Models' }));
+
+			expect(screen.getByTitle('Sources')).toHaveAttribute('aria-current', 'page');
+			expect(screen.getByRole('button', { name: 'Collapse Models' })).toHaveAttribute(
+				'aria-expanded',
+				'true'
+			);
+		});
+
+		it('keeps a manual collapse when another tab is selected, even with room in the sidebar', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Collapse Models' }));
+
+			expect(screen.getByTitle('General')).toHaveAttribute('aria-current', 'page');
+			expect(screen.queryByTitle('Sources')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+
+			expect(screen.getByTitle('Shortcuts')).toHaveAttribute('aria-current', 'page');
+			expect(screen.queryByTitle('Sources')).not.toBeInTheDocument();
+			expect(screen.getByTitle('Models')).toHaveAttribute('aria-expanded', 'false');
+		});
+
 		describe('when the expanded subtree would scroll the sidebar', () => {
 			// The sidebar wants 900px and has 600: expanding would make it scroll.
 			beforeEach(() => {
@@ -1026,6 +1069,22 @@ describe('SettingsModal', () => {
 				}
 				// The Models row opened its Overview, so it is the selected row.
 				expect(screen.getByTitle('Models')).toHaveAttribute('aria-current', 'page');
+			});
+
+			it('lets the user expand Models without selecting it when the sidebar is crowded', async () => {
+				render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+				fireEvent.click(screen.getByRole('button', { name: 'Expand Models' }));
+
+				expect(screen.getByTitle('Sources')).toBeInTheDocument();
+				expect(screen.getByTitle('General')).toHaveAttribute('aria-current', 'page');
+				expect(screen.getByRole('button', { name: 'Collapse Models' })).toHaveAttribute(
+					'aria-expanded',
+					'true'
+				);
 			});
 		});
 

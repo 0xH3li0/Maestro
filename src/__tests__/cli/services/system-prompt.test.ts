@@ -547,7 +547,9 @@ describe('prepareMaestroSystemPromptCli', () => {
 			});
 
 			it('sits after the role section and before the plugin sections', async () => {
-				vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+				vi.mocked(readSettingValue).mockImplementation(
+					settings({ computerHistory: true, pianola: true })
+				);
 				const result = await prepareMaestroSystemPromptCli(
 					mockSession({ name: 'A', isPianola: true })
 				);

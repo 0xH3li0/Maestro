@@ -1315,8 +1315,22 @@ describe('provider translation context capacity', () => {
 					).map((row) => row.item)
 				)
 			);
+			// Measure the full history with the same native message and tool overhead.
 			const allTokens = estimateTokenCount(
-				canonicalJson(conversation.records.map((record) => record.blocks))
+				canonicalJson(
+					projectConversation(
+						{
+							...conversation,
+							records: conversation.records.map((record) => ({
+								...record,
+								window: 'active' as const,
+							})),
+						},
+						provider === 'codex' ? 'claude-code' : 'codex',
+						'capacity-preview',
+						provider === 'codex' ? '2.1.296' : '0.162.1'
+					).map((row) => row.item)
+				)
 			);
 			expect(allTokens).toBeGreaterThan(activeTokens);
 			const capacity = vi.spyOn(capabilitySnapshots, 'get');

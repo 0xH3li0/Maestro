@@ -271,6 +271,8 @@ documentGraphLayoutType: DocumentGraphLayoutType; // Default layout (default: 'h
 
 The global default is `DEFAULT_GLOBAL_DELEGATION_LAYOUT` (`lobes`); group and agent scopes use `DEFAULT_DELEGATION_LAYOUT` (`hierarchical`). The layout vocabulary reuses the Document Graph's leaf labels and excludes Timeline, since relationships have no document timestamps. Layouts and positions are stored separately under `all`, `group:<groupId>`, and `agent:<sessionId>`.
 
+**Hide unconnected** uses `usePersistedToggle('delegationGraph.hideUnconnected')` and `connectedAgentIds()` to filter displayed nodes in both modes without changing peer rosters. It defaults to off and persists across scopes and reopening. Agents added by hand stay visible in Edit so they can be connected; View hides them until they have a relationship. Keep the full model for scope labels and placement eligibility, even when the filter hides every node.
+
 For the fleet view, `<MindMap clusterAllNodes nodeLabel="agent">` includes disconnected communities in Lobes. Directed links remain visible between every pair of displayed endpoints in every layout. Default Document Graph behavior is unchanged: disconnected documents remain in the orphan band unless the caller requests clustering. A canvas drag supplies all displayed positions to the caller so the existing debounced persistence can save the whole arrangement. Manual placement hides algorithm hulls, and Fit measures the displayed coordinates.
 
 User documentation: [agent-delegation.md](docs/agent-delegation.md#the-delegation-graph).

@@ -464,7 +464,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'Left Side Panel',
 		description:
-			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, Cue indicator, worktree badges, branch names, providers, and full vs abbreviated group labels on bookmarked agents (the abbreviated badge can be overridden per group in Group Settings)',
+			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, worktree badges, branch names, providers, and full vs abbreviated group labels on bookmarked agents (the abbreviated badge can be overridden per group in Group Settings)',
 		keywords: [
 			'left',
 			'side',

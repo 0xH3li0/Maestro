@@ -444,7 +444,7 @@ describe('the System One section (main builder)', () => {
 
 	it('sits after the role section and before the plugin sections', async () => {
 		storedSessions = [agent({ isPianola: true })];
-		settings.encoreFeatures = { computerHistory: true };
+		settings.encoreFeatures = { computerHistory: true, pianola: true };
 		const result = await buildMaestroSystemPromptForSession('agent-1');
 		expect(result?.split('\n\n---\n\n').map((part) => part.slice(0, 4))).toEqual([
 			'BASE',

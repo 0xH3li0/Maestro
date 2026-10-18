@@ -168,8 +168,11 @@ describe('destination native projections', () => {
 	it('uses the picker declarations for native direction and version registration', () => {
 		const registry = createTranslationRegistry();
 		for (const direction of TRANSLATION_DIRECTIONS) {
-			for (const sourceVersion of direction.sourceVersions)
-				for (const destinationVersion of direction.destinationVersions)
+			for (const sourceVersion of [direction.sourceMinVersion, ...direction.sourceTestedVersions])
+				for (const destinationVersion of [
+					direction.destinationMinVersion,
+					...direction.destinationTestedVersions,
+				])
 					expect(
 						registry.direction(
 							{ ...identity, provider: direction.source, version: sourceVersion },

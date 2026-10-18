@@ -693,6 +693,94 @@ describe('DelegationGraphView', () => {
 		});
 	});
 
+	describe('hiding unconnected agents', () => {
+		it.each(['view', 'edit'] as const)(
+			'filters and restores agents in %s without changing relationships',
+			(mode) => {
+				initialMode = mode;
+				const sessions = useSessionStore.getState().sessions;
+				renderView();
+				const toggle = screen.getByRole('switch', { name: 'Hide unconnected' });
+				expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+				fireEvent.click(toggle);
+
+				expect(toggle).toHaveAttribute('aria-checked', 'true');
+				expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
+				expect(drawnEdgeIds()).toEqual(['a->b', 'b->a', 'd->e']);
+				if (mode === 'view') expect(sharedCanvas.props?.fitToken).toBeGreaterThan(0);
+				expect(useSessionStore.getState().sessions).toBe(sessions);
+				expect(writeCount()).toBe(0);
+
+				fireEvent.click(toggle);
+				expect(drawnNodeIds()).toEqual(ALL_IDS);
+			}
+		);
+
+		it('remembers the filter across scopes and reopening', () => {
+			const first = renderView();
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			changeScope(scopeStorageKey(RESEARCH_SCOPE));
+			expect(drawnNodeIds()).toEqual(['a', 'b']);
+			first.unmount();
+
+			renderView();
+			expect(screen.getByRole('switch', { name: 'Hide unconnected' })).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+			expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
+		});
+
+		it('updates the filter when incoming relationships are added and removed', () => {
+			renderView();
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			patchSession('a', {
+				peerAgents: [...sessionOf('a').peerAgents!, { sessionId: 'c', read: true, write: false }],
+			});
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+			patchSession('a', { peerAgents: [{ sessionId: 'b', read: true, write: true }] });
+			expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
+		});
+
+		it('keeps an agent added in Edit visible until switching to View', () => {
+			renderView();
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			expect(addableIds()).toEqual(['c']);
+			fireEvent.change(addAgentSelect()!, { target: { value: 'c' } });
+			expect(drawnNodeIds()).toEqual(ALL_IDS);
+			switchMode('view');
+			expect(drawnNodeIds()).toEqual(['a', 'b', 'd', 'e']);
+		});
+
+		it('lets the user add an endpoint in Edit when every agent is hidden', () => {
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'c', name: 'Gamma' })] });
+			renderView();
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			expect(drawnNodeIds()).toEqual([]);
+			expect(addableIds()).toEqual(['c']);
+			expect(addAgentSelect()).not.toBeDisabled();
+
+			fireEvent.change(addAgentSelect()!, { target: { value: 'c' } });
+
+			expect(drawnNodeIds()).toEqual(['c']);
+			expect(drawnEdgeIds()).toEqual([]);
+			expect(writeCount()).toBe(0);
+		});
+
+		it('explains when every agent is hidden and lets the user restore them', () => {
+			useSessionStore.setState({ sessions: [createMockSession({ id: 'c', name: 'Gamma' })] });
+			renderView();
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			expect(screen.getByText('No connected agents')).toBeInTheDocument();
+			expect(screen.getByText(/Turn off Hide unconnected/)).toBeInTheDocument();
+			expect(screen.getByTestId('delegation-graph-fit')).toBeDisabled();
+			expect(drawnNodeIds()).toEqual([]);
+			fireEvent.click(screen.getByRole('switch', { name: 'Hide unconnected' }));
+			expect(drawnNodeIds()).toEqual(['c']);
+		});
+	});
+
 	describe('shared Document Graph canvas', () => {
 		beforeEach(() => {
 			initialMode = 'view';

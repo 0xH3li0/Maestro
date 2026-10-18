@@ -112,6 +112,7 @@ import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 import { MiniBadge } from '../ui/MiniBadge';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import {
 	DelegationEdgeEditor,
 	DelegationEdgeRefusal,
@@ -311,15 +312,28 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	// The agents the user put on this scope's canvas by hand. Never saved and
 	// never written to an agent: see `DelegationGraphPlacement`.
 	const [placedIds, setPlacedIds] = useState<readonly string[]>(NONE_PLACED);
-	const model = useDelegationGraphModel(scope, placedIds);
+	const hideUnconnected = usePersistedToggle('delegationGraph.hideUnconnected');
+	const fullModel = useDelegationGraphModel(scope, placedIds);
+	const connectedIds = useMemo(() => connectedAgentIds(fullModel), [fullModel]);
+	const model = useMemo<DelegationGraphModel>(() => {
+		if (!hideUnconnected.value) return fullModel;
+		// Keep agents added in Edit available as endpoints for a new relationship.
+		const placed = new Set(isEditing ? placedIds : NONE_PLACED);
+		return {
+			...fullModel,
+			nodes: fullModel.nodes.filter(
+				(node) => connectedIds.has(node.sessionId) || placed.has(node.sessionId)
+			),
+		};
+	}, [fullModel, connectedIds, hideUnconnected.value, isEditing, placedIds]);
 	const mindMapData = useMemo(() => delegationMindMapData(model), [model]);
 	const addableAgents = useAgentsOffDelegationGraph(model);
 	const stats = useMemo(() => delegationGraphStats(model), [model]);
-	const connectedIds = useMemo(() => connectedAgentIds(model), [model]);
 	const isEmpty = stats.agents === 0;
+	const allHidden = isEmpty && fullModel.nodes.length > 0;
 	// An agent is placed to be connected, and an edge needs one end in the
 	// scope: with no agent in it there is nothing to place an agent for.
-	const canPlace = isEditing && stats.agents > stats.spill;
+	const canPlace = isEditing && fullModel.nodes.some((node) => node.scope === 'in-scope');
 	const {
 		layout,
 		hasSavedLayout,
@@ -836,7 +850,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					{scope.kind === 'agent' && (
 						<option value={scopeKey}>
 							Cluster:{' '}
-							{model.nodes.find((node) => node.sessionId === scope.sessionId)?.name ??
+							{fullModel.nodes.find((node) => node.sessionId === scope.sessionId)?.name ??
 								'Removed agent'}
 						</option>
 					)}
@@ -911,6 +925,24 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 
 				<div className="flex-1" />
 
+				<label
+					className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer"
+					style={{ color: colors.textDim }}
+				>
+					<ToggleSwitch
+						theme={theme}
+						size="sm"
+						checked={hideUnconnected.value}
+						onChange={(next) => {
+							hideUnconnected.setValue(next);
+							requestFit();
+						}}
+						ariaLabel="Hide unconnected"
+						title="Hide agents with no incoming or outgoing peer relationships"
+					/>
+					Hide unconnected
+				</label>
+
 				<HeaderActionButton
 					theme={theme}
 					variant="ghost"
@@ -962,11 +994,19 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						theme={theme}
 						className="h-full"
 						icon={<Waypoints className="w-12 h-12" />}
-						title={scope.kind === 'group' ? 'No agents in this group' : 'No agents yet'}
+						title={
+							allHidden
+								? 'No connected agents'
+								: scope.kind === 'group'
+									? 'No agents in this group'
+									: 'No agents yet'
+						}
 						description={
-							scope.kind === 'group'
-								? 'Pick another scope, or move an agent into this group. Who an agent can consult or delegate to is set on the Peers tab of its settings.'
-								: 'This graph draws which agent can consult or delegate to which. Create an agent, then give it peers on the Peers tab of its settings.'
+							allHidden
+								? 'Turn off Hide unconnected to show these agents. Who an agent can consult or delegate to is set on the Peers tab of its settings.'
+								: scope.kind === 'group'
+									? 'Pick another scope, or move an agent into this group. Who an agent can consult or delegate to is set on the Peers tab of its settings.'
+									: 'This graph draws which agent can consult or delegate to which. Create an agent, then give it peers on the Peers tab of its settings.'
 						}
 					/>
 				) : !isEditing ? (

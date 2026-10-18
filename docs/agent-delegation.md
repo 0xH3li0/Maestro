@@ -180,6 +180,8 @@ A group's graph draws the agents of that group, and also any agent outside the g
 
 An agent's cluster follows both incoming and outgoing arrows, including indirect connections and agents in other groups. From the global view, select a linked agent and choose **Show cluster**, or double-click a node in View. **Show all agents** returns to the fleet. If the cluster's anchor agent is deleted, the graph returns to all agents.
 
+**Hide unconnected** hides agents with no incoming or outgoing arrows in the current scope, in both View and Edit. It defaults to off and remembers your choice across scopes and reopening. It changes only what is shown. Agents you add in Edit remain visible so you can connect them; switching to View hides them until they have a relationship. If every agent is hidden, turn the filter off to show them again.
+
 ### Reading the Graph
 
 An arrow from A to B means **A may reach B**. Two arrows between a pair mean each can reach the other, and the two can carry different access. All arrows have one color. The line tells the kinds apart:
@@ -274,7 +276,7 @@ Adding an agent to the graph **does not move it into the group** and changes not
 - Draw an arrow between it and an agent of the group, and it stays on this graph as an agent outside the group.
 - With no arrow, it is gone from the graph when you close the graph or change the scope. A notice says so while it is there, with a **Take off the graph** button.
 
-On **All agents**, every agent already has a box, so the control has nothing to offer.
+On **All agents**, every agent already has a box unless **Hide unconnected** is on. With that filter on, **Add agent** also offers hidden agents so you can connect them in Edit.
 
 ## From the CLI
 

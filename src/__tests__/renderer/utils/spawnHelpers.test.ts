@@ -340,7 +340,9 @@ describe('prepareMaestroSystemPrompt', () => {
 			});
 
 			it('sits after the role section and before the plugin sections', async () => {
-				enableComputerHistory();
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: true, pianola: true },
+				});
 				const result = await prepareMaestroSystemPrompt({
 					session: { ...baseSession, isPianola: true },
 				});

@@ -8,6 +8,8 @@ icon: gear
 
 Open Settings with `Cmd+,` / `Ctrl+,` or via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Open Settings".
 
+In the sidebar, use the chevron beside a tab such as **Models** to expand or collapse its panels without changing the current page. Your manual choice overrides automatic expansion while Settings is mounted. On narrow screens, panels appear under the selected tab in the horizontal tab strip.
+
 Settings are organized into tabs:
 
 | Tab                             | Contents                                                                                                                                                                                                                                                                                             |

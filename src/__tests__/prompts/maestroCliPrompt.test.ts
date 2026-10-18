@@ -13,7 +13,6 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { program } from '../../cli/index';
 import { ExitCode } from '../../cli/exit-codes';
-import { LOCAL_MODEL_TASK_IDS } from '../../shared/local-models/tasks';
 import { declaredFlags, descendCommandTree, findSubcommand } from '../helpers/cliCommandTree';
 
 const prompt = readFileSync(path.join(__dirname, '../../prompts/_maestro-cli.md'), 'utf-8');
@@ -131,9 +130,10 @@ describe('_maestro-cli.md names the verbs of this branch', () => {
 		}
 	});
 
-	test('lists every Local Models task id the assign verb takes', () => {
-		for (const task of LOCAL_MODEL_TASK_IDS) {
-			expect(prompt, `task ${task} is missing`).toContain(task);
+	test('points to registered commands for live task discovery and assignment', () => {
+		for (const verb of ['tasks', 'status', 'assign']) {
+			expect(prompt).toContain(`models ${verb}`);
+			expect(descendCommandTree(['models', verb]).command.name()).toBe(verb);
 		}
 	});
 

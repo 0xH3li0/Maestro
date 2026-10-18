@@ -32,6 +32,9 @@ const AGENTS = [
 ];
 
 vi.mock('../../../cli/services/storage', () => ({
+	readSettingValue: vi.fn((key: string) =>
+		key === 'encoreFeatures' ? { maestroCue: true } : undefined
+	),
 	readGroups: vi.fn(() => GROUPS),
 	resolveGroupId: vi.fn((partial: string) => {
 		const match = GROUPS.find((group) => group.id.startsWith(partial));

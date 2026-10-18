@@ -255,7 +255,7 @@ describe('openUiSurface - Encore-gated tabs', () => {
 		useSettingsStore.setState((s) => ({
 			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
 		}));
-		const result = openUiSurface('usage-dashboard', 'cue');
+		const result = openUiSurface({ surface: 'usage-dashboard', tab: 'cue' });
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('Cue');
 		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);

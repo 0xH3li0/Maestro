@@ -174,6 +174,12 @@ describe('searchableSettings', () => {
 
 			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
 			expect(on).toEqual(expect.arrayContaining(['general-power', 'display-left-side-panel']));
+			expect(
+				searchSettings('cue indicator', [], { maestroCue: false }).map((s) => s.id)
+			).not.toContain('display-left-side-panel');
+			expect(searchSettings('cue indicator', [], { maestroCue: true }).map((s) => s.id)).toContain(
+				'display-left-side-panel'
+			);
 
 			// The setting itself stays findable by its own terms either way.
 			expect(searchSettings('prevent sleep', [], { maestroCue: false }).map((s) => s.id)).toContain(

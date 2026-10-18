@@ -85,6 +85,7 @@ describe('headless translate at send', () => {
 		const nativeDir = path.join(codexRoot, 'sessions/2026/10/17');
 		await fs.mkdir(nativeDir, { recursive: true });
 		await fs.mkdir(project, { recursive: true });
+		await fs.mkdir(claudeRoot, { recursive: true });
 		const native =
 			[
 				{ type: 'session_meta', payload: { id: 'source', cwd: project } },
@@ -198,8 +199,8 @@ describe('headless translate at send', () => {
 		}));
 		const ready = createRuntimeTurns(options);
 		try {
-			await ready.api.send('agent', 'tab', { text: 'Continue the same context' });
-			expect(runAgentTurn).toHaveBeenCalledTimes(1);
+			const sent = await ready.api.send('agent', 'tab', { text: 'Continue the same context' });
+			expect(runAgentTurn, JSON.stringify(sent)).toHaveBeenCalledTimes(1);
 			const turn = runAgentTurn.mock.calls[0][0];
 			const tab = repository.getTab('agent', 'tab')!;
 			expect(turn.resumeSessionId).toBe(tab.agentSessionId);

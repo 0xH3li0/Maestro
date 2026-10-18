@@ -3112,7 +3112,8 @@ describe('EditAgentModal', () => {
 			await renderOnModels(createSession({ tierTargets: { low: LOCAL } }));
 
 			openTab('Provider');
-			fireEvent.change(screen.getByDisplayValue('Claude Code'), { target: { value: 'codex' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			await screen.findByText('Native resume remains unverified');
 			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
 			openTab('Models');

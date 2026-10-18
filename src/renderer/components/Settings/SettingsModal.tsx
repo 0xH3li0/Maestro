@@ -80,9 +80,9 @@ interface SettingsNavEntry {
 interface SettingsNavItem extends SettingsNavEntry {
 	id: SettingsTabId;
 	/**
-	 * The tab's subtree. Drawn under the tab whenever the sidebar has room for
-	 * it, and otherwise only while the tab is open. Walked by Cmd+Shift+[ / ] in
-	 * place of the tab itself.
+	 * The tab's subtree. Defaults to open whenever the sidebar has room for it,
+	 * and otherwise only while the tab is open; the disclosure overrides that.
+	 * Walked by Cmd+Shift+[ / ] in place of the tab itself.
 	 */
 	children?: readonly (SettingsNavEntry & { id: string })[];
 	/**
@@ -128,14 +128,14 @@ const TAB_ITEMS: SettingsNavItem[] = [
 // that child carries the selection (background and edge) and the tab is drawn
 // as the open parent: accent and bold, with no fill. A tab with a landing page
 // passes `selected` while the landing page shows. In the sidebar a chevron
-// shows whether the subtree is drawn; it can be expanded with another tab
-// selected, when the sidebar has room for every row.
+// toggles the subtree independently of the page the tab opens.
 function SettingsTabButton({
 	tab,
 	isActive,
 	orientation,
 	theme,
 	onClick,
+	onToggle,
 	child = false,
 	expanded,
 	selected = isActive && !expanded,
@@ -145,6 +145,8 @@ function SettingsTabButton({
 	orientation: 'vertical' | 'horizontal';
 	theme: Theme;
 	onClick: () => void;
+	/** Toggle the subtree without navigating away from the current page. */
+	onToggle?: () => void;
 	/** A row of a tab's subtree: indented in the sidebar, smaller everywhere. */
 	child?: boolean;
 	/** Whether this row carries the selection. Defaults to active and not an open parent. */
@@ -156,9 +158,16 @@ function SettingsTabButton({
 	const activeEdge = `2px solid ${theme.colors.accent}`;
 	const inactiveEdge = '2px solid transparent';
 	const vertical = orientation === 'vertical';
-	const padding = child ? (vertical ? 'pl-10 pr-4 py-1.5' : 'px-3 py-2') : 'px-4 py-2';
+	const collapsible = vertical && expanded !== undefined && onToggle !== undefined;
+	const padding = child
+		? vertical
+			? 'pl-10 pr-4 py-1.5'
+			: 'px-3 py-2'
+		: collapsible
+			? 'pl-4 pr-12 py-2'
+			: 'px-4 py-2';
 	const Chevron = expanded ? ChevronDown : ChevronRight;
-	return (
+	const tabButton = (
 		<button
 			onClick={onClick}
 			className={`flex items-center gap-2.5 ${padding} ${child ? 'text-[13px]' : 'text-sm'} text-left transition-colors cursor-pointer ${vertical ? 'w-full' : 'flex-shrink-0'} ${isActive ? 'font-bold' : 'opacity-70 hover:opacity-100'}`}
@@ -175,10 +184,23 @@ function SettingsTabButton({
 		>
 			<Icon className={`${child ? 'w-3.5 h-3.5' : 'w-4 h-4'} flex-shrink-0`} />
 			<span className="whitespace-nowrap">{tab.label}</span>
-			{expanded !== undefined && vertical && (
-				<Chevron className="w-3.5 h-3.5 ml-auto flex-shrink-0 opacity-70" />
-			)}
 		</button>
+	);
+	if (!collapsible) return tabButton;
+	return (
+		<div className="relative">
+			{tabButton}
+			<button
+				type="button"
+				onClick={onToggle}
+				aria-label={`${expanded ? 'Collapse' : 'Expand'} ${tab.label}`}
+				aria-expanded={expanded}
+				className="absolute inset-y-0 right-0 px-4 opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+				style={{ color: isActive ? theme.colors.accent : theme.colors.textMain }}
+			>
+				<Chevron className="w-3.5 h-3.5" aria-hidden="true" />
+			</button>
+		</div>
 	);
 }
 
@@ -586,7 +608,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		enabled: isOpen,
 	});
 
-	// A subtree in the sidebar stays expanded while every row fits without
+	// By default, a subtree in the sidebar stays expanded while every row fits without
 	// scrolling the sidebar, and collapses to "open only under the selected tab"
 	// when it would not. Measured, not a breakpoint: the font size is a user
 	// setting, and plugin settings pages add rows. The key re-measures when the
@@ -596,15 +618,21 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		axis: 'height',
 		contentKey: `${isOpen}:${isXs}:${tabItems.length}`,
 	});
+	// A manual disclosure choice takes precedence over the automatic fit rule.
+	const [subtreeExpansion, setSubtreeExpansion] = useState<Partial<Record<SettingsTabId, boolean>>>(
+		{}
+	);
 
 	// The sidebar rows, for either orientation: every tab, and its subtree when
-	// it is open or the sidebar has room for it. The phone strip scrolls
-	// sideways anyway, so there a subtree shows only under the selected tab.
+	// it is open or the sidebar has room for it, unless toggled manually. The phone
+	// strip scrolls sideways anyway, so there it shows only under the selected tab.
 	const renderNavItems = (orientation: 'vertical' | 'horizontal') =>
 		tabItems.map((tab) => {
 			const isActive = activeTab === tab.id;
 			const expanded = tab.children
-				? isActive || (orientation === 'vertical' && subtreesFit)
+				? orientation === 'vertical'
+					? (subtreeExpansion[tab.id] ?? (isActive || subtreesFit))
+					: isActive
 				: undefined;
 			const landing = tab.landing;
 			return (
@@ -613,6 +641,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						tab={tab}
 						isActive={isActive}
 						expanded={expanded}
+						onToggle={
+							tab.children
+								? () => setSubtreeExpansion((previous) => ({ ...previous, [tab.id]: !expanded }))
+								: undefined
+						}
 						selected={
 							tab.children ? isActive && landing !== undefined && activeChild === landing : isActive
 						}

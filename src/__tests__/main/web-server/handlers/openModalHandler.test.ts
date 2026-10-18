@@ -249,7 +249,7 @@ describe('open_modal handler: a surface behind an Encore Feature', () => {
 			success: false,
 			requestId: 'req-1',
 		});
-		expect(lastResponse(client).error).toContain('is an Encore Feature and is currently off');
+		expect(lastResponse(client).error).toContain('Maestro Cue is turned off.');
 	});
 
 	it('opens the same surface once the feature is on', async () => {
