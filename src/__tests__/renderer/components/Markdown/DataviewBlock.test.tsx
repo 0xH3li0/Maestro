@@ -15,6 +15,7 @@ import {
 	type Literal,
 } from '../../../../shared/dataview';
 import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const ROOT = '/vault';
@@ -77,6 +78,8 @@ function setDataviewEnabled(enabled: boolean) {
 describe('DataviewBlock', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Results live in a module-level cache; a test must not see another's answer.
+		clearCachedResources();
 		setDataviewEnabled(true);
 	});
 
@@ -252,6 +255,25 @@ describe('DataviewBlock', () => {
 		expect(toggleOwnTask).not.toHaveBeenCalled();
 	});
 
+	it('leaves the file alone when the task line no longer holds the task', async () => {
+		vi.mocked(window.maestro.fs.readFile).mockResolvedValue('# Alpha\n- [ ] something else\n');
+		respond({
+			kind: 'task',
+			groups: [{ text: 'ship it', line: 1, path: 'Projects/Alpha.md', task: true, checked: false }],
+			idMeaning: { type: 'path' },
+			warnings: [],
+		});
+		renderBlock('TASK FROM "Projects"');
+
+		await screen.findByText('ship it');
+		fireEvent.click(screen.getByRole('checkbox'));
+
+		await waitFor(() =>
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/vault/Projects/Alpha.md', undefined)
+		);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+
 	it('re-runs on a change to its root and keeps the old result on screen until the new one arrives', async () => {
 		const emit = captureChanges();
 		respond(listOf(['first']));
@@ -289,6 +311,7 @@ describe('DataviewBlock', () => {
 		await screen.findByText('first');
 
 		emit({ root: '/other-vault', sshRemoteId: null, revision: 9, changedPaths: [] });
+		emit({ root: ROOT, sshRemoteId: 'remote-1', revision: 9, changedPaths: [] });
 		emit({ root: ROOT, sshRemoteId: null, revision: 5, changedPaths: [] });
 		await new Promise((resolve) => setTimeout(resolve, DATAVIEW_REFRESH_DEBOUNCE_MS * 2));
 
@@ -346,6 +369,21 @@ describe('DataviewBlock', () => {
 
 		await screen.findByText(/CALENDAR queries are not supported/);
 		expect(container.querySelector('[data-alert-type="warning"]')).not.toBeNull();
+	});
+
+	it('counts a single result in the singular and lists skipped-row warnings', async () => {
+		respond({
+			kind: 'list',
+			items: wire(['only one']),
+			idMeaning: { type: 'path' },
+			warnings: ['Skipped 1 row: field "x" is not a number'],
+		});
+		const { container } = renderBlock('LIST x');
+
+		await screen.findByText('only one');
+		expect(container.querySelector('[data-dataview-count]')?.textContent).toBe('1 result');
+		const warning = container.querySelector('[data-alert-type="warning"]');
+		expect(warning?.textContent).toContain('Skipped 1 row: field "x" is not a number');
 	});
 
 	it("shows Dataview's empty-result notice instead of an empty table", async () => {

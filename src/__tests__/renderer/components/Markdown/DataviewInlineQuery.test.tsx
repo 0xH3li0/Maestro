@@ -14,7 +14,14 @@ import {
 	REMARK_GFM_PLUGINS,
 } from '../../../../renderer/utils/markdownConfig';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { Link, toWireValue, type DataviewInlineResult } from '../../../../shared/dataview';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
+import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
+import {
+	Link,
+	toWireValue,
+	type DataviewChangeEvent,
+	type DataviewInlineResult,
+} from '../../../../shared/dataview';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const NOTE = '/vault/People/Ada.md';
@@ -23,14 +30,24 @@ function scope(overrides: Partial<DataviewDocumentScope> = {}): DataviewDocument
 	return { filePath: NOTE, agentId: 'agent-1', openLink: vi.fn(), ...overrides };
 }
 
-function respond(result: DataviewInlineResult) {
+function respond(result: DataviewInlineResult, revision = 1) {
 	vi.mocked(window.maestro.dataview.queryInline).mockResolvedValue({
 		root: '/vault',
 		sshRemoteId: null,
-		revision: 1,
+		revision,
 		path: 'People/Ada.md',
 		result,
 	});
+}
+
+/** Capture the window's `dataview:changed` listener so a test can emit events. */
+function captureChanges(): (event: DataviewChangeEvent) => void {
+	let emit: (event: DataviewChangeEvent) => void = () => {};
+	vi.mocked(window.maestro.dataview.onChanged).mockImplementation((handler) => {
+		emit = handler;
+		return () => {};
+	});
+	return (event) => emit(event);
 }
 
 function renderNote(markdown: string, doc: DataviewDocumentScope | null = scope()) {
@@ -76,6 +93,8 @@ describe('parseDataviewInlineQuery', () => {
 describe('DataviewInlineQuery', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Values live in a module-level cache; a test must not see another's answer.
+		clearCachedResources();
 		setDataviewEnabled(true);
 	});
 
@@ -122,6 +141,22 @@ describe('DataviewInlineQuery', () => {
 				`Dataview (for inline query 'nope()'): No implementation found for "nope"`
 			)
 		);
+	});
+
+	it('re-evaluates on a change to its root and ignores other roots', async () => {
+		const emit = captureChanges();
+		respond({ kind: 'value', value: toWireValue('before') });
+		renderNote('`= this.status`');
+		await screen.findByText('before');
+
+		emit({ root: '/other-vault', sshRemoteId: null, revision: 2, changedPaths: [] });
+		await new Promise((resolve) => setTimeout(resolve, DATAVIEW_REFRESH_DEBOUNCE_MS * 2));
+		expect(window.maestro.dataview.queryInline).toHaveBeenCalledTimes(1);
+
+		respond({ kind: 'value', value: toWireValue('after') }, 2);
+		emit({ root: '/vault', sshRemoteId: null, revision: 2, changedPaths: ['People/Ada.md'] });
+		await screen.findByText('after', undefined, { timeout: DATAVIEW_REFRESH_DEBOUNCE_MS * 4 });
+		expect(window.maestro.dataview.queryInline).toHaveBeenCalledTimes(2);
 	});
 
 	it('keeps the span as code outside a Dataview surface or with the Encore Feature off', () => {
