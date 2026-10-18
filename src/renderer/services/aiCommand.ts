@@ -19,7 +19,7 @@ import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { dispatchShellCommand, resolveCommandCwd } from './shellCommand';
 import { aiCommandKey, useAiCommandStore, type AiCommandEntry } from '../stores/aiCommandStore';
-import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { codifyTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
 import { collectRecentCommands } from '../../shared/aiCommand';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import {
@@ -74,6 +74,8 @@ export async function requestAiCommand(options: {
 	const requestId = generateId();
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId);
+	if (!tab) return;
+	const providerSession = projectTabProvider(session, tab).agent;
 	// Same resolution the chat spawn uses, so the suggestion runs under exactly
 	// the model and effort the composer's pills advertise. Settings are codified
 	// here, at send time, for the same reason a chat turn codifies them: changing
@@ -105,17 +107,17 @@ export async function requestAiCommand(options: {
 	try {
 		const result = await window.maestro.aiCommand.suggest({
 			request,
-			agentType: session.toolType,
+			agentType: providerSession.toolType,
 			cwd: resolveCommandCwd(session),
 			isGitRepo: session.isGitRepo,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			sshRemoteName: session.sshRemote?.name,
-			customPath: session.customPath,
-			customArgs: session.customArgs,
-			customEnvVars: session.customEnvVars,
+			customPath: providerSession.customPath,
+			customArgs: providerSession.customArgs,
+			customEnvVars: providerSession.customEnvVars,
 			customModel: turnModel,
 			customEffort: turnEffort,
-			claudeTokenSource: getClaudeTokenSourceFields(session),
+			claudeTokenSource: getClaudeTokenSourceFields(providerSession),
 			recentCommands,
 		});
 

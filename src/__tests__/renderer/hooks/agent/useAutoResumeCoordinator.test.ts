@@ -53,6 +53,7 @@ function makeLimitPausedSession(overrides: Partial<Session> = {}): Session {
 	return createMockSession({
 		id: 'sess-claude',
 		toolType: 'claude-code',
+		customEnvVars: { CLAUDE_CONFIG_DIR: '/home/.claude' },
 		name: 'My Agent',
 		state: 'error',
 		agentErrorPaused: true,

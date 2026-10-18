@@ -228,6 +228,7 @@ export type ReauthHost = Pick<
 	| 'projectRoot'
 	| 'customEnvVars'
 	| 'customPath'
+	| 'providerOverrides'
 	| 'sessionSshRemoteConfig'
 	| 'sshRemoteId'
 	| 'remoteCwd'

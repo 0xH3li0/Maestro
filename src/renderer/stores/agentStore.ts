@@ -304,11 +304,32 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	clearAgentError: (sessionId, tabId?) => {
+		const session = getSession(sessionId);
+		const clearsSessionError =
+			!tabId || !session?.agentErrorTabId || session.agentErrorTabId === tabId;
+		const targetTabId = tabId ?? session?.agentErrorTabId;
+		const remainingErrorTab = session?.aiTabs.find(
+			(tab) => tab.id !== targetTabId && tab.agentError
+		);
 		updateSession(sessionId, (s) => {
 			const targetTabId = tabId ?? s.agentErrorTabId;
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
+			// Resolving one provider outage cannot release another tab's pause.
+			if (!clearsSessionError) {
+				return { ...s, aiTabs: updatedAiTabs };
+			}
+			if (remainingErrorTab) {
+				return {
+					...s,
+					aiTabs: updatedAiTabs,
+					agentError: remainingErrorTab.agentError,
+					agentErrorTabId: remainingErrorTab.id,
+					agentErrorPaused: true,
+					state: 'error' as SessionState,
+				};
+			}
 			// Clearing the error must not claim the AGENT is idle while one of its
 			// tabs is still mid-turn. A re-authentication resumes blocked agents one
 			// after another (see `resolveAuthOutage`), so this runs while an earlier
@@ -335,6 +356,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				aiTabs: updatedAiTabs,
 			};
 		});
+		if (!clearsSessionError || remainingErrorTab) return;
 		// Close the agent error modal if open
 		window.maestro.agentError.clearError(sessionId).catch((err) => {
 			logger.error('Failed to clear agent error:', undefined, err);

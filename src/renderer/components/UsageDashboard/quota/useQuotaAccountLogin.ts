@@ -108,7 +108,7 @@ export function useQuotaAccountLogin(
 					homeDir,
 					useSessionStore.getState().sessions
 				);
-				const { providerKey } = startAccountReauth(toolType);
+				const { providerKey } = startAccountReauth(toolType, host);
 				pendingRef.current = true;
 				getModalActions().openReauthModal({ providerKey, host });
 			};

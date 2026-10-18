@@ -177,6 +177,47 @@ describe('requestAiCommand', () => {
 		expect(entryNow()?.effort).toBe('high');
 	});
 
+	it('uses the requested tab harness and its parked configuration', async () => {
+		const session = makeSession({
+			customPath: '/claude',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/claude-account' },
+			enableMaestroP: true,
+			providerOverrides: {
+				codex: {
+					customPath: '/codex',
+					customArgs: '--codex',
+					customEnvVars: { CODEX_HOME: '/codex-account' },
+				},
+			},
+			aiTabs: [
+				createMockAITab({
+					id: TAB_ID,
+					tabProvider: 'codex',
+					customModel: 'gpt-5',
+					customEffort: 'high',
+				}),
+			],
+		});
+		await requestAiCommand({ session, tabId: TAB_ID, request: 'list files' });
+		expect(suggest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'codex',
+				customPath: '/codex',
+				customArgs: '--codex',
+				customEnvVars: { CODEX_HOME: '/codex-account' },
+				customModel: 'gpt-5',
+				customEffort: 'high',
+				claudeTokenSource: expect.objectContaining({ enableMaestroP: undefined }),
+			})
+		);
+	});
+
+	it('does not suggest on the default provider when the requested tab is gone', async () => {
+		await requestAiCommand({ session: makeSession(), tabId: 'gone', request: 'list files' });
+		expect(suggest).not.toHaveBeenCalled();
+		expect(entryNow()).toBeUndefined();
+	});
+
 	it('falls back to the agent model and effort when the tab has no override', async () => {
 		await requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'list files' });
 

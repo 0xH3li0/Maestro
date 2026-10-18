@@ -115,6 +115,16 @@ function makeDeps() {
 }
 
 describe('useAgentErrorListener', () => {
+	it('opens recovery for the emitted provider after the target tab switches harness', () => {
+		const tab = createMockAITab({ id: 'tab-1', tabProvider: 'claude-code', turnProvider: 'codex' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: tab.id });
+		useSessionStore.setState({ sessions: [session] });
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, agentId: 'codex' });
+		expect(useModalStore.getState().modals.get('reauth')?.data).toEqual({ providerKey: 'codex' });
+		expect(useAuthOutageStore.getState().outages.codex.host?.toolType).toBe('codex');
+	});
+
 	it('opens the agentError modal and stamps session error state', () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });

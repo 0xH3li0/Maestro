@@ -795,6 +795,16 @@ describe('providerOverridesFor', () => {
 });
 
 describe('one-tab launch projection', () => {
+	it('drops the default harness quota stamp from foreign provider projections', () => {
+		const agent = {
+			...makeAgent('codex'),
+			claudeInteractive: { lastUsageSnapshotKey: '/stale/account' },
+		};
+		const tab = makeTab({ tabProvider: 'claude-code' });
+		expect(projectTabProvider(agent, tab).agent.claudeInteractive).toBeUndefined();
+		expect(agent.claudeInteractive.lastUsageSnapshotKey).toBe('/stale/account');
+	});
+
 	it('uses the selected provider slot and overrides without changing the saved agent', () => {
 		const tab = makeTab({
 			tabProvider: 'codex',

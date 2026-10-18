@@ -247,6 +247,62 @@ describe('agentStore', () => {
 	});
 
 	describe('clearAgentError', () => {
+		it('keeps another provider tab paused when clearing one recovered tab', () => {
+			const error = { type: 'auth_expired', agentId: 'codex', message: 'expired' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: error,
+				agentErrorTabId: 'codex-tab',
+				agentErrorPaused: true,
+			});
+			session.aiTabs = [
+				{
+					...session.aiTabs[0],
+					id: 'claude-tab',
+					agentError: { ...error, agentId: 'claude-code' },
+				},
+				{ ...session.aiTabs[0], id: 'codex-tab', agentError: error },
+			];
+			useSessionStore.getState().setSessions([session]);
+			useAgentStore.getState().clearAgentError(session.id, 'claude-tab');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			expect(updated.agentError).toBe(error);
+			expect(updated.agentErrorTabId).toBe('codex-tab');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		});
+
+		it('retains the remaining failed tab after the aggregate error is recovered', () => {
+			const error = { type: 'auth_expired', agentId: 'codex', message: 'expired' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: error,
+				agentErrorTabId: 'codex-tab',
+				agentErrorPaused: true,
+			});
+			session.aiTabs = [
+				{
+					...session.aiTabs[0],
+					id: 'claude-tab',
+					agentError: { ...error, agentId: 'claude-code' },
+				},
+				{ ...session.aiTabs[0], id: 'codex-tab', agentError: error },
+			];
+			useSessionStore.getState().setSessions([session]);
+			useAgentStore.getState().clearAgentError(session.id, 'codex-tab');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[1].agentError).toBeUndefined();
+			expect(updated.agentError?.agentId).toBe('claude-code');
+			expect(updated.agentErrorTabId).toBe('claude-tab');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		});
+
 		it('clears session-level error fields and sets state to idle', () => {
 			const session = createMockSession({
 				id: 'session-1',

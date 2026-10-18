@@ -782,7 +782,7 @@ export const TerminalOutput = memo(
 									// still name a hidden consult tab - the transcript below is
 									// drawing `activeTab`'s logs, so that is the conversation a
 									// chip in them belongs to.
-									codexDirectives={session.toolType === 'codex'}
+									codexDirectives={log.turnProvider === 'codex'}
 									codexFollowupTabId={activeTab?.id}
 									isClaudeCode={log.turnProvider === 'claude-code'}
 									isAdaptiveMode={claudeTokenMode === 'dynamic'}

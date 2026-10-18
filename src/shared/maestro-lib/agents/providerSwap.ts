@@ -336,6 +336,8 @@ export function projectTabProvider<
 			...overrides,
 			toolType: provider,
 			...(foreign && {
+				// The default harness's last quota probe cannot identify a foreign tab account.
+				claudeInteractive: undefined,
 				tierTargets: undefined,
 				runOn: undefined,
 				gatewayUrl: undefined,
