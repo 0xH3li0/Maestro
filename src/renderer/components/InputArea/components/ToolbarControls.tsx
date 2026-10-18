@@ -41,9 +41,12 @@ import { formatTerminalCwd } from '../utils/terminalPath';
 import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { projectTabProvider } from '../../../utils/providerTabSessions';
 
 interface ToolbarControlsProps {
 	session: Session;
+	/** One selection owner supplies both provider control presentations. */
+	providerChoice?: { pill: React.ReactNode; row: React.ReactNode };
 	theme: Theme;
 	isTerminalMode: boolean;
 	canAttachImages: boolean;
@@ -104,6 +107,7 @@ interface ToolbarControlsProps {
 
 export const ToolbarControls = memo(function ToolbarControls({
 	session,
+	providerChoice,
 	theme,
 	isTerminalMode,
 	canAttachImages,
@@ -193,6 +197,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 		phone && isAiMode && !!onToggleVoiceInput && !!voiceHandledElsewhere;
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
+	const provider = useMemo(() => projectTabProvider(session, activeTab), [session, activeTab]);
+	const ensemble = useSettingsStore((s) => s.encoreFeatures.ensemble);
 	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
@@ -217,7 +223,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// Auto is a model choice like any other, offered only for an agent it can
 	// act on. It is added here, where the agent is known, so the desktop pill and
 	// the phone sheet below list the same thing.
-	const autoModel = useAutoModelChoice(session);
+	const autoModel = useAutoModelChoice(provider.agent);
 	const modelOptions = useMemo(
 		() => withAutoModelOption(availableModels, autoModel),
 		[availableModels, autoModel]
@@ -397,10 +403,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 				</div>
 				{isAiMode && (
 					<ComposerOptionsSheet
+						key={provider.agent.toolType}
 						open={optionsSheetOpen}
 						onClose={() => setOptionsSheetOpen(false)}
 						theme={theme}
-						agentId={session.toolType}
+						agentId={provider.agent.toolType}
+						providerControl={ensemble ? providerChoice?.row : undefined}
 						tabSaveToHistory={tabSaveToHistory}
 						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 						hasReadOnlyCapability={hasReadOnlyCapability}
@@ -485,7 +493,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 				)}
 				{imageFileInput}
 				<ModelEffortPills
+					key={provider.agent.toolType}
 					isVisible={isAiMode}
+					providerControl={ensemble ? providerChoice?.pill : undefined}
 					theme={theme}
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
@@ -579,11 +589,11 @@ export const ToolbarControls = memo(function ToolbarControls({
 						}}
 						title={`${getPermissionModeTooltip(
 							currentPermissionMode,
-							session.toolType
+							provider.agent.toolType
 						)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
 					>
 						<Eye className="w-3 h-3" />
-						<span>{getPermissionModeLabel(currentPermissionMode, session.toolType)}</span>
+						<span>{getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}</span>
 					</button>
 				)}
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (

@@ -66,6 +66,8 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
+import { projectTabProvider } from '../utils/providerTabSessions';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 
 export interface ModelEffortModalProps {
 	theme: Theme;
@@ -158,19 +160,26 @@ function findTypeaheadMatch(models: string[], query: string, from: number): numb
 export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
 	const tab = activeSession?.aiTabs.find((t) => t.id === tabId);
-	const agentId = activeSession?.toolType;
+	const provider = activeSession ? projectTabProvider(activeSession, tab) : undefined;
+	const agentId = provider?.agent.toolType;
 
-	const { models, efforts, defaultModel, defaultEffort, loaded } =
-		useAgentModelEffortOptions(agentId);
-	const { model: currentModel, effort: currentEffort } = resolveModelEffort(tab, activeSession, {
-		defaultModel,
-		defaultEffort,
-	});
+	const { models, efforts, defaultModel, defaultEffort, loaded } = useAgentModelEffortOptions(
+		agentId,
+		getSessionSshRemoteId(activeSession)
+	);
+	const { model: currentModel, effort: currentEffort } = resolveModelEffort(
+		provider?.tab,
+		provider?.agent,
+		{
+			defaultModel,
+			defaultEffort,
+		}
+	);
 
 	// '' (inherit the agent default) is always offered as the first choice, the
 	// same way the composer pills offer it. Auto follows it, for an agent it can
 	// act on.
-	const autoModel = useAutoModelChoice(activeSession);
+	const autoModel = useAutoModelChoice(provider?.agent);
 	const modelOptions = useMemo(
 		() => withAutoModelOption(models.includes('') ? models : ['', ...models], autoModel),
 		[models, autoModel]
@@ -185,8 +194,35 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	// leave a window right after open where the highlight sits on '(default)'
 	// because the option lists hadn't landed yet - and an Enter inside that
 	// window would clear the override the user came here to nudge.
-	const [pickedModel, setPickedModel] = useState<string | null>(null);
-	const [pickedEffort, setPickedEffort] = useState<string | null>(null);
+	const selectionKey = JSON.stringify([
+		activeSession?.id,
+		tabId,
+		agentId,
+		getSessionSshRemoteId(activeSession),
+	]);
+	const [picks, setPicks] = useState<{ key: string; model?: string; effort?: string }>({
+		key: selectionKey,
+	});
+	const pickedModel = picks.key === selectionKey ? picks.model : undefined;
+	const pickedEffort = picks.key === selectionKey ? picks.effort : undefined;
+	const setPickedModel = useCallback(
+		(model: string) =>
+			setPicks((prev) => ({
+				...(prev.key === selectionKey ? prev : {}),
+				key: selectionKey,
+				model,
+			})),
+		[selectionKey]
+	);
+	const setPickedEffort = useCallback(
+		(effort: string) =>
+			setPicks((prev) => ({
+				...(prev.key === selectionKey ? prev : {}),
+				key: selectionKey,
+				effort,
+			})),
+		[selectionKey]
+	);
 
 	const selectedModel = pickedModel ?? currentModel;
 	const selectedEffort = pickedEffort ?? currentEffort;
@@ -228,7 +264,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			const match = findTypeaheadMatch(modelOptions, typedRef.current, from);
 			if (match >= 0) setPickedModel(modelOptions[match]);
 		},
-		[modelOptions, modelIndex]
+		[modelOptions, modelIndex, setPickedModel]
 	);
 
 	const stepModel = useCallback(
@@ -238,7 +274,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				modelOptions[(modelIndex + delta + modelOptions.length) % modelOptions.length]
 			);
 		},
-		[modelOptions, modelIndex]
+		[modelOptions, modelIndex, setPickedModel]
 	);
 
 	const stepEffort = useCallback(
@@ -248,7 +284,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				effortOptions[(effortIndex + delta + effortOptions.length) % effortOptions.length]
 			);
 		},
-		[effortOptions, effortIndex]
+		[effortOptions, effortIndex, setPickedEffort]
 	);
 
 	/**

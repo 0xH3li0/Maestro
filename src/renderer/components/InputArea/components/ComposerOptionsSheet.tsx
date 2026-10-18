@@ -20,7 +20,7 @@
  * and the file-preview actions sheet cannot drift on tap-target heights.
  */
 
-import { memo, useState } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import { Brain, Eye, Gauge, History, Sparkles } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../types';
 import { getPermissionModeLabel } from '../../../../shared/agentMetadata';
@@ -38,6 +38,8 @@ export type PermissionMode = 'full' | 'standard' | 'readonly';
 
 interface ComposerOptionsSheetProps {
 	open: boolean;
+	/** Ensemble phone row, from the same choice as the desktop pill. */
+	providerControl?: ReactNode;
 	onClose: () => void;
 	theme: Theme;
 	/** Provider id, so read-only reads as the agent's own word for it. */
@@ -70,6 +72,7 @@ const THINKING_LABELS: Record<ThinkingMode, string> = {
 
 export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	open,
+	providerControl,
 	onClose,
 	theme,
 	agentId,
@@ -191,6 +194,8 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 					))}
 				</PhoneSheetSection>
 			)}
+
+			{providerControl}
 
 			{onEffortChange && availableEfforts.some((e) => e !== '') && (
 				<PhoneSheetSection

@@ -166,6 +166,23 @@ describe('QueuedItemEditModal model + effort override', () => {
 		return { onSave };
 	}
 
+	it('edits the captured provider even after the target tab switches', async () => {
+		const { onSave } = renderWithSession('claude-code', {
+			turnSettings: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' },
+		});
+		await screen.findByTitle('Change model');
+		expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, undefined);
+		fireEvent.click(screen.getByTitle('Change effort level'));
+		expect(screen.getByText('low')).toBeInTheDocument();
+		expect(screen.queryByText('ultrathink')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onSave).toHaveBeenCalledWith(
+			expect.objectContaining({
+				turnSettings: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' },
+			})
+		);
+	});
+
 	it('offers Claude Code models and thinking levels for a claude-code agent', async () => {
 		renderWithSession('claude-code');
 		// The pills render once the provider probe resolves.

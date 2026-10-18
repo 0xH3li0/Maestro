@@ -36,6 +36,14 @@ describe('ModelEffortPills', () => {
 		);
 	}
 
+	it('places the shared provider control before model and effort', () => {
+		renderPills({ providerControl: <button>Provider</button> });
+		const buttons = screen.getAllByRole('button');
+		expect(buttons[0]).toHaveTextContent('Provider');
+		expect(buttons[1]).toHaveAttribute('title', 'Change model');
+		expect(buttons[2]).toHaveAttribute('title', 'Change effort level');
+	});
+
 	it('renders nothing when not visible', () => {
 		renderPills({ isVisible: false });
 

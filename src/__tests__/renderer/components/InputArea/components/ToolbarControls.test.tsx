@@ -30,6 +30,9 @@ describe('ToolbarControls', () => {
 		restorePointer();
 		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
+		}));
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -65,6 +68,37 @@ describe('ToolbarControls', () => {
 			/>
 		);
 	}
+
+	it.each([false, true])('gates both provider presentations when phone=%s', (phone) => {
+		mockedUsePhoneLayout.mockReturnValue(phone);
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
+		}));
+		const { unmount } = renderToolbar({
+			providerChoice: { pill: <button>Provider pill</button>, row: <button>Provider row</button> },
+		});
+		if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+		expect(screen.queryByText(/Provider (pill|row)/)).not.toBeInTheDocument();
+		unmount();
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+		}));
+		renderToolbar({
+			providerChoice: { pill: <button>Provider pill</button>, row: <button>Provider row</button> },
+		});
+		if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+		expect(screen.getByText(phone ? 'Provider row' : 'Provider pill')).toBeInTheDocument();
+	});
+
+	it('uses the selected tab provider for permission labels', () => {
+		const session = createInputAreaSession();
+		session.toolType = 'claude-code';
+		session.aiTabs = [
+			{ ...session.aiTabs[0], id: session.activeTabId, tabProvider: 'codex', readOnlyMode: true },
+		];
+		renderToolbar({ session });
+		expect(screen.getByText('Read-Only')).toBeInTheDocument();
+	});
 
 	describe('dictation', () => {
 		const dictationTarget: DictationTarget = { getElement: () => null, insert: () => true };

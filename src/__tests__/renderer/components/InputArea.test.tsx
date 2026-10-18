@@ -259,6 +259,21 @@ describe('InputArea', () => {
 		mockUpdateSessionWith.mockClear();
 	});
 
+	it('loads capabilities for the selected tab provider', async () => {
+		const props = createDefaultProps();
+		props.session = {
+			...props.session,
+			toolType: 'claude-code',
+			aiTabs: props.session.aiTabs.map((tab) =>
+				tab.id === props.session.activeTabId ? { ...tab, tabProvider: 'codex' } : tab
+			),
+		};
+		render(<InputArea {...props} />);
+		const { useAgentCapabilities } =
+			await import('../../../renderer/hooks/agent/useAgentCapabilities');
+		expect(useAgentCapabilities).toHaveBeenCalledWith('codex', undefined, undefined);
+	});
+
 	describe('Basic Rendering', () => {
 		it('renders the input textarea', () => {
 			const props = createDefaultProps();
@@ -1352,6 +1367,24 @@ describe('InputArea', () => {
 				...overrides,
 			});
 		}
+
+		it('previews the selected provider model instead of the agent default', () => {
+			const previous = useSettingsStore.getState().localModelAssignments;
+			useSettingsStore.setState({ localModelAssignments: {} });
+			try {
+				const session = createMockSession({
+					toolType: 'claude-code',
+					customModel: 'claude-default',
+					providerOverrides: { codex: { customModel: 'gpt-tab-model', customEffort: 'high' } },
+				});
+				session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex' };
+				render(<InputArea {...aiCommandProps({ session })} />);
+				expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('gpt-tab-model');
+				expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('high');
+			} finally {
+				useSettingsStore.setState({ localModelAssignments: previous });
+			}
+		});
 
 		it('shows the AI command bar instead of the shell one', () => {
 			render(<InputArea {...aiCommandProps()} />);

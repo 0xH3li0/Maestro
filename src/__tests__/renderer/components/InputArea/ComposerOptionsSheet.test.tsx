@@ -37,6 +37,17 @@ function renderSheet(overrides: Partial<React.ComponentProps<typeof ComposerOpti
 }
 
 describe('ComposerOptionsSheet', () => {
+	it('places the shared provider row before model and effort', () => {
+		renderSheet({ providerControl: <button>Provider</button> });
+		const provider = screen.getByRole('button', { name: 'Provider' });
+		for (const id of ['model', 'effort']) {
+			expect(
+				provider.compareDocumentPosition(screen.getByTestId(`composer-options-${id}`)) &
+					Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		}
+	});
+
 	it('renders nothing while closed', () => {
 		renderSheet({ open: false });
 		expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();

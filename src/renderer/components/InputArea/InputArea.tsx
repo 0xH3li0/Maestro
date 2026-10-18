@@ -51,12 +51,13 @@ import {
 	dismissAiCommand,
 	resolveAiCommandProvenance,
 } from '../../services/aiCommand';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { codifyTurnSettings, projectTabProvider } from '../../utils/providerTabSessions';
 import {
 	buildSlotRemap,
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
@@ -177,13 +178,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		effortMenuRef,
 	} = useModelEffortMenus();
 
-	// Get agent capabilities for conditional feature rendering
-	const { hasCapability } = useAgentCapabilities(session.toolType);
-
 	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
 	const activeTab = useMemo(
 		() => session.aiTabs?.find((tab) => tab.id === session.activeTabId),
 		[session.aiTabs, session.activeTabId]
+	);
+
+	const composerProvider = useMemo(
+		() => projectTabProvider(session, activeTab),
+		[session, activeTab]
+	);
+	const { hasCapability } = useAgentCapabilities(
+		composerProvider.agent.toolType,
+		session.providerTranslationKnowledgeDirectory,
+		getSessionSshRemoteId(session)
 	);
 
 	// Get wizardState from active tab (not session level - wizard state is per-tab)
@@ -775,7 +783,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
-							supportsThinking={supportsThinking}
+							supportsThinking={supportsThinking && hasCapability('supportsThinkingDisplay')}
 							currentModel={currentModel}
 							currentEffort={currentEffort}
 							availableModels={availableModels}

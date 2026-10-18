@@ -50,10 +50,16 @@ and are shared by the composer pills (`ModelEffortPills`) and the keyboard-only
 picker (`ModelEffortModal`), so the two surfaces cannot disagree about what an
 agent offers or what a tab is currently running.
 
-| Function                     | Signature                                                                        | Purpose                                                                                                                                                                                                                                   |
-| ---------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useAgentModelEffortOptions` | `(agentId?: string) => { models, efforts, defaultModel, defaultEffort, loaded }` | Fetches all four with a stale guard. Probes BOTH `effort` and `reasoningEffort` config keys, since agents split between them. `loaded` is false until every lookup settles - an empty list means "still loading" and "not offered" alike. |
-| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`           | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.                                                                                                                         |
+| Function                     | Signature                                                                                              | Purpose                                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useAgentModelEffortOptions` | `(agentId?: string, sshRemoteId?: string) => { models, efforts, defaultModel, defaultEffort, loaded }` | Fetches all four with a stale guard. Probes BOTH `effort` and `reasoningEffort` config keys, since agents split between them. `loaded` is false until every lookup settles - an empty list means "still loading" and "not offered" alike. |
+| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`                                 | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.                                                                                                                         |
+
+For an existing tab, pass the provider and overrides from `projectTabProvider()`
+to discovery and `resolveModelEffort()`. Queue editors project the captured item
+provider. Model discovery passes the SSH host; provider/host changes hide old
+options immediately and discard stale replies. Config/effort APIs remain
+provider-scoped.
 
 Effort options are agent-scoped, not model-scoped: the underlying CLIs expose a
 single list per agent, and a model with no reasoning budget just ignores the

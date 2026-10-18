@@ -17,9 +17,10 @@ import { LightboxModal } from './LightboxModal';
 import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
-import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { captureQueuedTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
 import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
 import { withAutoModelOption } from '../../shared/autoTurn';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
@@ -70,8 +71,16 @@ export function QueuedItemEditModal({
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
-	const providerOptions = useAgentModelEffortOptions(session?.toolType);
-	const autoModel = useAutoModelChoice(session);
+	const tab = session?.aiTabs?.find((t) => t.id === item.tabId);
+	const provider = useMemo(
+		() => (session ? projectTabProvider(session, tab, turnSettings.provider) : undefined),
+		[session, tab, turnSettings.provider]
+	);
+	const providerOptions = useAgentModelEffortOptions(
+		provider?.agent.toolType,
+		getSessionSshRemoteId(session)
+	);
+	const autoModel = useAutoModelChoice(provider?.agent);
 	const modelOptions = useMemo(
 		() => withAutoModelOption(providerOptions.models, autoModel),
 		[providerOptions.models, autoModel]

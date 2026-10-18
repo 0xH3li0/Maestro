@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useRef, useState } from 'react';
-import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, createEvent, act } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
@@ -84,6 +84,42 @@ describe('ModelEffortModal', () => {
 			localModelEndpoints: [],
 		});
 		seedStore();
+	});
+
+	it('uses the edited tab provider and its defaults instead of the agent default', async () => {
+		seedStore(
+			{ tabProvider: 'codex' },
+			{
+				customModel: 'claude-sonnet-4.5',
+				customEffort: 'low',
+				providerOverrides: { codex: { customModel: 'gpt-5', customEffort: 'high' } },
+			}
+		);
+		renderModal();
+		await waitFor(() =>
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, undefined)
+		);
+		await screen.findByText('gpt-5');
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'gpt-5');
+		expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'high');
+	});
+
+	it('drops a user pick when the same edited tab changes provider', async () => {
+		seedStore({ customModel: 'claude-sonnet-4.5' });
+		renderModal();
+		await screen.findByText('gpt-5');
+		fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+		vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
+		act(() => {
+			seedStore({ tabProvider: 'opencode', customModel: 'destination-model' });
+		});
+		await waitFor(() =>
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('opencode', false, undefined)
+		);
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+		expect(setTabModel).toHaveBeenCalledWith('tab-1', 'destination-model');
+		expect(setTabEffort).not.toHaveBeenCalled();
 	});
 
 	it('opens on the value the tab is currently running', async () => {
