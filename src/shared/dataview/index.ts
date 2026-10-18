@@ -23,6 +23,8 @@ export type {
 	GroupElement,
 } from './vendor/data-model/value';
 export { Result, Success, Failure } from './vendor/api/result';
+export { DataArray } from './vendor/api/data-array';
+export type { ArrayFunc, ArrayComparator, LowestKey, Ingrouped } from './vendor/api/data-array';
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
 export type { QuerySettings } from './vendor/settings';
 export { DataviewSettings } from './settings';
