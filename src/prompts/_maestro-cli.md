@@ -44,6 +44,17 @@ Run `<group> --help` for the exact subcommands and flags.
 
 These are judgment calls and gotchas, not syntax - the part worth reading.
 
+**Provider Carry Over** changes an agent's active provider while translating its native conversations and project knowledge, preserving tabs, transcripts, drafts, queue, and file previews. Claude Code ↔ Codex has declared adapters; the **Carry Over** pill in Edit Agent marks these destinations. Installed versions and content still determine whether a plan can proceed. Check the live plan rather than assuming that a pill certifies complete conversion.
+
+```bash
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --provider codex --dry-run --json
+# Read plan.id and limitations from the result, then apply the reviewed ID:
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --migration status --migration-plan <plan-id> --json
+```
+
+Use `--provider claude-code` for the reverse direction. `--migration recover` or `--migration rollback` with `--migration-plan <id>` addresses a failed operation. Accept limitations only within the user's authorization; acceptance cannot override a blocked plan. Project resources are discovered automatically; `--translation-resource <absolute-path>` optionally adds an exact user resource, never an entire account. Skill/subagent definitions may carry without compatible native execution, so report the plan's limits. This requires a matching running desktop and CLI; a headless host or older desktop refuses it. Never emulate translation by editing `toolType` in a store. It changes the active provider, not an independent replica. Inspect the final operation state and nonzero failures/deferred results before claiming completion. When automating from Cue, use an existing shell Command node on a separate controller after the target turn finishes.
+
 **Settings requests** ("can I configure X", theme/preference/behavior asks): discover with `settings list -v [-c <category>]`, inspect the current value with `settings get <key> -v` (don't change something already set how they want), recommend the 1-3 most relevant keys with current value + what each controls (don't dump the catalogue), apply with `settings set <key> <value>` on confirmation, then re-read to confirm. Per-agent overrides (`nudge`, `model`, `effort`, `customArgs`, ...) via `settings agent set <agent-id> <key> <value>`.
 
 **Encore Features (toggled).** Four capabilities sit behind `encoreFeatures.*` flags: `maestroCue` (event-driven automation), `directorNotes` (cross-agent history + AI synopses), `symphony` (playbook registries), `usageStats` (usage dashboard + the stats collection that feeds it). All four ship ON, so a flag reading `false` means the user turned it off deliberately. When a user's intent maps to one, check `settings get encoreFeatures.<flag>` - if `false`, do NOT silently re-enable it. Say the capability is switched off, give a one-line pitch, and offer to flip it back (`settings set encoreFeatures.<flag> true` - instant, no restart). Trigger phrases:
