@@ -153,7 +153,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
-- **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)` in `src/shared/encoreFeatureDefaults.ts`
+- **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)`, `isEncoreFeatureEnabled()`, `requireEncoreFeature()` in `src/shared/encoreFeatureDefaults.ts`; background services follow the flag via `createEncoreFeatureLifecycle()` in `src/main/encore-feature-lifecycle.ts`
+- **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
+- **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
@@ -170,6 +172,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)` in `src/main/process-manager/utils/spawnCwd.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
+- **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
@@ -216,7 +219,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Codex rate-limit reset credits:** spend rules (`describeCreditSpend()`) in `src/shared/codexResetCredits.ts`, primitives in `src/main/agents/codex-reset-credits.ts`, state in `src/renderer/stores/codexResetCreditsStore.ts`, automation in `src/renderer/services/codexAutoReset.ts`
 - **Keeping a plan account on the Usage Dashboard after its agents leave:** `rememberQuotaAccounts()`, `pruneMissingQuotaAccounts()` in `src/main/stores/quotaAccountsStore.ts`; `partitionSnapshotsByAge()` in `src/main/stores/usageSnapshotRetention.ts`
 - **Which provider generates a synopsis:** `synopsisProviderChoice()`, `pickFirstAvailableProvider()` in `src/shared/directorNotesProvider.ts`; `resolveSynopsisProvider()` in `src/main/utils/director-notes-provider.ts`
-- **Parsing a Codex assistant directive:** `parseCodexDirective()`, `findCodexDirectives()`, `KNOWN_CODEX_DIRECTIVES` in `src/shared/codexDirectives.ts`
+- **Parsing a Codex assistant directive:** `parseCodexDirective()`, `findCodexDirectives()`, `KNOWN_CODEX_DIRECTIVES` in `src/shared/codexDirectives.ts`; U+E200 content references via `findCodexContentReferences()`, `KNOWN_CODEX_CONTENT_REFERENCES`
+- **Rendering a Codex `visualize` reference inline:** `loadCodexVisualization()` in `src/main/codex-visualization.ts`, drawn by `CodexVisualizationFrame` in `src/renderer/components/Markdown/components/CodexVisualizationFrame.tsx`
 - **Acting on a clicked Codex followup chip:** `requestCodexFollowup()`, `resolveCodexFollowup()`, `codexDirectivesLiveForSource()` in `src/renderer/services/codexFollowup.ts`, drawn by `FollowupChip`
 - **Changing an agent's provider:** `switchAgentProvider()`, `switchTabProvider()`, `resolveTurnProvider()`, `resolveErrorProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
 - **Selecting one tab's provider:** `resolveTabProvider()`, `resolveTabNativeProvider()`, `switchTabProviderFor()` in `src/shared/maestro-lib/agents/providerSwap.ts`; `useTabStore.setTabProvider()` in `src/renderer/stores/tabStore.ts`
@@ -338,6 +342,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Ordering the Auto Run run list from the picker:** `applySelectionOrder()`, `selectFolderFiles()` in `src/renderer/utils/documentSelectionOrder.ts`
 - **Whether an Auto Run is parked waiting on the user:** `useAutoRunErrorPaused(sessionId)` in `src/renderer/hooks/batch/useAutoRunPause.ts` (never `errorPaused` off the `batchRunState` prop)
 - **Folding a disk change into an Auto Run draft:** `reconcileDiskContent()`, `isAutoRunDocumentLocked()` in `src/renderer/utils/autoRunDraft.ts`
+- **Auto Run percent complete and ETA:** `autoRunProgressPercent()`, `estimateAutoRunEta()` in `src/shared/autorunProgress.ts`, drawn by `<AutoRunProgressStats>`
 - **Which agent an Auto Run executes in (worktree targets):** `resolveAutoRunDispatchTarget()` in `src/renderer/services/autoRunDispatchTarget.ts`; cue.yaml spelling in `src/shared/cue/autorun-worktree.ts`
 - **Scheduled Tasks (clock-driven Cue subs):** types and pure helpers in `src/shared/cue/scheduled-tasks.ts`, filesystem work in `src/main/cue/cue-scheduled-tasks.ts`
 - **Editing one Cue subscription in place:** `patchSubscriptionInYaml()`, `setSubscriptionTurnSettings()`, `findSubscriptionsByName()` in `src/main/cue/cue-subscription-edit.ts`; `applyCueTurnSettingsPatch()` in `src/shared/cue/turn-settings.ts`
@@ -354,6 +359,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Notifications, modals, and surfaces
 
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })` in `src/renderer/stores/notificationStore.ts` (async results, errors, sticky messages)
+- **Whether in-app toasts are on:** `areToastsEnabled()`, `TOAST_DURATION_OFF`, `resolveEnabledToastDuration()` in `src/shared/toastDuration.ts`; `setToastsEnabled()` (settings store), `toggleInAppToasts()` in `src/renderer/services/inAppToasts.ts` (never compare against `-1`)
 - **What a toast click does:** `ToastClickAction` + `parseToastClickAction()` in `src/shared/toastClickAction.ts`, dispatched by `dispatchToastClickAction()` in `src/renderer/services/toastClickActions.ts`
 - **Toast history / unread state:** `history`, `markNotificationRead()`, `selectUnreadNotificationCount()` in `src/renderer/stores/notificationStore.ts`; `<NotificationCenter>`, `<NotificationCenterHost>` in `src/renderer/components/NotificationCenter.tsx`
 - **Center flash (rapid acks):** `notifyCenterFlash()` in `src/renderer/stores/centerFlashStore.ts`; `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts` (momentary acks; never a Toast for clipboard)

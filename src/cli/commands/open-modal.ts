@@ -28,6 +28,7 @@ import {
 } from '../../shared/uiSurfaces';
 import { ExitCode, exitWith } from '../exit-codes';
 import { failCommand, failFromError } from '../services/session-command';
+import { readEncoreFlags, requireEncore } from '../utils/encore-gate';
 
 interface OpenModalOptions {
 	tab?: string;
@@ -53,11 +54,24 @@ function shortcutFor(surface: UiSurface): string | undefined {
 	return formatShortcutKeysFor(shortcut.keys, isMacOS(), '+');
 }
 
+/**
+ * The surfaces, and their tabs, that exist right now: a switched-off Encore
+ * Feature's are left out, the same as in the app.
+ */
+function availableSurfaces(): UiSurface[] {
+	const flags = readEncoreFlags();
+	const exists = (entry: { encore?: UiSurface['encore'] }) => !entry.encore || flags[entry.encore];
+	return UI_SURFACES.filter(exists).map((surface) =>
+		surface.tabs ? { ...surface, tabs: surface.tabs.filter(exists) } : surface
+	);
+}
+
 function printSurfaceList(options: OpenModalOptions): void {
+	const surfaces = availableSurfaces();
 	if (options.json) {
 		console.log(
 			JSON.stringify(
-				UI_SURFACES.map((surface) => ({
+				surfaces.map((surface) => ({
 					id: surface.id,
 					label: surface.label,
 					aliases: surface.aliases ?? [],
@@ -78,8 +92,8 @@ function printSurfaceList(options: OpenModalOptions): void {
 		);
 		return;
 	}
-	const width = Math.max(...UI_SURFACES.map((surface) => surface.id.length));
-	for (const surface of UI_SURFACES) {
+	const width = Math.max(...surfaces.map((surface) => surface.id.length));
+	for (const surface of surfaces) {
 		const shortcut = shortcutFor(surface);
 		const tabs = surfaceTabIds(surface);
 		const subTabs = (surface.tabs ?? [])
@@ -115,9 +129,12 @@ export async function openModal(
 
 	const surface = resolveUiSurface(surfaceName);
 	if (!surface) {
-		const valid = UI_SURFACES.map((entry) => entry.id).join(', ');
+		const valid = availableSurfaces()
+			.map((entry) => entry.id)
+			.join(', ');
 		failCommand(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options.json);
 	}
+	if (surface.encore) requireEncore(surface.encore, options.json);
 
 	// Whether the surface takes a group or an agent is checked before either is
 	// looked up, so `--group` on the wrong surface says that and not "Group not
@@ -129,6 +146,8 @@ export async function openModal(
 		agent: options.agent,
 	});
 	if ('error' in accepted) failCommand(accepted.error, options.json);
+	if (accepted.tab?.encore) requireEncore(accepted.tab.encore, options.json);
+	if (accepted.subTab?.encore) requireEncore(accepted.subTab.encore, options.json);
 	let groupId: string | undefined;
 	let agentId: string | undefined;
 	try {

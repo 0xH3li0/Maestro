@@ -35,6 +35,11 @@ import {
 	parseUserLocalModels,
 } from '../../shared/local-models/user-models';
 import { resolveSyncDir } from '../../shared/syncPath';
+import {
+	DORMANT_PIANOLA_MESSAGE,
+	filterLiveAgents,
+	isAgentDormant,
+} from '../../shared/agentVisibility';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
 // (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
@@ -125,6 +130,33 @@ interface AgentConfigsStore {
  */
 export function readSessions(): SessionInfo[] {
 	return readSessionsStoreFile(getSyncDir()).sessions;
+}
+
+/**
+ * Every LIVE agent: `readSessions()` minus agents whose Encore Feature is
+ * switched off (a dormant Pianola). Anything that lists, resolves, or acts on
+ * agents reads this; only persistence and pruning read the full list. See
+ * `src/shared/agentVisibility.ts`.
+ */
+export function readLiveSessions(): SessionInfo[] {
+	return filterLiveAgents(readSessions(), readSettingValue('encoreFeatures'));
+}
+
+/**
+ * True when `ref` (an id, id prefix, or name) points at a DORMANT agent, so a
+ * resolver that came up empty can say why instead of a bare "not found".
+ */
+function refersToDormantAgent(ref: string): boolean {
+	const encoreFeatures = readSettingValue('encoreFeatures');
+	const lower = ref.toLowerCase();
+	const readable = readableAgentName(ref);
+	return readSessions().some(
+		(s) =>
+			isAgentDormant(s, encoreFeatures) &&
+			(s.id.startsWith(ref) ||
+				s.name.toLowerCase() === lower ||
+				(readable !== '' && readableAgentName(s.name) === readable))
+	);
 }
 
 /**
@@ -500,13 +532,12 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
  * Resolve an agent ID (partial or full)
  * Throws if ambiguous or not found
  *
- * `sessions` defaults to the agents in Maestro's data directory; pass a list
+ * `sessions` defaults to the LIVE agents in Maestro's data directory (a dormant
+ * Pianola never resolves; naming it throws a "turned off" error); pass a list
  * read from somewhere else (`bundle export --data-dir`) to resolve against it.
  */
-export function resolveAgentId(
-	partialId: string,
-	sessions: SessionInfo[] = readSessions()
-): string {
+export function resolveAgentId(partialId: string, sessionList?: SessionInfo[]): string {
+	const sessions = sessionList ?? readLiveSessions();
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);
 
@@ -556,6 +587,9 @@ export function resolveAgentId(
 		}
 	}
 
+	if (!sessionList && refersToDormantAgent(partialId)) {
+		throw new Error(DORMANT_PIANOLA_MESSAGE);
+	}
 	throw new Error(`Agent not found: ${partialId}`);
 }
 
@@ -634,10 +668,11 @@ export function resolveSessionHistoryFilePath(sessionId: string): string | undef
 }
 
 /**
- * Get a session by ID (supports partial IDs)
+ * Get a LIVE session by ID (supports partial IDs). A dormant Pianola is not
+ * returned; see `readLiveSessions`.
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 
 	// First try exact match
 	const exact = sessions.find((s) => s.id === sessionId);
@@ -653,10 +688,10 @@ export function getSessionById(sessionId: string): SessionInfo | undefined {
 }
 
 /**
- * Get sessions by group ID (supports partial IDs)
+ * Get the LIVE sessions in a group (supports partial IDs)
  */
 export function getSessionsByGroup(groupId: string): SessionInfo[] {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const groups = readGroups();
 
 	// Resolve group ID

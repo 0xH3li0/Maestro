@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback } from 'react';
+import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
 import type { ToolType } from '../../types';
 import type {
@@ -23,6 +23,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { VoiceSetupModal } from '../Settings/ACappella/VoiceSetupModal';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
@@ -540,6 +541,13 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onNavBack,
 	onNavForward,
 }: AppUtilityModalsProps) {
+	// Live agents only: a dormant Pianola (flag off) is not offered as a prompt
+	// target and its queue is not browsed.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const liveSessions = useMemo(
+		() => filterLiveAgents(sessions, { pianola: pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
 	// the BatchRunnerModal opens with all freshly generated docs pre-selected.
@@ -879,7 +887,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
 					activeSession={activeGroupChatId ? undefined : activeSession}
-					sessions={activeGroupChatId ? sessions : undefined}
+					sessions={activeGroupChatId ? liveSessions : undefined}
 					groups={activeGroupChatId ? groups : undefined}
 				/>
 			)}
@@ -889,7 +897,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<ExecutionQueueBrowser
 					isOpen={queueBrowserOpen}
 					onClose={onCloseQueueBrowser}
-					sessions={sessions}
+					sessions={liveSessions}
 					activeSessionId={activeSessionId}
 					theme={theme}
 					onRemoveItem={onRemoveQueueItem}

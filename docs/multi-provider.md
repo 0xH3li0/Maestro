@@ -379,10 +379,10 @@ explicit installation option and its limits.
 As of **2026-10-18, no translation direction is native-certified**. The declared
 local directions are:
 
-| Direction            | Schema-tested versions               | Native acceptance                                      |
-| -------------------- | ------------------------------------ | ------------------------------------------------------ |
-| Claude Code to Codex | Claude Code 2.1.296 to Codex 0.162.1 | Unverified; acceptance skipped, certification deferred |
-| Codex to Claude Code | Codex 0.162.1 to Claude Code 2.1.296 | Unverified; acceptance skipped, certification deferred |
+| Direction            | Schema-tested versions               | Native acceptance                                   |
+| -------------------- | ------------------------------------ | --------------------------------------------------- |
+| Claude Code to Codex | Claude Code 2.1.296 to Codex 0.162.1 | Unverified; limited live QA, certification deferred |
+| Codex to Claude Code | Codex 0.162.1 to Claude Code 2.1.296 | Unverified; limited live QA, certification deferred |
 
 Installed local destinations in these directions can be selected, but selection
 does not accept conversion warnings. Other directions are disabled, including
@@ -429,20 +429,21 @@ directly resumable.
 Different providers use different native formats. Maestro provides preview
 conversion between **Claude Code 2.1.296 or newer** and **Codex 0.162.1 or newer**,
 in both directions, for session history and project memory. The tested versions
-are **2.1.296** and **0.162.1**, respectively; other versions at or above those
+are **2.1.296/2.1.302** and **0.162.1/0.163.0**, respectively; other versions at or above those
 minimums show an `untested-version` warning naming the installed and tested
 versions. Unreadable versions, older versions and providers without a converter
 are blocked by preflight.
 
 Status (2026-10-17): **Claude Code 2.1.296 -> Codex 0.162.1** and
 **Codex 0.162.1 -> Claude Code 2.1.296** remain **unverified**. Native
-acceptance was explicitly skipped; certification is deferred, with no native
-evidence date or verified versions. Tested versions describe schema coverage,
+acceptance was initially skipped; subsequent isolated live QA on 2.1.302/0.163.0
+verified conversation recall and access to carried resource definitions, while
+execution continuity and repeated incremental synchronization remain uncertified. Tested versions describe schema coverage,
 not native certification. Untested versions
 keep the plan unverified even if the direction later gains certification;
 blocking history or resource limitations still prevent conversion on any version.
 
-In **Edit Agent**, marked provider destinations have a carry-over adapter.
+In **Edit Agent**, destinations with a **Carry Over** pill have a carry-over adapter.
 Selecting one reads a conversion plan; **Save Changes** applies it after any
 listed warnings are accepted. Blocking limitations prevent the switch. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)

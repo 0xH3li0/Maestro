@@ -5304,6 +5304,15 @@ interface MaestroAPI {
 	};
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;
+	/**
+	 * Codex `visualize` content references. `load` builds the isolated document
+	 * for one fragment and returns the id/revision to frame it by.
+	 */
+	codexVisualization: {
+		load: (
+			request: import('../shared/codexVisualization').CodexVisualizationLoadRequest
+		) => Promise<import('../shared/codexVisualization').CodexVisualizationLoadResult>;
+	};
 }
 
 declare global {

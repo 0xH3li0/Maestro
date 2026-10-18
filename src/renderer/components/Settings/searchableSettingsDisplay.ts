@@ -496,7 +496,6 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'change',
 			'changes',
 			'dirty',
-			'cue',
 			'indicator',
 			'terminal',
 			'startup',
@@ -531,6 +530,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'hide pill',
 			'group pill',
 		],
+		encoreKeywords: { maestroCue: ['cue', 'cue indicator'] },
 	},
 	{
 		id: 'display-modal-layout',

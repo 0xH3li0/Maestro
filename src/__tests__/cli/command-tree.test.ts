@@ -217,7 +217,7 @@ describe('maestro-cli reference', () => {
 		vi.spyOn(console, 'log').mockImplementation((line?: unknown) => {
 			out += `${String(line)}\n`;
 		});
-		reference(program, { format });
+		reference(program, { format, all: true });
 		return out;
 	}
 

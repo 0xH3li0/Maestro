@@ -7,6 +7,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { isCotExportAvailable } from './AgentCotExportSection';
+import { MiniBadge } from '../ui/MiniBadge';
 import { Spinner } from '../ui/Spinner';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
@@ -239,8 +240,27 @@ export function EditAgentModal({
 	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
 	const [projectResourcesIntoRepo, setProjectResourcesIntoRepo] = useState(false);
 	const [selectionRevision, setSelectionRevision] = useState(0);
-	const carryDestinations = SUPPORTED_AGENTS.filter((provider) =>
-		getDeclaredTranslationDirection(session?.toolType ?? selectedToolType, provider)
+	const carryOverBadge = useMemo(
+		() => (
+			<MiniBadge
+				label="Carry Over"
+				theme={theme}
+				className="inline-flex align-middle whitespace-nowrap"
+				style={{ textTransform: 'none', borderRadius: '9999px' }}
+			/>
+		),
+		[theme]
+	);
+	const providerOptions = useMemo(
+		() =>
+			SUPPORTED_AGENTS.map((provider) => ({
+				value: provider,
+				label: getAgentDisplayName(provider),
+				rightContent: getDeclaredTranslationDirection(session?.toolType ?? '', provider)
+					? carryOverBadge
+					: undefined,
+			})),
+		[session?.toolType, carryOverBadge]
 	);
 	const currentMigration = (liveSession ?? session)?.providerMigration;
 	const migrationState =
@@ -1261,21 +1281,15 @@ export function EditAgentModal({
 									theme={theme}
 									value={translationReview ? translationDestination : selectedToolType}
 									disabled={migrationSaving || !!translationReview}
-									optionLabel={(agentId) => {
-										const direction = getDeclaredTranslationDirection(session.toolType, agentId);
-										return direction
-											? `→ ${getAgentDisplayName(agentId)} · Memory + history (${direction.verification === 'verified' ? 'verified' : 'preview'})`
-											: getAgentDisplayName(agentId);
-									}}
+									options={providerOptions}
 									onChange={(providerId) => {
 										setProjectResourcesIntoRepo(false);
 										setSelectedToolType(providerId as ToolType);
 									}}
 								>
 									<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-										{carryDestinations.length > 0
-											? '→ Memory + session carry. Preview conversions are unverified; installed versions and content are checked before saving.'
-											: 'Memory + session carry is not available from this provider.'}
+										Some providers support the ability to transfer sessions, memories, subagents,
+										etc between them. They are denoted as {carryOverBadge} in the list.
 									</div>
 									{translationRequested && migrationActivity && (
 										<div

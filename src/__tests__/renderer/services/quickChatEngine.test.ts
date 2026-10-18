@@ -703,8 +703,17 @@ describe('wrong tab (thumbs-down): move a message that already ran', () => {
 });
 
 describe('new chat', () => {
-	it('deletes an ephemeral tab without putting it on the undo stack', async () => {
+	// The ended chat finishes out of sight, and the engine's store subscription
+	// is what notices it has.
+	let stopEngine: () => void = () => {};
+	beforeEach(() => {
+		stopEngine = startQuickChatEngine();
+	});
+	afterEach(() => stopEngine());
+
+	it('deletes a finished ephemeral tab without putting it on the undo stack', async () => {
 		const { message } = await send('hi');
+		reply('b', message.route!.tabId!, 'hello');
 		const result = await runQuickChatCommand({ type: 'new' });
 		expect(result.snapshot.tabId).toBeNull();
 		expect(result.snapshot.messages).toEqual([]);
@@ -733,36 +742,76 @@ describe('new chat', () => {
 		expect(result.snapshot.persistent).toBe(false);
 	});
 
-	it('keeps a message sent while the old chat is still being cleaned up', async () => {
-		const old = await send('old');
-		// The old chat's tab is mid-reply, so ending it waits on an interrupt.
-		let finishInterrupt: (ok: boolean) => void = () => {};
-		vi.mocked(window.maestro.process.interrupt).mockReturnValue(
-			new Promise((resolve) => (finishInterrupt = resolve))
-		);
-		const ending = runQuickChatCommand({ type: 'new' });
-		await runQuickChatCommand({ type: 'send', text: 'fresh' });
-		finishInterrupt(true);
-		await ending;
+	it('lets a reply in progress finish out of sight, then deletes its hidden tab', async () => {
+		const { message } = await send('plan the trip');
+		const tabId = message.route!.tabId!;
+		expect(message.route!.status).toBe('running');
+		const chatId = buildQuickChatSnapshot().chatId;
 
-		await vi.waitFor(() => expect(sent().at(-1)?.route?.status).toBe('running'));
-		expect(sent().map((m) => m.text)).toEqual(['fresh']);
-		// The old chat's tab is gone; the new chat's tab is not.
-		const tabs = session('b').aiTabs.map((t) => t.id);
-		expect(tabs).not.toContain(old.message.route!.tabId);
-		expect(tabs).toContain(sent()[0].route!.tabId);
+		const result = await runQuickChatCommand({ type: 'new' });
+		expect(result.snapshot.messages).toEqual([]);
+		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
+		expect(tab('b', tabId)).toMatchObject({ hidden: true, state: 'busy' });
+
+		vi.mocked(window.maestro.quickChat.saveRecent).mockClear();
+		reply('b', tabId, 'Here is the plan');
+		await vi.waitFor(() => expect(session('b').aiTabs.some((t) => t.id === tabId)).toBe(false), {
+			timeout: 3000,
+		});
+		// The finished reply reached the recent chats list before its tab went.
+		const saved = vi.mocked(window.maestro.quickChat.saveRecent).mock.calls.at(-1)![0];
+		expect(saved.id).toBe(chatId);
+		expect(saved.turns[0].reply.map((m) => m.text)).toEqual(['Here is the plan']);
+		expect(session('b').closedTabHistory).toEqual([]);
 	});
 
-	it('drops a message whose tab was still being found', async () => {
+	it('runs a new chat beside the old one still replying', async () => {
+		const old = await send('old');
+		await runQuickChatCommand({ type: 'new' });
+		const fresh = await send('fresh');
+
+		expect(fresh.message.route!.status).toBe('running');
+		expect(sent().map((m) => m.text)).toEqual(['fresh']);
+		const tabs = session('b').aiTabs.map((t) => t.id);
+		expect(tabs).toContain(old.message.route!.tabId);
+		expect(tabs).toContain(fresh.message.route!.tabId);
+		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
+	});
+
+	it('still delivers a message whose tab was being found', async () => {
 		let found: (target: { kind: 'new' }) => void = () => {};
 		vi.mocked(routeQuickChatMessage).mockReturnValue(new Promise((resolve) => (found = resolve)));
 		await runQuickChatCommand({ type: 'send', text: 'hello' });
 		await runQuickChatCommand({ type: 'new' });
 
 		found({ kind: 'new' });
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(session('b').aiTabs).toHaveLength(1);
-		expect(useAgentStore.getState().processQueuedItem).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(useAgentStore.getState().processQueuedItem).toHaveBeenCalled());
+		const added = session('b').aiTabs.find((t) => t.id !== 'b-main')!;
+		expect(added).toMatchObject({ hidden: true, quickChat: true });
+		// It went to the old chat, not the one now in the window.
+		expect(buildQuickChatSnapshot().messages).toEqual([]);
+	});
+
+	it('brings back a chat still finishing, live, without touching its tab', async () => {
+		const { message } = await send('plan the trip');
+		const tabId = message.route!.tabId!;
+		const chatId = buildQuickChatSnapshot().chatId!;
+		await runQuickChatCommand({ type: 'new' });
+
+		vi.mocked(window.maestro.quickChat.getRecent).mockClear();
+		const result = await runQuickChatCommand({ type: 'recall', chatId });
+		expect(result.ok).toBe(true);
+		expect(window.maestro.quickChat.getRecent).not.toHaveBeenCalled();
+		expect(sent(result.snapshot.messages)[0].route).toMatchObject({ status: 'running', tabId });
+
+		// Finishing no longer retires it: it is the chat in the window again.
+		reply('b', tabId, 'Here is the plan');
+		await new Promise((resolve) => setTimeout(resolve, 1_200));
+		expect(tab('b', tabId)).toMatchObject({ hidden: true });
+		expect(buildQuickChatSnapshot().messages.map((m) => m.text)).toEqual([
+			'plan the trip',
+			'Here is the plan',
+		]);
 	});
 });
 
@@ -1226,6 +1275,7 @@ describe('stop', () => {
 describe('setAgent', () => {
 	it('ends the chat and saves the new agent', async () => {
 		const { message } = await send('hi');
+		reply('b', message.route!.tabId!, 'hello');
 		const result = await runQuickChatCommand({ type: 'setAgent', agentId: 'a' });
 		expect(result.snapshot.agentId).toBe('a');
 		expect(result.snapshot.tabId).toBeNull();
@@ -1237,20 +1287,16 @@ describe('setAgent', () => {
 		expect((await runQuickChatCommand({ type: 'setAgent', agentId: 'nope' })).ok).toBe(false);
 	});
 
-	it('sends a message typed during the switch to the agent just chosen', async () => {
-		await send('old');
-		let finishInterrupt: (ok: boolean) => void = () => {};
-		vi.mocked(window.maestro.process.interrupt).mockReturnValue(
-			new Promise((resolve) => (finishInterrupt = resolve))
-		);
-		const switching = runQuickChatCommand({ type: 'setAgent', agentId: 'a' });
-		await runQuickChatCommand({ type: 'send', text: 'fresh' });
-		finishInterrupt(true);
-		await switching;
+	it("lets the old chat's reply finish while the next message goes to the agent just chosen", async () => {
+		const old = await send('old');
+		await runQuickChatCommand({ type: 'setAgent', agentId: 'a' });
+		await send('fresh');
 
-		await vi.waitFor(() => expect(sent().at(-1)?.route?.status).toBe('running'));
+		expect(sent().at(-1)?.route?.status).toBe('running');
 		expect(buildQuickChatSnapshot().agentId).toBe('a');
 		expect(session('a').aiTabs).toHaveLength(2);
+		expect(tab('b', old.message.route!.tabId)).toMatchObject({ state: 'busy' });
+		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
 	});
 });
 

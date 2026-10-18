@@ -95,10 +95,23 @@ const connections = new WeakMap<
 	{ sessionId: string | null; caller?: CoworkingBrowserCaller }
 >();
 
+/** Every open connection, so stopping the bridge can drop them too (a WeakMap
+ *  cannot be walked). Closing the server alone only stops NEW connections. */
+const openSockets = new Set<net.Socket>();
+
 /** Env-var pair to embed in each agent's MCP-server config entry. */
 export function getBridgeEnvVar(): { name: string; value: string } {
 	return { name: COWORKING_SOCKET_ENV_VAR, value: getBridgeSocketPath() };
 }
+
+/**
+ * The start in progress, or null. `server` is only set once the socket listens,
+ * several awaits in, so two overlapping starts (the Extensions toggle reconciles
+ * once directly and once through the flag listener) would both pass the
+ * `server` check: the second would unlink the first one's live socket and leave
+ * its server open with nothing able to close it.
+ */
+let starting: Promise<void> | null = null;
 
 /** Start the bridge. Idempotent. Must be called inside `app.whenReady`. */
 export async function startCoworkingBridge(options?: {
@@ -111,7 +124,15 @@ export async function startCoworkingBridge(options?: {
 	if (options?.resolveCallerFromPid !== undefined)
 		resolveCallerFromPid = options.resolveCallerFromPid;
 	if (server) return;
+	if (!starting) {
+		starting = listenOnBridgeSocket().finally(() => {
+			starting = null;
+		});
+	}
+	await starting;
+}
 
+async function listenOnBridgeSocket(): Promise<void> {
 	const socketPath = getBridgeSocketPath();
 
 	// Clean up stale socket file from a prior crashed run (POSIX only).
@@ -161,18 +182,28 @@ export async function startCoworkingBridge(options?: {
 	logger.info(`${LOG_CTX} listening on ${socketPath}`, 'Coworking');
 }
 
-/** Stop the bridge. Idempotent. Called on app quit. */
+/**
+ * Stop the bridge. Idempotent. Called on app quit and when the coworking Encore
+ * flag turns off: live MCP-server connections are dropped as well, so an agent
+ * that connected while the feature was on cannot keep calling tools after it.
+ */
 export async function stopCoworkingBridge(): Promise<void> {
+	// A stop that lands mid-start waits for the socket, then closes it.
+	if (starting) await starting.catch(() => undefined);
 	if (!server) return;
 	const srv = server;
 	server = null;
-	await new Promise<void>((resolve) => {
+	const closed = new Promise<void>((resolve) => {
 		srv.close(() => resolve());
 	});
+	for (const socket of openSockets) socket.destroy();
+	openSockets.clear();
+	await closed;
 }
 
 function handleConnection(conn: net.Socket): void {
 	connections.set(conn, { sessionId: null });
+	openSockets.add(conn);
 	conn.setEncoding('utf8');
 	let buffer = '';
 	conn.on('data', (chunk) => {
@@ -192,6 +223,7 @@ function handleConnection(conn: net.Socket): void {
 	});
 	conn.on('close', () => {
 		connections.delete(conn);
+		openSockets.delete(conn);
 	});
 }
 

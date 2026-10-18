@@ -605,7 +605,11 @@ maestro-cli update-agent <agent-id> --system-one on
 maestro-cli update-agent <agent-id> --token-source tui
 
 # Review native provider translation before applying it (desktop required)
-maestro-cli update-agent <agent-id> --provider codex --dry-run
+maestro-cli update-agent <agent-id> --provider codex --dry-run --json
+
+# Apply the reviewed plan, then inspect its operation state
+maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
 
 # Opt a Codex agent into the experimental app-server transport (enables steering)
 maestro-cli update-agent <agent-id> --codex-transport app-server
@@ -659,7 +663,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 - `--env-park KEY` keeps the variable in the agent's settings and stops spawning with it, the Edit Agent toggle for the same thing. `--env-unpark KEY` reverses it. Neither is for `--clear-env`, which deletes. `show agent` lists parked variables apart from the effective environment.
 - `--share-history-to-project-dir` is for an agent whose project another Maestro install controls: it mirrors History entries into the project's `.maestro/history/` folder. The agent must be stopped.
 
-`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run`, then apply with `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Native resume and round-trip conversion remain unverified until live acceptance checks pass. Provider translation is refused by a headless host without changing agent state.
+`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
 
 | Flag                                    | Description                                                                                                                                                                                     | Default |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |

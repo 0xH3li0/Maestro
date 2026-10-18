@@ -14,7 +14,7 @@
  * change up. `--data-dir` points it at a server's data directory, as on the
  * other headless Cue verbs.
  */
-import { readSessions, resolveAgentId } from '../services/storage';
+import { readLiveSessions, resolveAgentId } from '../services/storage';
 import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 import {
 	findSubscriptionsByName,
@@ -82,7 +82,7 @@ function resolveSubscription(
 	options: CueModelOptions,
 	printWarnings = true
 ): SubscriptionMatch<SessionInfo> {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const { matches: all, warnings } = findSubscriptionsByName(sessions, name);
 	if (printWarnings && !options.json) {
 		for (const warning of warnings) console.error(`Warning: ${warning}`);

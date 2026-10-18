@@ -28,6 +28,8 @@ export interface UiSurfaceTab {
 	id: string;
 	/** Label as it reads in the app. */
 	label: string;
+	/** Encore Feature that must be on for this tab to exist. */
+	encore?: UiSurfaceEncoreFlag;
 	/** Retired or alternate ids that still resolve to this tab (a renamed tab keeps its old deep link). */
 	aliases?: string[];
 	/** Deep-linkable tabs inside this tab, passed as `--sub-tab`. */
@@ -214,7 +216,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'models', label: 'Models' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
-			{ id: 'cue', label: 'Cue' },
+			{ id: 'cue', label: 'Cue', encore: 'maestroCue' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
 		],
 		shortcutId: 'usageDashboard',
@@ -563,19 +565,23 @@ function resolveUiSurfaceTabTarget(
 	return { tab, subTab };
 }
 
-/**
- * Why a surface cannot open right now because the Encore Feature behind it is
- * switched off, or null when it can. `encoreFeatures` is the raw setting; a
- * flag the user never touched reads as its default.
- *
- * One sentence for both ends of `maestro-cli open`: the app shows it as a
- * toast, and the bridge answers the CLI with it, so a caller is never told
- * "Opened" for a surface that did not open.
- */
+/** Refuse a surface or tab while its Encore Feature is off. */
+export function uiSurfaceRefusal(
+	surface: UiSurface,
+	tab: UiSurfaceTab | null | undefined,
+	encoreFeatures: unknown
+): string | null {
+	const flags = resolveEncoreFeatures(encoreFeatures);
+	if (surface.encore && !flags[surface.encore])
+		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	if (tab?.encore && !flags[tab.encore])
+		return `The ${tab.label} tab of ${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	return null;
+}
+
+/** Surface-only gate for callers without a tab. */
 export function surfaceEncoreRefusal(surface: UiSurface, encoreFeatures: unknown): string | null {
-	if (!surface.encore) return null;
-	if (resolveEncoreFeatures(encoreFeatures)[surface.encore]) return null;
-	return `${surface.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`;
+	return uiSurfaceRefusal(surface, undefined, encoreFeatures);
 }
 
 /**

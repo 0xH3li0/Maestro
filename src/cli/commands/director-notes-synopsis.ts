@@ -6,6 +6,8 @@ import { withMaestroClient } from '../services/maestro-client';
 import { failCommand } from '../services/session-command';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readSettings } from '../services/storage';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { encoreDisabledMessage } from '../utils/encore-gate';
 import {
 	parseDirectorNotesNarrative,
 	recoverDirectorNotesNarrative,
@@ -66,11 +68,11 @@ function getDefaultProvider(): string {
 	});
 }
 
+// Resolved against the shipped defaults: Director's Notes ships on, so an
+// install that never saved the flag has it on, not off.
 function checkEncoreFeatureEnabled(): void {
-	const settings = readSettings();
-	const encoreFeatures = settings.encoreFeatures as { directorNotes?: boolean } | undefined;
-	if (!encoreFeatures?.directorNotes) {
-		throw new Error("Director's Notes is not enabled. Enable it in Settings > Encore Features.");
+	if (!resolveEncoreFeatures(readSettings().encoreFeatures).directorNotes) {
+		throw new Error(encoreDisabledMessage('directorNotes'));
 	}
 }
 

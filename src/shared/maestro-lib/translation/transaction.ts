@@ -51,7 +51,8 @@ async function translationWriteRoot(
 	nativeFs: TranslationFs = localTranslationFs
 ): Promise<string> {
 	const paths = nativeFs?.paths ?? path;
-	if (!journal.resourceWrites.includes(write)) return journal.plan.destination.accountRoot;
+	if (!journal.resourceWrites.includes(write))
+		return journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot;
 	if (write.gitExcludeBlock) {
 		const git = await resolveProjectGit?.(journal.plan.destination.projectRoot);
 		if (!git || paths.resolve(write.path) !== paths.join(git.commonDirectory, 'info', 'exclude'))

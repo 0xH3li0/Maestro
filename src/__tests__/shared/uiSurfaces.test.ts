@@ -17,6 +17,7 @@ import {
 	surfaceEncoreRefusal,
 	surfaceSubTabIds,
 	surfaceTabIds,
+	uiSurfaceRefusal,
 } from '../../shared/uiSurfaces';
 import { MODELS_SETTINGS_SUB_TAB_PATHS } from '../../shared/local-models/settings-location';
 import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from '../../shared/agentSettingsTabs';
@@ -302,6 +303,27 @@ describe('resolveUiSurfaceTarget', () => {
 	});
 });
 
+describe('uiSurfaceRefusal', () => {
+	it('refuses a surface whose Encore Feature is off, and allows it when on', () => {
+		const notes = resolveUiSurface('director-notes')!;
+		expect(uiSurfaceRefusal(notes, null, { directorNotes: false })).toContain('Settings → Plugins');
+		expect(uiSurfaceRefusal(notes, null, { directorNotes: true })).toBeNull();
+	});
+
+	it("refuses the Usage Dashboard's Cue tab while Cue is off, but not the dashboard", () => {
+		const dashboard = resolveUiSurface('usage-dashboard')!;
+		const cueTab = resolveUiSurfaceTab(dashboard, 'cue');
+		const flags = { usageStats: true, maestroCue: false };
+		expect(uiSurfaceRefusal(dashboard, null, flags)).toBeNull();
+		expect(uiSurfaceRefusal(dashboard, cueTab, flags)).toContain('Cue');
+		expect(uiSurfaceRefusal(dashboard, cueTab, { ...flags, maestroCue: true })).toBeNull();
+	});
+
+	it('never refuses an ungated surface', () => {
+		expect(uiSurfaceRefusal(resolveUiSurface('about')!, null, {})).toBeNull();
+	});
+});
+
 describe('describeSurfaceAccess', () => {
 	it('lists every manual path so an agent can teach the user', () => {
 		const cue = resolveUiSurface('cue')!;
@@ -439,7 +461,7 @@ describe('surfaceEncoreRefusal', () => {
 
 	it('refuses a surface whose feature is switched off, and names it', () => {
 		expect(surfaceEncoreRefusal(cue, { maestroCue: false })).toBe(
-			`${cue.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`
+			`${cue.label} is turned off. Turn it on in Settings → Plugins.`
 		);
 		expect(surfaceEncoreRefusal(cue, { maestroCue: true })).toBeNull();
 	});
@@ -449,7 +471,7 @@ describe('surfaceEncoreRefusal', () => {
 		// "everything off", which is how a fresh install would refuse Cue.
 		expect(surfaceEncoreRefusal(cue, undefined)).toBeNull();
 		expect(surfaceEncoreRefusal(cue, {})).toBeNull();
-		expect(surfaceEncoreRefusal(voiceSetup, {})).toContain('currently off');
+		expect(surfaceEncoreRefusal(voiceSetup, {})).toContain('turned off');
 		expect(surfaceEncoreRefusal(voiceSetup, { aCappella: true })).toBeNull();
 	});
 });

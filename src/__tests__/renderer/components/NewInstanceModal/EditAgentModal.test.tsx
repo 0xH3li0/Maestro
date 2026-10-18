@@ -9,7 +9,7 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
@@ -474,8 +474,8 @@ describe('EditAgentModal', () => {
 		openTab('Provider');
 
 		await waitFor(() => {
-			const providerSelect = screen.getByDisplayValue('Claude Code');
-			expect(providerSelect).toBeInTheDocument();
+			const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
+			expect(providerSelect).toHaveTextContent('Claude Code');
 		});
 	});
 
@@ -493,10 +493,11 @@ describe('EditAgentModal', () => {
 		);
 		openTab('Provider');
 
-		const providerSelect = await screen.findByDisplayValue('Claude Code');
+		const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
 
 		// Change provider
-		fireEvent.change(providerSelect, { target: { value: 'codex' } });
+		fireEvent.click(providerSelect);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		rerender(
 			<EditAgentModal
 				isOpen={true}
@@ -507,7 +508,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
-		expect((providerSelect as HTMLSelectElement).value).toBe('codex');
+		expect(providerSelect).toHaveTextContent('Codex');
 
 		await waitFor(() => {
 			expect(
@@ -531,18 +532,23 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		expect(
-			screen.getByRole('option', { name: '→ Codex · Memory + history (preview)' })
-		).toBeInTheDocument();
+		const hint = screen.getByText(/Some providers support the ability to transfer sessions/);
+		expect(hint).toHaveTextContent(
+			'Some providers support the ability to transfer sessions, memories, subagents, etc between them. They are denoted as Carry Over in the list.'
+		);
+		const hintBadge = within(hint).getByText('Carry Over');
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		const destination = screen.getByRole('option', { name: 'Codex Carry Over' });
+		expect(within(destination).getByText('Carry Over').className).toBe(hintBadge.className);
+		expect(within(destination).getByText('Carry Over').getAttribute('style')).toBe(
+			hintBadge.getAttribute('style')
+		);
 		expect(screen.getByRole('option', { name: 'Claude Code' })).toBeInTheDocument();
 		expect(screen.getByRole('option', { name: 'OpenCode' })).toBeInTheDocument();
-		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
-			target: { value: 'opencode' },
-		});
+		fireEvent.click(screen.getByRole('option', { name: 'OpenCode' }));
 		// Selection is not a completed switch: compatibility still uses the original Claude source.
-		expect(
-			screen.getByRole('option', { name: '→ Codex · Memory + history (preview)' })
-		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.getByRole('option', { name: 'Codex Carry Over' })).toBeInTheDocument();
 	});
 
 	it('marks the reverse Claude destination for a Codex agent', () => {
@@ -557,9 +563,8 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		expect(
-			screen.getByRole('option', { name: '→ Claude Code · Memory + history (preview)' })
-		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.getByRole('option', { name: 'Claude Code Carry Over' })).toBeInTheDocument();
 		expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument();
 	});
 
@@ -575,9 +580,10 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		expect(screen.queryByRole('option', { name: /Memory \+ history/ })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.queryByRole('option', { name: /Carry Over/ })).not.toBeInTheDocument();
 		expect(
-			screen.getByText('Memory + session carry is not available from this provider.')
+			screen.getByText(/Some providers support the ability to transfer sessions/)
 		).toBeInTheDocument();
 	});
 
@@ -604,7 +610,7 @@ describe('EditAgentModal', () => {
 			)
 		);
 		fireEvent.click(await screen.findByLabelText('Accept the listed conversion limitations'));
-		expect(screen.getByRole('combobox', { name: 'Agent Provider' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Agent Provider' })).toBeDisabled();
 		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
 		fireEvent.click(screen.getByRole('button', { name: /Save/ }));
 		await waitFor(() =>
@@ -653,9 +659,8 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
-			target: { value: 'codex' },
-		});
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		expect(
 			await screen.findByText(
 				'Conversation 1: 312 records carried, 4,180 archived before the last compaction'
@@ -680,9 +685,8 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
-			target: { value: 'codex' },
-		});
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		expect(screen.getByRole('status')).toHaveTextContent('Reading memory and session history...');
 		expect(await screen.findByRole('alert')).toHaveTextContent('Cannot read history');
 		expect(screen.queryByText('Reading memory and session history...')).not.toBeInTheDocument();
@@ -701,8 +705,9 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		const picker = screen.getByRole('combobox', { name: 'Agent Provider' });
-		fireEvent.change(picker, { target: { value: 'codex' } });
+		const picker = screen.getByRole('button', { name: 'Agent Provider' });
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		await screen.findByText('Native resume remains unverified');
 		const checkbox = screen.getByLabelText(
 			'Also install skills and subagents into the project (git-excluded)'
@@ -721,8 +726,10 @@ describe('EditAgentModal', () => {
 		fireEvent.click(screen.getByText('Save Changes'));
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		expect(onSave.mock.calls[0][30]).toBe(true);
-		fireEvent.change(picker, { target: { value: 'claude-code' } });
-		fireEvent.change(picker, { target: { value: 'codex' } });
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Claude Code' }));
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		expect(
 			screen.getByLabelText('Also install skills and subagents into the project (git-excluded)')
 		).not.toBeChecked();
@@ -746,8 +753,9 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		const picker = screen.getByRole('combobox', { name: 'Agent Provider' });
-		fireEvent.change(picker, { target: { value: 'codex' } });
+		const picker = screen.getByRole('button', { name: 'Agent Provider' });
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		await screen.findByText('Native resume remains unverified');
 		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
 		fireEvent.click(screen.getByText('Save Changes'));
@@ -795,9 +803,8 @@ describe('EditAgentModal', () => {
 				/>
 			);
 			openTab('Provider');
-			fireEvent.change(screen.getByRole('combobox', { name: 'Agent Provider' }), {
-				target: { value: 'codex' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			await screen.findByText('Review conversion');
 			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
 			fireEvent.click(screen.getByText('Save Changes'));
@@ -861,9 +868,8 @@ describe('EditAgentModal', () => {
 				/>
 			);
 			openTab('Provider');
-			fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
-				target: { value: 'codex' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			const summary = await screen.findByText('Notes');
 			expect(summary.closest('details')).not.toHaveAttribute('open');
 			expect(summary.closest('details')).toHaveTextContent('Original directories stay archived');
@@ -892,9 +898,8 @@ describe('EditAgentModal', () => {
 			/>
 		);
 		openTab('Provider');
-		fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
-			target: { value: 'codex' },
-		});
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
 		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
 		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
@@ -1751,11 +1756,9 @@ describe('EditAgentModal', () => {
 				await screen.findByDisplayValue('200000');
 				expect(note()).toBeInTheDocument();
 
-				// ...and gone once a different provider is selected. The provider
-				// control is a <select>, so change it rather than clicking a label.
-				fireEvent.change(screen.getByDisplayValue('Claude Code'), {
-					target: { value: 'codex' },
-				});
+				// ...and gone once a different provider is selected.
+				fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+				fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 				// The control itself is still on screen - the note is gone, not the panel.
 				await waitFor(() => expect(note()).not.toBeInTheDocument());
 				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
@@ -2192,7 +2195,10 @@ describe('EditAgentModal', () => {
 			);
 			fireEvent.click(screen.getByLabelText(TOGGLE_LABEL));
 			await waitFor(() =>
-				expect((screen.getByLabelText(TOGGLE_LABEL) as HTMLInputElement).checked).toBe(true)
+				expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).toHaveAttribute(
+					'aria-checked',
+					'true'
+				)
 			);
 
 			// The section saved both changes itself, the moment they were made.
@@ -2729,9 +2735,8 @@ describe('EditAgentModal', () => {
 		it('waits for a pending provider change, and says why', async () => {
 			renderOnModels(createSession());
 			openTab('Provider');
-			fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
-				target: { value: 'codex' },
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			openTab('Models');
 
 			expect(modeSelect()).toBeDisabled();

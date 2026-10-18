@@ -50,6 +50,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -143,6 +144,7 @@ export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerParquetHandlers };
+export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -442,7 +444,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
 	// Register multi-window handlers (windows:* channel surface). The registry

@@ -2025,9 +2025,10 @@ maestro-cli completions zsh > ~/.zfunc/_maestro-cli
 
 Print the full command reference (Markdown, or --format json)
 
-| Option              | Description                         | Default |
-| ------------------- | ----------------------------------- | ------- |
-| `--format <format>` | Output format: md (default) or json | -       |
+| Option              | Description                                                   | Default |
+| ------------------- | ------------------------------------------------------------- | ------- |
+| `--format <format>` | Output format: md (default) or json                           | -       |
+| `--all`             | Include the commands of Encore Features that are switched off | -       |
 
 ```bash
 maestro-cli reference --format json
@@ -2993,11 +2994,11 @@ maestro-cli theme set accent=#ff0000 --base dracula --activate
 
 ## `maestro-cli encore`
 
-List and toggle experimental Encore features
+List and toggle the optional features on Settings > Plugins
 
 ## `maestro-cli encore list`
 
-List Encore features and whether each is enabled
+List the optional features and whether each is on
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -3009,7 +3010,7 @@ maestro-cli encore list
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, aCappella, throughputGauge, ensemble)
+Turn a feature on (any id from `encore list`, e.g. computerHistory or groups-plus)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -3021,7 +3022,7 @@ maestro-cli encore enable aCappella
 
 ## `maestro-cli encore disable <feature>`
 
-Disable an Encore feature
+Turn a feature off
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -3074,6 +3075,7 @@ Search recorded events (text, selections, snapshots, app and window changes)
 | `--kind <kind>`  | text \| selection \| snapshot \| app \| window (comma list or repeat) | `[]`    |
 | `--grep <regex>` | Case-insensitive regex over text, titles, URLs, and labels            | -       |
 | `--limit <n>`    | Most recent N matches (default 200)                                   | -       |
+| `--drafts`       | Keep text commits a later commit in the same field supersedes         | -       |
 | `--json`         | Output as JSON (for scripting)                                        | -       |
 
 ```bash
@@ -4277,6 +4279,7 @@ Open the microphone and keep each burst of speech as one recording of the phrase
 | Option           | Description                                                              | Default |
 | ---------------- | ------------------------------------------------------------------------ | ------- |
 | `--other-speech` | Record ordinary speech that is NOT the phrase instead (about 30 seconds) | -       |
+| `--background`   | -                                                                        | -       |
 | `--json`         | Output as JSON (for scripting)                                           | -       |
 
 ```bash
@@ -4303,6 +4306,7 @@ Add recordings from 16-bit PCM WAV files instead of the microphone, one recordin
 | Option           | Description                                          | Default |
 | ---------------- | ---------------------------------------------------- | ------- |
 | `--other-speech` | The files are ordinary speech that is NOT the phrase | -       |
+| `--background`   | -                                                    | -       |
 | `--json`         | Output as JSON (for scripting)                       | -       |
 
 ```bash
@@ -5384,7 +5388,7 @@ maestro-cli quick-chat send "What changed on main today?"
 
 ## `maestro-cli quick-chat new`
 
-Start a new chat (an ephemeral previous chat is deleted)
+Start a new chat (the previous one finishes any reply in progress; an ephemeral one is then deleted)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

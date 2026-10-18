@@ -69,6 +69,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import {
@@ -321,6 +322,13 @@ function SessionListInner(props: SessionListProps) {
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
+	// The agents the Left Bar may surface: drops a dormant Pianola agent (its
+	// Encore flag is off) so header tells - busy wand, unread bell dot, the
+	// "no agents" state, the group-chat agent count - never react to it.
+	const liveSessions = useMemo(
+		() => filterSessionsVisibleInSidebar(sessions, { pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const showLeftPanelCollapsedInitials = useSettingsStore((s) => s.showLeftPanelCollapsedInitials);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
@@ -424,12 +432,18 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
-	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
+	// Fetched only while the Cue Encore Feature is on. A disabled feature has no
+	// footprint: no status poll, no activity subscription, and no row indicator,
+	// so the map is emptied the moment the flag goes off.
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
 	>(new Map());
 	useEffect(() => {
+		if (!maestroCueEnabled) {
+			setCueSessionMap((prev) => (prev.size === 0 ? prev : new Map()));
+			return;
+		}
 		let mounted = true;
 
 		const fetchCueStatus = async () => {
@@ -479,7 +493,7 @@ function SessionListInner(props: SessionListProps) {
 			unsubscribe();
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
-	}, [sessions.length]);
+	}, [sessions.length, maestroCueEnabled]);
 	// Starred Sessions: prefer sidebarNavStore (shared with Cmd+[ / ] cycling).
 	// Props remain for tests that inject fixtures without mounting SidebarNavSync.
 	const storeStarredItems = useSidebarNavStore((s) => s.starredItems);
@@ -687,10 +701,10 @@ function SessionListInner(props: SessionListProps) {
 	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const isAnyBusy = useMemo(
 		() =>
-			sessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
+			liveSessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
 			activeBatchSessionIds.length > 0 ||
 			isAnyGroupChatBusy,
-		[sessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
+		[liveSessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -730,9 +744,9 @@ function SessionListInner(props: SessionListProps) {
 	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
 		() =>
-			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			liveSessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
 			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
-		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
+		[liveSessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2418,7 +2432,7 @@ function SessionListInner(props: SessionListProps) {
 						onEditGroupChat &&
 						onRenameGroupChat &&
 						onDeleteGroupChat &&
-						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
+						liveSessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
 								groupChats={groupChats}
@@ -2471,7 +2485,7 @@ function SessionListInner(props: SessionListProps) {
 			<SidebarActions
 				theme={theme}
 				leftSidebarOpen={leftSidebarOpen}
-				hasNoSessions={sessions.length === 0}
+				hasNoSessions={liveSessions.length === 0}
 				shortcuts={shortcuts}
 				showUnreadAgentsOnly={showUnreadAgentsOnly}
 				hasUnreadAgents={hasUnreadAgents}

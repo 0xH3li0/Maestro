@@ -28,11 +28,10 @@ import { AGENT_IDS } from '../../agentIds';
 import { canonicalJson } from '../../canonicalJson';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
-import { createTranslationRegistry } from './adapters';
+import { createTranslationRegistry, projectConversation } from './adapters';
 import { providerOverridesFor, resolveTabProvider } from '../agents/providerSwap';
 import { TranslationArchive, type TranslationJournal } from './archive';
 import { planTranslation } from './registry';
-import { activeContextRecords } from './context-window';
 import { limitationsNeedingAcceptance } from './limitations';
 import { reconcileConversation, reconcileResource } from './reconcile';
 import { collectTranslationResources } from './resources';
@@ -190,6 +189,15 @@ export class NativeTranslationService {
 			if (probe.exitCode === 0) version = /\d+\.\d+\.\d+/.exec(probe.stdout)?.[0] ?? '';
 		}
 		const projectRoot = await this.nativeFs.realpath(session.projectRoot || session.cwd);
+		let nativeSessionRoot: string | undefined;
+		if (provider === 'claude-code') {
+			nativeSessionRoot = this.paths.join(root, 'projects');
+			try {
+				nativeSessionRoot = await this.nativeFs.realpath(nativeSessionRoot);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
+		}
 		const memoryProjectRoot = await resolveMemoryRepositoryRoot(projectRoot, async (cwd) => {
 			const result = await this.deps.execGit(['rev-parse', '--git-common-dir'], cwd);
 			return result.exitCode === 0 ? result.stdout : undefined;
@@ -211,6 +219,7 @@ export class NativeTranslationService {
 			provider,
 			version,
 			accountRoot: root,
+			...(nativeSessionRoot && { nativeSessionRoot }),
 			projectRoot,
 			memoryProjectRoot,
 			userResourceRoots,
@@ -251,14 +260,17 @@ export class NativeTranslationService {
 		const file =
 			identity.provider === 'claude-code'
 				? this.paths.join(
-						identity.accountRoot,
-						'projects',
+						identity.nativeSessionRoot ?? this.paths.join(identity.accountRoot, 'projects'),
 						encodeClaudeProjectPath(identity.projectRoot),
 						`${sessionId}.jsonl`
 					)
 				: await this.deps.findCodexSessionFile(sessionId, identity.accountRoot);
 		if (!file) throw new Error(`Selected native session missing for tab ${tabId}`);
-		await assertTranslationTarget(file, identity.accountRoot, this.nativeFs);
+		await assertTranslationTarget(
+			file,
+			identity.nativeSessionRoot ?? identity.accountRoot,
+			this.nativeFs
+		);
 		const stat = await this.nativeFs.stat(file);
 		const bytes = await this.nativeFs.readFile(file);
 		const after = await this.nativeFs.stat(file);
@@ -623,11 +635,16 @@ export class NativeTranslationService {
 			});
 		const capacity = this.deps.contextWindow(destination.provider);
 		for (const conversation of conversations) {
-			if (
-				estimateTokenCount(
-					canonicalJson(activeContextRecords(conversation.records).map((r) => r.blocks))
-				) > capacity
-			)
+			const projected =
+				destination.provider === 'codex' || destination.provider === 'claude-code'
+					? projectConversation(
+							conversation,
+							destination.provider,
+							'capacity-preview',
+							destination.version
+						).map((row) => row.item)
+					: [];
+			if (estimateTokenCount(canonicalJson(projected)) > capacity)
 				limitations.push({
 					code: 'context-capacity',
 					severity: 'block',
@@ -731,6 +748,14 @@ export class NativeTranslationService {
 				);
 				if (canonicalJson(actual) !== canonicalJson(operation.plan.source))
 					throw new Error('Source account, project root or provider version changed');
+				const destination = await this.identity(
+					session,
+					operation.plan.destination.provider,
+					false,
+					operation.checkpoint
+				);
+				if (canonicalJson(destination) !== canonicalJson(operation.plan.destination))
+					throw new Error('Destination account, project root or provider version changed');
 				if (session.providerTranslationKnowledgeDirectory) {
 					const directory = session.providerTranslationKnowledgeDirectory;
 					const legacyRoot = this.paths.join(actual.projectRoot, '.maestro/provider-knowledge');
@@ -775,13 +800,16 @@ export class NativeTranslationService {
 							].find((root) =>
 								isPathAtOrUnderRoot(
 									this.paths.resolve(artifact.sourcePath).split(this.paths.sep).join('/'),
-									this.paths.resolve(root.accountRoot).split(this.paths.sep).join('/')
+									this.paths
+										.resolve(root.nativeSessionRoot ?? root.accountRoot)
+										.split(this.paths.sep)
+										.join('/')
 								)
 							);
 							if (!identity) throw new Error('Native source is outside selected provider accounts');
 							await assertTranslationTarget(
 								artifact.sourcePath,
-								identity.accountRoot,
+								identity.nativeSessionRoot ?? identity.accountRoot,
 								this.nativeFs
 							);
 							if (

@@ -20,6 +20,10 @@
  * tab's normal rules. A turn for a free tab is run at once, alongside whatever
  * the agent's other tabs are doing. A turn for a tab that is mid-reply waits in
  * the queue behind it, and the user can move it to a new tab instead of waiting.
+ *
+ * Only Stop stops a turn. Closing the window hides a view of work that runs
+ * here, and starting a new chat (or switching agent, or recalling another chat)
+ * lets the old chat finish out of sight: see endChat.
  */
 
 import {
@@ -64,6 +68,7 @@ import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRout
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { projectTabProvider } from '../utils/providerTabSessions';
+import { isAgentDormant } from '../../shared/agentVisibility';
 
 /**
  * The name a tab Quick Chat creates carries when automatic tab naming is off.
@@ -102,8 +107,8 @@ interface Turn {
 	agentSessionId: string | null;
 }
 
-/** The chat in progress. Module state: there is one Quick Chat per app window. */
-const chat: {
+/** One chat: a thread of turns on one agent. */
+interface Chat {
 	/** The chat's id in the recent chats list; null until a message is sent. */
 	id: string | null;
 	createdAt: number;
@@ -131,33 +136,43 @@ const chat: {
 	 * the next send; null means the message follows the chat.
 	 */
 	choice: QuickChatTabChoice | null;
-} = {
-	id: null,
-	createdAt: 0,
-	sessionId: null,
-	persistent: null,
-	turns: [],
-	ownedTabIds: new Set(),
-	home: null,
-	homeTabId: null,
-	choice: null,
-};
+	/** The last record written to the recent chats list, so an unchanged chat is not written again. */
+	savedRecent: string;
+}
+
+function newChat(): Chat {
+	return {
+		id: null,
+		createdAt: 0,
+		sessionId: null,
+		persistent: null,
+		turns: [],
+		ownedTabIds: new Set(),
+		home: null,
+		homeTabId: null,
+		choice: null,
+		savedRecent: '',
+	};
+}
+
+/** The chat in the window. Module state: there is one Quick Chat per app window. */
+let chat: Chat = newChat();
+
+/**
+ * Chats the user moved on from while their work was still in motion. Each
+ * finishes out of sight, and is retired once it has (see settleEndedChats).
+ */
+const endedChats = new Set<Chat>();
 
 /** Reset module state. Tests only. */
 export function resetQuickChatEngineForTests(): void {
-	chat.id = null;
-	chat.createdAt = 0;
-	chat.sessionId = null;
-	chat.persistent = null;
-	chat.turns = [];
-	chat.ownedTabIds = new Set();
-	chat.home = null;
-	chat.homeTabId = null;
-	chat.choice = null;
+	chat = newChat();
+	endedChats.clear();
 	lastPushed = '';
 	if (recentTimer) clearTimeout(recentTimer);
 	recentTimer = null;
-	lastSavedRecent = '';
+	if (endedTimer) clearTimeout(endedTimer);
+	endedTimer = null;
 }
 
 function quickChatSettings() {
@@ -169,9 +184,15 @@ function findSession(sessionId: string | null): Session | null {
 	return useSessionStore.getState().sessions.find((s) => s.id === sessionId) ?? null;
 }
 
-/** Terminal-only agents have no AI tab to chat in. */
+/**
+ * Terminal-only agents have no AI tab to chat in, and a dormant Pianola (flag
+ * off) cannot be chatted with at all.
+ */
 function canChat(session: Session): boolean {
-	return session.toolType !== 'terminal';
+	return (
+		session.toolType !== 'terminal' &&
+		!isAgentDormant(session, useSettingsStore.getState().encoreFeatures)
+	);
 }
 
 /**
@@ -192,8 +213,8 @@ function resolveAgent(): Session | null {
 	);
 }
 
-function isPersistent(): boolean {
-	return chat.persistent ?? quickChatSettings().persistent;
+function isPersistent(c: Chat = chat): boolean {
+	return c.persistent ?? quickChatSettings().persistent;
 }
 
 /** Whether the window shows the agent's reasoning. A setting, so it outlives the chat. */
@@ -212,8 +233,8 @@ function thinkingMode(): ThinkingMode {
  * window applies its own mode on top (logsToQuickChatMessages), so a tab whose
  * chip is set higher still shows only what the window asks for.
  */
-function applyThinking(sessionId: string, tabId: string, mode: ThinkingMode): void {
-	const owned = chat.ownedTabIds.has(tabId);
+function applyThinking(c: Chat, sessionId: string, tabId: string, mode: ThinkingMode): void {
+	const owned = c.ownedTabIds.has(tabId);
 	updateSessionWith(sessionId, (s) => {
 		const tab = s.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return s;
@@ -232,7 +253,7 @@ function setThinking(requested: ThinkingMode | 'cycle'): void {
 	settings.setQuickChatSettings({ ...settings.quickChatSettings, thinking: mode });
 	if (!chat.sessionId) return;
 	const tabIds = new Set(chat.turns.map((turn) => turn.tabId).filter((id): id is string => !!id));
-	for (const tabId of tabIds) applyThinking(chat.sessionId, tabId, mode);
+	for (const tabId of tabIds) applyThinking(chat, chat.sessionId, tabId, mode);
 }
 
 /** History rule for a tab Quick Chat creates, in the given mode. */
@@ -251,16 +272,16 @@ function findTab(session: Session | null, tabId: string | null): AITab | undefin
 	);
 }
 
-/** The tabs this chat created that still exist on its agent. */
-function ownedTabs(session: Session | null): AITab[] {
-	return session ? session.aiTabs.filter((t) => chat.ownedTabIds.has(t.id)) : [];
+/** The tabs a chat created that still exist on its agent. */
+function ownedTabs(session: Session | null, c: Chat = chat): AITab[] {
+	return session ? session.aiTabs.filter((t) => c.ownedTabIds.has(t.id)) : [];
 }
 
 /** The tab the latest delivered message went to, when it is still open. */
-function currentTab(session: Session | null): AITab | undefined {
-	if (!session || session.id !== chat.sessionId) return undefined;
-	for (let i = chat.turns.length - 1; i >= 0; i--) {
-		const turn = chat.turns[i];
+function currentTab(session: Session | null, c: Chat = chat): AITab | undefined {
+	if (!session || session.id !== c.sessionId) return undefined;
+	for (let i = c.turns.length - 1; i >= 0; i--) {
+		const turn = c.turns[i];
 		if (turn.phase !== 'delivered') continue;
 		return session.aiTabs.find((t) => t.id === turn.tabId);
 	}
@@ -496,8 +517,8 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
  * Create a tab for `message` on `session`, in the background, hidden unless the
  * chat is kept.
  */
-function createChatTab(session: Session, message: string): string | null {
-	const persistent = isPersistent();
+function createChatTab(c: Chat, session: Session, message: string): string | null {
+	const persistent = isPersistent(c);
 	const autoName = useSettingsStore.getState().automaticTabNamingEnabled;
 	let tabId: string | null = null;
 	updateSessionWith(session.id, (s) => {
@@ -516,7 +537,7 @@ function createChatTab(session: Session, message: string): string | null {
 		};
 	});
 	if (!tabId) return null;
-	chat.ownedTabIds.add(tabId);
+	c.ownedTabIds.add(tabId);
 	// This tab's name is how the chat's next message finds it and what its pill
 	// reads, so it is named here, at creation, rather than waiting for the send.
 	const live = findSession(session.id);
@@ -577,42 +598,46 @@ function setChatPersistence(persistent: boolean): string | null {
 }
 
 /**
- * End the current chat. A tab it created that is still hidden is deleted with
- * it, along with anything of the chat's still queued for that tab. Messages
- * queued for the user's own tabs stay queued: they are that tab's business now.
+ * End the chat in the window and give the window a fresh one.
  *
- * The chat is detached NOW and its tabs are cleaned up after. Cleanup awaits an
- * interrupt, and commands do not wait for each other: a message sent during
- * that wait belongs to the NEXT chat, and a reset that ran after the wait would
- * erase it. So everything that changes what the next command sees happens
- * before this returns, and only the returned cleanup is awaited.
+ * The ended chat's work is NOT stopped: a message still being routed, queued,
+ * or answered goes through out of sight, and its reply lands in the recent
+ * chats list, which is how the chat comes back. Once nothing of it is in
+ * motion, a tab it created that is still hidden is deleted (see
+ * settleEndedChats). Messages for the user's own tabs are that tab's business.
  */
-function detachChat(): () => Promise<void> {
-	const session = findSession(chat.sessionId);
-	const hiddenTabs = ownedTabs(session).filter(isAiTabHidden);
-	// A tab still being found for a message must not receive it after this.
-	for (const turn of chat.turns) {
-		if (turn.phase === 'searching') turn.phase = 'cancelled';
-	}
-	// The chat leaves the window here; the recent chats list is how it comes back.
-	saveRecentNow();
-	chat.id = null;
-	chat.createdAt = 0;
-	chat.sessionId = null;
-	chat.persistent = null;
-	chat.turns = [];
-	chat.ownedTabIds = new Set();
-	chat.home = null;
-	chat.homeTabId = null;
-	chat.choice = null;
+function endChat(): void {
+	const ended = chat;
+	chat = newChat();
+	saveRecentNow(ended);
+	if (ended.turns.length === 0) return;
+	endedChats.add(ended);
+	settleEndedChats();
+}
 
-	return async () => {
-		if (!session) return;
-		for (const tab of hiddenTabs) {
-			if (tab.state === 'busy') {
-				await window.maestro.process.interrupt(`${session.id}-ai-${tab.id}`).catch(() => false);
-			}
-			updateSessionWith(session.id, (s) => {
+/** Whether any of a chat's work is still going: a message routed, queued, or answered. */
+function isInMotion(session: Session, c: Chat): boolean {
+	return (
+		c.turns.some((turn) => isActive(turnView(session, turn).route.status)) ||
+		ownedTabs(session, c).some((t) => isAiTabHidden(t) && t.state === 'busy')
+	);
+}
+
+/**
+ * Bring the ended chats up to date: write each one's replies to the recent
+ * chats list, and retire each one that has nothing left in motion, deleting
+ * the hidden tabs it created along with anything still queued for them.
+ */
+function settleEndedChats(): void {
+	if (endedTimer) clearTimeout(endedTimer);
+	endedTimer = null;
+	for (const ended of endedChats) {
+		saveRecentNow(ended);
+		const session = findSession(ended.sessionId);
+		if (session && isInMotion(session, ended)) continue;
+		endedChats.delete(ended);
+		for (const tab of ownedTabs(session, ended).filter(isAiTabHidden)) {
+			updateSessionWith(ended.sessionId!, (s) => {
 				// Skip the closed-tab undo stack: a hidden tab reopened by Cmd+Shift+T
 				// would come back as a chip the user never saw.
 				const result = closeTab(s, tab.id, undefined, { skipHistory: true });
@@ -623,7 +648,15 @@ function detachChat(): () => Promise<void> {
 				};
 			});
 		}
-	};
+	}
+}
+
+let endedTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Settle the ended chats soon. A reply streaming in is checked once per interval, not per chunk. */
+function scheduleEndedChatsCheck(): void {
+	if (endedChats.size === 0 || endedTimer) return;
+	endedTimer = setTimeout(settleEndedChats, RECENT_SAVE_INTERVAL_MS);
 }
 
 function fail(turn: Turn, error: string): string {
@@ -638,13 +671,14 @@ function fail(turn: Turn, error: string): string {
  * comes free (see runFreedTurns).
  */
 function deliverToTab(
+	c: Chat,
 	turn: Turn,
 	sessionId: string,
 	tabId: string,
 	origin: QuickChatRouteOrigin
 ): string | null {
 	// Before it runs, so its reasoning is recorded from the first chunk.
-	applyThinking(sessionId, tabId, thinkingMode());
+	applyThinking(c, sessionId, tabId, thinkingMode());
 	const item = enqueuePromptForTab({
 		sessionId,
 		tabId,
@@ -708,7 +742,7 @@ function isTabFreeFor(session: Session | null, tabId: string, itemId: string): b
 }
 
 /**
- * Run the chat's queued messages whose tab has come free.
+ * Run a chat's queued messages whose tab has come free.
  *
  * The agent's queue is one line for the whole agent: a message that writes
  * waits while ANY other tab is mid-turn. That is right for the composer, and it
@@ -721,10 +755,10 @@ function isTabFreeFor(session: Session | null, tabId: string, itemId: string): b
  * One per pass. Running it changes the store, which brings this back for the
  * next.
  */
-function runFreedTurns(): void {
-	const session = findSession(chat.sessionId);
+function runFreedTurns(c: Chat): void {
+	const session = findSession(c.sessionId);
 	if (!session) return;
-	for (const turn of chat.turns) {
+	for (const turn of c.turns) {
 		if (turn.phase !== 'delivered' || !turn.tabId || !turn.queuedItemId) continue;
 		if (!isTabFreeFor(session, turn.tabId, turn.queuedItemId)) continue;
 		sendQueuedItemNow(session.id, turn.queuedItemId);
@@ -747,13 +781,15 @@ function runFreedTurns(): void {
  * (`auto`), or straight to a new tab (`new`).
  */
 async function routeAndDeliver(
+	c: Chat,
 	sessionId: string,
 	turn: Turn,
 	home: Promise<string | null> | null,
 	choice: QuickChatTabChoice | null
 ): Promise<string | null> {
-	// The chat can end, or the user can press Stop, while a tab is being found.
-	const stillWanted = () => turn.phase === 'searching' && chat.turns.includes(turn);
+	// The user can press Stop while a tab is being found. Ending the chat is not
+	// a stop: the message still goes through (see endChat).
+	const stillWanted = () => turn.phase === 'searching';
 	const isOpen = (tabId: string) => !!findSession(sessionId)?.aiTabs.some((t) => t.id === tabId);
 	let homeTabId: string | null = null;
 	try {
@@ -783,14 +819,14 @@ async function routeAndDeliver(
 		} else if (!choice && homeTabId && isOpen(homeTabId)) {
 			tabId = homeTabId;
 		} else if (!fresh) {
-			const routed = await routeToTab(sessionId, turn);
+			const routed = await routeToTab(c, sessionId, turn);
 			if (!stillWanted()) return homeTabId;
 			if (routed) ({ tabId, origin } = routed);
 		}
 		if (!tabId) {
 			// A new tab was asked for, or nothing to continue could be reached.
 			const live = findSession(sessionId);
-			tabId = live ? createChatTab(live, turn.text) : null;
+			tabId = live ? createChatTab(c, live, turn.text) : null;
 			origin = 'new';
 		}
 		if (!tabId) {
@@ -798,7 +834,7 @@ async function routeAndDeliver(
 			return homeTabId;
 		}
 		// A tab that did not take the message is not the conversation's home.
-		return deliverToTab(turn, sessionId, tabId, origin) ? homeTabId : tabId;
+		return deliverToTab(c, turn, sessionId, tabId, origin) ? homeTabId : tabId;
 	} catch (error) {
 		// Routing has a fallback for every failure it expects, so this is a bug.
 		// The message must not hang on "searching": say so, and report it.
@@ -807,6 +843,7 @@ async function routeAndDeliver(
 		return homeTabId;
 	} finally {
 		notifyChanged();
+		scheduleEndedChatsCheck();
 	}
 }
 
@@ -816,15 +853,16 @@ async function routeAndDeliver(
  * conversation chosen could not be reached.
  */
 async function routeToTab(
+	c: Chat,
 	sessionId: string,
 	turn: Turn
 ): Promise<{ tabId: string; origin: QuickChatRouteOrigin } | null> {
 	const session = findSession(sessionId);
 	if (!session) return null;
 	const target = await routeQuickChatMessage(session, turn.text, {
-		currentTabId: currentTab(session)?.id ?? null,
+		currentTabId: currentTab(session, c)?.id ?? null,
 		// A copy: the decision is about the chat as it stood when this was sent.
-		ownedTabIds: new Set(chat.ownedTabIds),
+		ownedTabIds: new Set(c.ownedTabIds),
 	});
 	if (target.kind === 'open' && findTab(findSession(sessionId), target.tabId)) {
 		return { tabId: target.tabId, origin: 'open' };
@@ -866,13 +904,14 @@ function send(text: string, images: string[]): string | null {
 	// route arrives in a later snapshot. The chat's tab is chained here, before
 	// anything awaits, so the next message waits for this one's answer. A tab the
 	// user chose is this message's alone to take.
-	const choice = chat.choice;
-	chat.choice = null;
-	const home = routeAndDeliver(session.id, turn, chat.home, choice);
-	chat.home = home;
+	const c = chat;
+	const choice = c.choice;
+	c.choice = null;
+	const home = routeAndDeliver(c, session.id, turn, c.home, choice);
+	c.home = home;
 	void home.then((tabId) => {
-		// Only the latest message's answer is the chat's tab, and only in this chat.
-		if (chat.home === home) chat.homeTabId = tabId;
+		// Only the latest message's answer is the chat's tab.
+		if (c.home === home) c.homeTabId = tabId;
 		notifyChanged();
 	});
 	return null;
@@ -983,9 +1022,9 @@ async function moveToNewTab(messageId: string | undefined): Promise<string | nul
 	}
 
 	const live = findSession(session.id);
-	const tabId = live ? createChatTab(live, turn.text) : null;
+	const tabId = live ? createChatTab(chat, live, turn.text) : null;
 	if (!tabId) return fail(turn, 'Could not open a tab on this agent');
-	const error = deliverToTab(turn, session.id, tabId, 'new');
+	const error = deliverToTab(chat, turn, session.id, tabId, 'new');
 	// The conversation moves with it: the next message follows it to the new tab.
 	if (!error) {
 		chat.home = Promise.resolve(tabId);
@@ -1018,15 +1057,13 @@ function reveal(messageId: string | undefined): string | null {
 /** How often a chat in motion is written to the recent chats list, at most. */
 const RECENT_SAVE_INTERVAL_MS = 1_000;
 let recentTimer: ReturnType<typeof setTimeout> | null = null;
-/** The last record written, so an unchanged chat is not written again. */
-let lastSavedRecent = '';
 
-/** The chat in progress as the recent chats list keeps it; null before its first message. */
-function buildRecent(): QuickChatRecent | null {
-	if (!chat.id || !chat.sessionId || chat.turns.length === 0) return null;
-	const session = findSession(chat.sessionId);
-	let updatedAt = chat.createdAt;
-	const turns = chat.turns.map((turn): QuickChatRecentTurn => {
+/** A chat as the recent chats list keeps it; null before its first message. */
+function buildRecent(c: Chat): QuickChatRecent | null {
+	if (!c.id || !c.sessionId || c.turns.length === 0) return null;
+	const session = findSession(c.sessionId);
+	let updatedAt = c.createdAt;
+	const turns = c.turns.map((turn): QuickChatRecentTurn => {
 		// Read through turnView, so the copy is the reply the window shows.
 		const reply = turnView(session, turn).reply.filter((m) => m.role !== 'thinking');
 		for (const m of [turn, ...reply]) updatedAt = Math.max(updatedAt, m.timestamp);
@@ -1045,38 +1082,40 @@ function buildRecent(): QuickChatRecent | null {
 			reply,
 		};
 	});
-	const home = [...chat.turns].reverse().find((t) => t.tabId && t.tabId === chat.homeTabId);
+	const home = [...c.turns].reverse().find((t) => t.tabId && t.tabId === c.homeTabId);
 	return {
-		id: chat.id,
-		agentId: chat.sessionId,
+		id: c.id,
+		agentId: c.sessionId,
 		agentName: session?.name ?? '',
-		persistent: isPersistent(),
-		createdAt: chat.createdAt,
+		persistent: isPersistent(c),
+		createdAt: c.createdAt,
 		updatedAt,
-		homeTabId: chat.homeTabId,
+		homeTabId: c.homeTabId,
 		homeAgentSessionId: home?.agentSessionId ?? null,
 		homeTabName: home?.tabName ?? null,
-		ownedTabIds: [...chat.ownedTabIds],
+		ownedTabIds: [...c.ownedTabIds],
 		turns,
 	};
 }
 
-/** Write the chat in progress to the recent chats list now, when it changed. */
-function saveRecentNow(): void {
-	if (recentTimer) clearTimeout(recentTimer);
-	recentTimer = null;
-	const recent = buildRecent();
+/** Write a chat (by default the one in the window) to the recent chats list now, when it changed. */
+function saveRecentNow(c: Chat = chat): void {
+	if (c === chat) {
+		if (recentTimer) clearTimeout(recentTimer);
+		recentTimer = null;
+	}
+	const recent = buildRecent(c);
 	if (!recent) return;
 	const key = JSON.stringify(recent);
-	if (key === lastSavedRecent) return;
-	lastSavedRecent = key;
+	if (key === c.savedRecent) return;
+	c.savedRecent = key;
 	window.maestro.quickChat.saveRecent(recent);
 }
 
 /** Write the chat soon. A reply streaming in is written once per interval, not per chunk. */
 function scheduleRecentSave(): void {
 	if (!chat.id || recentTimer) return;
-	recentTimer = setTimeout(saveRecentNow, RECENT_SAVE_INTERVAL_MS);
+	recentTimer = setTimeout(() => saveRecentNow(), RECENT_SAVE_INTERVAL_MS);
 }
 
 /** A remembered message, as the thread holds it again. */
@@ -1146,29 +1185,45 @@ async function restoreHome(sessionId: string, recent: QuickChatRecent): Promise<
 	for (const turn of chat.turns) {
 		if (turn.tabId === recent.homeTabId) turn.tabId = tabId;
 	}
-	applyThinking(sessionId, tabId, thinkingMode());
+	applyThinking(chat, sessionId, tabId, thinkingMode());
 	return tabId;
+}
+
+/** Make a chat's agent Quick Chat's agent, as picking it would. */
+function adoptAgent(sessionId: string): void {
+	const settings = useSettingsStore.getState();
+	if (settings.quickChatSettings.agentId !== sessionId) {
+		settings.setQuickChatSettings({ ...settings.quickChatSettings, agentId: sessionId });
+	}
 }
 
 /**
  * Bring back a chat from the recent chats list, in place of the chat in
  * progress (which is saved to the list and ended, as `new` ends it). The chat's
  * agent becomes Quick Chat's agent, as picking it would make it.
+ *
+ * A chat that is still finishing out of sight comes back as it is, live: its
+ * messages still being routed or answered carry on in the window.
  */
 async function recall(chatId: string): Promise<string | null> {
 	if (chatId === chat.id) return null;
+	const live = [...endedChats].find((c) => c.id === chatId);
+	const liveSession = live && findSession(live.sessionId);
+	if (live && liveSession && canChat(liveSession)) {
+		endedChats.delete(live);
+		endChat();
+		chat = live;
+		adoptAgent(liveSession.id);
+		return null;
+	}
 	const recent = await window.maestro.quickChat.getRecent(chatId);
 	if (!recent) return 'That chat is no longer in the recent chats list';
 	const session = findSession(recent.agentId);
 	if (!session || !canChat(session)) {
 		return `The agent this chat was on (${recent.agentName || recent.agentId}) no longer exists`;
 	}
-	// Everything the next command sees changes before anything is awaited (see detachChat).
-	const cleanUp = detachChat();
-	const settings = useSettingsStore.getState();
-	if (settings.quickChatSettings.agentId !== session.id) {
-		settings.setQuickChatSettings({ ...settings.quickChatSettings, agentId: session.id });
-	}
+	endChat();
+	adoptAgent(session.id);
 	chat.id = recent.id;
 	chat.createdAt = recent.createdAt;
 	chat.sessionId = session.id;
@@ -1177,7 +1232,6 @@ async function recall(chatId: string): Promise<string | null> {
 		recent.ownedTabIds.filter((id) => session.aiTabs.some((t) => t.id === id))
 	);
 	chat.turns = recent.turns.map(restoreTurn);
-	lastSavedRecent = '';
 	// A message sent while the tab is being reopened waits for it, like any home.
 	const home = restoreHome(session.id, recent);
 	chat.home = home;
@@ -1186,7 +1240,6 @@ async function recall(chatId: string): Promise<string | null> {
 		notifyChanged();
 	});
 	await home;
-	await cleanUp();
 	return null;
 }
 
@@ -1205,7 +1258,7 @@ export async function runQuickChatCommand(
 			break;
 		}
 		case 'new':
-			await detachChat()();
+			endChat();
 			break;
 		case 'setPersistent':
 			error = setChatPersistence(command.persistent);
@@ -1226,12 +1279,8 @@ export async function runQuickChatCommand(
 				error = `Agent not found: ${command.agentId}`;
 				break;
 			}
-			// The agent is switched before the old chat's cleanup is awaited, so a
-			// message sent during that wait goes to the agent that was just chosen.
-			const cleanUp = detachChat();
-			const settings = useSettingsStore.getState();
-			settings.setQuickChatSettings({ ...settings.quickChatSettings, agentId: target.id });
-			await cleanUp();
+			endChat();
+			adoptAgent(target.id);
 			break;
 		}
 		case 'reveal':
@@ -1347,13 +1396,18 @@ export function startQuickChatEngine(): () => void {
 			if (changed(state.sessions) !== changed(previous.sessions)) scheduleRecentSave();
 		}
 		// A tab finishing its reply is a session change. Checked after the update
-		// that announced it has settled, never from inside it.
-		if (state.sessions !== previous.sessions && chat.turns.length > 0 && !freedCheck) {
-			freedCheck = true;
-			queueMicrotask(() => {
-				freedCheck = false;
-				runFreedTurns();
-			});
+		// that announced it has settled, never from inside it. Ended chats still
+		// finishing out of sight are checked too: their messages go through.
+		if (state.sessions !== previous.sessions) {
+			scheduleEndedChatsCheck();
+			if ((chat.turns.length > 0 || endedChats.size > 0) && !freedCheck) {
+				freedCheck = true;
+				queueMicrotask(() => {
+					freedCheck = false;
+					runFreedTurns(chat);
+					for (const ended of endedChats) runFreedTurns(ended);
+				});
+			}
 		}
 	});
 	const offSettings = useSettingsStore.subscribe((state, previous) => {
@@ -1375,5 +1429,6 @@ export function startQuickChatEngine(): () => void {
 		pushTimer = null;
 		// What the list has not been told yet is not lost with the window.
 		if (recentTimer) saveRecentNow();
+		if (endedTimer) settleEndedChats();
 	};
 }

@@ -35,6 +35,7 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
@@ -77,11 +78,8 @@ import {
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
 import { getQuickChatController } from '../../quick-chat';
-import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
-import { startCoworkingBridge } from '../../coworking/coworking-bridge';
-import { resolveOwningMaestroSessionId } from '../../coworking/coworking-session-id';
-import { isValidAgentId } from '../../../shared/agentIds';
-import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
+import { startCoworkingService } from '../../coworking/coworking-lifecycle';
+import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
@@ -102,6 +100,7 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
 
 export type { IpcBootstrapDependencies } from './types';
@@ -201,6 +200,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Cue - event-driven automation engine
 	registerCueHandlers({
 		getCueEngine: deps.getCueEngine,
+		settingsStore: deps.settingsStore,
 	});
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
@@ -475,50 +475,18 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				.some((entry) => entry.browserWindow === window && entry.kind === 'app'),
 	});
 
-	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
-	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation
-	// is opt-in via Settings -> Encore Features -> Coworking Setup. Bridge startup is
-	// non-fatal - feature degrades to "not available" until next launch.
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
-	void (async () => {
-		try {
-			await ensureCoworkingServerScript();
-			await startCoworkingBridge({
-				resolveCallerFromPid: (pid) =>
-					resolveSessionFromPidWalk(pid, (candidate) => {
-						const proc = deps
-							.getProcessManager()
-							?.getAll()
-							.find((entry) => entry.pid === candidate && entry.toolType !== 'terminal');
-						return proc && isValidAgentId(proc.toolType)
-							? {
-									sessionId: resolveOwningMaestroSessionId(proc.sessionId),
-									processSessionId: proc.sessionId,
-									provider: proc.toolType,
-								}
-							: null;
-					}),
-				resolveSessionFromPid: (pid) =>
-					resolveSessionFromPidWalk(
-						pid,
-						(candidate) => deps.getProcessManager()?.getSessionIdByPid(candidate) ?? null
-					),
-			});
-		} catch (err) {
-			// EADDRINUSE means another Maestro process already owns the bridge
-			// socket/pipe for this userData slug. Bridge startup is deliberately
-			// non-fatal (the feature degrades to "not available" until the next
-			// launch), so a second instance losing the race is an expected
-			// outcome rather than a defect worth reporting (MAESTRO-WH).
-			const code = (err as NodeJS.ErrnoException | null)?.code;
-			if (code !== 'EADDRINUSE') {
-				void captureException(err instanceof Error ? err : new Error(String(err)), {
-					operation: 'startup:coworkingBridge',
-				});
-			}
-			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
-		}
-	})();
+	// Register Coworking handlers, and start the IPC bridge socket + refresh the
+	// bundled MCP-server script only while the coworking Encore flag is on. A flag
+	// change after boot starts or stops the service through the Encore lifecycle
+	// (src/main/encore-feature-lifecycle.ts); per-agent activation is opt-in via
+	// the Coworking tile. Bridge startup is non-fatal (see coworking-lifecycle.ts).
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
+	if (isEncoreFeatureEnabled(deps.settingsStore, 'coworking')) {
+		void startCoworkingService(deps.getProcessManager);
+	}
 	// Register multi-window handlers (windows:* channel surface). Registered here
 	// because the running app wires handlers through setupIpcHandlers(), not
 	// registerAllHandlers(). The registry and window manager are module-scope
@@ -603,7 +571,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() =>
 		mapSessionsForMentions(
-			deps.sessionsStore.get('sessions', []),
+			// Live agents only: the moderator never lists or auto-adds a dormant Pianola.
+			filterLiveAgents(
+				deps.sessionsStore.get('sessions', []),
+				deps.settingsStore.get('encoreFeatures')
+			),
 			getSshRemoteById,
 			deps.getProcessManager()
 		)
@@ -637,6 +609,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// - that function is dead code, so a registration that lives solely there
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
+
+	// Codex `visualize` content references rendered inline in the transcript.
+	registerCodexVisualizationHandlers();
 
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts

@@ -479,6 +479,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Clear All Notifications',
 		keys: [],
 	},
+	// Unbound by default: the bell popover and the palette already reach it, and
+	// listing it here is what lets a user bind it in Settings -> Shortcuts.
+	toggleInAppToasts: {
+		id: 'toggleInAppToasts',
+		label: 'Toggle In-App Toasts',
+		keys: [],
+	},
 	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
 
 	// Dictation into the focused text box: tap to toggle, hold to record while

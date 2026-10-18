@@ -7,8 +7,8 @@ import type {
 
 /** Renderer-safe declarations shared by the native adapters and provider picker. */
 export const TRANSLATION_PROVIDER_VERSIONS = {
-	'claude-code': { minVersion: '2.1.296', testedVersions: ['2.1.296'] },
-	codex: { minVersion: '0.162.1', testedVersions: ['0.162.1'] },
+	'claude-code': { minVersion: '2.1.296', testedVersions: ['2.1.296', '2.1.302'] },
+	codex: { minVersion: '0.162.1', testedVersions: ['0.162.1', '0.163.0'] },
 } as const satisfies Record<string, TranslationVersionSupport>;
 
 /** Share strict schema compatibility and test coverage rules across every entry point. */

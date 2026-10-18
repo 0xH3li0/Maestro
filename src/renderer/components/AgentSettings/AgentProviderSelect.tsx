@@ -12,6 +12,7 @@ import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import type { Theme } from '../../types';
 import { SUPPORTED_AGENTS } from '../NewInstanceModal/types';
 import { FormFieldLabel } from '../ui/FormFieldLabel';
+import { ThemedSelect, type ThemedSelectOption } from '../shared/ThemedSelect';
 
 export interface AgentProviderSelectProps {
 	theme: Theme;
@@ -28,6 +29,7 @@ export interface AgentProviderSelectProps {
 	testId?: string;
 	disabled?: boolean;
 	optionLabel?: (providerId: string) => ReactNode;
+	options?: ThemedSelectOption[];
 }
 
 export function AgentProviderSelect({
@@ -39,30 +41,42 @@ export function AgentProviderSelect({
 	testId,
 	disabled,
 	optionLabel,
+	options,
 }: AgentProviderSelectProps) {
 	return (
 		<div>
 			<FormFieldLabel theme={theme}>Agent Provider</FormFieldLabel>
-			<select
-				disabled={disabled}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				aria-label="Agent Provider"
-				className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-				style={{
-					borderColor: theme.colors.border,
-					color: theme.colors.textMain,
-					backgroundColor: theme.colors.bgMain,
-				}}
-				data-testid={testId}
-			>
-				{noneLabel !== undefined && <option value="">{noneLabel}</option>}
-				{SUPPORTED_AGENTS.map((agentId) => (
-					<option key={agentId} value={agentId}>
-						{optionLabel ? optionLabel(agentId) : getAgentDisplayName(agentId)}
-					</option>
-				))}
-			</select>
+			{options ? (
+				<ThemedSelect
+					theme={theme}
+					value={value}
+					onChange={onChange}
+					disabled={disabled}
+					options={options}
+					aria-label="Agent Provider"
+				/>
+			) : (
+				<select
+					disabled={disabled}
+					value={value}
+					onChange={(e) => onChange(e.target.value)}
+					aria-label="Agent Provider"
+					className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						backgroundColor: theme.colors.bgMain,
+					}}
+					data-testid={testId}
+				>
+					{noneLabel !== undefined && <option value="">{noneLabel}</option>}
+					{SUPPORTED_AGENTS.map((agentId) => (
+						<option key={agentId} value={agentId}>
+							{optionLabel ? optionLabel(agentId) : getAgentDisplayName(agentId)}
+						</option>
+					))}
+				</select>
+			)}
 			{children}
 		</div>
 	);

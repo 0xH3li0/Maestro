@@ -37,6 +37,7 @@ import {
 	resolveSessionHistoryFilePath,
 } from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
+import { isPianolaEnabled } from '../../shared/agentVisibility';
 
 /** True for the known "no readable prompt file" failure from `getCliPrompt`. */
 function isPromptMissingError(err: unknown): err is Error {
@@ -138,7 +139,10 @@ export async function prepareMaestroSystemPromptCli(
 		typeof conductorProfileSetting === 'string' ? conductorProfileSetting : undefined;
 
 	// Same role, core and plugin sections the desktop appends (see spawnHelpers.ts).
-	const roleSections = session.isPianola ? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	const roleSections =
+		session.isPianola && isPianolaEnabled(readSettingValue('encoreFeatures'))
+			? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)]
+			: [];
 	// `maestro-cli s1` reaches the desktop on this machine, so an SSH agent is
 	// never asked about. A reader that cannot answer leaves the section out.
 	const readSystemOneAccess = options.readSystemOneAccess ?? readSystemOneAccessFromDesktop;

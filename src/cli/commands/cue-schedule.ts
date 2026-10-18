@@ -25,7 +25,7 @@
  * event type, as `cue enable` / `cue disable` do for the on/off switch.
  */
 import * as fs from 'fs';
-import { readSessions } from '../services/storage';
+import { readLiveSessions } from '../services/storage';
 import { resolveCliPath } from '../utils/parse';
 import { humanizeDuration, DURATION_LADDER_DAYS } from '../../shared/duration';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -178,7 +178,7 @@ function loadTasks(options: CueScheduleOptions): {
 	tasks: ScheduledTask[];
 	sessions: SessionInfo[];
 } {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const { tasks, warnings } = collectScheduledTasks(sessions.map(toTaskAgent));
 	if (!options.json) {
 		for (const warning of warnings) console.error(`Warning: ${warning}`);
@@ -766,7 +766,7 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	const timing = parseTiming(options);
 
 	if (!options.agent) errorOut('--agent <id-or-name> is required', options, 'MISSING_AGENT');
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	let agent: SessionInfo | null;
 	try {
 		agent = resolveAgent(options.agent, sessions);

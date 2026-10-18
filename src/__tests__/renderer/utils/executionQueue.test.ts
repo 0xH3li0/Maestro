@@ -1044,17 +1044,23 @@ describe('getSteerEligibility', () => {
 		).toBe('waiting-for-connection');
 	});
 
-	it('refuses an SSH agent, whose turn runs on another host', () => {
+	it('refuses an SSH Claude agent, whose TUI runs on another host', () => {
 		const claude = steerableSession({
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
 		} as Partial<Session>);
-		const codex = steerableSession({
-			toolType: 'codex',
-			codexTransport: 'app-server',
-			sshRemoteId: 'r1',
-		} as Partial<Session>);
 		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
-		expect(getSteerEligibility(codex, item).blockedReason).toBe('ssh-remote');
+	});
+
+	it('steers an SSH Codex agent on app-server, and names the transport for one on exec', () => {
+		const remote = {
+			toolType: 'codex',
+			sshRemoteId: 'r1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>;
+		const appServer = steerableSession({ ...remote, codexTransport: 'app-server' });
+		const exec = steerableSession(remote);
+		expect(getSteerEligibility(appServer, item).canSteer).toBe(true);
+		expect(getSteerEligibility(exec, item).blockedReason).toBe('codex-exec');
 	});
 
 	it('refuses when the agent has no tabs at all', () => {

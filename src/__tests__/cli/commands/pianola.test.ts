@@ -90,7 +90,7 @@ describe('pianola command gating', () => {
 	it('blocks rules when the pianola Encore flag is off', () => {
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: false });
 		expect(() => pianolaRules({})).toThrow('__exit__');
-		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('encore set pianola on'));
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('encore enable pianola'));
 		expect(readPianolaRules).not.toHaveBeenCalled();
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});

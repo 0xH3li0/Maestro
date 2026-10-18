@@ -21,7 +21,7 @@ import {
 	UI_SURFACES,
 	resolveUiSurface,
 	resolveUiSurfaceTarget,
-	surfaceEncoreRefusal,
+	uiSurfaceRefusal,
 } from '../../../../shared/uiSurfaces';
 import { currentEncoreFeatures } from '../bridgePathGuard';
 import { normalizeRenameTabResult } from '../../types';
@@ -1188,7 +1188,7 @@ export function handleOpenModal(
 	// A surface behind a switched-off Encore Feature does not open: the app
 	// shows a toast and stays as it was. The caller is told so here, with the
 	// same sentence, instead of hearing that it opened.
-	const refusal = surfaceEncoreRefusal(surface, currentEncoreFeatures());
+	const refusal = uiSurfaceRefusal(surface, target.subTab ?? target.tab, currentEncoreFeatures());
 	if (refusal) {
 		sendResult(false, refusal);
 		return;
@@ -1206,6 +1206,11 @@ export function handleOpenModal(
 		sendResult(false, `Agent not found: ${target.agent}`);
 		return;
 	}
+
+	// A surface behind a switched-off Encore Feature does not exist for the user.
+	// Refuse here so the caller gets a clear error; the renderer refuses too, but
+	// silently (no toast advertising the disabled feature), and its answer never
+	// travels back over this one-way send.
 
 	logger.info(
 		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}, group=${target.group ?? '-'}, agent=${target.agent ?? '-'}`,

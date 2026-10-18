@@ -369,6 +369,7 @@ describe('every registered action has a handler', () => {
 		'mediaPrev',
 		'openLeaderboard',
 		'clearAllNotifications',
+		'toggleInAppToasts',
 		'openThemeSettings',
 		'dictate',
 	];

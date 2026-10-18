@@ -38,7 +38,7 @@ import {
 	type StandaloneCueLog,
 } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
-import { readAgentConfigs, readSessions, readSshRemotes } from '../services/storage';
+import { readAgentConfigs, readLiveSessions, readSshRemotes } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
 import {
 	applyDataDirOption,
@@ -177,7 +177,7 @@ async function statusPayloadOrReport(options: {
 async function computeCueReadiness(): Promise<CueReadinessReport> {
 	const { checkCueReadiness } = await import('../../main/cue/cue-readiness');
 	return checkCueReadiness({
-		sessions: readSessions(),
+		sessions: readLiveSessions(),
 		agentConfigs: readAgentConfigs(),
 		sshRemotes: readSshRemotes(),
 	});
@@ -448,7 +448,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 			})
 		);
 	} else {
-		const sessionCount = readSessions().length;
+		const sessionCount = readLiveSessions().length;
 		log(
 			'info',
 			`Engine started (pid ${process.pid}). Watching ${sessionCount} agent(s) for .maestro/cue.yaml. Press Ctrl+C to stop.`
@@ -657,7 +657,7 @@ export async function cueEngineInspect(options: CueEngineInspectOptions = {}): P
 	applyDataDirOption(options.dataDir);
 	requireDataDirOrExit(options);
 	const { loadCueConfigDetailed } = await import('../../main/cue/cue-yaml-loader');
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const agents: CueEngineInspectAgentPayload[] = [];
 
 	for (const session of sessions) {

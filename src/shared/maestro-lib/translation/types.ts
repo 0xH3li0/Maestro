@@ -6,6 +6,8 @@ export interface TranslationIdentity {
 	provider: ToolType;
 	version: string;
 	accountRoot: string;
+	/** Canonical Claude projects directory selected with the account, including shared profile links. */
+	nativeSessionRoot?: string;
 	projectRoot: string;
 	/** Remote identity binds preflight to the selected host and its home, never the local user's. */
 	remoteHost?: string;

@@ -12,7 +12,27 @@ import { readModelUsage } from '../../../local-models/model-usage';
 import { isStatsTimeRange, STATS_TIME_RANGES } from '../../../../shared/stats-types';
 import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
+import { getSettingsStore } from '../../../stores';
+import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+/**
+ * Refuse a stats read while Usage & Stats is off, the way the desktop never
+ * opens the dashboard then. Returns true when the request was refused.
+ */
+function refuseWhenUsageStatsOff(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): boolean {
+	if (isEncoreFeatureEnabled(getSettingsStore(), 'usageStats')) return false;
+	ctx.sendError(
+		client,
+		'Usage & Stats is turned off. Run `maestro-cli encore enable usageStats` first.',
+		{ requestId: message.requestId }
+	);
+	return true;
+}
 
 /**
  * Handle get_usage_dashboard message - fetch usage analytics data
@@ -60,6 +80,7 @@ export function handleGetStatsAggregation(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
 	const range = (message.range as string) || 'week';
 
 	if (!isStatsTimeRange(range)) {
@@ -121,6 +142,7 @@ export function handleGetTokenUsage(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
 	const range = (message.range as string) || 'week';
 	if (!isStatsTimeRange(range)) {
 		ctx.sendError(client, `Invalid range. Must be one of: ${STATS_TIME_RANGES.join(', ')}`);
@@ -155,6 +177,7 @@ export function handleStatsQuery(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
 	const sql = message.sql as string | undefined;
 	const params = Array.isArray(message.params) ? (message.params as unknown[]) : [];
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback } from 'react';
+import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type {
 	Theme,
 	Session,
@@ -22,6 +22,8 @@ import {
 	selectModalOpen,
 	useModalStore,
 } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
 const ProcessMonitor = lazy(() =>
@@ -158,6 +160,13 @@ export const AppInfoModals = memo(function AppInfoModals({
 		[]
 	);
 
+	// Live agents only: a dormant Pianola (flag off) is not counted, listed, or
+	// offered by any of these surfaces.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const liveSessions = useMemo(
+		() => filterLiveAgents(sessions, { pianola: pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	return (
 		<>
 			{/* --- SHORTCUTS HELP MODAL --- */}
@@ -196,7 +205,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 			{feedbackModalOpen && (
 				<FeedbackModal
 					theme={theme}
-					sessions={sessions}
+					sessions={liveSessions}
 					onClose={onCloseFeedbackModal}
 					onSwitchToSession={onSwitchToSession}
 				/>
@@ -210,7 +219,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 				<Suspense fallback={null}>
 					<ProcessMonitor
 						theme={theme}
-						sessions={sessions}
+						sessions={liveSessions}
 						groups={groups}
 						groupChats={groupChats}
 						onClose={onCloseProcessMonitor}
@@ -229,7 +238,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 						theme={theme}
 						defaultTimeRange={defaultStatsTimeRange}
 						colorBlindMode={colorBlindMode}
-						sessions={sessions}
+						sessions={liveSessions}
 						autoRunStats={autoRunStats}
 						usageStats={usageStats}
 						handsOnTimeMs={handsOnTimeMs}

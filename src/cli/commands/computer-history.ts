@@ -5,13 +5,14 @@
 // Writes (pause, resume, rules add/remove, clear, enable-accessibility,
 // config with flags) go over the WebSocket bridge as `computer_history_command`
 // to the SAME ComputerHistoryService the desktop UI calls; the app must be
-// running. Writes are gated on the `computerHistory` Encore flag.
+// running. Every verb, reads included, is gated on the `computerHistory`
+// Encore flag.
 //
 // Captured content is untrusted (a page the user read can carry text aimed
 // at an agent). Text output fences it in an UNTRUSTED OBSERVED INPUT block;
 // JSON output marks it with `untrusted: true`.
 
-import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import { computerHistoryDir, resolveStorePath } from '../../shared/computer-history/paths';
 import {
 	compileGrep,
@@ -58,7 +59,6 @@ import {
 	getConfigDirectory,
 	readLocalModelAssignments,
 	readLocalModelEndpoints,
-	readSettingValue,
 } from '../services/storage';
 import {
 	failCommand,
@@ -67,7 +67,6 @@ import {
 	type SimpleResult,
 } from '../services/session-command';
 import { formatSuccess, formatWarning } from '../output/formatter';
-import { ExitCode, exitWith } from '../exit-codes';
 
 interface JsonOption {
 	json?: boolean;
@@ -83,6 +82,7 @@ export interface QueryCliOptions extends RangeOptions {
 	kind?: string | string[];
 	grep?: string;
 	limit?: string;
+	drafts?: boolean;
 }
 
 export interface ConfigCliOptions extends JsonOption {
@@ -118,31 +118,16 @@ function storeDir(): string {
 }
 
 function isEnabled(): boolean {
-	return resolveEncoreFeatures(readSettingValue('encoreFeatures')).computerHistory;
+	return isEncoreEnabled('computerHistory');
 }
 
-/** Writes need the feature on (the service ignores a recorder that is off). */
+/**
+ * Every verb, read or write, needs the feature on. A switched-off feature is
+ * gone, so even history recorded while it was on stays out of reach until the
+ * user turns it back on.
+ */
 export function ensureComputerHistoryEnabled(json?: boolean): void {
-	if (isEnabled()) return;
-	const message =
-		'Computer History is not enabled. Enable it with: maestro-cli encore enable computerHistory';
-	if (json) {
-		console.log(
-			JSON.stringify({ success: false, error: message, code: 'COMPUTER_HISTORY_DISABLED' })
-		);
-	} else {
-		console.error(message);
-	}
-	exitWith(ExitCode.GeneralError);
-}
-
-/** Reads still work when the flag is off; say so once, on stderr. */
-function noteIfDisabled(json?: boolean): void {
-	if (!json && !isEnabled()) {
-		console.error(
-			formatWarning('Computer History is off; showing what was recorded while it was on.')
-		);
-	}
+	requireEncore('computerHistory', json);
 }
 
 function parseRange(
@@ -228,6 +213,7 @@ async function writeCommand(
 // ----------------------------------------------------------------------------
 
 export async function computerHistoryStatus(options: JsonOption): Promise<void> {
+	ensureComputerHistoryEnabled(options.json);
 	const dir = storeDir();
 	const [config, stats, digestFiles] = await Promise.all([
 		readStoreConfig(dir),
@@ -346,7 +332,7 @@ function describeDigest(d: DigestInfo) {
 export async function computerHistoryDigests(
 	options: RangeOptions & { kind?: string }
 ): Promise<void> {
-	noteIfDisabled(options.json);
+	ensureComputerHistoryEnabled(options.json);
 	const range = parseRange(options, '1d');
 	let kind: '15m' | '6h' | undefined;
 	if (options.kind !== undefined) {
@@ -389,7 +375,7 @@ export async function computerHistoryDigests(
 // ----------------------------------------------------------------------------
 
 export async function computerHistoryList(options: RangeOptions & { app?: string }): Promise<void> {
-	noteIfDisabled(options.json);
+	ensureComputerHistoryEnabled(options.json);
 	const range = parseRange(options, '2h');
 	const appFilter = options.app?.trim().toLowerCase();
 	let segments = await listSegments(storeDir(), range);
@@ -421,7 +407,7 @@ export async function computerHistoryList(options: RangeOptions & { app?: string
 }
 
 export async function computerHistoryQuery(options: QueryCliOptions): Promise<void> {
-	noteIfDisabled(options.json);
+	ensureComputerHistoryEnabled(options.json);
 	const range = parseRange(options, '1h');
 	const kinds: StoredEventKind[] = [];
 	for (const k of toList(options.kind)) {
@@ -447,6 +433,7 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 		kinds,
 		grep: compileGrep(options.grep),
 		limit,
+		keepDrafts: options.drafts === true,
 	});
 	if (options.json) {
 		console.log(
@@ -456,6 +443,7 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 				notice: UNTRUSTED_NOTICE,
 				count: result.events.length,
 				limited: result.limited,
+				draftsCollapsed: result.draftsCollapsed,
 				events: result.events,
 			})
 		);
@@ -466,13 +454,17 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 		return;
 	}
 	console.log(fenceUntrusted(result.events.map(formatEvent).join('\n\n')));
-	console.log(
-		`${result.events.length} event(s)${result.limited ? `, limited to the most recent ${limit} (raise --limit or narrow --since)` : ''}`
-	);
+	const notes = [
+		result.limited ? `limited to the most recent ${limit} (raise --limit or narrow --since)` : '',
+		result.draftsCollapsed > 0
+			? `${result.draftsCollapsed} superseded draft(s) hidden (--drafts shows them)`
+			: '',
+	].filter(Boolean);
+	console.log(`${result.events.length} event(s)${notes.map((n) => `, ${n}`).join('')}`);
 }
 
 export async function computerHistoryApps(options: RangeOptions): Promise<void> {
-	noteIfDisabled(options.json);
+	ensureComputerHistoryEnabled(options.json);
 	const range = parseRange(options, '1d');
 	const apps = await summarizeApps(storeDir(), range);
 	if (options.json) {
@@ -535,6 +527,7 @@ export async function computerHistoryResume(options: JsonOption): Promise<void> 
 // ----------------------------------------------------------------------------
 
 export async function computerHistoryRulesList(options: JsonOption): Promise<void> {
+	ensureComputerHistoryEnabled(options.json);
 	const config = await readStoreConfig(storeDir());
 	const platform = observedPlatformFor(process.platform);
 	const builtIn = builtInBlockedApps(platform);
@@ -710,7 +703,7 @@ export async function computerHistoryRulesMode(
 export async function computerHistoryClear(
 	options: JsonOption & { since?: string; all?: boolean }
 ): Promise<void> {
-	ensureComputerHistoryEnabled(options.json);
+	// No flag check: deleting what was recorded is allowed with the feature off.
 	if (!!options.all === (options.since !== undefined)) {
 		failCommand('Specify exactly one of --since <time> or --all', options.json);
 	}
@@ -762,6 +755,7 @@ function parseOnOff(value: string, flag: string, json?: boolean): boolean {
 }
 
 export async function computerHistoryConfig(options: ConfigCliOptions): Promise<void> {
+	ensureComputerHistoryEnabled(options.json);
 	const patch: Record<string, unknown> = {};
 	if (options.retentionDays !== undefined) {
 		const n = Number(options.retentionDays);
@@ -833,7 +827,6 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 		return;
 	}
 
-	ensureComputerHistoryEnabled(options.json);
 	const result = await writeCommand('config-set', { patch }, options.json);
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, config: result.config }));

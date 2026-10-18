@@ -20,7 +20,7 @@ import { openAgentSettings } from '../services/agentNavigation';
 import {
 	resolveUiSurface,
 	resolveUiSurfaceTarget,
-	surfaceEncoreRefusal,
+	uiSurfaceRefusal,
 	type OpenUiSurfaceRequest,
 } from '../../shared/uiSurfaces';
 import type { AgentSettingsTabId } from '../../shared/agentSettingsTabs';
@@ -38,9 +38,12 @@ export interface OpenUiSurfaceResult {
  * inside it, `subTab`, on the agent group `group` for a surface that takes
  * one, or for the agent `agent` when the surface is one agent's.
  *
- * Refuses (with a toast) when the surface is behind an Encore Feature the user
- * has turned off: silently opening nothing would look like the CLI lied, and
- * silently enabling the feature would change a setting the user never touched.
+ * Refuses when the surface (or the requested tab) is behind an Encore Feature
+ * the user has turned off. The refusal goes back to the caller only - no toast:
+ * a disabled feature has no footprint, and a toast naming it would advertise it
+ * to the person who switched it off. Silently enabling the feature would change
+ * a setting the user never touched. (`maestro-cli open` gets the same refusal
+ * from the main process, which checks before the renderer is asked.)
  */
 export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResult {
 	const surface = resolveUiSurface(request.surface);
@@ -50,11 +53,12 @@ export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResul
 	if ('error' in target) return { ok: false, error: target.error };
 	const { tab, subTab } = target;
 
-	const refusal = surfaceEncoreRefusal(surface, useSettingsStore.getState().encoreFeatures);
-	if (refusal) {
-		notifyToast({ color: 'yellow', title: `${surface.label} is disabled`, message: refusal });
-		return { ok: false, error: refusal };
-	}
+	const refusal = uiSurfaceRefusal(
+		surface,
+		subTab ?? tab,
+		useSettingsStore.getState().encoreFeatures
+	);
+	if (refusal) return { ok: false, error: refusal };
 
 	const actions = getModalActions();
 

@@ -1,15 +1,16 @@
-// Encore Features commands - list and toggle Maestro's Encore Features in the
+// Encore Features commands - list and toggle Maestro's optional features in the
 // running desktop app. Toggling routes through the set_setting
 // WS message (key: encoreFeatures), so changes apply live and persist. Mirrors
-// the Settings -> Encore Features toggles.
+// the Settings > Plugins toggles.
 
-import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { ENCORE_FEATURE_DEFAULTS, resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import {
 	FIRST_PARTY_PLUGINS,
 	isFirstPartyPluginAvailableOn,
 	type FirstPartyEncoreFlag,
 } from '../../shared/plugins/first-party';
 import { readSettingValue } from '../services/storage';
+import { encoreFeatureName, type EncoreFlag } from '../utils/encore-gate';
 import {
 	sendSimpleCommand,
 	reportResult,
@@ -17,28 +18,20 @@ import {
 	failFromError,
 } from '../services/session-command';
 
-// Feature ID -> display name. Keys mirror EncoreFeatureFlags in
-// src/shared/encoreFeatures.ts. Aliases let an agent say "symphony" or "cue".
-// Group Chat is a core feature with no Encore flag, so it has no alias here:
-// mapping it to Symphony once made `encore disable group-chat` turn off the
-// wrong feature.
-const FEATURES: Record<string, string> = {
-	directorNotes: "Director's Notes",
-	usageStats: 'Usage Dashboard',
-	symphony: 'Maestro Symphony',
-	maestroCue: 'Maestro Cue',
-	pianola: 'Pianola (Manager Agent)',
-	computerHistory: 'Computer History',
-	quickChat: 'Quick Chat',
-	maestroRun: 'MaestroRun (macOS)',
-	aCappella: 'A Cappella (Voice)',
-	throughputGauge: 'Throughput Gauge',
-	ensemble: 'Ensemble',
-};
+// Feature ID -> display name. Keys come from ENCORE_FEATURE_DEFAULTS, so every
+// flag the app knows is listed and accepted; names are the Plugins tab's. A
+// hand-kept list here once knew 9 of the 15 flags.
+const FEATURES: Record<string, string> = Object.fromEntries(
+	(Object.keys(ENCORE_FEATURE_DEFAULTS) as EncoreFlag[]).map((key) => [key, encoreFeatureName(key)])
+);
 
-/** Every feature id `enable` accepts on some platform, in the order `list` prints them. */
+// Aliases let an agent say "symphony" or "cue". Any key also matches with its
+// hyphens dropped (`groups-plus`, `web-login`). Group Chat is a core feature
+// with no Encore flag, so it has no alias here: mapping it to Symphony once
+// made `encore disable group-chat` turn off the wrong feature.
+
+/** Every feature id accepted by enable. */
 export const ENCORE_FEATURE_KEYS: readonly string[] = Object.keys(FEATURES);
-
 const ALIASES: Record<string, string> = {
 	'director-notes': 'directorNotes',
 	directornotes: 'directorNotes',
@@ -106,8 +99,9 @@ function resolveFeature(input: string): string | null {
 	if (FEATURES[q]) return q;
 	const lower = q.toLowerCase();
 	if (ALIASES[lower]) return ALIASES[lower];
-	// Case-insensitive direct match on canonical keys
-	const direct = Object.keys(FEATURES).find((k) => k.toLowerCase() === lower);
+	// Case-insensitive match on canonical keys, hyphens ignored (`groups-plus`).
+	const bare = lower.replace(/-/g, '');
+	const direct = Object.keys(FEATURES).find((k) => k.toLowerCase() === bare);
 	return direct ?? null;
 }
 

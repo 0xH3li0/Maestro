@@ -16,6 +16,7 @@ import type { Theme } from '../types';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { TOAST_WIDTHS, TOAST_WIDTH_LABELS } from '../../shared/toastWidth';
 import type { ToastPosition } from '../../shared/toastPosition';
+import { TOAST_DURATION_OFF } from '../../shared/toastDuration';
 import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
 import { SpokenNoticesSetting } from './SpokenNoticesSetting';
@@ -88,6 +89,7 @@ export function NotificationsPanel({
 			shortcuts: s.shortcuts,
 		}))
 	);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	// The inbox options only mean anything while the inbox exists: ghosted and
 	// inert until the master toggle is on, but their values are kept.
 	const inboxEnabled = settings.notificationCenterEnabled;
@@ -487,8 +489,9 @@ export function NotificationsPanel({
 						</p>
 					)}
 					<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
-						Runs when all agents finish and no Auto Run is active. Cue tasks don&apos;t count as
-						activity. The command receives &quot;Maestro is idle&quot; via stdin.
+						Runs when all agents finish and no Auto Run is active.
+						{maestroCueEnabled && " Cue tasks don't count as activity."} The command receives
+						&quot;Maestro is idle&quot; via stdin.
 					</p>
 				</div>
 			</div>
@@ -504,7 +507,7 @@ export function NotificationsPanel({
 				</label>
 				<ToggleButtonGroup
 					options={[
-						{ value: -1, label: 'Off' },
+						{ value: TOAST_DURATION_OFF, label: 'Off' },
 						{ value: 5, label: '5s' },
 						{ value: 10, label: '10s' },
 						{ value: 20, label: '20s' },
