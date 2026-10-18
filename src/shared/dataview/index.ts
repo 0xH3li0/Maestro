@@ -25,3 +25,53 @@ export type {
 export { Result, Success, Failure } from './vendor/api/result';
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
 export type { QuerySettings } from './vendor/settings';
+
+export { parseQuery } from './vendor/query/parse';
+export { QueryFields } from './vendor/query/query';
+export type {
+	Query,
+	QueryType,
+	QueryHeader,
+	QueryOperation,
+	QuerySortBy,
+	NamedField,
+	ListQuery,
+	TableQuery,
+	TaskQuery,
+	CalendarQuery,
+	WhereStep,
+	SortByStep,
+	LimitStep,
+	FlattenStep,
+	GroupStep,
+	ExtractStep,
+} from './vendor/query/query';
+export { parseField, EXPRESSION } from './vendor/expression/parse';
+export { Fields } from './vendor/expression/field';
+export type {
+	Field,
+	BinaryOp,
+	CompareOp,
+	ArithmeticOp,
+	LiteralField,
+	VariableField,
+	ListField,
+	ObjectField,
+	BinaryOpField,
+	FunctionField,
+	LambdaField,
+	IndexField,
+	NegatedField,
+} from './vendor/expression/field';
+export { Sources } from './vendor/data-index/source';
+export type {
+	Source,
+	SourceOp,
+	TagSource,
+	CsvSource,
+	FolderSource,
+	LinkSource,
+	NegatedSource,
+	EmptySource,
+	BinaryOpSource,
+} from './vendor/data-index/source';

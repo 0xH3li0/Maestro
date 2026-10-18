@@ -132,5 +132,26 @@ export default tseslint.config(
 		rules: {
 			'shared-boundary/no-shared-to-main-imports': 'error',
 		},
+	},
+
+	// Dataview boundary: src/shared/dataview/index.ts is the one import site for the
+	// vendored Dataview core. Only src/shared/dataview/** may reach into vendor/.
+	{
+		files: ['src/**/*.ts', 'src/**/*.tsx'],
+		ignores: ['src/shared/dataview/**'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							regex: 'dataview/vendor(/|$)',
+							message:
+								"Import Dataview from 'src/shared/dataview' (index.ts), never from its vendor/ folder. See docs/agent-guides/DATAVIEW.md.",
+						},
+					],
+				},
+			],
+		},
 	}
 );
