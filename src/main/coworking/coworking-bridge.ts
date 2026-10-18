@@ -99,6 +99,15 @@ export function getBridgeEnvVar(): { name: string; value: string } {
 	return { name: COWORKING_SOCKET_ENV_VAR, value: getBridgeSocketPath() };
 }
 
+/**
+ * The start in progress, or null. `server` is only set once the socket listens,
+ * several awaits in, so two overlapping starts (the Extensions toggle reconciles
+ * once directly and once through the flag listener) would both pass the
+ * `server` check: the second would unlink the first one's live socket and leave
+ * its server open with nothing able to close it.
+ */
+let starting: Promise<void> | null = null;
+
 /** Start the bridge. Idempotent. Must be called inside `app.whenReady`. */
 export async function startCoworkingBridge(options?: {
 	resolveSessionFromPid?: CoworkingSessionFromPidResolver;
@@ -107,7 +116,15 @@ export async function startCoworkingBridge(options?: {
 		resolveSessionFromPid = options.resolveSessionFromPid;
 	}
 	if (server) return;
+	if (!starting) {
+		starting = listenOnBridgeSocket().finally(() => {
+			starting = null;
+		});
+	}
+	await starting;
+}
 
+async function listenOnBridgeSocket(): Promise<void> {
 	const socketPath = getBridgeSocketPath();
 
 	// Clean up stale socket file from a prior crashed run (POSIX only).
@@ -163,6 +180,8 @@ export async function startCoworkingBridge(options?: {
  * that connected while the feature was on cannot keep calling tools after it.
  */
 export async function stopCoworkingBridge(): Promise<void> {
+	// A stop that lands mid-start waits for the socket, then closes it.
+	if (starting) await starting.catch(() => undefined);
 	if (!server) return;
 	const srv = server;
 	server = null;

@@ -90,6 +90,7 @@ import {
 	isHighRiskActCapability,
 	describeUnattendedConsent,
 	isValidAllowlistMember,
+	parseAllowlistScope,
 } from '../shared/plugins/permissions';
 import {
 	createAuthorizationStore,
@@ -2975,14 +2976,30 @@ app
 				// Intersect the submitted ids with the live session set (only a real
 				// agent is dispatchable) and drop any token that could corrupt the
 				// comma-joined scope. Deduped, order-stable.
-				const sessions = getLiveSessions() as Array<{ id?: string }>;
-				const existing = new Set(
-					sessions.map((s) => s?.id).filter((id): id is string => typeof id === 'string')
+				const idsOf = (list: unknown[]): Set<string> =>
+					new Set(
+						(list as Array<{ id?: unknown }>)
+							.map((s) => s?.id)
+							.filter((id): id is string => typeof id === 'string')
+					);
+				const existing = idsOf(getLiveSessions());
+				// A dormant agent (Pianola with its flag off) cannot be newly granted,
+				// but a grant it already holds is kept: saving the list while the
+				// feature is off must not silently revoke it for when it comes back.
+				const stored = getSessionsStore().get('sessions', []);
+				const allIds = idsOf(Array.isArray(stored) ? stored : []);
+				const currentScope = new Set(
+					parseAllowlistScope(
+						authStore.readGrants(pluginId).find((g) => g.capability === 'agents:dispatch')?.scope
+					) ?? []
 				);
+				const keepsDormant = (id: string): boolean =>
+					allIds.has(id) && !existing.has(id) && currentScope.has(id);
 				const seen = new Set<string>();
 				const members: string[] = [];
 				for (const raw of agentIds) {
-					if (!isValidAllowlistMember(raw) || !existing.has(raw) || seen.has(raw)) continue;
+					if (!isValidAllowlistMember(raw) || seen.has(raw)) continue;
+					if (!existing.has(raw) && !keepsDormant(raw)) continue;
 					seen.add(raw);
 					members.push(raw);
 				}

@@ -680,7 +680,7 @@ export async function computerHistoryRulesMode(
 export async function computerHistoryClear(
 	options: JsonOption & { since?: string; all?: boolean }
 ): Promise<void> {
-	ensureComputerHistoryEnabled(options.json);
+	// No flag check: deleting what was recorded is allowed with the feature off.
 	if (!!options.all === (options.since !== undefined)) {
 		failCommand('Specify exactly one of --since <time> or --all', options.json);
 	}

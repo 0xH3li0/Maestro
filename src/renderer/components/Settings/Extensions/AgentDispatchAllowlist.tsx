@@ -18,6 +18,7 @@ import { parseAllowlistScope, type PermissionGrant } from '../../../../shared/pl
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import { useLiveSessions } from '../../../hooks/session/useLiveSessions';
 import { notifyToast } from '../../../stores/notificationStore';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { FilterInput } from '../../ui/FilterInput';
 
@@ -43,6 +44,14 @@ export function AgentDispatchAllowlist({
 	// Live agents only: a dormant Pianola (flag off) cannot be granted dispatch.
 	const sessions = useLiveSessions();
 	const sessionIds = useMemo(() => new Set(sessions.map((s) => s.id)), [sessions]);
+	// Agents that exist but are dormant. A grant one already holds is neither
+	// shown nor stale: it is kept on save so it is still there when the feature
+	// comes back on.
+	const allSessions = useSessionStore((s) => s.sessions);
+	const dormantIds = useMemo(
+		() => new Set(allSessions.map((s) => s.id).filter((id) => !sessionIds.has(id))),
+		[allSessions, sessionIds]
+	);
 
 	// The persisted allow list from the ledger grant. Recomputed only when the
 	// scope changes (after a save, or when switching plugins).
@@ -82,10 +91,10 @@ export function AgentDispatchAllowlist({
 	// Allowed ids that no longer match a live agent (a deleted agent, or a stale
 	// manifest id): unenforceable, and dropped when the user saves.
 	const staleChecked = useMemo(
-		() => [...checked].filter((id) => !sessionIds.has(id)),
-		[checked, sessionIds]
+		() => [...checked].filter((id) => !sessionIds.has(id) && !dormantIds.has(id)),
+		[checked, sessionIds, dormantIds]
 	);
-	const liveCheckedCount = checked.size - staleChecked.length;
+	const liveCheckedCount = [...checked].filter((id) => sessionIds.has(id)).length;
 	const hiddenCheckedCount = normalizedQuery
 		? [...checked].filter((id) => sessionIds.has(id) && !visibleSessionIds.has(id)).length
 		: 0;
@@ -109,8 +118,11 @@ export function AgentDispatchAllowlist({
 	const save = useCallback(async () => {
 		setSaving(true);
 		try {
-			// Send only live ids; the host also filters, but keep the payload honest.
-			const members = [...checked].filter((id) => sessionIds.has(id));
+			// Send live ids plus dormant ones the scope already held; the host
+			// applies the same rule, but keep the payload honest.
+			const members = [...checked].filter(
+				(id) => sessionIds.has(id) || (dormantIds.has(id) && currentMembers.has(id))
+			);
 			const snapshot = await window.maestro.plugins.setAgentAllowlist(pluginId, members);
 			onSaved(snapshot);
 			notifyToast({ color: 'green', title: 'Plugins', message: 'Updated dispatch allow list' });
@@ -128,7 +140,7 @@ export function AgentDispatchAllowlist({
 		} finally {
 			setSaving(false);
 		}
-	}, [pluginId, checked, sessionIds, onSaved]);
+	}, [pluginId, checked, sessionIds, dormantIds, currentMembers, onSaved]);
 
 	return (
 		<div className="mt-5" data-testid="agent-dispatch-allowlist">

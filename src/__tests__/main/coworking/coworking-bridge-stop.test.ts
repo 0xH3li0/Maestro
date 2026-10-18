@@ -64,4 +64,19 @@ describe('stopCoworkingBridge', () => {
 		});
 		expect(refused).toBe(true);
 	});
+
+	it('overlapping starts share one server, so a stop leaves nothing listening', async () => {
+		await Promise.all([startCoworkingBridge(), startCoworkingBridge()]);
+		await stopCoworkingBridge();
+
+		const refused = await new Promise<boolean>((resolve) => {
+			const client = net.createConnection(socketPath);
+			client.once('connect', () => {
+				client.destroy();
+				resolve(false);
+			});
+			client.once('error', () => resolve(true));
+		});
+		expect(refused).toBe(true);
+	});
 });

@@ -2533,13 +2533,17 @@ computerHistoryRules
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((id, options) => computerHistoryRulesRemove(id, options));
 
-computerHistory
-	.command('clear')
-	.description('Delete recorded history: everything since a time, or all of it')
-	.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
-	.option('--all', 'Delete all recorded history (settings and rules stay)')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => computerHistoryClear(options));
+// Deleting a recording takes a footprint away, so it still runs with the
+// feature switched off: what was recorded must always be removable.
+allowWhileEncoreOff(
+	computerHistory
+		.command('clear')
+		.description('Delete recorded history: everything since a time, or all of it')
+		.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
+		.option('--all', 'Delete all recorded history (settings and rules stay)')
+		.option('--json', 'Output as JSON (for scripting)')
+		.action((options) => computerHistoryClear(options))
+);
 
 computerHistory
 	.command('enable-accessibility')

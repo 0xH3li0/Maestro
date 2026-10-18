@@ -334,6 +334,18 @@ describe('writes (over WS)', () => {
 		expect(lastJson()).toEqual({ success: true, deletedSegments: 3, freedBytes: 9 });
 	});
 
+	it('clear still deletes the recording with the feature switched off', async () => {
+		h.flags = { computerHistory: false };
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			deletedSegments: 1,
+			freedBytes: 4,
+		});
+		await computerHistoryClear({ all: true, json: true });
+		expect(vi.mocked(sendSimpleCommand).mock.calls.at(-1)![0]).toMatchObject({ all: true });
+		expect(lastJson()).toEqual({ success: true, deletedSegments: 1, freedBytes: 4 });
+	});
+
 	it('config flags build a patch (GB to bytes, on/off, digest agent)', async () => {
 		vi.mocked(sendSimpleCommand).mockResolvedValue({ success: true, config: {} });
 		await computerHistoryConfig({
