@@ -2058,6 +2058,7 @@ Search recorded events (text, selections, snapshots, app and window changes)
 | `--kind <kind>`  | text \| selection \| snapshot \| app \| window (comma list or repeat) | `[]`    |
 | `--grep <regex>` | Case-insensitive regex over text, titles, URLs, and labels            | -       |
 | `--limit <n>`    | Most recent N matches (default 200)                                   | -       |
+| `--drafts`       | Keep text commits a later commit in the same field supersedes         | -       |
 | `--json`         | Output as JSON (for scripting)                                        | -       |
 
 ## `maestro-cli computer-history apps`

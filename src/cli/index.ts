@@ -2416,6 +2416,7 @@ computerHistory
 	)
 	.option('--grep <regex>', 'Case-insensitive regex over text, titles, URLs, and labels')
 	.option('--limit <n>', 'Most recent N matches (default 200)')
+	.option('--drafts', 'Keep text commits a later commit in the same field supersedes')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryQuery(options));
 

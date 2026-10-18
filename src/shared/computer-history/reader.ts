@@ -74,6 +74,8 @@ export interface EventFilter extends TimeRange {
 export interface QueryOptions extends EventFilter {
 	/** Return at most this many events: the MOST RECENT matches, in time order. */
 	limit?: number;
+	/** Keep drafts a later commit in the same field supersedes (see isSupersededDraft). */
+	keepDrafts?: boolean;
 }
 
 export interface QueryResult {
@@ -81,6 +83,51 @@ export interface QueryResult {
 	/** True when `limit` was reached and older matches may exist. */
 	limited: boolean;
 	segmentsScanned: number;
+	/** Superseded drafts left out (0 with `keepDrafts`). */
+	draftsCollapsed: number;
+}
+
+/** A draft and the commit that supersedes it must be this close in time. */
+export const DRAFT_SUPERSEDE_MS = 5 * 60_000;
+
+/** The field a text commit came from: same app, same role, same label. */
+function draftFieldKey(event: StoredEvent): string | null {
+	if (event.kind !== 'text.committed' || !event.app) return null;
+	return `${event.app.id}\u0000${event.element?.role ?? ''}\u0000${event.element?.label ?? ''}`;
+}
+
+/**
+ * True when `older` is an idle or blur commit that `newer`, the next commit
+ * in the same field, starts with: a message caught mid-typing (dictation
+ * overlays steal focus and cause a blur every few seconds). A `cleared`
+ * commit is a send and never a draft.
+ */
+export function isSupersededDraft(older: StoredEvent, newer: StoredEvent): boolean {
+	if (older.reason === 'cleared') return false;
+	const key = draftFieldKey(older);
+	if (!key || key !== draftFieldKey(newer)) return false;
+	const gap = Date.parse(newer.ts) - Date.parse(older.ts);
+	if (!(gap >= 0 && gap <= DRAFT_SUPERSEDE_MS)) return false;
+	const draft = (older.text ?? '').trim();
+	return draft.length > 0 && (newer.text ?? '').trim().startsWith(draft);
+}
+
+/** Fed matches newest-first, drops each draft the next commit in its field supersedes. */
+class DraftCollapser {
+	private readonly nextInField = new Map<string, StoredEvent>();
+	collapsed = 0;
+
+	keep(event: StoredEvent): boolean {
+		const key = draftFieldKey(event);
+		if (!key) return true;
+		const newer = this.nextInField.get(key);
+		this.nextInField.set(key, event);
+		if (newer && isSupersededDraft(event, newer)) {
+			this.collapsed++;
+			return false;
+		}
+		return true;
+	}
 }
 
 export interface AppUsage {
@@ -306,6 +353,8 @@ export async function queryEvents(
 ): Promise<QueryResult> {
 	const segments = await listSegments(storeDir, options);
 	const limit = options.limit !== undefined && options.limit > 0 ? options.limit : undefined;
+	const drafts = new DraftCollapser();
+	const keep = (e: StoredEvent) => options.keepDrafts === true || drafts.keep(e);
 	let segmentsScanned = 0;
 	if (limit === undefined) {
 		const events: StoredEvent[] = [];
@@ -316,7 +365,8 @@ export async function queryEvents(
 			}
 		}
 		events.sort(compareEvents);
-		return { events, limited: false, segmentsScanned };
+		const kept = events.reverse().filter(keep).reverse();
+		return { events: kept, limited: false, segmentsScanned, draftsCollapsed: drafts.collapsed };
 	}
 	const newestFirst: StoredEvent[] = [];
 	let limited = false;
@@ -326,6 +376,7 @@ export async function queryEvents(
 			.filter((e) => eventMatches(e, options))
 			.sort(compareEvents);
 		for (let j = matches.length - 1; j >= 0; j--) {
+			if (!keep(matches[j])) continue;
 			if (newestFirst.length >= limit) {
 				limited = true;
 				break;
@@ -338,7 +389,12 @@ export async function queryEvents(
 			break;
 		}
 	}
-	return { events: newestFirst.reverse(), limited, segmentsScanned };
+	return {
+		events: newestFirst.reverse(),
+		limited,
+		segmentsScanned,
+		draftsCollapsed: drafts.collapsed,
+	};
 }
 
 function compareEvents(a: StoredEvent, b: StoredEvent): number {

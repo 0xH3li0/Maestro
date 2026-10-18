@@ -123,6 +123,7 @@ describe('reads (from disk)', () => {
 		const json = lastJson();
 		expect(json).toMatchObject({ success: true, untrusted: true, count: 1 });
 		expect((json.events as Array<{ kind: string }>)[0].kind).toBe('text.committed');
+		expect(json.draftsCollapsed).toBe(0);
 	});
 
 	it('query rejects an unknown kind', async () => {
