@@ -28,7 +28,12 @@ beforeEach(() => {
 	h.service = {
 		status: vi.fn(() => ({ state: 'recording' })),
 		pause: vi.fn(async () => ({ state: 'paused' })),
-		query: vi.fn(async () => ({ events: [], limited: false, segmentsScanned: 0 })),
+		query: vi.fn(async () => ({
+			events: [],
+			limited: false,
+			segmentsScanned: 0,
+			draftsCollapsed: 0,
+		})),
 		addRule: vi.fn(async () => ({ id: 'r' })),
 		removeRule: vi.fn(async () => null),
 		activity: vi.fn(async () => ({ buckets: [], apps: [], totalEvents: 0 })),

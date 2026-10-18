@@ -73,6 +73,7 @@ export interface QueryCliOptions extends RangeOptions {
 	kind?: string | string[];
 	grep?: string;
 	limit?: string;
+	drafts?: boolean;
 }
 
 export interface ConfigCliOptions extends JsonOption {
@@ -429,6 +430,7 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 		kinds,
 		grep: compileGrep(options.grep),
 		limit,
+		keepDrafts: options.drafts === true,
 	});
 	if (options.json) {
 		console.log(
@@ -438,6 +440,7 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 				notice: UNTRUSTED_NOTICE,
 				count: result.events.length,
 				limited: result.limited,
+				draftsCollapsed: result.draftsCollapsed,
 				events: result.events,
 			})
 		);
@@ -448,9 +451,13 @@ export async function computerHistoryQuery(options: QueryCliOptions): Promise<vo
 		return;
 	}
 	console.log(fenceUntrusted(result.events.map(formatEvent).join('\n\n')));
-	console.log(
-		`${result.events.length} event(s)${result.limited ? `, limited to the most recent ${limit} (raise --limit or narrow --since)` : ''}`
-	);
+	const notes = [
+		result.limited ? `limited to the most recent ${limit} (raise --limit or narrow --since)` : '',
+		result.draftsCollapsed > 0
+			? `${result.draftsCollapsed} superseded draft(s) hidden (--drafts shows them)`
+			: '',
+	].filter(Boolean);
+	console.log(`${result.events.length} event(s)${notes.map((n) => `, ${n}`).join('')}`);
 }
 
 export async function computerHistoryApps(options: RangeOptions): Promise<void> {
