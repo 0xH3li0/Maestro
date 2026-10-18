@@ -299,6 +299,41 @@ describe('ThinkingStatusPill', () => {
 	});
 
 	describe('primary item display', () => {
+		it('keeps the running native owner in its tooltip after selecting another provider', () => {
+			const item = createThinkingItemWithTab(
+				{ toolType: 'opencode' },
+				{
+					tabProvider: 'claude-code',
+					turnProvider: 'codex',
+					agentSessionId: 'selected-claude',
+					turnSessionId: 'running-codex',
+				}
+			);
+			const { rerender } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(screen.getAllByTitle(/Codex: running-codex/).length).toBeGreaterThan(0);
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[{ ...item, tab: { ...item.tab!, turnSessionId: 'replacement-codex' } }]}
+					theme={mockTheme}
+				/>
+			);
+			expect(screen.getAllByTitle(/Codex: replacement-codex/).length).toBeGreaterThan(0);
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[
+						{
+							...item,
+							tab: { ...item.tab!, turnProvider: 'claude-code', turnSessionId: 'new-claude' },
+						},
+					]}
+					theme={mockTheme}
+				/>
+			);
+			expect(screen.getAllByTitle(/Claude Code: new-claude/).length).toBeGreaterThan(0);
+			expect(screen.queryByTitle(/Codex: running-codex/)).not.toBeInTheDocument();
+		});
+
 		it('shows session name', () => {
 			const item = createThinkingItem({ name: 'Primary Session' });
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
@@ -336,7 +371,7 @@ describe('ThinkingStatusPill', () => {
 			expect(elementWithTooltip).toHaveAttribute('title', expect.stringContaining('Test Name'));
 			expect(elementWithTooltip).toHaveAttribute(
 				'title',
-				expect.stringContaining('Claude: abc12345')
+				expect.stringContaining('Claude Code: abc12345')
 			);
 		});
 	});

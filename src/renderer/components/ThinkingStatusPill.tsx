@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTurnProvider } from '../utils/providerTabSessions';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 /**
  * ThinkingStatusPill - Displays status when AI is actively processing/thinking.
@@ -100,7 +101,12 @@ function getItemDisplayName(
 	namedSessions?: Record<string, string>
 ): string {
 	// Use tab's agentSessionId if available, fallback to session's (legacy)
-	const agentSessionId = tab?.agentSessionId || session.agentSessionId;
+	const runningTab = tab
+		? projectTabProvider(session, tab, resolveTurnProvider(tab, session)).tab
+		: undefined;
+	const agentSessionId = tab
+		? tab.turnSessionId || runningTab?.agentSessionId
+		: session.agentSessionId;
 
 	// Priority 1: Named session from namedSessions lookup
 	if (agentSessionId) {
@@ -754,7 +760,13 @@ function ThinkingStatusPillInner({
 	const maestroSessionName = primarySession.name;
 
 	// Use tab's agentSessionId if available, fallback to session's (legacy)
-	const agentSessionId = primaryTab?.agentSessionId || primarySession.agentSessionId;
+	const runningProvider = resolveTurnProvider(primaryTab ?? undefined, primarySession);
+	const runningTab = primaryTab
+		? projectTabProvider(primarySession, primaryTab, runningProvider).tab
+		: undefined;
+	const agentSessionId = primaryTab
+		? primaryTab.turnSessionId || runningTab?.agentSessionId
+		: primarySession.agentSessionId;
 
 	// Priority: 1. namedSessions lookup, 2. tab's name, 3. UUID octet
 	const customName = agentSessionId ? namedSessions?.[agentSessionId] : undefined;
@@ -771,7 +783,8 @@ function ThinkingStatusPillInner({
 
 	// For tooltip, show all available info
 	const tooltipParts = [maestroSessionName];
-	if (agentSessionId) tooltipParts.push(`Claude: ${agentSessionId}`);
+	if (agentSessionId)
+		tooltipParts.push(`${getAgentDisplayName(runningProvider)}: ${agentSessionId}`);
 	if (tabName) tooltipParts.push(`Tab: ${tabName}`);
 	if (customName) tooltipParts.push(`Named: ${customName}`);
 	const fullTooltip = tooltipParts.join(' | ');
@@ -1002,6 +1015,11 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 				prev.session.id !== next.session.id ||
 				prev.session.name !== next.session.name ||
 				prev.session.currentCycleTokens !== next.session.currentCycleTokens ||
+				resolveTurnProvider(prev.tab ?? undefined, prev.session) !==
+					resolveTurnProvider(next.tab ?? undefined, next.session) ||
+				prev.tab?.turnSessionId !== next.tab?.turnSessionId ||
+				prev.tab?.providerSessions !== next.tab?.providerSessions ||
+				prev.tab?.tabProvider !== next.tab?.tabProvider ||
 				prev.tab?.id !== next.tab?.id ||
 				prev.tab?.name !== next.tab?.name ||
 				prev.tab?.translatingFrom !== next.tab?.translatingFrom ||
@@ -1042,6 +1060,11 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 		}
 		// Compare tab-level properties
 		if (
+			resolveTurnProvider(prev.tab ?? undefined, prev.session) !==
+				resolveTurnProvider(next.tab ?? undefined, next.session) ||
+			prev.tab?.turnSessionId !== next.tab?.turnSessionId ||
+			prev.tab?.providerSessions !== next.tab?.providerSessions ||
+			prev.tab?.tabProvider !== next.tab?.tabProvider ||
 			prev.tab?.id !== next.tab?.id ||
 			prev.tab?.name !== next.tab?.name ||
 			prev.tab?.agentSessionId !== next.tab?.agentSessionId ||

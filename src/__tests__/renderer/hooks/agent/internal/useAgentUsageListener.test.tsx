@@ -631,8 +631,13 @@ describe('useAgentUsageListener', () => {
 	});
 });
 
-it('uses the running tab provider window instead of the agent default', () => {
-	const tab = createMockAITab({ id: 'pin', tabProvider: 'codex', turnProvider: 'codex' });
+it('uses the captured running provider window after another provider is selected', () => {
+	const tab = createMockAITab({
+		id: 'pin',
+		tabProvider: 'opencode',
+		turnProvider: 'codex',
+		providerSessions: { codex: { agentSessionId: 'running-codex' } },
+	});
 	useSessionStore.setState({
 		sessions: [
 			createMockSession({

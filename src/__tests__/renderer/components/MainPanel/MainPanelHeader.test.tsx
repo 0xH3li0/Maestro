@@ -216,6 +216,28 @@ describe('MainPanelHeader', () => {
 		mockOpenModal.mockRestore();
 	});
 
+	it('labels the selected native slot and computes input tokens for that provider', async () => {
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({ customModel: 'opus[1m]' })}
+				activeTab={makeTab({
+					tabProvider: 'codex',
+					turnProvider: 'claude-code',
+					usageStats: {
+						inputTokens: 1000,
+						outputTokens: 500,
+						cacheReadInputTokens: 250,
+					},
+				})}
+			/>
+		);
+		fireEvent.mouseEnter(screen.getByTestId('header-context-widget'));
+		await waitFor(() => expect(screen.getByText('Codex')).toBeInTheDocument());
+		expect(screen.getByText('1,000')).toBeInTheDocument();
+		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+	});
+
 	it('renders session name', () => {
 		render(<MainPanelHeader {...defaultProps} />);
 		expect(screen.getByText('Test Agent')).toBeInTheDocument();

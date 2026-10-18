@@ -1389,6 +1389,8 @@ export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 /** A delivered chat steer awaiting its transcript verdict (see Session.pendingSteers). */
 export interface PendingSteer {
+	/** Captured running owner; legacy records fall back to the queued item/tab. */
+	provider?: ToolType;
 	/** The steer id the socket answered with; verdicts carry the same id. */
 	steerId: string;
 	/** `{sessionId}-ai-{tabId}`, the process the text was typed into. */
