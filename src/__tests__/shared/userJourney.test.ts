@@ -1,0 +1,185 @@
+import { describe, it, expect } from 'vitest';
+import { formatTimestamp } from '../../shared/formatters';
+import {
+	JOURNEY_MAX_ENTRIES_PER_AGENT,
+	JOURNEY_RETENTION_DAYS,
+	formatJourneyLine,
+	sanitizeJourneyUrl,
+	shouldCollapseJourneyEntry,
+	type UserJourneyEntry,
+} from '../../shared/userJourney';
+
+const NOW = new Date(2026, 9, 18, 14, 30).getTime();
+const TODAY = new Date(2026, 9, 18, 14, 2).getTime();
+const YESTERDAY = new Date(2026, 9, 17, 9, 15).getTime();
+
+function entry(overrides: Partial<UserJourneyEntry>): UserJourneyEntry {
+	return {
+		ts: TODAY,
+		agentId: 'agent-1',
+		kind: 'file.open',
+		target: '/repo/src/foo.ts',
+		...overrides,
+	};
+}
+
+describe('userJourney constants', () => {
+	it('caps entries and retention', () => {
+		expect(JOURNEY_MAX_ENTRIES_PER_AGENT).toBe(5000);
+		expect(JOURNEY_RETENTION_DAYS).toBe(30);
+	});
+});
+
+describe('sanitizeJourneyUrl', () => {
+	it('drops the query string', () => {
+		expect(sanitizeJourneyUrl('https://example.com/page?token=abc&x=1')).toBe(
+			'https://example.com/page'
+		);
+	});
+
+	it('drops the fragment', () => {
+		expect(sanitizeJourneyUrl('https://docs.runmaestro.ai/cue#triggers')).toBe(
+			'https://docs.runmaestro.ai/cue'
+		);
+	});
+
+	it('drops a query and a fragment together', () => {
+		expect(sanitizeJourneyUrl('https://example.com/a/b?q=1#frag')).toBe('https://example.com/a/b');
+	});
+
+	it('drops embedded credentials', () => {
+		expect(sanitizeJourneyUrl('https://user:secret@example.com/x')).toBe('https://example.com/x');
+	});
+
+	it('returns an unparseable URL unchanged', () => {
+		expect(sanitizeJourneyUrl('not a url')).toBe('not a url');
+		expect(sanitizeJourneyUrl('')).toBe('');
+	});
+
+	it('leaves about:blank as it is', () => {
+		expect(sanitizeJourneyUrl('about:blank')).toBe('about:blank');
+	});
+});
+
+describe('shouldCollapseJourneyEntry', () => {
+	const nav = entry({
+		kind: 'browser.navigate',
+		target: 'https://example.com/a',
+		tabId: 'tab-1',
+	});
+
+	it('collapses a navigate to the same URL on the same tab', () => {
+		expect(shouldCollapseJourneyEntry(nav, { ...nav, ts: nav.ts + 10 })).toBe(true);
+	});
+
+	it('collapses a navigate that repeats the browser.open location', () => {
+		expect(shouldCollapseJourneyEntry({ ...nav, kind: 'browser.open' }, nav)).toBe(true);
+	});
+
+	it('keeps a navigate to a different URL', () => {
+		expect(shouldCollapseJourneyEntry(nav, { ...nav, target: 'https://example.com/b' })).toBe(
+			false
+		);
+	});
+
+	it('keeps a navigate on a different tab', () => {
+		expect(shouldCollapseJourneyEntry(nav, { ...nav, tabId: 'tab-2' })).toBe(false);
+	});
+
+	it('keeps anything that is not a navigate', () => {
+		expect(shouldCollapseJourneyEntry(nav, { ...nav, kind: 'browser.close' })).toBe(false);
+		expect(shouldCollapseJourneyEntry(nav, { ...nav, kind: 'browser.open' })).toBe(false);
+	});
+
+	it('keeps a navigate after a non-browser entry with the same target', () => {
+		expect(shouldCollapseJourneyEntry({ ...nav, kind: 'file.open' }, nav)).toBe(false);
+	});
+
+	it('keeps the first entry', () => {
+		expect(shouldCollapseJourneyEntry(undefined, nav)).toBe(false);
+	});
+});
+
+describe('formatJourneyLine', () => {
+	const time = formatTimestamp(TODAY, 'time');
+	const cwd = '/repo';
+
+	it('renders an open relative to cwd', () => {
+		expect(formatJourneyLine(entry({}), NOW, { cwd })).toBe(`${time} opened src/foo.ts`);
+	});
+
+	it('keeps the absolute path without cwd or outside cwd', () => {
+		expect(formatJourneyLine(entry({}), NOW)).toBe(`${time} opened /repo/src/foo.ts`);
+		expect(formatJourneyLine(entry({ target: '/other/x.ts' }), NOW, { cwd })).toBe(
+			`${time} opened /other/x.ts`
+		);
+		expect(formatJourneyLine(entry({ target: '/repo-two/x.ts' }), NOW, { cwd })).toBe(
+			`${time} opened /repo-two/x.ts`
+		);
+	});
+
+	it('renders a Windows path relative to cwd', () => {
+		expect(
+			formatJourneyLine(entry({ target: 'C:\\repo\\src\\foo.ts' }), NOW, { cwd: 'C:\\repo' })
+		).toBe(`${time} opened src/foo.ts`);
+	});
+
+	it('renders a save with line counts', () => {
+		expect(
+			formatJourneyLine(entry({ kind: 'file.save', linesAdded: 12, linesRemoved: 3 }), NOW, {
+				cwd,
+			})
+		).toBe(`${time} saved src/foo.ts (+12/-3)`);
+	});
+
+	it('renders a save without line counts', () => {
+		expect(formatJourneyLine(entry({ kind: 'file.save' }), NOW, { cwd })).toBe(
+			`${time} saved src/foo.ts`
+		);
+	});
+
+	it('renders a close with dwell time', () => {
+		expect(
+			formatJourneyLine(entry({ kind: 'file.close', dwellMs: 5 * 60_000 }), NOW, { cwd })
+		).toBe(`${time} closed src/foo.ts (5m)`);
+	});
+
+	it('renders create, rename, and delete', () => {
+		expect(formatJourneyLine(entry({ kind: 'file.create' }), NOW, { cwd })).toBe(
+			`${time} created src/foo.ts`
+		);
+		expect(
+			formatJourneyLine(entry({ kind: 'file.rename', fromPath: '/repo/src/old.ts' }), NOW, { cwd })
+		).toBe(`${time} renamed src/old.ts to src/foo.ts`);
+		expect(formatJourneyLine(entry({ kind: 'file.delete' }), NOW, { cwd })).toBe(
+			`${time} deleted src/foo.ts`
+		);
+	});
+
+	it('renders browser entries without scheme or trailing slash', () => {
+		expect(
+			formatJourneyLine(
+				entry({ kind: 'browser.navigate', target: 'https://docs.runmaestro.ai/cue' }),
+				NOW
+			)
+		).toBe(`${time} browsed docs.runmaestro.ai/cue`);
+		expect(
+			formatJourneyLine(
+				entry({ kind: 'browser.open', target: 'https://example.com/', title: 'Example' }),
+				NOW
+			)
+		).toBe(`${time} opened browser example.com "Example"`);
+		expect(
+			formatJourneyLine(
+				entry({ kind: 'browser.close', target: 'https://example.com/', dwellMs: 30_000 }),
+				NOW
+			)
+		).toBe(`${time} closed browser example.com (30s)`);
+	});
+
+	it('adds the date for an entry from another day', () => {
+		expect(formatJourneyLine(entry({ ts: YESTERDAY }), NOW, { cwd })).toBe(
+			`${formatTimestamp(YESTERDAY, 'datetime')} opened src/foo.ts`
+		);
+	});
+});
