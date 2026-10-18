@@ -7,6 +7,7 @@ import {
 	readFileTailRemote,
 	statRemote,
 	findAncestorWithDirRemote,
+	listFilesWithStatsRemote,
 	directorySizeRemote,
 	writeFileRemote,
 	existsRemote,
@@ -1077,6 +1078,76 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Permission denied');
+		});
+	});
+
+	describe('listFilesWithStatsRemote', () => {
+		it('parses size, mtime, birth time, and change time per file, keeping spaces in paths', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'120 1700000000 1690000000 1700000100 ./People/Pedram Amini.md\n' +
+					'5 1700000001 0 1700000200 ./data/people.csv\r\n' +
+					'9 1700000002 - 1700000300 ./No Birth.md\n' +
+					'garbage line\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listFilesWithStatsRemote('/srv/vault', ['.*'], baseConfig, deps);
+
+			expect(result).toEqual({
+				success: true,
+				data: [
+					{
+						path: 'People/Pedram Amini.md',
+						size: 120,
+						mtime: 1700000000000,
+						birthtime: 1690000000000,
+						ctime: 1700000100000,
+					},
+					{
+						path: 'data/people.csv',
+						size: 5,
+						mtime: 1700000001000,
+						birthtime: 0,
+						ctime: 1700000200000,
+					},
+					{
+						path: 'No Birth.md',
+						size: 9,
+						mtime: 1700000002000,
+						birthtime: 0,
+						ctime: 1700000300000,
+					},
+				],
+			});
+		});
+
+		it('lists and stats the whole tree in ONE ssh command, GNU first then BSD', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await listFilesWithStatsRemote('/srv/my vault', ['.*', 'node_modules'], baseConfig, deps);
+
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const remoteCommand = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain(`cd '/srv/my vault'`);
+			expect(remoteCommand).toContain(
+				`\\( -name '.*' -o -name 'node_modules' \\) -prune -o -type f`
+			);
+			expect(remoteCommand).toContain(`f='%s %Y %W %Z %n'`);
+			expect(remoteCommand).toContain(`f='%z %m %B %c %N'`);
+			expect(remoteCommand).toContain('-exec stat -L "$o" "$f" {} +');
+		});
+
+		it('reports a root that cannot be entered', async () => {
+			const deps = createMockDeps({ stdout: '__CD_ERROR__\n', stderr: '', exitCode: 0 });
+
+			const result = await listFilesWithStatsRemote('/missing', [], baseConfig, deps);
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Directory not found or not accessible: /missing',
+			});
 		});
 	});
 

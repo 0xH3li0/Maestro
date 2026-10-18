@@ -1,0 +1,179 @@
+/**
+ * File access for one Dataview vault root (DV-5, DV-6): a local folder through `fs`, or a folder on an SSH
+ * remote through `remote-fs.ts`, behind one interface so `VaultIndex` never branches on where the vault is.
+ *
+ * Paths handed out and taken in are vault-relative POSIX paths (`People/Pedram Amini.md`). What gets
+ * indexed follows Obsidian: dot-prefixed files and folders are skipped (`.obsidian/`, `.trash/`, `.git/`,
+ * and `.maestro/` included; see the guide's "Semantics traps"), and so are `node_modules/` and the Windows
+ * system files the watchers already skip.
+ */
+
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import type { SshRemoteConfig } from '../../shared/types';
+import { isMarkdownPagePath } from '../../shared/dataview';
+import { walkLocalFileTree, type LocalTreeNode } from '../utils/file-tree-walk';
+import { listFilesWithStatsRemote, readFileRemote } from '../utils/remote-fs';
+import { WINDOWS_LOCKED_SYSTEM_FILES } from '../utils/watcher-ignore';
+import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+
+/**
+ * Names pruned from every vault walk, local and remote. `.*` covers `.obsidian`, `.trash`, `.git`, and
+ * every other dot folder; `node_modules` is named because a vault with a JS project inside it would
+ * otherwise drown the scan.
+ */
+export const VAULT_PRUNED_NAMES = ['.*', 'node_modules'] as const;
+
+/** Deepest folder level a local walk descends to. */
+const VAULT_MAX_DEPTH = 64;
+
+/** The stat of one markdown file, in milliseconds and bytes. */
+export interface VaultFileStat {
+	size: number;
+	mtime: number;
+	/** Creation time: `birthtime`, falling back to the change time when the filesystem has none. */
+	ctime: number;
+}
+
+/** Everything a full scan needs from the file system. */
+export interface VaultListing {
+	/** Every indexed file, any extension. */
+	files: string[];
+	/** Every indexed folder, empty ones included where the platform reports them. */
+	folders: string[];
+	/** The stat of every markdown page in `files`. A page whose stat failed is left out of both. */
+	stats: Map<string, VaultFileStat>;
+}
+
+export interface VaultFs {
+	/** The vault root as the platform spells it (an absolute local path, or a POSIX path on the remote). */
+	readonly root: string;
+	/** Set when the root lives on an SSH remote. */
+	readonly sshRemoteId: string | null;
+	list(): Promise<VaultListing>;
+	/** Read a vault-relative file as UTF-8 text. Throws when it cannot be read. */
+	readText(relPath: string): Promise<string>;
+}
+
+/**
+ * Whether a vault-relative path belongs in the index: no dot-prefixed segment, no `node_modules`
+ * segment, and not a Windows system file.
+ */
+export function isIndexedVaultPath(relPath: string): boolean {
+	if (!relPath) return false;
+	for (const segment of relPath.split('/')) {
+		if (segment.startsWith('.') || segment === 'node_modules') return false;
+	}
+	return !WINDOWS_LOCKED_SYSTEM_FILES.test(relPath);
+}
+
+/** Creation time per the guide's `file.ctime` trap: birth time, else the inode change time. */
+function creationTime(birthtimeMs: number, ctimeMs: number): number {
+	return birthtimeMs > 0 ? birthtimeMs : ctimeMs;
+}
+
+function flattenTree(
+	nodes: LocalTreeNode[],
+	prefix: string,
+	files: string[],
+	folders: string[]
+): void {
+	for (const node of nodes) {
+		const relPath = prefix ? `${prefix}/${node.name}` : node.name;
+		if (!isIndexedVaultPath(relPath)) continue;
+		if (node.type === 'folder') {
+			folders.push(relPath);
+			flattenTree(node.children ?? [], relPath, files, folders);
+		} else files.push(relPath);
+	}
+}
+
+/** A vault on the local disk. */
+export function createLocalVaultFs(root: string): VaultFs {
+	const absolute = (relPath: string) => path.join(root, ...relPath.split('/'));
+	return {
+		root,
+		sshRemoteId: null,
+		async list() {
+			const { tree } = await walkLocalFileTree(root, {
+				maxDepth: VAULT_MAX_DEPTH,
+				ignorePatterns: [...VAULT_PRUNED_NAMES],
+			});
+			const files: string[] = [];
+			const folders: string[] = [];
+			flattenTree(tree, '', files, folders);
+
+			const stats = new Map<string, VaultFileStat>();
+			const pages = files.filter(isMarkdownPagePath);
+			const statted = await mapWithConcurrency(
+				pages,
+				LOCAL_SESSION_READ_CONCURRENCY,
+				async (page) => {
+					try {
+						return await fs.stat(absolute(page));
+					} catch {
+						return null; // Deleted between the walk and the stat.
+					}
+				}
+			);
+			const gone = new Set<string>();
+			pages.forEach((page, i) => {
+				const stat = statted[i];
+				if (!stat) gone.add(page);
+				else
+					stats.set(page, {
+						size: stat.size,
+						mtime: stat.mtimeMs,
+						ctime: creationTime(stat.birthtimeMs, stat.ctimeMs),
+					});
+			});
+			return { files: gone.size ? files.filter((f) => !gone.has(f)) : files, folders, stats };
+		},
+		readText(relPath) {
+			return fs.readFile(absolute(relPath), 'utf8');
+		},
+	};
+}
+
+/** A vault on an SSH remote. The listing is one round trip; each read is one more. */
+export function createRemoteVaultFs(root: string, sshRemote: SshRemoteConfig): VaultFs {
+	const absolute = (relPath: string) => path.posix.join(root, relPath);
+	return {
+		root,
+		sshRemoteId: sshRemote.id,
+		async list() {
+			const result = await listFilesWithStatsRemote(root, [...VAULT_PRUNED_NAMES], sshRemote);
+			if (!result.success || !result.data) {
+				throw new Error(result.error ?? `Failed to list the vault at ${root}`);
+			}
+			const files: string[] = [];
+			const folders = new Set<string>();
+			const stats = new Map<string, VaultFileStat>();
+			for (const entry of result.data) {
+				if (!isIndexedVaultPath(entry.path)) continue;
+				files.push(entry.path);
+				for (let slash = entry.path.lastIndexOf('/'); slash > 0; ) {
+					const folder = entry.path.slice(0, slash);
+					if (folders.has(folder)) break;
+					folders.add(folder);
+					slash = folder.lastIndexOf('/');
+				}
+				if (isMarkdownPagePath(entry.path)) {
+					stats.set(entry.path, {
+						size: entry.size,
+						mtime: entry.mtime,
+						ctime: creationTime(entry.birthtime, entry.ctime),
+					});
+				}
+			}
+			return { files, folders: [...folders], stats };
+		},
+		async readText(relPath) {
+			const result = await readFileRemote(absolute(relPath), sshRemote);
+			if (!result.success || result.data === undefined) {
+				throw new Error(result.error ?? `Failed to read ${relPath}`);
+			}
+			return result.data;
+		},
+	};
+}

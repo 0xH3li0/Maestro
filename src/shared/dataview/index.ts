@@ -92,3 +92,14 @@ export { extractMetadata } from './metadata';
 export type { ExtractedMetadata, MetadataWarning } from './metadata';
 export { createLinkResolver } from './resolve';
 export type { LinkResolver } from './resolve';
+
+export { matchingSourcePaths } from './vendor/data-index/resolver';
+export { IndexMap, ValueCaseInsensitiveIndexMap, PathFilters } from './vendor/data-index/index';
+export type { FullIndex, StarredEntry } from './vendor/data-index/index';
+export { parseCsv } from './vendor/data-import/csv';
+export {
+	VaultPaths,
+	isMarkdownPagePath,
+	starredPathsFromBookmarks,
+	buildResolvedLinks,
+} from './vault';

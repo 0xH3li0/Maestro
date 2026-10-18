@@ -1602,6 +1602,88 @@ export async function listTreeRemote(
 	return { success: true, data: { directories, files, truncated } };
 }
 
+/** One regular file from {@link listFilesWithStatsRemote}. Times are milliseconds. */
+export interface RemoteFileWithStats {
+	/** Path relative to the listed root, `/`-separated, with no leading `./`. */
+	path: string;
+	size: number;
+	mtime: number;
+	/** Creation time, or 0 when the remote filesystem does not record one. */
+	birthtime: number;
+	/** Inode change time (the fallback when `birthtime` is 0). */
+	ctime: number;
+}
+
+/**
+ * List every regular file under a remote directory with its size, mtime,
+ * birth time, and change time, in ONE SSH round trip. `statRemote()` per file
+ * would cost a round trip each.
+ *
+ * Directories whose base name matches one of `pruneNames` (a `find -name`
+ * pattern such as `.*` or `node_modules`) are skipped with everything under
+ * them, and so are files with a matching name. Symlinks are followed, as in
+ * {@link listTreeRemote}. GNU `stat -c` is tried first, then BSD `stat -f`
+ * (macOS), the same dual form `statRemote()` uses. Both print a birth time of
+ * 0 when the filesystem has none. Unreadable subdirectories are skipped.
+ *
+ * @param rootPath Directory on the remote host to list
+ * @param pruneNames `find -name` patterns to skip
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ */
+export async function listFilesWithStatsRemote(
+	rootPath: string,
+	pruneNames: string[],
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteFileWithStats[]>> {
+	const pruneTerms = pruneNames
+		.filter((name) => name && !name.includes('/'))
+		.map((name) => `-name ${shellEscape(name)}`);
+	const pruneClause = pruneTerms.length > 0 ? `\\( ${pruneTerms.join(' -o ')} \\) -prune -o ` : '';
+
+	// Space-separated fields: the four numbers never contain a space, so the
+	// path is everything after the fourth one, spaces included.
+	const remoteCommand =
+		`cd ${shellEscapeRemotePath(rootPath)} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
+		`if stat -c %s . >/dev/null 2>&1; then o=-c; f='%s %Y %W %Z %n'; ` +
+		`else o=-f; f='%z %m %B %c %N'; fi; ` +
+		`find -L . -mindepth 1 ${pruneClause}-type f -exec stat -L "$o" "$f" {} + 2>/dev/null; ` +
+		`exit 0`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to list files under: ${rootPath}`,
+		};
+	}
+	if (result.stdout.startsWith('__CD_ERROR__')) {
+		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
+	}
+
+	const toMs = (field: string): number => {
+		const seconds = parseInt(field, 10);
+		return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+	};
+	const files: RemoteFileWithStats[] = [];
+	for (const line of result.stdout.split('\n')) {
+		const match = /^(\d+) (\d+) (-?\d+|-) (\d+) (.+)$/.exec(line.replace(/\r$/, ''));
+		if (!match) continue;
+		const filePath = match[5].startsWith('./') ? match[5].slice(2) : match[5];
+		if (!filePath) continue;
+		files.push({
+			path: filePath,
+			size: parseInt(match[1], 10),
+			mtime: toMs(match[2]),
+			birthtime: toMs(match[3]),
+			ctime: toMs(match[4]),
+		});
+	}
+	return { success: true, data: files };
+}
+
 /**
  * Result of an incremental file scan showing changes since last check.
  */
