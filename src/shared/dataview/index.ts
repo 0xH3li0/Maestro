@@ -28,6 +28,8 @@ export type { ArrayFunc, ArrayComparator, LowestKey, Ingrouped } from './vendor/
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
 export type { QuerySettings } from './vendor/settings';
 export { DataviewSettings } from './settings';
+export { renderMinimalDate, renderMinimalDuration, getFileTitle } from './vendor/util/normalize';
+export { currentLocale } from './vendor/util/locale';
 
 export { parseQuery } from './vendor/query/parse';
 export { QueryFields } from './vendor/query/query';

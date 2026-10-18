@@ -890,6 +890,15 @@ const mockMaestro = {
 		readyPath: vi.fn().mockResolvedValue(null),
 		onStatusChanged: vi.fn(() => () => {}),
 	},
+	// Dataview (Encore Feature, off by default). Queries never resolve on their
+	// own; a test that renders a block sets the answer it needs.
+	dataview: {
+		query: vi.fn(() => new Promise(() => {})),
+		queryInline: vi.fn(() => new Promise(() => {})),
+		status: vi.fn().mockResolvedValue([]),
+		rebuild: vi.fn().mockResolvedValue(null),
+		onChanged: vi.fn(() => () => {}),
+	},
 	// Quick Chat (floating window + its engine). Subscriptions return a no-op
 	// unsubscribe so App's engine hook mounts and cleans up in every render test.
 	quickChat: {

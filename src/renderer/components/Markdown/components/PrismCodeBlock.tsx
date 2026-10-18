@@ -29,6 +29,67 @@ export interface PrismCodeBlockOptions {
 	};
 }
 
+export interface PrismHighlightedCodeProps {
+	code: string;
+	language: string;
+	theme: Theme;
+	codeBlockStyle?: PrismCodeBlockOptions['codeBlockStyle'];
+}
+
+/**
+ * The standard highlighted block (Prism, theme colors, copy button). Exported so
+ * a custom language renderer that declines to render (Dataview outside its
+ * surfaces) can show the fence exactly as an ordinary code block.
+ */
+export function PrismHighlightedCode({
+	code,
+	language,
+	theme,
+	codeBlockStyle,
+}: PrismHighlightedCodeProps) {
+	// Use light/dark base style depending on theme mode, then override text
+	// color & background so plain-text / unknown-language code blocks match
+	// inline code across all themes.
+	const baseStyle = getSyntaxStyle(theme.mode);
+	const themedStyle = {
+		...baseStyle,
+		'pre[class*="language-"]': {
+			...(baseStyle as any)['pre[class*="language-"]'],
+			color: theme.colors.textMain,
+			background: theme.colors.bgActivity,
+		},
+		'code[class*="language-"]': {
+			...(baseStyle as any)['code[class*="language-"]'],
+			color: theme.colors.textMain,
+		},
+	};
+	// The margin lives on the wrapper so the copy button's top-right anchor
+	// is the block's visible corner, not the margin box.
+	return React.createElement(
+		'div',
+		{ className: 'relative', style: { margin: codeBlockStyle?.margin ?? '0.5em 0' } },
+		React.createElement(SyntaxHighlightBoundary, {
+			code,
+			theme,
+			children: React.createElement(SyntaxHighlighter, {
+				language,
+				style: themedStyle,
+				customStyle: {
+					margin: 0,
+					padding: codeBlockStyle?.padding ?? '1em',
+					background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+					fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+					borderRadius: codeBlockStyle?.borderRadius ?? '6px',
+				},
+				PreTag: 'div',
+				translate: 'no',
+				children: code,
+			}),
+		}),
+		React.createElement(CodeCopyButton, { code, theme })
+	);
+}
+
 export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 	const { theme, customLanguageRenderers = {}, codeBlockStyle } = options;
 
@@ -53,48 +114,12 @@ export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 				return React.createElement(CustomRenderer, { code: codeContent, theme });
 			}
 
-			// Standard syntax-highlighted code block. Use light/dark base style
-			// depending on theme mode, then override text color & background so
-			// plain-text / unknown-language code blocks match inline code across all
-			// themes.
-			const baseStyle = getSyntaxStyle(theme.mode);
-			const themedStyle = {
-				...baseStyle,
-				'pre[class*="language-"]': {
-					...(baseStyle as any)['pre[class*="language-"]'],
-					color: theme.colors.textMain,
-					background: theme.colors.bgActivity,
-				},
-				'code[class*="language-"]': {
-					...(baseStyle as any)['code[class*="language-"]'],
-					color: theme.colors.textMain,
-				},
-			};
-			// The margin lives on the wrapper so the copy button's top-right anchor
-			// is the block's visible corner, not the margin box.
-			return React.createElement(
-				'div',
-				{ className: 'relative', style: { margin: codeBlockStyle?.margin ?? '0.5em 0' } },
-				React.createElement(SyntaxHighlightBoundary, {
-					code: codeContent,
-					theme,
-					children: React.createElement(SyntaxHighlighter, {
-						language,
-						style: themedStyle,
-						customStyle: {
-							margin: 0,
-							padding: codeBlockStyle?.padding ?? '1em',
-							background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
-							fontSize: codeBlockStyle?.fontSize ?? '0.9em',
-							borderRadius: codeBlockStyle?.borderRadius ?? '6px',
-						},
-						PreTag: 'div',
-						translate: 'no',
-						children: codeContent,
-					}),
-				}),
-				React.createElement(CodeCopyButton, { code: codeContent, theme })
-			);
+			return React.createElement(PrismHighlightedCode, {
+				code: codeContent,
+				language,
+				theme,
+				codeBlockStyle,
+			});
 		}
 
 		// Fallback: render as-is
