@@ -132,6 +132,9 @@ import { maestroRun } from './commands/maestro-run';
 import {
 	dataviewEval,
 	dataviewIndexRebuild,
+	dataviewTrust,
+	dataviewTrusted,
+	dataviewUntrust,
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
@@ -2957,7 +2960,7 @@ maestroRunCmd
 // one the preview queries. Hidden and refused while the Dataview Encore Feature
 // is off.
 const dataviewCmd = encoreCommand(program, 'dataview', 'dataview', encoreFlags).description(
-	"Dataview: run a note's Dataview queries and manage the vault index"
+	"Dataview: run a note's Dataview queries, manage the vault index, and choose the vaults DataviewJS trusts"
 );
 
 dataviewCmd
@@ -2999,6 +3002,24 @@ dataviewIndexCmd
 	.option('--agent <id>', 'Agent whose SSH remote holds the root (default: a local root)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((root, options) => dataviewIndexRebuild(root, options));
+
+dataviewCmd
+	.command('trust <root>')
+	.description('Trust a vault root: its DataviewJS blocks run in the sandbox without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewTrust(root, options));
+
+dataviewCmd
+	.command('untrust <root>')
+	.description('Stop trusting a vault root: its DataviewJS blocks ask before they run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewUntrust(root, options));
+
+dataviewCmd
+	.command('trusted')
+	.description('List the vault roots whose DataviewJS blocks run without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => dataviewTrusted(options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

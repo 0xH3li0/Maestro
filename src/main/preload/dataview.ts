@@ -4,7 +4,8 @@
  * Mirrors the `dataview:*` channels in `src/main/ipc/handlers/dataview.ts`. Results arrive in wire form;
  * run them through `reviveDataviewResult()` / `reviveDataviewInlineResult()` (`src/shared/dataview`) to
  * get Dataview values back. The web-desktop bridge forwards the DQL channels and the change push (DV-14);
- * `jsSnapshot` and `readInRoot` are DataviewJS, which is desktop only.
+ * `jsSnapshot`, `readInRoot`, `jsRoot`, `jsRunOnce`, and the trust calls are DataviewJS, which is desktop
+ * only.
  */
 
 import { ipcRenderer } from 'electron';
@@ -13,6 +14,8 @@ import type {
 	DataviewIndexStatus,
 	DataviewInlineQueryRequest,
 	DataviewInlineResult,
+	DataviewJsRoot,
+	DataviewJsRootRequest,
 	DataviewJsSnapshotRequest,
 	DataviewQueryRequest,
 	DataviewQueryResponse,
@@ -21,6 +24,8 @@ import type {
 	DataviewRebuildRequest,
 	DataviewResult,
 	DataviewStatusRequest,
+	DataviewTrustRequest,
+	DataviewTrustResponse,
 } from '../../shared/dataview/types';
 import type { SandboxIndexSnapshot } from '../../shared/dataview/sandboxProtocol';
 
@@ -49,6 +54,20 @@ export function createDataviewApi() {
 		/** Read a text file inside the note's vault root for a DataviewJS script (`dv.io.load`, D4). */
 		readInRoot: (request: DataviewReadInRootRequest): Promise<DataviewReadInRootResponse> =>
 			ipcRenderer.invoke('dataview:readInRoot', request),
+		/** The vault root of a note with a `dataviewjs` block, as the trust list compares it (D3). */
+		jsRoot: (request: DataviewJsRootRequest): Promise<DataviewJsRoot> =>
+			ipcRenderer.invoke('dataview:jsRoot', request),
+		/** "Run once": let main answer DataviewJS in the note's vault for this app session (D3). */
+		jsRunOnce: (request: DataviewJsRootRequest): Promise<DataviewJsRoot> =>
+			ipcRenderer.invoke('dataview:jsRunOnce', request),
+		/** The trusted vault roots (`dataviewJsTrustedRoots`), cleaned. */
+		trustedRoots: (): Promise<string[]> => ipcRenderer.invoke('dataview:trustedRoots'),
+		/** Trust a vault root: its DataviewJS blocks run without asking (D3). */
+		trust: (request: DataviewTrustRequest): Promise<DataviewTrustResponse> =>
+			ipcRenderer.invoke('dataview:trust', request),
+		/** Stop trusting a vault root, and revoke its "Run once" grants. */
+		untrust: (request: DataviewTrustRequest): Promise<DataviewTrustResponse> =>
+			ipcRenderer.invoke('dataview:untrust', request),
 		/** Fires when an open index changes (DV-7). Returns the unsubscribe function. */
 		onChanged: (handler: (event: DataviewChangeEvent) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, change: DataviewChangeEvent) =>

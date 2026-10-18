@@ -17,8 +17,13 @@
  * resolve the agent in main, and answer in wire form. The quit handler calls `shutdownDataviewService()`.
  *
  * DataviewJS (D3, D4): `jsSnapshot` and `readInRoot` are what a sandboxed script can learn about a vault, so
- * they also refuse unless the DataviewJS setting is on and the note's root is in `dataviewJsTrustedRoots`,
- * both read live on every request. `readInRoot` re-checks the path in main whatever the renderer checked.
+ * they also refuse unless the DataviewJS setting is on and the note's root is trusted: in
+ * `dataviewJsTrustedRoots` (read live on every request), or granted for this app session by a block's
+ * "Run once" (`grantJsRunOnce`). `readInRoot` re-checks the path in main whatever the renderer checked.
+ *
+ * Trust (D3, D8): `trustedRootList`, `trustRoot`, and `untrustRoot` are the one way the settings UI and the
+ * CLI read and edit `dataviewJsTrustedRoots`, and `onTrustedRootsChange` tells the windows to reload
+ * settings after an edit. `untrustRoot` also revokes that root's "Run once" grants.
  *
  * Gate (D3): while the `dataview` Encore Feature is off, every request method, `getIndex`, and `rebuild`
  * throw `encoreDisabledMessage('dataview')` (the text a gated CLI verb prints) before touching anything, so no root opens and nothing is
@@ -46,15 +51,26 @@ import {
 	type DataviewInlineResult,
 	type DataviewQueryRequest,
 	type DataviewQueryResponse,
+	type DataviewJsRoot,
+	type DataviewJsRootRequest,
 	type DataviewJsSnapshotRequest,
 	type DataviewReadInRootRequest,
 	type DataviewReadInRootResponse,
 	type DataviewRebuildRequest,
 	type DataviewResult,
 	type DataviewStatusRequest,
+	type DataviewTrustRequest,
+	type DataviewTrustResponse,
 	type SandboxIndexSnapshot,
 } from '../../shared/dataview';
-import { isTrustedDataviewRoot } from '../../shared/dataview/trust';
+import {
+	cleanTrustedRoots,
+	isTrustableDataviewRoot,
+	isTrustedDataviewRoot,
+	normalizeTrustedRoot,
+	withTrustedRoot,
+	withoutTrustedRoot,
+} from '../../shared/dataview/trust';
 import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -119,7 +135,11 @@ export interface DataviewServiceOptions {
 	isJsEnabled?: () => boolean;
 	/** The trusted vault roots (`dataviewJsTrustedRoots`). Defaults to reading the settings store. */
 	trustedRoots?: () => readonly unknown[];
+	/** Store a new trust list. Defaults to writing the settings store. */
+	setTrustedRoots?: (roots: string[]) => void;
 }
+
+export type DataviewTrustedRootsListener = (roots: string[]) => void;
 
 interface IndexEntry {
 	key: string;
@@ -145,6 +165,10 @@ function defaultIsJsEnabled(): boolean {
 function defaultTrustedRoots(): readonly unknown[] {
 	const roots: unknown = getSettingsStore().get('dataviewJsTrustedRoots');
 	return Array.isArray(roots) ? roots : [];
+}
+
+function defaultSetTrustedRoots(roots: string[]): void {
+	getSettingsStore().set('dataviewJsTrustedRoots', roots);
 }
 
 function defaultVaultFs(root: string, sshRemoteId: string | null): VaultFs {
@@ -183,6 +207,10 @@ export class DataviewService {
 	private readonly isEnabled: () => boolean;
 	private readonly isJsEnabled: () => boolean;
 	private readonly trustedRoots: () => readonly unknown[];
+	private readonly setTrustedRoots: (roots: string[]) => void;
+	private readonly trustListeners = new Set<DataviewTrustedRootsListener>();
+	/** Roots a block's "Run once" opened for this app session, keyed like `entries`. Never persisted. */
+	private readonly runOnceGrants = new Set<string>();
 
 	constructor(options: DataviewServiceOptions = {}) {
 		this.cacheDir = options.cacheDir ?? defaultCacheDir;
@@ -193,6 +221,7 @@ export class DataviewService {
 		this.isEnabled = options.isEnabled ?? defaultIsEnabled;
 		this.isJsEnabled = options.isJsEnabled ?? defaultIsJsEnabled;
 		this.trustedRoots = options.trustedRoots ?? defaultTrustedRoots;
+		this.setTrustedRoots = options.setTrustedRoots ?? defaultSetTrustedRoots;
 	}
 
 	/** How many roots are open right now. */
@@ -277,7 +306,7 @@ export class DataviewService {
 	): Promise<DataviewQueryResponse<SandboxIndexSnapshot>> {
 		this.requireJsEnabled();
 		const { index, filePath, thisPath } = await this.openNote(request);
-		this.requireTrustedRoot(index.root);
+		this.requireTrustedRoot(index.root, index.fs.sshRemoteId);
 		if (thisPath === null) throw new Error(outsideRootMessage(filePath, index.root));
 		const snapshot = index.jsSnapshot();
 		return {
@@ -309,12 +338,88 @@ export class DataviewService {
 			throw new Error(`Dataview: DataviewJS cannot read ${relPath}`);
 		}
 		const { index } = await this.openNote(request);
-		this.requireTrustedRoot(index.root);
+		this.requireTrustedRoot(index.root, index.fs.sshRemoteId);
 		return {
 			root: index.root,
 			sshRemoteId: index.fs.sshRemoteId,
 			path: relPath,
 			text: await index.fs.readTextInRoot(relPath, DATAVIEW_JS_MAX_READ_BYTES),
+		};
+	}
+
+	/**
+	 * The vault root of the note at `filePath` (`dataview:jsRoot`), spelled as `jsSnapshot` will answer it, so
+	 * a `dataviewjs` block can decide its run policy and name the vault it asks about. Resolves the root
+	 * without opening its index. Refused unless DataviewJS is on.
+	 */
+	async jsRoot(request: DataviewJsRootRequest): Promise<DataviewJsRoot> {
+		this.requireJsEnabled();
+		const filePath = requireAbsolutePath(request?.filePath, 'filePath');
+		const agent = this.resolveAgent(requireString(request?.agentId, 'agentId'));
+		const sshRemoteId = agent.sshRemoteId ?? null;
+		const root = await this.resolveRoot(filePath, { agentCwd: agent.agentCwd, sshRemoteId });
+		return { root: normalizeVaultRoot(root, sshRemoteId), sshRemoteId };
+	}
+
+	/**
+	 * A block's "Run once" (`dataview:jsRunOnce`, D3): let DataviewJS read the note's vault for the rest of
+	 * this app session without adding it to `dataviewJsTrustedRoots`. The grant lives in memory only and is
+	 * revoked by `untrustRoot` and by `disposeAll` (the Encore Feature turning off). Which blocks run is the
+	 * renderer's choice; this only lets main answer them. Refused unless DataviewJS is on.
+	 */
+	async grantJsRunOnce(request: DataviewJsRootRequest): Promise<DataviewJsRoot> {
+		const target = await this.jsRoot(request);
+		this.runOnceGrants.add(rootKey(target.root, target.sshRemoteId));
+		return target;
+	}
+
+	/** The trusted vault roots, cleaned (`maestro-cli dataview trusted`, the Dataview settings list). */
+	trustedRootList(): string[] {
+		this.requireEnabled();
+		return cleanTrustedRoots(this.trustedRoots());
+	}
+
+	/**
+	 * Add a vault root to `dataviewJsTrustedRoots` (`dataview:trust`, `maestro-cli dataview trust`, "Always
+	 * trust this vault"). The root must be an absolute path; it is stored normalized. Writes only when the
+	 * root was not on the list.
+	 */
+	trustRoot(request: DataviewTrustRequest): DataviewTrustResponse {
+		this.requireEnabled();
+		const root = requireTrustableRoot(request?.root);
+		const before = cleanTrustedRoots(this.trustedRoots());
+		const roots = withTrustedRoot(before, root);
+		const changed = roots.length !== before.length;
+		if (changed) this.writeTrustedRoots(roots);
+		return { root, trusted: true, changed, roots };
+	}
+
+	/**
+	 * Take a vault root off `dataviewJsTrustedRoots` (`dataview:untrust`, `maestro-cli dataview untrust`, the
+	 * settings list's remove control), and revoke its "Run once" grants on every host. Writes only when the
+	 * root was on the list.
+	 */
+	untrustRoot(request: DataviewTrustRequest): DataviewTrustResponse {
+		this.requireEnabled();
+		const root = requireTrustableRoot(request?.root);
+		for (const key of [...this.runOnceGrants]) {
+			if (normalizeTrustedRoot(key.slice(key.indexOf('\0') + 1)) === root) {
+				this.runOnceGrants.delete(key);
+			}
+		}
+		const stored = this.trustedRoots();
+		const before = cleanTrustedRoots(stored);
+		const roots = withoutTrustedRoot(stored, root);
+		const changed = roots.length !== before.length;
+		if (changed) this.writeTrustedRoots(roots);
+		return { root, trusted: false, changed, roots };
+	}
+
+	/** Subscribe to trust list edits made through this service. Returns the unsubscribe function. */
+	onTrustedRootsChange(listener: DataviewTrustedRootsListener): () => void {
+		this.trustListeners.add(listener);
+		return () => {
+			this.trustListeners.delete(listener);
 		};
 	}
 
@@ -392,6 +497,7 @@ export class DataviewService {
 	 * writes. The service stays usable; the next query opens its root again.
 	 */
 	async disposeAll(): Promise<void> {
+		this.runOnceGrants.clear();
 		for (const entry of [...this.entries.values()]) this.close(entry);
 		await Promise.all(this.closing.values());
 	}
@@ -407,10 +513,25 @@ export class DataviewService {
 		if (!this.isJsEnabled()) throw new Error(DATAVIEW_JS_DISABLED_MESSAGE);
 	}
 
-	/** Refuse a root that is not in `dataviewJsTrustedRoots` (D3, DV-12), read live on every request. */
-	private requireTrustedRoot(root: string): void {
+	/**
+	 * Refuse a root that is neither in `dataviewJsTrustedRoots` (D3, DV-12; read live on every request) nor
+	 * granted by a "Run once" on its host this session.
+	 */
+	private requireTrustedRoot(root: string, sshRemoteId: string | null): void {
+		if (this.runOnceGrants.has(rootKey(root, sshRemoteId))) return;
 		if (!isTrustedDataviewRoot(root, this.trustedRoots())) {
 			throw new Error(dataviewJsUntrustedMessage(root));
+		}
+	}
+
+	private writeTrustedRoots(roots: string[]): void {
+		this.setTrustedRoots(roots);
+		for (const listener of [...this.trustListeners]) {
+			try {
+				listener(roots);
+			} catch (error) {
+				void captureException(error, { operation: 'dataview:trustedRootsListener' });
+			}
 		}
 	}
 
@@ -604,6 +725,13 @@ function requireAbsolutePath(value: unknown, name: string): string {
 	const text = requireString(value, name);
 	if (!isAbsolutePath(text)) throw new Error(`Dataview: ${name} must be an absolute path`);
 	return text;
+}
+
+/** A root for the trust list: an absolute path, returned as the list stores it (`normalizeTrustedRoot()`). */
+function requireTrustableRoot(value: unknown): string {
+	const text = requireString(value, 'root');
+	if (!isTrustableDataviewRoot(text)) throw new Error('Dataview: root must be an absolute path');
+	return normalizeTrustedRoot(text);
 }
 
 function statusOf(index: VaultIndex): DataviewIndexStatus {

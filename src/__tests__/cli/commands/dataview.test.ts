@@ -3,7 +3,8 @@
  * @description Tests for `maestro-cli dataview` (D8, DV-13): each verb sends the `dataview_command`
  * action the service method behind it expects, the note's agent is resolved on the CLI side, results
  * print as text or as the revived result under `--json`, and DataviewJS blocks, query errors, and bad
- * arguments exit with the documented codes.
+ * arguments exit with the documented codes. The trust verbs send the root resolved and normalized the way
+ * the app compares roots.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -26,6 +27,10 @@ import {
 	dataviewIndexRebuild,
 	dataviewIndexStatus,
 	dataviewQuery,
+	dataviewTrust,
+	dataviewTrusted,
+	dataviewUntrust,
+	resolveTrustRoot,
 } from '../../../cli/commands/dataview';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveOwningAgent } from '../../../cli/utils/owning-agent';
@@ -405,6 +410,107 @@ describe('dataview command', () => {
 			respondStatus(STATUS);
 			await dataviewIndexRebuild('/vault', { json: true });
 			expect(json()).toEqual({ success: true, index: STATUS });
+		});
+	});
+	describe('trust', () => {
+		const VAULT = path.resolve('/vault');
+
+		function respondTrust(response: unknown) {
+			return mockReply({ type: 'dataview_result', success: true, response });
+		}
+
+		it('resolves a root against the cwd and normalizes it like the app', () => {
+			expect(resolveTrustRoot('vault')).toBe(path.resolve(process.cwd(), 'vault'));
+			expect(resolveTrustRoot('  /vault/  ')).toBe(VAULT);
+			expect(resolveTrustRoot('/vault/sub/..')).toBe(VAULT);
+		});
+
+		it('trust sends the absolute root and reports the change', async () => {
+			const sent = respondTrust({ root: VAULT, trusted: true, changed: true, roots: [VAULT] });
+			await dataviewTrust('/vault/', {});
+
+			expect(sent[0]).toEqual({
+				type: 'dataview_command',
+				action: 'trust',
+				root: VAULT,
+				responseType: 'dataview_result',
+			});
+			expect(logged()).toBe(`Trusted ${VAULT}. Its DataviewJS blocks run without asking.`);
+
+			logSpy.mockClear();
+			respondTrust({ root: VAULT, trusted: true, changed: false, roots: [VAULT] });
+			await dataviewTrust('/vault', {});
+			expect(logged()).toBe(`${VAULT} is already trusted.`);
+		});
+
+		it('trust --json prints the whole answer', async () => {
+			const response = { root: VAULT, trusted: true, changed: true, roots: [VAULT] };
+			respondTrust(response);
+			await dataviewTrust('/vault', { json: true });
+			expect(json()).toEqual({ success: true, ...response });
+		});
+
+		it('untrust sends the root and reports whether it was trusted', async () => {
+			const sent = respondTrust({ root: VAULT, trusted: false, changed: true, roots: [] });
+			await dataviewUntrust('/vault', {});
+
+			expect(sent[0]).toMatchObject({ action: 'untrust', root: VAULT });
+			expect(logged()).toBe(
+				`Stopped trusting ${VAULT}. Its DataviewJS blocks ask before they run.`
+			);
+
+			logSpy.mockClear();
+			respondTrust({ root: VAULT, trusted: false, changed: false, roots: [] });
+			await dataviewUntrust('/vault', { json: true });
+			expect(json()).toEqual({
+				success: true,
+				root: VAULT,
+				trusted: false,
+				changed: false,
+				roots: [],
+			});
+		});
+
+		it('trusted lists one root per line, or says none is trusted', async () => {
+			const sent = respondTrust(['/vault', '/notes']);
+			await dataviewTrusted({});
+			expect(sent[0]).toEqual({
+				type: 'dataview_command',
+				action: 'trusted',
+				responseType: 'dataview_result',
+			});
+			expect(logged()).toBe('/vault\n/notes');
+
+			logSpy.mockClear();
+			respondTrust([]);
+			await dataviewTrusted({});
+			expect(logged()).toBe('No vault is trusted. DataviewJS blocks ask before they run.');
+
+			logSpy.mockClear();
+			respondTrust(['/vault']);
+			await dataviewTrusted({ json: true });
+			expect(json()).toEqual({ success: true, roots: ['/vault'] });
+		});
+
+		it('exits 1 with the error the app answered', async () => {
+			mockReply({
+				type: 'dataview_result',
+				success: false,
+				error: 'Dataview: root must be an absolute path',
+			});
+			await expect(dataviewTrust('/vault', {})).rejects.toThrow('__exit__');
+			expect(errors()).toContain('Dataview: root must be an absolute path');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('carries the disabled code when the app reads the feature as off', async () => {
+			mockReply({
+				type: 'dataview_result',
+				success: false,
+				error: encoreDisabledMessage('dataview'),
+			});
+			await expect(dataviewTrusted({ json: true })).rejects.toThrow('__exit__');
+			expect(json()).toMatchObject({ success: false, code: 'DATAVIEW_DISABLED' });
 		});
 	});
 });

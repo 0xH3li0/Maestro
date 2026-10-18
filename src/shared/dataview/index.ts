@@ -166,6 +166,10 @@ export type {
 	DataviewJsSnapshotRequest,
 	DataviewReadInRootRequest,
 	DataviewReadInRootResponse,
+	DataviewJsRootRequest,
+	DataviewJsRoot,
+	DataviewTrustRequest,
+	DataviewTrustResponse,
 } from './types';
 export {
 	DATAVIEW_GUEST_SCHEME,
@@ -179,7 +183,17 @@ export {
 	isDataviewGuestPartition,
 	isAllowedDataviewGuestAttachment,
 } from './sandboxHost';
-export { normalizeTrustedRoot, isTrustedDataviewRoot } from './trust';
+export {
+	dataviewJsRunPolicy,
+	normalizeTrustedRoot,
+	isTrustedDataviewRoot,
+	isTrustableDataviewRoot,
+	cleanTrustedRoots,
+	withTrustedRoot,
+	withoutTrustedRoot,
+	type DataviewJsRunPolicy,
+	type DataviewJsRunPolicyInput,
+} from './trust';
 
 export {
 	parseSandboxMessage,

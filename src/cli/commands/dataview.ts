@@ -11,6 +11,11 @@
 // - `eval <file> "<dql>"` runs an ad-hoc query with `this` bound to the file;
 //   input that starts with `=` is an inline expression.
 // - `index status [<root>]` and `index rebuild <root>` read and reset an index.
+// - `trust <root>`, `untrust <root>`, and `trusted` edit and list the vaults
+//   whose DataviewJS blocks run without asking (D3). The CLI never runs a
+//   script; these only change what the desktop app's sandbox may do. The root
+//   is resolved against the shell's cwd and normalized the way the app compares
+//   roots, and the app stores it through the same service as the settings UI.
 //
 // Encore-gated (D3): `src/cli/index.ts` registers the command with
 // `encoreCommand()`, so it is hidden and refused while the `dataview` flag is
@@ -24,6 +29,7 @@ import { resolveCliPath } from '../utils/parse';
 import { resolveOwningAgent } from '../utils/owning-agent';
 import { formatTextTable } from '../output/formatter';
 import { encoreDisabledCode, encoreDisabledMessage } from '../utils/encore-gate';
+import { normalizeTrustedRoot } from '../../shared/dataview/trust';
 import type {
 	DataviewCommandAction,
 	DataviewFileQueryResult,
@@ -31,6 +37,7 @@ import type {
 	DataviewInlineResult,
 	DataviewQueryResponse,
 	DataviewResult,
+	DataviewTrustResponse,
 	Literal,
 	RevivedDataviewResult,
 } from '../../shared/dataview';
@@ -362,4 +369,57 @@ export async function dataviewIndexRebuild(
 	}
 	const took = status.lastScanDurationMs === null ? '' : ` in ${status.lastScanDurationMs} ms`;
 	console.log(`Rebuilt ${status.root}: ${status.pageCount} pages${took}.`);
+}
+
+/** A root as the trust list stores it: resolved against the shell's cwd, then normalized like the app's. */
+export function resolveTrustRoot(root: string): string {
+	return normalizeTrustedRoot(resolveCliPath(root));
+}
+
+/** `maestro-cli dataview trust <root>`: run the vault's DataviewJS blocks without asking. */
+export async function dataviewTrust(root: string, options: DataviewCliOptions): Promise<void> {
+	const response = await send<DataviewTrustResponse>(
+		'trust',
+		{ root: resolveTrustRoot(root) },
+		options
+	);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, ...response }));
+		return;
+	}
+	console.log(
+		response.changed
+			? `Trusted ${response.root}. Its DataviewJS blocks run without asking.`
+			: `${response.root} is already trusted.`
+	);
+}
+
+/** `maestro-cli dataview untrust <root>`: ask again before any DataviewJS block in the vault runs. */
+export async function dataviewUntrust(root: string, options: DataviewCliOptions): Promise<void> {
+	const response = await send<DataviewTrustResponse>(
+		'untrust',
+		{ root: resolveTrustRoot(root) },
+		options
+	);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, ...response }));
+		return;
+	}
+	console.log(
+		response.changed
+			? `Stopped trusting ${response.root}. Its DataviewJS blocks ask before they run.`
+			: `${response.root} was not trusted.`
+	);
+}
+
+/** `maestro-cli dataview trusted`: the vaults whose DataviewJS blocks run without asking. */
+export async function dataviewTrusted(options: DataviewCliOptions): Promise<void> {
+	const roots = await send<string[]>('trusted', {}, options);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, roots }));
+	} else if (roots.length === 0) {
+		console.log('No vault is trusted. DataviewJS blocks ask before they run.');
+	} else {
+		for (const root of roots) console.log(root);
+	}
 }

@@ -1,8 +1,10 @@
 /**
  * `dataview:*` IPC. Each handler is a pass-through to one DataviewService request method (the CLI's WS
  * verbs call the same methods), and every index change goes out as `dataview:changed` through the
- * all-windows `safeSend` (DV-7). The DataviewJS channels (`jsSnapshot`, `readInRoot`, D4) pass through the
- * same way, and registration wires the guest host's serving check to the service.
+ * all-windows `safeSend` (DV-7). The DataviewJS channels (`jsSnapshot`, `readInRoot`, D4) and the trust gate's
+ * channels (`jsRoot`, `jsRunOnce`, `trustedRoots`, `trust`, `untrust`, D3) pass through the same way,
+ * registration wires the guest host's serving check to the service, and a trust edit tells every window to
+ * reload settings.
  */
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -11,6 +13,7 @@ import type { DataviewChangeEvent } from '../../../../shared/dataview';
 const h = vi.hoisted(() => ({
 	handlers: new Map<string, (...args: unknown[]) => unknown>(),
 	changeListeners: [] as Array<(event: unknown) => void>,
+	trustListeners: [] as Array<(roots: string[]) => void>,
 	service: null as Record<string, ReturnType<typeof vi.fn>> | null,
 }));
 
@@ -58,6 +61,7 @@ let safeSend: Mock<(channel: string, ...args: unknown[]) => void>;
 beforeEach(() => {
 	h.handlers.clear();
 	h.changeListeners = [];
+	h.trustListeners = [];
 	h.service = {
 		query: vi.fn(async () => queryResponse),
 		queryInline: vi.fn(async () => ({ ...queryResponse, result: { kind: 'value', value: 'A' } })),
@@ -71,6 +75,15 @@ beforeEach(() => {
 			text: 'x',
 		})),
 		jsServing: vi.fn(() => true),
+		jsRoot: vi.fn(async () => ({ root: '/vault', sshRemoteId: null })),
+		grantJsRunOnce: vi.fn(async () => ({ root: '/vault', sshRemoteId: null })),
+		trustedRootList: vi.fn(() => ['/vault']),
+		trustRoot: vi.fn(() => ({ root: '/vault', trusted: true, changed: true, roots: ['/vault'] })),
+		untrustRoot: vi.fn(() => ({ root: '/vault', trusted: false, changed: true, roots: [] })),
+		onTrustedRootsChange: vi.fn((listener: (roots: string[]) => void) => {
+			h.trustListeners.push(listener);
+			return () => undefined;
+		}),
 		onChange: vi.fn((listener: (event: unknown) => void) => {
 			h.changeListeners.push(listener);
 			return () => undefined;
@@ -82,15 +95,47 @@ beforeEach(() => {
 });
 
 describe('dataview IPC', () => {
-	it('registers the four DQL channels and the two DataviewJS channels', () => {
+	it('registers the four DQL channels, the DataviewJS channels, and the trust channels', () => {
 		expect([...h.handlers.keys()].sort()).toEqual([
+			'dataview:jsRoot',
+			'dataview:jsRunOnce',
 			'dataview:jsSnapshot',
 			'dataview:query',
 			'dataview:queryInline',
 			'dataview:readInRoot',
 			'dataview:rebuild',
 			'dataview:status',
+			'dataview:trust',
+			'dataview:trustedRoots',
+			'dataview:untrust',
 		]);
+	});
+
+	it('answers the trust gate through the service', async () => {
+		const note = { filePath: '/vault/People/A.md', agentId: 'agent-1' };
+		await expect(invoke('dataview:jsRoot', note)).resolves.toEqual({
+			root: '/vault',
+			sshRemoteId: null,
+		});
+		expect(h.service!.jsRoot).toHaveBeenCalledWith(note);
+		await invoke('dataview:jsRunOnce', note);
+		expect(h.service!.grantJsRunOnce).toHaveBeenCalledWith(note);
+
+		await expect(invoke('dataview:trustedRoots')).resolves.toEqual(['/vault']);
+		await expect(invoke('dataview:trust', { root: '/vault' })).resolves.toMatchObject({
+			trusted: true,
+		});
+		expect(h.service!.trustRoot).toHaveBeenCalledWith({ root: '/vault' });
+		await expect(invoke('dataview:untrust', { root: '/vault' })).resolves.toMatchObject({
+			trusted: false,
+		});
+		expect(h.service!.untrustRoot).toHaveBeenCalledWith({ root: '/vault' });
+	});
+
+	it('tells every window to reload settings after a trust edit', () => {
+		expect(h.trustListeners).toHaveLength(1);
+		h.trustListeners[0](['/vault']);
+		expect(safeSend).toHaveBeenCalledWith('settings:externalChange');
 	});
 
 	it('answers the DataviewJS snapshot and in-root reads through the service', async () => {

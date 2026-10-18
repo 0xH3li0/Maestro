@@ -5,7 +5,9 @@
  * CLI's WS verbs call the same methods. Main resolves the agent's cwd and SSH remote from its id, so a
  * request never names a host. The DQL channels are on the web bridge's allowlist
  * (`src/main/web-server/handlers/bridgeDenyList.ts`), so the browser build runs DQL too; the DataviewJS
- * channels (`jsSnapshot`, `readInRoot`) are not, since DataviewJS is desktop only (DV-14).
+ * channels (`jsSnapshot`, `readInRoot`, `jsRoot`, `jsRunOnce`) and the trust channels (`trustedRoots`,
+ * `trust`, `untrust`) are not, since DataviewJS is desktop only (DV-14). The CLI edits trust over its own
+ * WS verb, which calls the same service methods.
  *
  * Gate (D3): the service's request methods refuse while the `dataview` Encore Feature is off, with the
  * readable `encoreDisabledMessage('dataview')` text, so these handlers and the WS bridge refuse alike
@@ -22,11 +24,13 @@ import { setDataviewJsServingCheck } from '../../dataview/guest-host';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type {
 	DataviewInlineQueryRequest,
+	DataviewJsRootRequest,
 	DataviewJsSnapshotRequest,
 	DataviewQueryRequest,
 	DataviewReadInRootRequest,
 	DataviewRebuildRequest,
 	DataviewStatusRequest,
+	DataviewTrustRequest,
 } from '../../../shared/dataview';
 
 const LOG_CONTEXT = '[Dataview]';
@@ -81,9 +85,44 @@ export function registerDataviewHandlers(deps: DataviewHandlerDependencies): voi
 		)
 	);
 
+	// The trust gate (D3, DV-12): a block's root and its "Run once" grant, then the trust list the settings
+	// UI and a block's "Always trust this vault" edit (the CLI reaches the same methods over WS).
+	ipcMain.handle(
+		'dataview:jsRoot',
+		withIpcErrorLogging(opts('jsRoot'), async (request: DataviewJsRootRequest) =>
+			service.jsRoot(request)
+		)
+	);
+	ipcMain.handle(
+		'dataview:jsRunOnce',
+		withIpcErrorLogging(opts('jsRunOnce'), async (request: DataviewJsRootRequest) =>
+			service.grantJsRunOnce(request)
+		)
+	);
+	ipcMain.handle(
+		'dataview:trustedRoots',
+		withIpcErrorLogging(opts('trustedRoots'), async () => service.trustedRootList())
+	);
+	ipcMain.handle(
+		'dataview:trust',
+		withIpcErrorLogging(opts('trust'), async (request: DataviewTrustRequest) =>
+			service.trustRoot(request)
+		)
+	);
+	ipcMain.handle(
+		'dataview:untrust',
+		withIpcErrorLogging(opts('untrust'), async (request: DataviewTrustRequest) =>
+			service.untrustRoot(request)
+		)
+	);
+
 	// The guest host serves and attaches DataviewJS guests only while this says yes (default deny).
 	setDataviewJsServingCheck(() => service.jsServing());
 
 	// DV-7: every open index's changes, to every window and bridge client.
 	service.onChange((event) => deps.safeSend('dataview:changed', event));
+
+	// A trust edit is a settings write main made itself, which the settings file watcher ignores, so tell
+	// every window to reload settings: the open settings list and every `dataviewjs` block follow it.
+	service.onTrustedRootsChange(() => deps.safeSend('settings:externalChange'));
 }

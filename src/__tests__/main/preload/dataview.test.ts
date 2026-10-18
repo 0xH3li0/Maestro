@@ -65,6 +65,20 @@ describe('Dataview Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:readInRoot', readRequest);
 	});
 
+	it('asks for the trust gate on its own channels', async () => {
+		const note = { filePath: '/vault/A.md', agentId: 'agent-1' };
+		await api.jsRoot(note);
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:jsRoot', note);
+		await api.jsRunOnce(note);
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:jsRunOnce', note);
+		await api.trustedRoots();
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:trustedRoots');
+		await api.trust({ root: '/vault' });
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:trust', { root: '/vault' });
+		await api.untrust({ root: '/vault' });
+		expect(mockInvoke).toHaveBeenLastCalledWith('dataview:untrust', { root: '/vault' });
+	});
+
 	it('subscribes to dataview:changed and unsubscribes the same listener', () => {
 		const handler = vi.fn();
 		const unsubscribe = api.onChanged(handler);

@@ -2581,7 +2581,7 @@ Open System Settings on the Full Disk Access list and watch for the switch (the 
 
 ## `maestro-cli dataview`
 
-Dataview: run a note's Dataview queries and manage the vault index
+Dataview: run a note's Dataview queries, manage the vault index, and choose the vaults DataviewJS trusts
 
 ## `maestro-cli dataview query <file>`
 
@@ -2623,6 +2623,30 @@ Drop a vault root's index cache and index it again from scratch
 | -------------- | ------------------------------------------------------------- | ------- |
 | `--agent <id>` | Agent whose SSH remote holds the root (default: a local root) | -       |
 | `--json`       | Output as JSON (for scripting)                                | -       |
+
+## `maestro-cli dataview trust <root>`
+
+Trust a vault root: its DataviewJS blocks run in the sandbox without asking
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli dataview untrust <root>`
+
+Stop trusting a vault root: its DataviewJS blocks ask before they run
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli dataview trusted`
+
+List the vault roots whose DataviewJS blocks run without asking
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli quick-chat`
 

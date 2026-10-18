@@ -1,7 +1,8 @@
 // Covers the dataview_command WebSocket message that backs `maestro-cli
 // dataview`. Each action is one DataviewService request method (the ones the
 // `dataview:*` IPC handlers call), its fields come from the message, and every
-// reply carries the request id so the CLI never hangs.
+// reply carries the request id so the CLI never hangs. The trust actions answer
+// the CLI's own connection only.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -21,6 +22,9 @@ const service = {
 	queryFile: vi.fn(),
 	indexStatus: vi.fn(),
 	rebuildIndex: vi.fn(),
+	trustRoot: vi.fn(),
+	untrustRoot: vi.fn(),
+	trustedRootList: vi.fn(),
 };
 
 vi.mock('../../../../main/dataview/dataview-service', () => ({
@@ -30,11 +34,12 @@ vi.mock('../../../../main/dataview/dataview-service', () => ({
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
-function createMockClient(): WebClient {
+function createMockClient(cli = false): WebClient {
 	return {
 		socket: { send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
+		...(cli ? { cli: true } : {}),
 	};
 }
 
@@ -63,6 +68,19 @@ describe('dataview_command handler', () => {
 		service.queryFile.mockResolvedValue(RESPONSE);
 		service.indexStatus.mockReturnValue([]);
 		service.rebuildIndex.mockResolvedValue({ root: '/vault', pageCount: 2 });
+		service.trustRoot.mockReturnValue({
+			root: '/vault',
+			trusted: true,
+			changed: true,
+			roots: ['/vault'],
+		});
+		service.untrustRoot.mockReturnValue({
+			root: '/vault',
+			trusted: false,
+			changed: true,
+			roots: [],
+		});
+		service.trustedRootList.mockReturnValue(['/vault']);
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
 	});
@@ -131,10 +149,41 @@ describe('dataview_command handler', () => {
 		);
 	});
 
+	it('trust, untrust, and trusted edit and read the trust list for the CLI', async () => {
+		client = createMockClient(true);
+		expect(await send({ action: 'trust', root: '/vault' })).toMatchObject({
+			success: true,
+			response: { root: '/vault', trusted: true, roots: ['/vault'] },
+		});
+		expect(service.trustRoot).toHaveBeenCalledWith({ root: '/vault' });
+		expect(await send({ action: 'untrust', root: '/vault' })).toMatchObject({
+			success: true,
+			response: { trusted: false, roots: [] },
+		});
+		expect(service.untrustRoot).toHaveBeenCalledWith({ root: '/vault' });
+		expect(await send({ action: 'trusted' })).toMatchObject({
+			success: true,
+			response: ['/vault'],
+		});
+	});
+
+	it('answers the trust actions to the CLI only, never a browser client', async () => {
+		for (const action of ['trust', 'untrust', 'trusted']) {
+			expect(await send({ action, root: '/vault' })).toMatchObject({
+				success: false,
+				error: `Dataview ${action} is available to maestro-cli only`,
+				requestId: 'r1',
+			});
+		}
+		expect(service.trustRoot).not.toHaveBeenCalled();
+		expect(service.untrustRoot).not.toHaveBeenCalled();
+		expect(service.trustedRootList).not.toHaveBeenCalled();
+	});
+
 	it('refuses an unknown action without calling the service', async () => {
-		expect(await send({ action: 'trust' })).toMatchObject({
+		expect(await send({ action: 'run' })).toMatchObject({
 			success: false,
-			error: 'Unknown Dataview action: trust',
+			error: 'Unknown Dataview action: run',
 			requestId: 'r1',
 		});
 		expect(await send({})).toMatchObject({ error: 'Unknown Dataview action: (none)' });

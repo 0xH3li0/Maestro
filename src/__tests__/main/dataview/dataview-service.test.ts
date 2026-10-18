@@ -26,6 +26,9 @@ vi.mock('../../../main/stores/getters', () => ({
 	getSshRemoteById: vi.fn(() => undefined),
 	getSettingsStore: () => ({
 		get: (key: string) => (settings as Record<string, unknown>)[key],
+		set: (key: string, value: unknown) => {
+			(settings as Record<string, unknown>)[key] = value;
+		},
 	}),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
@@ -942,6 +945,232 @@ describe('DataviewJS requests (D3, D4)', () => {
 			} finally {
 				await defaults.disposeAll();
 			}
+		});
+	});
+});
+
+describe('DataviewJS trust (D3, DV-12, D8)', () => {
+	const root = rootAt('trust');
+	const remoteRoot = '/remote/trust-vault';
+	const note = path.join(root, 'Notes', 'Note.md');
+	const remoteNote = `${remoteRoot}/Notes/Note.md`;
+	const files: MemoryVault = { 'Notes/Note.md': '# Note\n' };
+	let trusted: unknown[];
+	let writes: string[][];
+	let resolved: number;
+	let opened: number;
+	let service: DataviewService;
+
+	function createTrustService(
+		options: Partial<ConstructorParameters<typeof DataviewService>[0]> = {}
+	) {
+		return new DataviewService({
+			resolveRoot: async (_filePath: string, agent: { agentCwd: string }) => {
+				resolved++;
+				return `${agent.agentCwd}${path.sep}`;
+			},
+			resolveAgent: (agentId) =>
+				agentId === 'remote'
+					? { agentCwd: remoteRoot, sshRemoteId: 'remote-1' }
+					: agentId === 'remote-same-path'
+						? { agentCwd: root, sshRemoteId: 'remote-1' }
+						: { agentCwd: root, sshRemoteId: null },
+			watch: false,
+			cacheDir: () => null,
+			isJsEnabled: () => true,
+			trustedRoots: () => trusted,
+			setTrustedRoots: (roots) => {
+				writes.push(roots);
+				trusted = roots;
+			},
+			createVaultFs: (vaultRoot, sshRemoteId) => {
+				opened++;
+				return memoryFs(vaultRoot, files, sshRemoteId);
+			},
+			...options,
+		});
+	}
+
+	beforeEach(() => {
+		trusted = [];
+		writes = [];
+		resolved = 0;
+		opened = 0;
+		service = createTrustService();
+	});
+
+	afterEach(async () => {
+		settings.encoreFeatures = { dataview: true };
+		settings.dataviewJsEnabled = false;
+		settings.dataviewJsTrustedRoots = [];
+		await service.disposeAll();
+	});
+
+	describe('jsRoot', () => {
+		it('names the root as the trust list compares it, without opening the index', async () => {
+			await expect(service.jsRoot({ filePath: note, agentId: 'local' })).resolves.toEqual({
+				root,
+				sshRemoteId: null,
+			});
+			await expect(service.jsRoot({ filePath: remoteNote, agentId: 'remote' })).resolves.toEqual({
+				root: remoteRoot,
+				sshRemoteId: 'remote-1',
+			});
+			expect(opened).toBe(0);
+		});
+
+		it('refuses a bad request, and anything while DataviewJS is off', async () => {
+			await expect(service.jsRoot({ filePath: 'Note.md', agentId: 'local' })).rejects.toThrow(
+				'filePath must be an absolute path'
+			);
+			const off = createTrustService({ isJsEnabled: () => false });
+			await expect(off.jsRoot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				DATAVIEW_JS_DISABLED_MESSAGE
+			);
+			await expect(off.grantJsRunOnce({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				DATAVIEW_JS_DISABLED_MESSAGE
+			);
+			expect(resolved).toBe(0);
+		});
+	});
+
+	describe('grantJsRunOnce', () => {
+		it("opens the note's vault for this session only, on its own host, without trusting it", async () => {
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				dataviewJsUntrustedMessage(root)
+			);
+			await expect(service.grantJsRunOnce({ filePath: note, agentId: 'local' })).resolves.toEqual({
+				root,
+				sshRemoteId: null,
+			});
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).resolves.toMatchObject(
+				{
+					root,
+				}
+			);
+			await expect(
+				service.readInRoot({ filePath: note, agentId: 'local', path: 'Notes/Note.md' })
+			).resolves.toMatchObject({ text: '# Note\n' });
+			expect(writes).toEqual([]);
+			expect(service.trustedRootList()).toEqual([]);
+
+			// The same path on an SSH remote is another vault.
+			await expect(
+				service.jsSnapshot({ filePath: note, agentId: 'remote-same-path' })
+			).rejects.toThrow('not trusted');
+
+			// A new service (the next app session) starts with no grants.
+			const nextSession = createTrustService();
+			await expect(nextSession.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				dataviewJsUntrustedMessage(root)
+			);
+			await nextSession.disposeAll();
+		});
+
+		it('is revoked by untrusting the root and by the Encore Feature turning off', async () => {
+			await service.grantJsRunOnce({ filePath: note, agentId: 'local' });
+			await service.grantJsRunOnce({ filePath: remoteNote, agentId: 'remote' });
+			const response = service.untrustRoot({ root });
+			expect(response).toEqual({ root, trusted: false, changed: false, roots: [] });
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				dataviewJsUntrustedMessage(root)
+			);
+			// Only that root lost its grant.
+			await expect(
+				service.jsSnapshot({ filePath: remoteNote, agentId: 'remote' })
+			).resolves.toMatchObject({ root: remoteRoot });
+
+			await service.disposeAll();
+			await expect(service.jsSnapshot({ filePath: remoteNote, agentId: 'remote' })).rejects.toThrow(
+				dataviewJsUntrustedMessage(remoteRoot)
+			);
+		});
+	});
+
+	describe('trustRoot, untrustRoot, trustedRootList', () => {
+		it('trusts a root once, stored normalized, and the vault then runs without a grant', async () => {
+			expect(service.trustRoot({ root: `  ${root}${path.sep} ` })).toEqual({
+				root,
+				trusted: true,
+				changed: true,
+				roots: [root],
+			});
+			expect(writes).toEqual([[root]]);
+			expect(service.trustRoot({ root })).toEqual({
+				root,
+				trusted: true,
+				changed: false,
+				roots: [root],
+			});
+			expect(writes).toHaveLength(1);
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).resolves.toMatchObject(
+				{
+					root,
+				}
+			);
+		});
+
+		it('untrusts every spelling of a root and leaves the others', async () => {
+			trusted = [`${root}${path.sep}`, root, '/other/vault', 7, ''];
+			expect(service.trustedRootList()).toEqual([root, '/other/vault']);
+			expect(service.untrustRoot({ root })).toEqual({
+				root,
+				trusted: false,
+				changed: true,
+				roots: ['/other/vault'],
+			});
+			expect(writes).toEqual([['/other/vault']]);
+			await expect(service.jsSnapshot({ filePath: note, agentId: 'local' })).rejects.toThrow(
+				dataviewJsUntrustedMessage(root)
+			);
+			expect(service.untrustRoot({ root }).changed).toBe(false);
+			expect(writes).toHaveLength(1);
+		});
+
+		it('refuses a root that is not an absolute path, and writes nothing', () => {
+			for (const bad of ['', '   ', 'vault', './vault', '~/vault', null, 3]) {
+				expect(() => service.trustRoot({ root: bad as string })).toThrow(/root must be/);
+				expect(() => service.untrustRoot({ root: bad as string })).toThrow(/root must be/);
+			}
+			expect(writes).toEqual([]);
+		});
+
+		it('tells listeners after a write only, and survives a listener that throws', () => {
+			const heard: string[][] = [];
+			service.onTrustedRootsChange(() => {
+				throw new Error('window gone');
+			});
+			const unsubscribe = service.onTrustedRootsChange((roots) => heard.push(roots));
+			service.trustRoot({ root });
+			service.trustRoot({ root });
+			service.untrustRoot({ root: '/never/trusted' });
+			expect(heard).toEqual([[root]]);
+			unsubscribe();
+			service.untrustRoot({ root });
+			expect(heard).toHaveLength(1);
+		});
+
+		it('works while DataviewJS is off, and refuses while the Encore Feature is off', () => {
+			const jsOff = createTrustService({ isJsEnabled: () => false });
+			expect(jsOff.trustRoot({ root }).trusted).toBe(true);
+			expect(jsOff.trustedRootList()).toEqual([root]);
+
+			settings.encoreFeatures = { dataview: false };
+			const off = encoreDisabledMessage('dataview');
+			expect(() => service.trustedRootList()).toThrow(off);
+			expect(() => service.trustRoot({ root })).toThrow(off);
+			expect(() => service.untrustRoot({ root })).toThrow(off);
+			expect(writes).toHaveLength(1);
+		});
+
+		it('reads and writes dataviewJsTrustedRoots in the settings store by default', () => {
+			const defaults = createTrustService({ trustedRoots: undefined, setTrustedRoots: undefined });
+			settings.dataviewJsTrustedRoots = ['/kept/'];
+			expect(defaults.trustRoot({ root }).roots).toEqual(['/kept', root]);
+			expect(settings.dataviewJsTrustedRoots).toEqual(['/kept', root]);
+			defaults.untrustRoot({ root: '/kept' });
+			expect(settings.dataviewJsTrustedRoots).toEqual([root]);
+			expect(defaults.trustedRootList()).toEqual([root]);
 		});
 	});
 });

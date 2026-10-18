@@ -1226,9 +1226,14 @@ maestro-cli dataview eval notes/today.md '= this.file.name'    # an inline expre
 maestro-cli dataview index status                              # every open vault index
 maestro-cli dataview index status ~/Vault --json
 maestro-cli dataview index rebuild ~/Vault                     # drop the cache and index again
+maestro-cli dataview trust ~/Vault                             # run the vault's DataviewJS blocks without asking
+maestro-cli dataview untrust ~/Vault                           # ask again before they run
+maestro-cli dataview trusted --json                            # the trusted vaults
 ```
 
 `--block <n>` counts `dataview` fences only, from 1. A note's agent is the agent whose folder holds it; pass `--agent <id>` to choose one, and to name the SSH remote for `index status` and `index rebuild`. Tables fit the terminal width; `--json` prints the full result, with links as objects and dates as ISO strings. A `dataviewjs` block prints `DataviewJS renders in the desktop app only` and exits `2`; a bad `--block` or a note no agent owns also exits `2`, and a query error exits `1`.
+
+`trust`, `untrust`, and `trusted` edit and list the vaults whose `dataviewjs` blocks run without asking, the same list as **Trusted Vaults** in the Dataview settings and **Always trust this vault** on a block. The CLI never runs a script. A root is resolved against the current folder (`~` works) and stored without a trailing separator; it must be the vault root as the app names it (the folder that holds `.obsidian/`, or the agent's folder). `untrust` also ends that vault's **Run once** grants.
 
 ### Quick Chat
 

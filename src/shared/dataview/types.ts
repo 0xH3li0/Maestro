@@ -247,7 +247,47 @@ export interface DataviewReadInRootResponse {
 }
 
 /**
- * The actions of the `dataview_command` WS message (`maestro-cli dataview`), one per DataviewService
- * request method. The request's fields travel as the message's own fields.
+ * The vault root of a note that holds a `dataviewjs` block (`dataview:jsRoot`), and the grant of "Run once"
+ * (`dataview:jsRunOnce`, D3). Both take the note, like `DataviewJsSnapshotRequest`, and main resolves the
+ * root itself.
  */
-export type DataviewCommandAction = 'query' | 'queryInline' | 'queryFile' | 'status' | 'rebuild';
+export type DataviewJsRootRequest = DataviewJsSnapshotRequest;
+
+/** A note's vault root as main spells it, the spelling the trust list compares (`isTrustedDataviewRoot`). */
+export interface DataviewJsRoot {
+	root: string;
+	sshRemoteId: string | null;
+}
+
+/** Add a vault root to `dataviewJsTrustedRoots`, or take it off (`dataview:trust`, `dataview:untrust`, D8). */
+export interface DataviewTrustRequest {
+	/** An absolute path. It is normalized with `normalizeTrustedRoot()` before it is stored. */
+	root: string;
+}
+
+/** The answer to a trust edit. */
+export interface DataviewTrustResponse {
+	/** The root as stored and compared. */
+	root: string;
+	/** Whether the root is trusted now. */
+	trusted: boolean;
+	/** False when the list already said so and nothing was written. */
+	changed: boolean;
+	/** The whole trust list after the edit. */
+	roots: string[];
+}
+
+/**
+ * The actions of the `dataview_command` WS message (`maestro-cli dataview`), one per DataviewService
+ * request method. The request's fields travel as the message's own fields. The trust actions answer CLI
+ * connections only.
+ */
+export type DataviewCommandAction =
+	| 'query'
+	| 'queryInline'
+	| 'queryFile'
+	| 'status'
+	| 'rebuild'
+	| 'trust'
+	| 'untrust'
+	| 'trusted';

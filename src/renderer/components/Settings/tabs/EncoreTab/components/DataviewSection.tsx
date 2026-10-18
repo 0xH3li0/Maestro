@@ -1,5 +1,8 @@
 import { AlertTriangle, Code2, FolderLock, X } from 'lucide-react';
 import { useSettingsStore } from '../../../../../stores/settingsStore';
+import { notifyToast } from '../../../../../stores/notificationStore';
+import { untrustDataviewRoot } from '../../../../../services/dataviewTrust';
+import { ipcErrorMessage } from '../../../../../utils/ipcErrorMessage';
 import type { Theme } from '../../../../../types';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
@@ -12,13 +15,24 @@ interface DataviewSectionProps {
 /**
  * Dataview's settings, shown in its Extensions tile: the DataviewJS switch and
  * the vault roots whose scripts run without asking (D3). DQL needs no setting;
- * it runs whenever the tile is on.
+ * it runs whenever the tile is on. Removing a vault goes through main's trust
+ * service (`untrustDataviewRoot()`), the same one `maestro-cli dataview untrust`
+ * reaches, so it also ends that vault's "Run once" grants.
  */
 export function DataviewSection({ theme }: DataviewSectionProps) {
 	const dataviewJsEnabled = useSettingsStore((s) => s.dataviewJsEnabled);
 	const setDataviewJsEnabled = useSettingsStore((s) => s.setDataviewJsEnabled);
 	const trustedRoots = useSettingsStore((s) => s.dataviewJsTrustedRoots);
-	const setTrustedRoots = useSettingsStore((s) => s.setDataviewJsTrustedRoots);
+
+	const stopTrusting = (root: string) => {
+		untrustDataviewRoot(root).catch((error: unknown) => {
+			notifyToast({
+				color: 'red',
+				title: 'Dataview',
+				message: `Could not stop trusting ${root}: ${ipcErrorMessage(error)}`,
+			});
+		});
+	};
 
 	return (
 		<div data-setting-id="encore-dataview" className="space-y-5 pt-4">
@@ -58,7 +72,7 @@ export function DataviewSection({ theme }: DataviewSectionProps) {
 			<div data-setting-id="encore-dataview-trusted-roots">
 				<SettingsSectionHeading
 					icon={FolderLock}
-					description="Vaults whose DataviewJS scripts run without asking. Choose Always trust this vault on a block to add one."
+					description="Vaults whose DataviewJS scripts run without asking. Choose Always trust this vault on a block, or run maestro-cli dataview trust <root>, to add one."
 				>
 					Trusted Vaults
 				</SettingsSectionHeading>
@@ -81,7 +95,7 @@ export function DataviewSection({ theme }: DataviewSectionProps) {
 									</span>
 									<button
 										type="button"
-										onClick={() => setTrustedRoots(trustedRoots.filter((r) => r !== root))}
+										onClick={() => stopTrusting(root)}
 										className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
 										style={{ color: theme.colors.error }}
 										title="Stop trusting this vault"
