@@ -1310,12 +1310,20 @@ function cancelQueuedDelegations(groupChatId: string): void {
  *
  * Prefers the agent's id over its name - a rename mid-wait must not silently
  * re-point the wait at a different agent.
+ *
+ * Re-reads the chat's availability setting on every tick, so turning "Only work
+ * with agents that are free" off in Edit Group Chat releases a delegation that
+ * is already waiting ('released') instead of leaving it parked for up to the
+ * full wait budget under a setting the user just changed.
  */
 async function waitForAgentToFree(
 	groupChatId: string,
 	participantName: string,
 	sessionId: string | undefined
-): Promise<{ outcome: 'free' | 'timeout' | 'cancelled'; session?: GroupChatSessionInfo }> {
+): Promise<{
+	outcome: 'free' | 'released' | 'timeout' | 'cancelled';
+	session?: GroupChatSessionInfo;
+}> {
 	const token = { cancelled: false };
 	let tokens = queuedDelegationTokens.get(groupChatId);
 	if (!tokens) {
@@ -1339,6 +1347,9 @@ async function waitForAgentToFree(
 			// A vanished agent counts as free, matching the delegation rule: an
 			// agent we cannot probe is never treated as busy.
 			if (session?.isBusy !== true) return { outcome: 'free', session };
+			const chat = await loadGroupChat(groupChatId);
+			if (token.cancelled) return { outcome: 'cancelled' };
+			if (chat && !requiresIdleParticipants(chat)) return { outcome: 'released', session };
 			if (Date.now() >= deadline) return { outcome: 'timeout', session };
 			await new Promise((resolve) => setTimeout(resolve, QUEUED_DELEGATION_POLL_MS));
 		}
@@ -1455,7 +1466,18 @@ function queueDelegationUntilAgentIsFree(opts: {
 		// already gone, so there is nothing to close out and nobody to tell.
 		if (outcome === 'cancelled') return;
 
-		if (outcome === 'free') {
+		if (outcome === 'released') {
+			// Logged like the original "Waiting for" line, so the moderator's next
+			// turn knows the agent was interrupted rather than found free.
+			await announceToChat(
+				groupChatId,
+				logPath,
+				`▶️ No longer waiting for @${normalizeMentionName(participantName)} - this chat now ` +
+					`hands work to busy agents, so the request goes in now.`
+			);
+		}
+
+		if (outcome === 'free' || outcome === 'released') {
 			try {
 				if (await opts.deliver(session)) return;
 			} catch (error) {
