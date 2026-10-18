@@ -262,6 +262,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -967,6 +968,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
 			activeBatchSessionIds,
+			batchRunStates,
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,
