@@ -276,3 +276,146 @@ describe('TabWindowRoot shell (TW-2, TW-3)', () => {
 		expect(document.title).toBe('Tab Window');
 	});
 });
+
+describe('TabWindowRoot tab switching (TW-6)', () => {
+	/** This window holds a2, f1, a3 in that order; a2 shows. */
+	const THREE_TABS: TabWindowInfo = {
+		...WINDOW_INFO,
+		tabRefs: [
+			{ type: 'ai', id: 'a2' },
+			{ type: 'file', id: 'f1' },
+			{ type: 'ai', id: 'a3' },
+		],
+	};
+
+	const press = (init: KeyboardEventInit) => {
+		act(() => {
+			fireEvent.keyDown(window, init);
+		});
+	};
+	const nextTab = () => press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
+	const prevTab = () => press({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true });
+	/** Open a chip's hover menu the way a pointer does, and pick an item. */
+	const chooseFromChipMenu = async (chipLabel: string, item: string | RegExp) => {
+		fireEvent.mouseEnter(screen.getByText(chipLabel).closest('[data-tab-id]')!);
+		fireEvent.click(await screen.findByText(item, undefined, { timeout: 2000 }));
+	};
+
+	beforeEach(() => {
+		seedAgent();
+		useSettingsStore.setState({ useCmd0AsLastTab: true });
+		tabWindowsApi.getState.mockResolvedValue(THREE_TABS);
+	});
+
+	it("walks this window's strip with Cmd+Shift+] and Cmd+Shift+[, wrapping", async () => {
+		await renderRoot();
+		nextTab();
+		expect(tabWindowsApi.focus).toHaveBeenLastCalledWith(AGENT, { type: 'file', id: 'f1' });
+		await act(async () => {});
+		prevTab();
+		prevTab();
+		// f1 -> a2 -> wraps to a3, never the owner's a1.
+		expect(tabWindowsApi.focus).toHaveBeenLastCalledWith(AGENT, { type: 'ai', id: 'a3' });
+	});
+
+	it('shows a selection at once, so two quick presses move two tabs', async () => {
+		// Main has not confirmed either press yet.
+		tabWindowsApi.focus.mockReturnValue(new Promise(() => {}));
+		await renderRoot();
+		nextTab();
+		expect(screen.getByTestId('file-pane')).toHaveTextContent('f1');
+		nextTab();
+		expect(tabWindowsApi.focus).toHaveBeenLastCalledWith(AGENT, { type: 'ai', id: 'a3' });
+		expect(screen.getByTestId('ai-pane')).toHaveTextContent('a3');
+	});
+
+	it('goes back to the recorded tab when main refuses the selection', async () => {
+		tabWindowsApi.focus.mockResolvedValue({ focused: false, error: 'The tab is gone' });
+		await renderRoot();
+		await act(async () => {
+			nextTab();
+		});
+		expect(await screen.findByText('The tab is gone')).toBeInTheDocument();
+		expect(screen.getByTestId('ai-pane')).toHaveTextContent('a2');
+	});
+
+	it('jumps by position in this strip with Cmd+1..9 and Cmd+0', async () => {
+		await renderRoot();
+		press({ key: '2', code: 'Digit2', metaKey: true });
+		expect(tabWindowsApi.focus).toHaveBeenLastCalledWith(AGENT, { type: 'file', id: 'f1' });
+		await act(async () => {});
+		press({ key: '0', code: 'Digit0', metaKey: true });
+		expect(tabWindowsApi.focus).toHaveBeenLastCalledWith(AGENT, { type: 'ai', id: 'a3' });
+		tabWindowsApi.focus.mockClear();
+		press({ key: '4', code: 'Digit4', metaKey: true });
+		expect(tabWindowsApi.focus).not.toHaveBeenCalled();
+	});
+
+	it('closes the shown tab with Cmd+W through the close intent', async () => {
+		await renderRoot();
+		press({ key: 'w', code: 'KeyW', metaKey: true });
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'closeTab',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+		});
+	});
+
+	it('leaves agent cycling and the sidebar shortcuts inert', async () => {
+		await renderRoot();
+		press({ key: '[', code: 'BracketLeft', metaKey: true });
+		press({ key: ']', code: 'BracketRight', metaKey: true });
+		press({ key: 'b', code: 'KeyB', metaKey: true, altKey: true });
+		press({ key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true, altKey: true });
+		expect(tabWindowsApi.focus).not.toHaveBeenCalled();
+		expect(tabWindowsApi.sendIntent).not.toHaveBeenCalled();
+		expect(screen.getByTestId('ai-pane')).toHaveTextContent('a2');
+	});
+
+	it('sends Close Others for this strip only, never the owner tabs', async () => {
+		await renderRoot();
+		await chooseFromChipMenu('Popped Chat', 'Close Other Tabs');
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'closeTabs',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			tabRefs: [
+				{ type: 'file', id: 'f1' },
+				{ type: 'ai', id: 'a3' },
+			],
+		});
+	});
+
+	it('sends Move to Last Position as this window order', async () => {
+		await renderRoot();
+		await chooseFromChipMenu('Popped Chat', 'Move to Last Position');
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'reorderTabs',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			tabRefs: [
+				{ type: 'file', id: 'f1' },
+				{ type: 'ai', id: 'a3' },
+				{ type: 'ai', id: 'a2' },
+			],
+		});
+	});
+
+	it('sends Mark as Unread and Star for the chip it was opened on', async () => {
+		await renderRoot();
+		await chooseFromChipMenu('Popped Chat', 'Mark as Unread');
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'markUnread',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+		});
+		fireEvent.mouseLeave(screen.getByText('Popped Chat').closest('[data-tab-id]')!);
+		await chooseFromChipMenu('Popped Chat', /^Star Session$/);
+		expect(tabWindowsApi.sendIntent).toHaveBeenCalledWith({
+			kind: 'starTab',
+			agentId: AGENT,
+			tabRef: { type: 'ai', id: 'a2' },
+			starred: true,
+		});
+	});
+});

@@ -8,13 +8,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+	buildTabWindowStripSession,
 	buildTabWindowUnifiedTabs,
 	buildUnifiedTabs,
 	closeTab,
 	getActiveTab,
 	getNavigableTabs,
 	leftNeighborRef,
+	moveUnifiedTabToTarget,
+	navigateToLastUnifiedTab,
 	navigateToNextUnifiedTab,
+	navigateToPrevUnifiedTab,
 	navigateToUnifiedTabByIndex,
 	repickPoppedOutActiveTab,
 } from '../../../renderer/utils/tabHelpers';
@@ -323,5 +327,67 @@ describe('buildTabWindowUnifiedTabs (the tab window strip, TW-2)', () => {
 	it('answers an empty strip for no session or no refs', () => {
 		expect(buildTabWindowUnifiedTabs(null, [{ type: 'ai', id: 'a1' }])).toEqual([]);
 		expect(buildTabWindowUnifiedTabs(mixedSession(), [])).toEqual([]);
+	});
+});
+
+describe('buildTabWindowStripSession (tab math scoped to a tab window, TW-6)', () => {
+	const STRIP: TabWindowTabRef[] = [
+		{ type: 'terminal', id: 't1' },
+		{ type: 'ai', id: 'a2' },
+		{ type: 'file', id: 'f1' },
+	];
+
+	beforeEach(() => {
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
+	});
+
+	it("holds only the strip's tabs, with the strip's own order and no groups", () => {
+		const strip = buildTabWindowStripSession(
+			mixedSession({
+				tabGroups: [
+					{ id: 'g1', name: 'Pair', layout: { kind: 'leaf', tab: { type: 'ai', id: 'a3' } } },
+				] as unknown as Session['tabGroups'],
+				activeGroupId: 'g1',
+			}),
+			STRIP
+		);
+		expect(ids(strip.aiTabs)).toEqual(['a2']);
+		expect(ids(strip.filePreviewTabs)).toEqual(['f1']);
+		expect(ids(strip.terminalTabs)).toEqual(['t1']);
+		expect(ids(strip.browserTabs)).toEqual([]);
+		expect(strip.unifiedTabOrder).toEqual(STRIP);
+		expect(strip.tabGroups).toEqual([]);
+		expect(strip.activeGroupId).toBeNull();
+	});
+
+	it('walks only the strip with the shared navigators, wrapping at its ends', () => {
+		const strip = buildTabWindowStripSession(mixedSession({ activeTabId: 'a2' }), STRIP);
+		expect(navigateToNextUnifiedTab(strip)).toMatchObject({ type: 'file', id: 'f1' });
+		expect(navigateToPrevUnifiedTab(strip)).toMatchObject({ type: 'terminal', id: 't1' });
+		expect(navigateToUnifiedTabByIndex(strip, 0)).toMatchObject({ type: 'terminal', id: 't1' });
+		expect(navigateToUnifiedTabByIndex(strip, 3)).toBeNull();
+		expect(navigateToLastUnifiedTab(strip)).toMatchObject({ type: 'file', id: 'f1' });
+	});
+
+	it('reorders within the strip, never against the agent order', () => {
+		const strip = buildTabWindowStripSession(mixedSession(), STRIP);
+		expect(moveUnifiedTabToTarget(strip, 'f1', 't1').unifiedTabOrder).toEqual([
+			{ type: 'file', id: 'f1' },
+			{ type: 'terminal', id: 't1' },
+			{ type: 'ai', id: 'a2' },
+		]);
+	});
+
+	it('drops a ref whose tab is gone and a hidden consult tab, as the strip does', () => {
+		const session = mixedSession({
+			aiTabs: [createMockAITab({ id: 'a1' }), createMockAITab({ id: 'a2', hidden: true })],
+		});
+		const strip = buildTabWindowStripSession(session, [
+			{ type: 'ai', id: 'a2' },
+			{ type: 'ai', id: 'gone' },
+			{ type: 'file', id: 'f1' },
+		]);
+		expect(strip.unifiedTabOrder).toEqual([{ type: 'file', id: 'f1' }]);
+		expect(strip.aiTabs).toEqual([]);
 	});
 });

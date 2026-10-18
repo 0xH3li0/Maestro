@@ -41,6 +41,7 @@ import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { matchTabNavigationShortcut } from '../../utils/tabNavigationShortcuts';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -1585,35 +1586,31 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.toggleTabUnread();
 					trackShortcut('toggleTabUnread');
 				}
-				// Cmd+Shift+] / Cmd+Shift+[ - Navigate tabs in unified order
-				// Cycles through ALL tab types (AI, file, terminal) via unifiedTabOrder
-				if (ctx.isTabShortcut(e, 'nextTab')) {
+				// Tab switching, matched by the table every tab strip shares
+				// (`matchTabNavigationShortcut`, also used by a tab window):
+				// Cmd+Shift+] / Cmd+Shift+[ walk the unified order (AI, file, browser,
+				// terminal, group), and Cmd+1-9 / Cmd+0 jump by position. In unread-only
+				// mode the index counts the filtered (visible) tabs, so Cmd+N matches the
+				// Nth chip the tab bar shows. With useCmd0AsLastTab off, Cmd+1-8 jump to
+				// tabs 1-8 and Cmd+9 to the last tab (browser-style).
+				const tabNavigation = matchTabNavigationShortcut(
+					e,
+					ctx.isTabShortcut,
+					useSettingsStore.getState().useCmd0AsLastTab
+				);
+				if (tabNavigation) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
 						const current = prev.find((s: Session) => s.id === activeSession.id);
 						if (!current) return prev;
-						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
+						const result = tabNavigation.navigate(current, ctx.showUnreadOnly, ctx);
 						if (!result) return prev;
 						if (result.type === 'ai' && !isWebDesktop()) {
 							noteDesktopAiTabSelection(current.id, result.id);
 						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
-					trackShortcut('nextTab');
-				}
-				if (ctx.isTabShortcut(e, 'prevTab')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === activeSession.id);
-						if (!current) return prev;
-						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						if (result.type === 'ai' && !isWebDesktop()) {
-							noteDesktopAiTabSelection(current.id, result.id);
-						}
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('prevTab');
+					trackShortcut(tabNavigation.shortcutId);
 				}
 				// Cmd+Shift+Left / Cmd+Shift+Right - Move the active tab to the first /
 				// last position. Works for ALL tab kinds (AI, file, browser, terminal)
@@ -1639,45 +1636,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						return prev.map((s: Session) => (s.id === current.id ? updated : s));
 					});
 					trackShortcut('moveTabToEnd');
-				}
-				// Cmd+1-9, Cmd+0 - Jump to tab by index in unified order.
-				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches
-				// the Nth tab currently shown in the tab bar (not the Nth tab overall).
-				// When useCmd0AsLastTab is off, fall back to browser-style mapping:
-				// Cmd+1-8 jump to tabs 1-8, Cmd+9 jumps to the last tab, Cmd+0 is unused.
-				const useCmd0AsLastTab = useSettingsStore.getState().useCmd0AsLastTab;
-				const maxNumberedTab = useCmd0AsLastTab ? 9 : 8;
-				for (let i = 1; i <= maxNumberedTab; i++) {
-					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
-						e.preventDefault();
-						ctx.setSessions((prev: Session[]) => {
-							const current = prev.find((s: Session) => s.id === activeSession.id);
-							if (!current) return prev;
-							const result = ctx.navigateToUnifiedTabByIndex(current, i - 1, ctx.showUnreadOnly);
-							if (!result) return prev;
-							if (result.type === 'ai' && !isWebDesktop()) {
-								noteDesktopAiTabSelection(current.id, result.id);
-							}
-							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-						});
-						trackShortcut(`goToTab${i}`);
-						break;
-					}
-				}
-				const lastTabActionId = useCmd0AsLastTab ? 'goToLastTab' : 'goToTab9';
-				if (ctx.isTabShortcut(e, lastTabActionId)) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === activeSession.id);
-						if (!current) return prev;
-						const result = ctx.navigateToLastUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						if (result.type === 'ai' && !isWebDesktop()) {
-							noteDesktopAiTabSelection(current.id, result.id);
-						}
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('goToLastTab');
 				}
 			}
 

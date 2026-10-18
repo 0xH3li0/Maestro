@@ -225,6 +225,41 @@ export function buildTabWindowUnifiedTabs(
 	return result;
 }
 
+/**
+ * The agent narrowed to a tab window's strip (Tab Windows, TW-6): only the
+ * tabs {@link buildTabWindowUnifiedTabs} draws, with `unifiedTabOrder` set to
+ * the tab window's own order and no tiled groups.
+ *
+ * This is how a tab window reuses the unified tab math instead of a copy of
+ * it: `navigateToNextUnifiedTab` (and the rest of the keyboard navigators),
+ * `moveUnifiedTabToTarget`, and the bulk-close ref pickers all read
+ * `unifiedTabOrder` and the tab arrays, so on this session they walk the tab
+ * window's chips and nothing else. The result is for that math only; it is
+ * never stored and never sent anywhere.
+ */
+export function buildTabWindowStripSession(
+	session: Session,
+	tabRefs: readonly SingleTabRef[]
+): Session {
+	const strip = buildTabWindowUnifiedTabs(session, tabRefs);
+	const keys = new Set(strip.map((tab) => tabRefKey(tab)));
+	const inStrip =
+		(type: SingleTabRef['type']) =>
+		(tab: { id: string }): boolean =>
+			keys.has(tabRefKey({ type, id: tab.id }));
+	return {
+		...session,
+		aiTabs: (session.aiTabs ?? []).filter(inStrip('ai')),
+		filePreviewTabs: (session.filePreviewTabs ?? []).filter(inStrip('file')),
+		browserTabs: (session.browserTabs ?? []).filter(inStrip('browser')),
+		terminalTabs: (session.terminalTabs ?? []).filter(inStrip('terminal')),
+		unifiedTabOrder: strip.map((tab) => ({ type: tab.type, id: tab.id })),
+		// A popped tab is never tiled (D6), and a tab window has no groups.
+		tabGroups: [],
+		activeGroupId: null,
+	};
+}
+
 /** One tab of the session as a unified tab, or null when it is gone or hidden. */
 function resolveSingleTab(session: Session, ref: SingleTabRef): UnifiedTab | null {
 	switch (ref.type) {

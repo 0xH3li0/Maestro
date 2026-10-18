@@ -601,9 +601,56 @@ Trap 4 above is closed. In `src/renderer/hooks/agent/internal/useOwnedSessionGat
 - **Where the state comes from.** The registry record (`tabRefs`, `activeTabRef`) comes from `useTabWindowInfo()`: `tabWindows.getState()` on mount and again on every `tab-window-changed`, through `watchTabWindowRegistry()` in `tabWindowStore.ts` (the same newest-read-wins watcher the owner's mirror uses). The `Session` comes from the renderer `sessionStore`, which phase 5 fills from the owner's patches. Until it holds the agent, only the header renders.
 - **The tab window never syncs `tabWindowStore`.** That store feeds the owner's hiding filters (D4). Every tab here is popped out, so filling it would empty the strip. `buildTabWindowUnifiedTabs` reads no store for the same reason.
 - **Active pointers.** The shell builds a view session, `{ ...session, ...focusFieldsForRef(session, activeTab) }`, so the strip and the content read this window's active tab. Its `activeTabId` is always an AI tab of this strip (the first one when a non-AI tab is shown), never the owner's.
-- **Chip actions so far.** A chip click calls `tabWindows.focus(agentId, ref)`, which sets `activeTabRef` in main and broadcasts the change. A chip close sends the `closeTab` intent, which the owner handles in phase 5. A refused or rejected call is a red toast; a rejection also goes to Sentry.
+- **Chip actions.** A chip click calls `tabWindows.focus(agentId, ref)`, which sets `activeTabRef` in main and broadcasts the change. A chip close sends the `closeTab` intent, which the owner handles in phase 5. A refused or rejected call is a red toast (`runTabWindowCall`); a rejection also goes to Sentry. Keyboard and chip menus: "Keyboard and chip menus" below.
 - **Title (TW-3).** `document.title = formatTabWindowTitle(session?.name)` (`src/shared/tabWindowTypes.ts`), so the OS title is `<agent name> - Tab Window` and follows a rename. Before the agent arrives it is `Tab Window`.
 - Tests: `TabWindowRoot.test.tsx` ("TabWindowRoot shell"), `tabHelpers.poppedOut.test.ts` (`buildTabWindowUnifiedTabs`), `AgentStatusDot.test.tsx`, `tabWindowTypes.test.ts` (`formatTabWindowTitle`).
+
+### Keyboard and chip menus (landed, phase 4)
+
+A tab window does not mount `App.tsx`, so `useMainKeyboardHandler` never runs there, and mounting it would mean faking its whole `ctx`. Instead the tab-switching entries were pulled out of that handler into one shared table, and both windows bind it:
+
+```mermaid
+flowchart LR
+    T["matchTabNavigationShortcut()<br/>utils/tabNavigationShortcuts.ts"] --> M["useMainKeyboardHandler<br/>on the agent"]
+    T --> W["useTabWindowKeyboard<br/>on buildTabWindowStripSession()"]
+    M --> N["navigateTo*UnifiedTab<br/>(tabHelpers)"]
+    W --> N
+```
+
+- **The table.** `matchTabNavigationShortcut(e, isTabShortcut, useCmd0AsLastTab)` maps `nextTab`, `prevTab`, `goToTab1..9`, and `goToLastTab` (with the `useCmd0AsLastTab` remap) to the `tabHelpers` navigators. The main handler's four copies of that block are now one call to it, so the two windows cannot drift on what a binding does. `isTabShortcut` is the same `useKeyboardShortcutHelpers` lookup, so a rebound key behaves the same in both windows.
+- **The scope.** `buildTabWindowStripSession(session, tabRefs)` (`utils/tabHelpers`) narrows the agent to the strip: only its tabs, `unifiedTabOrder` set to the tab window's own order, no groups. The unchanged navigators, `moveUnifiedTabToTarget`, and the bulk-close pickers (`getRefsExceptActive` / `Left` / `Right`, `excludePreservedRefs`) all run on it, so they walk this window's chips and never the owner's. It is for that math only and is never stored or sent.
+- **Selection is immediate.** `useTabWindowSelection` shows a selected tab at once and calls `tabWindows.focus` (main records it with `setTabWindowActiveTab`). The pending tab holds until a re-read names it, or until the next re-read after main accepted it, so two quick `Cmd+Shift+]` presses move two tabs and a later change from elsewhere is never masked. A refusal drops it at once.
+- **Modals win.** The handler does nothing while a true modal is open (`hasOpenModal()`), as in the app window.
+- **Keyboard mastery.** Not recorded from a tab window: it is a settings write with a level-up modal, and it stays in the app window.
+
+| Shortcut                                                                                                                                                                       | In a tab window                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Cmd+Shift+]` / `Cmd+Shift+[` (`nextTab` / `prevTab`)                                                                                                                          | **Live.** Walks this strip, wrapping.                                                                                                                  |
+| `Cmd+1..9`, `Cmd+0` (`goToTab1..9`, `goToLastTab`, `useCmd0AsLastTab`)                                                                                                         | **Live.** Position in this strip.                                                                                                                      |
+| `Cmd+W` (`closeTab`)                                                                                                                                                           | **Live.** Sends the `closeTab` intent for the shown tab, the same path as the chip X. The draft and wizard confirm lands with the composer in phase 5. |
+| Chip click, chip X, chip drag (reorder)                                                                                                                                        | **Live.**                                                                                                                                              |
+| `Cmd+[` / `Cmd+]` (agent cycling), `Opt+Cmd+1..9` (agent jump)                                                                                                                 | Inert. One agent per tab window (TW-4).                                                                                                                |
+| `Opt+Cmd+Left` / `Opt+Cmd+Right` (Left Bar / Right Bar), `Cmd+Shift+F` / `H` / `1` (Right Bar tabs)                                                                            | Inert. No sidebars (TW-2).                                                                                                                             |
+| `Cmd+T` and the other new-tab shortcuts, tile-new-tab shortcuts                                                                                                                | Inert. A tab window adds no tabs (no + button) and has no tiling in v1.                                                                                |
+| `Cmd+K`, the tab switcher, settings, and every other surface or modal shortcut                                                                                                 | Inert. Those surfaces live in the app window.                                                                                                          |
+| `Cmd+Shift+Left` / `Right` (move tab), `Cmd+Shift+R` (rename), `Opt+Cmd+S` (snooze), `Opt+Cmd+W` / `Cmd+Shift+W` (bulk close), `Cmd+Shift+T` (reopen), `Cmd+U` (unread filter) | Inert for now. Their chip-menu forms are below; the keyboard forms can bind the same callbacks later.                                                  |
+
+Inert means nothing listens: the app menu sets no accelerators (`src/main/app-menu.ts`, rule 1), so its items reach the focused tab window as IPC that this renderer does not subscribe to, and `Cmd+W` / `Cmd+R` have no menu role that would close or reload the window.
+
+Chip menus (AI chips; the menu items appear only for the callbacks passed):
+
+| Menu item                                                                                | In a tab window                                                                                                                             |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Star / Unstar Session                                                                    | `starTab` intent.                                                                                                                           |
+| Mark as Unread                                                                           | `markUnread` intent.                                                                                                                        |
+| Move to First / Last Position, chip drag                                                 | `reorderTabs` intent with this window's new order (`moveUnifiedTabToTarget` on the strip session).                                          |
+| Close Other Tabs / Close Tabs to the Left / Right                                        | `closeTabs` intent with refs picked on the strip session (drafts kept, as in the owner).                                                    |
+| Copy Session ID and the other copy items `AITab` handles itself                          | Live, local.                                                                                                                                |
+| Rename, Snooze, Merge Into, Send to Agent, Context: Compact / Copy, Export, Publish Gist | Not offered yet: each needs a local modal or the export handlers pointed at the mirror tab (table D above). Phase 5 passes those callbacks. |
+
+The owner side of every intent above is phase 5. Note for that phase: an owner applying `closeTabs` must not run the refs through `excludePreservedRefs` in the owner, because that drops popped-out refs, which is every ref this intent carries.
+
+Tests: `tabNavigationShortcuts.test.ts`, `tabHelpers.poppedOut.test.ts` (`buildTabWindowStripSession`), `useTabWindowSelection.test.ts`, `TabWindowRoot.test.tsx` ("tab switching"), and the existing `useMainKeyboardHandler.test.ts` (unchanged, still passing over the shared table).
 
 ## Deviations
 

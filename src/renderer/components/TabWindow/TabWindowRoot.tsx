@@ -18,7 +18,8 @@
  * shared `TabBar` fed with only this window's tabs, and `TabWindowContent`.
  * Which tabs, and which one is shown, come from this window's registry record
  * (`useTabWindowInfo`). The agent's `Session` comes from the renderer
- * `sessionStore`, which the owner's patches fill (phase 5).
+ * `sessionStore`, which the owner's patches fill (phase 5). Tab shortcuts and
+ * chip menus work as in the main window (TW-6, `useTabWindowKeyboard`).
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
@@ -27,13 +28,26 @@ import { useWindowSettingsSync } from '../../hooks/settings/useWindowSettingsSyn
 import { useResolvedTheme } from '../../hooks/ui/useResolvedTheme';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { notifyToast } from '../../stores/notificationStore';
-import { buildTabWindowUnifiedTabs, focusFieldsForRef } from '../../utils/tabHelpers';
-import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
+import {
+	buildTabWindowStripSession,
+	buildTabWindowUnifiedTabs,
+	focusFieldsForRef,
+	moveUnifiedTabToTarget,
+} from '../../utils/tabHelpers';
+import {
+	excludePreservedRefs,
+	getRefsExceptActive,
+	getRefsLeftOfActive,
+	getRefsRightOfActive,
+} from '../../hooks/tabs/internal/unifiedCloseHelpers';
 import { isSessionRemote } from '../../utils/sessionHelpers';
-import { captureException } from '../../utils/sentry';
 import { formatTabWindowTitle, type TabWindowTabRef } from '../../../shared/tabWindowTypes';
-import { isSameTabRef, type SingleTabType } from '../../../shared/unifiedTabRef';
+import {
+	isSameTabRef,
+	isSingleTabRef,
+	type SingleTabType,
+	type UnifiedTabRef,
+} from '../../../shared/unifiedTabRef';
 import type { Session, Theme, UnifiedTab } from '../../types';
 import { ToastContainer } from '../Toast';
 import { CenterFlash } from '../CenterFlash';
@@ -43,6 +57,9 @@ import { TabBar } from '../TabBar';
 import { TabWindowHeader } from './TabWindowHeader';
 import { TabWindowContent } from './TabWindowContent';
 import { useTabWindowInfo } from './useTabWindowInfo';
+import { useTabWindowKeyboard } from './useTabWindowKeyboard';
+import { useTabWindowSelection } from './useTabWindowSelection';
+import { runTabWindowCall } from './runTabWindowCall';
 
 export interface TabWindowRootProps {
 	/** Registry id of this tab window (the `?tabWindow=<id>` query value). */
@@ -115,6 +132,11 @@ interface TabWindowBodyProps {
 
 function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const tabWindows = window.maestro.tabWindows;
+	const agentId = session.id;
+
+	// Which tab shows. A selection shows at once and the record catches up.
+	const { activeTabRef: shownRef, selectTab } = useTabWindowSelection(agentId, activeTabRef);
 
 	// Only this window's tabs, in its own order (never the owner's strip).
 	const unifiedTabs = useMemo(
@@ -126,9 +148,11 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		[unifiedTabs]
 	);
 	const activeTab: UnifiedTab | null = useMemo(() => {
-		const ref = activeTabRef ?? tabRefs[0] ?? null;
-		return ref ? (unifiedTabs.find((tab) => isSameTabRef(tab, ref)) ?? null) : null;
-	}, [activeTabRef, tabRefs, unifiedTabs]);
+		const find = (ref: TabWindowTabRef | null) =>
+			ref ? (unifiedTabs.find((tab) => isSameTabRef(tab, ref)) ?? null) : null;
+		// A pending selection whose tab just left falls back to the record.
+		return find(shownRef) ?? find(activeTabRef ?? tabRefs[0] ?? null);
+	}, [shownRef, activeTabRef, tabRefs, unifiedTabs]);
 
 	// The agent as this window sees it: its active pointers name this window's
 	// tab, never the owner's (the owner's active AI tab is not in this strip).
@@ -137,22 +161,20 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		const activeAiInStrip = aiTabs.some((tab) => tab.id === focused.activeTabId);
 		return activeAiInStrip ? focused : { ...focused, activeTabId: aiTabs[0]?.id ?? '' };
 	}, [session, activeTab, aiTabs]);
-
-	const tabWindows = window.maestro.tabWindows;
-	const agentId = session.id;
-
-	// Show a tab of this window. Main records it as the window's active tab and
-	// broadcasts `tab-window-changed`, which re-reads this window's record.
-	const selectTab = useCallback(
-		(type: SingleTabType, id: string) => {
-			void runTabWindowCall(
-				'focus',
-				() => tabWindows.focus(agentId, { type, id }),
-				(result) => (result.focused ? null : result.error)
-			);
-		},
-		[tabWindows, agentId]
+	// The same agent narrowed to this strip: what the shared tab math (keyboard
+	// navigation, reorder, bulk-close pickers) runs on, so it walks these chips only.
+	const stripSession = useMemo(
+		() => buildTabWindowStripSession(viewSession, tabRefs),
+		[viewSession, tabRefs]
 	);
+	const refOf = useCallback(
+		(id: string): TabWindowTabRef | null => {
+			const tab = unifiedTabs.find((t) => t.id === id);
+			return tab && tab.type !== 'group' ? { type: tab.type, id: tab.id } : null;
+		},
+		[unifiedTabs]
+	);
+
 	// Closing is a real close through the owner's close path (D7). The intent is
 	// handled by the owner's dispatcher (phase 5).
 	const closeTab = useCallback(
@@ -161,16 +183,66 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 		},
 		[tabWindows, agentId]
 	);
-	const activeRef = activeTab && activeTab.type !== 'group' ? activeTab : null;
+	const activeRef: TabWindowTabRef | null =
+		activeTab && activeTab.type !== 'group' ? { type: activeTab.type, id: activeTab.id } : null;
 	const dockActiveTab = useCallback(() => {
 		if (!activeRef) return;
-		const tabRef: TabWindowTabRef = { type: activeRef.type, id: activeRef.id };
 		void runTabWindowCall(
 			'dock',
-			() => tabWindows.dock(agentId, tabRef),
+			() => tabWindows.dock(agentId, activeRef),
 			(result) => (result.docked ? null : result.error)
 		);
 	}, [tabWindows, agentId, activeRef]);
+
+	// Tab shortcuts: the main window's entries, scoped to this strip (TW-6).
+	useTabWindowKeyboard({
+		stripSession,
+		activeTabRef: activeRef,
+		onSelectTab: selectTab,
+		onCloseTab: closeTab,
+	});
+
+	// Chip menus. Each is the intent the owner runs with its own handler
+	// (phase 5); the refs are picked here by the same helpers the owner strip
+	// uses, on the narrowed session, so "Close Others" means this strip.
+	const starTab = useCallback(
+		(id: string, starred: boolean) => {
+			tabWindows.sendIntent({ kind: 'starTab', agentId, tabRef: { type: 'ai', id }, starred });
+		},
+		[tabWindows, agentId]
+	);
+	const markTabUnread = useCallback(
+		(id: string) => {
+			tabWindows.sendIntent({ kind: 'markUnread', agentId, tabRef: { type: 'ai', id } });
+		},
+		[tabWindows, agentId]
+	);
+	const reorderTab = useCallback(
+		(sourceTabId: string, targetTabId: string) => {
+			const source = refOf(sourceTabId);
+			const moved = moveUnifiedTabToTarget(stripSession, sourceTabId, targetTabId);
+			if (!source || moved === stripSession) return;
+			tabWindows.sendIntent({
+				kind: 'reorderTabs',
+				agentId,
+				tabRef: source,
+				tabRefs: moved.unifiedTabOrder.filter(isSingleTabRef),
+			});
+		},
+		[tabWindows, agentId, refOf, stripSession]
+	);
+	const closeTabsBy = useCallback(
+		(pick: (session: Session, pivotTabId?: string) => UnifiedTabRef[], pivotTabId?: string) => {
+			const pivot = pivotTabId ? refOf(pivotTabId) : activeRef;
+			const tabRefsToClose = excludePreservedRefs(
+				stripSession,
+				pick(stripSession, pivot?.id)
+			).filter(isSingleTabRef);
+			if (!pivot || tabRefsToClose.length === 0) return;
+			tabWindows.sendIntent({ kind: 'closeTabs', agentId, tabRef: pivot, tabRefs: tabRefsToClose });
+		},
+		[tabWindows, agentId, refOf, activeRef, stripSession]
+	);
 
 	return (
 		<>
@@ -198,6 +270,12 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 				onFileTabClose={(id) => closeTab('file', id)}
 				onBrowserTabClose={(id) => closeTab('browser', id)}
 				onTerminalTabClose={(id) => closeTab('terminal', id)}
+				onTabStar={starTab}
+				onTabMarkUnread={markTabUnread}
+				onUnifiedTabReorder={reorderTab}
+				onCloseOtherTabs={(pivot) => closeTabsBy(getRefsExceptActive, pivot)}
+				onCloseTabsLeft={(pivot) => closeTabsBy(getRefsLeftOfActive, pivot)}
+				onCloseTabsRight={(pivot) => closeTabsBy(getRefsRightOfActive, pivot)}
 				colorBlindMode={colorBlindMode}
 				sshRemote={isSessionRemote(session)}
 			/>
@@ -206,25 +284,4 @@ function TabWindowBody({ theme, session, tabRefs, activeTabRef }: TabWindowBodyP
 			</div>
 		</>
 	);
-}
-
-/**
- * Run one `tabWindows:*` call. A refusal (the call answered with an error) is
- * expected and shown as a toast. A rejection is not: it is shown the same way
- * and also reported to Sentry.
- */
-async function runTabWindowCall<T>(
-	operation: string,
-	call: () => Promise<T>,
-	refusal: (result: T) => string | null
-): Promise<void> {
-	try {
-		const error = refusal(await call());
-		if (error) notifyToast({ color: 'red', title: 'Tab Window', message: error });
-	} catch (error) {
-		notifyToast({ color: 'red', title: 'Tab Window', message: ipcErrorMessage(error) });
-		captureException(error instanceof Error ? error : new Error(String(error)), {
-			extra: { operation: `tabWindows.${operation}` },
-		});
-	}
 }
