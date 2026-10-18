@@ -84,6 +84,12 @@ describe('redactSecrets - typed placeholders', () => {
 		);
 		expect(redactSecrets('Use G-482913 to verify', otp).text).toBe('Use [REDACTED_CODE] to verify');
 		expect(redactSecrets('Security code 482-913', otp).text).toBe('Security code [REDACTED_CODE]');
+		expect(redactSecrets('Your one-time password is 482913', otp).text).toBe(
+			'Your one-time password is [REDACTED_CODE]'
+		);
+		expect(redactSecrets('Your temporary PIN: 4829', otp).text).toBe(
+			'Your temporary PIN: [REDACTED_CODE]'
+		);
 		expect(redactSecrets('Your device code is WDJB-MJHT', otp).text).toBe(
 			'Your device code is [REDACTED_CODE]'
 		);

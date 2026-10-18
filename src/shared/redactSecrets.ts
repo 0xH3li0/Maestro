@@ -175,7 +175,7 @@ const HEX_BLOB_RULE: Rule = { kind: 'secret', pattern: /\b[A-Fa-f0-9]{40,}\b/g }
 const NOT_AUTH_CODE_WORD =
 	'(?!(?:status|exit|error|zip|postal|area|country|promo|coupon|discount|source|response|return|tracking|reference|qr|bar)\\b)';
 const CODE_FILLER = `(?:\\s{1,3}${NOT_AUTH_CODE_WORD}[A-Za-z]{1,20}){0,2}`;
-const CODE_KEYWORD = `(?:(?:verification|security|login|sign[- ]?in|confirmation|access|auth(?:entication)?|one[- ]time|2fa|mfa|device|user|activation|pairing|your${CODE_FILLER})\\s{1,3}code|passcode|otp)`;
+const CODE_KEYWORD = `(?:(?:verification|security|login|sign[- ]?in|confirmation|access|auth(?:entication)?|one[- ]time|2fa|mfa|device|user|activation|pairing|your${CODE_FILLER})\\s{1,3}code|(?:one[- ]time|temporary|verification|security|login)\\s{1,3}(?:password|pin)|passcode|otp)`;
 
 /** A device-login code ("WDJB-MJHT"): upper case, checked case-sensitively. */
 const DEVICE_CODE = /[A-Z0-9]{3,6}-[A-Z0-9]{3,6}$/;
