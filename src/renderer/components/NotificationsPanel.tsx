@@ -16,6 +16,7 @@ import type { Theme } from '../types';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { TOAST_WIDTHS, TOAST_WIDTH_LABELS } from '../../shared/toastWidth';
 import type { ToastPosition } from '../../shared/toastPosition';
+import { TOAST_DURATION_OFF } from '../../shared/toastDuration';
 import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
@@ -564,7 +565,7 @@ export function NotificationsPanel({
 				</label>
 				<ToggleButtonGroup
 					options={[
-						{ value: -1, label: 'Off' },
+						{ value: TOAST_DURATION_OFF, label: 'Off' },
 						{ value: 5, label: '5s' },
 						{ value: 10, label: '10s' },
 						{ value: 20, label: '20s' },

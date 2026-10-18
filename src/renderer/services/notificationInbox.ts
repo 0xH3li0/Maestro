@@ -18,6 +18,7 @@ import { logger } from '../utils/logger';
 import { jumpToAgent } from './agentNavigation';
 import { runToastClick } from './toastClickActions';
 import { openUrl } from '../utils/openUrl';
+import { areToastsEnabled } from '../../shared/toastDuration';
 
 /** Report a stale source even when the user has disabled floating toasts. */
 function jumpToNotificationSource(sessionId: string, tabId?: string): boolean {
@@ -26,7 +27,7 @@ function jumpToNotificationSource(sessionId: string, tabId?: string): boolean {
 		color: 'yellow',
 		title: 'Agent Not Found',
 		message: 'The agent this notification came from no longer exists.',
-		skipHistory: useNotificationStore.getState().config.defaultDuration !== -1,
+		skipHistory: areToastsEnabled(useNotificationStore.getState().config.defaultDuration),
 	});
 	return false;
 }

@@ -2763,6 +2763,7 @@ export function getSettingsActions() {
 		setAudioFeedbackEnabled: state.setAudioFeedbackEnabled,
 		setAudioFeedbackCommand: state.setAudioFeedbackCommand,
 		setToastDuration: state.setToastDuration,
+		setToastsEnabled: state.setToastsEnabled,
 		setCheckForUpdatesOnStartup: state.setCheckForUpdatesOnStartup,
 		setAutoResumeOnLimit: state.setAutoResumeOnLimit,
 		setAutoResumeCheckIntervalHours: state.setAutoResumeCheckIntervalHours,
