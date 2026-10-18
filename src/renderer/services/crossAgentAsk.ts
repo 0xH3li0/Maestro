@@ -82,6 +82,7 @@ export interface CrossAgentAskResult {
 	targetAgentName?: string;
 	/** The hidden consult tab on the target that holds the persisted exchange. */
 	targetTabId?: string;
+	targetToolType?: CrossAgentCompletion['targetToolType'];
 }
 
 /**
@@ -145,6 +146,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 					status: completion.canceled ? 'canceled' : completion.error ? 'error' : 'done',
 					error: completion.error,
 					toTabId: completion.targetTabId,
+					toToolType: completion.targetToolType,
 				});
 			}
 			resolve({
@@ -154,6 +156,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 				canceled: completion.canceled,
 				targetAgentName: target.name,
 				targetTabId: completion.targetTabId,
+				targetToolType: completion.targetToolType,
 			});
 		};
 

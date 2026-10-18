@@ -247,12 +247,13 @@ describe('runCrossAgentAsk', () => {
 			});
 			expect(pillsIn('other-tab')).toHaveLength(0);
 
-			complete({ text: 'Signed cookie.', targetTabId: 'consult-1' });
+			complete({ text: 'Signed cookie.', targetTabId: 'consult-1', targetToolType: 'codex' });
 			await pending;
 
 			expect(pillsIn('asking-tab')[0].delegation).toMatchObject({
 				status: 'done',
 				toTabId: 'consult-1',
+				toToolType: 'codex',
 			});
 		});
 

@@ -72,6 +72,7 @@ export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 		canceled: r.canceled === true,
 		targetAgentName: str(r.targetAgentName),
 		targetTabId: str(r.targetTabId),
+		targetToolType: str(r.targetToolType),
 	};
 }
 

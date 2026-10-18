@@ -24,6 +24,7 @@ import {
 } from '../../main/peer-consults/consult-budget';
 import { describeConsultBudgetRefusal, isConsultChainId } from '../../shared/consultBudget';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+import { extractTextFromStreamJson } from '../../main/group-chat/output-parser';
 import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
 
 /**
@@ -143,6 +144,20 @@ function harness(
 }
 
 describe('the desktop consult runner', () => {
+	it.each(['exit', 'stop'] as const)(
+		'parses %s output with the captured launch provider',
+		async (end) => {
+			const { dispatch, emitData, emitExit } = harness({
+				request: { targetProvider: 'codex' },
+				agent: { id: 'codex' },
+			});
+			await dispatch();
+			emitData('captured output');
+			if (end === 'exit') emitExit(0);
+			else cancelCrossAgentRequestsForSource('src');
+			expect(extractTextFromStreamJson).toHaveBeenCalledWith('captured output', 'codex');
+		}
+	);
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
@@ -249,6 +264,8 @@ describe('the desktop consult runner', () => {
 			await dispatch();
 
 			expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt', {
+				activeTabId: undefined,
+				provider: 'claude-code',
 				consultChain: { chainId: 'chain-a', depth: 2 },
 				consultBudgetStore: { dataDir: budgetDir },
 			});

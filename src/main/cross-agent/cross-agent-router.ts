@@ -117,6 +117,8 @@ export function startCrossAgentRequest(
 		consultBudgetStore: opts.consultBudgetStore,
 		getSystemPrompt: (target, consultChain) =>
 			buildMaestroSystemPromptForSession(target.id, {
+				activeTabId: request.targetTabId,
+				provider: target.toolType,
 				consultChain,
 				consultBudgetStore: opts.consultBudgetStore,
 			}),

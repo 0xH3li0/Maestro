@@ -134,6 +134,17 @@ describe('buildMaestroSystemPromptForSession', () => {
 		);
 	});
 
+	it('names the captured consult provider and tab without changing the agent default', async () => {
+		prompts['maestro-system-prompt'] = '{{TOOL_TYPE}}|{{TAB_ID}}';
+		expect(
+			await buildMaestroSystemPromptForSession('agent-1', {
+				provider: 'codex',
+				activeTabId: 'consult-tab',
+			})
+		).toBe('codex|consult-tab');
+		expect(storedSessions[0].toolType).toBe('claude-code');
+	});
+
 	it('accepts an already-loaded record', async () => {
 		storedSessions = [];
 		const result = await buildMaestroSystemPromptForSession(agent({ name: 'Bob' }) as any);

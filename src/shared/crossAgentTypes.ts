@@ -118,6 +118,8 @@ export interface CrossAgentRequest {
 	 * before the tab exists is not possible - the renderer always creates it first.
 	 */
 	targetTabId?: string;
+	/** Provider captured from the destination consult tab, never the caller's selection. */
+	targetProvider?: ToolType;
 	/**
 	 * The target's captured provider session id to RESUME, when this (source tab ->
 	 * target) pairing has been consulted before. Null/undefined on the first
@@ -202,7 +204,7 @@ export interface CrossAgentResponseChunk {
 	targetTabId?: string;
 	/** Display name of the consulted agent (for provenance rendering). */
 	targetAgentName: string;
-	/** Tool type of the consulted agent (for provenance rendering). */
+	/** Captured launch provider of the consult (for provenance and native ID ownership). */
 	targetToolType: ToolType;
 	/**
 	 * The target's own provider session id, captured from its output stream. Sent

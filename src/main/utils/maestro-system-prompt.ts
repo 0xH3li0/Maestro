@@ -32,6 +32,7 @@ import {
 } from '../../shared/consultBudget';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { StoredSession } from '../stores/types';
+import type { ToolType } from '../../shared/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
@@ -50,6 +51,8 @@ const LOG_CONTEXT = '[MaestroSystemPrompt]';
 export interface BuildMaestroSystemPromptOptions {
 	/** The AI tab the spawn belongs to ({{TAB_ID}}). Headless spawns leave it empty. */
 	activeTabId?: string;
+	/** Captured launch provider for a consult or another tab-scoped spawn. */
+	provider?: ToolType;
 	/**
 	 * The place the spawned turn takes in a consult chain, when the caller put
 	 * it in one (a cross-agent consult). The Peer Agents block then states what
@@ -282,7 +285,7 @@ export async function buildMaestroSystemPromptForSession(
 		session: {
 			id: record.id,
 			name: record.name,
-			toolType: record.toolType,
+			toolType: opts.provider ?? record.toolType,
 			cwd,
 			projectRoot: record.projectRoot,
 			fullPath: record.fullPath,

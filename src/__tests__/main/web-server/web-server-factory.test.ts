@@ -239,6 +239,7 @@ import { WebServer } from '../../../main/web-server/WebServer';
 import { tunnelManager } from '../../../main/tunnel-manager';
 import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-snapshot';
 import { getThemeById } from '../../../main/themes';
+import { parseConsultAgentResult } from '../../../main/web-server/callbacks/commandCallbacks';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
 import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
@@ -251,6 +252,19 @@ import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { steerNewMessage, steerQueuedItem } from '../../../main/group-chat/group-chat-queue';
 
 describe('web-server/web-server-factory', () => {
+	it('retains the captured consult provider in the renderer reply', () => {
+		expect(
+			parseConsultAgentResult({
+				success: true,
+				answer: 'reply',
+				targetToolType: 'codex',
+				targetTabId: 'consult',
+			})
+		).toMatchObject({ success: true, targetToolType: 'codex', targetTabId: 'consult' });
+		expect(
+			parseConsultAgentResult({ success: true, targetToolType: 5 }).targetToolType
+		).toBeUndefined();
+	});
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
 	let mockSessionsStore: WebServerFactoryDependencies['sessionsStore'];
 	let mockGroupsStore: WebServerFactoryDependencies['groupsStore'];

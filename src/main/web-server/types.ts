@@ -550,6 +550,7 @@ export type ConsultAgentResult = {
 	canceled?: boolean;
 	targetAgentName?: string;
 	targetTabId?: string;
+	targetToolType?: string;
 };
 export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 /**

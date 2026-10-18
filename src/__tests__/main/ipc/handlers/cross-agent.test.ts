@@ -189,6 +189,40 @@ describe('cross-agent:send', () => {
 		expect(result.requestId).toEqual(expect.any(String));
 		expect(routed().request.requestId).toBe(result.requestId);
 	});
+
+	it('forwards the consult provider snapshot and the target provider configuration', async () => {
+		const stored = {
+			id: 'tgt',
+			toolType: 'claude-code',
+			cwd: '/proj',
+			providerOverrides: { codex: { customPath: '/codex' } },
+			aiTabs: [{ id: 'consult', tabProvider: 'codex', agentSessionId: 'native-codex' }],
+		};
+		vi.mocked(ipcMain.handle).mockClear();
+		send = registerAndGetHandler('cross-agent:send', {
+			getProcessManager: () => processManager as never,
+			getAgentDetector: () => agentDetector as never,
+			sessionsStore: { get: () => [stored] } as never,
+		});
+		await send(
+			{},
+			payload({
+				targetTabId: 'consult',
+				targetProvider: 'codex',
+				resumeAgentSessionId: 'native-codex',
+			})
+		);
+		expect(routed().request).toMatchObject({
+			targetTabId: 'consult',
+			targetProvider: 'codex',
+			resumeAgentSessionId: 'native-codex',
+		});
+		const options = vi.mocked(startCrossAgentRequest).mock.calls[0][1];
+		expect(options.getTargetSession('tgt')).toMatchObject({
+			aiTabs: stored.aiTabs,
+			providerOverrides: stored.providerOverrides,
+		});
+	});
 });
 
 describe('cross-agent:consultBudget', () => {
