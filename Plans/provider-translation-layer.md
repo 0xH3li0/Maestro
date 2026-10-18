@@ -353,3 +353,9 @@ This completes only the certification skip-handling task. No code or tests chang
 **OpenCode adapter deferred; baseline native certification unavailable**. Read `src/shared/maestro-lib/translation/support.ts` and confirmed that Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the first task's deferral handling; OpenCode mapping research and its implementation steps were not executed.
 
 No code or tests changed, no test cases or live provider acceptance ran, and no OpenCode session was exported. No implementation or certification is claimed; no human gate or halt marker was added. No task images were supplied.
+
+### 2026-10-18: Ensemble 10 OpenCode adapter implementation deferred
+
+**OpenCode adapter deferred; baseline native certification unavailable**. Rechecked `src/shared/maestro-lib/translation/support.ts`: Claude Code to Codex and Codex to Claude Code both remain `unverified`. Under [[ENSEMBLE-10]], this completes only the second task's deferral handling. Extraction, native import/export readback, adapter registration, direction declarations and service identity resolution were not implemented.
+
+No code or tests changed, and no test cases or live provider acceptance ran. No provider homes were accessed or modified. No implementation or certification is claimed; no human gate or halt marker was added. No task images were supplied.
