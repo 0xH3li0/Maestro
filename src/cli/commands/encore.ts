@@ -33,6 +33,7 @@ const FEATURES: Record<string, string> = {
 	maestroRun: 'MaestroRun (macOS)',
 	aCappella: 'A Cappella (Voice)',
 	throughputGauge: 'Throughput Gauge',
+	ensemble: 'Ensemble',
 };
 
 /** Every feature id `enable` accepts on some platform, in the order `list` prints them. */

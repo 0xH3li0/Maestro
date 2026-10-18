@@ -153,6 +153,7 @@ describe('first-party plugin registry', () => {
 			['quickChat', 'com.maestro.quick-chat'],
 			['maestroRun', 'com.maestro.maestro-run'],
 			['throughputGauge', 'com.maestro.throughput-gauge'],
+			['ensemble', 'com.maestro.ensemble'],
 		]);
 	});
 

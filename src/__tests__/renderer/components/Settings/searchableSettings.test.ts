@@ -178,6 +178,12 @@ describe('searchableSettings', () => {
 			);
 		});
 
+		it('keeps Ensemble discoverable while off so its tile can be enabled', () => {
+			expect(searchSettings('ensemble', [], { ensemble: false })).toEqual(
+				expect.arrayContaining([expect.objectContaining({ id: 'encore-ensemble' })])
+			);
+		});
+
 		it('never gates an Encore tile entry on its own flag', () => {
 			const tiles = ALL_SEARCHABLE_SETTINGS.filter(
 				(s) => s.tab === 'encore' && s.requiresEncore && !s.jumpToId
@@ -192,6 +198,7 @@ describe('searchableSettings', () => {
 				'encore-coworking',
 				'encore-director-notes',
 				'encore-pianola',
+				'encore-ensemble',
 				'encore-concerto',
 				'encore-groups-plus',
 				'encore-web-login',
@@ -206,6 +213,7 @@ describe('searchableSettings', () => {
 		it('maps a jump to the Plugins tile whose details pane holds it', () => {
 			expect(encoreTileForSetting('encore-computer-history')).toBe('computerHistory');
 			expect(encoreTileForSetting('encore-cue')).toBe('maestroCue');
+			expect(encoreTileForSetting('encore-ensemble')).toBe('ensemble');
 			// A sub-setting opens its feature's tile through requiresEncore.
 			expect(encoreTileForSetting('encore-director-notes-provider')).toBe('directorNotes');
 			// Grid-level anchors and other tabs open nothing.
@@ -353,6 +361,11 @@ describe('searchableSettings', () => {
 			['test connection', 'ssh-remotes'],
 
 			// Encore tab
+			['ensemble', 'encore-ensemble'],
+			['switch provider', 'encore-ensemble'],
+			['tab provider', 'encore-ensemble'],
+			['model effort remembered', 'encore-ensemble'],
+			['keep conversation', 'encore-ensemble'],
 			['lookback', 'encore-usage-stats'],
 			['coding activity', 'encore-usage-stats'],
 			['wakatime', 'encore-usage-stats'],

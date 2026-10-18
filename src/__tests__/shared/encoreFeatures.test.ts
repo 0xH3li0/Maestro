@@ -20,6 +20,15 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships the Throughput Gauge off', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.throughputGauge).toBe(false);
 	});
+
+	it('ships Ensemble off for new and older settings', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.ensemble).toBe(false);
+		expect(resolveEncoreFeatures(undefined).ensemble).toBe(false);
+		expect(resolveEncoreFeatures({ symphony: true }).ensemble).toBe(false);
+		expect(resolveEncoreFeatures({ ensemble: 'true' }).ensemble).toBe(false);
+		expect(resolveEncoreFeatures({ ensemble: true }).ensemble).toBe(true);
+		expect(resolveEncoreFeatures({ ensemble: false }).ensemble).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

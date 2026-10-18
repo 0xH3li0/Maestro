@@ -28,6 +28,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	quickChat: true,
 	maestroRun: false,
 	throughputGauge: false,
+	ensemble: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */

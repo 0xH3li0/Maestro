@@ -113,6 +113,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'quickChat',
 			'maestroRun',
 			'throughputGauge',
+			'ensemble',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
@@ -134,6 +135,23 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			expect(ext.permissions).toEqual(backing.permissions);
 			expect(ext.backgroundServiceId).toBe(backing.backgroundServices[0]?.id);
 		}
+	});
+
+	it('projects Ensemble as an opt-in provider feature without a background service', () => {
+		const ensemble = BUILTIN_FEATURES.find((def) => def.flag === 'ensemble');
+		expect(ensemble).toBeDefined();
+		expect(builtinExtension(ensemble!, flags())).toMatchObject({
+			key: 'builtin:ensemble',
+			name: 'Ensemble',
+			category: 'agents',
+			state: 'not-installed',
+			beta: true,
+			encore: false,
+			pluginId: 'com.maestro.ensemble',
+			settingsNamespace: 'ensemble',
+			backgroundServiceId: undefined,
+		});
+		expect(builtinExtension(ensemble!, flags({ ensemble: true })).state).toBe('enabled');
 	});
 
 	it('projects Groups+ as a disabled-by-default plugin-backed UI extension', () => {

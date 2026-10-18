@@ -68,6 +68,7 @@ export const ENCORE_FEATURE_LABELS: Record<EncoreFlag, string> = {
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun',
 	throughputGauge: 'Throughput Gauge',
+	ensemble: 'Ensemble',
 };
 
 /** One `key: value` line of a provider's config, ready to print. A secret is already masked. */

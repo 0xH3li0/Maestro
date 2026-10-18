@@ -83,6 +83,24 @@ describe('encore commands', () => {
 			quickChat: true,
 			aCappella: false,
 			throughputGauge: false,
+			ensemble: false,
+		});
+	});
+
+	it('lists Ensemble in text and JSON, off until enabled', () => {
+		encoreList({ json: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).features.ensemble).toBe(false);
+		encoreList({});
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/off\s+ensemble\s+Ensemble/));
+	});
+
+	it.each([true, false])('sets Ensemble to %s through the shared settings command', async (on) => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('ensemble', on, {});
+		expect(getPayload()).toMatchObject({
+			type: 'set_setting',
+			key: 'encoreFeatures',
+			value: { ensemble: on, symphony: true, maestroCue: false },
 		});
 	});
 
@@ -160,6 +178,7 @@ describe('encore commands', () => {
 		['computerHistory', true],
 		['quickChat', false],
 		['maestroRun', false],
+		['ensemble', true],
 	] as const)('changing %s preserves other saved Encore flags', async (feature, enabled) => {
 		vi.mocked(readSettingValue).mockReturnValue(
 			Object.freeze({

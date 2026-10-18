@@ -15,6 +15,7 @@ import { builtinExtension } from '../../../../../renderer/components/Settings/Ex
 import type { UnifiedExtension } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import {
 	CONCERTO_FIRST_PARTY_PLUGIN,
+	ENSEMBLE_FIRST_PARTY_PLUGIN,
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	PIANOLA_FIRST_PARTY_PLUGIN,
 } from '../../../../../shared/plugins/first-party';
@@ -77,6 +78,21 @@ describe('ExtensionDetails usage guide', () => {
 		expect(guide.textContent).toContain('Command palette');
 		expect(guide.textContent).toContain('Concerto Stage');
 		expect(guide.textContent).toContain('hamburger menu');
+	});
+
+	it('shows Ensemble settings help and CLI controls while the feature is off', () => {
+		renderDetails(
+			builtinExtension(
+				{ flag: 'ensemble', beta: true, pluginBacking: ENSEMBLE_FIRST_PARTY_PLUGIN },
+				{ ensemble: false } as never
+			)
+		);
+		const guide = screen.getByTestId('extension-usage-guide');
+		expect(guide.textContent).toContain('Model and effort are remembered per provider.');
+		expect(guide.textContent).toContain('Settings > Plugins > Ensemble');
+		expect(guide.textContent).toContain('maestro-cli encore enable ensemble');
+		expect(guide.textContent).toContain('maestro-cli encore disable ensemble');
+		expect(guide.textContent).toContain('tab provider controls are still in development');
 	});
 
 	it('prints the live binding, so a rebound key is never advertised stale', () => {
