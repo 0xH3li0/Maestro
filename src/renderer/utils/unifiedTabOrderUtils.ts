@@ -5,6 +5,8 @@
 
 import type { AITab, Session, UnifiedTabRef } from '../types';
 import { useSettingsStore } from '../stores/settingsStore';
+import { getPoppedOutTabKeys } from '../stores/tabWindowStore';
+import { tabRefKey } from '../../shared/unifiedTabRef';
 
 /**
  * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
@@ -76,6 +78,25 @@ export function getNavigableUnifiedTabOrder(
 	const hiddenAiIds = new Set((session.aiTabs || []).filter(isAiTabHidden).map((tab) => tab.id));
 	if (hiddenAiIds.size === 0) return order;
 	return order.filter((ref) => !(ref.type === 'ai' && hiddenAiIds.has(ref.id)));
+}
+
+/**
+ * Drop the refs of tabs popped out into a tab window (Tab Windows, D4).
+ *
+ * The stored order keeps a popped tab's ref, because that ref is what puts the
+ * tab back in its slot on dock (TW-8). The owner window must not draw it or
+ * land on it, so every list the owner picks a tab from is narrowed here, the
+ * same way {@link getNavigableUnifiedTabOrder} narrows hidden consult tabs.
+ * Group refs always survive: a whole tiled group is never popped out (D6).
+ *
+ * Returns the input by reference when nothing is dropped (the common case),
+ * since callers memoize on identity.
+ */
+export function filterPoppedOutRefs<T extends UnifiedTabRef>(agentId: string, order: T[]): T[] {
+	const popped = getPoppedOutTabKeys(agentId);
+	if (popped.size === 0 || order.length === 0) return order;
+	const isPopped = (ref: T) => ref.type !== 'group' && popped.has(tabRefKey(ref));
+	return order.some(isPopped) ? order.filter((ref) => !isPopped(ref)) : order;
 }
 
 /**

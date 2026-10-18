@@ -150,6 +150,7 @@ import { useSymphonyContribution } from './hooks/symphony/useSymphonyContributio
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
+import { useTabWindowStoreSync } from './stores/tabWindowStore';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -1075,6 +1076,8 @@ function MaestroConsoleInner() {
 	useCueVisibilityWiring(encoreFeatures.maestroCue);
 	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
 	useCueBundleAgentSync();
+	// Which tabs are popped out into a tab window (Tab Windows, D4).
+	useTabWindowStoreSync();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
