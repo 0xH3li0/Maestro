@@ -427,3 +427,9 @@ No live hop was attempted, so plan status, limitations, fact recall and remote w
 Read `.maestro/scratch/acceptance-auth/inputs.json` and confirmed `skip: true` for [[ENSEMBLE-07]]. **Native acceptance skipped; certification deferred**. Both Claude Code to Codex and Codex to Claude Code remain `unverified` in `src/shared/maestro-lib/translation/support.ts`.
 
 No native hop or test case was executed. No credentials were accessed, no provider turn ran, and no provider home or original-agent data was modified. No acceptance evidence was generated. This completes only the acceptance skip-handling task; no human gate was added. No code or tests changed, and no task images were supplied.
+
+### 2026-10-17: Ensemble 07 native acceptance repair deferred
+
+**Native acceptance repair deferred; no hops executed**. Confirmed `skip: true` in `.maestro/scratch/acceptance-auth/inputs.json` and no `evidence-*.json` files in `.maestro/scratch/provider-translation-acceptance/`. There are no native hop results to inspect or repair for [[ENSEMBLE-07]]. Both translation directions remain `unverified`; certification remains deferred.
+
+No tests or provider turns were executed, and no credentials, provider homes or original-agent data were accessed. No code or tests changed; no task images were supplied. This completes only the repair skip-handling task, without a human gate.
