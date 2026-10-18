@@ -421,3 +421,9 @@ SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code u
 Read `.maestro/scratch/ssh-acceptance.json` and confirmed `skip: true` for [[ENSEMBLE-06]]. **SSH live check skipped.** This explicit decision supersedes the earlier missing-target prerequisite. SSH acceptance result: **Claude Code to Codex unverified; Codex to Claude Code unverified.** Phase 08 must keep SSH Ensemble choices disabled without live evidence; certification remains deferred.
 
 No live hop was attempted, so plan status, limitations, fact recall and remote write-boundary checks have no live results. No scratch agent was created, no SSH command or provider turn ran, and no provider home or remote file was modified. No code or tests changed; no test cases were executed and no task images were supplied.
+
+### 2026-10-17: Ensemble 07 native acceptance skip verified
+
+Read `.maestro/scratch/acceptance-auth/inputs.json` and confirmed `skip: true` for [[ENSEMBLE-07]]. **Native acceptance skipped; certification deferred**. Both Claude Code to Codex and Codex to Claude Code remain `unverified` in `src/shared/maestro-lib/translation/support.ts`.
+
+No native hop or test case was executed. No credentials were accessed, no provider turn ran, and no provider home or original-agent data was modified. No acceptance evidence was generated. This completes only the acceptance skip-handling task; no human gate was added. No code or tests changed, and no task images were supplied.
