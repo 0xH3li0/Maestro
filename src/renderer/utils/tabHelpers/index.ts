@@ -1307,8 +1307,12 @@ function countOwnerVisibleNonAiTabs(session: Session): number {
 	);
 }
 
-/** The session patch that makes `ref` the visible tab. */
-function focusFieldsForRef(session: Session, ref: UnifiedTabRef): Partial<Session> {
+/**
+ * The session patch that makes `ref` the visible tab, for a ref of any kind (a
+ * tiled group lands on the group). Used by the popped-out re-pick and by
+ * dock-back, which shows the tab that just returned (Tab Windows, D4).
+ */
+export function focusFieldsForRef(session: Session, ref: UnifiedTabRef): Partial<Session> {
 	switch (ref.type) {
 		case 'file':
 			return fileTabFocusFields(ref.id);

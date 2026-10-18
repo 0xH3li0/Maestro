@@ -6,7 +6,11 @@
 
 import { vi } from 'vitest';
 import { useTabWindowStore } from '../../renderer/stores/tabWindowStore';
-import type { TabWindowFocusResult, TabWindowTabRef } from '../../shared/tabWindowTypes';
+import type {
+	TabWindowDockResult,
+	TabWindowFocusResult,
+	TabWindowTabRef,
+} from '../../shared/tabWindowTypes';
 
 /** Mark `tabRefs` of `agentId` as popped out into one tab window. */
 export function popOutTabsInStore(agentId: string, tabRefs: TabWindowTabRef[]): void {
@@ -23,18 +27,25 @@ export function clearTabWindowStore(): void {
 }
 
 /**
- * Install a fake `window.maestro.tabWindows` whose `focus` answers `result`.
- * Returns the `focus` mock and a restore function.
+ * Install a fake `window.maestro.tabWindows` whose `focus` answers `result` and
+ * whose `dock` answers `dockResult`. Returns both mocks and a restore function.
  */
 export function installTabWindowsApi(
-	result: TabWindowFocusResult = { focused: true, windowId: 'tw-1' }
-): { focus: ReturnType<typeof vi.fn>; restore: () => void } {
+	result: TabWindowFocusResult = { focused: true, windowId: 'tw-1' },
+	dockResult: TabWindowDockResult = { docked: true, windowId: 'tw-1' }
+): {
+	focus: ReturnType<typeof vi.fn>;
+	dock: ReturnType<typeof vi.fn>;
+	restore: () => void;
+} {
 	const maestro = (window as unknown as { maestro: Record<string, unknown> }).maestro;
 	const previous = maestro.tabWindows;
 	const focus = vi.fn().mockResolvedValue(result);
-	maestro.tabWindows = { focus };
+	const dock = vi.fn().mockResolvedValue(dockResult);
+	maestro.tabWindows = { focus, dock };
 	return {
 		focus,
+		dock,
 		restore: () => {
 			if (previous === undefined) delete maestro.tabWindows;
 			else maestro.tabWindows = previous;

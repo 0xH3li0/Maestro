@@ -477,6 +477,14 @@ With a popped target, each of these raises the owner first and the tab window se
 
 Recommendation for phase 3: put the `focusTabWindowIfPoppedOut(agentId, ref)` helper at N1 to N7 and at each bypass that a user action can reach. Add one safety net in the owner as well: after a session write, if an owned agent's active pointer names a popped tab, re-pick the owner's tab with the `closeTab` neighbor rule. `setSessions` and `updateSession` (`stores/sessionStore.ts`) are the one funnel every renderer write passes through. The helper produces the visible redirect, and the guard keeps a missed bypass from rendering a popped tab in the owner.
 
+### Dock-back and restart reconciliation (landed, phase 3)
+
+- **Module.** `hooks/tabs/useTabWindowDockReconcile.ts`, mounted in `App.tsx` right after `usePoppedOutTabGuard(windowCtx?.ownsSession)`. Same trap for phase 4: a tab window must not mount it.
+- **Dock-back (TW-8).** On every `tabWindowStore` change, `findDockedTabsToFocus(prev, next)` names, per agent, the ref that left its tab window: the one the tab window was showing when several dock at once (a closed tab window), else the last in its strip. `focusDockedTabs` then makes it the owner's active tab with `focusFieldsForRef` (now exported from `tabHelpers`, the same patch the re-pick uses). The tab needs no move: its `unifiedTabOrder` ref never left. It skips an agent this window does not own, a tab the session no longer has (closed from the tab window), and a ref popped out again. It does not switch the active agent.
+- **Restart (TW-10).** `dockStaleTabWindowRefs(checked, ownsSession)` waits for `sessionsLoaded && sessionsReadOk`, then, once per agent (`checked`), calls `tabWindows.dock` for every ref whose tab the owned session lacks (a terminal tab dropped on load). It runs on every store change and session write, so a tab window main restores after the renderer's first `list()` is still checked. An agent this window does not own yet stays unchecked until it is owned.
+- **Accepted risk.** The check runs once per agent, the first time this window owns it while it has a tab window. An agent moved into a window whose copy of that agent lags a tab the old owner just created and popped out could have that ref docked wrongly. The window is narrow (move plus pop-out before the copy syncs), and the dock only returns the tab to the strip.
+- Tests: `src/__tests__/renderer/hooks/tabs/useTabWindowDockReconcile.test.ts`. `installTabWindowsApi` in `src/__tests__/helpers/tabWindows.ts` now fakes `dock` too.
+
 ## D5. Per tab type
 
 ### Terminal
