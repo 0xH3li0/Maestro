@@ -2579,6 +2579,51 @@ Open System Settings on the Full Disk Access list and watch for the switch (the 
 | `--reveal` | Also show MaestroRun.app in Finder, for dragging into the list | -       |
 | `--json`   | Output as JSON (for scripting)                                 | -       |
 
+## `maestro-cli dataview`
+
+Dataview: run a note's Dataview queries and manage the vault index
+
+## `maestro-cli dataview query <file>`
+
+Run a note's dataview blocks with `this` bound to the note (DataviewJS blocks are desktop-only)
+
+| Option         | Description                                                               | Default |
+| -------------- | ------------------------------------------------------------------------- | ------- |
+| `--block <n>`  | Run only the n-th dataview block (1-based; dataviewjs fences not counted) | -       |
+| `--agent <id>` | Agent the note belongs to (default: the agent whose folder holds it)      | -       |
+| `--json`       | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli dataview eval <file> <dql>`
+
+Run an ad-hoc DQL query with `this` bound to the note; start with = for an inline expression
+
+| Option         | Description                                                          | Default |
+| -------------- | -------------------------------------------------------------------- | ------- |
+| `--agent <id>` | Agent the note belongs to (default: the agent whose folder holds it) | -       |
+| `--json`       | Output as JSON (for scripting)                                       | -       |
+
+## `maestro-cli dataview index`
+
+Inspect or rebuild the Dataview index of a vault
+
+## `maestro-cli dataview index status [root]`
+
+Show the open vault indexes, or one vault root (pages, revision, watcher, cache)
+
+| Option         | Description                                                   | Default |
+| -------------- | ------------------------------------------------------------- | ------- |
+| `--agent <id>` | Agent whose SSH remote holds the root (default: a local root) | -       |
+| `--json`       | Output as JSON (for scripting)                                | -       |
+
+## `maestro-cli dataview index rebuild <root>`
+
+Drop a vault root's index cache and index it again from scratch
+
+| Option         | Description                                                   | Default |
+| -------------- | ------------------------------------------------------------- | ------- |
+| `--agent <id>` | Agent whose SSH remote holds the root (default: a local root) | -       |
+| `--json`       | Output as JSON (for scripting)                                | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey
