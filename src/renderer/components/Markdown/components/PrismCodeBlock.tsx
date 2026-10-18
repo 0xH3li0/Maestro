@@ -34,6 +34,12 @@ export interface PrismHighlightedCodeProps {
 	language: string;
 	theme: Theme;
 	codeBlockStyle?: PrismCodeBlockOptions['codeBlockStyle'];
+	/**
+	 * The fence's `data-source-line` (stamped on its `pre` by `rehypeSourceLine`),
+	 * carried on the block's outer element so preview/edit line sync can anchor
+	 * on code blocks too.
+	 */
+	sourceLine?: string | number;
 }
 
 /**
@@ -46,6 +52,7 @@ export function PrismHighlightedCode({
 	language,
 	theme,
 	codeBlockStyle,
+	sourceLine,
 }: PrismHighlightedCodeProps) {
 	// Use light/dark base style depending on theme mode, then override text
 	// color & background so plain-text / unknown-language code blocks match
@@ -67,7 +74,11 @@ export function PrismHighlightedCode({
 	// is the block's visible corner, not the margin box.
 	return React.createElement(
 		'div',
-		{ className: 'relative', style: { margin: codeBlockStyle?.margin ?? '0.5em 0' } },
+		{
+			className: 'relative',
+			style: { margin: codeBlockStyle?.margin ?? '0.5em 0' },
+			...(sourceLine !== undefined ? { 'data-source-line': sourceLine } : null),
+		},
 		React.createElement(SyntaxHighlightBoundary, {
 			code,
 			theme,
@@ -93,7 +104,10 @@ export function PrismHighlightedCode({
 export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 	const { theme, customLanguageRenderers = {}, codeBlockStyle } = options;
 
-	return function PrismCodeBlock({ children }: JSX.IntrinsicElements['pre'] & ExtraProps) {
+	return function PrismCodeBlock({
+		children,
+		'data-source-line': sourceLine,
+	}: JSX.IntrinsicElements['pre'] & ExtraProps & { 'data-source-line'?: string | number }) {
 		const codeElement = React.Children.toArray(children).find(
 			(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
 		) as React.ReactElement<any> | undefined;
@@ -108,10 +122,18 @@ export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 			const language = match ? match[1] : 'text';
 			const codeContent = String(codeChildren).replace(/\n$/, '');
 
-			// Check for custom language renderer (e.g., mermaid)
-			if (customLanguageRenderers[language]) {
+			// Check for custom language renderer (e.g., mermaid). Own keys only: a
+			// `constructor` or `toString` fence must not reach Object.prototype.
+			if (Object.prototype.hasOwnProperty.call(customLanguageRenderers, language)) {
 				const CustomRenderer = customLanguageRenderers[language];
-				return React.createElement(CustomRenderer, { code: codeContent, theme });
+				const rendered = React.createElement(CustomRenderer, { code: codeContent, theme });
+				// The custom element replaces the `pre`, so its line tag would be lost.
+				// A plain block wrapper keeps it for line sync; the renderer's own
+				// output never carries one (rows from other files would break the
+				// ascending line walk).
+				return sourceLine === undefined
+					? rendered
+					: React.createElement('div', { 'data-source-line': sourceLine }, rendered);
 			}
 
 			return React.createElement(PrismHighlightedCode, {
@@ -119,10 +141,18 @@ export function createPrismCodeBlock(options: PrismCodeBlockOptions) {
 				language,
 				theme,
 				codeBlockStyle,
+				sourceLine,
 			});
 		}
 
 		// Fallback: render as-is
-		return React.createElement('pre', { translate: 'no' }, children);
+		return React.createElement(
+			'pre',
+			{
+				translate: 'no',
+				...(sourceLine !== undefined ? { 'data-source-line': sourceLine } : null),
+			},
+			children
+		);
 	};
 }
