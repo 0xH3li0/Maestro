@@ -108,4 +108,120 @@
  *   - `getMediaPlaybackActions()` in the store has no callers.
  */
 
-export {};
+import {
+	MEDIA_COMMAND_ACTIONS,
+	isMediaPlayerWidgetCommand,
+	type MediaCommandAction,
+	type MediaPlayerWidgetCommand,
+	type MediaPlayerWidgetState,
+} from '../../shared/floatingWidgets';
+import { floatingWidgetsAvailable } from '../utils/floatingWidgetMode';
+import {
+	mirrorStoreState,
+	onWidgetCommand,
+	publishStoreState,
+	sendWidgetCommand,
+} from '../utils/windowStoreMirror';
+import { setMediaQueuePersistEnabled, useMediaPlaybackStore } from './mediaPlaybackStore';
+
+const WIDGET_ID = 'media-player';
+
+type MediaPlaybackState = ReturnType<typeof useMediaPlaybackStore.getState>;
+type MediaCommands = Pick<MediaPlaybackState, MediaCommandAction>;
+
+const noop = () => {};
+
+/**
+ * The mirrored snapshot (map section (c)). The authority publishes it from its
+ * store, and the replica applies it through the same pick, so a stray field in
+ * a relayed payload never reaches the replica's store.
+ */
+export function selectMediaPlayerWidgetState(
+	state: MediaPlayerWidgetState
+): MediaPlayerWidgetState {
+	return {
+		items: state.items,
+		activeItemId: state.activeItemId,
+		history: state.history,
+		playing: state.playing,
+		dismissed: state.dismissed,
+		dormant: state.dormant,
+	};
+}
+
+/**
+ * What a forwarded command returns to its caller. The authority answers
+ * asynchronously, so only `enqueueMedia`'s count needs a stand-in: the number
+ * of requests sent, which is what the callers report to the user.
+ */
+function forwardedResult(action: MediaCommandAction, args: unknown[]): unknown {
+	if (action === 'enqueueMedia') return Array.isArray(args[0]) ? args[0].length : 0;
+	return undefined;
+}
+
+/**
+ * Make this window's media store a REPLICA of the media widget window's.
+ *
+ * Every COMMAND action is replaced by one that forwards it to the authority and
+ * changes nothing here; the authority's snapshot is mirrored in; and this window
+ * stops writing `mediaPlayerQueue`. A no-op outside the desktop app.
+ *
+ * @returns Uninstall: restores the original actions and queue persistence.
+ */
+export function installMediaPlaybackReplica(): () => void {
+	if (!floatingWidgetsAvailable()) return noop;
+
+	const state = useMediaPlaybackStore.getState();
+	const originals = {} as Record<MediaCommandAction, unknown>;
+	const forwarded = {} as Record<MediaCommandAction, unknown>;
+	for (const action of MEDIA_COMMAND_ACTIONS) {
+		originals[action] = state[action];
+		forwarded[action] = (...args: unknown[]) => {
+			const command: MediaPlayerWidgetCommand = { type: 'action', action, args };
+			sendWidgetCommand(WIDGET_ID, command);
+			return forwardedResult(action, args);
+		};
+	}
+
+	setMediaQueuePersistEnabled(false);
+	useMediaPlaybackStore.setState(forwarded as MediaCommands);
+	const unmirror = mirrorStoreState<MediaPlaybackState, MediaPlayerWidgetState>(
+		WIDGET_ID,
+		useMediaPlaybackStore,
+		selectMediaPlayerWidgetState
+	);
+
+	return () => {
+		unmirror();
+		useMediaPlaybackStore.setState(originals as MediaCommands);
+		setMediaQueuePersistEnabled(true);
+	};
+}
+
+/**
+ * Make this window's media store the AUTHORITY: publish its snapshot and apply
+ * every valid command a replica forwards by calling the same action here. A
+ * command naming anything outside the COMMAND union is dropped. A no-op outside
+ * the desktop app.
+ *
+ * @returns Uninstall: stops publishing and listening.
+ */
+export function installMediaPlaybackAuthority(): () => void {
+	const unpublish = publishStoreState(
+		WIDGET_ID,
+		useMediaPlaybackStore,
+		selectMediaPlayerWidgetState
+	);
+	const unlisten = onWidgetCommand<unknown>(WIDGET_ID, (command) => {
+		if (!isMediaPlayerWidgetCommand(command)) return;
+		const action = useMediaPlaybackStore.getState()[command.action] as (
+			...args: unknown[]
+		) => unknown;
+		action(...command.args);
+	});
+
+	return () => {
+		unpublish();
+		unlisten();
+	};
+}
