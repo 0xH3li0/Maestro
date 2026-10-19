@@ -2703,7 +2703,7 @@ Send a message in the current Quick Chat (starts a chat if none is open); --imag
 
 ## `maestro-cli quick-chat new`
 
-Start a new chat (an ephemeral previous chat is deleted)
+Start a new chat (the previous one finishes any reply in progress; an ephemeral one is then deleted)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

@@ -69,7 +69,7 @@ When Maestro picks the wrong tab, click the thumbs-down beside the pill. A reply
 
 ### When the tab is busy
 
-A tab answers one message at a time. When a message goes to a tab that is in the middle of a reply (a follow-up sent before the last answer finished, or a first message routed to a busy tab), it waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
+A tab answers one message at a time. When Maestro finds a tab for a message, it skips the agent's tabs that are in the middle of a reply, so a message that matches a busy tab starts a new tab instead of waiting behind it. The chat's own tab is the exception. A follow-up sent before the last answer finished, or a message you sent to a busy tab yourself, waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
 
 If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now, and the chat moves with it: your next message goes to that new tab. The same thing from the command line is `maestro-cli quick-chat new-tab`.
 
@@ -83,10 +83,12 @@ Two replies running at once on one agent share its working directory. If both ed
 
 A chat has one of two modes, and you can flip between them at any time with the bookmark in the window or `Cmd+S` / `Ctrl+S`. The mode applies only to the tabs the chat **creates**. A tab the agent already had, and a tab reopened for a message, are yours: Quick Chat never hides or deletes them.
 
-| Mode                | What happens to a tab the chat creates                                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted. Whether its turns write [History](/history) entries is a setting. |
-| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
+| Mode                | What happens to a tab the chat creates                                                                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted once any reply in progress has finished. Whether its turns write [History](/history) entries is a setting. |
+| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                                                                       |
+
+Only Stop stops a reply. Closing the window, starting a new chat, switching agents, or bringing back a recent chat never cuts off a message already sent: it goes through out of sight, and its reply lands in the recent chats (`Cmd+Y` / `Ctrl+Y`), where bringing the chat back shows it, live if it is still running.
 
 An ephemeral chat that wrote History entries is still a conversation from the last two weeks, so a later message about the same subject can reopen it.
 

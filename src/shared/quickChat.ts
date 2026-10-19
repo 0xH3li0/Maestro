@@ -27,7 +27,8 @@
  * the agent already had, or one reopened for a message, is the user's own and is
  * never hidden or deleted:
  * - Ephemeral: a created tab is hidden (no chip in the tab strip). Starting a
- *   new chat deletes it. Whether its turns reach History is a setting.
+ *   new chat deletes it once its reply in progress, if any, has finished.
+ *   Whether its turns reach History is a setting.
  * - Persistent: a created tab is visible on the agent and stays when a new chat
  *   starts, like any other tab.
  */
