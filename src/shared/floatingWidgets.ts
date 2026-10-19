@@ -7,6 +7,7 @@
  * `Plans/floating-widgets.md`.
  */
 
+import type { MediaItem } from './mediaTypes';
 import type { ThroughputHistory, ThroughputRates } from './throughputRate';
 
 /** Every widget that can float. The order is stable; tests and IPC rely on it. */
@@ -98,4 +99,63 @@ export function isThroughputGaugeWidgetCommand(
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
 	const type = (value as { type?: unknown }).type;
 	return typeof type === 'string' && THROUGHPUT_GAUGE_WIDGET_COMMAND_TYPES.includes(type);
+}
+
+/**
+ * What the media widget window (the authority, which owns the one media
+ * element) publishes with `publishStoreState('media-player', ...)`. The primary
+ * window mirrors it into its replica of `useMediaPlaybackStore`. Positions,
+ * durations, aspects, and one-shot nonces stay in the authority: see the map in
+ * `src/renderer/stores/mediaPlaybackReplica.ts`.
+ */
+export interface MediaPlayerWidgetState {
+	items: MediaItem[];
+	activeItemId: string | null;
+	history: MediaItem[];
+	playing: boolean;
+	dismissed: boolean;
+	dormant: boolean;
+}
+
+/**
+ * Every `useMediaPlaybackStore` action a caller may issue from a replica. Element
+ * reports (`setPlaying`, `rememberTime`, ...) are deliberately absent: only the
+ * authority's player makes them, so a forwarded one is refused.
+ */
+export const MEDIA_COMMAND_ACTIONS = [
+	'openMedia',
+	'enqueueMedia',
+	'setActiveItem',
+	'requestToggle',
+	'closeItem',
+	'clearQueue',
+	'removeHistoryItem',
+	'clearHistory',
+	'dismiss',
+	'restore',
+	'openPlayer',
+] as const;
+
+export type MediaCommandAction = (typeof MEDIA_COMMAND_ACTIONS)[number];
+
+/**
+ * A store action the replica forwards to the authority, which applies it by
+ * calling the same action on its own store with the same arguments.
+ */
+export interface MediaPlayerWidgetCommand {
+	type: 'action';
+	action: MediaCommandAction;
+	args: unknown[];
+}
+
+/** Whether a relayed value is a media command, naming only a COMMAND action. */
+export function isMediaPlayerWidgetCommand(value: unknown): value is MediaPlayerWidgetCommand {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const { type, action, args } = value as { type?: unknown; action?: unknown; args?: unknown };
+	return (
+		type === 'action' &&
+		typeof action === 'string' &&
+		(MEDIA_COMMAND_ACTIONS as readonly string[]).includes(action) &&
+		Array.isArray(args)
+	);
 }

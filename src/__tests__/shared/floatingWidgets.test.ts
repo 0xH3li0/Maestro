@@ -1,14 +1,16 @@
 /**
  * @file floatingWidgets.test.ts
  * @description The floating-widget contract: id validation, the widget specs,
- * and the throughput gauge's command guard.
+ * and the command guards for the throughput gauge and the media player.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
 	FLOATING_WIDGET_IDS,
 	FLOATING_WIDGET_SPECS,
+	MEDIA_COMMAND_ACTIONS,
 	isFloatingWidgetId,
+	isMediaPlayerWidgetCommand,
 	isThroughputGaugeWidgetCommand,
 } from '../../shared/floatingWidgets';
 
@@ -82,6 +84,79 @@ describe('isThroughputGaugeWidgetCommand', () => {
 			{ kind: 'hide' },
 		]) {
 			expect(isThroughputGaugeWidgetCommand(value)).toBe(false);
+		}
+	});
+});
+
+describe('MEDIA_COMMAND_ACTIONS', () => {
+	it('lists exactly the store commands a caller issues, once each', () => {
+		expect([...MEDIA_COMMAND_ACTIONS].sort()).toEqual(
+			[
+				'clearHistory',
+				'clearQueue',
+				'closeItem',
+				'dismiss',
+				'enqueueMedia',
+				'openMedia',
+				'openPlayer',
+				'removeHistoryItem',
+				'requestToggle',
+				'restore',
+				'setActiveItem',
+			].sort()
+		);
+		expect(new Set(MEDIA_COMMAND_ACTIONS).size).toBe(MEDIA_COMMAND_ACTIONS.length);
+	});
+});
+
+describe('isMediaPlayerWidgetCommand', () => {
+	it('accepts every command action with an argument list', () => {
+		for (const action of MEDIA_COMMAND_ACTIONS) {
+			expect(isMediaPlayerWidgetCommand({ type: 'action', action, args: [] })).toBe(true);
+		}
+		expect(
+			isMediaPlayerWidgetCommand({
+				type: 'action',
+				action: 'setActiveItem',
+				args: ['item-1', { autoplay: true }],
+			})
+		).toBe(true);
+	});
+
+	it('refuses element reports, which only the authority makes', () => {
+		for (const action of [
+			'setPlaying',
+			'rememberTime',
+			'rememberDuration',
+			'rememberAspect',
+			'advanceAfterEnded',
+			'consumeAutoplay',
+			'setFloatGeometry',
+			'setFloatFootprint',
+		]) {
+			expect(isMediaPlayerWidgetCommand({ type: 'action', action, args: [] })).toBe(false);
+		}
+	});
+
+	it('refuses unknown, misspelled, or inherited action names', () => {
+		for (const action of ['', 'OpenMedia', 'open', 'setState', 'toString', 'constructor']) {
+			expect(isMediaPlayerWidgetCommand({ type: 'action', action, args: [] })).toBe(false);
+		}
+	});
+
+	it('refuses a command without an argument array or with the wrong type', () => {
+		expect(isMediaPlayerWidgetCommand({ type: 'action', action: 'dismiss' })).toBe(false);
+		expect(isMediaPlayerWidgetCommand({ type: 'action', action: 'dismiss', args: 'x' })).toBe(
+			false
+		);
+		expect(isMediaPlayerWidgetCommand({ type: 'action', action: 'dismiss', args: {} })).toBe(false);
+		expect(isMediaPlayerWidgetCommand({ type: 'hide', action: 'dismiss', args: [] })).toBe(false);
+		expect(isMediaPlayerWidgetCommand({ action: 'dismiss', args: [] })).toBe(false);
+	});
+
+	it('refuses values that are not command objects', () => {
+		for (const value of [undefined, null, 'dismiss', 0, true, {}, [], [{ type: 'action' }]]) {
+			expect(isMediaPlayerWidgetCommand(value)).toBe(false);
 		}
 	});
 });

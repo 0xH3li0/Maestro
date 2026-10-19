@@ -18,7 +18,12 @@
  */
 
 import { formatElapsedTimeColon } from '../../shared/formatters';
-import { getMediaKind, isMediaStreamUrl, type MediaKind } from '../../shared/mediaTypes';
+import {
+	getMediaKind,
+	isMediaStreamUrl,
+	type MediaItem,
+	type MediaKind,
+} from '../../shared/mediaTypes';
 
 /**
  * A media clock time (`4:26`, `1:02:30`), or `--:--` when it is not known yet.
@@ -48,18 +53,8 @@ export function getOpenedMediaKind(fileName: string, content: string): MediaKind
 	return getMediaKind(fileName);
 }
 
-/** One entry in the play queue. */
-export interface MediaItem {
-	/** Stable per agent + path, so re-opening the same file resumes it. */
-	id: string;
-	path: string;
-	/** Filename including the extension, shown in the player's title bar. */
-	name: string;
-	/** Agent the file was opened from, so the player can say where it came from. */
-	sessionId: string;
-	sessionName: string;
-	kind: MediaKind;
-}
+/** One entry in the play queue. Defined in shared so the widget relay can type it. */
+export type { MediaItem } from '../../shared/mediaTypes';
 
 /**
  * Identity of a media item.

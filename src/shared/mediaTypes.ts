@@ -49,6 +49,19 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 
 export type MediaKind = 'audio' | 'video';
 
+/** One entry in the play queue. */
+export interface MediaItem {
+	/** Stable per agent + path, so re-opening the same file resumes it. */
+	id: string;
+	path: string;
+	/** Filename including the extension, shown in the player's title bar. */
+	name: string;
+	/** Agent the file was opened from, so the player can say where it came from. */
+	sessionId: string;
+	sessionName: string;
+	kind: MediaKind;
+}
+
 /**
  * What opening a playable audio/video file should do.
  *
