@@ -819,9 +819,10 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// flow. When the primary is the LAST window, we defer to
 		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
 		// we skip if a quit is already in flight to avoid re-entrancy.
-		// Offscreen browser pages are workloads, not secondary application windows.
+		// Offscreen browser pages are workloads, not secondary application windows,
+		// and feature windows (HUD, Quick Chat, floating widgets) are not either.
 		const otherWindowsOpen = BrowserWindow.getAllWindows().some(
-			(window) => !isHostBrowserPageWindow(window)
+			(window) => !isHostBrowserPageWindow(window) && !windowRegistry.isFeatureWindow(window)
 		);
 		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
 			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
@@ -3388,7 +3389,12 @@ app
 		timeZoneWatcher.start();
 
 		app.on('activate', () => {
-			if (BrowserWindow.getAllWindows().length === 0) {
+			// A floating widget left on screen is not an app window: the dock click
+			// must still bring the main window back.
+			const appWindowOpen = BrowserWindow.getAllWindows().some(
+				(window) => !windowRegistry.isFeatureWindow(window)
+			);
+			if (!appWindowOpen) {
 				createWindow();
 			}
 		});
