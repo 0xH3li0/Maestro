@@ -83,10 +83,12 @@ Two replies running at once on one agent share its working directory. If both ed
 
 A chat has one of two modes, and you can flip between them at any time with the bookmark in the window or `Cmd+S` / `Ctrl+S`. The mode applies only to the tabs the chat **creates**. A tab the agent already had, and a tab reopened for a message, are yours: Quick Chat never hides or deletes them.
 
-| Mode                | What happens to a tab the chat creates                                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted. Whether its turns write [History](/history) entries is a setting. |
-| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
+| Mode                | What happens to a tab the chat creates                                                                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted once any reply in progress has finished. Whether its turns write [History](/history) entries is a setting. |
+| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                                                                       |
+
+Only Stop stops a reply. Closing the window, starting a new chat, switching agents, or bringing back a recent chat never cuts off a message already sent: it goes through out of sight, and its reply lands in the recent chats (`Cmd+Y` / `Ctrl+Y`), where bringing the chat back shows it, live if it is still running.
 
 An ephemeral chat that wrote History entries is still a conversation from the last two weeks, so a later message about the same subject can reopen it.
 

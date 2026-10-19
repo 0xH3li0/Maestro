@@ -1735,6 +1735,51 @@ describe('group-chat-router', () => {
 			}
 		});
 
+		it('releases a held delegation when the chat opts out mid-wait', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Opt Out Mid Wait Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [busyClientSession]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				await runPollsUntil(() => false, 2);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				// The user flips the toggle off in Edit Group Chat while the agent is
+				// still busy: the waiting delegation must go in on the next poll
+				// rather than sit out the rest of the wait budget.
+				await updateGroupChat(chat.id, { requireIdleParticipants: false });
+
+				// Wait on real time until the spawn lands. The release path writes its
+				// "No longer waiting" line to the log file before it spawns, and that
+				// write is real I/O: a fixed number of fake-timer passes is a hidden time
+				// budget, and on a slow CI runner it ran out before the write finished.
+				// vi.waitFor advances the fake clock by its interval on every check, so
+				// the next poll still fires; 10 seconds of checks is about 10 seconds of
+				// fake time, well inside the 15 minute wait budget, so a give-up cannot
+				// stand in for the release.
+				await vi.waitFor(() => expect(participantSpawnsFor(chat.id)).toHaveLength(1), {
+					timeout: 10_000,
+				});
+
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some((m) => m.from === 'system' && m.content.includes('No longer waiting'))
+				).toBe(true);
+
+				clearPendingParticipants(chat.id);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('stops waiting when the chat is stopped', async () => {
 			vi.useFakeTimers();
 			try {
