@@ -70,6 +70,7 @@ import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
 	MEDIA_QUEUE_SETTINGS_KEY,
+	isMediaQueuePersistEnabled,
 	useMediaPlaybackStore,
 	type PersistedMediaQueue,
 } from './mediaPlaybackStore';
@@ -2450,11 +2451,19 @@ export async function loadAllSettings(): Promise<void> {
 		// describes a session that has since moved on - so the live store wins and
 		// the read is skipped entirely. That also makes the hydration idempotent,
 		// which matters because a second `useSettings` mount calls it again.
+		//
+		// A media REPLICA (the primary window while the player has its own desktop
+		// window) skips it too: the widget window owns the queue, hydrates it, and
+		// publishes the snapshot this window shows.
 		const mediaAlreadyLoaded = (): boolean => {
 			const media = useMediaPlaybackStore.getState();
 			return media.activeItemId !== null || media.items.length > 0;
 		};
-		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined && !mediaAlreadyLoaded()) {
+		if (
+			allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined &&
+			isMediaQueuePersistEnabled() &&
+			!mediaAlreadyLoaded()
+		) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
 			if (items.length > 0) {

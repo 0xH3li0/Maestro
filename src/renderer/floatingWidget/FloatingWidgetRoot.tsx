@@ -8,6 +8,12 @@
  * the one widget body the id names. Each body draws its own
  * `FloatingWidgetFrame`, so it owns its title, actions and close behavior.
  *
+ * The root reports the window ready to main only once those settings have
+ * loaded. Main holds commands until then, and the media player's persisted
+ * queue hydrates in that load, so a held `open-file` lands on the restored
+ * queue rather than racing it (and losing it to the "restore only onto an
+ * empty player" guard).
+ *
  * An id this build does not know renders nothing: the window stays a
  * transparent, empty rectangle rather than a broken widget, and the reason
  * goes to the log.
@@ -15,13 +21,13 @@
 
 import { useEffect, useRef } from 'react';
 import type { ComponentType } from 'react';
-import { LayoutPanelTop } from 'lucide-react';
 import { isFloatingWidgetId, type FloatingWidgetId } from '../../shared/floatingWidgets';
 import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
+import { useSettingsStore } from '../stores/settingsStore';
 import { logger } from '../utils/logger';
 import type { Theme } from '../types';
-import { FloatingWidgetFrame } from './FloatingWidgetFrame';
+import { MediaPlayerWidget } from './MediaPlayerWidget';
 import { ThroughputGaugeWidget } from './ThroughputGaugeWidget';
 
 /** The URL parameter that names the widget a window hosts. */
@@ -31,40 +37,10 @@ export interface FloatingWidgetBodyProps {
 	theme: Theme;
 }
 
-/**
- * Temporary body until the real widget lands (phase 04 of the
- * floating-widgets plan). Its close hides the window, which main keeps.
- */
-function placeholderBody(
-	id: FloatingWidgetId,
-	title: string
-): ComponentType<FloatingWidgetBodyProps> {
-	function PlaceholderBody({ theme }: FloatingWidgetBodyProps) {
-		return (
-			<FloatingWidgetFrame
-				theme={theme}
-				icon={<LayoutPanelTop className="w-3.5 h-3.5" />}
-				title={title}
-				onClose={() => void window.maestro?.floatingWidgets?.hide(id)}
-				closeLabel={`Hide ${title}`}
-			>
-				<div
-					className="flex-1 flex items-center justify-center text-xs"
-					style={{ color: theme.colors.textDim }}
-				>
-					{title}
-				</div>
-			</FloatingWidgetFrame>
-		);
-	}
-	PlaceholderBody.displayName = `PlaceholderBody(${id})`;
-	return PlaceholderBody;
-}
-
 /** The body each widget id renders. */
 const WIDGET_BODIES: Record<FloatingWidgetId, ComponentType<FloatingWidgetBodyProps>> = {
 	'throughput-gauge': ThroughputGaugeWidget,
-	'media-player': placeholderBody('media-player', 'Media Player'),
+	'media-player': MediaPlayerWidget,
 };
 
 function readWidgetParam(): string | null {
@@ -90,15 +66,17 @@ function FloatingWidgetHost({ id }: { id: FloatingWidgetId }) {
 	// secondary window shares.
 	useWindowSettingsSync();
 	const theme = useResolvedTheme();
+	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 
-	// Tell main the body mounted (and subscribed), so commands it held for this
-	// window can be delivered. The ref keeps StrictMode's remount from sending twice.
+	// Tell main the body mounted (and subscribed) and the settings it hydrates
+	// from have loaded, so commands it held for this window can be delivered.
+	// The ref keeps StrictMode's remount from sending twice.
 	const readySent = useRef(false);
 	useEffect(() => {
-		if (readySent.current) return;
+		if (!settingsLoaded || readySent.current) return;
 		readySent.current = true;
 		window.maestro?.floatingWidgets?.ready(id);
-	}, [id]);
+	}, [id, settingsLoaded]);
 
 	const Body = WIDGET_BODIES[id];
 	return <Body theme={theme} />;

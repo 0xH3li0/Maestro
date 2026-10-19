@@ -315,6 +315,15 @@ export function setMediaQueuePersistEnabled(enabled: boolean): void {
 	}
 }
 
+/**
+ * Whether this window owns the persisted queue. A replica neither writes it nor
+ * hydrates from it: the authority does both, and its snapshot is what the
+ * replica shows.
+ */
+export function isMediaQueuePersistEnabled(): boolean {
+	return queuePersistEnabled;
+}
+
 /** Write the queue, the loaded item, and every remembered position to settings. */
 function writeQueueNow(): void {
 	if (!queuePersistEnabled) return;
