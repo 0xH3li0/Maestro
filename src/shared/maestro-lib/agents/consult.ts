@@ -168,6 +168,8 @@ export interface ConsultStartOptions {
 interface ActiveConsult {
 	/** The agent the mention was typed in - what Stop is addressed to. */
 	sourceSessionId: string;
+	/** The tab whose turn asked - what a Stop aimed at one tab is addressed to. */
+	sourceTabId: string;
 	/** The agent that is answering. */
 	targetSessionId: string;
 	/** Terminate this consult and emit its terminal chunk. Idempotent. */
@@ -185,12 +187,17 @@ export function createConsultService() {
 	 * stamped `canceled` rather than `error`, so the source agent's bubble reports that the user
 	 * stopped it instead of blaming the target for failing to answer.
 	 *
+	 * `sourceTabId` narrows it to the consults one tab's turn started, for a Stop aimed at that
+	 * tab alone. Without it a tab-scoped stop would leave the consult running, and its reply would
+	 * release the hold into a continuation that resumes the conversation just stopped.
+	 *
 	 * @returns How many consults were cancelled.
 	 */
-	function cancelForSource(sourceSessionId: string): number {
+	function cancelForSource(sourceSessionId: string, sourceTabId?: string): number {
 		// Snapshot first: `cancel()` deletes from the map it is iterating.
 		const doomed = [...activeConsults.values()].filter(
-			(c) => c.sourceSessionId === sourceSessionId
+			(c) =>
+				c.sourceSessionId === sourceSessionId && (!sourceTabId || c.sourceTabId === sourceTabId)
 		);
 		for (const consult of doomed) consult.cancel();
 		return doomed.length;
@@ -269,6 +276,7 @@ export function createConsultService() {
 		let cancelRequested = false;
 		const registration: ActiveConsult = {
 			sourceSessionId: request.sourceSessionId,
+			sourceTabId: request.sourceTabId,
 			targetSessionId: request.targetSessionId,
 			cancel: () => {
 				cancelRequested = true;

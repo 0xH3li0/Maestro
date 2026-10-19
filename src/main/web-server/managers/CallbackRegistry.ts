@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/notificationInbox';
 
 import { logger } from '../../utils/logger';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
 import type {
 	GetSessionsCallback,
@@ -474,8 +475,16 @@ export class CallbackRegistry {
 		);
 	}
 
-	async interruptSession(sessionId: string): Promise<boolean> {
-		return this.callbacks.interruptSession?.(sessionId) ?? false;
+	async interruptSession(sessionId: string, tabId?: string): Promise<InterruptTurnResult> {
+		if (!this.callbacks.interruptSession) {
+			return interruptTurnFailure(
+				sessionId,
+				tabId ?? null,
+				'RENDERER_UNAVAILABLE',
+				'Session interrupt service not configured'
+			);
+		}
+		return this.callbacks.interruptSession(sessionId, tabId);
 	}
 
 	async switchMode(

@@ -4,7 +4,7 @@ import { startNotificationHistorySync } from '../../stores/notificationStore';
 import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
+import type { Session, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
@@ -54,6 +54,8 @@ import {
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { steerQueuedItem } from '../../services/chatSteering';
+import { interruptTurn } from '../../services/turnInterrupt';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -502,35 +504,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, [sessionsRef]);
 
-	// Handle remote interrupts from web interface
-	// This allows web interrupts to go through the same code path as desktop (handleInterrupt)
+	// Handle remote interrupts (REST `POST /api/session/:id/interrupt` and
+	// `maestro-cli interrupt`). Runs the same `interruptTurn()` the desktop Stop
+	// pill runs, scoped to one tab when the caller named one, and answers main
+	// with the result so the caller learns what stopped. Main sends this to the
+	// window that owns the agent, so no ownership check is needed here.
 	useEffect(() => {
 		const unsubscribeInterrupt = window.maestro.process.onRemoteInterrupt(
-			async (sessionId: string) => {
-				// Find the session
-				const session = sessionsRef.current.find((s) => s.id === sessionId);
-				if (!session) {
-					return;
-				}
-
-				// Use the same logic as handleInterrupt
-				const currentMode = session.inputMode;
-				const targetSessionId =
-					currentMode === 'ai' ? `${session.id}-ai` : `${session.id}-terminal`;
-
+			async (sessionId, tabId, responseChannel) => {
+				let result: InterruptTurnResult;
 				try {
-					// Send interrupt signal (Ctrl+C)
-					await window.maestro.process.interrupt(targetSessionId);
-
-					// Set state to idle (same as handleInterrupt)
-					updateSessionWith(session.id, (s) => ({
-						...s,
-						state: 'idle' as SessionState,
-						busySource: undefined,
-						thinkingStartTime: undefined,
-					}));
+					result = await interruptTurn(sessionId, { tabId });
 				} catch (error) {
-					logger.error('[Remote] Failed to interrupt session:', undefined, error);
+					// Answer before rethrowing, so the caller is not left waiting for
+					// the timeout, and the bug still reaches Sentry.
+					if (responseChannel) {
+						window.maestro.process.sendRemoteInterruptResponse(
+							responseChannel,
+							interruptTurnFailure(
+								sessionId,
+								tabId ?? null,
+								'SIGNAL_FAILED',
+								error instanceof Error ? error.message : String(error)
+							)
+						);
+					}
+					throw error;
+				}
+				if (responseChannel) {
+					window.maestro.process.sendRemoteInterruptResponse(responseChannel, result);
 				}
 			}
 		);
@@ -538,7 +540,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribeInterrupt();
 		};
-	}, [sessionsRef]);
+	}, []);
 
 	// Handle remote session selection from web interface
 	// This allows web clients to switch the active session in the desktop app

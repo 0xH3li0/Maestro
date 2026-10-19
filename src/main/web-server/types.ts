@@ -6,6 +6,7 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { InterruptTurnResult } from '../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
@@ -344,7 +345,14 @@ export type ExecuteCommandCallback = (
  * Callback type for interrupting a session through the desktop's existing logic.
  * This forwards to the renderer which handles state updates and broadcasts.
  */
-export type InterruptSessionCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * Stop a running turn through the renderer's `interruptTurn()`: the whole agent,
+ * or one tab when `tabId` is given. Resolves with what the stop did.
+ */
+export type InterruptSessionCallback = (
+	sessionId: string,
+	tabId?: string
+) => Promise<InterruptTurnResult>;
 
 /**
  * Callback type for switching session input mode through the desktop's existing logic.

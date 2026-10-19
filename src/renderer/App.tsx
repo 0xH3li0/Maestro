@@ -2408,7 +2408,6 @@ function MaestroConsoleInner() {
 
 	// handleInterrupt - provided by useInterruptHandler hook
 	const { handleInterrupt } = useInterruptHandler({
-		sessionsRef,
 		cancelPendingSynopsis,
 		processQueuedItem,
 	});
