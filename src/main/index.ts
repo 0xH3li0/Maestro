@@ -223,6 +223,16 @@ import {
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
+import {
+	createFloatingWidgetWindow,
+	type FloatingWidgetController,
+} from './floating-widgets/floating-widget-window';
+import { createFloatingWidgetRelay } from './floating-widgets/floating-widget-relay';
+import {
+	FLOATING_WIDGET_IDS,
+	FLOATING_WIDGET_SPECS,
+	type FloatingWidgetId,
+} from '../shared/floatingWidgets';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
 import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
@@ -679,6 +689,10 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
+	// A switched-off Throughput Gauge leaves no widget window behind.
+	if (!resolveEncoreFeatures(encoreFeatures).throughputGauge) {
+		floatingWidgetControllers['throughput-gauge'].close();
+	}
 	// Feature changes also invalidate cached settings guests, including changes
 	// made outside this renderer. Reads remain pure; do not refresh discovery.
 	try {
@@ -753,6 +767,53 @@ const quickChatController = createQuickChatController({
 	getWindowForSession: resolveWindowForSession,
 });
 
+// Floating widgets: always-on-top desktop windows for the throughput gauge and
+// the media player (see Plans/floating-widgets.md). One controller per widget,
+// with the same window deps as Quick Chat; the relay carries state and commands
+// between each widget and the window that owns it. IPC registers at app-ready
+// (see floatingWidgetRelay.init below).
+const floatingWidgetControllers = Object.fromEntries(
+	FLOATING_WIDGET_IDS.map((id) => [
+		id,
+		createFloatingWidgetWindow(FLOATING_WIDGET_SPECS[id], {
+			isDevelopment,
+			preloadPath,
+			rendererProductionUrl,
+			devServerUrl,
+			windowRegistry,
+			// Per-device, like every other window's bounds.
+			boundsStore: {
+				get: () => windowStateStore.get('floatingWidgets')?.[id],
+				set: (bounds) =>
+					windowStateStore.set('floatingWidgets', {
+						...windowStateStore.get('floatingWidgets'),
+						[id]: bounds,
+					}),
+			},
+			// The gauge is an Encore Feature: while it is off, its window never exists.
+			isEnabled:
+				id === 'throughput-gauge'
+					? () => resolveEncoreFeatures(store.get('encoreFeatures')).throughputGauge
+					: undefined,
+		}),
+	])
+) as Record<FloatingWidgetId, FloatingWidgetController>;
+
+const floatingWidgetRelay = createFloatingWidgetRelay({
+	controllers: floatingWidgetControllers,
+	// The gauge's rate engine runs in the primary app window; the media player
+	// owns its media element in its own window.
+	getAuthorityWindow: (id) =>
+		id === 'throughput-gauge'
+			? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
+			: floatingWidgetControllers[id].getWindow(),
+	getAllWindows: () => BrowserWindow.getAllWindows(),
+});
+
+function closeFloatingWidgetWindows(): void {
+	for (const controller of Object.values(floatingWidgetControllers)) controller.close();
+}
+
 // What a CLI or web caller is told when it asks a switched-off Cue to act.
 const CUE_DISABLED_MESSAGE =
 	'Maestro Cue is turned off. Run `maestro-cli encore enable cue` first.';
@@ -810,6 +871,7 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		closeCadenzaHudWindow();
 		// Same for Quick Chat: it is a feature window, not a reason to keep running.
 		closeQuickChatWindow();
+		closeFloatingWidgetWindows();
 
 		// The primary window is the app's anchor: it owns the auto-updater, the
 		// global hotkey, the deep-link target, and the quit-confirmation surface.
@@ -3358,6 +3420,7 @@ app
 		});
 		// Quick Chat registers its own hotkey through the same manager.
 		quickChatController.init();
+		floatingWidgetRelay.init();
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
