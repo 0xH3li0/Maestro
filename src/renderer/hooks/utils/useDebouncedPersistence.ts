@@ -69,7 +69,7 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
 /**
  * Prepare a session for persistence by:
  * 1. Filtering out tabs with active wizard state (incomplete wizards should not persist)
- * 2. Truncating logs in each AI tab to MAX_PERSISTED_SESSION_LOGS entries
+ * 2. Truncating ordinary AI tab logs, retaining document chat history in full
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
  *
@@ -137,11 +137,13 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 		tabsToProcess = [];
 	}
 
-	// Truncate logs and reset runtime state in each tab
+	// Document chat history is read directly from this saved transcript on reopen.
+	// Keep it in full; the ordinary tab log budget must not discard its earlier turns.
+	// Reset runtime state in every tab.
 	const truncatedTabs = tabsToProcess.map((tab) => ({
 		...tab,
 		logs:
-			tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+			!tab.documentOrigin && tab.logs.length > MAX_PERSISTED_SESSION_LOGS
 				? tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 				: tab.logs,
 		// Reset runtime-only tab state - processes don't survive app restart
@@ -233,7 +235,7 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 					tab: {
 						...entry.tab,
 						logs:
-							entry.tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+							!entry.tab.documentOrigin && entry.tab.logs.length > MAX_PERSISTED_SESSION_LOGS
 								? entry.tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 								: entry.tab.logs,
 						state: 'idle' as const,

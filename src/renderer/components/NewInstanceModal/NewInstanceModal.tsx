@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Folder, AlertTriangle, Terminal } from 'lucide-react';
+import { Folder, AlertTriangle } from 'lucide-react';
 import type {
 	AdditionalDirectory,
 	AgentConfig,
@@ -26,14 +26,12 @@ import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
-import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
 import {
 	AGENT_FORM_TAB_IDS,
-	AgentSettingsPanel,
 	buildAgentSettingsTabs,
-	EnvironmentTab,
+	ProviderEnvironmentSection,
 	firstTabWithError,
 	GeneralTab,
 	ModelsTab,
@@ -78,7 +76,7 @@ import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 /**
  * NewInstanceModal - the New Agent form.
  *
- * The form is tabbed (General, Provider, Models, Environment, Peers, SSH; see
+ * The form is tabbed (General, Provider, Models, Peers, SSH; see
  * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
  * Only the active panel is rendered, so Tab never walks into a hidden one. It
  * always opens on General, where the name is the first thing to type.
@@ -460,14 +458,12 @@ export function NewInstanceModal({
 						Object.fromEntries(everyProvider.map((id: string) => [id, value]));
 					const seedEnvVars = source.customEnvVars;
 					if (seedEnvVars && Object.keys(seedEnvVars).length > 0) {
-						// Over the provider's own variables, key by key: the group has no
-						// opinion on a variable it does not name.
-						setCustomAgentEnvVars((prev) => ({
-							...prev,
-							...Object.fromEntries(
-								everyProvider.map((id: string) => [id, { ...prev[id], ...seedEnvVars }])
-							),
-						}));
+						// These become the agent's own variables, which replace the
+						// provider set at launch. Do not copy unrelated provider values
+						// (including account selectors) into the group's environment.
+						setCustomAgentEnvVars(
+							Object.fromEntries(everyProvider.map((id: string) => [id, { ...seedEnvVars }]))
+						);
 					}
 					if (source.retryOnAvailabilityErrors !== undefined) {
 						setRetryAvailabilityByAgent(
@@ -1223,7 +1219,7 @@ export function NewInstanceModal({
 	}, [effectiveSshRemoteId, sshRemotes]);
 
 	// One set of env var handlers, keyed by provider. The picker's config panels
-	// (which hide the rows) and the Environment tab (which draws them) share it.
+	// (which hide the rows) and the Provider environment section share it.
 	const envVarHandlers = {
 		onEnvVarKeyChange: (agentId: string, oldKey: string, newKey: string, value: string) => {
 			setCustomAgentEnvVars((prev) => {
@@ -1626,7 +1622,7 @@ export function NewInstanceModal({
 						idPrefix="new-agent"
 						picker={
 							// Each provider's settings (path, args, model, ...) expand in its
-							// card. Their env vars live on the Environment tab.
+							// card. The selected provider's environment follows the picker.
 							<AgentPickerGrid
 								theme={theme}
 								hideEnvVars
@@ -1725,6 +1721,28 @@ export function NewInstanceModal({
 								}
 							/>
 						}
+						environment={
+							selectedAgent ? (
+								<ProviderEnvironmentSection
+									theme={theme}
+									providerName={getAgentDisplayName(selectedAgent)}
+									toolType={selectedAgent}
+									isSshEnabled={!!isSshEnabled}
+									customEnvVars={customAgentEnvVars[selectedAgent] ?? {}}
+									onEnvVarKeyChange={(oldKey, newKey, value) =>
+										envVarHandlers.onEnvVarKeyChange(selectedAgent, oldKey, newKey, value)
+									}
+									onEnvVarValueChange={(key, value) =>
+										envVarHandlers.onEnvVarValueChange(selectedAgent, key, value)
+									}
+									onEnvVarRemove={(key) => envVarHandlers.onEnvVarRemove(selectedAgent, key)}
+									onEnvVarAdd={() => envVarHandlers.onEnvVarAdd(selectedAgent)}
+									onEnvVarsBlur={() => {
+										/* Saved on agent create */
+									}}
+								/>
+							) : undefined
+						}
 						// Agent Resilience: auto-retry toggles (default ON).
 						resilience={
 							selectedAgent
@@ -1804,38 +1822,6 @@ export function NewInstanceModal({
 						}
 					/>
 				)}
-
-				{activeTab === 'environment' &&
-					(selectedAgent ? (
-						<EnvironmentTab
-							theme={theme}
-							idPrefix="new-agent"
-							providerName={getAgentDisplayName(selectedAgent)}
-							toolType={selectedAgent}
-							isSshEnabled={!!isSshEnabled}
-							customEnvVars={customAgentEnvVars[selectedAgent] ?? {}}
-							onEnvVarKeyChange={(oldKey, newKey, value) =>
-								envVarHandlers.onEnvVarKeyChange(selectedAgent, oldKey, newKey, value)
-							}
-							onEnvVarValueChange={(key, value) =>
-								envVarHandlers.onEnvVarValueChange(selectedAgent, key, value)
-							}
-							onEnvVarRemove={(key) => envVarHandlers.onEnvVarRemove(selectedAgent, key)}
-							onEnvVarAdd={() => envVarHandlers.onEnvVarAdd(selectedAgent)}
-							onEnvVarsBlur={() => {
-								/* Saved on agent create */
-							}}
-						/>
-					) : (
-						// The environment is kept per provider, so there is none to edit yet.
-						<AgentSettingsPanel theme={theme} idPrefix="new-agent" tab="environment">
-							<EmptyStatePlaceholder
-								theme={theme}
-								icon={<Terminal className="w-10 h-10" />}
-								title="Choose a provider on the Provider tab first."
-							/>
-						</AgentSettingsPanel>
-					))}
 
 				{activeTab === 'peers' && (
 					// No `selfSessionId`: the agent has no id until it is created, so the

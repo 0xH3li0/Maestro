@@ -27,6 +27,7 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
 import type {
 	Theme,
 	Shortcut,
@@ -60,11 +61,13 @@ vi.mock('../../../renderer/components/plugins/PluginPanelFrame', () => ({
 }));
 
 // Mock the LayerStackContext
+let topLayerPriority: number = MODAL_PRIORITIES.SETTINGS;
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: vi.fn(() => ({
 		registerLayer: vi.fn(() => 'layer-123'),
 		unregisterLayer: vi.fn(),
 		updateLayerHandler: vi.fn(),
+		getLayers: () => [{ priority: topLayerPriority }],
 	})),
 }));
 
@@ -462,6 +465,7 @@ function setViewportWidth(width: number): void {
 
 describe('SettingsModal', () => {
 	beforeEach(() => {
+		topLayerPriority = MODAL_PRIORITIES.SETTINGS;
 		settingsPanels = [];
 		vi.useFakeTimers();
 		__resetLastOpenSettingsTabForTests();
@@ -842,6 +846,67 @@ describe('SettingsModal', () => {
 	});
 
 	describe('keyboard tab navigation', () => {
+		it('cycles Library sections with Cmd+[ and ], wrapping without leaving Library', async () => {
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialNavigationRequest: { tab: 'models', subTab: 'library/engines' },
+					})}
+				/>
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true });
+			expect(screen.getByRole('tab', { name: 'Custom' })).toHaveAttribute('aria-selected', 'true');
+			fireEvent.keyDown(window, { key: ']', metaKey: true });
+			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+			// The chord is captured even when a focused control stops bubbling.
+			const tab = screen.getByRole('tab', { name: 'Engines' });
+			tab.focus();
+			expect(fireEvent.keyDown(tab, { key: ']', ctrlKey: true })).toBe(false);
+			expect(screen.getByRole('tab', { name: 'Agent Models' })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(screen.getByTitle('Library')).toHaveAttribute('aria-current', 'page');
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(screen.getByTitle('Sources')).toHaveAttribute('aria-current', 'page');
+		});
+
+		it('leaves Library sections alone while another layer, search, or panel is open', async () => {
+			const props = createDefaultProps({
+				initialTab: 'models',
+				initialNavigationRequest: { tab: 'models', subTab: 'library/engines' },
+			});
+			const { rerender } = render(<SettingsModal {...props} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			topLayerPriority = MODAL_PRIORITIES.CONFIRM;
+			// The real context change rerenders memoized Settings; make the mock rerender too.
+			rerender(<SettingsModal {...props} onClose={vi.fn()} />);
+			fireEvent.keyDown(window, { key: ']', metaKey: true });
+			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+
+			topLayerPriority = MODAL_PRIORITIES.SETTINGS;
+			rerender(<SettingsModal {...props} onClose={vi.fn()} />);
+			const searchInput = screen.getByRole('textbox', { name: 'Search settings' });
+			fireEvent.change(searchInput, { target: { value: 'font' } });
+			fireEvent.keyDown(searchInput, { key: ']', metaKey: true });
+			fireEvent.change(searchInput, { target: { value: '' } });
+			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+
+			fireEvent.click(screen.getByTitle('Sources'));
+			fireEvent.keyDown(window, { key: ']', metaKey: true });
+			fireEvent.click(screen.getByTitle('Library'));
+			expect(screen.getByRole('tab', { name: 'Engines' })).toHaveAttribute('aria-selected', 'true');
+		});
+
 		// Sidebar is alphabetized by label, so the order under no LLM flag is:
 		// About, AI Commands, Display, Environment, General, Maestro Prompts, Models,
 		// Notifications, Plugins, Shortcuts, SSH Hosts, Themes.
@@ -2150,7 +2215,7 @@ describe('SettingsModal', () => {
 				updateLayerHandler: vi.fn(),
 				getTopLayer: vi.fn(),
 				closeTopLayer: vi.fn(),
-				getLayers: vi.fn(),
+				getLayers: () => [{ priority: topLayerPriority }],
 				hasOpenLayers: vi.fn(),
 				hasOpenModal: vi.fn(),
 				layerCount: 0,
@@ -2179,7 +2244,7 @@ describe('SettingsModal', () => {
 				updateLayerHandler: vi.fn(),
 				getTopLayer: vi.fn(),
 				closeTopLayer: vi.fn(),
-				getLayers: vi.fn(),
+				getLayers: () => [{ priority: topLayerPriority }],
 				hasOpenLayers: vi.fn(),
 				hasOpenModal: vi.fn(),
 				layerCount: 0,
@@ -2212,7 +2277,7 @@ describe('SettingsModal', () => {
 				updateLayerHandler: vi.fn(),
 				getTopLayer: vi.fn(),
 				closeTopLayer: vi.fn(),
-				getLayers: vi.fn(),
+				getLayers: () => [{ priority: topLayerPriority }],
 				hasOpenLayers: vi.fn(),
 				hasOpenModal: vi.fn(),
 				layerCount: 0,

@@ -3879,14 +3879,13 @@ describe('NewInstanceModal', () => {
 		const gatewayInput = async () =>
 			(await screen.findByTestId('new-agent-gateway')).querySelector('input') as HTMLInputElement;
 
-		it('renders the six tabs in order, opens on General, and is a resizable frame', () => {
+		it('renders the five tabs in order, opens on General, and is a resizable frame', () => {
 			const { container } = renderModal();
 
 			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
 				'General',
 				'Provider',
 				'Models',
-				'Environment',
 				'Peers',
 				'SSH',
 			]);
@@ -4200,7 +4199,7 @@ describe('NewInstanceModal', () => {
 			await waitFor(async () => expect((await gatewayInput()).value).toBe('http://127.0.0.1:9000'));
 		});
 
-		it('edits env vars on the Environment tab only, for the selected provider', async () => {
+		it('edits env vars beside the selected provider settings', async () => {
 			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
 				customEnvVars: { API_KEY: 'test-key' },
 			});
@@ -4212,9 +4211,7 @@ describe('NewInstanceModal', () => {
 			await waitFor(() =>
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument()
 			);
-			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
-
-			openTab('Environment');
+			expect(screen.getAllByDisplayValue('API_KEY')).toHaveLength(1);
 			expect(screen.getByText(/Editing the Claude Code environment\./)).toBeInTheDocument();
 			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
 			openTab('General');
@@ -4318,7 +4315,7 @@ describe('NewInstanceModal', () => {
 			expect(await screen.findByDisplayValue('Be brief.')).toBeInTheDocument();
 
 			// The seed's provider is selected, not the first one this machine can run.
-			openTab('Environment');
+			openTab('Provider');
 			expect(await screen.findByText(/Editing the Codex environment\./)).toBeInTheDocument();
 			expect(screen.getByDisplayValue('CODEX_HOME')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('~/.work')).toBeInTheDocument();
@@ -4333,35 +4330,45 @@ describe('NewInstanceModal', () => {
 			expect(args[25]).toBeUndefined();
 		});
 
-		it('fills env vars for a default that names no provider, over the provider own', async () => {
-			// The motivating case: one variable pinned for every agent in the group.
+		it.each([undefined, 'claude-code'] as const)(
+			'replaces provider env vars with the group environment (provider: %s)',
+			async (toolType) => {
+				vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '~/.claude-other',
+						PEDRAM: 'WAS HERE',
+						ANTHROPIC_API_KEY: 'provider-key',
+					},
+				});
+				withGroupDefaults({ toolType, customEnvVars: { ANTHROPIC_API_KEY: 'group-key' } });
+				renderSeeded();
+				await banner();
+
+				openTab('Provider');
+				expect(await screen.findByDisplayValue('ANTHROPIC_API_KEY')).toBeInTheDocument();
+				expect(screen.getByDisplayValue('group-key')).toBeInTheDocument();
+				expect(screen.queryByDisplayValue('CLAUDE_CONFIG_DIR')).not.toBeInTheDocument();
+				expect(screen.queryByDisplayValue('PEDRAM')).not.toBeInTheDocument();
+
+				openTab('General');
+				const args = await create();
+				expect(args[0]).toBe('claude-code');
+				expect(args[7]).toEqual({ ANTHROPIC_API_KEY: 'group-key' });
+			}
+		);
+
+		it('keeps provider args and env vars when the group does not set them', async () => {
 			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				customEnvVars: { API_KEY: 'provider-level' },
+				customArgs: '--verbose',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
 			});
-			withGroupDefaults({ customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' } });
-			renderSeeded();
-			await banner();
-
-			openTab('Environment');
-			expect(await screen.findByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
-			// The group has no opinion on a variable it does not name.
-			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
-
-			openTab('General');
-			const args = await create();
-			// No default provider: the first one this machine can run.
-			expect(args[0]).toBe('claude-code');
-			expect(args[7]).toEqual({ API_KEY: 'provider-level', CLAUDE_CONFIG_DIR: '~/.work' });
-		});
-
-		it('keeps the provider own path and args when the default has none', async () => {
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({ customArgs: '--verbose' });
 			withGroupDefaults({ toolType: 'claude-code', nudgeMessage: 'Be brief.' });
 			renderSeeded();
 			await banner();
 
 			const args = await create();
 			expect(args[6]).toBe('--verbose');
+			expect(args[7]).toEqual({ CLAUDE_CONFIG_DIR: '~/.work' });
 		});
 
 		it('carries a resilience flag the group switched off onto whichever provider is picked', async () => {
@@ -4528,7 +4535,7 @@ describe('NewInstanceModal', () => {
 				);
 
 				// That pass must not replace what the seed filled.
-				openTab('Environment');
+				openTab('Provider');
 				expect(await screen.findByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
 
 				openTab('General');

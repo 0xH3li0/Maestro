@@ -1,28 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bot } from 'lucide-react';
+import {
+	formatLocalModelAssignmentSpec,
+	LOCAL_MODEL_TASKS,
+	localModelAssignmentProblem,
+	parseLocalModelAssignmentSpec,
+	parseUtilitySource,
+	UTILITY_AGENT_ASSIGNMENT,
+} from '../../../../../shared/local-models/tasks';
+import type { LocalModelEndpointsState, LocalModelsState } from '../../../../hooks/localModels';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
+import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { AssignmentOptionElements } from './AssignmentOptionElements';
+import { buildAssignmentOptionGroups } from './assignmentOptions';
 
 export interface UtilityAgentSettingsProps {
 	theme: Theme;
+	models: LocalModelsState;
+	endpoints: LocalModelEndpointsState;
 }
 
 /**
- * The Utility Agent: what the "Utility Agent" choice in the Assignments picker
- * means.
- *
- * Tasks that already ran through an agent before Local Models (tab naming,
- * summaries) keep doing so when assigned `utility-agent`, and this is the agent
- * they run on: a cheaper or faster agent than the tab's own, with an optional
- * model override. Left as Default, each tab's own agent is used, exactly as
- * before. It lives beside the assignments rather than in General so the two
- * halves of "which model names my tabs" are read in one place.
- *
- * The stored values are still `utilityAgentId` / `utilityModelId`, so moving
- * the control changed nothing about what runs.
+ * One shared source for inherited text tasks. Local and endpoint choices use
+ * the same assignment picker as task overrides. Provider choices retain the
+ * existing utilityAgentId / utilityModelId configuration.
  */
-export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
+export function UtilityAgentSettings({ theme, models, endpoints }: UtilityAgentSettingsProps) {
+	const utilitySource = useSettingsStore((s) => s.utilitySource);
+	const setUtilitySource = useSettingsStore((s) => s.setUtilitySource);
 	const utilityAgentId = useSettingsStore((s) => s.utilityAgentId);
 	const setUtilityAgentId = useSettingsStore((s) => s.setUtilityAgentId);
 	const utilityModelId = useSettingsStore((s) => s.utilityModelId);
@@ -30,6 +37,46 @@ export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
 	const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
 	const [detectionFailed, setDetectionFailed] = useState(false);
+	const [problem, setProblem] = useState<string | null>(null);
+	const source = parseUtilitySource(utilitySource);
+	const providerSource = source.type === 'utility-agent';
+	const groups = useMemo(
+		() =>
+			buildAssignmentOptionGroups(LOCAL_MODEL_TASKS['tab-naming'], source, {
+				listings: models.listings,
+				endpoints: endpoints.endpoints,
+				endpointModels: endpoints.models,
+			})
+				.map((group) => ({
+					...group,
+					options: group.options.filter(
+						(option) => option.value !== 'off' && option.value !== 'utility-agent'
+					),
+				}))
+				.filter((group) => group.options.length > 0),
+		[source, models.listings, endpoints.endpoints, endpoints.models]
+	);
+	const selected = providerSource
+		? utilityAgentId
+			? `provider:${utilityAgentId}`
+			: 'utility-agent'
+		: formatLocalModelAssignmentSpec(source);
+
+	function choose(spec: string) {
+		setProblem(null);
+		if (spec === 'utility-agent' || spec.startsWith('provider:')) {
+			setUtilityAgentId(spec === 'utility-agent' ? null : spec.slice('provider:'.length));
+			setUtilitySource(UTILITY_AGENT_ASSIGNMENT);
+			return;
+		}
+		const assignment = parseLocalModelAssignmentSpec(spec);
+		const invalid = localModelAssignmentProblem('tab-naming', assignment);
+		if (invalid) {
+			setProblem(invalid);
+			return;
+		}
+		setUtilitySource(parseUtilitySource(assignment));
+	}
 
 	// Detect available agents for the dropdown. The tab mounts only while it is
 	// the one on screen, so this runs when the user opens it, not at app start.
@@ -72,69 +119,73 @@ export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
 
 	return (
 		<div data-setting-id="local-models-utility-agent">
+			<SettingsSectionHeading
+				icon={Bot}
+				description="Choose the default for tasks set to Utility source below. Use a provider, an installed text model, or an endpoint. Each task can override this choice."
+			>
+				Utility source
+			</SettingsSectionHeading>
 			<SectionCard theme={theme}>
-				<div
-					className="flex items-center gap-2 font-medium"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Bot className="w-4 h-4" />
-					Utility Agent
-				</div>
-				{/* Opacity alone, no textDim override: stacking the two multiplies the
-				    dimming and drops contrast below 3:1 in most themes
-				    (CLAUDE-SETTINGS.md rule 1). Descriptions inherit textMain. */}
-				<div className="text-xs opacity-70">
-					What a task set to Utility Agent below runs on. Route auxiliary tasks (tab naming, context
-					grooming) to a cheaper or faster agent instead of the session agent, or leave as Default
-					to keep using each tab's own agent.
-				</div>
 				<div>
 					<label
 						className="text-sm block mb-1"
 						style={{ color: theme.colors.textMain }}
 						htmlFor="utility-agent-select"
 					>
-						Agent
+						Source
 					</label>
 					<select
 						id="utility-agent-select"
-						value={utilityAgentId || ''}
-						onChange={(e) => setUtilityAgentId(e.target.value || null)}
+						value={selected}
+						onChange={(e) => choose(e.target.value)}
 						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
-						<option value="">Default (same as session)</option>
-						{availableAgents.map((agent) => (
-							<option key={agent.id} value={agent.id}>
-								{agent.name}
-							</option>
-						))}
-						{/*
-						 * A persisted id that matches no option makes the <select> render
-						 * as its FIRST option - so the UI would read "Default" while
-						 * auxiliary tasks kept routing to the stored agent. Surface it
-						 * either way, so the setting the user is running is the setting
-						 * they can see.
-						 */}
-						{unmatchedAgentId && (
-							<option value={unmatchedAgentId}>
-								{unmatchedAgentId} {missingAgentId ? '(not installed)' : '(unverified)'}
-							</option>
-						)}
+						<option value="utility-agent">Default (same as session)</option>
+						<optgroup label="Providers">
+							{availableAgents.map((agent) => (
+								<option key={agent.id} value={`provider:${agent.id}`}>
+									{agent.name}
+								</option>
+							))}
+							{/*
+							 * A persisted id that matches no option makes the <select> render
+							 * as its FIRST option - so the UI would read "Default" while
+							 * auxiliary tasks kept routing to the stored agent. Surface it
+							 * either way, so the setting the user is running is the setting
+							 * they can see.
+							 */}
+							{unmatchedAgentId && (
+								<option value={`provider:${unmatchedAgentId}`}>
+									{unmatchedAgentId} {missingAgentId ? '(not installed)' : '(unverified)'}
+								</option>
+							)}
+						</optgroup>
+						<AssignmentOptionElements groups={groups} />
 					</select>
-					{missingAgentId && (
+					{providerSource && missingAgentId && (
 						<div className="text-xs mt-1" style={{ color: theme.colors.warning }}>
 							This agent is no longer available. Auxiliary tasks will fail until you pick another
 							agent or return to Default.
 						</div>
 					)}
-					{!missingAgentId && unverifiedAgentId && (
+					{providerSource && !missingAgentId && unverifiedAgentId && (
 						<div className="text-xs mt-1" style={{ color: theme.colors.warning }}>
 							Could not check installed agents. This selection is still in use.
 						</div>
 					)}
 				</div>
-				{utilityAgentId && (
+				{problem && (
+					<p className="text-xs" style={{ color: theme.colors.error }}>
+						{problem}
+					</p>
+				)}
+				{!providerSource && (
+					<p className="text-xs opacity-70">
+						Context grooming and transfer need tools, so they keep using the session provider.
+					</p>
+				)}
+				{providerSource && utilityAgentId && (
 					<div>
 						<label
 							className="text-sm block mb-1"

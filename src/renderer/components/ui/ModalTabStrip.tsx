@@ -52,6 +52,8 @@ export interface ModalTabStripProps<Id extends string> {
 	idPrefix: string;
 	/** Extra classes for the strip row (padding, margins) where it is mounted. */
 	className?: string;
+	/** Keep the strip at the top of its scrolling panel, above the content. */
+	sticky?: boolean;
 }
 
 function tabElementId(idPrefix: string, id: string): string {
@@ -85,6 +87,7 @@ export function ModalTabStrip<Id extends string>({
 	label,
 	idPrefix,
 	className = '',
+	sticky = false,
 }: ModalTabStripProps<Id>) {
 	// The strip scrolls sideways and draws no scrollbar, so a selected tab past
 	// its edge would be invisible: nothing on screen would say which panel is
@@ -131,8 +134,11 @@ export function ModalTabStrip<Id extends string>({
 		<div
 			// Scrolls sideways rather than wrapping, like the Usage Dashboard strip:
 			// six tabs do not fit a phone, and a wrapped row reads as two strips.
-			className={`flex items-center gap-1 border-b overflow-x-auto no-scrollbar flex-shrink-0 ${className}`}
-			style={{ borderColor: theme.colors.border }}
+			className={`flex items-center gap-1 border-b overflow-x-auto no-scrollbar flex-shrink-0 ${sticky ? 'sticky top-0 z-20 pt-2' : ''} ${className}`}
+			style={{
+				borderColor: theme.colors.border,
+				backgroundColor: sticky ? theme.colors.bgSidebar : undefined,
+			}}
 			role="tablist"
 			aria-label={label}
 			onKeyDown={handleKeyDown}
@@ -193,10 +199,13 @@ export interface UseModalTabCyclingOptions<Id extends string> {
 	onSelect: (id: Id) => void;
 	/** Whether the shortcut is live (modal open and topmost). */
 	enabled: boolean;
+	/** Require Shift for top-level tabs; disable for nested tabs. Defaults to true. */
+	shift?: boolean;
 }
 
 /**
  * Cmd/Ctrl+Shift+[ and ] step to the previous / next tab, wrapping at the ends.
+ * Pass `shift: false` for Cmd/Ctrl+[ and ] on a nested tab strip.
  * The one implementation of that shortcut for modals: `useModalTabs` calls it,
  * and so does `SettingsModal`, whose tab state is too entangled with deep links
  * and search to hand to `useModalTabs` itself.
@@ -206,19 +215,22 @@ export function useModalTabCycling<Id extends string>({
 	activeTab,
 	onSelect,
 	enabled,
+	shift = true,
 }: UseModalTabCyclingOptions<Id>): void {
 	useEventListener(
 		'keydown',
 		(event) => {
 			const e = event as globalThis.KeyboardEvent;
-			if (tabs.length === 0) return;
-			const step = eventMatchesShortcutKeys(e, ['Meta', 'Shift', '['])
+			if (tabs.length === 0 || e.defaultPrevented) return;
+			const modifiers = shift ? ['Meta', 'Shift'] : ['Meta'];
+			const step = eventMatchesShortcutKeys(e, [...modifiers, '['])
 				? -1
-				: eventMatchesShortcutKeys(e, ['Meta', 'Shift', ']'])
+				: eventMatchesShortcutKeys(e, [...modifiers, ']'])
 					? 1
 					: 0;
 			if (step === 0) return;
 			e.preventDefault();
+			e.stopPropagation();
 			const current = tabs.indexOf(activeTab);
 			const next =
 				current === -1
@@ -228,7 +240,9 @@ export function useModalTabCycling<Id extends string>({
 					: (current + step + tabs.length) % tabs.length;
 			onSelect(tabs[next]);
 		},
-		{ enabled }
+		// Modal stops bubbling keydowns at its backdrop, including those from
+		// focused form controls. Capture the chord before it reaches that boundary.
+		{ enabled, capture: true }
 	);
 }
 

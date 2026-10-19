@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
@@ -22,13 +23,17 @@ import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { talkWithDocument } from '../../services/documentVoice';
 import {
 	buildDocumentChatView,
+	keepDocumentChat,
+	cycleDocumentChatThinking,
+	restoreDocumentChat,
+	stopDocumentChat,
 	findDocumentChatTab,
 	popOutDocumentChat,
 	resetDocumentChat,
 	sendDocumentChatMessage,
 	type DocumentChatView,
 } from '../../services/documentChat';
-import type { Session } from '../../types';
+import type { Session, AITab } from '../../types';
 
 /**
  * The agent this chat belongs to, resolved inside the selector so both
@@ -46,13 +51,20 @@ export interface UseDocumentChatOptions {
 	path: string;
 	/** Agent the chat belongs to. Defaults to the active one. */
 	sessionId?: string;
+	/** Project earlier threads only while the history picker is visible. */
+	includeHistory?: boolean;
 }
 
 export interface UseDocumentChatReturn extends DocumentChatView {
 	draft: string;
 	setDraft: (value: string) => void;
 	/** Send the draft (or explicit text) and clear the box. */
-	send: (text?: string) => void;
+	send: (text?: string, images?: string[]) => boolean;
+	keep: () => void;
+	cycleThinking: () => void;
+	stop: () => void;
+	restore: (tabId: string) => void;
+	history: (DocumentChatView & { tab: AITab })[];
 	/** Retire this conversation and start a fresh one. */
 	reset: () => void;
 	/** Reveal and focus the chat's tab. No-op before the first message. */
@@ -72,16 +84,26 @@ export interface UseDocumentChatReturn extends DocumentChatView {
 export function useDocumentChat({
 	path,
 	sessionId,
+	includeHistory = false,
 }: UseDocumentChatOptions): UseDocumentChatReturn {
 	const [draft, setDraft] = useState('');
 
-	// Two narrow subscriptions rather than one on the whole session. The panel
-	// depends on exactly two things - the bound tab and the execution queue - and
-	// both are stable by identity, so an agent streaming output into some OTHER
-	// tab (which replaces the session object on every chunk) does not re-render a
-	// conversation nothing happened in.
+	// Subscribe to this document's tabs and queue without following other tabs' output.
 	const tab = useSessionStore((s) => findDocumentChatTab(resolveSession(s, sessionId), path));
 	const executionQueue = useSessionStore((s) => resolveSession(s, sessionId)?.executionQueue);
+	const tabs = useSessionStore(
+		useShallow((s) =>
+			(resolveSession(s, sessionId)?.aiTabs ?? []).filter((t) => t.documentOrigin?.path === path)
+		)
+	);
+	const history = useMemo(
+		() =>
+			(includeHistory ? tabs : [])
+				.slice()
+				.reverse()
+				.map((tab) => ({ ...buildDocumentChatView(tab, executionQueue), tab })),
+		[tabs, includeHistory, executionQueue]
+	);
 
 	const view = useMemo(() => buildDocumentChatView(tab, executionQueue), [tab, executionQueue]);
 
@@ -96,13 +118,14 @@ export function useDocumentChat({
 	);
 
 	const send = useCallback(
-		(text?: string) => {
+		(text?: string, images?: string[]) => {
 			const message = (text ?? draft).trim();
-			if (!message) return;
-			const sent = sendDocumentChatMessage({ path, text: message, sessionId });
+			if (!message && !images?.length) return false;
+			const sent = sendDocumentChatMessage({ path, text: message, sessionId, images });
 			// Only clear on a message that actually went somewhere: a send refused
 			// for want of an agent must leave the user's words in the box.
 			if (sent) setDraft('');
+			return !!sent;
 		},
 		[draft, path, sessionId]
 	);
@@ -116,6 +139,22 @@ export function useDocumentChat({
 		popOutDocumentChat({ path, sessionId });
 	}, [path, sessionId]);
 
+	const keep = useCallback(() => keepDocumentChat({ path, sessionId }), [path, sessionId]);
+	const cycleThinking = useCallback(
+		() => cycleDocumentChatThinking({ path, sessionId }),
+		[path, sessionId]
+	);
+	const stop = useCallback(() => {
+		void stopDocumentChat({ path, sessionId }).catch(() => undefined);
+	}, [path, sessionId]);
+	const restore = useCallback(
+		(tabId: string) => {
+			restoreDocumentChat({ path, sessionId, tabId });
+			setDraft('');
+		},
+		[path, sessionId]
+	);
+
 	const startVoice = useCallback(() => {
 		void talkWithDocument({ path, sessionId });
 	}, [path, sessionId]);
@@ -126,6 +165,11 @@ export function useDocumentChat({
 
 	return {
 		...view,
+		history,
+		keep,
+		cycleThinking,
+		stop,
+		restore,
 		draft,
 		setDraft,
 		send,

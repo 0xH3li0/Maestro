@@ -116,28 +116,32 @@ workspace the file lives in reads it and answers there. It is not limited to the
 file: it reads whatever else it needs and uses its tools normally. It just
 starts from your document rather than from nothing.
 
-There are three ways to put a message in, chosen with the switch above the box:
+Type into the box, or use the microphone beside Send:
 
 - **Type.** `Enter` sends, `Shift+Enter` breaks a line.
-- **Push to type.** Hold the microphone and speak. The words land in the box, so
-  you can fix them before sending. Nothing is spoken back.
-- **Push to talk.** Hold the microphone and speak, and the reply is spoken back
-  to you. This one needs [A Cappella](./voice-mode) switched on.
+- **With A Cappella off**, the microphone dictates into the box, so you can
+  fix the words before sending. Nothing is spoken back.
+- **With [A Cappella](./voice-mode) on**, the microphone starts a voice session
+  about this document and the reply is spoken back.
 
-Both microphone buttons work as a hold OR as a tap: hold them like a
-walkie-talkie for one sentence, or tap once to leave them running and tap again
-to stop. The mode you pick is remembered.
+The microphone works as a hold or as a tap: hold it for one sentence, or tap
+once to leave it running and tap again to stop.
 
-All three land in the **same conversation**, so you can ask something out loud,
+All inputs land in the **same conversation**, so you can ask something out loud,
 type the follow-up, and read both in the chat. The conversation is an ordinary
 AI tab that Maestro keeps out of your tab strip until you want it, which means:
 
 - **It survives a restart.** Come back to the file tomorrow, open the chat, and
   the whole conversation is still there.
-- **Pop out** turns it into a real tab, with the full transcript - tool calls,
-  thinking, everything the bubble leaves out.
-- **Reset** starts a fresh conversation with a new session. The previous one is
-  not deleted: it becomes an ordinary tab you can read or close yourself.
+- **Keep as a tab** adds it to the tab strip without leaving the document.
+- **History** restores an earlier conversation about this file. **New chat**
+  starts a fresh session and keeps the previous thread in that history.
+- **Thinking** cycles between hidden reasoning, reasoning shown while the agent
+  works, and reasoning kept above the answer.
+
+Attach, paste, or drop images into the composer. **Stop** interrupts this
+document's reply and withdraws its queued messages. The chat's text size is
+remembered when you close and reopen it.
 
 The button is offered on any file with text in it, and not on images, media, or
 compiled binaries, which give the agent nothing to read.
@@ -886,7 +890,7 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has six tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window), **Models** (Run on target, tiers, gateway and token proxy, System One), **Environment** (environment variables), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (Run on target, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
 Changing the **Agent Provider** here opens a native conversation translation preflight. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Review the reported limits and accept them before saving. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded.
 

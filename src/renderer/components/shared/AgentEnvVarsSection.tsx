@@ -5,7 +5,7 @@
  * optional park/unpark eye), the "Add Variable" button, and, when asked, the
  * read-only list of variables Maestro sets itself. `AgentConfigPanel` renders
  * it in place by default; a tabbed agent form sets `hideEnvVars` on the panel
- * and mounts this section on its own Environment tab instead.
+ * and mounts this section in the Provider panel instead.
  *
  * Why this is not `Settings/EnvVarsEditor.tsx`: the two edit the same shape
  * but hand changes back differently, and swapping one for the other would

@@ -16,6 +16,8 @@ import {
 	TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR,
 } from './knowledge-binding';
 import { estimateTokenCount } from '../../formatters';
+import { getModelContextWindowOverride } from '../../agentConstants';
+import { getContextWindowValue } from '../launch/agent-args';
 import type { TranslationFs } from './fs-port';
 import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
@@ -633,7 +635,16 @@ export class NativeTranslationService {
 				message:
 					'Rollback retains staged Codex threads and provider-owned indexes for inspection; deleting a rollout alone cannot undo the native thread metadata.',
 			});
-		const capacity = this.deps.contextWindow(destination.provider);
+		const destinationConfig = this.deps.providerConfig(destination.provider);
+		const destinationOverrides = providerOverridesFor(
+			{ ...session, aiTabs: undefined },
+			destination.provider
+		);
+		const capacity =
+			getContextWindowValue(undefined, {}, destinationOverrides.customContextWindow) ||
+			getModelContextWindowOverride(destinationOverrides.customModel ?? destinationConfig.model) ||
+			getContextWindowValue(undefined, destinationConfig) ||
+			this.deps.contextWindow(destination.provider);
 		for (const conversation of conversations) {
 			const projected =
 				destination.provider === 'codex' || destination.provider === 'claude-code'
@@ -647,9 +658,12 @@ export class NativeTranslationService {
 			if (estimateTokenCount(canonicalJson(projected)) > capacity)
 				limitations.push({
 					code: 'context-capacity',
-					severity: 'block',
+					// Serialized import size is an estimate, not the model's token count.
+					// A provider-wide fallback cannot establish the selected model's limit.
+					severity: 'warning',
 					tabId: conversation.tabId,
-					message: `Active conversation window exceeds the destination context capacity (${capacity} tokens). No history is truncated or summarized.`,
+					message:
+						'This conversation may exceed the destination model’s context window. The full source transcript is preserved.',
 				});
 		}
 		const plan = planTranslation({

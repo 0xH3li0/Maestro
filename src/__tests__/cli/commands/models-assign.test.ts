@@ -13,6 +13,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readLocalModelAssignments: vi.fn(() => ({})),
 	writeLocalModelAssignments: vi.fn(),
 	readLocalModelEndpoints: vi.fn(() => []),
+	readSettingValue: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -24,6 +25,7 @@ import { modelsAssign, modelsTasks } from '../../../cli/commands/models-assign';
 import {
 	readLocalModelAssignments,
 	readLocalModelEndpoints,
+	readSettingValue,
 	writeLocalModelAssignments,
 } from '../../../cli/services/storage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -59,6 +61,7 @@ describe('models assign / tasks commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		vi.mocked(readLocalModelAssignments).mockReturnValue({});
 		vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama]);
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -190,6 +193,22 @@ describe('models assign / tasks commands', () => {
 	});
 
 	describe('tasks', () => {
+		it('lists inherited utility sources even when the desktop cannot be asked', async () => {
+			vi.mocked(readSettingValue).mockReturnValue({ type: 'local', modelId: QWEN3_1_7B_ID });
+			vi.mocked(readLocalModelAssignments).mockReturnValue({ 'tab-summary': { type: 'off' } });
+			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro is not running'));
+			await modelsTasks({ json: true });
+			const result = JSON.parse(String(logSpy.mock.calls[0][0]));
+			expect(
+				result.tasks.find((task: { taskId: string }) => task.taskId === 'tab-naming')
+			).toMatchObject({
+				spec: `local:${QWEN3_1_7B_ID}`,
+			});
+			expect(
+				result.tasks.find((task: { taskId: string }) => task.taskId === 'tab-summary')
+			).toMatchObject({ spec: 'off' });
+		});
+
 		it('lists every task with its assignment and readiness from the desktop', async () => {
 			vi.mocked(readLocalModelAssignments).mockReturnValue({
 				'semantic-search': { type: 'local', modelId: BGE_SMALL_EN_ID },

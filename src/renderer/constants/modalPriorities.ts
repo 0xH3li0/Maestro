@@ -112,6 +112,9 @@ export const MODAL_PRIORITIES = {
 	/** Delete group chat confirmation */
 	DELETE_GROUP_CHAT: 660,
 
+	/** Moderator settings, opened by Customize in the group chat form. */
+	GROUP_CHAT_MODERATOR_SETTINGS: 655,
+
 	/** New group chat creation modal */
 	NEW_GROUP_CHAT: 650,
 

@@ -329,7 +329,7 @@ This is the quickest way to catch the case where an agent behaves oddly because 
 
 Maestro spawns each provider's own CLI, so it does not have a "model gateway" setting of its own. What an agent bills to, and which endpoint it talks to, is whatever its CLI reads from the environment. That makes per-agent variables the way to point one agent at a proxy, a gateway, or a company account while every other agent keeps its normal login.
 
-Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
+Set these in **Edit Agent → Provider → Environment variables** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
 
 | Provider          | Variables that redirect it                                                                                                            | Notes                                                                            |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |

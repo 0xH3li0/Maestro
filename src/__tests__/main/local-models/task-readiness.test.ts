@@ -123,6 +123,28 @@ beforeEach(() => {
 });
 
 describe('resolveTaskReadiness', () => {
+	it('checks the shared local model for inherited tasks and honors explicit overrides', async () => {
+		settings.set('utilitySource', local(QWEN3_1_7B_ID));
+		const options = healthy();
+		const verdict = await resolveTaskReadiness('tab-naming', options);
+		expect(verdict).toMatchObject({ state: 'ready', assignment: local(QWEN3_1_7B_ID) });
+		expect(options.readModelStatus).toHaveBeenCalledWith(QWEN3_1_7B_ID);
+		settings.set('localModelAssignments', { 'tab-naming': { type: 'off' } });
+		expect(await resolveTaskReadiness('tab-naming', options)).toMatchObject({ state: 'off' });
+	});
+
+	it('reports an inherited missing model as unavailable rather than as a provider', async () => {
+		settings.set('utilitySource', local(QWEN3_1_7B_ID));
+		expect(
+			await resolveTaskReadiness(
+				'tab-summary',
+				healthy({
+					readModelStatus: async () => status('not-installed'),
+				})
+			)
+		).toMatchObject({ state: 'unavailable', reason: 'model-not-installed' });
+	});
+
 	it('reports the default assignment when nothing is stored', async () => {
 		const tabNaming = await resolveTaskReadiness('tab-naming', healthy());
 		expect(tabNaming).toMatchObject({

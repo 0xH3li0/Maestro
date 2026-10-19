@@ -85,11 +85,11 @@ describe('ComposerOptionsSheet', () => {
 		);
 	});
 
-	it('keeps Run on inside the model section on phones', () => {
-		renderSheet({ runOnControl: <button>Run on target</button> });
-		expect(screen.queryByText('Run on target')).not.toBeInTheDocument();
+	it('keeps Run on configuration out of the quick model section on phones', () => {
+		renderSheet();
 		fireEvent.click(screen.getByTestId('composer-options-model'));
-		expect(screen.getByRole('button', { name: 'Run on target' })).toBeInTheDocument();
+		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 	});
 
 	it('places the shared provider row before model and effort', () => {

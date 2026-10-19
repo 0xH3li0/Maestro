@@ -920,13 +920,14 @@ export interface AITab {
 	 *
 	 * A document chat is created `hidden` and stays that way until the user pops
 	 * it out (`revealAiTab`), so chatting about a file does not put a chip in the
-	 * strip nobody asked for. Resetting the chat clears this field and reveals the
-	 * tab: the fresh chat gets a new tab, and the old transcript is still there to
-	 * read rather than being destroyed.
+	 * strip nobody asked for. Resetting the chat archives this binding: the fresh
+	 * chat gets a new tab, and the old transcript remains in document history.
 	 */
 	documentOrigin?: {
 		/** Absolute path of the document, as the owning agent sees it. */
 		path: string;
+		/** Retained in document history; excluded from active text and voice routing. */
+		archived?: boolean;
 	};
 	/**
 	 * When true, the tab exists as a data container but is NOT surfaced in the tab

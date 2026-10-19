@@ -1,46 +1,19 @@
 /**
- * DocumentChatOverlay - the floating chat control on a file preview.
- *
- * A round button pinned bottom-LEFT and the panel it opens, deliberately the
- * mirror image of `TocOverlay` on the right: same size, same corner offsets,
- * same rounded shell, same click-outside and Escape wiring (both owned by
- * `useTocOverlay`, which is the generic open/close plumbing for these floating
- * panels rather than anything table-of-contents specific). One preview surface,
- * two floating controls, and the muscle memory built on one carries to the other.
- *
- * Presentational only: it does not own the conversation. `useDocumentChat` binds
- * it to the AI tab the chat actually lives in, so the panel, the popped-out tab,
- * and a spoken turn are all views of one conversation.
- *
- * The header carries the two controls that are easy to get wrong:
- *   - **Reset** starts a fresh conversation. It reveals the old one rather than
- *     deleting it, so the button can never cost the user a transcript.
- *   - **Pop out** turns the chat into a real tab. It is disabled before the first
- *     message, because there is no conversation to open yet and a button that
- *     silently does nothing teaches people the button does nothing.
+ * Document chat embedded below the file preview. Starts as a compact composer
+ * and grows with the conversation, using Quick Chat's shared presentation.
+ * Conversation state stays in the bound AI tab across closing the panel and restarting the app.
  */
 
-import React, { useCallback } from 'react';
-import { MessageSquare, PanelRightOpen, RotateCcw } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
+import { MessageSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { useDocumentChat } from '../../hooks/ui/useDocumentChat';
-import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
-import { getBasename } from '../../../shared/formatters';
+import { useFontScale } from '../../hooks/ui/useFontScale';
+import { getBasename, formatRelativeTime } from '../../../shared/formatters';
 import { DocumentChatComposer } from './DocumentChatComposer';
 import { DocumentChatMessages } from './DocumentChatMessages';
-import {
-	DEFAULT_DOCUMENT_CHAT_MODE,
-	DOCUMENT_CHAT_MODES,
-	DOCUMENT_CHAT_MODE_STORAGE_KEY,
-} from './modes';
-
-/**
- * Panel width. Fixed rather than measured: unlike the ToC, whose width is
- * derived from its longest heading, a chat has no content whose length should
- * decide how wide the box is - a reply is as long as it needs to be and wraps.
- */
-export const DOCUMENT_CHAT_WIDTH = 340;
+import { QuickChatPicker } from '../../quickChat/QuickChatPicker';
 
 export interface DocumentChatOverlayProps {
 	theme: Theme;
@@ -68,22 +41,11 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 	overlayRef,
 	shortcutHint,
 }: DocumentChatOverlayProps) {
-	const chat = useDocumentChat({ path, sessionId });
-	const { value: mode, setValue: setMode } = usePersistedChoice(
-		DOCUMENT_CHAT_MODE_STORAGE_KEY,
-		DOCUMENT_CHAT_MODES,
-		DEFAULT_DOCUMENT_CHAT_MODE
-	);
-
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const chat = useDocumentChat({ path, sessionId, includeHistory: open && historyOpen });
+	const fontScale = useFontScale('documentChat.fontScale');
 	const documentName = getBasename(path) || path;
 	const close = useCallback(() => onOpenChange(false), [onOpenChange]);
-
-	// Popping out replaces this preview with the AI tab, so the panel that was
-	// floating over it has nothing left to float over.
-	const handlePopOut = useCallback(() => {
-		chat.popOut();
-		onOpenChange(false);
-	}, [chat, onOpenChange]);
 
 	const buttonTitle = shortcutHint
 		? `Chat with this document (${shortcutHint})`
@@ -98,7 +60,7 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 				onClick={() => onOpenChange(!open)}
 				aria-label={buttonTitle}
 				aria-expanded={open}
-				className="absolute bottom-4 left-4 p-2.5 rounded-full shadow-lg transition-all duration-200 hover:scale-105 z-10"
+				className={`${open ? 'hidden' : 'absolute bottom-4 left-4'} p-2.5 rounded-full shadow-lg transition-all duration-200 hover:scale-105 z-10`}
 				style={{
 					backgroundColor: open ? theme.colors.accent : theme.colors.bgSidebar,
 					color: open ? theme.colors.accentForeground : theme.colors.textMain,
@@ -119,112 +81,95 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 			</button>
 
 			{open && (
-				<div
-					ref={overlayRef}
-					data-testid="document-chat-panel"
-					className="absolute bottom-16 left-4 rounded-lg shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-bottom-2 duration-200 flex flex-col select-none"
-					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
-						maxHeight: 'calc(70vh - 80px)',
-						height: 'calc(70vh - 80px)',
-						width: `${DOCUMENT_CHAT_WIDTH}px`,
-					}}
-					onWheel={(e) => e.stopPropagation()}
-				>
+				<div className="shrink-0 min-h-0 max-h-[60%] flex flex-col px-4 pb-4 pt-2">
 					<div
-						className="px-3 py-2 border-b flex items-center gap-1.5 flex-shrink-0"
-						style={{ borderColor: theme.colors.border }}
+						ref={overlayRef}
+						data-testid="document-chat-panel"
+						className="mx-auto min-h-0 w-full max-w-3xl rounded-[28px] overflow-hidden flex flex-col select-none"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							border: `1px solid ${theme.colors.border}`,
+						}}
+						onWheel={(e) => e.stopPropagation()}
 					>
-						<span
-							className="text-xs font-medium uppercase tracking-wide truncate"
-							style={{ color: theme.colors.textDim }}
-							title={path}
-						>
-							{documentName}
-						</span>
+						<div className="px-4 pt-3 pb-2 flex items-center gap-2 shrink-0">
+							<span
+								className="min-w-0 text-sm font-medium truncate"
+								style={{ color: theme.colors.textDim }}
+								title={path}
+							>
+								{documentName}
+							</span>
 
-						<div className="flex-1" />
+							<div className="flex-1" />
 
-						<HeaderButton
+							<EscCloseButton
+								theme={theme}
+								onClose={close}
+								testId="document-chat-close"
+								className="rounded-full"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							/>
+						</div>
+
+						{historyOpen && (
+							<div className="min-h-0 overflow-y-auto">
+								<QuickChatPicker
+									theme={theme}
+									items={chat.history.map(({ tab, messages }) => {
+										const first = messages.find((m) => m.kind === 'you');
+										return {
+											id: tab.id,
+											name: first?.text ?? tab.name ?? documentName,
+											detail: formatRelativeTime(tab.logs.at(-1)?.timestamp ?? tab.createdAt),
+											extras: messages.map((m) => m.text),
+										};
+									})}
+									currentId={chat.tab?.id ?? null}
+									onPick={(tabId) => {
+										chat.restore(tabId);
+										setHistoryOpen(false);
+									}}
+									onClose={() => setHistoryOpen(false)}
+									placeholder="Search document chats..."
+									listLabel="Document chats"
+									emptyText="No document chats yet"
+									noMatchText={(query) => `No chat matches "${query}"`}
+									testIdPrefix="document-chat-history"
+								/>
+							</div>
+						)}
+						<DocumentChatMessages
 							theme={theme}
-							testId="document-chat-reset"
-							label="Start a fresh chat about this document"
-							disabled={!chat.tab}
-							onClick={chat.reset}
-						>
-							<RotateCcw className="w-3.5 h-3.5" />
-						</HeaderButton>
+							messages={chat.messages}
+							busy={chat.busy}
+							fontScale={fontScale.fontScale}
+						/>
 
-						<HeaderButton
-							theme={theme}
-							testId="document-chat-pop-out"
-							label="Open this chat as a tab"
-							disabled={!chat.tab}
-							onClick={handlePopOut}
-						>
-							<PanelRightOpen className="w-3.5 h-3.5" />
-						</HeaderButton>
-
-						{/* Escape alone strands users on remote desktops and tablets. */}
-						<EscCloseButton theme={theme} onClose={close} />
+						<div className="px-3 pb-3 shrink-0">
+							<DocumentChatComposer
+								theme={theme}
+								fontScale={fontScale}
+								draft={chat.draft}
+								onDraftChange={chat.setDraft}
+								onSend={chat.send}
+								chat={chat}
+								onHistory={() => setHistoryOpen((value) => !value)}
+								holdThresholdMs={chat.holdThresholdMs}
+								voiceEnabled={chat.voiceEnabled}
+								voiceActive={chat.voiceActive}
+								onStartVoice={chat.startVoice}
+								onStopVoice={chat.stopVoice}
+							/>
+						</div>
 					</div>
-
-					<DocumentChatMessages
-						theme={theme}
-						messages={chat.messages}
-						busy={chat.busy}
-						documentName={documentName}
-					/>
-
-					<DocumentChatComposer
-						theme={theme}
-						mode={mode}
-						onModeChange={setMode}
-						draft={chat.draft}
-						onDraftChange={chat.setDraft}
-						onSend={chat.send}
-						holdThresholdMs={chat.holdThresholdMs}
-						voiceEnabled={chat.voiceEnabled}
-						voiceActive={chat.voiceActive}
-						onStartVoice={chat.startVoice}
-						onStopVoice={chat.stopVoice}
-					/>
 				</div>
 			)}
 		</>
 	);
 });
-
-function HeaderButton({
-	theme,
-	testId,
-	label,
-	disabled,
-	onClick,
-	children,
-}: {
-	theme: Theme;
-	testId: string;
-	label: string;
-	disabled?: boolean;
-	onClick: () => void;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			data-testid={testId}
-			aria-label={label}
-			title={label}
-			disabled={disabled}
-			onClick={onClick}
-			className="p-1 rounded focus:outline-none focus-visible:ring-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition-colors"
-			style={{ color: theme.colors.textDim }}
-		>
-			{children}
-		</button>
-	);
-}
 
 export default DocumentChatOverlay;

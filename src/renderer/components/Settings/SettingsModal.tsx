@@ -29,6 +29,7 @@ import {
 import { useSettings } from '../../hooks';
 import type { Theme, SettingsTab } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { useOptionalContentFits } from '../../hooks/ui/useOptionalLabelFits';
@@ -63,6 +64,7 @@ import { PluginSettingsCard } from './PluginSettingsCard';
 import { encoreTileForSetting, settingSubTab, type SearchableSetting } from './searchableSettings';
 import type { EncoreTileRequest } from './tabs/EncoreTab/types';
 import type { SettingsModalData } from '../../stores/modalStore';
+import { LOCAL_MODEL_LIBRARY_SECTION_IDS } from '../../../shared/local-models/library';
 
 /**
  * The tabs this modal renders: the shared {@link SettingsTab} (an alias rather
@@ -606,6 +608,19 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		activeTab: activeViewKey,
 		onSelect: selectNavLeaf,
 		enabled: isOpen,
+	});
+	const settingsIsTopLayer = useIsTopLayer(MODAL_PRIORITIES.SETTINGS);
+	useModalTabCycling({
+		tabs: LOCAL_MODEL_LIBRARY_SECTION_IDS,
+		activeTab: modelsNav.librarySection,
+		onSelect: modelsNav.setLibrarySection,
+		shift: false,
+		enabled:
+			isOpen &&
+			settingsIsTopLayer &&
+			!searchActive &&
+			activeTab === 'models' &&
+			modelsNav.panel === 'library',
 	});
 
 	// By default, a subtree in the sidebar stays expanded while every row fits without

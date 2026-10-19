@@ -1030,14 +1030,13 @@ export const FilePreview = React.memo(
 		// install that has not turned voice on - which is all of them by default.
 		const canChatAboutThisFile = !!file && isEditableText;
 
-		// The chat bubble on the other side of the same preview. `useTocOverlay` is
-		// the generic open/close plumbing for these floating panels - hotkey, Escape,
-		// click-outside, focus back to the container - so the two controls behave
-		// identically instead of the second one being a copy that drifts.
+		// Reuse the preview's shortcut and focus handling, but keep the embedded
+		// chat open while the user selects or scrolls through the document.
 		const documentChat = useTocOverlay({
 			shortcuts,
 			containerRef,
 			shortcutId: 'toggleDocumentChat',
+			dismissOnClickOutside: false,
 			enabled: canChatAboutThisFile,
 			onShortcutUsed,
 		});
@@ -1995,7 +1994,7 @@ export const FilePreview = React.memo(
 		return (
 			<div
 				ref={containerRef}
-				className="flex flex-col h-full outline-none"
+				className="relative flex flex-col h-full outline-none"
 				style={{ backgroundColor: theme.colors.bgMain }}
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
@@ -2154,7 +2153,7 @@ export const FilePreview = React.memo(
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
-							: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+							: 'flex-1 min-h-0 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
 					}
 					style={
 						{
@@ -2897,22 +2896,6 @@ export const FilePreview = React.memo(
 						activeIndex={activeTocIndex}
 					/>
 
-					{/* Chat with this document - the bottom-LEFT twin of the ToC. Gated
-					    on there being text to talk about, so an image or a compiled
-					    binary does not offer a conversation whose first act would be a
-					    failed read. */}
-					{canChatAboutThisFile && file && (
-						<DocumentChatOverlay
-							theme={theme}
-							path={file.path}
-							open={documentChat.open}
-							onOpenChange={documentChat.setOpen}
-							buttonRef={documentChat.buttonRef}
-							overlayRef={documentChat.overlayRef}
-							shortcutHint={formatShortcutKeys(shortcuts.toggleDocumentChat?.keys ?? [])}
-						/>
-					)}
-
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
 					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (
 						<HeadingPalette
@@ -2926,6 +2909,19 @@ export const FilePreview = React.memo(
 						/>
 					)}
 				</div>
+
+				{/* Embedded chat has its own scroll area, leaving the document readable. */}
+				{canChatAboutThisFile && file && (
+					<DocumentChatOverlay
+						theme={theme}
+						path={file.path}
+						open={documentChat.open}
+						onOpenChange={documentChat.setOpen}
+						buttonRef={documentChat.buttonRef}
+						overlayRef={documentChat.overlayRef}
+						shortcutHint={formatShortcutKeys(shortcuts.toggleDocumentChat?.keys ?? [])}
+					/>
+				)}
 
 				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
 

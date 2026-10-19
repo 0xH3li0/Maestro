@@ -12,15 +12,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	buildDocumentChatMessages,
+	keepDocumentChat,
+	cycleDocumentChatThinking,
+	restoreDocumentChat,
+	stopDocumentChat,
 	findDocumentChatTab,
 	popOutDocumentChat,
 	readDocumentChatView,
 	resetDocumentChat,
 	sendDocumentChatMessage,
 } from '../../../renderer/services/documentChat';
+import { processService } from '../../../renderer/services/process';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 import { buildDocumentOpeningPrompt } from '../../../shared/acappella/document-scope';
 import type { AITab, LogEntry } from '../../../renderer/types';
 
@@ -145,7 +151,7 @@ describe('sendDocumentChatMessage', () => {
 });
 
 describe('resetDocumentChat', () => {
-	it('reveals the old conversation instead of destroying it', () => {
+	it('archives the old conversation without cluttering the tab strip', () => {
 		sendDocumentChatMessage({ path: DOC_PATH, text: 'hello' });
 		const oldTabId = chatTab()!.id;
 
@@ -153,9 +159,9 @@ describe('resetDocumentChat', () => {
 
 		const retired = currentSession().aiTabs.find((t) => t.id === oldTabId);
 		expect(retired).toBeDefined();
-		// Still there, now reachable, and no longer answering for the document.
-		expect(retired!.hidden).toBe(false);
-		expect(retired!.documentOrigin).toBeUndefined();
+		// Still in document history, with its prior visibility, and no longer active.
+		expect(retired!.hidden).toBe(true);
+		expect(retired!.documentOrigin).toEqual({ path: DOC_PATH, archived: true });
 		expect(chatTab()).toBeNull();
 	});
 
@@ -219,9 +225,10 @@ describe('buildDocumentChatMessages', () => {
 		],
 	} as unknown as AITab;
 
-	it('keeps what was asked and what came back, and drops the machinery', () => {
+	it('keeps streamed replies as well as answers and drops tool detail', () => {
 		const messages = buildDocumentChatMessages(tab);
 		expect(messages.map((m) => m.kind)).toEqual(['you', 'assistant', 'system']);
+		expect(messages[1].text).toBe('It is the overview.noise');
 	});
 
 	it('shows what the user typed rather than the hand-over wrapper', () => {
@@ -288,5 +295,79 @@ describe('readDocumentChatView', () => {
 		expect(view.messages).toEqual([]);
 		expect(view.busy).toBe(false);
 		expect(view.pending).toBe(0);
+	});
+});
+
+describe('document chat controls', () => {
+	it('keeps a conversation visible without moving away from the document', () => {
+		const before = currentSession();
+		keepDocumentChat({ path: DOC_PATH });
+		expect(chatTab()?.hidden).toBe(false);
+		expect(currentSession().activeTabId).toBe(before.activeTabId);
+		expect(currentSession().activeFileTabId).toBe(before.activeFileTabId);
+	});
+	it('cycles thinking on the document tab without changing another tab', () => {
+		const original = createMockAITab({ id: 'ordinary-tab', showThinking: 'off' });
+		useSessionStore.setState({ sessions: [{ ...currentSession(), aiTabs: [original] }] });
+		cycleDocumentChatThinking({ path: DOC_PATH });
+		expect(chatTab()?.showThinking).toBe('on');
+		cycleDocumentChatThinking({ path: DOC_PATH });
+		expect(chatTab()?.showThinking).toBe('sticky');
+		cycleDocumentChatThinking({ path: DOC_PATH });
+		expect(chatTab()?.showThinking).toBe('off');
+		expect(currentSession().aiTabs.find((t) => t.id === original.id)).toBe(original);
+	});
+	it('restores an archived conversation and its provider ID after serialization', () => {
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'original question' });
+		const originalId = chatTab()!.id;
+		useSessionStore.setState({
+			sessions: [
+				{
+					...currentSession(),
+					aiTabs: currentSession().aiTabs.map((tab) =>
+						tab.id === originalId ? { ...tab, agentSessionId: 'original-provider' } : tab
+					),
+				},
+			],
+		});
+		resetDocumentChat({ path: DOC_PATH });
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'new thread' });
+		const newId = chatTab()!.id;
+		useSessionStore.setState({ sessions: JSON.parse(JSON.stringify([currentSession()])) });
+		restoreDocumentChat({ path: DOC_PATH, tabId: originalId });
+		expect(chatTab()).toMatchObject({ id: originalId, agentSessionId: 'original-provider' });
+		expect(currentSession().aiTabs.find((t) => t.id === newId)?.documentOrigin?.archived).toBe(
+			true
+		);
+	});
+	it('forwards an image-only message to the same document conversation', () => {
+		const images = ['data:image/png;base64,aGVsbG8='];
+		sendDocumentChatMessage({ path: DOC_PATH, text: '', images });
+		expect(currentSession().executionQueue?.[0].images).toEqual(images);
+		expect(readDocumentChatView(currentSession(), DOC_PATH).messages[0].images).toEqual(images);
+	});
+	it('withdraws only this document queue and interrupts its process', async () => {
+		const interrupt = vi.spyOn(processService, 'interrupt').mockResolvedValue(true);
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'stop me' });
+		const tabId = chatTab()!.id;
+		sendDocumentChatMessage({ path: '/repo/other.md', text: 'keep running' });
+		await stopDocumentChat({ path: DOC_PATH });
+		expect(interrupt).toHaveBeenCalledWith(`${SESSION_ID}-ai-${tabId}`);
+		expect(currentSession().executionQueue).toHaveLength(1);
+		expect(currentSession().executionQueue?.[0].text).toContain('keep running');
+		interrupt.mockRestore();
+	});
+	it('shows temporary reasoning only while running and retains sticky reasoning', () => {
+		const tab = {
+			id: 'thinking',
+			state: 'busy',
+			showThinking: 'on',
+			logs: [logEntry({ source: 'thinking', text: 'Reading the document' })],
+		} as AITab;
+		expect(buildDocumentChatMessages(tab)[0].kind).toBe('thinking');
+		expect(buildDocumentChatMessages({ ...tab, state: 'idle' })).toEqual([]);
+		expect(
+			buildDocumentChatMessages({ ...tab, state: 'idle', showThinking: 'sticky' })[0].text
+		).toBe('Reading the document');
 	});
 });

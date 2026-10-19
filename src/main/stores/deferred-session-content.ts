@@ -23,7 +23,11 @@ import {
 	type DeferredSessionContent,
 } from '../../shared/deferredSessionContent';
 
-type StoredAiTab = { id: string; logs: { id?: string; timestamp?: number }[] };
+type StoredAiTab = {
+	id: string;
+	logs: { id?: string; timestamp?: number }[];
+	documentOrigin?: { path: string };
+};
 
 /** What `sessions:getDeferredContent` returns for one agent. */
 export interface DeferredContentPayload {
@@ -183,7 +187,7 @@ export function mergeDeferredSessionContent(
 				previousTab.logs,
 				tab.logs,
 				(log) => log.id,
-				MAX_PERSISTED_SESSION_LOGS
+				tab.documentOrigin ? undefined : MAX_PERSISTED_SESSION_LOGS
 			),
 		};
 	});

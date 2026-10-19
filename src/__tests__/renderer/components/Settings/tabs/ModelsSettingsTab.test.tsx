@@ -5,10 +5,11 @@
  * nav that says which is open.
  *
  * Verifies each panel's sections, that each system panel lists exactly its own
- * tasks, that the Utility Agent sits under System Two, that the model server and
- * the cloud-only note moved to Sources, that the last panel and Library section
- * are remembered and a sub-tab path moves them, and that opening the tab only
- * reads what is on disk (nothing downloads or probes on open).
+ * tasks, that the Utility Agent sits under System Two, that Sources contains the
+ * model server without cloud-only or download mirror sections, that the last
+ * panel and Library section are remembered and a sub-tab path moves them, and
+ * that opening the tab only reads what is on disk (nothing downloads or probes
+ * on open).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -187,7 +188,7 @@ describe('ModelsSettingsTab', () => {
 		);
 	});
 
-	it('shows each section on its own panel, with the server, cloud note and mirror in Sources', () => {
+	it('shows each section on its own panel without cloud-only or advanced sections in Sources', () => {
 		const { container } = render(<Harness />);
 		const present = (id: string) => container.querySelector(`[data-setting-id="${id}"]`) !== null;
 
@@ -203,8 +204,9 @@ describe('ModelsSettingsTab', () => {
 		expect(present('local-models-voice-studio')).toBe(true);
 		expect(window.maestro.voice.voiceStudioStatus).not.toHaveBeenCalled();
 		expect(present('local-models-model-server')).toBe(true);
-		expect(present('local-models-download-source')).toBe(true);
-		expect(screen.getByTestId('local-models-cloud-only')).toHaveTextContent('DeepSeek V4');
+		expect(present('local-models-download-source')).toBe(false);
+		expect(screen.queryByTestId('local-models-cloud-only')).toBeNull();
+		expect(screen.queryByText('Advanced')).not.toBeInTheDocument();
 		expect(present('local-models-models')).toBe(false);
 
 		openPanel('Gateway');
@@ -338,7 +340,7 @@ describe('ModelsSettingsTab', () => {
 		expect(
 			utility!.compareDocumentPosition(assignments) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
-		expect(utility).toHaveTextContent('What a task set to Utility Agent below runs on.');
+		expect(utility).toHaveTextContent('Choose the default for tasks set to Utility source below.');
 	});
 
 	it('shows the tier defaults table on System Two, and on no other inner tab', () => {

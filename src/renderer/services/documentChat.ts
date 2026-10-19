@@ -28,21 +28,30 @@
  * this to live store state for the panel.
  */
 
-import type { AITab, LogEntry, QueuedItem, Session } from '../types';
+import type { AITab, QueuedItem, Session } from '../types';
 import { useSessionStore, updateSessionWith, selectActiveSession } from '../stores/sessionStore';
-import { createTab, focusAiTabInSession, revealAiTab } from '../utils/tabHelpers';
-import { enqueuePromptForTab } from './queuedPrompt';
+import {
+	createTab,
+	focusAiTabInSession,
+	revealAiTab,
+	cycleShowThinkingFields,
+} from '../utils/tabHelpers';
+import { enqueuePromptForTab, removeQueuedItem } from './queuedPrompt';
 import {
 	buildDocumentOpeningPrompt,
 	stripDocumentOpeningPrompt,
 } from '../../shared/acappella/document-scope';
 import { getBasename } from '../../shared/formatters';
 import { notifyToast } from '../stores/notificationStore';
+import { logsToQuickChatMessages } from '../../shared/quickChat';
+import { cancelRecoveryForTab } from '../stores/retryStore';
+import { processService } from './process';
 
 /** One line in the bubble's history. */
 export interface DocumentChatMessage {
 	id: string;
-	kind: 'you' | 'assistant' | 'system';
+	kind: 'you' | 'assistant' | 'system' | 'thinking';
+	images?: string[];
 	text: string;
 	ts: number;
 	/** True while this reply is still streaming in. */
@@ -88,7 +97,11 @@ export function findDocumentChatTab(
 	path: string
 ): AITab | null {
 	if (!session || !path) return null;
-	return session.aiTabs?.find((tab) => tab.documentOrigin?.path === path) ?? null;
+	return (
+		session.aiTabs?.find(
+			(tab) => tab.documentOrigin?.path === path && !tab.documentOrigin.archived
+		) ?? null
+	);
 }
 
 /**
@@ -107,47 +120,27 @@ export function resolveDocumentChatAgentId(sessionId?: string): string | null {
 // The history the bubble renders
 // ---------------------------------------------------------------------------
 
-/**
- * Project a tab's transcript into chat lines.
- *
- * The bubble is a READING view, so it keeps the two things a conversation is
- * made of - what you asked and what came back - and drops the machinery around
- * them (tool cards, thinking, streamed stdout). Anyone who wants the full
- * transcript pops the chat out into the tab, which renders it properly. Building
- * a second full transcript renderer inside a 320px panel would be a worse copy
- * of one that already exists.
- *
- * Errors are kept and marked `system`, because a turn that failed is exactly
- * what a user staring at a silent chat needs to be told.
- */
+/** Project replies and reasoning with the same thinking rules as Quick Chat. */
 export function buildDocumentChatMessages(tab: AITab | null): DocumentChatMessage[] {
 	if (!tab) return [];
-	const messages: DocumentChatMessage[] = [];
-	for (const entry of tab.logs) {
-		const kind = chatKindForLogEntry(entry);
-		if (!kind) continue;
-		const text = entry.text?.trim();
-		if (!text) continue;
-		messages.push({
-			id: entry.id,
+	const entries = new Map(tab.logs.map((entry) => [entry.id, entry]));
+	return logsToQuickChatMessages(tab.logs, {
+		thinking: tab.showThinking ?? 'off',
+		running: tab.state === 'busy',
+		maxMessages: Infinity,
+	}).map((message) => {
+		const entry = entries.get(message.id);
+		const kind =
+			message.role === 'user' ? 'you' : message.role === 'error' ? 'system' : message.role;
+		return {
+			id: message.id,
 			kind,
-			// The first message hands the document over (see `sendDocumentChatMessage`),
-			// so what the user actually typed is recovered for display. Showing the
-			// wrapper instead would open every chat with a paragraph of instructions
-			// the user did not write.
-			text: kind === 'you' ? stripDocumentOpeningPrompt(text) : text,
-			ts: entry.timestamp,
-			...(entry.metadata?.crossAgent?.streaming ? { streaming: true } : {}),
-		});
-	}
-	return messages;
-}
-
-function chatKindForLogEntry(entry: LogEntry): DocumentChatMessage['kind'] | null {
-	if (entry.source === 'user') return 'you';
-	if (entry.source === 'ai') return 'assistant';
-	if (entry.source === 'error') return 'system';
-	return null;
+			text: kind === 'you' ? stripDocumentOpeningPrompt(message.text) : message.text,
+			ts: message.timestamp,
+			...(entry?.images?.length ? { images: entry.images } : {}),
+			...(entry?.metadata?.crossAgent?.streaming ? { streaming: true } : {}),
+		};
+	});
 }
 
 /**
@@ -169,6 +162,7 @@ function buildPendingMessages(
 			kind: 'you' as const,
 			text: stripDocumentOpeningPrompt(item.text!),
 			ts: item.timestamp,
+			images: item.images,
 			pending: true,
 		}));
 }
@@ -283,7 +277,7 @@ export function sendDocumentChatMessage({
 	sessionId,
 	images,
 }: SendDocumentChatOptions): string | null {
-	const message = text.trim();
+	const message = text.trim() || (images?.length ? 'What can you tell me about these images?' : '');
 	if (!message || !path) return null;
 
 	const agentSessionId = resolveDocumentChatAgentId(sessionId);
@@ -334,13 +328,13 @@ export function sendDocumentChatMessage({
 /**
  * Start a fresh conversation about the document.
  *
- * The old tab is UNBOUND and REVEALED, never deleted. The next message mints a
+ * The old tab is archived, never deleted. The next message mints a
  * new tab with a new provider session, which is the "fresh session id" the reset
- * button promises, and the previous transcript becomes an ordinary tab the user
- * can read or close themselves. Destroying a conversation as a side effect of
+ * button promises. The previous transcript stays in document history and, if
+ * kept, in the tab strip. Destroying a conversation as a side effect of
  * clearing a text box is not a trade this feature gets to make.
  *
- * @returns The revealed tab's id, or null when there was nothing to reset.
+ * @returns The archived tab's id, or null when there was nothing to reset.
  */
 export function resetDocumentChat(options: { path: string; sessionId?: string }): string | null {
 	const agentSessionId = resolveDocumentChatAgentId(options.sessionId);
@@ -352,13 +346,14 @@ export function resetDocumentChat(options: { path: string; sessionId?: string })
 		const existing = findDocumentChatTab(session, options.path);
 		if (!existing) return session;
 		retiredTabId = existing.id;
-		// Reveal first, so the transcript is reachable, then drop the binding so
-		// the next message cannot find it and continue the old thread.
-		const revealed = revealAiTab(session, existing.id);
+		// Archive the binding so the next message starts a new thread. Keep the
+		// existing visibility: only Keep as a tab adds a chip to the tab strip.
 		return {
-			...revealed,
-			aiTabs: revealed.aiTabs.map((tab) =>
-				tab.id === existing.id ? { ...tab, documentOrigin: undefined } : tab
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === existing.id
+					? { ...tab, documentOrigin: { path: options.path, archived: true } }
+					: tab
 			),
 		};
 	});
@@ -386,4 +381,72 @@ export function popOutDocumentChat(options: { path: string; sessionId?: string }
 
 	updateSessionWith(agentSessionId, (current) => focusAiTabInSession(current, tab.id));
 	return tab.id;
+}
+
+/** Keep a document conversation in the tab strip without leaving the document. */
+export function keepDocumentChat(options: { path: string; sessionId?: string }): void {
+	const sessionId = resolveDocumentChatAgentId(options.sessionId);
+	if (!sessionId) return;
+	const ensured = ensureDocumentChatTab(sessionId, options.path);
+	if (ensured) updateSessionWith(sessionId, (session) => revealAiTab(session, ensured.tabId));
+}
+
+/** Cycle the bound tab's existing thinking preference, even before the first send. */
+export function cycleDocumentChatThinking(options: { path: string; sessionId?: string }): void {
+	const sessionId = resolveDocumentChatAgentId(options.sessionId);
+	if (!sessionId) return;
+	const ensured = ensureDocumentChatTab(sessionId, options.path);
+	if (!ensured) return;
+	updateSessionWith(sessionId, (session) => ({
+		...session,
+		aiTabs: session.aiTabs.map((tab) =>
+			tab.id === ensured.tabId ? { ...tab, ...cycleShowThinkingFields(tab) } : tab
+		),
+	}));
+}
+
+/** Resume an earlier thread without changing the file or the main tab selection. */
+export function restoreDocumentChat(options: {
+	path: string;
+	sessionId?: string;
+	tabId: string;
+}): void {
+	const sessionId = resolveDocumentChatAgentId(options.sessionId);
+	if (!sessionId) return;
+	updateSessionWith(sessionId, (session) => {
+		if (
+			!session.aiTabs.some(
+				(tab) => tab.id === options.tabId && tab.documentOrigin?.path === options.path
+			)
+		)
+			return session;
+		return {
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.documentOrigin?.path === options.path
+					? {
+							...tab,
+							documentOrigin: { ...tab.documentOrigin, archived: tab.id !== options.tabId },
+						}
+					: tab
+			),
+		};
+	});
+}
+
+/** Withdraw queued messages and interrupt only this document's running reply. */
+export async function stopDocumentChat(options: {
+	path: string;
+	sessionId?: string;
+}): Promise<void> {
+	const sessionId = resolveDocumentChatAgentId(options.sessionId);
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const tab = findDocumentChatTab(session, options.path);
+	if (!session || !tab) return;
+	cancelRecoveryForTab(session.id, tab.id);
+	for (const item of session.executionQueue ?? []) {
+		if (item.tabId === tab.id && item.type === 'message') removeQueuedItem(session.id, item.id);
+	}
+	// Scope the interrupt to this conversation; other tabs keep running.
+	await processService.interrupt(`${session.id}-ai-${tab.id}`);
 }

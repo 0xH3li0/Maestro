@@ -94,6 +94,7 @@ function getBadgeLevelForTime(cumulativeTimeMs: number): number {
  */
 function resetStore() {
 	useSettingsStore.setState({
+		utilitySource: { type: 'utility-agent' },
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
@@ -2190,6 +2191,24 @@ describe('settingsStore', () => {
 		});
 
 		describe('localModelAssignments', () => {
+			it('hydrates the shared utility source and keeps per-task choices separate', async () => {
+				const utilitySource = { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' } as const;
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilitySource,
+					localModelAssignments: { 'tab-naming': { type: 'off' } },
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().utilitySource).toEqual(utilitySource);
+				expect(useSettingsStore.getState().localModelAssignments).toEqual({
+					'tab-naming': { type: 'off' },
+				});
+				useSettingsStore.getState().setUtilitySource({ type: 'local', modelId: 'local-model' });
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('utilitySource', {
+					type: 'local',
+					modelId: 'local-model',
+				});
+			});
+
 			it('drops unusable entries and keeps the Utility Agent default for an existing install', async () => {
 				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 					utilityAgentId: 'agent-1',
@@ -2207,6 +2226,7 @@ describe('settingsStore', () => {
 					'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
 				});
 				expect(useSettingsStore.getState().utilityAgentId).toBe('agent-1');
+				expect(useSettingsStore.getState().utilitySource).toEqual({ type: 'utility-agent' });
 			});
 		});
 

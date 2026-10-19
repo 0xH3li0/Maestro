@@ -18,6 +18,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import {
 	readLocalModelAssignments,
 	readLocalModelEndpoints,
+	readSettingValue,
 	writeLocalModelAssignments,
 } from '../services/storage';
 import { ExitCode } from '../exit-codes';
@@ -31,6 +32,7 @@ import {
 	localModelAssignmentCaution,
 	localModelAssignmentProblem,
 	parseLocalModelAssignmentSpec,
+	parseUtilitySource,
 	resolveLocalModelAssignments,
 	withLocalModelAssignment,
 	type LocalModelAssignment,
@@ -139,7 +141,10 @@ export function modelsAssign(taskId: string, spec: string, options: JsonOption):
 }
 
 export async function modelsTasks(options: JsonOption): Promise<void> {
-	const assignments = resolveLocalModelAssignments(readLocalModelAssignments());
+	const assignments = resolveLocalModelAssignments(
+		readLocalModelAssignments(),
+		parseUtilitySource(readSettingValue('utilitySource'))
+	);
 
 	// Readiness needs the model store and the network, so it comes from the
 	// desktop. Its absence is not a failure here: the assignments are the

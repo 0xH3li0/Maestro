@@ -826,20 +826,27 @@ its `system`. The user's choice per task is a `LocalModelAssignment`:
 | Assignment                                | Meaning                                                                                                                                                                                       |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{ type: 'off' }`                         | The task does not run.                                                                                                                                                                        |
-| `{ type: 'utility-agent' }`               | The task's existing agent path, unchanged (`utilityAgentId` / `utilityModelId`, or the tab's agent).                                                                                          |
+| `{ type: 'utility-agent' }`               | Inherit `utilitySource`: a local model, endpoint, or provider (`utilityAgentId` / `utilityModelId`, or the tab's agent).                                                                      |
 | `{ type: 'local', modelId }`              | A catalog model of the needed kind, run on this machine.                                                                                                                                      |
 | `{ type: 'endpoint', endpointId, model }` | A model on one of the user's `localModelEndpoints`.                                                                                                                                           |
 | `{ type: 'system-one' }`                  | The System One engine in force answers the task's typed questions. Only for a task that declares `systemOneQuestions`. See [System One](#system-one-engines-the-router-entry-and-the-ledger). |
 
 The `localModelAssignments` setting is SPARSE: only tasks the user changed are stored, and
 `resolveLocalModelAssignment()` falls back to the registry default. Tab naming, summaries, and AI
-command mode default to `utility-agent`, so an existing install (including one with `utilityAgentId`
-set) behaves exactly as before; every task new with Local Models defaults to `off`. The migration is
+command mode default to `utility-agent`, inheriting the shared source. Existing installs retain
+their `utilityAgentId` / `utilityModelId` provider choice; every task new with Local Models defaults to `off`. The migration is
 `parseLocalModelAssignments()`, run on every load: unknown tasks, malformed entries, and
 `utility-agent` on a task without an agent path are dropped back to the default. A model id the
 catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.
+
+`parseUtilitySource()` defaults old settings to the provider path.
+`readLocalModelAssignments()` resolves shared-source inheritance for both execution and readiness;
+task pickers keep the stored `utility-agent` choice. `resolveUtilityProvider()` reads provider
+overrides only while the shared source is on the provider path. A parked provider choice must not
+override a local source. Tool-based grooming and transfer keep the owning session's provider when
+the shared source is local or an endpoint.
 
 One task takes two kinds of catalog model. `model-routing` declares `needs: 'text-gen'` and
 `alsoAcceptsLocal: ['embedding']`, and does its job a different way on each (see

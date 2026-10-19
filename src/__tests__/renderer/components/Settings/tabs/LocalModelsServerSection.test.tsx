@@ -147,6 +147,9 @@ describe('LocalModelsServerCard', () => {
 		expect(screen.getByTestId('model-server-engine')).toHaveTextContent(
 			/Vulkan \(NVIDIA GeForce RTX 4090\)/
 		);
+		expect(screen.getByTestId('model-server-engine')).toHaveTextContent(
+			'separate install from the in-app llama.cpp engine'
+		);
 		expect(screen.getByTestId('model-server-address')).toHaveTextContent('http://127.0.0.1:47811');
 		expect(screen.getByTestId('model-server-loaded')).toHaveTextContent(/Qwen3 1\.7B/);
 		expect(screen.getByTestId('model-server-loaded')).toHaveTextContent(/of weights in memory/);
@@ -196,6 +199,12 @@ describe('LocalModelsServerCard', () => {
 
 		expect(screen.getByTestId('model-server-start')).toBeDisabled();
 		expect(screen.getByTestId('model-server-engine')).toHaveTextContent(/not installed/);
+		expect(screen.getByTestId('model-server-engine')).toHaveTextContent(
+			'Both use the same downloaded model files'
+		);
+		expect(screen.getByTestId('model-server-install')).toHaveAccessibleName(
+			'Install hosting engine'
+		);
 		expect(screen.getByTestId('model-server-address')).toHaveTextContent(/chosen the first time/);
 
 		fireEvent.change(screen.getByTestId('model-server-build'), { target: { value: 'cuda' } });

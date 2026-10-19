@@ -49,7 +49,10 @@ import {
 } from '../../shared/local-models/endpoints';
 import {
 	parseLocalModelAssignments,
+	parseUtilitySource,
+	UTILITY_AGENT_ASSIGNMENT,
 	type LocalModelAssignments,
+	type UtilitySource,
 } from '../../shared/local-models/tasks';
 import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import {
@@ -518,6 +521,7 @@ export interface SettingsStoreState
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
 	utilityAgentId: string | null;
+	utilitySource: UtilitySource;
 	utilityModelId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
@@ -648,6 +652,7 @@ export interface SettingsStoreActions
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setUtilityAgentId: (value: string | null) => void;
+	setUtilitySource: (value: UtilitySource) => void;
 	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
@@ -919,6 +924,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
 		utilityAgentId: null,
+		utilitySource: UTILITY_AGENT_ASSIGNMENT,
 		utilityModelId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
@@ -1485,6 +1491,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUtilityAgentId: (value) => {
 			set({ utilityAgentId: value });
 			window.maestro.settings.set('utilityAgentId', value);
+		},
+
+		setUtilitySource: (value) => {
+			const utilitySource = parseUtilitySource(value);
+			set({ utilitySource });
+			window.maestro.settings.set('utilitySource', utilitySource);
 		},
 
 		setUtilityModelId: (value) => {
@@ -2721,6 +2733,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['utilityAgentId'] !== undefined)
 			patch.utilityAgentId = allSettings['utilityAgentId'] as string | null;
+
+		patch.utilitySource = parseUtilitySource(allSettings['utilitySource']);
 
 		if (allSettings['utilityModelId'] !== undefined)
 			patch.utilityModelId = allSettings['utilityModelId'] as string | null;

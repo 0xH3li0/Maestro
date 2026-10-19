@@ -8,7 +8,7 @@
  * ({@link runClassifierTask}), one clip of audio for a speech-to-text task
  * ({@link runSpeechToTextTask}), one prompt for the embedding router
  * ({@link runEmbeddingRouteTask}). The router reads the user's assignment for that task
- * (`localModelAssignments`, resolved against the registry defaults in
+ * (`localModelAssignments`, with utility-source inheritance and registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
  *   - `off`               - the task does not run. The caller hides or skips it.

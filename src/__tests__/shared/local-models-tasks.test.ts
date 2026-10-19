@@ -25,6 +25,8 @@ import {
 	parseLocalModelAssignmentSpec,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
+	parseUtilitySource,
+	resolveUtilityProvider,
 	tasksForSystem,
 	tasksNeedingKind,
 	tasksUsingEndpoint,
@@ -427,6 +429,83 @@ describe('localModelAssignments setting', () => {
 		expect(SETTINGS_METADATA.localModelAssignments.default).toEqual({});
 		expect(SETTINGS_METADATA.localModelAssignments.type).toBe('object');
 		expect(SETTINGS_DEFAULTS.localModelAssignments).toEqual({});
+	});
+});
+
+describe('shared utility source', () => {
+	const local = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
+	const endpoint = { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' } as const;
+
+	it('preserves provider defaults for older installs and rejects recursive or off sources', () => {
+		for (const value of [undefined, null, {}, { type: 'off' }, { type: 'system-one' }]) {
+			expect(parseUtilitySource(value)).toEqual({ type: 'utility-agent' });
+		}
+		expect(SETTINGS_METADATA.utilitySource.default).toEqual({ type: 'utility-agent' });
+		expect(SETTINGS_DEFAULTS.utilitySource).toEqual({ type: 'utility-agent' });
+	});
+
+	it.each([local, endpoint])(
+		'resolves inherited tasks through $type without changing explicit choices',
+		(source) => {
+			const resolved = resolveLocalModelAssignments(
+				{
+					'tab-naming': { type: 'off' },
+					'tab-summary': endpoint,
+				},
+				source
+			);
+			expect(resolved['tab-naming']).toEqual({ type: 'off' });
+			expect(resolved['tab-summary']).toEqual(endpoint);
+			expect(resolved['ai-command']).toEqual(source);
+			expect(resolved['git-drafts']).toEqual({ type: 'off' });
+			expect(resolved['semantic-search']).toEqual({ type: 'off' });
+		}
+	);
+
+	it('retains removed sources so readiness can report the problem', () => {
+		expect(parseUtilitySource({ type: 'local', modelId: 'removed-model' })).toEqual({
+			type: 'local',
+			modelId: 'removed-model',
+		});
+		expect(parseUtilitySource(endpoint)).toEqual(endpoint);
+	});
+
+	it('resolves provider defaults and ignores parked overrides on a local source', () => {
+		expect(
+			resolveUtilityProvider(
+				{ utilityAgentId: 'codex', utilityModelId: 'gpt-model' },
+				'claude-code'
+			)
+		).toEqual({
+			agentType: 'codex',
+			modelId: 'gpt-model',
+			usesUtilityProvider: true,
+			changesProvider: true,
+		});
+		expect(
+			resolveUtilityProvider(
+				{ utilitySource: local, utilityAgentId: 'codex', utilityModelId: 'gpt-model' },
+				'claude-code'
+			)
+		).toEqual({
+			agentType: 'claude-code',
+			modelId: undefined,
+			usesUtilityProvider: false,
+			changesProvider: false,
+		});
+	});
+
+	it('includes inherited tasks in model and endpoint removal warnings', () => {
+		expect(
+			tasksUsingLocalModel({ 'tab-summary': { type: 'off' } }, local.modelId, local).map(
+				(task) => task.id
+			)
+		).toEqual(['tab-naming', 'ai-command']);
+		expect(
+			tasksUsingEndpoint({ 'ai-command': local }, endpoint.endpointId, endpoint).map(
+				(task) => task.id
+			)
+		).toEqual(['tab-naming', 'tab-summary']);
 	});
 });
 

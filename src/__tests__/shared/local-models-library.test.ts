@@ -14,12 +14,15 @@ import {
 	GEMMA_4_12B_ID,
 	GEMMA_4_E4B_ID,
 	GPT_OSS_20B_ID,
+	GPT_OSS_120B_ID,
 	LOCAL_MODEL_CATALOG,
 	LOCAL_MODEL_KIND_LABELS,
 	QWEN3_1_7B_ID,
 	QWEN3_5_9B_ID,
 	QWEN3_CODER_30B_A3B_ID,
 	getLocalModel,
+	PARAKEET_TDT_V2_ID,
+	WHISPER_BASE_EN_ID,
 } from '../../shared/local-models/model-catalog';
 import {
 	CLOUD_ONLY_MODELS,
@@ -32,7 +35,13 @@ import {
 	localModelLibraryGroup,
 	localModelLibrarySection,
 	localModelRoleBadges,
+	recommendedLocalModelsForHardware,
 } from '../../shared/local-models/library';
+import {
+	modelFit,
+	RAM_SYSTEM_HEADROOM_BYTES,
+	type HardwareProfile,
+} from '../../shared/local-models/model-fit';
 import { userLocalModelEntry } from '../../shared/local-models/user-models';
 
 const USER_ENTRY = userLocalModelEntry({
@@ -45,6 +54,60 @@ const USER_ENTRY = userLocalModelEntry({
 	parametersB: 1.5,
 	contextLength: 8192,
 	addedAt: 0,
+});
+
+describe('hardware recommendations', () => {
+	const mac: HardwareProfile = {
+		platform: 'darwin',
+		arch: 'arm64',
+		totalMemoryBytes: 128 * 1024 ** 3,
+		unifiedMemory: true,
+		gpus: [],
+	};
+
+	it('chooses the preferred agent that comfortably fits, independent of catalog order', () => {
+		const entries = [getLocalModel(GPT_OSS_20B_ID)!, getLocalModel(GPT_OSS_120B_ID)!];
+		expect(Object.keys(recommendedLocalModelsForHardware(entries, mac))).toEqual([GPT_OSS_120B_ID]);
+		expect(
+			Object.keys(
+				recommendedLocalModelsForHardware(entries, { ...mac, totalMemoryBytes: 32 * 1024 ** 3 })
+			)
+		).toEqual([GPT_OSS_20B_ID]);
+	});
+
+	it('falls back to the smaller recognizer when Parakeet exceeds the memory budget', () => {
+		const whisper = getLocalModel(WHISPER_BASE_EN_ID)!;
+		const profile = { ...mac, totalMemoryBytes: RAM_SYSTEM_HEADROOM_BYTES + whisper.bytes };
+		const picks = recommendedLocalModelsForHardware(
+			[getLocalModel(PARAKEET_TDT_V2_ID)!, whisper],
+			profile
+		);
+		expect(Object.keys(picks)).toEqual([WHISPER_BASE_EN_ID]);
+	});
+
+	it('never recommends tight, oversized, pending or user-added models, or guesses without hardware', () => {
+		expect(recommendedLocalModelsForHardware(LOCAL_MODEL_CATALOG, null)).toEqual({});
+		const cpu = { ...mac, unifiedMemory: false };
+		const picks = recommendedLocalModelsForHardware(LOCAL_MODEL_CATALOG, cpu);
+		for (const id of Object.keys(picks)) {
+			expect(modelFit(getLocalModel(id)!, cpu).fit).toBe('fits');
+			expect(getLocalModel(id)!.kind).not.toBe('text-gen');
+		}
+		const agent = getLocalModel(GPT_OSS_120B_ID)!;
+		expect(recommendedLocalModelsForHardware([{ ...agent, pending: 'Unavailable' }], mac)).toEqual(
+			{}
+		);
+		expect(recommendedLocalModelsForHardware([{ ...agent, userAdded: true }], mac)).toEqual({});
+		expect(recommendedLocalModelsForHardware([USER_ENTRY], mac)).toEqual({});
+	});
+
+	it('offers at most one pick per Library group and leaves complementary wake-word parts alone', () => {
+		const groups = Object.keys(recommendedLocalModelsForHardware(LOCAL_MODEL_CATALOG, mac)).map(
+			(id) => localModelLibraryGroup(getLocalModel(id)!)
+		);
+		expect(new Set(groups).size).toBe(groups.length);
+		expect(groups).not.toContain('wake-word');
+	});
 });
 
 describe('Library sections', () => {
@@ -67,6 +130,10 @@ describe('Library sections', () => {
 		}
 		// Engines lists no model; every other section lists at least one group.
 		expect(LOCAL_MODEL_LIBRARY_SECTIONS.engines.groups).toEqual([]);
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.engines.description).toContain('inside Maestro');
+		expect(LOCAL_MODEL_LIBRARY_SECTIONS.engines.description).toContain(
+			'llama-server, installed separately in Models > Sources'
+		);
 	});
 
 	it('files every group in exactly one section', () => {

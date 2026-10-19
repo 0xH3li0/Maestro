@@ -356,7 +356,7 @@ export interface AgentConfigPanelProps extends Pick<
 	onCustomArgsBlur: () => void;
 	/**
 	 * Skip the env var section. A tabbed agent form sets this and mounts
-	 * `AgentEnvVarsSection` on its own Environment tab, so the vars are not
+	 * `ProviderEnvironmentSection` in the Provider panel, so the vars are not
 	 * rendered twice. The env props are still required: the panel's callers
 	 * keep one prop shape either way.
 	 */
@@ -844,7 +844,7 @@ export function AgentConfigPanel({
 				</p>
 			</div>
 
-			{/* Custom environment variables input. Hidden when a tabbed form moves it to its own tab. */}
+			{/* Custom environment variables input. Hidden when a form supplies its own Provider environment section. */}
 			{!hideEnvVars && (
 				<AgentEnvVarsSection
 					theme={theme}

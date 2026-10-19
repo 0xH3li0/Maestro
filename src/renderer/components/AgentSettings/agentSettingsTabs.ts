@@ -8,15 +8,7 @@
  * with an empty name is never left facing a dead Save button.
  */
 
-import {
-	BrainCircuit,
-	Cpu,
-	ScrollText,
-	Server,
-	SlidersHorizontal,
-	Terminal,
-	Users,
-} from 'lucide-react';
+import { BrainCircuit, Cpu, ScrollText, Server, SlidersHorizontal, Users } from 'lucide-react';
 import type { ModalTab } from '../ui/ModalTabStrip';
 import {
 	AGENT_SETTINGS_TAB_IDS,
@@ -43,7 +35,6 @@ const LINKABLE_TAB_ICONS: Readonly<Record<LinkableAgentSettingsTabId, ModalTab['
 	general: SlidersHorizontal,
 	provider: Cpu,
 	models: BrainCircuit,
-	environment: Terminal,
 	peers: Users,
 	ssh: Server,
 };
@@ -75,12 +66,7 @@ export const EDIT_AGENT_TAB_IDS: readonly AgentSettingsTabId[] = [
 ];
 
 /** The moderator has no gateway (no Models tab) and a group chat has no peers. */
-export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = [
-	'general',
-	'provider',
-	'environment',
-	'ssh',
-];
+export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = ['general', 'provider', 'ssh'];
 
 /**
  * The tab each validation field lives on. Keys are the field ids the modals
@@ -90,8 +76,8 @@ export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = [
 export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabId>> = {
 	name: 'general',
 	group: 'general',
-	// The Group Chat moderator picker sits on General, beside the chat name.
-	moderator: 'general',
+	// The moderator editor uses the same Provider picker as agent forms.
+	moderator: 'provider',
 	directory: 'general',
 	workingDir: 'general',
 	additionalDirectories: 'general',
@@ -110,7 +96,7 @@ export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabI
 	tierTargets: 'models',
 	backgroundRequests: 'models',
 	systemOne: 'models',
-	envVars: 'environment',
+	envVars: 'provider',
 	peers: 'peers',
 	sshRemote: 'ssh',
 	remoteWorkingDir: 'ssh',

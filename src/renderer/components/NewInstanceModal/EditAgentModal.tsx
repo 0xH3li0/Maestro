@@ -1,6 +1,5 @@
 import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
-import { formatTranslationRecordCounts } from '../../../shared/maestro-lib/translation/context-window';
 import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
@@ -9,11 +8,12 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { isCotExportAvailable } from './AgentCotExportSection';
 import { MiniBadge } from '../ui/MiniBadge';
 import { Spinner } from '../ui/Spinner';
+import { StatCardGrid } from '../widgets';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { normalizePeerAgents } from '../../../shared/peerAgents';
-import { formatTokensCompact } from '../../../shared/formatters';
+import { formatCount, formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
@@ -51,7 +51,7 @@ import {
 	BrowseFolderButton,
 	buildAgentSettingsTabs,
 	EDIT_AGENT_TAB_IDS,
-	EnvironmentTab,
+	ProviderEnvironmentSection,
 	firstTabWithError,
 	GeneralTab,
 	ModelsTab,
@@ -90,7 +90,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
  * Allows editing the agent's name, provider, working directory (refused while
  * the agent is running), messages, provider settings, and SSH configuration.
  *
- * The form is tabbed (General, Provider, Models, Environment, Peers, SSH; see
+ * The form is tabbed (General, Provider, Models, Peers, SSH; see
  * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
  * Only the active panel is rendered, so Tab never walks into a hidden one.
  * The desktop app adds a last tab, Audit Log, which is the exception: it saves
@@ -237,9 +237,7 @@ export function EditAgentModal({
 	const [migrationLoading, setMigrationLoading] = useState(false);
 	const [migrationSaving, setMigrationSaving] = useState(false);
 	const [acceptTranslationLimitations, setAcceptTranslationLimitations] = useState(false);
-	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
 	const [projectResourcesIntoRepo, setProjectResourcesIntoRepo] = useState(false);
-	const [selectionRevision, setSelectionRevision] = useState(0);
 	const carryOverBadge = useMemo(
 		() => (
 			<MiniBadge
@@ -267,6 +265,21 @@ export function EditAgentModal({
 		currentMigration?.operationId === migrationPlan?.id
 			? currentMigration?.state
 			: migrationPlan?.status;
+	const migrationNotices = useMemo(
+		() => [
+			...new Map(
+				(migrationLoading ? [] : (migrationPlan?.limitations ?? []))
+					.filter((limit) => limit.severity !== 'info')
+					.map((limit) => [`${limit.severity}:${limit.code}:${limit.message}`, limit])
+			).values(),
+		],
+		[migrationPlan, migrationLoading]
+	);
+	const needsTranslationAcceptance =
+		!!migrationPlan &&
+		!migrationLoading &&
+		migrationPlan.status !== 'blocked' &&
+		limitationsNeedingAcceptance(migrationPlan.limitations).length > 0;
 	const migrationActivity = migrationSaving
 		? migrationState === 'deferred'
 			? 'Waiting for the current turn to finish...'
@@ -279,10 +292,13 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (!isOpen || !session || !translationRequested) {
 			setMigrationPlan(null);
+			setMigrationError('');
+			setMigrationLoading(false);
 			return;
 		}
 		let disposed = false;
 		setMigrationLoading(true);
+		setMigrationPlan(null);
 		setAcceptTranslationLimitations(false);
 		setMigrationError('');
 		void requestProviderTranslation({
@@ -291,7 +307,7 @@ export function EditAgentModal({
 			tabId: translationReview?.tabId,
 			action: 'plan',
 			projectResourcesIntoRepo,
-			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
+			selectedUserResources: [],
 		})
 			.then((report) => {
 				if (disposed) return;
@@ -308,14 +324,12 @@ export function EditAgentModal({
 		return () => {
 			disposed = true;
 		};
-		// Resource edits are reviewed explicitly, so typing does not repeatedly scan native history.
 	}, [
 		isOpen,
 		session?.id,
 		translationRequested,
 		translationDestination,
 		translationReview?.tabId,
-		selectionRevision,
 		projectResourcesIntoRepo,
 	]);
 
@@ -563,10 +577,8 @@ export function EditAgentModal({
 			setWorktreePeerAccess(session.worktreePeerAccess && { ...session.worktreePeerAccess });
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
-			setSelectedUserResources(['']);
 			setProjectResourcesIntoRepo(false);
 			setAcceptTranslationLimitations(false);
-			setSelectionRevision((v) => v + 1);
 		}
 	}, [isOpen, session?.id]);
 
@@ -731,7 +743,7 @@ export function EditAgentModal({
 						planId: migrationPlan.id,
 						acceptLimitations: acceptTranslationLimitations,
 						projectResourcesIntoRepo,
-						selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
+						selectedUserResources: [],
 					},
 					{ waitForDeferred: true }
 				);
@@ -870,7 +882,7 @@ export function EditAgentModal({
 			];
 			if (providerChanged) {
 				saveArguments[27] = acceptTranslationLimitations;
-				saveArguments[28] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
+				saveArguments[28] = [];
 				saveArguments[29] = migrationPlan?.id;
 				saveArguments[30] = projectResourcesIntoRepo;
 			}
@@ -889,7 +901,6 @@ export function EditAgentModal({
 		migrationPlan,
 		migrationLoading,
 		acceptTranslationLimitations,
-		selectedUserResources,
 		projectResourcesIntoRepo,
 		session,
 		instanceName,
@@ -1097,7 +1108,7 @@ export function EditAgentModal({
 	);
 
 	// Shared by the Provider tab's config panel (which hides them) and the
-	// Environment tab (which draws them): one set of handlers over two records.
+	// Provider environment section: one set of handlers over two records.
 	const envVarProps = agentEnvVarHandlers({
 		customEnvVars,
 		customEnvVarsDisabled,
@@ -1171,19 +1182,39 @@ export function EditAgentModal({
 				</div>
 			}
 			footer={
-				<ModalFooter
-					theme={theme}
-					onCancel={onClose}
-					onConfirm={handleSave}
-					confirmLabel={
-						migrationSaving
-							? migrationState === 'deferred'
-								? 'Waiting for current turn'
-								: 'Translating provider'
-							: 'Save Changes'
-					}
-					confirmDisabled={!isFormValid}
-				/>
+				<>
+					{translationRequested && !migrationSaving && (
+						<div className="mr-auto text-xs" style={{ color: theme.colors.textDim }}>
+							{needsTranslationAcceptance ? (
+								<label className="flex items-center gap-2">
+									<input
+										type="checkbox"
+										checked={acceptTranslationLimitations}
+										onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
+									/>
+									Accept the listed conversion limitations
+								</label>
+							) : migrationLoading ? (
+								'Checking carry-over…'
+							) : migrationError || migrationPlan?.status === 'blocked' ? (
+								'Provider switch blocked. Review the Provider tab.'
+							) : null}
+						</div>
+					)}
+					<ModalFooter
+						theme={theme}
+						onCancel={onClose}
+						onConfirm={handleSave}
+						confirmLabel={
+							migrationSaving
+								? migrationState === 'deferred'
+									? 'Waiting for current turn'
+									: 'Translating provider'
+								: 'Save Changes'
+						}
+						confirmDisabled={!isFormValid}
+					/>
+				</>
 			}
 		>
 			<ModalTabStrip
@@ -1291,16 +1322,6 @@ export function EditAgentModal({
 										Some providers support the ability to transfer sessions, memories, subagents,
 										etc between them. They are denoted as {carryOverBadge} in the list.
 									</div>
-									{translationRequested && migrationActivity && (
-										<div
-											role="status"
-											aria-live="polite"
-											className="mt-2 flex items-center gap-2 text-xs"
-										>
-											<Spinner size={14} color={theme.colors.accent} decorative />
-											<span>{migrationActivity}</span>
-										</div>
-									)}
 									{translationRequested && (
 										<div
 											className="mt-2 p-2 rounded border text-xs space-y-2"
@@ -1327,100 +1348,55 @@ export function EditAgentModal({
 												/>
 												Also install skills and subagents into the project (git-excluded)
 											</label>
-											{selectedUserResources.map((resource, index) => (
-												<FormInput
-													key={index}
+											{migrationPlan && !migrationLoading && (
+												<StatCardGrid
 													theme={theme}
-													label={`Selected user resource ${index + 1} (optional)`}
-													value={resource}
-													onChange={(value) => {
-														setSelectedUserResources((paths) =>
-															paths.map((p, i) => (i === index ? value : p))
-														);
-														setMigrationPlan(null);
-														setAcceptTranslationLimitations(false);
-													}}
-													placeholder="Absolute path to a selected skill, memory, instruction or subagent"
-													disabled={migrationSaving}
+													minColumnWidth={120}
+													cards={[
+														{ label: 'Sessions', value: migrationPlan.tabs.length },
+														{
+															label:
+																migrationPlan.counts.messages === undefined
+																	? 'Records'
+																	: 'Messages',
+															value: migrationPlan.counts.messages ?? migrationPlan.counts.records,
+															displayValue: formatCount(
+																migrationPlan.counts.messages ?? migrationPlan.counts.records
+															),
+														},
+														{
+															label: 'On next use',
+															value: migrationPlan.deferredTabs?.length ?? 0,
+														},
+													]}
 												/>
-											))}
-											<div className="flex gap-3">
-												<button
-													type="button"
-													disabled={migrationSaving}
-													onClick={() => setSelectedUserResources((paths) => [...paths, ''])}
-												>
-													Add resource
-												</button>
-												<button
-													type="button"
-													disabled={migrationLoading || migrationSaving}
-													onClick={() => setSelectionRevision((v) => v + 1)}
-												>
-													Review selection
-												</button>
-											</div>
-											{migrationPlan && (
-												<div>
-													{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records}{' '}
-													native records, {migrationPlan.counts.artifacts} artifacts.{' '}
-													{migrationPlan.status === 'deferred'
-														? 'Migration waits for the current turn to finish.'
-														: ''}
-													<div>Translated now: {migrationPlan.tabs.length}</div>
-													{migrationPlan.tabs.map((tab, index) => (
-														<div key={tab.tabId}>
-															Conversation {index + 1}: {formatTranslationRecordCounts(tab)}
-														</div>
-													))}
-													<div>
-														Translated on next use: {migrationPlan.deferredTabs?.length ?? 0}
-													</div>
-													{migrationPlan.deferredTabs?.map((tab) => (
-														<div key={tab.id}>{tab.id}</div>
-													))}
-												</div>
 											)}
-											{migrationPlan?.limitations
-												.filter((limit) => limit.severity !== 'info')
-												.map((limit, index) => (
-													<div
-														key={`${limit.code}-${index}`}
-														style={{
-															color:
-																limit.severity === 'block'
-																	? theme.colors.error
-																	: theme.colors.textDim,
-														}}
-													>
-														{limit.message}
-													</div>
-												))}
-											{migrationPlan?.limitations.some((limit) => limit.severity === 'info') && (
-												<details style={{ color: theme.colors.textDim }}>
-													<summary className="cursor-pointer">Notes</summary>
-													<ul className="list-disc pl-4">
-														{migrationPlan.limitations
-															.filter((limit) => limit.severity === 'info')
-															.map((limit, index) => (
-																<li key={`${limit.code}-${index}`}>{limit.message}</li>
-															))}
-													</ul>
-												</details>
-											)}
-											{migrationPlan &&
-												migrationPlan.status !== 'blocked' &&
-												limitationsNeedingAcceptance(migrationPlan.limitations).length > 0 && (
-													<label className="flex items-center gap-2">
-														<input
-															type="checkbox"
-															checked={acceptTranslationLimitations}
-															disabled={migrationSaving}
-															onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
-														/>
-														Accept the listed conversion limitations
-													</label>
+											<div role="status" aria-live="polite" className="flex items-center gap-2">
+												{migrationActivity && (
+													<Spinner size={14} color={theme.colors.accent} decorative />
 												)}
+												<span>
+													{migrationActivity ??
+														(migrationError || migrationPlan?.status === 'blocked'
+															? 'Resolve the issue below to switch providers.'
+															: migrationPlan?.status === 'deferred'
+																? 'Ready. The switch will wait for the current turn to finish.'
+																: 'Ready to switch providers.')}
+												</span>
+											</div>
+											{migrationNotices.map((limit) => (
+												<div
+													key={`${limit.severity}-${limit.code}-${limit.message}`}
+													style={{
+														color:
+															limit.severity === 'block'
+																? theme.colors.error
+																: theme.colors.textDim,
+													}}
+												>
+													{limit.message}
+												</div>
+											))}
 										</div>
 									)}
 									{migrationError && (
@@ -1435,7 +1411,7 @@ export function EditAgentModal({
 								</AgentProviderSelect>
 
 								{/* Provider settings (path, args, agent-specific options). Its env
-								    vars live on the Environment tab. Per-session values are saved
+								    vars live in the Provider environment section. Per-session values are saved
 								    on modal save, not on blur. */}
 								{agent && (
 									<div>
@@ -1523,6 +1499,14 @@ export function EditAgentModal({
 									</div>
 								)}
 							</>
+						}
+						environment={
+							<ProviderEnvironmentSection
+								theme={theme}
+								toolType={selectedToolType}
+								isSshEnabled={!!isSshEnabled}
+								{...envVarProps}
+							/>
 						}
 						// Agent Resilience: auto-retry toggles (default ON), editable post-creation.
 						resilience={{
@@ -1627,16 +1611,6 @@ export function EditAgentModal({
 								sshRemoteName={sshRemoteName}
 							/>
 						}
-					/>
-				)}
-
-				{activeTab === 'environment' && (
-					<EnvironmentTab
-						theme={theme}
-						idPrefix="edit-agent"
-						toolType={selectedToolType}
-						isSshEnabled={!!isSshEnabled}
-						{...envVarProps}
 					/>
 				)}
 

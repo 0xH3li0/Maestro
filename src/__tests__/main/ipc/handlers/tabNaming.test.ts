@@ -14,6 +14,7 @@ import {
 import { runLocalTask } from '../../../../main/local-models/task-router';
 import { resetLocalTaskNotices } from '../../../../main/local-models/task-notices';
 import { logger } from '../../../../main/utils/logger';
+import { applyAgentConfigOverrides } from '../../../../main/utils/agent-args';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
@@ -443,6 +444,11 @@ describe('Tab Naming IPC Handlers', () => {
 
 			// Detection and spawn must both use the utility agent, not claude-code.
 			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(vi.mocked(applyAgentConfigOverrides)).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.objectContaining({ sessionCustomModel: 'gpt-4o-mini' })
+			);
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ toolType: 'codex' })
 			);

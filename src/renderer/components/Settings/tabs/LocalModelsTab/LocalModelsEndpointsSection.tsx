@@ -47,6 +47,7 @@ type OpenForm = { mode: 'add' } | { mode: 'edit'; id: string } | null;
 
 export function LocalModelsEndpointsSection({ theme, state }: LocalModelsEndpointsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
+	const utilitySource = useSettingsStore((s) => s.utilitySource);
 	const [form, setForm] = useState<OpenForm>(null);
 	const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
 	const [offerError, setOfferError] = useState<string | null>(null);
@@ -62,13 +63,13 @@ export function LocalModelsEndpointsSection({ theme, state }: LocalModelsEndpoin
 
 	const handleRemove = useCallback(
 		(id: string) => {
-			if (tasksUsingEndpoint(assignments, id).length > 0) {
+			if (tasksUsingEndpoint(assignments, id, utilitySource).length > 0) {
 				setConfirmingRemove(id);
 				return;
 			}
 			remove(id);
 		},
-		[assignments, remove]
+		[assignments, remove, utilitySource]
 	);
 
 	const addOffer = useCallback(
@@ -181,7 +182,9 @@ export function LocalModelsEndpointsSection({ theme, state }: LocalModelsEndpoin
 						<RemoveInUseWarning
 							theme={theme}
 							subjectName={endpoint.name}
-							taskLabels={tasksUsingEndpoint(assignments, endpoint.id).map((task) => task.label)}
+							taskLabels={tasksUsingEndpoint(assignments, endpoint.id, utilitySource).map(
+								(task) => task.label
+							)}
 							recovery="add it again"
 							onConfirm={() => remove(endpoint.id)}
 							onKeep={() => setConfirmingRemove(null)}

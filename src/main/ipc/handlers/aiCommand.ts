@@ -50,6 +50,7 @@ import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
 
 const LOG_CONTEXT = '[AICommand]';
 
@@ -174,21 +175,29 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				const agent = await agentDetector.getAgent(config.agentType);
+				const utility = resolveUtilityProvider(
+					{
+						utilitySource: settingsStore.get('utilitySource'),
+						utilityAgentId: settingsStore.get('utilityAgentId', null),
+						utilityModelId: settingsStore.get('utilityModelId', null),
+					},
+					config.agentType
+				);
+				const agent = await agentDetector.getAgent(utility.agentType);
 				if (!agent || !agent.available) {
 					return {
 						success: false,
-						error: `${config.agentType} is not available, so it cannot suggest a command.`,
+						error: `${utility.agentType} is not available, so it cannot suggest a command.`,
 					};
 				}
 
 				const prompt = buildAiCommandPrompt(getPrompt('ai-command'), host, request, recentCommands);
 
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const agentConfigValues = allConfigs[config.agentType] || {};
+				const agentConfigValues = allConfigs[utility.agentType] || {};
 
 				logger.info('Requesting command suggestion', LOG_CONTEXT, {
-					agentType: config.agentType,
+					agentType: utility.agentType,
 					requestLength: request.length,
 					model: config.customModel,
 					effort: config.customEffort,
@@ -201,7 +210,7 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 					const result = await groomContext(
 						{
 							projectRoot: config.cwd,
-							agentType: config.agentType,
+							agentType: utility.agentType,
 							prompt,
 							// A command suggestion is a text transform, not an errand. Both
 							// flags exist to stop the model wandering off into the repo: it
@@ -217,12 +226,14 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							// machine, so leaving it out fails every suggestion for an agent
 							// on a remote.
 							sshStore: isRemote ? createSshRemoteStoreAdapter(settingsStore) : undefined,
-							sessionCustomPath: config.customPath,
-							sessionCustomArgs: config.customArgs,
-							sessionCustomEnvVars: config.customEnvVars,
-							sessionCustomModel: config.customModel,
-							sessionCustomEffort: config.customEffort,
-							claudeTokenSource: config.claudeTokenSource,
+							sessionCustomPath: utility.changesProvider ? undefined : config.customPath,
+							sessionCustomArgs: utility.changesProvider ? undefined : config.customArgs,
+							sessionCustomEnvVars: utility.changesProvider ? undefined : config.customEnvVars,
+							sessionCustomModel: utility.usesUtilityProvider
+								? utility.modelId
+								: config.customModel,
+							sessionCustomEffort: utility.usesUtilityProvider ? undefined : config.customEffort,
+							claudeTokenSource: utility.changesProvider ? undefined : config.claudeTokenSource,
 							agentConfigValues,
 						},
 						processManager,

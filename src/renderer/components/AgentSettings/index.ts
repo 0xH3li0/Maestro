@@ -5,7 +5,7 @@ export * from './BrowseFolderButton';
 export * from './GeneralTab';
 export * from './ProviderTab';
 export * from './ModelsTab';
-export * from './EnvironmentTab';
+export * from './ProviderEnvironmentSection';
 export * from './PeersTab';
 export * from './SshTab';
 export * from './AuditLogTab';

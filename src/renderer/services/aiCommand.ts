@@ -22,10 +22,13 @@ import { aiCommandKey, useAiCommandStore, type AiCommandEntry } from '../stores/
 import { codifyTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
 import { collectRecentCommands } from '../../shared/aiCommand';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
+	resolveUtilityProvider,
 	type LocalModelAssignments,
+	type UtilitySource,
 } from '../../shared/local-models/tasks';
 import { useSettingsStore } from '../stores/settingsStore';
 
@@ -47,10 +50,18 @@ import { useSettingsStore } from '../stores/settingsStore';
 export function resolveAiCommandProvenance(
 	turn: { turnModel?: string; turnEffort?: string },
 	assignments: LocalModelAssignments | undefined,
-	endpoints: readonly LocalModelEndpoint[]
+	endpoints: readonly LocalModelEndpoint[],
+	utilitySource?: UtilitySource,
+	utilityProvider?: { utilityAgentId: string | null; utilityModelId: string | null }
 ): { model?: string; effort?: string } {
-	const assignment = resolveLocalModelAssignment(assignments, 'ai-command');
+	const assignment = resolveLocalModelAssignment(assignments, 'ai-command', utilitySource);
 	if (assignment.type === 'utility-agent') {
+		const provider = resolveUtilityProvider({ ...utilityProvider, utilitySource }, '');
+		if (provider.usesUtilityProvider) {
+			return {
+				model: provider.modelId ?? `${getAgentDisplayName(provider.agentType)} (default model)`,
+			};
+		}
 		return { model: turn.turnModel, effort: turn.turnEffort };
 	}
 	const source = localModelAssignmentSourceLabel(assignment, endpoints);
@@ -88,11 +99,13 @@ export async function requestAiCommand(options: {
 	// tab's commands in true chronological order.
 	const recentCommands = collectRecentCommands(tab?.logs ?? []);
 
-	const { localModelAssignments, localModelEndpoints } = useSettingsStore.getState();
+	const { localModelAssignments, localModelEndpoints, utilitySource } = useSettingsStore.getState();
 	const provenance = resolveAiCommandProvenance(
 		{ turnModel, turnEffort },
 		localModelAssignments,
-		localModelEndpoints
+		localModelEndpoints,
+		utilitySource,
+		useSettingsStore.getState()
 	);
 
 	useAiCommandStore.getState().beginAiCommand({

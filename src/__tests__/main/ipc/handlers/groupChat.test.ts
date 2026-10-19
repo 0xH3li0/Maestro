@@ -130,12 +130,16 @@ vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 // Mock the main-process stores. Only the sessions store matters here: it is what
 // resolveParticipantSshRemoteConfig reads to recover a participant's SSH config.
 const mockStoredSessions: Record<string, unknown>[] = [];
+const mockUtilitySettings = new Map<string, unknown>();
 vi.mock('../../../../main/stores', () => ({
 	getSessionsStore: () => ({
 		get: () => mockStoredSessions,
 	}),
 	getSettingsStore: () => ({
-		get: () => undefined,
+		get: (key: string) => mockUtilitySettings.get(key),
+	}),
+	getAgentConfigsStore: () => ({
+		get: () => ({ codex: { customEnvVars: { CODEX_CONFIG: 'utility' } } }),
 	}),
 }));
 
@@ -163,6 +167,7 @@ describe('groupChat IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockUtilitySettings.clear();
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -1493,6 +1498,26 @@ describe('groupChat IPC handlers', () => {
 				agentSessionId: undefined,
 				contextUsage: 0,
 			});
+		});
+
+		it('summarizes on the utility provider with chat history and no participant native session', async () => {
+			mockUtilitySettings.set('utilityAgentId', 'codex');
+			mockUtilitySettings.set('utilityModelId', 'gpt-model');
+			await reset();
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agentType: 'codex',
+					agentSessionId: undefined,
+					sessionCustomModel: 'gpt-model',
+					sessionCustomEffort: undefined,
+					disableTools: true,
+					claudeTokenSource: undefined,
+					prompt: expect.stringContaining('[Backend]: Drafted notes in docs/releases-draft.md'),
+					agentConfigValues: { customEnvVars: { CODEX_CONFIG: 'utility' } },
+				}),
+				mockProcessManager,
+				mockAgentDetector
+			);
 		});
 
 		it('asks the router with the chat log and never spawns an agent on ok', async () => {

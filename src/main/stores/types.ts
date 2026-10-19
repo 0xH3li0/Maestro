@@ -9,7 +9,7 @@ import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
-import type { LocalModelAssignments } from '../../shared/local-models/tasks';
+import type { LocalModelAssignments, UtilitySource } from '../../shared/local-models/tasks';
 import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
@@ -153,6 +153,7 @@ export interface MaestroSettings {
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;
+	utilitySource: UtilitySource;
 	// Optional model override for the utility agent. When null, the agent default model is used.
 	utilityModelId: string | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's

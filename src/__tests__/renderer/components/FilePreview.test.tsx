@@ -11,7 +11,8 @@ import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal<typeof import('lucide-react')>()),
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
 	Eye: () => <span data-testid="eye-icon">Eye</span>,
 	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
@@ -62,6 +63,7 @@ vi.mock('lucide-react', () => ({
 	Mic: () => <span data-testid="mic-icon">Mic</span>,
 	MicOff: () => <span data-testid="mic-off-icon">MicOff</span>,
 	Send: () => <span data-testid="send-icon">Send</span>,
+	ArrowUp: () => <span data-testid="arrow-up-icon">ArrowUp</span>,
 }));
 
 // Mock react-markdown
@@ -117,6 +119,7 @@ vi.mock('../../../renderer/constants/modalPriorities', () => ({
 // one broke the moment a third panel - the document chat bubble - registered,
 // and it would break again on the fourth.
 const mockContainerClickOutside = { callback: null as (() => void) | null, enabled: false };
+const mockChatClickOutside = { callback: null as (() => void) | null, enabled: false };
 const mockTocClickOutside = { callback: null as (() => void) | null, enabled: false };
 let useClickOutsideCallCount = 0;
 vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
@@ -131,6 +134,9 @@ vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
 		if (useClickOutsideCallCount % 2 === 1) {
 			mockTocClickOutside.callback = callback;
 			mockTocClickOutside.enabled = enabled;
+		} else {
+			mockChatClickOutside.callback = callback;
+			mockChatClickOutside.enabled = enabled;
 		}
 		useClickOutsideCallCount++;
 	},
@@ -255,6 +261,8 @@ describe('FilePreview', () => {
 		useClickOutsideCallCount = 0;
 		mockContainerClickOutside.callback = null;
 		mockContainerClickOutside.enabled = false;
+		mockChatClickOutside.callback = null;
+		mockChatClickOutside.enabled = false;
 		mockTocClickOutside.callback = null;
 		mockTocClickOutside.enabled = false;
 	});
@@ -1220,6 +1228,34 @@ describe('FilePreview', () => {
 
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('preserved content');
+		});
+	});
+
+	describe('embedded document chat', () => {
+		it('docks outside the document scroller and stays open while reading', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Document\nSome content', path: '/test/doc.md' }}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('document-chat-button'));
+			const panel = screen.getByTestId('document-chat-panel');
+			const scroller = screen.getByTestId('file-preview-font-scale').closest('.overflow-y-auto');
+			expect(scroller).not.toBeNull();
+			expect(scroller).not.toContainElement(panel);
+			expect(mockChatClickOutside.enabled).toBe(false);
+			fireEvent.mouseDown(screen.getByTestId('markdown-content'));
+			expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+		});
+
+		it('closes the embedded chat on Escape before closing the document', () => {
+			const onClose = vi.fn();
+			render(<FilePreview {...defaultProps} onClose={onClose} />);
+			fireEvent.click(screen.getByTestId('document-chat-button'));
+			fireEvent.keyDown(screen.getByTestId('document-chat-input'), { key: 'Escape' });
+			expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 

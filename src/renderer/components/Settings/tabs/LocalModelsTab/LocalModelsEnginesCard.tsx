@@ -88,6 +88,12 @@ export function LocalModelsEnginesCard({ theme, runtimes }: LocalModelsEnginesCa
 							<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
 								{listing.label}
 							</div>
+							{listing.id === 'llama' && (
+								<p className="text-xs opacity-70 mt-0.5">
+									In-app text engine. Hosting for agents uses a separate llama-server install in
+									Models &gt; Sources. Both use the same downloaded model files.
+								</p>
+							)}
 							<p className="text-xs opacity-70 mt-0.5">Runs {modelNames(listing)}.</p>
 							{state === 'unavailable' && (
 								<p className="text-xs-plus mt-0.5" style={{ color: theme.colors.warning }}>

@@ -1,6 +1,6 @@
 /**
  * ProviderTab - which provider runs the agent and how: the picker and Agent
- * Resilience.
+ * Resilience, with environment variables kept alongside the provider settings.
  *
  * The picker is a slot because each modal keeps its own state model: Edit
  * Agent passes its provider `<select>`, the provider-change notice and
@@ -17,13 +17,21 @@ import { AgentSettingsPanel, type AgentSettingsPanelBaseProps } from './AgentSet
 
 export interface ProviderTabProps extends AgentSettingsPanelBaseProps {
 	picker: ReactNode;
+	environment?: ReactNode;
 	resilience?: Omit<AgentResilienceSectionProps, 'theme'>;
 }
 
-export function ProviderTab({ theme, idPrefix, picker, resilience }: ProviderTabProps) {
+export function ProviderTab({
+	theme,
+	idPrefix,
+	picker,
+	environment,
+	resilience,
+}: ProviderTabProps) {
 	return (
 		<AgentSettingsPanel theme={theme} idPrefix={idPrefix} tab="provider">
 			{picker}
+			{environment}
 			{resilience && <AgentResilienceSection theme={theme} {...resilience} />}
 		</AgentSettingsPanel>
 	);

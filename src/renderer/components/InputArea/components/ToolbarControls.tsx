@@ -44,7 +44,6 @@ import { isWebDesktop } from '../../../utils/runtimeContext';
 import { projectTabProvider } from '../../../utils/providerTabSessions';
 import { useTabProviderChoice } from '../hooks/useTabProviderChoice';
 import { ProviderPill } from './ProviderPill';
-import { ComposerRunOnField } from './ComposerRunOnField';
 
 interface ToolbarControlsProps {
 	session: Session;
@@ -239,14 +238,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	const activeTabId = activeTab?.id;
-	const runOnControl = activeTabId ? (
-		<ComposerRunOnField
-			key={`${session.id}:${activeTabId}:${provider.agent.toolType}`}
-			theme={theme}
-			agent={provider.agent}
-			tabId={activeTabId}
-		/>
-	) : undefined;
 
 	// One hidden file input, rendered by BOTH the phone row and the desktop row.
 	// The attach button reaches it by element id, so a second copy would give two
@@ -422,7 +413,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 						agentId={provider.agent.toolType}
 						providerControl={ensemble ? providerChoice?.row : undefined}
 						providerChoice={ensemble && !providerChoice ? tabProviderChoice : undefined}
-						runOnControl={runOnControl}
 						tabSaveToHistory={tabSaveToHistory}
 						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 						hasReadOnlyCapability={hasReadOnlyCapability}
@@ -520,7 +510,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 				<ModelEffortPills
 					key={provider.agent.toolType}
 					isVisible={isAiMode}
-					runOnControl={runOnControl}
 					providerControl={ensemble ? providerChoice?.pill : undefined}
 					theme={theme}
 					shortcutKeys={modelEffortKeys}

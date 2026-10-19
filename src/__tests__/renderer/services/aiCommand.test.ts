@@ -64,7 +64,13 @@ let suggest: Mock;
 beforeEach(() => {
 	vi.clearAllMocks();
 	useAiCommandStore.setState({ entries: {} });
-	useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
+	useSettingsStore.setState({
+		localModelAssignments: {},
+		localModelEndpoints: [],
+		utilitySource: { type: 'utility-agent' },
+		utilityAgentId: null,
+		utilityModelId: null,
+	});
 	suggest = vi.fn().mockResolvedValue({ success: true, command: 'du -sh *' });
 	(window as unknown as { maestro: unknown }).maestro = { aiCommand: { suggest } };
 });
@@ -105,6 +111,41 @@ describe('resolveAiCommandProvenance', () => {
 
 	it('names nothing when the task is off', () => {
 		expect(resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [])).toEqual({});
+	});
+
+	it('names the inherited utility model and keeps explicit Off authoritative', () => {
+		const utility = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
+		expect(resolveAiCommandProvenance(turn, {}, [], utility)).toEqual({ model: QWEN_NAME });
+		expect(
+			resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [], utility)
+		).toEqual({});
+	});
+
+	it('names the utility provider model without claiming the tab effort applies', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{},
+				[],
+				{ type: 'utility-agent' },
+				{
+					utilityAgentId: 'codex',
+					utilityModelId: 'gpt-model',
+				}
+			)
+		).toEqual({ model: 'gpt-model' });
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{},
+				[],
+				{ type: 'utility-agent' },
+				{
+					utilityAgentId: 'codex',
+					utilityModelId: null,
+				}
+			)
+		).toEqual({ model: 'Codex (default model)' });
 	});
 });
 

@@ -159,7 +159,8 @@ function toRosterTab(tab: Record<string, unknown>, state: RosterTabState): Roste
  */
 function documentChatPath(tab: Record<string, unknown>): string | null {
 	const origin = tab.documentOrigin;
-	if (!origin || typeof origin !== 'object') return null;
+	if (!origin || typeof origin !== 'object' || (origin as { archived?: boolean }).archived)
+		return null;
 	const path = (origin as { path?: unknown }).path;
 	return typeof path === 'string' && path.length > 0 ? path : null;
 }

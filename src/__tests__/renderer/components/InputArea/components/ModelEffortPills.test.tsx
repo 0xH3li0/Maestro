@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelEffortPills } from '../../../../../renderer/components/InputArea/components/ModelEffortPills';
 import { inputAreaTheme } from '../_fixtures';
 import { formatShortcutKeys } from '../../../../../renderer/utils/shortcutFormatter';
 import { getShortcutKeys } from '../../../../helpers/shortcutKeys';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 
 // Formatted through the real formatter rather than spelled out: the chord
 // renders as '⌘X' on macOS and 'Ctrl+X' elsewhere, and hardcoding either makes
@@ -14,6 +15,9 @@ const HINT_TEXT = `Try: ${formatShortcutKeys(HINT_KEYS)}`;
 const hintRow = () => getShortcutKeys(HINT_KEYS).closest('div') as HTMLElement;
 
 describe('ModelEffortPills', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ modalSizes: {} });
+	});
 	function renderPills(overrides = {}) {
 		return render(
 			<ModelEffortPills
@@ -49,19 +53,68 @@ describe('ModelEffortPills', () => {
 
 		expect(screen.queryByTitle('Change model')).not.toBeInTheDocument();
 	});
-	it('places the shared Run on control inside the model menu', () => {
-		renderPills({
-			modelMenuOpen: true,
-			runOnControl: (
-				<label>
-					Run on
-					<select aria-label="Run on">
-						<option>Provider</option>
-					</select>
-				</label>
-			),
+	it('keeps Run on configuration out of the quick model menu', () => {
+		renderPills({ modelMenuOpen: true });
+		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
+	});
+
+	it('filters models without case or surrounding whitespace and selects a match', () => {
+		const onModelChange = vi.fn();
+		renderPills({ modelMenuOpen: true, onModelChange });
+		fireEvent.change(screen.getByPlaceholderText('Filter models...'), {
+			target: { value: ' MINI ' },
 		});
-		expect(screen.getByRole('combobox', { name: 'Run on' })).toBeInTheDocument();
+		expect(
+			within(screen.getByTestId('model-picker')).queryByRole('button', { name: 'gpt-5' })
+		).not.toBeInTheDocument();
+		expect(screen.queryByText('(default)')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'gpt-5-mini' }));
+		expect(onModelChange).toHaveBeenCalledWith('gpt-5-mini');
+	});
+
+	it('shows an empty result, then clears the filter before closing on Escape', () => {
+		const setModelMenuOpen = vi.fn();
+		renderPills({ modelMenuOpen: true, setModelMenuOpen });
+		const input = screen.getByPlaceholderText('Filter models...');
+		expect(input).toHaveFocus();
+		fireEvent.change(input, { target: { value: 'missing-model' } });
+		expect(screen.getByText('No matching models')).toBeInTheDocument();
+		expect(screen.getByLabelText('Use a model ID that is not listed')).toBeInTheDocument();
+		fireEvent.keyDown(input, { key: 'Escape' });
+		expect(input).toHaveValue('');
+		expect(setModelMenuOpen).not.toHaveBeenCalled();
+		expect(screen.getByText('(default)')).toBeInTheDocument();
+		fireEvent.keyDown(input, { key: 'Escape' });
+		expect(setModelMenuOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('resizes upward and rightward, remembers the size, and resets on double click', () => {
+		const { unmount } = renderPills({ modelMenuOpen: true });
+		const picker = screen.getByTestId('model-picker');
+		const width = parseFloat(picker.style.width);
+		const height = parseFloat(picker.style.height);
+		expect(screen.queryByTestId('modal-resize-handle-s')).not.toBeInTheDocument();
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-ne'), {
+			clientX: 0,
+			clientY: 0,
+		});
+		fireEvent.mouseMove(document, { clientX: 30, clientY: -20 });
+		fireEvent.mouseUp(document);
+		// Browsers emit a click after mouseup; consume the resize guard's one-shot listener.
+		fireEvent.click(document);
+		expect(picker).toHaveStyle({ width: `${width + 30}px`, height: `${height + 20}px` });
+		unmount();
+		renderPills({ modelMenuOpen: true });
+		expect(screen.getByTestId('model-picker')).toHaveStyle({
+			width: `${width + 30}px`,
+			height: `${height + 20}px`,
+		});
+		fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-ne'));
+		expect(screen.getByTestId('model-picker')).toHaveStyle({
+			width: `${width}px`,
+			height: `${height}px`,
+		});
 	});
 
 	it('opens model menu and closes effort menu when model pill is clicked', () => {
@@ -321,6 +374,10 @@ describe('ModelEffortPills', () => {
 			const input = screen.getByLabelText('Use a model ID that is not listed');
 			fireEvent.keyDown(input, { key: 'Escape' });
 			fireEvent.keyDown(input, { key: 'a' });
+			const filter = screen.getByPlaceholderText('Filter models...');
+			fireEvent.keyDown(filter, { key: 'a' });
+			fireEvent.keyDown(filter, { key: 'Enter' });
+			fireEvent.keyDown(filter, { key: 'Escape' });
 
 			expect(onKeyDown).not.toHaveBeenCalled();
 		});

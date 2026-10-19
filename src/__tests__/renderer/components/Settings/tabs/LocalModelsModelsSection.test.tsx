@@ -52,6 +52,7 @@ const theme = {
 		textDim: '#888888',
 		border: '#333333',
 		bgMain: '#000000',
+		bgSidebar: '#111111',
 		bgActivity: '#111111',
 		success: '#22c55e',
 		warning: '#f59e0b',
@@ -178,6 +179,9 @@ describe('LocalModelsModelsSection', () => {
 		const summary = await screen.findByTestId('local-models-summary');
 		await waitFor(() => expect(summary).toHaveTextContent('1 installed'));
 		expect(summary).toHaveTextContent(/on disk/);
+		const strip = screen.getByRole('tablist', { name: 'Library sections' });
+		expect(strip).toHaveClass('sticky', 'top-0', 'z-20');
+		expect(strip).toHaveStyle({ backgroundColor: theme.colors.bgSidebar });
 		expect(await screen.findByTestId('local-models-hardware')).toHaveTextContent(
 			'128.0 GB of unified memory'
 		);
@@ -268,7 +272,7 @@ describe('LocalModelsModelsSection', () => {
 		);
 	});
 
-	it('shows a prominent hardware-fit verdict and visible reason for every model', async () => {
+	it('shows compact footer fit badges and reveals full reasons on hover', async () => {
 		// 32 GB of unified memory: 24 GB for the GPU by default, 28.8 GB at most.
 		api().hardware.mockResolvedValue(mac(32));
 		window.localStorage.setItem(SHOW_TOO_LARGE_MODELS_STORAGE_KEY, 'true');
@@ -278,8 +282,13 @@ describe('LocalModelsModelsSection', () => {
 		);
 		const tooLarge = await screen.findByTestId(`local-model-fit-${GPT_OSS_120B_ID}`);
 		expect(tooLarge).toHaveAttribute('data-fit', 'too-large');
-		expect(within(tooLarge).getByText('Too large on this computer')).toBeVisible();
-		expect(within(tooLarge).getByText(/^Needs /)).toBeVisible();
+		expect(tooLarge).toHaveTextContent('Too large');
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+		fireEvent.mouseEnter(tooLarge.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Too large on this computer');
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Needs ');
+		fireEvent.mouseLeave(tooLarge.parentElement!);
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 
 		const lines: HTMLElement[] = [];
 		for (const label of ['Agent Models', 'Housekeeping', 'Speech', 'Search & Safety']) {
@@ -289,20 +298,57 @@ describe('LocalModelsModelsSection', () => {
 			const fits = screen.queryByTestId(`local-model-fit-${QWEN3_5_9B_ID}`);
 			if (fits) {
 				expect(fits).toHaveAttribute('data-fit', 'fits');
-				expect(within(fits).getByText('Fits on this computer')).toBeVisible();
-				expect(within(fits).getByText(/^Needs /)).toBeVisible();
+				expect(fits).toHaveTextContent(/^Fits$/);
+				expect(fits).toHaveAccessibleName(/^Fits on this computer\. Needs /);
 			}
 			for (const line of visibleLines.filter((line) => line.getAttribute('data-fit') === 'tight')) {
-				expect(within(line).getByText('Tight on this computer')).toBeVisible();
-				expect(within(line).getByText(/^Needs /)).toBeVisible();
+				expect(line).toHaveTextContent(/^Tight$/);
+				expect(line).toHaveAccessibleName(/^Tight on this computer\. Needs /);
 			}
 		}
 		expect(lines).toHaveLength(LOCAL_MODEL_CATALOG.length);
 		expect(lines.map((line) => line.dataset.testid)).toContain(`local-model-fit-${QWEN3_5_9B_ID}`);
 		// The screenshot's small embedding model gets the same treatment.
 		const embedding = screen.getByTestId(`local-model-fit-${BGE_SMALL_EN_ID}`);
-		expect(within(embedding).getByText('Fits on this computer')).toBeVisible();
-		expect(within(embedding).getByText(/runs on the CPU/)).toBeVisible();
+		expect(embedding).toHaveTextContent(/^Fits$/);
+		const footer = embedding.closest('.ml-auto')!;
+		expect(footer.parentElement).toBe(
+			rowOf(getLocalModel(BGE_SMALL_EN_ID)!.displayName).lastElementChild
+		);
+		fireEvent.focus(embedding);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('runs on the CPU');
+		fireEvent.blur(embedding);
+	});
+
+	it('recommends a hardware-fit pick per job and explains it on hover', async () => {
+		render(<ModelsSection />);
+		const agentBadge = await screen.findByTestId(`local-model-recommended-${GPT_OSS_120B_ID}`);
+		expect(agentBadge).toHaveTextContent('Recommended');
+		openSection('Speech');
+		const recommended = screen.getByTestId(`local-model-recommended-${PARAKEET_TDT_V2_ID}`);
+		expect(recommended.closest('.ml-auto')).toContainElement(
+			screen.getByTestId(`local-model-fit-${PARAKEET_TDT_V2_ID}`)
+		);
+		fireEvent.mouseEnter(recommended.closest('.inline-flex')!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Why recommended');
+		expect(screen.getByRole('tooltip')).toHaveTextContent(
+			getLocalModel(PARAKEET_TDT_V2_ID)!.goodAt
+		);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('English dictation');
+		expect(screen.getByRole('tooltip')).toHaveTextContent('not a benchmark');
+		expect(screen.getByRole('tooltip')).toHaveTextContent(
+			"Needs 630.7 MB and runs on the CPU, within this computer's 128.0 GB."
+		);
+		fireEvent.mouseLeave(recommended.closest('.inline-flex')!);
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+	});
+
+	it('shows no fit or recommendation badges until hardware is known', async () => {
+		api().hardware.mockReturnValue(new Promise(() => {}));
+		render(<ModelsSection />);
+		await screen.findByText(getLocalModel(GPT_OSS_20B_ID)!.displayName);
+		expect(screen.queryAllByTestId(/^local-model-fit-/)).toHaveLength(0);
+		expect(screen.queryAllByTestId(/^local-model-recommended-/)).toHaveLength(0);
 	});
 
 	it('hides models too large for this machine behind a toggle', async () => {
@@ -443,6 +489,10 @@ describe('LocalModelsModelsSection', () => {
 
 		const llama = screen.getByTestId('local-models-engine-llama');
 		expect(llama).toHaveTextContent(getLocalModel(QWEN3_1_7B_ID)!.displayName);
+		expect(llama).toHaveTextContent('In-app text engine');
+		expect(llama).toHaveTextContent('separate llama-server install in Models > Sources');
+		expect(llama).toHaveTextContent('Both use the same downloaded model files');
+		expect(onnx).not.toHaveTextContent('llama-server');
 		expect(runtimesApi().install).not.toHaveBeenCalled();
 		fireEvent.click(within(llama).getByRole('button', { name: /^Install/ }));
 		await waitFor(() => expect(runtimesApi().install).toHaveBeenCalledWith('llama'));

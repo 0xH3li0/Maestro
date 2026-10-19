@@ -29,6 +29,8 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
+import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
+import { findDocumentChatTab, readDocumentChatView } from '../../../renderer/services/documentChat';
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import {
 	updateAiTab,
@@ -877,6 +879,41 @@ describe('restoreSession - Corruption recovery', () => {
 // ============================================================================
 
 describe('restoreSession - Runtime state reset', () => {
+	it('restores the same hidden document conversation and full history after a disk round trip', async () => {
+		const session = createMockSession();
+		const tab = {
+			...session.aiTabs[0],
+			id: 'document-chat',
+			hidden: true,
+			documentOrigin: { path: '/docs/plan.md' },
+			agentSessionId: 'provider-conversation',
+			logs: Array.from({ length: 200 }, (_, i) => ({
+				id: `message-${i}`,
+				timestamp: i,
+				source: i % 2 === 0 ? ('user' as const) : ('ai' as const),
+				text: `Message ${i}`,
+			})),
+		};
+		const persisted = JSON.parse(
+			JSON.stringify(prepareSessionForPersistence({ ...session, aiTabs: [...session.aiTabs, tab] }))
+		);
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(persisted);
+		});
+		expect(findDocumentChatTab(restored!, '/docs/plan.md')).toMatchObject({
+			id: tab.id,
+			hidden: true,
+			agentSessionId: 'provider-conversation',
+			logs: tab.logs,
+		});
+		const view = readDocumentChatView(restored!, '/docs/plan.md');
+		expect(view.messages).toHaveLength(200);
+		expect(view.messages[0].text).toBe('Message 0');
+		expect(view.messages[199].text).toBe('Message 199');
+	});
+
 	it('resets aiPid to 0 (lazy spawn)', async () => {
 		const session = createMockSession({ aiPid: 999 });
 		const { result } = renderHook(() => useSessionRestoration());

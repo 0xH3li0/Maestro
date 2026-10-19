@@ -422,7 +422,7 @@ describe("a surface that is one agent's", () => {
 
 	it('names the valid tabs when the tab is not one of the form', () => {
 		expect(resolveUiSurfaceTarget(editAgent, { agent: 'agent-1', tab: 'nope' })).toEqual({
-			error: expect.stringContaining('Valid tabs: general, provider, models, environment, peers'),
+			error: expect.stringContaining('Valid tabs: general, provider, models, peers'),
 		});
 	});
 

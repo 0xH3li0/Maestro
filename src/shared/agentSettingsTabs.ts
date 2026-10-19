@@ -10,14 +10,7 @@
  */
 
 /** Every tab, in strip order. A surface shows the subset it supports. */
-export const AGENT_SETTINGS_TAB_IDS = [
-	'general',
-	'provider',
-	'models',
-	'environment',
-	'peers',
-	'ssh',
-] as const;
+export const AGENT_SETTINGS_TAB_IDS = ['general', 'provider', 'models', 'peers', 'ssh'] as const;
 
 export type AgentSettingsTabId = (typeof AGENT_SETTINGS_TAB_IDS)[number];
 
@@ -27,7 +20,6 @@ export const AGENT_SETTINGS_TAB_LABELS: Readonly<Record<AgentSettingsTabId, stri
 		general: 'General',
 		provider: 'Provider',
 		models: 'Models',
-		environment: 'Environment',
 		peers: 'Peers',
 		ssh: 'SSH',
 	});

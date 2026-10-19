@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 
 vi.mock('../../../cli/services/storage', () => ({
 	readLocalModelAssignments: vi.fn(() => ({})),
+	readSettingValue: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -30,7 +31,7 @@ import {
 	modelsRemoveHf,
 	modelsVerify,
 } from '../../../cli/commands/models-manage';
-import { readLocalModelAssignments } from '../../../cli/services/storage';
+import { readLocalModelAssignments, readSettingValue } from '../../../cli/services/storage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import {
@@ -118,6 +119,7 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		vi.mocked(readLocalModelAssignments).mockReturnValue({});
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -446,6 +448,15 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 	});
 
 	describe('remove', () => {
+		it('includes inherited utility tasks in the in-use guard', async () => {
+			vi.mocked(readSettingValue).mockReturnValue({ type: 'local', modelId: QWEN3_1_7B_ID });
+			await expect(modelsRemove(QWEN3_1_7B_ID, {})).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(
+				/assigned to Tab naming, Summaries, AI command mode/
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
 		it('removes an unassigned model and reports the bytes reclaimed', async () => {
 			const captured = mockSend({ success: true, bytes: 2048 });
 

@@ -9,8 +9,7 @@
  *   (Engines, Agent Models, Housekeeping, Speech, Search & Safety, Custom).
  * - Sources: where models come from besides the Library: model servers and
  *   user endpoints, Maestro's own model server that serves the Library's text
- *   models over HTTP, the models that are cloud only, and the Hugging Face
- *   mirror model files download from.
+ *   models over HTTP, and the local VoiceStudio speech service.
  * - System One: the engine that answers typed questions (Jev, OpenJev, or a
  *   local judge) with its key and Test, then the tasks whose output is a
  *   judgment (a decision, label, score, vector or transcript), with their
@@ -39,17 +38,7 @@
  * pickers offer, and the engine card and the fail policy column read one report.
  */
 
-import {
-	Brain,
-	Cloud,
-	Layers,
-	Router,
-	Server,
-	SlidersHorizontal,
-	Sparkles,
-	type LucideIcon,
-} from 'lucide-react';
-import { CLOUD_ONLY_NOTE } from '../../../../../shared/local-models/library';
+import { Brain, Layers, Router, Server, Sparkles, type LucideIcon } from 'lucide-react';
 import {
 	MODELS_SETTINGS_DETAIL_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
@@ -63,9 +52,7 @@ import {
 } from '../../../../hooks/localModels';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
-import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
-import { LocalModelsDownloadSourceCard } from './LocalModelsDownloadSourceCard';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
@@ -147,27 +134,6 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 			{panel === 'sources' && <LocalModelsServerSection theme={theme} />}
 			{panel === 'sources' && <VoiceStudioSourceSection theme={theme} />}
 
-			{panel === 'sources' && (
-				<div data-testid="local-models-cloud-only">
-					<SettingsSectionHeading icon={Cloud}>Cloud only</SettingsSectionHeading>
-					<SectionCard theme={theme}>
-						<p className="text-xs opacity-70 select-text">{CLOUD_ONLY_NOTE}</p>
-					</SectionCard>
-				</div>
-			)}
-
-			{panel === 'sources' && (
-				<div data-setting-id="local-models-download-source">
-					<SettingsSectionHeading
-						icon={SlidersHorizontal}
-						description="Where model files are downloaded from, for networks that block Hugging Face. It covers every model download and Add from Hugging Face; engines come from npm and are not affected."
-					>
-						Advanced
-					</SettingsSectionHeading>
-					<LocalModelsDownloadSourceCard theme={theme} />
-				</div>
-			)}
-
 			{panel === 'system-one' && <SystemOneEngineSection theme={theme} systemOne={systemOne} />}
 
 			{panel === 'system-one' && (
@@ -211,7 +177,7 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 
 			{panel === 'system-two' && (
 				<>
-					<UtilityAgentSettings theme={theme} />
+					<UtilityAgentSettings theme={theme} models={models} endpoints={endpoints} />
 					<div data-setting-id="local-models-system-two">
 						<SettingsSectionHeading
 							icon={Sparkles}

@@ -10,12 +10,13 @@ import { createMockTheme } from '../../../helpers/mockTheme';
 const theme = createMockTheme();
 
 describe('ProviderTab', () => {
-	it('renders the picker first, then resilience', () => {
+	it('keeps the picker, environment and resilience in one Provider panel', () => {
 		render(
 			<ProviderTab
 				theme={theme}
 				idPrefix="new-agent"
 				picker={<div data-testid="picker-slot">picker</div>}
+				environment={<div data-testid="environment-slot">environment</div>}
 				resilience={{
 					retryOnAvailabilityErrors: true,
 					retryOnTokenExhaustion: false,
@@ -28,7 +29,15 @@ describe('ProviderTab', () => {
 		const panel = screen.getByRole('tabpanel');
 		expect(panel).toHaveAttribute('id', 'new-agent-tabpanel-provider');
 		const picker = screen.getByTestId('picker-slot');
+		const environment = screen.getByTestId('environment-slot');
 		const resilience = screen.getByText('Agent Resilience');
+		expect(panel).toContainElement(environment);
+		expect(
+			picker.compareDocumentPosition(environment) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		expect(
+			environment.compareDocumentPosition(resilience) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
 		expect(
 			picker.compareDocumentPosition(resilience) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();

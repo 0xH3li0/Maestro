@@ -14,6 +14,7 @@ import {
 	ModalTabStrip,
 	tabPanelProps,
 	useModalTabs,
+	useModalTabCycling,
 	__resetRememberedModalTabsForTests,
 	type ModalTab,
 } from '../../../../renderer/components/ui/ModalTabStrip';
@@ -59,6 +60,25 @@ describe('ModalTabStrip', () => {
 			'Provider',
 			'SSH',
 		]);
+	});
+
+	it('can pin the strip above scrolling content with an opaque themed background', () => {
+		const props = {
+			theme: mockTheme,
+			tabs: TABS,
+			activeTab: 'general' as const,
+			onChange: vi.fn(),
+			label: 'Library sections',
+			idPrefix: 'library',
+		};
+		const { rerender } = render(<ModalTabStrip {...props} sticky />);
+		const strip = screen.getByRole('tablist');
+		expect(strip).toHaveClass('sticky', 'top-0', 'z-20');
+		expect(strip).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+
+		rerender(<ModalTabStrip {...props} />);
+		expect(strip).not.toHaveClass('sticky');
+		expect(strip.style.backgroundColor).toBe('');
 	});
 
 	it('wires the active tab to its panel in both directions', () => {
@@ -158,6 +178,39 @@ describe('tabPanelProps', () => {
 	});
 });
 
+describe('useModalTabCycling for nested tabs', () => {
+	it('uses unshifted brackets without also cycling the outer tabs', () => {
+		const outerSelect = vi.fn();
+		const innerSelect = vi.fn();
+		renderHook(() => {
+			useModalTabCycling({
+				tabs: IDS,
+				activeTab: 'general',
+				onSelect: outerSelect,
+				enabled: true,
+			});
+			useModalTabCycling({
+				tabs: IDS,
+				activeTab: 'general',
+				onSelect: innerSelect,
+				enabled: true,
+				shift: false,
+			});
+		});
+
+		pressCycle(']', { shiftKey: false });
+		expect(innerSelect).toHaveBeenLastCalledWith('provider');
+		pressCycle('[', { shiftKey: false, metaKey: false, ctrlKey: true });
+		expect(innerSelect).toHaveBeenLastCalledWith('ssh');
+		expect(outerSelect).not.toHaveBeenCalled();
+
+		innerSelect.mockClear();
+		pressCycle(']');
+		expect(outerSelect).toHaveBeenCalledWith('provider');
+		expect(innerSelect).not.toHaveBeenCalled();
+	});
+});
+
 describe('useModalTabs', () => {
 	beforeEach(() => {
 		__resetRememberedModalTabsForTests();
@@ -194,6 +247,31 @@ describe('useModalTabs', () => {
 		});
 		expect(result.current.activeTab).toBe('provider');
 	});
+
+	it.each(['input', 'textarea', 'button'] as const)(
+		'cycles from a focused %s inside a modal that stops bubbling keydowns',
+		(tag) => {
+			const { result } = renderHook(() =>
+				useModalTabs({ tabs: IDS, initialTab: 'general', enabled: true })
+			);
+			const Control = tag;
+			render(
+				<div onKeyDown={(event) => event.stopPropagation()}>
+					<Control data-testid="focused-control" />
+				</div>
+			);
+			const control = screen.getByTestId('focused-control');
+			control.focus();
+
+			expect(fireEvent.keyDown(control, { key: '}', metaKey: true, shiftKey: true })).toBe(false);
+			expect(result.current.activeTab).toBe('provider');
+			fireEvent.keyDown(control, { key: '{', metaKey: true, shiftKey: true });
+			expect(result.current.activeTab).toBe('general');
+			fireEvent.keyDown(control, { key: '{', ctrlKey: true, shiftKey: true });
+			expect(result.current.activeTab).toBe('ssh');
+			expect(control).toHaveFocus();
+		}
+	);
 
 	it('does not cycle while disabled, or without Shift', () => {
 		const { result, rerender } = renderHook(

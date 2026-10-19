@@ -442,9 +442,6 @@ describe('searchableSettings', () => {
 			['llama.cpp', 'local-models-engines'],
 			['onnx runtime', 'local-models-engines'],
 			['deepseek', 'local-models-endpoints'],
-			['mirror', 'local-models-download-source'],
-			['download source', 'local-models-download-source'],
-			['blocked', 'local-models-download-source'],
 			['model server', 'local-models-model-server'],
 			['llama-server', 'local-models-model-server'],
 			['rotate', 'local-models-model-server'],
@@ -457,6 +454,7 @@ describe('searchableSettings', () => {
 			['system two', 'local-models-system-two'],
 			['tab naming', 'local-models-system-two'],
 			['utility agent', 'local-models-utility-agent'],
+			['utility source', 'local-models-utility-agent'],
 			['context grooming', 'local-models-utility-agent'],
 			['semantic index', 'local-models-semantic-index'],
 			['explore index', 'local-models-semantic-index'],
@@ -508,7 +506,6 @@ describe('searchableSettings', () => {
 				'local-models-search': 'library/search',
 				'local-models-engines': 'library/engines',
 				'local-models-add-hf': 'library/custom',
-				'local-models-download-source': 'sources',
 				'local-models-model-server': 'sources',
 				'local-models-endpoints': 'sources',
 				'local-models-voice-studio': 'sources',
@@ -527,7 +524,7 @@ describe('searchableSettings', () => {
 
 		it('reads an inner tab back by setting id, and none for a plain tab', () => {
 			expect(settingSubTab('local-models-utility-agent')).toBe('system-two');
-			expect(settingSubTab('local-models-download-source')).toBe('sources');
+			expect(settingSubTab('local-models-download-source')).toBeUndefined();
 			expect(settingSubTab('general-tab-behavior')).toBeUndefined();
 			expect(settingSubTab('no-such-setting')).toBeUndefined();
 		});

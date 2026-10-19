@@ -207,7 +207,7 @@ export interface TranslationPlan {
 	}>;
 	/** Native identities only; these conversations are translated on their next send. */
 	deferredTabs?: TranslationTab[];
-	counts: { records: number; artifacts: number; bytes: number };
+	counts: { records: number; messages?: number; artifacts: number; bytes: number };
 	fingerprint: string;
 }
 

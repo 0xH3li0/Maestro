@@ -30,6 +30,7 @@ import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import { MAX_TASK_MAX_TOKENS, runLocalTask } from '../../local-models/task-router';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -182,9 +183,18 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 
 				// Resolve the agent: use the utility agent if configured, otherwise the
 				// requested agent. Null/empty leaves behavior unchanged (session agent).
-				const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
-				const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
-				const effectiveAgentType = utilityAgentId || agentType;
+				// Local utility sources handle the text tasks above. Tool-based
+				// grooming and transfer stay on the owning session's provider, not
+				// a provider choice left over from an earlier utility configuration.
+				const utility = resolveUtilityProvider(
+					{
+						utilitySource: settingsStore.get('utilitySource'),
+						utilityAgentId: settingsStore.get('utilityAgentId', null),
+						utilityModelId: settingsStore.get('utilityModelId', null),
+					},
+					agentType
+				);
+				const effectiveAgentType = utility.agentType;
 
 				// Look up agent-level config values for override resolution
 				const allConfigs = agentConfigsStore.get('configs', {});
@@ -199,11 +209,13 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
 				// runs, not WHICH binary runs it, and grooming a remote agent's context
 				// on the local machine would look at the wrong filesystem.
-				const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
+				const usingUtilityAgent = utility.changesProvider;
 
 				// Only summarization opts in (see `cheapTurn` above). Left undefined
 				// for grooming and transfer, which keep the agent's configured model.
-				const cheapTurn = options?.cheapTurn ? cheapTurnSettings(agentType as ToolType) : undefined;
+				const cheapTurn = options?.cheapTurn
+					? cheapTurnSettings(effectiveAgentType as ToolType)
+					: undefined;
 
 				// Use the shared groomContext utility
 				const result = await groomContext(
@@ -212,7 +224,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						agentType: effectiveAgentType,
 						prompt,
 						// Only apply the model override when a utility agent is actually in use.
-						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
+						modelId: utility.modelId,
 						// Pass SSH and custom config for remote execution support.
 						// The store lets groomContext resolve `remoteId` and actually
 						// wrap the spawn with ssh - without it grooming would run the
@@ -231,7 +243,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						// down - so grooming and transfer are untouched by this. An
 						// explicit tier is not the caller's own setting leaking, so it
 						// applies to a utility agent too.
-						sessionCustomModel: cheapTurn?.model,
+						sessionCustomModel: utility.modelId ?? cheapTurn?.model,
 						sessionCustomEffort: cheapTurn?.effort,
 						// The token source belongs to the session's agent, like its path
 						// and env above, so a utility agent runs on its own default.

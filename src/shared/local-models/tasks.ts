@@ -46,12 +46,11 @@ export type LocalModelTaskNeed = Extract<
  *
  * - `off`: the task does not run. A consumer with no model-free fallback hides
  *   its affordance.
- * - `utility-agent`: the task's EXISTING agent path, unchanged. For tab naming
- *   and summaries that is the Utility Agent (`utilityAgentId` / `utilityModelId`
- *   in Settings, or the agent's own provider when those are unset); for AI
- *   command mode it is the tab's own provider. The router never spawns an agent
- *   for this: it tells the caller to keep doing what it did before Local Models
- *   existed. Only tasks that HAVE such a path accept it
+ * - `utility-agent`: inherit the shared `utilitySource` setting. A local model
+ *   or endpoint runs through the task router. The provider choice uses
+ *   `utilityAgentId` / `utilityModelId`, or the session's provider when unset.
+ *   The router never spawns a provider: it hands that path back to the caller.
+ *   Only tasks that HAVE such a path accept it
  *   ({@link LocalModelTaskDefinition.allowsUtilityAgent}).
  * - `local`: a catalog model run on this machine.
  * - `endpoint`: a model served by one of the user's `localModelEndpoints`.
@@ -69,6 +68,13 @@ export type LocalModelAssignment =
 	| { type: 'system-one' };
 
 export type LocalModelAssignmentType = LocalModelAssignment['type'];
+
+/** Shared source inherited by tasks assigned to `utility-agent`. The provider
+ * path retains the existing utilityAgentId / utilityModelId settings. */
+export type UtilitySource = Extract<
+	LocalModelAssignment,
+	{ type: 'utility-agent' | 'local' | 'endpoint' }
+>;
 
 /**
  * The needs a user-run model server can serve. Endpoints speak chat
@@ -104,7 +110,7 @@ export const LOCAL_MODEL_ASSIGNMENT_TYPES: readonly LocalModelAssignmentType[] =
 ]);
 
 export const OFF_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'off' });
-export const UTILITY_AGENT_ASSIGNMENT: LocalModelAssignment = Object.freeze({
+export const UTILITY_AGENT_ASSIGNMENT: UtilitySource = Object.freeze({
 	type: 'utility-agent',
 });
 export const SYSTEM_ONE_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'system-one' });
@@ -596,7 +602,7 @@ export function parseLocalModelAssignment(
  *   before Local Models (no setting at all) gets every default. Because the
  *   tasks that already ran through an agent default to `utility-agent`, a user
  *   who set `utilityAgentId` / `utilityModelId` keeps exactly the behavior they
- *   configured: those two settings are still what `utility-agent` means.
+ *   configured: `utilitySource` defaults to the existing provider path.
  * - Unknown task ids (a task a later build dropped) and unusable entries (a
  *   malformed record, `utility-agent` on a task that has no agent path, or
  *   `system-one` on a task with no typed questions) are dropped, which leaves
@@ -617,6 +623,36 @@ export function parseLocalModelAssignments(value: unknown): LocalModelAssignment
 	return assignments;
 }
 
+/** Older installs retain their provider choice. Missing models and endpoints
+ * remain selected so readiness reports them instead of choosing a provider. */
+export function parseUtilitySource(value: unknown): UtilitySource {
+	const assignment = parseLocalModelAssignment('tab-naming', value);
+	return assignment &&
+		(assignment.type === 'utility-agent' ||
+			assignment.type === 'local' ||
+			assignment.type === 'endpoint')
+		? assignment
+		: UTILITY_AGENT_ASSIGNMENT;
+}
+
+/** Provider settings belong to the shared source only while it is on the
+ * provider path. A parked provider choice cannot override a local source. */
+export function resolveUtilityProvider(
+	settings: { utilitySource?: unknown; utilityAgentId?: unknown; utilityModelId?: unknown },
+	sessionProvider: string
+) {
+	const provider =
+		parseUtilitySource(settings.utilitySource).type === 'utility-agent'
+			? nonEmptyString(settings.utilityAgentId)
+			: null;
+	return {
+		agentType: provider ?? sessionProvider,
+		modelId: provider ? (nonEmptyString(settings.utilityModelId) ?? undefined) : undefined,
+		usesUtilityProvider: provider !== null,
+		changesProvider: provider !== null && provider !== sessionProvider,
+	};
+}
+
 export function isSameLocalModelAssignment(
 	a: LocalModelAssignment,
 	b: LocalModelAssignment
@@ -629,23 +665,27 @@ export function isSameLocalModelAssignment(
 	return true;
 }
 
-/** The assignment a task runs with: the stored one, else the task's default. */
+/** The stored task choice, else its default. Passing the shared utility source
+ * resolves inheritance; omitting it preserves the choice shown by task pickers. */
 export function resolveLocalModelAssignment(
 	assignments: LocalModelAssignments | undefined,
-	taskId: LocalModelTaskId
+	taskId: LocalModelTaskId,
+	utilitySource?: UtilitySource
 ): LocalModelAssignment {
 	const stored = assignments?.[taskId];
 	const parsed = stored === undefined ? null : parseLocalModelAssignment(taskId, stored);
-	return parsed ?? LOCAL_MODEL_TASKS[taskId].defaultAssignment;
+	const assignment = parsed ?? LOCAL_MODEL_TASKS[taskId].defaultAssignment;
+	return assignment.type === 'utility-agent' ? (utilitySource ?? assignment) : assignment;
 }
 
 /** Every task's effective assignment, for a surface that lists them all. */
 export function resolveLocalModelAssignments(
-	assignments: LocalModelAssignments | undefined
+	assignments: LocalModelAssignments | undefined,
+	utilitySource?: UtilitySource
 ): Record<LocalModelTaskId, LocalModelAssignment> {
 	const resolved = {} as Record<LocalModelTaskId, LocalModelAssignment>;
 	for (const taskId of LOCAL_MODEL_TASK_IDS) {
-		resolved[taskId] = resolveLocalModelAssignment(assignments, taskId);
+		resolved[taskId] = resolveLocalModelAssignment(assignments, taskId, utilitySource);
 	}
 	return resolved;
 }
@@ -753,10 +793,11 @@ export function withLocalModelAssignment(
  */
 export function tasksUsingLocalModel(
 	assignments: LocalModelAssignments | undefined,
-	modelId: string
+	modelId: string,
+	utilitySource?: UtilitySource
 ): LocalModelTaskDefinition[] {
 	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
-		const assignment = resolveLocalModelAssignment(assignments, taskId);
+		const assignment = resolveLocalModelAssignment(assignments, taskId, utilitySource);
 		return assignment.type === 'local' && assignment.modelId === modelId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
 }
@@ -783,10 +824,11 @@ export function tasksForSystem(system: LocalModelSystem): LocalModelTaskDefiniti
  */
 export function tasksUsingEndpoint(
 	assignments: LocalModelAssignments | undefined,
-	endpointId: string
+	endpointId: string,
+	utilitySource?: UtilitySource
 ): LocalModelTaskDefinition[] {
 	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
-		const assignment = resolveLocalModelAssignment(assignments, taskId);
+		const assignment = resolveLocalModelAssignment(assignments, taskId, utilitySource);
 		return assignment.type === 'endpoint' && assignment.endpointId === endpointId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
 }

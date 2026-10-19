@@ -136,6 +136,33 @@ describe('aiCommand IPC handler', () => {
 		expect(options.projectRoot).toBe('/repo');
 	});
 
+	it('uses the configured utility provider without leaking the tab provider configuration', async () => {
+		settingsValues.utilityAgentId = 'codex';
+		settingsValues.utilityModelId = 'gpt-model';
+		await invokeSuggest({
+			customPath: '/bin/claude',
+			customArgs: '--claude-flag',
+			customEnvVars: { CLAUDE_TOKEN: 'session-only' },
+			customModel: 'opus',
+			customEffort: 'high',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		});
+		expect(getAgent).toHaveBeenCalledWith('codex');
+		expect(mockGroomContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'codex',
+				sessionCustomModel: 'gpt-model',
+				sessionCustomEffort: undefined,
+				sessionCustomPath: undefined,
+				sessionCustomArgs: undefined,
+				sessionCustomEnvVars: undefined,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			}),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
 	it('names the configured shell so the prompt and the eventual run agree', async () => {
 		settingsValues.defaultShell = '/bin/zsh';
 

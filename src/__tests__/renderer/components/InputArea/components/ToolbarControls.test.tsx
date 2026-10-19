@@ -90,6 +90,17 @@ describe('ToolbarControls', () => {
 		expect(screen.getByText(phone ? 'Provider row' : 'Provider pill')).toBeInTheDocument();
 	});
 
+	it('keeps Run on configuration out of the desktop quick model picker', () => {
+		renderToolbar({
+			modelMenuOpen: true,
+			availableModels: ['gpt-5'],
+			onModelChange: vi.fn(),
+		});
+		expect(screen.getByPlaceholderText('Filter models...')).toBeInTheDocument();
+		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
+		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+	});
+
 	it('uses the selected tab provider for permission labels', () => {
 		const session = createInputAreaSession();
 		session.toolType = 'claude-code';

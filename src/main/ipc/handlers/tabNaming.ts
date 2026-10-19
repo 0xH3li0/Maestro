@@ -44,6 +44,7 @@ import { truncateAtWordBoundary } from '../../../shared/formatters';
 import type { ProcessManager } from '../../process-manager';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { runLocalTask, type LocalTaskResult } from '../../local-models/task-router';
+import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
@@ -200,21 +201,24 @@ export async function generateTabName(
 		}
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
-		const utilityAgentId =
+		const utility = resolveUtilityProvider(
 			config.useUtilityAgent === false
-				? null
-				: (settingsStore.get('utilityAgentId', null) as string | null);
-		const utilityModelId = utilityAgentId
-			? (settingsStore.get('utilityModelId', null) as string | null)
-			: null;
-		const effectiveAgentType = utilityAgentId || config.agentType;
+				? {}
+				: {
+						utilitySource: settingsStore.get('utilitySource'),
+						utilityAgentId: settingsStore.get('utilityAgentId', null),
+						utilityModelId: settingsStore.get('utilityModelId', null),
+					},
+			config.agentType
+		);
+		const effectiveAgentType = utility.agentType;
 
 		// Get the agent configuration
 		const agent = await agentDetector.getAgent(effectiveAgentType);
 		if (!agent) {
 			logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
 				agentType: effectiveAgentType,
-				isUtilityAgent: !!utilityAgentId,
+				isUtilityAgent: utility.usesUtilityProvider,
 			});
 			return null;
 		}
@@ -251,7 +255,7 @@ export async function generateTabName(
 			cwd: config.cwd,
 			readOnlyMode,
 			// Only apply the model override when a utility agent is actually in use.
-			modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
+			modelId: utility.modelId,
 		});
 
 		// Apply config overrides from store.
@@ -264,7 +268,7 @@ export async function generateTabName(
 		// isn't mapped, and applyAgentConfigOverrides then falls through to
 		// the agent's own configured value - so an unmapped provider keeps
 		// exactly the behaviour it had before.
-		const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+		const cheapSettings = cheapTurnSettings(effectiveAgentType as ToolType);
 		// The cheap effort is a value MAESTRO picked off a static ladder, and
 		// a provider can retire a rung without notice. When it has refused
 		// this one, the retry below runs again with the effort left to the
@@ -275,7 +279,7 @@ export async function generateTabName(
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 			agentConfigValues,
 			readOnlyMode,
-			sessionCustomModel: cheapNaming.model,
+			sessionCustomModel: utility.modelId ?? cheapNaming.model,
 			sessionCustomEffort: cheapNaming.effort,
 		});
 		finalArgs = configResolution.args;

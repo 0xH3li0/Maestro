@@ -161,6 +161,8 @@ export function HoverTooltip({
 				style={triggerStyle}
 				onMouseEnter={handleEnter}
 				onMouseLeave={() => setOpen(false)}
+				onFocus={handleEnter}
+				onBlur={() => setOpen(false)}
 			>
 				{children}
 			</span>

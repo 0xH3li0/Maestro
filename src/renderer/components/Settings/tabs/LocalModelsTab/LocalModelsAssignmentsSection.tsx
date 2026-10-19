@@ -35,6 +35,7 @@ import { AlertTriangle, Download, Loader2, Power, RefreshCw } from 'lucide-react
 import {
 	formatLocalModelAssignmentSpec,
 	localModelAssignmentProblem,
+	localModelAssignmentCaution,
 	parseLocalModelAssignmentSpec,
 	resolveLocalModelAssignment,
 	tasksForSystem,
@@ -112,6 +113,7 @@ export function LocalModelsAssignmentsSection({
 }: LocalModelsAssignmentsSectionProps) {
 	const tasks = useMemo(() => tasksForSystem(system), [system]);
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
+	const utilitySource = useSettingsStore((s) => s.utilitySource);
 	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
 	// The last refused pick per task, shown under its row until the next pick.
 	const [problems, setProblems] = useState<Partial<Record<LocalModelTaskId, string>>>({});
@@ -123,6 +125,7 @@ export function LocalModelsAssignmentsSection({
 		() =>
 			JSON.stringify([
 				assignments,
+				utilitySource,
 				endpoints.endpoints,
 				models.listings.map((listing) => [listing.entry.id, listing.status.status]),
 				systemOneEngine?.engine ?? null,
@@ -130,6 +133,7 @@ export function LocalModelsAssignmentsSection({
 			]),
 		[
 			assignments,
+			utilitySource,
 			endpoints.endpoints,
 			models.listings,
 			systemOneEngine?.engine,
@@ -200,6 +204,10 @@ export function LocalModelsAssignmentsSection({
 						readiness={readiness.readiness[task.id]}
 						checking={readiness.loading}
 						problem={problems[task.id]}
+						caution={localModelAssignmentCaution(
+							task.id,
+							resolveLocalModelAssignment(assignments, task.id, utilitySource)
+						)}
 						onChoose={(spec) => choose(task.id, spec)}
 						onRecheck={readiness.refresh}
 					/>
@@ -223,6 +231,7 @@ interface TaskAssignmentRowProps {
 	readiness: LocalModelTaskReadiness | undefined;
 	checking: boolean;
 	problem: string | undefined;
+	caution: string | null;
 	onChoose: (spec: string) => void;
 	onRecheck: () => Promise<void>;
 	/** This task's fail policy, when it has one. */
@@ -243,6 +252,7 @@ function TaskAssignmentRow({
 	readiness,
 	checking,
 	problem,
+	caution,
 	onChoose,
 	onRecheck,
 }: TaskAssignmentRowProps) {
@@ -260,6 +270,11 @@ function TaskAssignmentRow({
 
 	return (
 		<div className="space-y-1.5" data-testid={`local-models-task-${task.id}`}>
+			{caution && (
+				<p className="text-xs" style={{ color: theme.colors.warning }}>
+					{caution}
+				</p>
+			)}
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
 					<label
@@ -365,7 +380,7 @@ export function TaskReadinessLine({
 		readiness.state === 'ready'
 			? 'Ready'
 			: readiness.state === 'utility-agent'
-				? 'Utility Agent'
+				? 'Utility source'
 				: readiness.state === 'off'
 					? 'Off'
 					: 'Unavailable';

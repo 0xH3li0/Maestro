@@ -171,6 +171,54 @@ describe('runLocalTask', () => {
 		});
 	});
 
+	describe('the shared utility source', () => {
+		it.each(['tab-naming', 'tab-summary', 'ai-command'] as const)(
+			'runs inherited %s on the shared local model and records the actual source',
+			async (taskId) => {
+				settings.set('utilitySource', LOCAL);
+				generate.generateText.mockResolvedValue(okReply(LOCAL));
+				await expect(runLocalTask(taskId, { prompt: 'hi' })).resolves.toMatchObject({
+					status: 'ok',
+					source: LOCAL,
+				});
+				expect(generate.generateText).toHaveBeenCalledWith(
+					expect.objectContaining({ source: LOCAL })
+				);
+				expect(recorded()).toMatchObject({ taskId, modelId: LOCAL.modelId, sourceType: 'local' });
+			}
+		);
+
+		it('uses the shared endpoint until a task overrides it', async () => {
+			settings.set('utilitySource', ENDPOINT);
+			generate.generateText.mockResolvedValue(okReply(ENDPOINT));
+			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
+				status: 'ok',
+				source: ENDPOINT,
+			});
+			assign('tab-naming', LOCAL);
+			generate.generateText.mockResolvedValue(okReply(LOCAL));
+			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
+				status: 'ok',
+				source: LOCAL,
+			});
+			assign('tab-naming', { type: 'off' });
+			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toEqual({
+				status: 'off',
+			});
+		});
+
+		it('reports an inherited endpoint failure without handing work to a provider', async () => {
+			settings.set('utilitySource', SERVER_ENDPOINT);
+			generate.generateText.mockRejectedValue(serverError('network'));
+			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
+				status: 'unavailable',
+				source: SERVER_ENDPOINT,
+				code: 'network',
+			});
+			expect(generate.generateText).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('a local assignment', () => {
 		beforeEach(() => assign('tab-naming', { type: 'local', modelId: QWEN3_1_7B_ID }));
 

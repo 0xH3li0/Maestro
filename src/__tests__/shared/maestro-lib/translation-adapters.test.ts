@@ -36,6 +36,49 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('destination native projections', () => {
+	it('counts user and assistant messages separately from native bookkeeping and tool events', () => {
+		const conversation = extractNativeConversation(
+			identity,
+			'tab',
+			'native',
+			Buffer.from(
+				[
+					{ type: 'user', uuid: 'user', message: { role: 'user', content: 'Question' } },
+					{
+						type: 'assistant',
+						uuid: 'tool',
+						message: {
+							role: 'assistant',
+							content: [{ type: 'tool_use', id: 'call', name: 'Read', input: { path: 'file' } }],
+						},
+					},
+					{
+						type: 'user',
+						uuid: 'result',
+						message: {
+							role: 'user',
+							content: [{ type: 'tool_result', tool_use_id: 'call', content: 'Result' }],
+						},
+					},
+					{ type: 'assistant', uuid: 'answer', message: { role: 'assistant', content: 'Answer' } },
+					{ type: 'progress', uuid: 'progress', message: 'Bookkeeping' },
+				]
+					.map((row) => JSON.stringify(row))
+					.join('\n')
+			)
+		);
+		const plan = planTranslation({
+			agentId: 'agent',
+			source: identity,
+			destination: { ...identity, provider: 'codex', version: '0.162.1' },
+			scope: { projectKnowledge: true, selectedUserResources: [] },
+			conversations: [conversation],
+			registry: createTranslationRegistry(),
+		});
+		expect(plan.counts.messages).toBe(2);
+		expect(plan.counts.records).toBeGreaterThan(plan.counts.messages!);
+	});
+
 	it.each([
 		['claude-compactions', 'claude-code', 7, 2],
 		['codex-compacted-replacement', 'codex', 4, 4],

@@ -15,6 +15,7 @@ import { memo } from 'react';
 import {
 	AlertTriangle,
 	CheckCircle2,
+	CheckSquare,
 	Download,
 	Pause,
 	Play,
@@ -40,6 +41,7 @@ import {
 } from '../../../../../shared/local-models/user-models';
 import type { Theme } from '../../../../types';
 import { MiniBadge } from '../../../ui/MiniBadge';
+import { HoverTooltip } from '../../../ui/HoverTooltip';
 
 export interface LocalModelRowProps {
 	theme: Theme;
@@ -73,6 +75,8 @@ export interface LocalModelRowProps {
 	showRoles?: boolean;
 	/** Whether the model runs on this computer. Omitted until the hardware is read. */
 	fit?: ModelFit;
+	/** Why this is the Library's hardware-based pick for its job. */
+	recommendation?: string;
 	/**
 	 * Take a model the user added out of the Library, files and entry. Offered
 	 * only on a user-added row; a curated model has `onRemove` alone.
@@ -113,6 +117,7 @@ function LocalModelRowInner({
 	engineBytes = 0,
 	showRoles = false,
 	fit,
+	recommendation,
 	onRemoveFromLibrary,
 }: LocalModelRowProps) {
 	const { entry, status, installPaths } = listing;
@@ -150,7 +155,6 @@ function LocalModelRowInner({
 					<p className="text-xs opacity-70 mt-0.5">
 						{showRoles && entry.goodAt ? entry.goodAt : entry.description}
 					</p>
-					{fit && <FitLine theme={theme} fit={fit} modelId={entry.id} />}
 					{usedBy && usedBy.length > 0 && (
 						<p
 							className="text-xs-plus mt-0.5"
@@ -226,7 +230,7 @@ function LocalModelRowInner({
 				</div>
 			)}
 
-			<div className="flex flex-wrap gap-2">
+			<div className="flex flex-wrap items-end gap-2">
 				{active && (
 					<RowButton theme={theme} icon={Pause} label="Pause" onClick={() => onPause(entry.id)} />
 				)}
@@ -288,37 +292,78 @@ function LocalModelRowInner({
 						onClick={() => onRemoveFromLibrary(entry.id)}
 					/>
 				)}
+				{fit && (
+					<div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+						{recommendation && (
+							<HoverTooltip
+								theme={theme}
+								maxWidth={400}
+								label={
+									<>
+										<span className="block font-semibold">Why recommended</span>
+										<span className="block mt-1">{entry.goodAt}</span>
+										<span className="block mt-2">{recommendation}</span>
+										<span className="block mt-2">{fit.reason}</span>
+									</>
+								}
+							>
+								<span tabIndex={0} aria-label={`Recommended. ${recommendation}`}>
+									<MiniBadge
+										theme={theme}
+										label="Recommended"
+										className="inline-flex h-7 items-center border"
+										style={{ borderColor: theme.colors.accent }}
+										testId={`local-model-recommended-${entry.id}`}
+									/>
+								</span>
+							</HoverTooltip>
+						)}
+						<FitBadge theme={theme} fit={fit} modelId={entry.id} />
+					</div>
+				)}
 			</div>
 		</div>
 	);
 }
 
 /**
- * A visible hardware-fit verdict and reason, read before downloading a model.
+ * Compact hardware-fit verdict, with the full explanation on hover.
  */
-function FitLine({ theme, fit, modelId }: { theme: Theme; fit: ModelFit; modelId: string }) {
+function FitBadge({ theme, fit, modelId }: { theme: Theme; fit: ModelFit; modelId: string }) {
 	const colors: Record<ModelFitLevel, string> = {
 		fits: theme.colors.success,
 		tight: theme.colors.warning,
 		'too-large': theme.colors.error,
 	};
-	const Icon = fit.fit === 'fits' ? CheckCircle2 : AlertTriangle;
+	const Icon = fit.fit === 'fits' ? CheckSquare : AlertTriangle;
+	const label = MODEL_FIT_LABELS[fit.fit];
 	return (
-		<div
-			className="mt-2 rounded border px-3 py-2 select-text"
-			style={{ borderColor: colors[fit.fit], backgroundColor: theme.colors.bgMain }}
-			data-testid={`local-model-fit-${modelId}`}
-			data-fit={fit.fit}
+		<HoverTooltip
+			theme={theme}
+			maxWidth={400}
+			label={
+				<>
+					<span className="block font-semibold">{label} on this computer</span>
+					<span className="block mt-1">{fit.reason}</span>
+				</>
+			}
 		>
-			<div
-				className="flex items-center gap-2 text-sm font-semibold"
-				style={{ color: colors[fit.fit] }}
+			<span
+				tabIndex={0}
+				aria-label={`${label} on this computer. ${fit.reason}`}
+				className="inline-flex h-7 items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium"
+				style={{
+					borderColor: colors[fit.fit],
+					backgroundColor: `${colors[fit.fit]}20`,
+					color: colors[fit.fit],
+				}}
+				data-testid={`local-model-fit-${modelId}`}
+				data-fit={fit.fit}
 			>
-				<Icon className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-				{MODEL_FIT_LABELS[fit.fit]} on this computer
-			</div>
-			<p className="text-xs opacity-70 mt-1">{fit.reason}</p>
-		</div>
+				<Icon className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+				{label}
+			</span>
+		</HoverTooltip>
 	);
 }
 

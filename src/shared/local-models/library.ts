@@ -18,7 +18,24 @@
  */
 
 import { getAgentDisplayName } from '../agentMetadata';
-import { LOCAL_MODEL_KIND_LABELS, LOCAL_MODEL_KIND_ORDER } from './model-catalog';
+import {
+	BGE_SMALL_EN_ID,
+	DEBERTA_INJECTION_V2_ID,
+	GEMMA_4_E4B_ID,
+	GPT_OSS_120B_ID,
+	GPT_OSS_20B_ID,
+	KOKORO_82M_ID,
+	LOCAL_MODEL_KIND_LABELS,
+	LOCAL_MODEL_KIND_ORDER,
+	PARAKEET_TDT_V2_ID,
+	PROMPT_GUARD_2_22M_ID,
+	QWEN3_1_7B_ID,
+	QWEN3_5_4B_ID,
+	QWEN3_CODER_30B_A3B_ID,
+	QWEN3_CODER_NEXT_ID,
+	WHISPER_BASE_EN_ID,
+} from './model-catalog';
+import { modelFit, type HardwareProfile } from './model-fit';
 import {
 	LOCAL_MODEL_ROLES,
 	type LocalModelEntry,
@@ -111,7 +128,7 @@ export const LOCAL_MODEL_LIBRARY_SECTIONS: Readonly<
 		id: 'engines',
 		label: 'Engines',
 		description:
-			'The libraries that run a model: llama.cpp for text, ONNX Runtime for speech, embeddings and classifiers. Downloading a model installs its engine with it.',
+			'The engines that run models inside Maestro: llama.cpp for text, ONNX Runtime for speech, embeddings and classifiers. Downloading a model installs its in-app engine. Hosting text models for agents also needs llama-server, installed separately in Models > Sources.',
 		groups: Object.freeze([] as const),
 	}),
 });
@@ -210,6 +227,73 @@ export function localModelRoleBadges(entry: LocalModelEntry): string[] {
 			? `${LOCAL_MODEL_ROLE_LABELS.agent}: ${harnesses.map(getAgentDisplayName).join(', ')}`
 			: LOCAL_MODEL_ROLE_LABELS[role];
 	});
+}
+
+/**
+ * Curated starting points, in preference order within each job. Fit is a memory
+ * estimate, not a speed benchmark: more RAM does not make a larger background
+ * model the better default. Wake-word entries are complementary parts, not
+ * alternatives, and user-added models have no reviewed recommendation.
+ */
+const LIBRARY_RECOMMENDATIONS: readonly {
+	ids: readonly string[];
+	reason: string;
+}[] = [
+	{
+		ids: [
+			GPT_OSS_120B_ID,
+			QWEN3_CODER_NEXT_ID,
+			QWEN3_CODER_30B_A3B_ID,
+			GPT_OSS_20B_ID,
+			GEMMA_4_E4B_ID,
+		],
+		reason: 'Our first agent pick among the curated choices that fit this computer comfortably.',
+	},
+	{
+		ids: [QWEN3_5_4B_ID, QWEN3_1_7B_ID],
+		reason:
+			'A small housekeeping model for quick background work, chosen from models that fit this computer comfortably.',
+	},
+	{
+		ids: [PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID],
+		reason:
+			'Our first English dictation pick that fits this computer comfortably. Parakeet handles names and punctuation; Whisper is the smaller fallback.',
+	},
+	{
+		ids: [KOKORO_82M_ID],
+		reason: 'Local speech synthesis that fits this computer comfortably.',
+	},
+	{
+		ids: [BGE_SMALL_EN_ID],
+		reason:
+			'Quick English semantic search with a small CPU and memory footprint. More RAM alone does not make a larger embedding model faster.',
+	},
+	{
+		ids: [PROMPT_GUARD_2_22M_ID, DEBERTA_INJECTION_V2_ID],
+		reason:
+			'Our first prompt-injection screening pick that fits this computer comfortably, favoring the smaller classifier.',
+	},
+];
+
+/** Recommendation explanation by model id. No hardware reading means no recommendation. */
+export function recommendedLocalModelsForHardware(
+	entries: readonly LocalModelEntry[],
+	profile: HardwareProfile | null
+): Record<string, string> {
+	const recommendations: Record<string, string> = {};
+	if (!profile) return recommendations;
+	for (const { ids, reason } of LIBRARY_RECOMMENDATIONS) {
+		for (const id of ids) {
+			const entry = entries.find((candidate) => candidate.id === id);
+			if (!entry || entry.userAdded || entry.pending || modelFit(entry, profile).fit !== 'fits') {
+				continue;
+			}
+			recommendations[id] =
+				`${reason} This is a hardware-fit recommendation, not a benchmark on this machine.`;
+			break;
+		}
+	}
+	return recommendations;
 }
 
 /**

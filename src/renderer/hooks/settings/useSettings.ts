@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
+import type { UtilitySource } from '../../../shared/local-models/tasks';
 import type {
 	ThemeId,
 	ThemeColors,
@@ -443,6 +444,8 @@ export interface UseSettingsReturn {
 
 	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
 	utilityAgentId: string | null;
+	utilitySource: UtilitySource;
+	setUtilitySource: (value: UtilitySource) => void;
 	setUtilityAgentId: (value: string | null) => void;
 	utilityModelId: string | null;
 	setUtilityModelId: (value: string | null) => void;

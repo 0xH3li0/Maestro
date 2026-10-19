@@ -7,6 +7,8 @@
 
 import {
 	formatLocalModelAssignmentSpec,
+	parseUtilitySource,
+	resolveLocalModelAssignments,
 	type LocalModelAssignment,
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
@@ -39,10 +41,13 @@ export function localModelSourceKey(source: LocalModelSource): string {
 }
 
 /**
- * The persisted `localModelAssignments` setting, unparsed. The task router and
- * task readiness both resolve it through `resolveLocalModelAssignment`, so they
- * cannot disagree about which source a task is on.
+ * Effective assignments, including the shared utility source. Both execution
+ * and readiness read this so an inherited source is checked and run alike.
  */
 export function readLocalModelAssignments(): LocalModelAssignments | undefined {
-	return getSettingsStore().get('localModelAssignments', {}) as LocalModelAssignments | undefined;
+	const settings = getSettingsStore();
+	return resolveLocalModelAssignments(
+		settings.get('localModelAssignments', {}) as LocalModelAssignments | undefined,
+		parseUtilitySource(settings.get('utilitySource'))
+	);
 }

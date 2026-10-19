@@ -8,7 +8,7 @@
  * on the other side of the same preview.
  */
 
-export { DocumentChatOverlay, DOCUMENT_CHAT_WIDTH } from './DocumentChatOverlay';
+export { DocumentChatOverlay } from './DocumentChatOverlay';
 export type { DocumentChatOverlayProps } from './DocumentChatOverlay';
 export {
 	DOCUMENT_CHAT_MODES,

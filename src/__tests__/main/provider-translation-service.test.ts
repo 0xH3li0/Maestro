@@ -1230,6 +1230,7 @@ describe('provider translation plan telemetry', () => {
 				aiTabs: [{ id: 'private-tab', agentSessionId: null }] as any,
 			});
 			const service = new ProviderTranslationService({
+				agentConfigsStore: { get: () => ({}) },
 				sessionsStore: { get: vi.fn(() => [session]) },
 				getProcessManager: () => ({ get: () => (status === 'deferred' ? {} : undefined) }),
 			} as unknown as ProviderTranslationDependencies);
@@ -1286,7 +1287,7 @@ describe('provider translation context capacity', () => {
 		['codex-compacted-replacement', 'codex', 4],
 		['codex-compacted-message', 'codex', 4],
 	] as const)(
-		'accepts the %s window at capacity and blocks it one token below',
+		'keeps the %s window intact and makes estimated overflow advisory',
 		async (fixture, provider, archivedCount) => {
 			vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
 			vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
@@ -1339,7 +1340,9 @@ describe('provider translation context capacity', () => {
 				toolType: provider,
 				aiTabs: [{ id: 'tab', agentSessionId: 'synthetic-compacted' }] as any,
 			});
+			const configs: Record<string, Record<string, unknown>> = {};
 			const service = new ProviderTranslationService({
+				agentConfigsStore: { get: () => configs },
 				sessionsStore: { get: vi.fn(() => [session]) },
 				getProcessManager: () => ({ get: () => undefined }),
 			} as unknown as ProviderTranslationDependencies);
@@ -1358,15 +1361,27 @@ describe('provider translation context capacity', () => {
 					destination: provider === 'codex' ? 'claude-code' : 'codex',
 					action: 'plan',
 				});
-				expect(journal.plan.status).toBe(contextWindow === activeTokens ? 'ready' : 'blocked');
+				expect(journal.plan.status).toBe('ready');
 				expect(
 					journal.plan.limitations
-						.filter((limit) => limit.severity === 'block')
-						.map((limit) => limit.code)
-				).toEqual(contextWindow === activeTokens ? [] : ['context-capacity']);
+						.filter((limit) => limit.code === 'context-capacity')
+						.map((limit) => limit.severity)
+				).toEqual(contextWindow === activeTokens ? [] : ['warning']);
 				expect(journal.conversations[0].records).toEqual(conversation.records);
 				expect(Buffer.from(journal.conversations[0].artifacts[0].bytesBase64, 'base64')).toEqual(
 					bytes
+				);
+			}
+			if (provider === 'codex') {
+				configs['claude-code'] = { contextWindow: activeTokens - 1, model: 'opus[1m]' };
+				const journal: TranslationJournal = await (service as any).prepare({
+					agentId: session.id,
+					destination: 'claude-code',
+					action: 'plan',
+				});
+				expect(journal.plan.status).toBe('ready');
+				expect(journal.plan.limitations.some((limit) => limit.code === 'context-capacity')).toBe(
+					false
 				);
 			}
 		}
@@ -1422,6 +1437,7 @@ describe('provider translation context capacity', () => {
 				aiTabs: [{ id: 'tab', agentSessionId: 'native' }] as any,
 			});
 			const service = new ProviderTranslationService({
+				agentConfigsStore: { get: () => ({}) },
 				sessionsStore: { get: vi.fn(() => [session]) },
 				getProcessManager: () => ({ get: () => undefined }),
 			} as unknown as ProviderTranslationDependencies);
@@ -1438,7 +1454,7 @@ describe('provider translation context capacity', () => {
 				destination: 'codex',
 				action: 'plan',
 			});
-			expect(journal.plan.status).toBe(variant === 'compacted' ? 'ready' : 'blocked');
+			expect(journal.plan.status).toBe('ready');
 			expect(journal.plan.limitations.some((limit) => limit.code === 'context-capacity')).toBe(
 				variant !== 'compacted'
 			);
@@ -1518,9 +1534,45 @@ describe('provider translation read scope', () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
-	it.each([false, true])(
-		'counts projected context rather than archived diagnostics (oversized=%s)',
-		async (oversized) => {
+	it.each([
+		{
+			oversized: false,
+			configured: undefined,
+			parked: undefined,
+			sourceWindow: undefined,
+			warns: false,
+		},
+		{
+			oversized: true,
+			configured: undefined,
+			parked: undefined,
+			sourceWindow: undefined,
+			warns: true,
+		},
+		{
+			oversized: true,
+			configured: 1_000_000,
+			parked: undefined,
+			sourceWindow: undefined,
+			warns: false,
+		},
+		{
+			oversized: true,
+			configured: undefined,
+			parked: 1_000_000,
+			sourceWindow: undefined,
+			warns: false,
+		},
+		{
+			oversized: true,
+			configured: undefined,
+			parked: undefined,
+			sourceWindow: 1_000_000,
+			warns: true,
+		},
+	])(
+		'uses destination capacity without borrowing source settings: %j',
+		async ({ oversized, configured, parked, sourceWindow, warns }) => {
 			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-capacity-'));
 			try {
 				const source = {
@@ -1532,6 +1584,8 @@ describe('provider translation read scope', () => {
 				const session = createMockSession({
 					id: 'agent',
 					toolType: 'claude-code',
+					customContextWindow: sourceWindow,
+					providerOverrides: { codex: { customContextWindow: parked } },
 					cwd: root,
 					projectRoot: root,
 					aiTabs: [createMockAITab({ id: 'tab', agentSessionId: 'native' })],
@@ -1559,6 +1613,7 @@ describe('provider translation read scope', () => {
 				vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
 				vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
 				const service = new ProviderTranslationService({
+					agentConfigsStore: { get: () => ({ codex: { contextWindow: configured } }) },
 					sessionsStore: { get: vi.fn(() => [session]) },
 					getProcessManager: () => ({ get: () => undefined }),
 				} as unknown as ProviderTranslationDependencies);
@@ -1579,8 +1634,12 @@ describe('provider translation read scope', () => {
 					journal.plan.limitations.some(
 						(item: { code: string }) => item.code === 'context-capacity'
 					)
-				).toBe(oversized);
-				expect(journal.plan.status).toBe(oversized ? 'blocked' : 'ready');
+				).toBe(warns);
+				expect(journal.plan.status).toBe('ready');
+				if (warns)
+					expect(journal.plan.limitations).toContainEqual(
+						expect.objectContaining({ code: 'context-capacity', severity: 'warning' })
+					);
 			} finally {
 				await fs.rm(root, { recursive: true, force: true });
 			}
@@ -1747,6 +1806,7 @@ describe('provider translation read scope', () => {
 					providerTranslationKnowledgeDirectory: knowledge,
 				});
 				const service = new ProviderTranslationService({
+					agentConfigsStore: { get: () => ({}) },
 					sessionsStore: { get: vi.fn(() => [session]) },
 					getProcessManager: () => ({ get: () => undefined }),
 				} as unknown as ProviderTranslationDependencies);
@@ -1803,6 +1863,7 @@ describe('provider translation read scope', () => {
 				providerTranslationKnowledgeDirectory: knowledge,
 			});
 			const service = new ProviderTranslationService({
+				agentConfigsStore: { get: () => ({}) },
 				sessionsStore: { get: vi.fn(() => [session]) },
 				getProcessManager: () => ({ get: () => undefined }),
 			} as unknown as ProviderTranslationDependencies);

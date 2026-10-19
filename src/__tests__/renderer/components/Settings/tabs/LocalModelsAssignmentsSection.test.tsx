@@ -11,6 +11,7 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
 import { LocalModelsAssignmentsSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsAssignmentsSection';
+import { UtilityAgentSettings } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/UtilityAgentSettings';
 import { buildAssignmentOptionGroups } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/assignmentOptions';
 import { useLocalModelEndpoints, useLocalModels } from '../../../../../renderer/hooks/localModels';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
@@ -89,6 +90,7 @@ function Section() {
 	const endpoints = useLocalModelEndpoints();
 	return (
 		<>
+			<UtilityAgentSettings theme={theme} models={models} endpoints={endpoints} />
 			<LocalModelsAssignmentsSection
 				theme={theme}
 				system="one"
@@ -115,6 +117,7 @@ function optionLabels(taskLabel: string): string[] {
 describe('LocalModelsAssignmentsSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(window.maestro.agents.detect).mockResolvedValue([]);
 		api().list.mockResolvedValue(LOCAL_MODEL_CATALOG.map((entry) => listing(entry.id)));
 		api().footprint.mockResolvedValue({ bytes: 0, models: [] });
 		api().onProgress.mockReturnValue(() => {});
@@ -128,7 +131,59 @@ describe('LocalModelsAssignmentsSection', () => {
 			localModelEndpoints: [ollama],
 			utilityAgentId: null,
 			utilityModelId: null,
+			utilitySource: { type: 'utility-agent' },
 		});
+	});
+
+	it('offers providers, installed text models and endpoints as the shared utility source', async () => {
+		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+			{ id: 'codex', name: 'Codex', available: true },
+		] as never);
+		render(<Section />);
+		await waitFor(() => expect(optionLabels('Source')).toContain(qwenName));
+		await waitFor(() => expect(optionLabels('Source')).toContain('llama3.2:latest'));
+		await waitFor(() => expect(optionLabels('Source')).toContain('Codex'));
+		expect(optionLabels('Source')).not.toContain(bgeName);
+		expect(optionLabels('Source')).not.toContain('Off');
+
+		fireEvent.change(screen.getByLabelText('Source'), {
+			target: { value: `local:${QWEN3_1_7B_ID}` },
+		});
+		expect(useSettingsStore.getState().utilitySource).toEqual({
+			type: 'local',
+			modelId: QWEN3_1_7B_ID,
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('utilitySource', {
+			type: 'local',
+			modelId: QWEN3_1_7B_ID,
+		});
+		expect(screen.getByLabelText('Tab naming')).toHaveValue('utility-agent');
+		expect(
+			within(screen.getByTestId('local-models-task-ai-command')).getByText(/kills a process/)
+		).toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText('Source'), {
+			target: { value: 'endpoint:ep-ollama:llama3.2:latest' },
+		});
+		expect(useSettingsStore.getState().utilitySource).toEqual({
+			type: 'endpoint',
+			endpointId: 'ep-ollama',
+			model: 'llama3.2:latest',
+		});
+		fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'provider:codex' } });
+		expect(useSettingsStore.getState().utilitySource).toEqual({ type: 'utility-agent' });
+		expect(useSettingsStore.getState().utilityAgentId).toBe('codex');
+		expect(screen.getByLabelText('Model override')).toBeInTheDocument();
+	});
+
+	it('keeps a missing shared model selected and rechecks inherited task readiness on changes', async () => {
+		useSettingsStore.setState({ utilitySource: { type: 'local', modelId: 'removed-model' } });
+		render(<Section />);
+		expect(screen.getByLabelText('Source')).toHaveValue('local:removed-model');
+		expect(optionLabels('Source').some((label) => label.includes('removed-model'))).toBe(true);
+		const calls = api().taskReadiness.mock.calls.length;
+		fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'utility-agent' } });
+		await waitFor(() => expect(api().taskReadiness.mock.calls.length).toBeGreaterThan(calls));
 	});
 
 	it('offers each task only sources of the kind it needs', async () => {
@@ -138,14 +193,14 @@ describe('LocalModelsAssignmentsSection', () => {
 
 		// Text generation: Utility Agent, the installed text model, the endpoint model.
 		const tabNaming = optionLabels('Tab naming');
-		expect(tabNaming).toEqual(expect.arrayContaining(['Off', 'Utility Agent']));
+		expect(tabNaming).toEqual(expect.arrayContaining(['Off', 'Utility source']));
 		expect(tabNaming).not.toContain(bgeName);
 
 		// Embeddings: no Utility Agent path, only the embedding model.
 		const semantic = optionLabels('Semantic search');
 		expect(semantic).toContain(bgeName);
 		expect(semantic).not.toContain(qwenName);
-		expect(semantic).not.toContain('Utility Agent');
+		expect(semantic).not.toContain('Utility source');
 
 		// Classifiers: no installed classifier and no endpoint can serve one.
 		expect(optionLabels('Prompt-injection screen')).toEqual(['Off']);

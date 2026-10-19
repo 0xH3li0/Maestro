@@ -599,6 +599,39 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
 			});
 
+			it('preserves full document chat history and its binding, including snoozed chats', () => {
+				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`document-${i}`));
+				const tab = makeTab({
+					id: 'document-chat',
+					documentOrigin: { path: '/docs/plan.md' },
+					hidden: true,
+					agentSessionId: 'provider-conversation',
+					logs,
+				});
+				const saved = prepareSessionForPersistence(
+					makeSession({
+						aiTabs: [tab],
+						snoozedTabs: [
+							{
+								id: 'snoozed-document',
+								type: 'ai',
+								tab,
+								unifiedIndex: 0,
+								snoozedAt: 0,
+								wakeAt: 10,
+							},
+						],
+					})
+				);
+				expect(saved.aiTabs[0]).toMatchObject({
+					documentOrigin: tab.documentOrigin,
+					hidden: true,
+					agentSessionId: 'provider-conversation',
+					logs,
+				});
+				expect(saved.snoozedTabs?.[0]).toMatchObject({ tab: { logs } });
+			});
+
 			it('should truncate tab logs to 100 entries (MAX_PERSISTED_LOGS_PER_TAB)', () => {
 				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`log-${i}`));
 				const tab = makeTab({ id: 'big-logs', logs });

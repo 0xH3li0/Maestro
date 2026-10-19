@@ -63,7 +63,7 @@ The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and 
 
 A group collects agents in the Left Bar. It also holds a **profile**: the settings a new agent in that group starts with. You edit the profile in **Group Settings**, which is the [Edit Agent](./general-usage#editing-agents) form with one extra field (the pill label) and a different job. Edit Agent changes one agent. Group Settings changes what the next agent in the group looks like.
 
-The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Environment**, **Peers**, and **SSH**. It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
+The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Peers**, and **SSH**. It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
 
 ### The Profile Is Copied, Not Inherited
 
@@ -73,7 +73,7 @@ The profile is **copy-at-create**. When you add an agent to the group, the New A
 - Moving an existing agent into the group does not change that agent.
 - Editing the profile does not change agents already in the group, unless you [publish](#publishing-a-save-to-existing-agents) the change.
 
-The motivating case is a Claude config directory. Give the **Work** group `CLAUDE_CONFIG_DIR=~/.claude-work` on its **Environment** tab and give **Personal** a different directory. Every Claude Code agent you create in **Work** starts on the work account, and you never have to remember to set it.
+The motivating case is a Claude config directory. Give the **Work** group `CLAUDE_CONFIG_DIR=~/.claude-work` under **Provider > Environment variables** and give **Personal** a different directory. Every Claude Code agent you create in **Work** starts on the work account, and you never have to remember to set it.
 
 ### Pre-Filled From
 

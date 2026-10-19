@@ -263,7 +263,7 @@ export interface AgentPickerGridProps {
 	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
 	/**
 	 * Leave env vars out of each provider's settings panel. The tabbed New Agent
-	 * form edits them on its Environment tab instead.
+	 * form edits them in its Provider panel instead.
 	 */
 	hideEnvVars?: boolean;
 	/** Offer Auto in each provider's model field (`AgentConfigPanelProps.autoModelFor`). */

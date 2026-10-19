@@ -109,7 +109,6 @@ describe('GroupSettingsModal', () => {
 			'General',
 			'Provider',
 			'Models',
-			'Environment',
 			'Peers',
 			'SSH',
 		]);
@@ -131,7 +130,7 @@ describe('GroupSettingsModal', () => {
 		expect(screen.getByDisplayValue('/srv/app')).toBeInTheDocument();
 		expect(screen.getByDisplayValue('Be brief.')).toBeInTheDocument();
 
-		openTab('Environment');
+		openTab('Provider');
 		expect(screen.getByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
 		expect(screen.getByDisplayValue('~/.claude-work')).toBeInTheDocument();
 	});

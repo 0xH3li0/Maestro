@@ -210,12 +210,16 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* Engine and build */}
 			<div className="space-y-2" data-testid="model-server-engine">
-				<CardRowTitle theme={theme}>Engine</CardRowTitle>
+				<CardRowTitle theme={theme}>Hosting engine (llama-server)</CardRowTitle>
+				<p className="text-xs opacity-70">
+					This is a separate install from the in-app llama.cpp engine in Models &gt; Library &gt;
+					Engines. Both use the same downloaded model files.
+				</p>
 				<p className="text-xs opacity-70">
 					{engine.installed
 						? `${engine.label} build of llama-server ${engine.release}, ${formatSize(engine.bytes)} on disk. Runs on: ${engine.accelerator?.label ?? 'not checked'}.`
 						: engine.builds.length > 0
-							? 'llama-server is not installed. Choose a build and install it before starting the server.'
+							? 'The hosting engine is not installed. Choose a build and install it to serve your models to agents.'
 							: 'No llama-server build is published for this platform, so the model server cannot run here.'}
 				</p>
 				{engine.stale && (
@@ -280,7 +284,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 								) : (
 									<Download className="w-3 h-3" />
 								)}
-								{engine.installed ? 'Install again' : 'Install'}
+								{engine.installed ? 'Install again' : 'Install hosting engine'}
 							</CardButton>
 						</div>
 					)

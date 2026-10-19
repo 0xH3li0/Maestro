@@ -17,7 +17,7 @@
 // against the hardware profile the desktop read.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { readLocalModelAssignments } from '../services/storage';
+import { readLocalModelAssignments, readSettingValue } from '../services/storage';
 import { ExitCode, exitWith } from '../exit-codes';
 import {
 	formatLocalModels,
@@ -42,7 +42,7 @@ import {
 	type HardwareProfile,
 	type ModelFit,
 } from '../../shared/local-models/model-fit';
-import { tasksUsingLocalModel } from '../../shared/local-models/tasks';
+import { parseUtilitySource, tasksUsingLocalModel } from '../../shared/local-models/tasks';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import {
 	USER_MODEL_UNVERIFIED_DETAIL,
@@ -119,9 +119,11 @@ async function send<T extends { success: boolean; error?: string }>(
  * shows.
  */
 function usedBy(modelId: string): string[] {
-	const tasks = tasksUsingLocalModel(readLocalModelAssignments(), modelId).map(
-		(task) => task.label
-	);
+	const tasks = tasksUsingLocalModel(
+		readLocalModelAssignments(),
+		modelId,
+		parseUtilitySource(readSettingValue('utilitySource'))
+	).map((task) => task.label);
 	const voice = voiceModelUsageLabel(modelId);
 	return voice ? [...tasks, voice] : tasks;
 }
@@ -316,9 +318,11 @@ export async function modelsAddHf(
  * `models remove` applies.
  */
 export async function modelsRemoveHf(modelId: string, options: RemoveOptions): Promise<void> {
-	const tasks = tasksUsingLocalModel(readLocalModelAssignments(), modelId).map(
-		(task) => task.label
-	);
+	const tasks = tasksUsingLocalModel(
+		readLocalModelAssignments(),
+		modelId,
+		parseUtilitySource(readSettingValue('utilitySource'))
+	).map((task) => task.label);
 	if (tasks.length > 0 && !options.force) {
 		failCommand(
 			`${getLocalModel(modelId)?.displayName ?? modelId} is assigned to ${tasks.join(', ')}. Removing it makes ${tasks.length === 1 ? 'that task' : 'those tasks'} unavailable. Re-run with --force to remove it anyway.`,
@@ -501,9 +505,11 @@ export async function modelsRemove(modelId: string, options: RemoveOptions): Pro
 
 	// Removing a model a task runs on turns that task unavailable. Settings names
 	// the tasks and asks; here the ask is `--force`.
-	const tasks = tasksUsingLocalModel(readLocalModelAssignments(), modelId).map(
-		(task) => task.label
-	);
+	const tasks = tasksUsingLocalModel(
+		readLocalModelAssignments(),
+		modelId,
+		parseUtilitySource(readSettingValue('utilitySource'))
+	).map((task) => task.label);
 	if (tasks.length > 0 && !options.force) {
 		failCommand(
 			`${entry.displayName} is assigned to ${tasks.join(', ')}. Removing it makes ${tasks.length === 1 ? 'that task' : 'those tasks'} unavailable. Re-run with --force to remove it anyway.`,

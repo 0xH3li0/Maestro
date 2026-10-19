@@ -19,13 +19,13 @@ Clicking **Models** in the Settings sidebar opens the **Overview**. A row of til
 
 The five panels are listed under **Models** in the sidebar; click one to open it. The list stays expanded while the sidebar has room for every row, and collapses to show only under an open **Models** when it would make the sidebar scroll. **Cmd+Shift+[** and **]** walk the Overview and the panels too. Maestro remembers the panel you used last.
 
-| Panel          | What lives there                                                                                                                                                                                                      |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                                                                                      |
-| **Sources**    | Where models come from besides the Library: the [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), the [cloud-only](#cloud-only) models, and the [download source](#download-source). |
-| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two).                                                                   |
-| **System Two** | The tasks that write text for someone to read or run, plus the Utility Agent settings.                                                                                                                                |
-| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                                                                                     |
+| Panel          | What lives there                                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                    |
+| **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), and the local VoiceStudio speech service.                    |
+| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
+| **System Two** | The tasks that write text for someone to read or run, plus the shared Utility source settings.                                                      |
+| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
 
 ### System One and System Two
 
@@ -53,6 +53,8 @@ Below that line is a strip of sections, one shown at a time. Maestro remembers t
 | **Custom**          | The models you [added from Hugging Face](#add-from-hugging-face), and the form that adds one.                          |
 
 A text model is listed once. Its other roles are badges on its row: **Judge** for the fastest small judgments, **Vision** for a model that reads images.
+
+**Recommended** marks a curated starting point for each job that fits this computer comfortably. Hover over the badge for the reason. It is a memory-fit recommendation, not a speed benchmark. No badge appears without a hardware reading, and custom models are not recommended.
 
 | Section         | Model                             | Size     | Good at                                                                   |
 | --------------- | --------------------------------- | -------- | ------------------------------------------------------------------------- |
@@ -113,7 +115,7 @@ On a PC, Maestro reads the graphics card's memory from the model server's engine
 
 ### Cloud only
 
-DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a desktop (the smallest is 155 GB), so the Library does not offer them. Use them through their provider's API, with your own key, from an endpoint. The note sits at the bottom of **Models -> Sources**.
+DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a desktop (the smallest is 155 GB), so the Library does not offer them. Use them through their provider's API, with your own key, from an endpoint.
 
 ### Add from Hugging Face
 
@@ -130,7 +132,7 @@ A model you add is labeled **Not verified by Maestro**. Maestro pins the revisio
 
 ### Download source
 
-Models download from Hugging Face. If your network blocks it, set a mirror under **Models > Sources > Advanced > Download source**: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. **Use Hugging Face** puts the default back.
+Models download from Hugging Face. If your network blocks it, use `maestro-cli models config set download-base <url>` to set a mirror: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. `maestro-cli models config set download-base default` restores Hugging Face.
 
 The mirror covers model files and **Add from Hugging Face**; engines download from npm and do not use it. It changes the host and nothing else. Every file is still checked against the hash Maestro pins (or, for a model you added, the hash Hugging Face reported), so a mirror that serves different bytes fails the download. Only `http` and `https` URLs with a host are accepted, and credentials in the URL are refused. A change applies to the next request, so a download already running keeps its host; pause and resume it to move it to the new one.
 
@@ -170,6 +172,8 @@ A model is a file of weights. An **engine** is the library that reads it: ONNX R
 
 **Models -> Library -> Engines** shows each engine on its own: installed, not installed, needs update (a newer build expects a newer engine), or not available on this platform. Press **Install** or **Update** there if an engine did not arrive with its model.
 
+These engines run models inside Maestro. Serving text models to agents over HTTP also needs **llama-server**, installed separately under **Models -> Sources**.
+
 The speech and wake word models are the same files A Cappella uses. Installing them here or from [Voice Setup](./voice-mode#downloading-the-models) is the same install, and either page shows it.
 
 ## Endpoints
@@ -195,7 +199,7 @@ Assignments choose what each task runs on. There is one row per task, each with 
 The picker only offers sources that can do the job:
 
 - **Off**: the feature does not use a model.
-- **Utility Agent**: the task's existing agent path, for tasks that had one. The Utility Agent settings themselves (which agent and model) sit under the table on **System Two**. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
+- **Utility source**: inherit the shared source on **System Two**, which can be a provider, an installed text model, or an endpoint. Each task can override it. The default keeps using each session's provider. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
 - **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation and embeddings).
 - **System One**, for a task that asks typed questions, while an [engine](#system-one-engines) is chosen. See [System One](#system-one).
@@ -204,27 +208,27 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 
 ### The tasks
 
-| Task                            | System | Needs                              | Default       | What it does                                                                                                                                            |
-| ------------------------------- | ------ | ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab naming                      | Two    | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                                                   |
-| Summaries                       | Two    | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                                                               |
-| AI command mode                 | Two    | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                                                       |
-| Tab cleanup suggestions         | One    | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                                              |
-| Git drafts                      | Two    | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.                                 |
-| Semantic search                 | One    | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                                                           |
-| Cue gate                        | One    | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                                                    |
-| Prompt-injection screen         | One    | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                                            |
-| Secret screen                   | One    | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                                            |
-| Dictation                       | One    | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                                                  |
-| Dictation vocabulary correction | One    | Text generation                    | Off           | Corrects misheard names in dictation and A Cappella transcripts using validated vocabulary replacements.                                                |
-| Spoken notices                  | Two    | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).                                     |
-| Voice routing                   | One    | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                                               |
-| Model routing                   | One    | Embeddings or text generation      | Off           | Decides how much model and effort a turn needs, for an agent on Auto. See [Model routing and Auto](#model-routing-and-auto).                            |
-| Token proxy                     | Two    | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                                                          |
-| Computer History digests        | Two    | Text generation                    | Off           | Writes the 15-minute digests and 6-hour roll-ups of [Computer History](./computer-history#digests-optional) while its digest source is the local model. |
-| Local judge                     | One    | Text generation                    | Off           | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.                         |
+| Task                            | System | Needs                              | Default        | What it does                                                                                                                                            |
+| ------------------------------- | ------ | ---------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab naming                      | Two    | Text generation                    | Utility source | Names a new AI tab from the first message sent in it.                                                                                                   |
+| Summaries                       | Two    | Text generation                    | Utility source | Writes context summaries for Summarize & Continue and the group chat participant summary.                                                               |
+| AI command mode                 | Two    | Text generation                    | Utility source | Turns a plain-English request in command mode into a shell command. You review it before it runs.                                                       |
+| Tab cleanup suggestions         | One    | Text generation                    | Off            | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                                              |
+| Git drafts                      | Two    | Text generation                    | Off            | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.                                 |
+| Semantic search                 | One    | Embeddings                         | Off            | Finds history, transcripts, and documents by meaning rather than exact words.                                                                           |
+| Cue gate                        | One    | Text generation                    | Off            | Checks a Cue subscription's gate condition against the event before an agent starts.                                                                    |
+| Prompt-injection screen         | One    | Classifier                         | Off            | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                                            |
+| Secret screen                   | One    | Classifier                         | Off            | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                                            |
+| Dictation                       | One    | Speech-to-text                     | Off            | Transcribes speech into any text box without starting a voice session.                                                                                  |
+| Dictation vocabulary correction | One    | Text generation                    | Off            | Corrects misheard names in dictation and A Cappella transcripts using validated vocabulary replacements.                                                |
+| Spoken notices                  | Two    | Text generation and text-to-speech | Off            | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).                                     |
+| Voice routing                   | One    | Text generation                    | Off            | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                                               |
+| Model routing                   | One    | Embeddings or text generation      | Off            | Decides how much model and effort a turn needs, for an agent on Auto. See [Model routing and Auto](#model-routing-and-auto).                            |
+| Token proxy                     | Two    | Text generation                    | Off            | Summarizes large tool output for the token-conservation proxy.                                                                                          |
+| Computer History digests        | Two    | Text generation                    | Off            | Writes the 15-minute digests and 6-hour roll-ups of [Computer History](./computer-history#digests-optional) while its digest source is the local model. |
+| Local judge                     | One    | Text generation                    | Off            | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.                         |
 
-For AI command mode, **Utility Agent** means the tab's own provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
+For AI command mode, **Utility source** follows the shared choice. When that choice is **Default (same as session)**, it uses the tab's provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does. Context grooming and transfer need tools, so they stay on the session's provider when the shared source is a local model or endpoint.
 
 **Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it.
 

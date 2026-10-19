@@ -42,7 +42,6 @@ interface ComposerOptionsSheetProps {
 	/** Ensemble phone row, from the same choice as the desktop pill. */
 	providerControl?: ReactNode;
 	providerChoice?: TabProviderChoice;
-	runOnControl?: ReactNode;
 	onClose: () => void;
 	theme: Theme;
 	/** Provider id, so read-only reads as the agent's own word for it. */
@@ -77,7 +76,6 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	open,
 	providerControl,
 	providerChoice,
-	runOnControl,
 	onClose,
 	theme,
 	agentId,
@@ -289,7 +287,6 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 							theme={theme}
 						/>
 					))}
-					{runOnControl && <div className="px-4 py-2">{runOnControl}</div>}
 				</PhoneSheetSection>
 			)}
 		</PhoneBottomSheet>

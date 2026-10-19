@@ -627,7 +627,7 @@ describe('EditAgentModal', () => {
 		expect(onSave).not.toHaveBeenCalled();
 		expect(onClose).toHaveBeenCalled();
 	});
-	it('shows carried and archived counts for each conversation, including legacy plans', async () => {
+	it('summarizes sessions and messages without exposing individual conversation IDs', async () => {
 		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
 		vi.mocked(requestProviderTranslation).mockResolvedValue({
 			...report,
@@ -645,7 +645,7 @@ describe('EditAgentModal', () => {
 					{ tabId: 'legacy', sourceSessionId: 'older', records: 12, newRecords: 0 },
 				],
 				deferredTabs: [{ id: 'closed-tab', agentSessionId: 'closed-native' }],
-				counts: { records: 4504, artifacts: 2, bytes: 0 },
+				counts: { records: 4504, messages: 800, artifacts: 2, bytes: 0 },
 			},
 		});
 		render(
@@ -661,15 +661,60 @@ describe('EditAgentModal', () => {
 		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
-		expect(
-			await screen.findByText(
-				'Conversation 1: 312 records carried, 4,180 archived before the last compaction'
-			)
-		).toBeInTheDocument();
-		expect(screen.getByText('Conversation 2: 12 records carried')).toBeInTheDocument();
-		expect(screen.getByText('Translated now: 2')).toBeInTheDocument();
-		expect(screen.getByText('Translated on next use: 1')).toBeInTheDocument();
-		expect(screen.getByText('closed-tab')).toBeInTheDocument();
+		await screen.findByText('Messages');
+		expect(screen.getByText('800')).toBeInTheDocument();
+		expect(screen.getByText('Sessions')).toBeInTheDocument();
+		expect(screen.getByText('2')).toBeInTheDocument();
+		expect(screen.getByText('On next use')).toBeInTheDocument();
+		expect(screen.getByText('1')).toBeInTheDocument();
+		expect(screen.queryByText(/Conversation 1:/)).not.toBeInTheDocument();
+		expect(screen.queryByText('closed-tab')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Selected user resource/)).not.toBeInTheDocument();
+		expect(screen.queryByText('Add resource')).not.toBeInTheDocument();
+		expect(screen.queryByText('Review selection')).not.toBeInTheDocument();
+	});
+
+	it('deduplicates repeated size warnings and enables Save after visible acceptance', async () => {
+		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
+		const warning = {
+			code: 'context-capacity',
+			severity: 'warning' as const,
+			message: 'Large conversation; source transcript preserved.',
+		};
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			...report,
+			plan: {
+				...report.plan!,
+				limitations: [
+					{ ...warning, tabId: 'one' },
+					{ ...warning, tabId: 'two' },
+				],
+			},
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		await screen.findByText(warning.message);
+		expect(screen.getAllByText(warning.message)).toHaveLength(1);
+		const accept = screen.getByLabelText('Accept the listed conversion limitations');
+		expect(screen.getByTestId('edit-agent-tab-body')).not.toContainElement(accept);
+		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
+		fireEvent.click(accept);
+		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+		fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][27]).toBe(true);
+		expect(onSave.mock.calls[0][28]).toEqual([]);
 	});
 
 	it('clears the reading indicator and disables save if preflight rejects', async () => {
@@ -838,7 +883,7 @@ describe('EditAgentModal', () => {
 	});
 
 	it.each([false, true])(
-		'shows collapsed notes without acceptance while warnings=%s',
+		'omits informational notes and keeps acceptance beside Save while warnings=%s',
 		async (withWarning) => {
 			const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!(
 				{} as any
@@ -870,9 +915,10 @@ describe('EditAgentModal', () => {
 			openTab('Provider');
 			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
-			const summary = await screen.findByText('Notes');
-			expect(summary.closest('details')).not.toHaveAttribute('open');
-			expect(summary.closest('details')).toHaveTextContent('Original directories stay archived');
+			await screen.findByText('Ready to switch providers.');
+			expect(screen.queryByText('Notes')).not.toBeInTheDocument();
+			expect(screen.queryByText('Original directories stay archived')).not.toBeInTheDocument();
+			openTab('General');
 			const accept = screen.queryByLabelText('Accept the listed conversion limitations');
 			if (withWarning) {
 				expect(accept).toBeInTheDocument();
@@ -2131,7 +2177,6 @@ describe('EditAgentModal', () => {
 				'General',
 				'Provider',
 				'Models',
-				'Environment',
 				'Peers',
 				'SSH',
 				AUDIT_LOG_TAB,
@@ -2420,14 +2465,13 @@ describe('EditAgentModal', () => {
 		const selectedTab = () =>
 			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
 
-		it('renders the six tabs in order, opens on General, and is a resizable frame', () => {
+		it('renders the five tabs in order, opens on General, and is a resizable frame', () => {
 			const { container } = renderModal();
 
 			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
 				'General',
 				'Provider',
 				'Models',
-				'Environment',
 				'Peers',
 				'SSH',
 			]);
@@ -2456,21 +2500,19 @@ describe('EditAgentModal', () => {
 			expect(selectedTab()).toHaveTextContent('Models');
 		});
 
-		it('moves the environment variables to the Environment tab', async () => {
+		it('keeps the environment variables on the Provider tab', async () => {
 			renderModal();
 
 			openTab('Provider');
 			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
-			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
-
-			openTab('Environment');
+			expect(screen.getAllByDisplayValue('API_KEY')).toHaveLength(1);
 			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('test-key')).toBeInTheDocument();
 		});
 
-		it('keeps an Environment edit through a tab switch and out through Save', async () => {
+		it('keeps a Provider environment edit through a tab switch and out through Save', async () => {
 			renderModal();
-			openTab('Environment');
+			openTab('Provider');
 
 			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
 			openTab('General');
@@ -2555,13 +2597,23 @@ describe('EditAgentModal', () => {
 			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
 		});
 
-		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', () => {
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[ from inside the dialog', () => {
 			renderModal();
 
-			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			const name = screen.getByDisplayValue('My Agent');
+			name.focus();
+			fireEvent.keyDown(name, { key: ']', metaKey: true, shiftKey: true });
 			expect(selectedTab()).toHaveTextContent('Provider');
-			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
-			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(screen.getByRole('tab', { name: 'Provider' }), {
+				key: '[',
+				metaKey: true,
+				shiftKey: true,
+			});
+			fireEvent.keyDown(screen.getByDisplayValue('My Agent'), {
+				key: '[',
+				metaKey: true,
+				shiftKey: true,
+			});
 			expect(selectedTab()).toHaveTextContent('SSH');
 		});
 

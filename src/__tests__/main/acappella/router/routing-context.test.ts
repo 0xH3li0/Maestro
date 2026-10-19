@@ -122,6 +122,20 @@ describe('buildRoutingRoster', () => {
 		});
 	});
 
+	it('excludes archived document bindings from voice routing after a new chat', () => {
+		const list = sessions();
+		list[0].aiTabs.push(
+			createMockAITab({
+				id: 'archived-document',
+				hidden: false,
+				documentOrigin: { path: '/repo/api/docs/system-overview.md', archived: true },
+			})
+		);
+		const [agent] = buildRoutingRoster(list);
+		expect(agent.tabs.find((tab) => tab.id === 'archived-document')).not.toHaveProperty(
+			'documentPath'
+		);
+	});
 	it('leaves documentPath off an ordinary tab', () => {
 		const [agent] = buildRoutingRoster(sessions());
 

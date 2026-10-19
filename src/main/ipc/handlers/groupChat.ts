@@ -103,13 +103,14 @@ import {
 import { AgentDetector } from '../../agents';
 import { groomContext } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { getSessionsStore, getSettingsStore } from '../../stores';
+import { getSessionsStore, getSettingsStore, getAgentConfigsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import { getPrompt } from '../../prompt-manager';
 import { runLocalTask } from '../../local-models/task-router';
+import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import {
 	getClaudeTokenSourceFields,
@@ -1034,7 +1035,16 @@ Respond with ONLY the summary text, no additional commentary.`;
 					safeSend,
 				});
 
-				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
+				const settings = getSettingsStore();
+				const utility = resolveUtilityProvider(
+					{
+						utilitySource: settings.get('utilitySource'),
+						utilityAgentId: settings.get('utilityAgentId', null),
+						utilityModelId: settings.get('utilityModelId', null),
+					},
+					participant.agentId
+				);
+				const cheapSummary = cheapTurnSettings(utility.agentType as ToolType);
 
 				// Use the shared groomContext utility to get the summary
 				// This spawns a batch process, collects the response, and handles cleanup
@@ -1044,10 +1054,15 @@ Respond with ONLY the summary text, no additional commentary.`;
 						const result = await groomContext(
 							{
 								projectRoot: effectiveCwd,
-								agentType: participant.agentId,
-								prompt: summaryPrompt,
-								agentSessionId: participant.agentSessionId, // Resume existing session for context
+								agentType: utility.agentType,
+								prompt: utility.usesUtilityProvider ? assigned.utilityPrompt : summaryPrompt,
+								// A utility provider gets the chat transcript in a fresh turn;
+								// the participant's native session belongs to its own provider.
+								agentSessionId: utility.usesUtilityProvider
+									? undefined
+									: participant.agentSessionId,
 								readOnlyMode: true, // Summary is read-only
+								disableTools: utility.usesUtilityProvider || undefined,
 								timeoutMs: 60000, // 60 second timeout for summary
 								// Pinned to the bottom of both ladders, same as a history
 								// synopsis. Safe because this is a LEAF turn: it resumes the
@@ -1055,10 +1070,17 @@ Respond with ONLY the summary text, no additional commentary.`;
 								// `response` and `durationMs`, discarding any session id - so
 								// the cheap model cannot follow the conversation forward into
 								// the participant's next real turn.
-								sessionCustomModel: cheapSummary.model,
-								sessionCustomEffort: cheapSummary.effort,
+								sessionCustomModel: utility.usesUtilityProvider
+									? utility.modelId
+									: cheapSummary.model,
+								sessionCustomEffort: utility.usesUtilityProvider ? undefined : cheapSummary.effort,
+								agentConfigValues: utility.usesUtilityProvider
+									? (getAgentConfigsStore().get('configs', {})[utility.agentType] ?? {})
+									: undefined,
 								sessionSshRemoteConfig: participantSshRemoteConfig,
-								claudeTokenSource: resolveParticipantClaudeTokenSource(participantName),
+								claudeTokenSource: utility.usesUtilityProvider
+									? undefined
+									: resolveParticipantClaudeTokenSource(participantName),
 								sshStore: participantSshRemoteConfig?.enabled
 									? createSshRemoteStoreAdapter(getSettingsStore())
 									: undefined,
@@ -1387,7 +1409,9 @@ Respond with ONLY the summary text, no additional commentary.`;
 	logger.info('Registered Group Chat IPC handlers', LOG_CONTEXT);
 }
 
-type AssignedParticipantSummary = { handled: false } | { handled: true; summary: string | null };
+type AssignedParticipantSummary =
+	| { handled: false; utilityPrompt: string }
+	| { handled: true; summary: string | null };
 
 /**
  * Summarize a participant with the `tab-summary` Local Models assignment, when
@@ -1417,11 +1441,13 @@ async function summarizeParticipantWithAssignedModel(options: {
 		await readLog(logPath),
 		LOCAL_PARTICIPANT_SUMMARY_HISTORY
 	);
+	const system = getPrompt('group-chat-participant-summary-local');
+	const prompt = `Participant: ${participantName}\nGroup chat: ${chatName}\n\nTranscript (oldest first):\n${transcript}`;
 	let verdict: Awaited<ReturnType<typeof runLocalTask>>;
 	try {
 		verdict = await runLocalTask('tab-summary', {
-			system: getPrompt('group-chat-participant-summary-local'),
-			prompt: `Participant: ${participantName}\nGroup chat: ${chatName}\n\nTranscript (oldest first):\n${transcript}`,
+			system,
+			prompt,
 			maxTokens: LOCAL_PARTICIPANT_SUMMARY_MAX_TOKENS,
 			signal: AbortSignal.timeout(PARTICIPANT_SUMMARY_TIMEOUT_MS),
 		});
@@ -1436,7 +1462,7 @@ async function summarizeParticipantWithAssignedModel(options: {
 	}
 	switch (verdict.status) {
 		case 'use-utility-agent':
-			return { handled: false };
+			return { handled: false, utilityPrompt: `${system}\n\n${prompt}` };
 		case 'off':
 			return { handled: true, summary: null };
 		case 'cancelled':

@@ -72,6 +72,20 @@ describe('readDeferredContent', () => {
 });
 
 describe('mergeDeferredSessionContent', () => {
+	it('keeps document history beyond the ordinary log cap when a browser saves', () => {
+		const logs = Array.from({ length: 200 }, (_, i) => ({ id: `message-${i}`, timestamp: i }));
+		const stored = storedAgent({
+			aiTabs: [
+				{ id: 'document-chat', documentOrigin: { path: '/docs/plan.md' }, hidden: true, logs },
+			],
+		});
+		const incoming = projectWebSession(stored);
+		incoming.aiTabs[0].logs = [{ id: 'new-message', timestamp: 201 }];
+		const merged = mergeDeferredSessionContent(incoming, stored);
+		expect(merged.aiTabs[0].logs).toEqual([...logs, { id: 'new-message', timestamp: 201 }]);
+		expect(merged.aiTabs[0].documentOrigin).toEqual({ path: '/docs/plan.md' });
+	});
+
 	it('passes an unmarked record through untouched', () => {
 		const incoming = storedAgent();
 		expect(mergeDeferredSessionContent(incoming, undefined)).toBe(incoming);

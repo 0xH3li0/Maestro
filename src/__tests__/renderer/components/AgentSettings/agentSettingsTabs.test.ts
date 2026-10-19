@@ -18,12 +18,11 @@ import { AGENT_SETTINGS_TAB_IDS } from '../../../../shared/agentSettingsTabs';
 import { AGENT_SETTINGS_SURFACE_TABS } from '../../../../shared/uiSurfaces';
 
 describe('agentSettingsTabs', () => {
-	it('lists the seven tabs in strip order, each with a label and an icon', () => {
+	it('lists the six tabs in strip order, each with a label and an icon', () => {
 		expect(AGENT_SETTINGS_TABS.map((tab) => tab.id)).toEqual([
 			'general',
 			'provider',
 			'models',
-			'environment',
 			'peers',
 			'ssh',
 			'auditLog',
@@ -31,7 +30,7 @@ describe('agentSettingsTabs', () => {
 		expect(AGENT_SETTINGS_TABS.every((tab) => tab.icon && tab.label)).toBe(true);
 	});
 
-	it('gives New Agent and Group Settings the six tabs the CLI can link to', () => {
+	it('gives New Agent and Group Settings the five tabs the CLI can link to', () => {
 		expect(AGENT_FORM_TAB_IDS).toEqual([...AGENT_SETTINGS_TAB_IDS]);
 		expect(AGENT_FORM_TAB_IDS).not.toContain(AUDIT_LOG_TAB_ID);
 	});
@@ -59,7 +58,7 @@ describe('agentSettingsTabs', () => {
 	});
 
 	it('gives the moderator no Models and no Peers tab', () => {
-		expect(MODERATOR_TAB_IDS).toEqual(['general', 'provider', 'environment', 'ssh']);
+		expect(MODERATOR_TAB_IDS).toEqual(['general', 'provider', 'ssh']);
 	});
 
 	describe('firstTabWithError', () => {
@@ -77,6 +76,7 @@ describe('agentSettingsTabs', () => {
 		it('maps the field ids the session validators report', () => {
 			expect(firstTabWithError(['directory'], AGENT_FORM_TAB_IDS)).toBe('general');
 			expect(firstTabWithError(['workingDir'], AGENT_FORM_TAB_IDS)).toBe('general');
+			expect(firstTabWithError(['envVars'], AGENT_FORM_TAB_IDS)).toBe('provider');
 		});
 
 		it('skips a tab the surface does not show', () => {

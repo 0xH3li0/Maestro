@@ -32,7 +32,7 @@ import {
 	AgentProviderSelect,
 	BrowseFolderButton,
 	buildAgentSettingsTabs,
-	EnvironmentTab,
+	ProviderEnvironmentSection,
 	firstTabWithError,
 	GeneralTab,
 	ModelsTab,
@@ -374,7 +374,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	);
 
 	// Shared by the Provider tab's config panel (which hides them) and the
-	// Environment tab (which draws them): one set of handlers over two records.
+	// Provider environment section: one set of handlers over two records.
 	const envVarProps = agentEnvVarHandlers({
 		customEnvVars: ac.customEnvVars,
 		customEnvVarsDisabled: ac.customEnvVarsDisabled,
@@ -560,7 +560,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 									</AgentProviderSelect>
 
 									{/* Provider settings (path, args, provider-specific options). Its
-									    env vars live on the Environment tab. Path, args, model, effort
+									    env vars share this Provider tab. Path, args, model, effort
 									    and context window are saved with the group. */}
 									{toolType && selectedAgentConfig && (
 										<div>
@@ -638,6 +638,14 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 										</p>
 									)}
 								</>
+							}
+							environment={
+								<ProviderEnvironmentSection
+									theme={theme}
+									toolType={toolType ?? undefined}
+									isSshEnabled={sshRemoteChosen}
+									{...envVarProps}
+								/>
 							}
 							resilience={{
 								retryOnAvailabilityErrors: own.retryOnAvailabilityErrors,
@@ -783,16 +791,6 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 									/>
 								</div>
 							}
-						/>
-					)}
-
-					{activeTab === 'environment' && (
-						<EnvironmentTab
-							theme={theme}
-							idPrefix={TAB_ID_PREFIX}
-							toolType={toolType ?? undefined}
-							isSshEnabled={sshRemoteChosen}
-							{...envVarProps}
 						/>
 					)}
 

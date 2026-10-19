@@ -224,6 +224,16 @@ export function planTranslation(options: {
 			};
 		}),
 		counts: {
+			messages: conversations.reduce(
+				(n, c) =>
+					n +
+					c.records.filter(
+						(record) =>
+							(record.role === 'user' || record.role === 'assistant') &&
+							record.blocks.some((block) => block.kind === 'text' || block.kind === 'attachment')
+					).length,
+				0
+			),
 			records: conversations.reduce((n, c) => n + c.records.length, 0),
 			artifacts: artifacts.length,
 			bytes: artifacts.reduce((n, a) => n + Buffer.from(a.bytesBase64, 'base64').length, 0),

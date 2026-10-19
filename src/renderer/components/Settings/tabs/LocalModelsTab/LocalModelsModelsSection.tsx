@@ -51,6 +51,7 @@ import {
 	LOCAL_MODEL_LIBRARY_SECTIONS,
 	groupLocalModelsForLibrary,
 	localModelLibrarySection,
+	recommendedLocalModelsForHardware,
 	type LocalModelLibrarySectionId,
 } from '../../../../../shared/local-models/library';
 import {
@@ -119,6 +120,7 @@ export function LocalModelsModelsSection({
 	onSectionChange,
 }: LocalModelsModelsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
+	const utilitySource = useSettingsStore((s) => s.utilitySource);
 	const hardware = useLocalModelsHardware();
 	const showTooLarge = usePersistedToggle(SHOW_TOO_LARGE_MODELS_STORAGE_KEY, false);
 	// The model whose removal is waiting on the in-use warning, if any.
@@ -135,6 +137,14 @@ export function LocalModelsModelsSection({
 		}
 		return byModel;
 	}, [hardware.profile, models.listings]);
+	const recommendations = useMemo(
+		() =>
+			recommendedLocalModelsForHardware(
+				models.listings.map(({ entry }) => entry),
+				hardware.profile
+			),
+		[hardware.profile, models.listings]
+	);
 
 	// A model too large for this computer is hidden unless the user asked to see
 	// those, or some of it is on disk or on its way there: disk in use, and a
@@ -175,12 +185,14 @@ export function LocalModelsModelsSection({
 	const tasksByModel = useMemo(() => {
 		const byModel: Record<string, string[]> = {};
 		for (const listing of models.listings) {
-			byModel[listing.entry.id] = tasksUsingLocalModel(assignments, listing.entry.id).map(
-				(task) => task.label
-			);
+			byModel[listing.entry.id] = tasksUsingLocalModel(
+				assignments,
+				listing.entry.id,
+				utilitySource
+			).map((task) => task.label);
 		}
 		return byModel;
-	}, [assignments, models.listings]);
+	}, [assignments, models.listings, utilitySource]);
 
 	const footprintBytes = models.footprint?.bytes ?? 0;
 	const installedCount = models.listings.filter(
@@ -307,6 +319,7 @@ export function LocalModelsModelsSection({
 					engineBytes={engineBytesByRuntime[listing.entry.runtime] ?? 0}
 					showRoles
 					fit={fitByModel[id]}
+					recommendation={recommendations[id]}
 					onDownload={handleDownload}
 					onPause={(modelId) => void models.pause(modelId)}
 					onResume={(modelId) => void models.resume(modelId)}
@@ -439,6 +452,7 @@ export function LocalModelsModelsSection({
 				onChange={onSectionChange}
 				label="Library sections"
 				idPrefix={ID_PREFIX}
+				sticky
 			/>
 
 			<div {...tabPanelProps(ID_PREFIX, section)} className="space-y-5">

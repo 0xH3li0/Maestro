@@ -25,7 +25,7 @@ The point of a Group Chat is that you are **delegating the moderating**. In an o
 ## How It Works
 
 1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+G` / `Alt+Ctrl+G`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
-2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation. The **Provider**, **Environment**, and **SSH** tabs set the moderator's provider options, environment variables, and where it runs (`Cmd+Shift+[` / `]` steps through the tabs)
+2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation. Click **Customize** to open **General**, **Provider**, and **SSH** for the moderator. Environment variables live under **Provider**; Cancel discards changes in Customize (`Cmd+Shift+[` / `]` steps through the tabs)
 3. **@mention agents** - In your message, @mention any Maestro session (e.g., `@Frontend`, `@Backend`). Agents are automatically added as participants when mentioned.
 4. **Send your question** - The moderator receives it first and decides how to proceed
 5. **Moderator coordinates** - Routes to relevant agents via @mentions, can make multiple rounds

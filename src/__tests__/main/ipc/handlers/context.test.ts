@@ -50,12 +50,14 @@ vi.mock('../../../../main/local-models/task-router', () => ({
 describe('context IPC handlers: Local Models routing', () => {
 	const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
 	const localSource = { type: 'local', modelId: 'qwen3-1.7b' } as const;
+	const settings = new Map<string, unknown>();
 
 	const groom = (options?: Record<string, unknown>) =>
 		handlers.get('context:groomContext')!({}, '/proj', 'claude-code', 'SUMMARIZE THIS', options);
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		settings.clear();
 		handlers.clear();
 		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
 			handlers.set(channel, handler as never);
@@ -69,7 +71,11 @@ describe('context IPC handlers: Local Models routing', () => {
 			getProcessManager: () => ({}) as never,
 			getAgentDetector: () => ({}) as never,
 			agentConfigsStore: { get: vi.fn(() => ({})) } as never,
-			settingsStore: { get: vi.fn(() => null) } as never,
+			settingsStore: {
+				get: vi.fn((key: string, fallback?: unknown) =>
+					settings.has(key) ? settings.get(key) : fallback
+				),
+			} as never,
 		});
 	});
 
@@ -79,6 +85,36 @@ describe('context IPC handlers: Local Models routing', () => {
 
 		expect(runLocalTask).not.toHaveBeenCalled();
 		expect(groomContext).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not use a hidden provider override when the utility source is local', async () => {
+		settings.set('utilitySource', localSource);
+		settings.set('utilityAgentId', 'codex');
+		settings.set('utilityModelId', 'utility-model');
+		await groom({ customPath: '/bin/claude' });
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'claude-code',
+				modelId: undefined,
+				sessionCustomPath: '/bin/claude',
+			}),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('retains the configured provider and model on the provider utility path', async () => {
+		settings.set('utilityAgentId', 'codex');
+		settings.set('utilityModelId', 'utility-model');
+		await groom();
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'codex',
+				modelId: 'utility-model',
+			}),
+			expect.anything(),
+			expect.anything()
+		);
 	});
 
 	it('never sends an answer-only cheap turn to the summary model', async () => {

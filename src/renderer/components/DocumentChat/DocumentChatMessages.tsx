@@ -1,22 +1,10 @@
-/**
- * The chat bubble's history.
- *
- * A READING view of the conversation, deliberately not a second transcript
- * renderer: `services/documentChat` has already reduced the tab's log to what
- * you asked and what came back, and the full record - tool cards, thinking,
- * streamed output - is one click away in the popped-out tab. Rebuilding that
- * inside a 320px panel would be a worse copy of something that already exists.
- *
- * It rides `useStickToBottom`, which is the rule for any capped box that fills
- * over time: once the panel hits its height it stops growing, so nothing else is
- * left to follow the tail, and the reader would be stranded on the first screen
- * of a reply while the rest piled up below. Scrolling up releases the pin, which
- * is what makes reading back through a long chat possible at all.
- */
+/** Compact conversation view, including the reasoning selected in the composer. */
 
 import React from 'react';
-import { MessageSquare } from 'lucide-react';
 import type { Theme } from '../../types';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
+import { openZoomViewer } from '../ZoomViewer';
+import { ChatUserMessage } from '../ui/ChatSurface';
 import { Markdown } from '../Markdown';
 import { useStickToBottom } from '../../hooks/ui/useStickToBottom';
 import type { DocumentChatMessage } from '../../services/documentChat';
@@ -26,14 +14,14 @@ interface DocumentChatMessagesProps {
 	messages: DocumentChatMessage[];
 	/** True while the agent is working on this conversation. */
 	busy: boolean;
-	documentName: string;
+	fontScale?: number;
 }
 
 export const DocumentChatMessages = React.memo(function DocumentChatMessages({
 	theme,
 	messages,
 	busy,
-	documentName,
+	fontScale = 1,
 }: DocumentChatMessagesProps) {
 	// Keyed on the conversation's length plus its tail so a streaming reply keeps
 	// the box pinned as it grows, not only when a new message arrives.
@@ -41,29 +29,18 @@ export const DocumentChatMessages = React.memo(function DocumentChatMessages({
 		`${messages.length}:${messages[messages.length - 1]?.text.length ?? 0}:${busy}`
 	);
 
-	if (messages.length === 0) {
-		return (
-			<div
-				ref={scrollRef}
-				data-testid="document-chat-messages"
-				className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-2 px-4 py-6 text-center"
-				style={{ overscrollBehavior: 'contain' }}
-			>
-				<MessageSquare className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-				<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
-					Ask anything about <span style={{ color: theme.colors.textMain }}>{documentName}</span>.
-					The agent reads the file first, then answers here.
-				</p>
-			</div>
-		);
-	}
+	if (messages.length === 0 && !busy) return null;
 
 	return (
 		<div
 			ref={scrollRef}
 			data-testid="document-chat-messages"
-			className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
-			style={{ overscrollBehavior: 'contain' }}
+			className="min-h-0 overflow-y-auto px-5 pb-3 flex flex-col gap-4"
+			style={{
+				overscrollBehavior: 'contain',
+				maxHeight: 'min(32vh, 320px)',
+				fontSize: `${0.875 * fontScale}rem`,
+			}}
 			onWheel={(e) => e.stopPropagation()}
 		>
 			{messages.map((message) => (
@@ -86,35 +63,64 @@ export const DocumentChatMessages = React.memo(function DocumentChatMessages({
 function DocumentChatBubble({ theme, message }: { theme: Theme; message: DocumentChatMessage }) {
 	const isYou = message.kind === 'you';
 	const isSystem = message.kind === 'system';
+	const isThinking = message.kind === 'thinking';
+
+	if (isYou) {
+		return (
+			<ChatUserMessage
+				theme={theme}
+				data-testid="document-chat-message-you"
+				title={message.pending ? 'Queued - the agent is busy' : undefined}
+				className={`self-end ${message.pending ? 'opacity-60' : ''}`}
+			>
+				{message.images && (
+					<div className="flex gap-2 flex-wrap mb-2">
+						{message.images.map((image, index) => (
+							<button
+								type="button"
+								key={`${message.id}-${index}`}
+								aria-label={`Open image ${index + 1}`}
+								onClick={(event) => {
+									const img = event.currentTarget.querySelector('img');
+									if (img) openZoomViewer(img, `Image ${index + 1}`);
+								}}
+							>
+								<img
+									src={displayImageSrc(image)}
+									alt={`Attachment ${index + 1}`}
+									className="max-h-24 rounded-lg"
+								/>
+							</button>
+						))}
+					</div>
+				)}
+				{message.text}
+			</ChatUserMessage>
+		);
+	}
 
 	return (
 		<div
 			data-testid={`document-chat-message-${message.kind}`}
-			// Dimmed while queued: it is the user's message, already theirs, but not
-			// yet the agent's. Hiding it would be worse (a chat that swallows what
-			// you typed), and drawing it as settled would be a lie.
 			title={message.pending ? 'Queued - the agent is busy' : undefined}
-			className={`max-w-[92%] rounded-lg px-2.5 py-1.5 text-xs ${isYou ? 'self-end' : 'self-start'} ${message.pending ? 'opacity-60' : ''}`}
+			className={`w-full min-w-0 select-text ${isThinking ? 'italic' : ''}`}
 			style={{
-				backgroundColor: isYou
-					? `${theme.colors.accent}22`
-					: isSystem
-						? `${theme.colors.error}18`
-						: theme.colors.bgMain,
-				border: `1px solid ${isSystem ? `${theme.colors.error}55` : theme.colors.border}`,
-				color: theme.colors.textMain,
+				color: isSystem
+					? theme.colors.error
+					: isThinking
+						? theme.colors.textDim
+						: theme.colors.textMain,
 			}}
 		>
-			{isYou || isSystem ? (
-				// The user's own words and an error string are plain text. Running them
-				// through the markdown pipeline would reformat something they typed.
+			{isSystem ? (
+				// Keep error strings literal, including paths and command output.
 				<span className="whitespace-pre-wrap break-words">{message.text}</span>
 			) : (
 				<Markdown
 					preset="chat"
 					theme={theme}
 					content={message.text}
-					className="text-xs break-words"
+					className="text-[inherit] break-words"
 					onCopy={(text) => void navigator.clipboard?.writeText(text)}
 				/>
 			)}

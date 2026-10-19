@@ -162,7 +162,7 @@ export function buildAssignmentOptionGroups(
 	});
 
 	const head: AssignmentOption[] = [{ value: 'off', label: 'Off' }];
-	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility Agent' });
+	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility source' });
 	const systemOneOption =
 		taskAcceptsSystemOne(task) && systemOneEngine !== 'off'
 			? option(SYSTEM_ONE_ASSIGNMENT, systemOneAssignmentLabel(systemOneEngine))
