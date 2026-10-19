@@ -1,6 +1,7 @@
 /**
  * @file floatingWidgets.test.ts
- * @description The floating-widget contract: id validation and the widget specs.
+ * @description The floating-widget contract: id validation, the widget specs,
+ * and the throughput gauge's command guard.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -8,6 +9,7 @@ import {
 	FLOATING_WIDGET_IDS,
 	FLOATING_WIDGET_SPECS,
 	isFloatingWidgetId,
+	isThroughputGaugeWidgetCommand,
 } from '../../shared/floatingWidgets';
 
 describe('isFloatingWidgetId', () => {
@@ -50,6 +52,36 @@ describe('FLOATING_WIDGET_SPECS', () => {
 			const { defaultSize, minSize } = FLOATING_WIDGET_SPECS[id];
 			expect(defaultSize.width).toBeGreaterThanOrEqual(minSize.width);
 			expect(defaultSize.height).toBeGreaterThanOrEqual(minSize.height);
+		}
+	});
+});
+
+describe('isThroughputGaugeWidgetCommand', () => {
+	it('accepts the hide and reset-peak commands', () => {
+		expect(isThroughputGaugeWidgetCommand({ type: 'hide' })).toBe(true);
+		expect(isThroughputGaugeWidgetCommand({ type: 'reset-peak' })).toBe(true);
+	});
+
+	it('refuses unknown or misspelled command types', () => {
+		for (const type of ['', 'show', 'Hide', 'reset', 'resetPeak', 'toString', 'constructor']) {
+			expect(isThroughputGaugeWidgetCommand({ type })).toBe(false);
+		}
+	});
+
+	it('refuses values that are not command objects', () => {
+		for (const value of [
+			undefined,
+			null,
+			'hide',
+			0,
+			true,
+			{},
+			[],
+			['hide'],
+			{ type: 1 },
+			{ kind: 'hide' },
+		]) {
+			expect(isThroughputGaugeWidgetCommand(value)).toBe(false);
 		}
 	});
 });

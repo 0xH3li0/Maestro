@@ -27,7 +27,11 @@
 
 import { create } from 'zustand';
 import type { ThroughputLayout } from '../../shared/throughputGauge';
-import type { ThroughputMetric, ThroughputRates } from '../../shared/throughputRate';
+import type {
+	ThroughputHistory,
+	ThroughputMetric,
+	ThroughputRates,
+} from '../../shared/throughputRate';
 import {
 	sanitizeGaugeRects,
 	type GaugeRect,
@@ -43,8 +47,7 @@ export const THROUGHPUT_GAUGE_RECTS_KEY = 'throughputGauge.rects';
 /** How many published readings each `history` buffer keeps (for a sparkline). */
 export const THROUGHPUT_HISTORY_LENGTH = 60;
 
-/** Recent readings per metric, oldest first. */
-export type ThroughputHistory = Readonly<Record<ThroughputMetric, readonly number[]>>;
+export type { ThroughputHistory };
 
 const ZERO_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
 const EMPTY_HISTORY: ThroughputHistory = { in: [], out: [], combined: [] };

@@ -7,6 +7,8 @@
  * `Plans/floating-widgets.md`.
  */
 
+import type { ThroughputHistory, ThroughputRates } from './throughputRate';
+
 /** Every widget that can float. The order is stable; tests and IPC rely on it. */
 export const FLOATING_WIDGET_IDS = ['throughput-gauge', 'media-player'] as const;
 
@@ -66,4 +68,34 @@ export interface FloatingWidgetBounds {
 	y?: number;
 	width?: number;
 	height?: number;
+}
+
+/**
+ * What the primary window publishes for the throughput gauge widget (relayed
+ * with `publishStoreState('throughput-gauge', ...)`). The rate engine stays in
+ * the primary window; the widget only draws these readings.
+ */
+export interface ThroughputGaugeWidgetState {
+	rates: ThroughputRates;
+	peak: ThroughputRates;
+	history: ThroughputHistory;
+	/** The active agent's name when the gauge reads the active scope, else null. */
+	activeAgentName: string | null;
+}
+
+/**
+ * What the gauge widget asks the primary window to do. `hide` goes through the
+ * gauge store, so its visible latch and the window never disagree.
+ */
+export type ThroughputGaugeWidgetCommand = { type: 'hide' } | { type: 'reset-peak' };
+
+const THROUGHPUT_GAUGE_WIDGET_COMMAND_TYPES: readonly string[] = ['hide', 'reset-peak'];
+
+/** Whether a relayed value is a command the gauge widget may send. */
+export function isThroughputGaugeWidgetCommand(
+	value: unknown
+): value is ThroughputGaugeWidgetCommand {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const type = (value as { type?: unknown }).type;
+	return typeof type === 'string' && THROUGHPUT_GAUGE_WIDGET_COMMAND_TYPES.includes(type);
 }
