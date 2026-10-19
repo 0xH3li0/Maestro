@@ -110,19 +110,7 @@ export function GroupContextMenu({
 			</div>
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
-			<button
-				type="button"
-				onClick={() => {
-					onRename();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Edit3 className="w-3.5 h-3.5" />
-				Rename Group...
-			</button>
-
+			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
 			<button
 				type="button"
 				onClick={() => {
@@ -134,6 +122,19 @@ export function GroupContextMenu({
 			>
 				<Plus className="w-3.5 h-3.5" />
 				New Agent in Group...
+			</button>
+
+			<button
+				type="button"
+				onClick={() => {
+					onRename();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Edit3 className="w-3.5 h-3.5" />
+				Rename Group...
 			</button>
 
 			{showMoveToWindow && (
