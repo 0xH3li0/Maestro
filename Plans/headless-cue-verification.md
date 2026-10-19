@@ -388,6 +388,17 @@ Possible fix, not written: have the host answer `get_cue_activity` and
 `get_cue_subscriptions` from its own engine, or have the CLI fall back to the
 `cue.db` read when the answer is the host's "does not support".
 
+**Status: fixed on `fix/cli-cue-on-host`, by tests only (not re-run live
+against a packaged build).** Both halves of the possible fix: the host answers
+from the engine it runs (run output included), and the CLI falls back to
+`cue.db` and each agent's cue.yaml when a host cannot answer (Cue held by
+another engine, failed, or an older host), with a stderr note. An old desktop
+build and a timeout still fail. During a shutdown drain the host keeps
+answering reads and refuses `cue enable|disable` and `cue trigger` as
+shutting down; after a lock loss reads fall back to disk and a refused write
+names the new holder (`host-cue.test.ts`, `cue-control.test.ts`,
+`cue-list.test.ts`).
+
 **F2. #1813, unchanged on the RC.** As above: with the default paths the CLI
 resolves `~/.config/Maestro` while the app writes `~/.config/maestro`; the
 readers refuse with a clear message, but `host start` silently creates and

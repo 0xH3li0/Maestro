@@ -321,10 +321,25 @@ export function cueUnavailableMessage(state: HostCueState): string {
 				'Make the change where that engine runs, or stop it and restart the host so the host runs Cue.'
 			);
 		case 'failed':
-			return `This host's Cue engine did not start: ${state.reason}`;
+			// Also a lock lost to an engine whose lock cannot be read, so not "did not start".
+			return `This host is not running Cue: ${state.reason}`;
 		case 'running':
 			return 'This host is still starting its Cue engine. Retry in a moment.';
 	}
+}
+
+/**
+ * Why a Cue change is refused while the host drains Cue for a shutdown. A toggle would write cue.yaml
+ * for an engine that is going away, and a trigger could only be queued and persisted for whichever
+ * engine starts next, which is not what someone asking to run a subscription now expects.
+ */
+export const CUE_SHUTTING_DOWN_MESSAGE =
+	'This host is shutting down Cue: its runs in flight are finishing and nothing new is accepted. ' +
+	'Make the change once Cue runs again (the next `maestro-cli host start`, the desktop app, or `maestro-cli cue engine start`).';
+
+export interface CueAnswerContext {
+	/** A drain for a shutdown was asked for: the engine finishes what it runs and takes no changes. */
+	shuttingDown?: boolean;
 }
 
 /**
@@ -334,13 +349,20 @@ export function cueUnavailableMessage(state: HostCueState): string {
  * Without a running engine a READ is left unanswered (`undefined`), which the server echoes and the
  * CLI reads as "this host cannot answer": it then reads cue.yaml or cue.db itself, which is right
  * whatever the reason (Cue held by another engine, failed, or just being switched). A WRITE has no
- * such fallback, so it is refused with the reason and what to do about it. Errors are the desktop's
+ * such fallback, so it is refused with the reason and what to do about it.
+ *
+ * The engine answers only while the state says `running`. A drain keeps it `running`, so reads go on
+ * answering while the runs finish (they are real data), but writes are refused with
+ * {@link CUE_SHUTTING_DOWN_MESSAGE}. After a lock loss the state names the new holder even while the
+ * old engine is still winding down, so reads fall back to disk and a refused write names the holder,
+ * which is where the change has to be made. Errors are the desktop's
  * `{ type: 'error', message }` frame, which the CLI's `errorFrameMessage` reads.
  */
 export async function answerCueMessage(
 	message: Record<string, unknown>,
-	engine: HostCueEngine | undefined,
-	state: HostCueState
+	liveEngine: HostCueEngine | undefined,
+	state: HostCueState,
+	context: CueAnswerContext = {}
 ): Promise<Record<string, unknown> | undefined> {
 	const type = message.type;
 	if (typeof type !== 'string') return undefined;
@@ -348,8 +370,16 @@ export async function answerCueMessage(
 	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
 	const error = (text: string): Record<string, unknown> => ({ type: 'error', message: text });
 
-	if (!engine)
-		return CUE_WRITE_MESSAGES.has(type) ? error(cueUnavailableMessage(state)) : undefined;
+	const engine = state.state === 'running' ? liveEngine : undefined;
+	if (CUE_WRITE_MESSAGES.has(type)) {
+		// A lost lock is the more useful answer: it says who to ask instead.
+		if (context.shuttingDown && state.state !== 'held' && state.state !== 'failed') {
+			return error(CUE_SHUTTING_DOWN_MESSAGE);
+		}
+		if (!engine) return error(cueUnavailableMessage(state));
+	} else if (!engine) {
+		return undefined;
+	}
 
 	switch (type) {
 		case 'get_cue_subscriptions':
@@ -657,7 +687,8 @@ export async function startHostCue(
 		state: () => current,
 		// Runs a drain is still waiting for count, so the host waits for them too.
 		activeRuns: () => live?.engine.getActiveRuns().length ?? 0,
-		answer: (message) => answerCueMessage(message, live?.engine, current),
+		answer: (message) =>
+			answerCueMessage(message, live?.engine, current, { shuttingDown: draining !== undefined }),
 		drain,
 		forceStop: () => {
 			forceRequested = true;

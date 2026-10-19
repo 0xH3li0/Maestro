@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CueAutoRunLaunchParams } from '../../../main/cue/cue-autorun-executor';
 import type { CueEngineLockInfo } from '../../../main/cue/cue-engine-lock';
 import {
+	CUE_SHUTTING_DOWN_MESSAGE,
 	answerCueMessage,
 	runAutoRunInRuntime,
 	startHostCue,
@@ -702,6 +703,121 @@ describe('another engine taking the lock over', () => {
 		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
 		vi.restoreAllMocks();
 	});
+	describe('the Cue answers it gives the CLI, around a drain and a loss', () => {
+		const toggle = {
+			type: 'toggle_cue_subscription',
+			subscriptionId: 'a1::beat::beat',
+			enabled: false,
+		};
+		const trigger = { type: 'trigger_cue_subscription', subscriptionName: 'beat' };
+		const list = { type: 'get_cue_subscriptions' };
+		const subs = [
+			{
+				sessionId: 'a1',
+				sessionName: 'One',
+				toolType: 'claude-code',
+				subscriptions: [{ name: 'beat', event: 'time.heartbeat', prompt: 'p' }],
+			},
+		] as unknown as CueGraphSession[];
+
+		/** A host mid-drain: the engine's drain waits until `finish` is called. */
+		async function draining() {
+			const host = await hosted();
+			vi.mocked(host.engine.getGraphData).mockReturnValue(subs);
+			let finish!: () => void;
+			vi.mocked(host.engine.drain).mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						finish = () => resolve({});
+					})
+			);
+			vi.mocked(host.engine.forceStop).mockImplementation(() => finish());
+			const drained = host.cue.drain(30_000);
+			await vi.waitFor(() => expect(host.engine.drain).toHaveBeenCalled());
+			return { ...host, drained, finish: () => finish() };
+		}
+
+		it('still answers a read while the runs finish, from the draining engine', async () => {
+			const { cue, drained, finish } = await draining();
+			await expect(cue.answer(list)).resolves.toMatchObject({
+				type: 'cue_subscriptions',
+				subscriptions: [{ id: 'a1::beat::beat' }],
+			});
+			await expect(cue.answer({ type: 'get_cue_activity' })).resolves.toMatchObject({
+				type: 'cue_activity',
+			});
+			finish();
+			await drained;
+		});
+
+		it('refuses a toggle and a trigger once the drain started, and the engine sees neither', async () => {
+			const { cue, engine, drained, finish } = await draining();
+			for (const message of [toggle, trigger]) {
+				await expect(cue.answer(message)).resolves.toEqual({
+					type: 'error',
+					message: CUE_SHUTTING_DOWN_MESSAGE,
+				});
+			}
+			expect(engine.setSubscriptionEnabled).not.toHaveBeenCalled();
+			expect(engine.triggerSubscription).not.toHaveBeenCalled();
+			finish();
+			await drained;
+		});
+
+		it('after the drain, leaves reads to disk and still says it is shutting down, not that Cue is off', async () => {
+			const { cue, drained, finish } = await draining();
+			finish();
+			await drained;
+			expect(cue.state()).toEqual({ state: 'disabled' });
+			await expect(cue.answer(list)).resolves.toBeUndefined();
+			await expect(cue.answer(toggle)).resolves.toEqual({
+				type: 'error',
+				message: CUE_SHUTTING_DOWN_MESSAGE,
+			});
+		});
+
+		it('after a lock loss, leaves reads to disk and names the new holder on a write', async () => {
+			const { cue, engine, takeOver } = await hosted();
+			vi.mocked(engine.getGraphData).mockReturnValue(subs);
+			takeOver(lock(99, 'desktop'));
+
+			await expect(cue.answer(list)).resolves.toBeUndefined();
+			await expect(cue.answer({ type: 'get_cue_activity' })).resolves.toBeUndefined();
+			for (const message of [toggle, trigger]) {
+				await expect(cue.answer(message)).resolves.toEqual({
+					type: 'error',
+					message: expect.stringContaining('a desktop Cue engine (pid 99) holds the Cue lock'),
+				});
+			}
+			expect(engine.setSubscriptionEnabled).not.toHaveBeenCalled();
+		});
+
+		it('after a loss during the drain, stops answering from the old engine and names the holder', async () => {
+			const { cue, engine, drained, takeOverDuringDrain } = await draining();
+			takeOverDuringDrain(lock(77, 'standalone'));
+
+			// The old engine is still winding down, but the data is no longer its to give.
+			await expect(cue.answer(list)).resolves.toBeUndefined();
+			await expect(cue.answer(toggle)).resolves.toEqual({
+				type: 'error',
+				message: expect.stringContaining('a standalone Cue engine (pid 77) holds the Cue lock'),
+			});
+			expect(engine.setSubscriptionEnabled).not.toHaveBeenCalled();
+			await drained;
+		});
+
+		it('names the loss when the new holder cannot be read, rather than "did not start"', async () => {
+			const { cue, takeOver } = await hosted();
+			takeOver(null);
+			const reply = await cue.answer(toggle);
+			expect(reply).toEqual({
+				type: 'error',
+				message: expect.stringMatching(
+					/^This host is not running Cue: another Cue engine took the Cue lock over/
+				),
+			});
+		});
+	});
 });
 
 describe('runAutoRunInRuntime', () => {
@@ -1010,7 +1126,7 @@ describe('the Cue answers a host gives the CLI', () => {
 		);
 		expect(failed).toEqual({
 			type: 'error',
-			message: "This host's Cue engine did not start: cue.db is locked",
+			message: 'This host is not running Cue: cue.db is locked',
 		});
 	});
 

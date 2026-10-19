@@ -2156,6 +2156,8 @@ This writes the subscription's `enabled` flag into its cue.yaml, as the switch o
 | `maestro-cli host`, not running Cue (another engine holds the Cue lock, or Cue did not start), or an older host | Read from each agent's cue.yaml and from `cue.db`. A run in flight in another engine still reads `running`. Run output is not included, and a line on stderr says where the list came from | Refused, with the reason and what to do      |
 | Nothing (`cue activity` only)                                                                                   | Read from `cue.db`, with the same stderr note. `cue list` reports that the app is not running (exit 3)                                                                                     | Reports that the app is not running (exit 3) |
 
+While a host is shutting down (`host stop`, or a signal), it goes on answering `cue list` and `cue activity` until its Cue runs have finished, and refuses `cue enable`, `cue disable`, and `cue trigger` with a message saying so. If another engine takes the Cue lock over from a host, the host stops answering for Cue, so reads come from disk and a refused change names the engine that now holds the lock.
+
 An older desktop build that does not know a command, or a peer that does not answer in time, is still reported as an error (exit 4 or 5): the CLI never covers a real failure with figures from disk. With Maestro Cue switched off in Encore Features every `cue` verb is refused before it asks anyone. `cue pipeline` edits the desktop Pipeline Graph layout and is not served by a host; beside one it says so and points at cue.yaml.
 
 ### Scheduling Tasks
