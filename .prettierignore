@@ -22,3 +22,10 @@ src/renderer/generated-fonts.css
 # Upstream Hugging Face tokenizer files, kept byte-for-byte at their pinned
 # revision so the fixture matches the hash the model catalog will verify.
 src/__tests__/fixtures/tokenizers/
+# Dataview test vault: tests assert on its exact bytes (line numbers, YAML
+# quoting, tab-indented lists), so formatting must never rewrite it.
+src/__tests__/fixtures/dataview-vault/
+
+# Vendored Dataview source: keep upstream's quotes and line breaks so an upstream
+# bump diffs cleanly (docs/agent-guides/DATAVIEW.md, "Formatting, lint, and placement").
+src/shared/dataview/vendor/

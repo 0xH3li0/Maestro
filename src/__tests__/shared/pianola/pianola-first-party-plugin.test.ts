@@ -154,6 +154,7 @@ describe('first-party plugin registry', () => {
 			['maestroRun', 'com.maestro.maestro-run'],
 			['throughputGauge', 'com.maestro.throughput-gauge'],
 			['ensemble', 'com.maestro.ensemble'],
+			['dataview', 'com.maestro.dataview'],
 		]);
 	});
 

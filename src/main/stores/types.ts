@@ -13,6 +13,7 @@ import type { LocalModelAssignments, UtilitySource } from '../../shared/local-mo
 import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
+import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
 
 // ============================================================================
@@ -243,6 +244,8 @@ export interface WindowState {
 	multiWindow?: MultiWindowState;
 	/** Where the user left the Quick Chat window (see `QuickChatWindowBounds`). */
 	quickChat?: QuickChatWindowBounds;
+	/** Where the user left each floating widget window (see `FloatingWidgetBounds`). */
+	floatingWidgets?: Partial<Record<FloatingWidgetId, FloatingWidgetBounds>>;
 }
 
 // ============================================================================

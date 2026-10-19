@@ -61,3 +61,10 @@ arguments the model server supervisor starts the real binary with (`--host`,
 supervisor's tests start, stop, crash and load models against a real process
 without a real model. Its header comment lists the environment variables that
 drive it.
+
+## `dataview-vault/`
+
+The shared Obsidian-style vault the Dataview tests run against. Its own
+`README.md` maps each note to the requirement it covers, lists the expected
+results of the spec's two motivating queries, and explains why every note
+carries a frontmatter `created` date.

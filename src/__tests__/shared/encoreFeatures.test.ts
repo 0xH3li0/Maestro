@@ -34,6 +34,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 		expect(resolveEncoreFeatures({ ensemble: true }).ensemble).toBe(true);
 		expect(resolveEncoreFeatures({ ensemble: false }).ensemble).toBe(false);
 	});
+
+	it('ships Dataview off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

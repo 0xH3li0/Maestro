@@ -46,7 +46,13 @@ const MODE_OPTIONS: ReadonlyArray<SegmentedOption<SwitchableVoiceMode>> = [
 	},
 ];
 
-export function VoiceModeSwitch({ theme }: { theme: Theme }) {
+export function VoiceModeSwitch({
+	theme,
+	onChange,
+}: {
+	theme: Theme;
+	onChange?: (mode: SwitchableVoiceMode) => void;
+}) {
 	const { mode, switchTo } = useVoiceModeSwitch();
 	const groupChat = useVoiceSessionStore((s) => s.scope?.kind === 'group-chat');
 	if (groupChat)
@@ -63,7 +69,7 @@ export function VoiceModeSwitch({ theme }: { theme: Theme }) {
 		<div className="px-3 py-2 border-b" style={{ borderColor: theme.colors.border }}>
 			<SegmentedControl
 				value={mode}
-				onChange={switchTo}
+				onChange={onChange ?? switchTo}
 				options={MODE_OPTIONS}
 				theme={theme}
 				ariaLabel="Who you are talking to (Tab switches)"

@@ -4,7 +4,9 @@ import {
 	extractJsonObject,
 	parseJsonWithBom,
 	stripJsonBom,
+	serializedJsonByteLength,
 } from '../../shared/jsonUtils';
+import { serializedJsonByteLength as contributionsByteLength } from '../../shared/plugins/contributions';
 
 describe('jsonUtils', () => {
 	it('strips a leading UTF-8 BOM', () => {
@@ -89,5 +91,27 @@ describe('extractJsonObject', () => {
 
 	it('returns null rather than throwing on malformed JSON', () => {
 		expect(extractJsonObject('{"target": }')).toBeNull();
+	});
+});
+
+describe('serializedJsonByteLength', () => {
+	it('counts the UTF-8 bytes of the JSON text', () => {
+		expect(serializedJsonByteLength({ a: 1 })).toBe(7);
+		expect(serializedJsonByteLength('é')).toBe(4); // 2-byte character plus quotes
+		expect(serializedJsonByteLength('€')).toBe(5); // 3-byte character plus quotes
+		expect(serializedJsonByteLength('\u{1F600}')).toBe(6); // 4-byte character (a surrogate pair)
+	});
+
+	it('returns null for a value JSON cannot hold, instead of throwing', () => {
+		expect(serializedJsonByteLength(undefined)).toBeNull();
+		expect(serializedJsonByteLength(() => 1)).toBeNull();
+		expect(serializedJsonByteLength(BigInt(1))).toBeNull();
+		const circular: Record<string, unknown> = {};
+		circular.self = circular;
+		expect(serializedJsonByteLength(circular)).toBeNull();
+	});
+
+	it('is the function the plugin contract re-exports (the plugin SDK drift test reads that export)', () => {
+		expect(contributionsByteLength).toBe(serializedJsonByteLength);
 	});
 });

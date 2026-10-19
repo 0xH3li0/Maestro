@@ -23,17 +23,18 @@
  * widget where it was, showing a closed microphone one click from open. A
  * control row where one button quietly hangs up, or a panel that vanishes while
  * someone is reading it, is a surface people stop trusting.
- * Blocking modals temporarily hide the widget without ending its session;
- * closing the last modal restores it.
+ * In the browser build, blocking modals temporarily hide the in-app HUD.
+ * Desktop widgets stay visible over other apps and Spaces.
  *
  * **Tab walks Tab / Agent / Conductor** while the widget is up, on top, and has
  * a live session to re-bind. The listener runs in the bubble phase and stands
  * down for a key something else already claimed, so a completion popup, a shell
  * line and an editor's indent all keep their Tab.
  *
- * The widget is draggable and remembers where it was put, through
- * `usePointerDrag` (the same gesture the Concerto surfaces use) and the `ui`
- * section of the A Cappella settings blob.
+ * Desktop geometry belongs to the shared floating-window controller. The
+ * browser fallback uses `usePointerDrag` and the persisted voice UI position.
+ * The originating app window publishes the projection and handles commands;
+ * the floating window reuses this body without a second voice subscription.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -67,6 +68,21 @@ import { getPlatform } from '../../utils/platformUtils';
 import { selectVoiceRemoteDevice, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { closeVoiceMic, openVoiceMic, toggleVoiceListenMode } from '../../services/voiceListening';
+import { floatingWidgetsAvailable } from '../../utils/floatingWidgetMode';
+import {
+	onWidgetCommand,
+	publishStoreState,
+	sendWidgetCommand,
+} from '../../utils/windowStoreMirror';
+import {
+	isVoiceWidgetCommand,
+	type VoiceWidgetCommand,
+	type VoiceWidgetState,
+} from '../../../shared/floatingWidgets';
+import type { VoiceSessionProjection } from '../../../shared/acappella/hud-state';
+import { FloatingWidgetFrame } from '../../floatingWidget/FloatingWidgetFrame';
+import { jumpToVoiceTab } from '../../hooks/voice/useVoiceAgentActions';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -102,6 +118,9 @@ export interface VoiceHudProps {
 	 * put a microphone widget on screen.
 	 */
 	showDevHarness?: boolean;
+	/** Replica body in the desktop widget window; never subscribes to voice events. */
+	floatingWindow?: boolean;
+	widgetState?: VoiceWidgetState;
 }
 
 /**
@@ -144,8 +163,22 @@ function viewport() {
 	return { width: window.innerWidth, height: window.innerHeight };
 }
 
-export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
-	const actions = useVoiceSession(enabled);
+export function VoiceHud({
+	theme,
+	enabled,
+	showDevHarness,
+	floatingWindow = false,
+	widgetState,
+}: VoiceHudProps) {
+	const actions = useVoiceSession(enabled, floatingWindow);
+	const relayCommand = useCallback(
+		(command: VoiceWidgetCommand): boolean => {
+			if (!floatingWindow) return false;
+			sendWidgetCommand('acappella-voice', command);
+			return true;
+		},
+		[floatingWindow]
+	);
 
 	const state = useVoiceSessionStore((s) => s.state);
 	const sendState = useVoiceSessionStore((s) => s.sendState);
@@ -204,6 +237,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// Read once, at mount: see DEV_HARNESS_STORAGE_KEY.
 	const [harnessOptedIn] = useState(devHarnessOptedIn);
 	const devHarness = showDevHarness ?? harnessOptedIn;
+	// The explicit developer harness stays in the app where its request/reply controls live.
+	const desktopAuthority = !floatingWindow && floatingWidgetsAvailable() && !devHarness;
+	const externalWindow = floatingWindow || desktopAuthority;
 	const active = isVoiceSessionActive(state);
 	const visualState = voiceHudVisualState(state, listenPaused);
 	// The one answer to "is the microphone open": a live session whose gate is
@@ -217,9 +253,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	positionRef.current = position;
 
 	useEffect(() => {
-		if (!enabled) return;
+		if (!enabled || floatingWindow) return;
 		void loadPrefs();
-	}, [enabled, loadPrefs]);
+	}, [enabled, loadPrefs, floatingWindow]);
 
 	const measuredSize = useCallback(
 		() => ({
@@ -233,16 +269,22 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// position saved on a monitor that is no longer attached is the reason this
 	// clamps rather than trusts.
 	useEffect(() => {
+		if (externalWindow) return;
 		setPosition(
 			storedPosition
 				? clampVoiceHudPosition(storedPosition, measuredSize(), viewport())
 				: defaultVoiceHudPosition(measuredSize(), viewport())
 		);
-	}, [measuredSize, storedPosition]);
+	}, [measuredSize, storedPosition, enabled, externalWindow]);
 
 	// A window resize can leave the widget partly or wholly off screen.
-	useEventListener('resize', () =>
-		setPosition((prev) => (prev ? clampVoiceHudPosition(prev, measuredSize(), viewport()) : prev))
+	useEventListener(
+		'resize',
+		() =>
+			setPosition((prev) =>
+				prev ? clampVoiceHudPosition(prev, measuredSize(), viewport()) : prev
+			),
+		{ enabled: !externalWindow }
 	);
 
 	const onDragHandle = useCallback(
@@ -281,50 +323,62 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// ONLY thing that hides the widget, and it takes the "just for now" wait with
 	// it, so the next conversation starts on the stored default.
 	const handleClose = useCallback(() => {
+		setWaitPickerOpen(false);
+		if (relayCommand({ type: 'close' })) return;
 		void actions.stop();
 		setMinimized(false);
 		setDismissed(true);
 		setWaitPickerOpen(false);
 		void setSendWait(null).catch(() => undefined);
-	}, [actions, setDismissed, setMinimized, setSendWait]);
+	}, [actions, setDismissed, setMinimized, setSendWait, relayCommand]);
 
 	// The other button. It does NOT touch the session, or the microphone.
-	const handleMinimize = useCallback(() => setMinimized(true), [setMinimized]);
+	const handleMinimize = useCallback(() => {
+		if (!relayCommand({ type: 'minimize' })) setMinimized(true);
+	}, [setMinimized, relayCommand]);
 
 	// The talk button. Both shut the microphone and keep the session; opening
 	// resumes it, or starts one when the last one has ended. See
 	// `services/voiceListening.ts` for why the two are queued behind each other.
-	const handleOpenMic = useCallback(({ hold }: { hold: boolean }) => {
-		void openVoiceMic({ hold });
-	}, []);
-	const handleCloseMic = useCallback(({ send }: { send: boolean }) => {
-		void closeVoiceMic({ send });
-	}, []);
+	const handleOpenMic = useCallback(
+		({ hold }: { hold: boolean }) => {
+			if (!relayCommand({ type: 'open-mic', hold })) void openVoiceMic({ hold });
+		},
+		[relayCommand]
+	);
+	const handleCloseMic = useCallback(
+		({ send }: { send: boolean }) => {
+			if (!relayCommand({ type: 'close-mic', send })) void closeVoiceMic({ send });
+		},
+		[relayCommand]
+	);
 
 	const handleToggleListenMode = useCallback(() => {
 		// The wait belongs to hands-free. Left open across the switch it would be a
 		// picker for a timer push-to-talk never runs.
 		setWaitPickerOpen(false);
-		void toggleVoiceListenMode();
-	}, []);
+		if (!relayCommand({ type: 'toggle-listen-mode' })) void toggleVoiceListenMode();
+	}, [relayCommand]);
 
 	const handlePickWait = useCallback(
 		(waitMs: number | null) => {
-			void setSendWait(waitMs).catch(() => undefined);
+			if (!relayCommand({ type: 'set-wait', waitMs }))
+				void setSendWait(waitMs).catch(() => undefined);
 		},
-		[setSendWait]
+		[setSendWait, relayCommand]
 	);
 
 	const handleSetSendPhrases = useCallback(
 		(phrases: string) => {
-			void setSendPhrases(phrases).catch(() => undefined);
+			if (!relayCommand({ type: 'set-send-phrases', phrases }))
+				void setSendPhrases(phrases).catch(() => undefined);
 		},
-		[setSendPhrases]
+		[setSendPhrases, relayCommand]
 	);
 
 	const handleInterrupt = useCallback(() => {
-		void actions.interrupt();
-	}, [actions]);
+		if (!relayCommand({ type: 'interrupt' })) void actions.interrupt();
+	}, [actions, relayCommand]);
 
 	/**
 	 * Mute applies to the live output and is deliberately not persisted: a mute
@@ -332,24 +386,25 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	 * talking to you, with a button you have long forgotten pressing.
 	 */
 	const handleToggleMute = useCallback(() => {
+		if (relayCommand({ type: 'toggle-mute' })) return;
 		const next = !muted;
 		setMuted(next);
 		void window.maestro.voice.setVolume(next ? 0 : DEFAULT_TTS_VOLUME).catch(() => undefined);
-	}, [muted, setMuted]);
+	}, [muted, setMuted, relayCommand]);
 
 	// Auto-idle: collapse when a turn finishes, expand the moment there is
 	// something to show again. Never closes - see the header comment.
 	useEffect(() => {
-		if (minimizeBehavior !== 'auto-idle') return;
+		if (floatingWindow || !enabled || minimizeBehavior !== 'auto-idle') return;
 		if (visualState === 'idle-armed') setMinimized(true);
 		else setMinimized(false);
-	}, [minimizeBehavior, setMinimized, visualState]);
+	}, [minimizeBehavior, setMinimized, visualState, enabled, floatingWindow]);
 
 	// A new session un-hides the widget. Otherwise a hotkey or a wake word would
 	// open a microphone behind a HUD the user dismissed an hour ago.
 	useEffect(() => {
-		if (active) setDismissed(false);
-	}, [active, setDismissed]);
+		if (active && !floatingWindow) setDismissed(false);
+	}, [active, setDismissed, floatingWindow]);
 
 	const micIssue = mic?.issue ?? null;
 	const { hasOpenModal } = useLayerStack();
@@ -377,10 +432,19 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// Tab and Agent mode follow the user to another agent or tab. Here rather
 	// than in the mode switch, which is only mounted while a session is live:
 	// the HUD is the one voice surface that is always mounted.
-	useVoiceScopeFollow(enabled && ownsSession);
+	useVoiceScopeFollow(enabled && ownsSession && !floatingWindow);
 	// Only while this window owns the surface: enumerating devices in every window
 	// would have each one subscribing to a list none of them is showing.
-	const inputDevices = useVoiceInputDevices(enabled && ownsSession);
+	const localInputDevices = useVoiceInputDevices(enabled && ownsSession && !floatingWindow);
+	const inputDevices =
+		floatingWindow && widgetState
+			? {
+					...widgetState.inputDevices,
+					select: async (deviceId: string) => {
+						relayCommand({ type: 'set-input', deviceId });
+					},
+				}
+			: localInputDevices;
 	// `surfaced` is what keeps the widget up after its session ends: once a
 	// session has been live here, only the close control takes the HUD away.
 	const visible =
@@ -388,31 +452,34 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		!dismissed &&
 		// Temporarily yield to blocking dialogs without dismissing or stopping the
 		// session. The shared stack excludes passive panels, including this HUD.
-		!hasOpenModal() &&
+		(externalWindow || !hasOpenModal()) &&
 		(devHarness || (ownsSession && (active || surfaced || !!error || !!micIssue)));
 
 	// Read when the widget comes up rather than once at mount: the default behind
 	// the wait chip is a setting, and it can change between two conversations.
 	useEffect(() => {
-		if (visible) void refreshSendWait().catch(() => undefined);
-	}, [refreshSendWait, visible]);
+		if (visible && !floatingWindow) void refreshSendWait().catch(() => undefined);
+	}, [refreshSendWait, visible, floatingWindow]);
 	// And again when the send panel opens: it edits the send phrase, which
 	// Settings can also change while the widget is already up, and a field seeded
 	// from a stale copy would write that copy back over the newer one.
 	useEffect(() => {
-		if (waitPickerOpen) void refreshSendWait().catch(() => undefined);
-	}, [refreshSendWait, waitPickerOpen]);
+		if (waitPickerOpen && !relayCommand({ type: 'refresh-send-wait' }))
+			void refreshSendWait().catch(() => undefined);
+	}, [refreshSendWait, waitPickerOpen, relayCommand]);
 
 	// Tab walks Tab / Agent / Conductor. Only with a live session (the switch is
 	// not drawn without one, and there is nothing to re-bind), only while the
 	// widget is actually on screen, and only on top: a modal opened over the HUD
 	// needs Tab for its own focus order.
 	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.VOICE_HUD);
-	const tabCyclesMode = visible && !minimized && active && isTopLayer;
+	const tabCyclesMode =
+		visible && !minimized && active && !desktopAuthority && (floatingWindow || isTopLayer);
 	useEffect(() => {
+		if (floatingWindow) return;
 		setTabCyclesMode(tabCyclesMode);
 		return () => setTabCyclesMode(false);
-	}, [setTabCyclesMode, tabCyclesMode]);
+	}, [setTabCyclesMode, tabCyclesMode, floatingWindow]);
 	useEventListener(
 		'keydown',
 		(event) => {
@@ -422,7 +489,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 			// popup, a shell line, an editor's indent) has already said so.
 			if (key.defaultPrevented) return;
 			key.preventDefault();
-			modeSwitch.cycle(key.shiftKey ? -1 : 1);
+			const direction = key.shiftKey ? -1 : 1;
+			if (!relayCommand({ type: 'cycle-mode', direction })) modeSwitch.cycle(direction);
 		},
 		{ enabled: tabCyclesMode }
 	);
@@ -438,12 +506,182 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// that exists to be talked at must never take the keyboard away from the app
 	// it is floating over.
 	useModalLayer(MODAL_PRIORITIES.VOICE_HUD, 'Voice HUD', handleClose, {
-		enabled: visible,
+		enabled: visible && !externalWindow,
 		blocksLowerLayers: false,
 		capturesFocus: false,
 		blocksAppShortcuts: false,
 		focusTrap: 'none',
 	});
+
+	// Only the originating app window publishes. The replica never owns protocol
+	// subscriptions, scope following, persistence, or microphone enumeration.
+	useEffect(() => {
+		if (!enabled || !desktopAuthority || !ownsSession) return;
+		const source = {
+			getState(): VoiceWidgetState {
+				const session = Object.fromEntries(
+					Object.entries(useVoiceSessionStore.getState()).filter(
+						([, value]) => typeof value !== 'function'
+					)
+				) as unknown as VoiceSessionProjection;
+				const u = useVoiceUiStore.getState();
+				return {
+					session,
+					ui: {
+						transcriptVisible: u.transcriptVisible,
+						hudPosition: u.hudPosition,
+						minimizeBehavior: u.minimizeBehavior,
+						listenMode: u.listenMode,
+						holdWhileBusy: u.holdWhileBusy,
+						defaultMode: u.defaultMode,
+						loaded: u.loaded,
+						minimized: u.minimized,
+						muted: u.muted,
+						holdThresholdMs: u.holdThresholdMs,
+						sendWait: u.sendWait,
+					},
+					inputDevices: {
+						devices: localInputDevices.devices,
+						selectedId: localInputDevices.selectedId,
+						loading: localInputDevices.loading,
+					},
+					forceSendAllowed,
+				};
+			},
+			subscribe(listener: (state: VoiceWidgetState, previous: VoiceWidgetState) => void) {
+				let previous = source.getState();
+				const changed = () => {
+					const next = source.getState();
+					listener(next, previous);
+					previous = next;
+				};
+				const voice = useVoiceSessionStore.subscribe(changed);
+				const ui = useVoiceUiStore.subscribe(changed);
+				return () => {
+					voice();
+					ui();
+				};
+			},
+		};
+		return publishStoreState('acappella-voice', source, (snapshot) => snapshot);
+	}, [
+		enabled,
+		desktopAuthority,
+		ownsSession,
+		localInputDevices.devices,
+		localInputDevices.selectedId,
+		localInputDevices.loading,
+		forceSendAllowed,
+	]);
+
+	const wasWindowAuthority = useRef(false);
+	useEffect(() => {
+		if (!enabled || !desktopAuthority) return;
+		const api = window.maestro.floatingWidgets;
+		if (!ownsSession) {
+			// A Quick Chat session has its own controls. Hide our old HUD, but main
+			// refuses this if another app window already published its new ownership.
+			if (wasWindowAuthority.current) void api.hide('acappella-voice');
+			wasWindowAuthority.current = false;
+			return;
+		}
+		wasWindowAuthority.current = true;
+		void (visible && !minimized ? api.show('acappella-voice') : api.hide('acappella-voice'));
+	}, [enabled, desktopAuthority, ownsSession, visible, minimized]);
+
+	useEffect(() => {
+		if (!enabled || !desktopAuthority) return;
+		return () => {
+			if (wasWindowAuthority.current) void window.maestro.floatingWidgets.hide('acappella-voice');
+		};
+	}, [enabled, desktopAuthority]);
+
+	useEffect(() => {
+		if (!enabled || !desktopAuthority || !ownsSession) return;
+		return onWidgetCommand<unknown>('acappella-voice', (command) => {
+			if (!isVoiceWidgetCommand(command)) return;
+			switch (command.type) {
+				case 'close':
+					handleClose();
+					break;
+				case 'minimize':
+					handleMinimize();
+					break;
+				case 'open-mic':
+					handleOpenMic(command);
+					break;
+				case 'close-mic':
+					handleCloseMic(command);
+					break;
+				case 'interrupt':
+					handleInterrupt();
+					break;
+				case 'toggle-mute':
+					handleToggleMute();
+					break;
+				case 'toggle-transcript':
+					void toggleTranscript();
+					break;
+				case 'toggle-listen-mode':
+					handleToggleListenMode();
+					break;
+				case 'set-wait':
+					handlePickWait(command.waitMs);
+					break;
+				case 'set-send-phrases':
+					handleSetSendPhrases(command.phrases);
+					break;
+				case 'set-hold-while-busy':
+					void setHoldWhileBusy(command.enabled);
+					break;
+				case 'set-force-send':
+					void window.maestro.voice.setForceSend(command.enabled);
+					break;
+				case 'set-input':
+					void localInputDevices.select(command.deviceId);
+					break;
+				case 'set-mode':
+					modeSwitch.switchTo(command.mode);
+					break;
+				case 'cycle-mode':
+					modeSwitch.cycle(command.direction);
+					break;
+				case 'send':
+					void window.maestro.voice.endUtterance();
+					break;
+				case 'open-mic-settings':
+					void window.maestro.voice.openMicSettings();
+					break;
+				case 'refresh-send-wait':
+					void refreshSendWait().catch(() => undefined);
+					break;
+				case 'navigate':
+					if (command.groupChatId)
+						useGroupChatStore.getState().setActiveGroupChatId(command.groupChatId);
+					else jumpToVoiceTab(command.agentSessionId, command.tabId);
+					break;
+			}
+		});
+	}, [
+		enabled,
+		desktopAuthority,
+		ownsSession,
+		handleClose,
+		handleMinimize,
+		handleOpenMic,
+		handleCloseMic,
+		handleInterrupt,
+		handleToggleMute,
+		toggleTranscript,
+		handleToggleListenMode,
+		handlePickWait,
+		handleSetSendPhrases,
+		setHoldWhileBusy,
+		refreshSendWait,
+		localInputDevices.select,
+		modeSwitch.switchTo,
+		modeSwitch.cycle,
+	]);
 
 	const warningText = useMemo(
 		() => readableTextOn(theme.colors.warning, [theme.colors.bgSidebar]),
@@ -458,7 +696,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		[theme.colors.accentForeground, theme.colors.accent]
 	);
 
-	if (!visible) return null;
+	if (!visible || desktopAuthority) return null;
 
 	const spoken = speech ? speech.sentences.length : 0;
 	// While the reply is still being written the total is a lower bound, so the
@@ -509,89 +747,106 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// told that the microphone just opened.
 	if (minimized) return liveRegion;
 
-	return (
+	const content = (
 		<>
 			{liveRegion}
 			<div
 				ref={setRootRef}
 				data-testid="voice-hud"
-				className="fixed rounded-lg border shadow-xl select-none overflow-hidden"
+				className={
+					floatingWindow
+						? 'relative flex-1 min-h-0 overflow-y-auto scrollbar-thin select-none'
+						: 'fixed rounded-lg border shadow-xl select-none overflow-hidden'
+				}
 				style={{
 					zIndex: Z_LAYERS.VOICE_HUD,
-					top: placement.top,
-					left: placement.left,
-					width: HUD_WIDTH,
+					top: floatingWindow ? undefined : placement.top,
+					left: floatingWindow ? undefined : placement.left,
+					width: floatingWindow ? '100%' : HUD_WIDTH,
 					backgroundColor: theme.colors.bgSidebar,
 					// Accent means a hot microphone, so it follows the gate, not the session.
 					borderColor: micOpen ? theme.colors.accent : theme.colors.border,
 					color: theme.colors.textMain,
 					// Hidden until the first placement lands, so the widget does not flash
 					// in the top-left corner on the frame before its position is known.
-					visibility: position ? undefined : 'hidden',
+					visibility: floatingWindow || position ? undefined : 'hidden',
 				}}
 			>
 				{/* Header: what it is bound to, what it is doing, and the two ways out.
 				    It doubles as the drag handle. */}
-				<div
-					data-testid="voice-hud-header"
-					className="flex items-center gap-2 px-3 py-2 border-b"
-					style={{ borderColor: theme.colors.border, cursor: 'grab' }}
-					onPointerDown={onDragHandle}
-					title="Drag to move"
-				>
-					<VoiceIndicator
-						theme={theme}
-						state={visualState}
-						deviceLabel={remoteDevice ?? (mic?.capturing ? mic.deviceLabel : null)}
-					/>
-					<div className="min-w-0 flex-1">
-						{/* The scope is the prominent line, not the state: the state is
-						    obvious from the indicator, and WHERE you are talking is not. */}
-						<div
-							data-testid="voice-hud-scope"
-							className="text-xs font-bold truncate"
-							style={{ color: scope.color }}
-						>
-							{scope.label}
-							{scope.tabLabel && (
-								<span className="font-normal opacity-80"> / {scope.tabLabel}</span>
-							)}
-						</div>
-						<div className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
-							{stateLabel}
-						</div>
-					</div>
-					{visualState === 'speaking' && speech && (
-						<span
-							data-testid="voice-hud-speech-progress"
-							className="text-2xs px-1.5 py-0.5 rounded shrink-0"
-							style={{ backgroundColor: theme.colors.accent, color: onAccent }}
-						>
-							{speechProgress}
-						</span>
-					)}
-					<button
-						type="button"
-						data-testid="voice-hud-minimize"
-						aria-label="Minimize the voice HUD (the session keeps running)"
-						title="Minimize (the session keeps running)"
-						onClick={handleMinimize}
-						className="p-0.5 rounded shrink-0 hover:bg-white/10 focus:outline-none focus-visible:ring-2"
-						style={{ color: theme.colors.textDim }}
+				{!floatingWindow && (
+					<div
+						data-testid="voice-hud-header"
+						className="flex items-center gap-2 px-3 py-2 border-b"
+						style={{ borderColor: theme.colors.border, cursor: 'grab' }}
+						onPointerDown={onDragHandle}
+						title="Drag to move"
 					>
-						<Minus className="w-3.5 h-3.5" />
-					</button>
-					<EscCloseButton
-						theme={theme}
-						onClose={handleClose}
-						label="End voice session (Esc)"
-						testId="voice-hud-close"
-					/>
-				</div>
+						<VoiceIndicator
+							theme={theme}
+							state={visualState}
+							deviceLabel={remoteDevice ?? (mic?.capturing ? mic.deviceLabel : null)}
+						/>
+						<div className="min-w-0 flex-1">
+							{/* The scope is the prominent line, not the state: the state is
+						    obvious from the indicator, and WHERE you are talking is not. */}
+							<div
+								data-testid="voice-hud-scope"
+								className="text-xs font-bold truncate"
+								style={{ color: scope.color }}
+							>
+								{scope.label}
+								{scope.tabLabel && (
+									<span className="font-normal opacity-80"> / {scope.tabLabel}</span>
+								)}
+							</div>
+							<div className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
+								{stateLabel}
+							</div>
+						</div>
+						{visualState === 'speaking' && speech && (
+							<span
+								data-testid="voice-hud-speech-progress"
+								className="text-2xs px-1.5 py-0.5 rounded shrink-0"
+								style={{ backgroundColor: theme.colors.accent, color: onAccent }}
+							>
+								{speechProgress}
+							</span>
+						)}
+						<button
+							type="button"
+							data-testid="voice-hud-minimize"
+							aria-label="Minimize the voice HUD (the session keeps running)"
+							title="Minimize (the session keeps running)"
+							onClick={handleMinimize}
+							className="p-0.5 rounded shrink-0 hover:bg-white/10 focus:outline-none focus-visible:ring-2"
+							style={{ color: theme.colors.textDim }}
+						>
+							<Minus className="w-3.5 h-3.5" />
+						</button>
+						<EscCloseButton
+							theme={theme}
+							onClose={handleClose}
+							label="End voice session (Esc)"
+							testId="voice-hud-close"
+						/>
+					</div>
+				)}
 
 				{/* Tab / Agent / Conductor: where the next sentence goes. Only while a
 				    session is live, because a switch re-binds that session. */}
-				{active && <VoiceModeSwitch theme={theme} />}
+				{active && (
+					<VoiceModeSwitch
+						theme={theme}
+						onChange={
+							floatingWindow
+								? (mode) => {
+										relayCommand({ type: 'set-mode', mode });
+									}
+								: undefined
+						}
+					/>
+				)}
 
 				{/* Anything the user is running that they did not ask for. */}
 				{substitutions.length > 0 && (
@@ -618,7 +873,20 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					</div>
 				)}
 
-				{micIssue && <MicIssueNotice theme={theme} issue={micIssue} color={warningText} />}
+				{micIssue && (
+					<MicIssueNotice
+						theme={theme}
+						issue={micIssue}
+						color={warningText}
+						onOpenSettings={
+							floatingWindow
+								? () => {
+										relayCommand({ type: 'open-mic-settings' });
+									}
+								: undefined
+						}
+					/>
+				)}
 
 				{showError && error && (
 					<div
@@ -630,7 +898,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 							<VoiceSetupRecovery
 								theme={theme}
 								fallback={error.message}
-								onReady={() => openVoiceMic()}
+								onReady={async () => {
+									if (!relayCommand({ type: 'open-mic', hold: false })) await openVoiceMic();
+								}}
 							/>
 						) : (
 							error.message
@@ -651,10 +921,35 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					</div>
 				)}
 
-				{transcriptVisible && <VoiceTranscript theme={theme} />}
+				{transcriptVisible && (
+					<VoiceTranscript
+						theme={theme}
+						onNavigate={
+							floatingWindow
+								? (route) => {
+										relayCommand({
+											type: 'navigate',
+											agentSessionId: route.agentSessionId,
+											tabId: route.tabId,
+											groupChatId: route.groupChatId,
+										});
+									}
+								: undefined
+						}
+					/>
+				)}
 
 				{/* A finished sentence waiting on a send phrase. */}
-				<VoiceHeldNotice theme={theme} />
+				<VoiceHeldNotice
+					theme={theme}
+					onSend={
+						floatingWindow
+							? () => {
+									relayCommand({ type: 'send' });
+								}
+							: undefined
+					}
+				/>
 
 				{/* The one thing "Listening" cannot say for itself. The floor really is
 				    open here - the state machine is not lying - but a text-in recogniser
@@ -686,7 +981,10 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 							theme={theme}
 							checked={holdWhileBusy}
 							ariaLabel="Hold while busy"
-							onChange={(value) => void setHoldWhileBusy(value)}
+							onChange={(value) => {
+								if (!relayCommand({ type: 'set-hold-while-busy', enabled: value }))
+									void setHoldWhileBusy(value);
+							}}
 						/>
 					</div>
 				</div>
@@ -738,7 +1036,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 						checked={forceSendAllowed && sendState.forceSend}
 						disabled={!active || !forceSendAllowed}
 						onChange={(value) => {
-							void window.maestro.voice.setForceSend(value);
+							if (!relayCommand({ type: 'set-force-send', enabled: value }))
+								void window.maestro.voice.setForceSend(value);
 						}}
 					/>
 				</div>
@@ -757,13 +1056,56 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					onToggleListenMode={handleToggleListenMode}
 					onToggleWaitPicker={() => setWaitPickerOpen((open) => !open)}
 					onInterrupt={handleInterrupt}
-					onToggleTranscript={() => void toggleTranscript()}
+					onToggleTranscript={() => {
+						if (!relayCommand({ type: 'toggle-transcript' })) void toggleTranscript();
+					}}
 					onToggleMute={handleToggleMute}
 				/>
 
 				{devHarness && <VoiceDevHarness theme={theme} actions={actions} />}
 			</div>
 		</>
+	);
+	return floatingWindow ? (
+		<FloatingWidgetFrame
+			theme={theme}
+			icon={
+				<VoiceIndicator
+					theme={theme}
+					state={visualState}
+					deviceLabel={remoteDevice ?? (mic?.capturing ? mic.deviceLabel : null)}
+				/>
+			}
+			title={`${scope.label}${scope.tabLabel ? ` / ${scope.tabLabel}` : ''}`}
+			subtitle={stateLabel}
+			onClose={handleClose}
+			closeLabel="End voice session (Esc)"
+			actions={
+				<>
+					{visualState === 'speaking' && speech && (
+						<span
+							data-testid="voice-hud-speech-progress"
+							className="text-2xs px-1.5 py-0.5 rounded"
+							style={{ backgroundColor: theme.colors.accent, color: onAccent }}
+						>
+							{speechProgress}
+						</span>
+					)}
+					<button
+						type="button"
+						aria-label="Minimize the voice HUD (the session keeps running)"
+						onClick={handleMinimize}
+						style={{ color: theme.colors.textDim }}
+					>
+						<Minus className="w-3.5 h-3.5" />
+					</button>
+				</>
+			}
+		>
+			{content}
+		</FloatingWidgetFrame>
+	) : (
+		content
 	);
 }
 
@@ -776,13 +1118,24 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
  * a platform with no deep link (Linux) the sentence carries the instruction
  * instead, since a button that opens nothing is worse than no button at all.
  */
-function MicIssueNotice({ theme, issue, color }: { theme: Theme; issue: MicIssue; color: string }) {
+function MicIssueNotice({
+	theme,
+	issue,
+	color,
+	onOpenSettings,
+}: {
+	theme: Theme;
+	issue: MicIssue;
+	color: string;
+	onOpenSettings?: () => void;
+}) {
 	const platform = getPlatform();
 	const settingsUrl = issue === 'permission-denied' ? micSettingsUrl(platform) : null;
 
 	const openSettings = useCallback(() => {
-		void window.maestro.voice.openMicSettings();
-	}, []);
+		if (onOpenSettings) onOpenSettings();
+		else void window.maestro.voice.openMicSettings();
+	}, [onOpenSettings]);
 
 	return (
 		<div

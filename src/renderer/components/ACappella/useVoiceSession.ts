@@ -42,8 +42,9 @@ export interface VoiceSessionActions {
  *                clears the mirrored state, so turning the feature off cannot
  *                leave a stale session on screen.
  */
-export function useVoiceSession(enabled: boolean): VoiceSessionActions {
+export function useVoiceSession(enabled: boolean, replica = false): VoiceSessionActions {
 	useEffect(() => {
+		if (replica) return;
 		if (!enabled) {
 			useVoiceSessionStore.getState().reset();
 			return;
@@ -65,7 +66,7 @@ export function useVoiceSession(enabled: boolean): VoiceSessionActions {
 			});
 
 		return unsubscribe;
-	}, [enabled]);
+	}, [enabled, replica]);
 
 	// A role that fell back to the mock tier has to reach the user, and every
 	// other trigger needs the same guarantee, so the projection lives in

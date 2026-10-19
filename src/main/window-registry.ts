@@ -13,7 +13,12 @@ import { generateUUID } from '../shared/uuid';
  * and `acappella-audio` are host-owned feature windows that own no sessions;
  * the multi-window consumers skip them.
  */
-export type WindowKind = 'app' | 'cadenza-hud' | 'acappella-audio' | 'quick-chat';
+export type WindowKind =
+	| 'app'
+	| 'cadenza-hud'
+	| 'acappella-audio'
+	| 'quick-chat'
+	| 'floating-widget';
 
 /**
  * A single window tracked by the registry. `sessionIds` are agent IDs (what
@@ -143,6 +148,19 @@ export class WindowRegistry extends EventEmitter {
 	 */
 	getAppWindows(): RegisteredWindow[] {
 		return [...this.windows.values()].filter((w) => w.kind === 'app');
+	}
+
+	/**
+	 * True when `browserWindow` is registered as a feature window (any kind but
+	 * `app`). Code that counts raw `BrowserWindow.getAllWindows()` uses this to
+	 * keep a HUD, Quick Chat, or floating widget from passing for an app window.
+	 * An untracked window is not a feature window.
+	 */
+	isFeatureWindow(browserWindow: BrowserWindow): boolean {
+		for (const entry of this.windows.values()) {
+			if (entry.browserWindow === browserWindow) return entry.kind !== 'app';
+		}
+		return false;
 	}
 
 	/** The first registered window of a given kind, if any (e.g. the cadenza HUD). */

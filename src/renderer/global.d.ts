@@ -241,6 +241,7 @@ import type { VoiceSelfTestResponse } from '../main/preload/debug';
 import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { LocalModelsApi } from '../main/preload/localModels';
 import type { QuickChatApi } from '../main/preload/quickChat';
+import type { FloatingWidgetsApi } from '../main/preload/floatingWidgets';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { GroupSeededCreateReport } from '../shared/groupAgentDefaults';
 import type { HistoryEntry } from '../shared/types';
@@ -257,6 +258,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -2001,6 +2003,11 @@ interface MaestroAPI {
 	 * the readiness that gates its system-prompt section).
 	 */
 	maestroRun: MaestroRunApi;
+	/**
+	 * Dataview (DQL queries against the main-process vault index, index status and
+	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
+	 */
+	dataview: DataviewApi;
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -5304,6 +5311,8 @@ interface MaestroAPI {
 	};
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;
+	/** Floating widgets: always-on-top desktop windows and the state relay between them. */
+	floatingWidgets: FloatingWidgetsApi;
 	/**
 	 * Codex `visualize` content references. `load` builds the isolated document
 	 * for one fragment and returns the id/revision to frame it by.

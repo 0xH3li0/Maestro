@@ -62,6 +62,7 @@ import {
 import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerMaestroRunHandlers } from './maestroRun';
+import { registerDataviewHandlers, DataviewHandlerDependencies } from './dataview';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -157,6 +158,8 @@ export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
 export { registerComputerHistoryHandlers };
 export { registerMaestroRunHandlers };
+export { registerDataviewHandlers };
+export type { DataviewHandlerDependencies };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };

@@ -42,6 +42,7 @@ export interface VoiceTranscriptProps {
 	theme: Theme;
 	/** Max height of the scroll area, in px. */
 	maxHeight?: number;
+	onNavigate?: (route: VoiceFeedRoute) => void;
 }
 
 /** Who said a line. `Maestro` is the session narrating itself. */
@@ -67,7 +68,7 @@ const ACTION_LABELS: Record<DispatchAction, string> = {
  */
 const ESTIMATED_ROW_HEIGHT = 34;
 
-export function VoiceTranscript({ theme, maxHeight = 220 }: VoiceTranscriptProps) {
+export function VoiceTranscript({ theme, maxHeight = 220, onNavigate }: VoiceTranscriptProps) {
 	const feed = useVoiceSessionStore((s) => s.feed);
 	const partial = useVoiceSessionStore((s) => s.partialTranscript);
 	const speech = useVoiceSessionStore((s) => s.speech);
@@ -141,7 +142,12 @@ export function VoiceTranscript({ theme, maxHeight = 220 }: VoiceTranscriptProps
 										transform: `translateY(${item.start}px)`,
 									}}
 								>
-									<TranscriptLine theme={theme} entry={entry} accentText={accentText} />
+									<TranscriptLine
+										theme={theme}
+										entry={entry}
+										accentText={accentText}
+										onNavigate={onNavigate}
+									/>
 								</div>
 							);
 						})}
@@ -176,9 +182,11 @@ function TranscriptLine({
 	theme,
 	entry,
 	accentText,
+	onNavigate,
 }: {
 	theme: Theme;
 	entry: VoiceFeedEntry;
+	onNavigate?: (route: VoiceFeedRoute) => void;
 	accentText: string;
 }) {
 	return (
@@ -200,7 +208,7 @@ function TranscriptLine({
 			) : (
 				<span style={{ color: theme.colors.textMain }}>{entry.text}</span>
 			)}
-			{entry.route && <RouteChip theme={theme} route={entry.route} />}
+			{entry.route && <RouteChip theme={theme} route={entry.route} onNavigate={onNavigate} />}
 		</div>
 	);
 }
@@ -211,14 +219,26 @@ function TranscriptLine({
  * A real `<button>` rather than a styled span: it navigates, so it has to be
  * reachable by keyboard and announced as something that can be activated.
  */
-function RouteChip({ theme, route }: { theme: Theme; route: VoiceFeedRoute }) {
+function RouteChip({
+	theme,
+	route,
+	onNavigate,
+}: {
+	theme: Theme;
+	route: VoiceFeedRoute;
+	onNavigate?: (route: VoiceFeedRoute) => void;
+}) {
 	const label = route.tabName ? `${route.agentName} / ${route.tabName}` : route.agentName;
 	const description = `${label} (${ACTION_LABELS[route.action]})`;
 
 	const onClick = useCallback(() => {
+		if (onNavigate) {
+			onNavigate(route);
+			return;
+		}
 		if (route.groupChatId) useGroupChatStore.getState().setActiveGroupChatId(route.groupChatId);
 		else jumpToVoiceTab(route.agentSessionId, route.tabId);
-	}, [route.agentSessionId, route.tabId, route.groupChatId]);
+	}, [route, onNavigate]);
 
 	return (
 		<button

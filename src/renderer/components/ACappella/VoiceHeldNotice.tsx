@@ -19,7 +19,7 @@ import type { Theme } from '../../types';
 /** How often the countdown redraws. A second is the unit it shows. */
 const TICK_MS = 1000;
 
-export function VoiceHeldNotice({ theme }: { theme: Theme }) {
+export function VoiceHeldNotice({ theme, onSend }: { theme: Theme; onSend?: () => void }) {
 	const held = useVoiceSessionStore((s) => s.heldUtterance);
 	const [now, setNow] = useState(() => Date.now());
 
@@ -52,7 +52,10 @@ export function VoiceHeldNotice({ theme }: { theme: Theme }) {
 			<button
 				type="button"
 				data-testid="voice-hud-send-now"
-				onClick={() => void window.maestro.voice.endUtterance()}
+				onClick={() => {
+					if (onSend) onSend();
+					else void window.maestro.voice.endUtterance();
+				}}
 				className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border text-2xs hover:opacity-80 focus:outline-none focus-visible:ring-2"
 				style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 			>

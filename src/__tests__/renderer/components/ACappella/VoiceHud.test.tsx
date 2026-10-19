@@ -28,9 +28,12 @@ import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { createMockSession } from '../../../helpers/mockSession';
 import { createMockAITab } from '../../../helpers/mockTab';
+import { VoiceWidget } from '../../../../renderer/floatingWidget/VoiceWidget';
+import type { VoiceWidgetState } from '../../../../shared/floatingWidgets';
 import { PARAKEET_TDT_V2_ID, getLocalModel } from '../../../../shared/local-models/model-catalog';
 
 const SESSION = 'voice-1';
+const originalFloatingWidgets = window.maestro.floatingWidgets;
 
 let seq = 0;
 
@@ -200,6 +203,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	window.maestro.floatingWidgets = originalFloatingWidgets;
 });
 
 describe('VoiceHud gating', () => {
@@ -1834,5 +1838,138 @@ describe('VoiceHud pending and Force Send', () => {
 		seq = 1;
 		emit(event('listen-stop', { reason: 'stopped' }));
 		expect(screen.queryByTestId('voice-hud-pending-send')).toBeNull();
+	});
+});
+
+describe('VoiceHud desktop window', () => {
+	let commandHandler: ((command: unknown) => void) | undefined;
+	let stateHandler: ((state: VoiceWidgetState) => void) | undefined;
+	let api: typeof window.maestro.floatingWidgets;
+	beforeEach(() => {
+		commandHandler = undefined;
+		stateHandler = undefined;
+		api = {
+			show: vi.fn().mockResolvedValue(true),
+			hide: vi.fn().mockResolvedValue(false),
+			toggle: vi.fn().mockResolvedValue(true),
+			isVisible: vi.fn().mockResolvedValue(false),
+			getBounds: vi.fn().mockResolvedValue(null),
+			setBounds: vi.fn().mockResolvedValue(null),
+			publishState: vi.fn(),
+			getState: vi.fn().mockResolvedValue(null),
+			ready: vi.fn(),
+			sendCommand: vi.fn(),
+			onCommand: vi.fn((_id, handler) => {
+				commandHandler = handler;
+				return vi.fn();
+			}),
+			onState: vi.fn((_id, handler) => {
+				stateHandler = handler;
+				return vi.fn();
+			}),
+		} as typeof api;
+		window.maestro.floatingWidgets = api;
+	});
+
+	it('publishes plain state and shows the desktop window without drawing an app card', async () => {
+		renderHud();
+		startSession();
+		await vi.waitFor(() => {
+			const last = vi.mocked(api.publishState).mock.calls.at(-1);
+			expect(last?.[0]).toBe('acappella-voice');
+			expect((last?.[1] as VoiceWidgetState).session.state).toBe('listening');
+		});
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		expect(api.show).toHaveBeenCalledWith('acappella-voice');
+		const snapshot = vi.mocked(api.publishState).mock.calls.at(-1)?.[1] as VoiceWidgetState;
+		expect(snapshot.session).not.toHaveProperty('applyEvent');
+		expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
+		expect(useVoiceUiStore.getState().tabCyclesMode).toBe(false);
+	});
+
+	it('keeps feature-off free of widget publishers, commands and windows', () => {
+		renderHud({ enabled: false });
+		expect(api.publishState).not.toHaveBeenCalled();
+		expect(api.onCommand).not.toHaveBeenCalled();
+		expect(api.show).not.toHaveBeenCalled();
+		expect(api.hide).not.toHaveBeenCalled();
+	});
+
+	it('handles minimize through the owning store and close through the voice service', async () => {
+		renderHud();
+		startSession();
+		act(() => commandHandler?.({ type: 'minimize' }));
+		expect(useVoiceUiStore.getState().minimized).toBe(true);
+		expect(api.hide).toHaveBeenCalledWith('acappella-voice');
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		await act(async () => commandHandler?.({ type: 'close' }));
+		expect(window.maestro.voice.stop).toHaveBeenCalledOnce();
+		expect(useVoiceSessionStore.getState().dismissed).toBe(true);
+	});
+
+	it('renders the same controls from a seed and routes commands without a second voice subscription', async () => {
+		useVoiceSessionStore
+			.getState()
+			.applyEvent(event('wake', { source: 'client-button', scope: { kind: 'conductor' } }));
+		useVoiceSessionStore
+			.getState()
+			.applyEvent(
+				event('listen-start', { scope: { kind: 'conductor' }, sttProviderId: 'mock-stt' })
+			);
+		const session = Object.fromEntries(
+			Object.entries(useVoiceSessionStore.getState()).filter(
+				([, value]) => typeof value !== 'function'
+			)
+		) as unknown as VoiceWidgetState['session'];
+		const u = useVoiceUiStore.getState();
+		const snapshot: VoiceWidgetState = {
+			session,
+			ui: {
+				transcriptVisible: false,
+				hudPosition: null,
+				minimizeBehavior: 'manual',
+				listenMode: 'hands-free',
+				holdWhileBusy: true,
+				defaultMode: u.defaultMode,
+				loaded: true,
+				minimized: false,
+				muted: false,
+				holdThresholdMs: u.holdThresholdMs,
+				sendWait: null,
+			},
+			inputDevices: {
+				devices: [{ deviceId: 'headset', label: 'Headset' }],
+				selectedId: 'headset',
+				loading: false,
+			},
+			forceSendAllowed: true,
+		};
+		vi.mocked(api.getState).mockResolvedValue(snapshot);
+		render(<VoiceWidget theme={mockTheme} />);
+		await act(async () => {});
+		expect(screen.getByTestId('floating-widget-frame')).toBeInTheDocument();
+		expect(screen.getByTestId('floating-widget-title-strip')).toHaveTextContent('Listening');
+		expect(window.maestro.voice.onEvent).not.toHaveBeenCalled();
+		expect(window.maestro.voice.getState).not.toHaveBeenCalled();
+		expect(window.maestro.voice.inputDevices).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId('voice-hud-mode-agent'));
+		expect(api.sendCommand).toHaveBeenCalledWith('acappella-voice', {
+			type: 'set-mode',
+			mode: 'agent',
+		});
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole('button', { name: 'Minimize the voice HUD (the session keeps running)' })
+		);
+		expect(api.sendCommand).toHaveBeenCalledWith('acappella-voice', { type: 'minimize' });
+		expect(useVoiceUiStore.getState().minimized).toBe(false);
+		fireEvent.keyDown(window, { key: 'Escape' });
+		expect(api.sendCommand).toHaveBeenCalledWith('acappella-voice', { type: 'close' });
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		act(() =>
+			stateHandler?.({ ...snapshot, session: { ...session, partialTranscript: 'Mirrored speech' } })
+		);
+		expect(screen.getByTestId('voice-hud-latest')).toHaveTextContent('Mirrored speech');
+		expect(api.publishState).not.toHaveBeenCalled();
 	});
 });

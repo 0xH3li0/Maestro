@@ -27,6 +27,7 @@
 import * as fs from 'fs';
 import { readLiveSessions } from '../services/storage';
 import { resolveCliPath } from '../utils/parse';
+import { formatTextTable } from '../output/formatter';
 import { humanizeDuration, DURATION_LADDER_DAYS } from '../../shared/duration';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
@@ -246,8 +247,6 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 
 /** Render a fixed-width table. Column widths flex to the widest value. */
 function renderTable(rows: ScheduledTaskRow[]): string {
-	const pad = (text: string, width: number) =>
-		text.length >= width ? text : text + ' '.repeat(width - text.length);
 	const columns: { header: string; get: (row: ScheduledTaskRow) => string }[] = [
 		{ header: 'NAME', get: (r) => r.name },
 		{ header: 'KIND', get: (r) => (r.enabled ? r.kind : `${r.kind} (paused)`) },
@@ -263,18 +262,10 @@ function renderTable(rows: ScheduledTaskRow[]): string {
 	if (rows.some((row) => row.gate)) {
 		columns.push({ header: 'GATE', get: (r) => r.gate ?? '' });
 	}
-	const widths = columns.map((col) =>
-		Math.max(col.header.length, ...rows.map((row) => col.get(row).length))
+	return formatTextTable(
+		columns.map((col) => col.header),
+		rows.map((row) => columns.map((col) => col.get(row)))
 	);
-	const line = (cells: string[]) =>
-		cells
-			.map((cell, i) => (i === columns.length - 1 ? cell : pad(cell, widths[i])))
-			.join('  ')
-			.trimEnd();
-	return [
-		line(columns.map((col) => col.header)),
-		...rows.map((row) => line(columns.map((col) => col.get(row)))),
-	].join('\n');
 }
 
 async function runList(options: CueScheduleOptions): Promise<void> {

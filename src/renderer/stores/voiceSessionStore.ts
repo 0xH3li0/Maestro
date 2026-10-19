@@ -19,17 +19,27 @@
 
 import { create } from 'zustand';
 import type {
-	DispatchEvent,
-	MicState,
-	RosterAgent,
+	VoiceFeedEntry,
+	VoiceFeedRoute,
+	VoiceFeedKind,
+	VoiceProviderIds,
+	VoiceSessionProjection,
+} from '../../shared/acappella/hud-state';
+export type {
+	VoiceFeedEntry,
+	VoiceFeedKind,
+	VoiceFeedRoute,
+	VoiceSpeechRun,
+	VoiceProviderIds,
+} from '../../shared/acappella/hud-state';
+
+import type {
 	VoiceEvent,
-	VoiceOrigin,
 	VoiceScope,
 	VoiceWindowId,
 	VoiceSendState,
 } from '../../shared/acappella/protocol';
 import type { VoiceProviderSubstitution } from '../../shared/acappella/providers';
-import type { RouteDecision } from '../../shared/acappella/route-decision';
 import { isContiguousVoiceSeq } from '../../shared/acappella/protocol';
 import {
 	documentScopeName,
@@ -44,62 +54,6 @@ import { useVoiceUiStore } from './voiceUiStore';
 // ============================================================================
 // Types
 // ============================================================================
-
-/** Who said a line in the HUD transcript. `system` is the session narrating itself. */
-export type VoiceFeedKind = 'you' | 'assistant' | 'system';
-
-/**
- * Where a turn was dispatched, carried on the feed line that narrates it.
- *
- * On the entry rather than looked up later because the transcript renders a
- * CLICKABLE chip from it ("Backend / Auth Refactor (new tab)"), and the agent or
- * tab it names may have been closed by the time anyone reads the line. Keeping
- * the address with the line is what lets the chip stay honest: it can say where
- * the turn went even when that place is gone.
- */
-export interface VoiceFeedRoute {
-	groupChatId?: string;
-	agentSessionId: string;
-	agentName: string;
-	tabId: string;
-	tabName?: string;
-	action: DispatchEvent['action'];
-}
-
-export interface VoiceFeedEntry {
-	/** `${sessionId}:${seq}` - stable, and unique even across a session restart. */
-	id: string;
-	kind: VoiceFeedKind;
-	text: string;
-	ts: number;
-	/** Set only on the line narrating a dispatch. */
-	route?: VoiceFeedRoute;
-}
-
-/** One speech run, so the HUD can show "2 of 4" and where it was cut off. */
-export interface VoiceSpeechRun {
-	utteranceId: string;
-	/**
-	 * How many sentences the run knew about at `speak-start`.
-	 *
-	 * A LOWER BOUND while {@link streaming} is true, per the protocol: the
-	 * scheduler starts speaking sentence one while the agent is still writing the
-	 * rest, so the delivered index runs past this. Anything rendering a total has
-	 * to say so rather than print it as fact.
-	 */
-	sentenceCount: number;
-	/** True while more sentences are still being written. */
-	streaming: boolean;
-	sentences: string[];
-	/** Null while the run is live. */
-	endedReason: 'complete' | 'cancelled' | 'error' | null;
-}
-
-export interface VoiceProviderIds {
-	stt: string;
-	tts: string;
-	brain: string;
-}
 
 /** The subset of `VoiceSessionSnapshot` a client can act on. */
 export interface VoiceSnapshotLike {
@@ -119,101 +73,7 @@ export interface VoiceSnapshotLike {
 	sendState?: VoiceSendState;
 }
 
-interface VoiceSessionStoreState {
-	sessionId: string | null;
-	state: VoiceSessionState;
-	scope: VoiceScope | null;
-	/**
-	 * Which microphone is holding the session.
-	 *
-	 * `local` unless a paired device took the floor, in which case the HUD says
-	 * which one. A Mac at home showing a listening indicator over its own shut
-	 * microphone is describing something that is not happening in the room, and
-	 * this is the field that stops it.
-	 */
-	origin: VoiceOrigin;
-	/**
-	 * The window whose HUD owns this session, or null for none.
-	 *
-	 * Mirrored in EVERY window, because every window receives the whole event
-	 * stream (see the multi-window invariant in `main/utils/safe-send.ts`) and
-	 * each one decides for itself whether to draw a surface. `useOwnsVoiceSession`
-	 * is that decision; nothing else should compare this field by hand.
-	 */
-	windowId: VoiceWindowId;
-	/** Last `seq` applied. */
-	seq: number;
-	/** True once a `seq` gap was seen. Sticky for the life of the session. */
-	lostEvents: boolean;
-	providerIds: VoiceProviderIds | null;
-	/**
-	 * Whether the live recogniser consumes microphone audio.
-	 *
-	 * Null until the session reports its providers. False is the case worth having
-	 * a field for: the text-in mock tier opens no capture device, so the floor is
-	 * genuinely open and nothing can ever be heard - a state that otherwise renders
-	 * as an ordinary "Listening" and sent a user through six rebuilds looking for a
-	 * broken microphone that was never opened.
-	 */
-	sttHearsAudio: boolean | null;
-	/** Roles running on the mock tier against the user's wishes. Never hidden. */
-	substitutions: VoiceProviderSubstitution[];
-	/** Live STT hypothesis. Cleared when the utterance settles. */
-	partialTranscript: string;
-	/**
-	 * Set while a finished sentence is held before dispatch (hold-until-send, or
-	 * the settle window). `settlesAt` is epoch ms; the HUD counts down to it and
-	 * says how to send now, so a held request never reads as a dead session.
-	 */
-	sendState: VoiceSendState;
-	heldUtterance: { settlesAt: number; sendPhrases: string[] } | null;
-	/** The last settled utterance. */
-	utterance: string | null;
-	decision: RouteDecision | null;
-	/**
-	 * What the last dispatch actually did. Kept whole rather than reduced,
-	 * because it is also the address a reply comes back on
-	 * (`agentSessionId` + `tabId`).
-	 */
-	lastDispatch: DispatchEvent | null;
-	speech: VoiceSpeechRun | null;
-	/**
-	 * Latest downsampled input level, 0 to 1. Updated ~20 times a second, so
-	 * anything that reads it should subscribe to it ALONE - see the note on
-	 * `selectVoiceAudioLevel`.
-	 */
-	audioLevel: number;
-	/** Whether the detector considered the last meter window to be speech. */
-	speechDetected: boolean;
-	/** The microphone as the session sees it. Null until the host reports. */
-	mic: MicState | null;
-	error: { code: string; message: string; recoverable: boolean } | null;
-	roster: RosterAgent[];
-	feed: VoiceFeedEntry[];
-	/** The user closed the HUD. Cleared when a new session starts. */
-	dismissed: boolean;
-	/**
-	 * The microphone is gated shut while the session stays alive (`listen-gate`):
-	 * hands-free switched off, or push-to-talk with the button up.
-	 *
-	 * Its own field rather than a session state, because the session really is
-	 * still `listening` - it can answer, speak, and be re-bound. What changed is
-	 * the device, and `voiceHudVisualState(state, listenPaused)` is how every
-	 * surface turns the pair into one honest answer about the microphone.
-	 */
-	listenPaused: boolean;
-	/**
-	 * A session has been live since the HUD was last closed.
-	 *
-	 * What keeps the HUD on screen after its session ends. Only Escape (the close
-	 * control) takes the HUD away: a session that timed out, or was switched off
-	 * from the talk button, leaves the surface where it was, showing that the
-	 * microphone is closed and one click from open again. Derived from the
-	 * session here, never set by a component, so a window that reloaded
-	 * mid-session agrees with one that watched it start.
-	 */
-	surfaced: boolean;
-}
+type VoiceSessionStoreState = VoiceSessionProjection;
 
 interface VoiceSessionStoreActions {
 	/** Project one protocol event. The only way session state changes. */

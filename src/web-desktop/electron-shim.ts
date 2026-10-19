@@ -73,6 +73,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'ssh-remote:test',
 	'cue:validateYaml',
 	'cue:loadPipelineLayout',
+	'dataview:status',
 ]);
 
 function isSubmissionChannel(channel: string): boolean {

@@ -46,6 +46,7 @@ import {
 import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
+import { createDataviewSupervisorHooks } from './dataview/dataview-service';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { RELAY_PLUGIN_ID } from '../shared/plugins/relay-identity';
@@ -242,6 +243,8 @@ import {
 } from './app-lifecycle';
 // A Cappella's hidden audio host window (created lazily on the first voice
 // session, closed here when the Encore Feature is switched off).
+import { getVoiceSessionService } from './acappella';
+import type { VoiceWidgetState } from '../shared/floatingWidgets';
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import {
 	shutdownACappellaForDisable,
@@ -253,6 +256,20 @@ import { hydrateUserLocalModels } from './local-models/user-models';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
+import {
+	createFloatingWidgetWindow,
+	type FloatingWidgetController,
+} from './floating-widgets/floating-widget-window';
+import {
+	createFloatingWidgetRelay,
+	type FloatingWidgetRelay,
+} from './floating-widgets/floating-widget-relay';
+import { restoreMediaWindowAtLaunch } from './floating-widgets/media-window-launch';
+import {
+	FLOATING_WIDGET_IDS,
+	FLOATING_WIDGET_SPECS,
+	type FloatingWidgetId,
+} from '../shared/floatingWidgets';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
 import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
@@ -736,6 +753,7 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	// quit: a hidden window holding an open capture device is exactly the thing a
 	// user turning the feature off is asking to be rid of.
 	if (!resolveEncoreFeatures(encoreFeatures).aCappella) {
+		floatingWidgetControllers['acappella-voice'].close();
 		// The full stand-down: session, audio bridge, inference pipeline, Bonjour
 		// advert, and every connected device. Awaited only for its own ordering -
 		// the window is closed after it, because the bridge stops capture through
@@ -746,6 +764,10 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	if (!resolveEncoreFeatures(encoreFeatures).plugins) {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
+	}
+	// A switched-off Throughput Gauge leaves no widget window behind.
+	if (!resolveEncoreFeatures(encoreFeatures).throughputGauge) {
+		floatingWidgetControllers['throughput-gauge'].close();
 	}
 	// Feature changes also invalidate cached settings guests, including changes
 	// made outside this renderer. Reads remain pure; do not refresh discovery.
@@ -824,6 +846,88 @@ const quickChatController = createQuickChatController({
 	getWindowForSession: resolveWindowForSession,
 });
 
+// Floating widgets: always-on-top desktop windows for the throughput gauge and
+// the media player (see Plans/floating-widgets.md). One controller per widget,
+// with the same window deps as Quick Chat; the relay carries state and commands
+// between each widget and the window that owns it. IPC registers at app-ready
+// (see floatingWidgetRelay.init below).
+const floatingWidgetControllers = Object.fromEntries(
+	FLOATING_WIDGET_IDS.map((id) => [
+		id,
+		createFloatingWidgetWindow(FLOATING_WIDGET_SPECS[id], {
+			isDevelopment,
+			preloadPath,
+			rendererProductionUrl,
+			devServerUrl,
+			windowRegistry,
+			// Per-device, like every other window's bounds.
+			boundsStore: {
+				get: () => windowStateStore.get('floatingWidgets')?.[id],
+				set: (bounds) =>
+					windowStateStore.set('floatingWidgets', {
+						...windowStateStore.get('floatingWidgets'),
+						[id]: bounds,
+					}),
+			},
+			// The gauge is an Encore Feature: while it is off, its window never exists.
+			isEnabled:
+				id === 'throughput-gauge'
+					? () => resolveEncoreFeatures(store.get('encoreFeatures')).throughputGauge
+					: id === 'acappella-voice'
+						? () => resolveEncoreFeatures(store.get('encoreFeatures')).aCappella
+						: undefined,
+		}),
+	])
+) as Record<FloatingWidgetId, FloatingWidgetController>;
+
+const floatingWidgetRelay: FloatingWidgetRelay = createFloatingWidgetRelay({
+	controllers: floatingWidgetControllers,
+	// The gauge's rate engine runs in the primary app window; the media player
+	// owns its media element in its own window.
+	getAuthorityWindow: floatingWidgetRelayAuthority,
+	canPublishState: (id, senderId) =>
+		id !== 'acappella-voice' || floatingWidgetRelayAuthority(id)?.webContents.id === senderId,
+	canControlVisibility: (id, senderId) => {
+		if (id !== 'acappella-voice') return true;
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = published?.session.windowId;
+		const owner = (ownerId ? windowRegistry.get(ownerId) : null) ?? windowRegistry.getPrimary();
+		return owner?.browserWindow.webContents.id === senderId;
+	},
+	getAllWindows: () => BrowserWindow.getAllWindows(),
+});
+
+function floatingWidgetRelayAuthority(id: FloatingWidgetId): BrowserWindow | null {
+	if (id === 'acappella-voice') {
+		// The protocol lives in main; HUD preferences and focus belong to the
+		// originating app window. Retain that owner after the service goes idle.
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = getVoiceSessionService()?.getSnapshot().windowId ?? published?.session.windowId;
+		return (
+			(ownerId ? windowRegistry.get(ownerId)?.browserWindow : null) ??
+			windowRegistry.getPrimary()?.browserWindow ??
+			mainWindow
+		);
+	}
+	return id === 'throughput-gauge'
+		? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
+		: floatingWidgetControllers[id].getWindow();
+}
+
+// Closing the originating app window also retires its HUD. The existing
+// registry bootstrap stops the voice session and releases its microphone.
+windowRegistry.onChange((change) => {
+	if (change.type !== 'removed') return;
+	const published = floatingWidgetRelay.getState('acappella-voice') as VoiceWidgetState | null;
+	if (published?.session.windowId === change.windowId) {
+		floatingWidgetControllers['acappella-voice'].close();
+	}
+});
+
+function closeFloatingWidgetWindows(): void {
+	for (const controller of Object.values(floatingWidgetControllers)) controller.close();
+}
+
 // What a CLI or web caller is told when it asks a switched-off Cue to act.
 const CUE_DISABLED_MESSAGE =
 	'Maestro Cue is turned off. Run `maestro-cli encore enable cue` first.';
@@ -889,6 +993,7 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		closeCadenzaHudWindow();
 		// Same for Quick Chat: it is a feature window, not a reason to keep running.
 		closeQuickChatWindow();
+		closeFloatingWidgetWindows();
 
 		// The primary window is the app's anchor: it owns the auto-updater, the
 		// global hotkey, the deep-link target, and the quit-confirmation surface.
@@ -898,9 +1003,10 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// flow. When the primary is the LAST window, we defer to
 		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
 		// we skip if a quit is already in flight to avoid re-entrancy.
-		// Offscreen browser pages are workloads, not secondary application windows.
+		// Offscreen browser pages are workloads, not secondary application windows,
+		// and feature windows (HUD, Quick Chat, floating widgets) are not either.
 		const otherWindowsOpen = BrowserWindow.getAllWindows().some(
-			(window) => !isHostBrowserPageWindow(window)
+			(window) => !isHostBrowserPageWindow(window) && !windowRegistry.isFeatureWindow(window)
 		);
 		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
 			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
@@ -1749,6 +1855,9 @@ app
 			// Computer History: `computerHistory.observer` - the accessibility
 			// helper plus the segment writer. Disable/revoke stops both.
 			computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
+			// Dataview: `dataview.index` - every open vault index with its watcher
+			// or poller and idle timer. Indexes open on demand; off disposes them.
+			dataview: createDataviewSupervisorHooks(),
 			// MaestroRun: no long-running service, only the bounded poll that
 			// watches for the Full Disk Access grant. Disable/revoke stops it.
 			maestroRun: {
@@ -1776,16 +1885,40 @@ app
 			plugins: {
 				reconcile: () => {
 					if (!pluginManager) return;
-					// Copy trusted bundled first-party plugins into the plugins dir
-					// before discovery. Trust-gated + idempotent.
-					seedBundledPlugins({
-						trustedKeys: trustedKeysFor,
-						onLog: (message) => logger.info(message, 'Plugins'),
-						onError: (error) => void captureException(error),
-					});
-					pluginManager.refresh();
-					pluginManager.startWatching();
-					pluginScheduler?.start();
+					const manager = pluginManager;
+					void manager
+						.retireBundledAgentFlow(authStore)
+						.then(({ recoveryPath, preserved }) => {
+							if (preserved) {
+								logger.info(`Agent Flow preserved: ${preserved}`, 'Plugins');
+								return;
+							}
+							if (recoveryPath) logger.info(`Agent Flow retired to ${recoveryPath}`, 'Plugins');
+							if (authStore.isSessionOnly()) {
+								logger.warn(
+									'Agent Flow authorization cleanup is session-only; retirement retries next launch',
+									'Plugins'
+								);
+							}
+						})
+						.catch((error) => {
+							logger.error(`Agent Flow retirement incomplete: ${error}`, 'Plugins');
+							void captureException(error, { operation: 'plugins:retire-agent-flow' });
+						})
+						.then(() => {
+							// A feature toggle may have switched off while the sandbox drained.
+							const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+							if (ef.plugins !== true) return;
+							seedBundledPlugins({
+								trustedKeys: trustedKeysFor,
+								onLog: (message) => logger.info(message, 'Plugins'),
+								onError: (error) => void captureException(error),
+							});
+							manager.refresh();
+							manager.startWatching();
+							pluginScheduler?.start();
+						})
+						.catch((error) => void captureException(error, { operation: 'plugins:startup' }));
 				},
 				stopAll: () => {
 					pluginManager?.stopWatching();
@@ -3522,6 +3655,13 @@ app
 		});
 		// Quick Chat registers its own hotkey through the same manager.
 		quickChatController.init();
+		floatingWidgetRelay.init();
+		// The media window owns the saved play queue: create it (hidden) now when
+		// there is one, or no window would show it until the next open-file.
+		restoreMediaWindowAtLaunch(
+			store.get('mediaPlayerQueue'),
+			floatingWidgetControllers['media-player']
+		);
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeAllGlobalHotkeys);
@@ -3640,7 +3780,12 @@ app
 		timeZoneWatcher.start();
 
 		app.on('activate', () => {
-			if (BrowserWindow.getAllWindows().length === 0) {
+			// A floating widget left on screen is not an app window: the dock click
+			// must still bring the main window back.
+			const appWindowOpen = BrowserWindow.getAllWindows().some(
+				(window) => !windowRegistry.isFeatureWindow(window)
+			);
+			if (!appWindowOpen) {
 				createWindow();
 			}
 		});

@@ -115,6 +115,14 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import type { DataviewDocumentScope } from '../Markdown/components/DataviewDocumentContext';
+import { DataviewDocumentProvider } from '../Markdown/components/DataviewDocumentProvider';
+import {
+	DATAVIEW_LANGUAGE_RENDERERS,
+	dataviewInlineCodeRenderer,
+	useDataviewEnabled,
+	withDataviewLanguageRenderers,
+} from '../Markdown/components/dataviewSurface';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
@@ -182,6 +190,7 @@ export const FilePreview = React.memo(
 			onOpenInGraph,
 			onOpenInBrowser,
 			sshRemoteId,
+			sessionId,
 			externalEditContent,
 			onEditContentChange,
 			initialScrollTop,
@@ -934,15 +943,42 @@ export const FilePreview = React.memo(
 		// which throws away the reader's scroll position mid-click.
 		const stableToggleTask = useStableCallback(handleToggleTask);
 
+		// Dataview (D7): the note, its agent, and this preview's own link and task
+		// paths, read by `dataview` blocks and `= expr` spans through context. Null
+		// while the Encore Feature is off, for an untitled buffer, or without an
+		// agent, so nothing of Dataview mounts and fences stay plain code.
+		const dataviewEnabled = useDataviewEnabled();
+		const dataviewFilePath = file?.path;
+		const dataviewScope = useMemo<DataviewDocumentScope | null>(() => {
+			if (!dataviewEnabled || !sessionId || !dataviewFilePath) return null;
+			return {
+				filePath: dataviewFilePath,
+				agentId: sessionId,
+				sshRemoteId: sshRemoteId ?? null,
+				openLink: (absolutePath, options) => onFileClick?.(absolutePath, options),
+				toggleOwnTask: onSave ? stableToggleTask : undefined,
+			};
+		}, [
+			dataviewEnabled,
+			sessionId,
+			dataviewFilePath,
+			sshRemoteId,
+			onFileClick,
+			onSave,
+			stableToggleTask,
+		]);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
 		const markdownComponents = useMemo(() => {
 			const components = createMarkdownComponents({
 				theme,
-				customLanguageRenderers: {
-					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
-				},
+				customLanguageRenderers: withDataviewLanguageRenderers(
+					{ mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} /> },
+					dataviewEnabled
+				),
+				renderInlineCode: dataviewInlineCodeRenderer(theme, dataviewEnabled),
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
 				onExternalLinkClick: handleExternalLinkClick,
 				containerRef: markdownContainerRef,
@@ -1007,6 +1043,7 @@ export const FilePreview = React.memo(
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			dataviewEnabled,
 		]);
 
 		// Extract directory path without filename
@@ -2674,18 +2711,21 @@ export const FilePreview = React.memo(
 								</div>
 							}
 						>
-							<MarkdownPreviewFast
-								ref={markdownFastRef}
-								content={markdownSource}
-								theme={theme}
-								markdownContainerRef={markdownContainerRef}
-								fileTreeIndices={fileTreeIndices}
-								cwd={cwd}
-								homeDir={homeDir}
-								filePath={file.path}
-								onFileClick={onFileClick}
-								onExternalLinkClick={handleExternalLinkClick}
-							/>
+							<DataviewDocumentProvider value={dataviewScope}>
+								<MarkdownPreviewFast
+									ref={markdownFastRef}
+									content={markdownSource}
+									theme={theme}
+									markdownContainerRef={markdownContainerRef}
+									fileTreeIndices={fileTreeIndices}
+									cwd={cwd}
+									homeDir={homeDir}
+									filePath={file.path}
+									onFileClick={onFileClick}
+									onExternalLinkClick={handleExternalLinkClick}
+									fenceRenderers={dataviewScope ? DATAVIEW_LANGUAGE_RENDERERS : undefined}
+								/>
+							</DataviewDocumentProvider>
 						</Suspense>
 					) : isMarkdown ? (
 						<div
@@ -2724,14 +2764,16 @@ export const FilePreview = React.memo(
               .file-preview-content.prose em { font-style: italic; }
               .file-preview-content.prose img { display: block; max-width: 100%; height: auto; }
             `}</style>
-							<ReactMarkdown
-								remarkPlugins={remarkPlugins}
-								rehypePlugins={rehypePlugins}
-								urlTransform={urlTransformAllowingMaestro}
-								components={markdownComponents}
-							>
-								{markdownSource}
-							</ReactMarkdown>
+							<DataviewDocumentProvider value={dataviewScope}>
+								<ReactMarkdown
+									remarkPlugins={remarkPlugins}
+									rehypePlugins={rehypePlugins}
+									urlTransform={urlTransformAllowingMaestro}
+									components={markdownComponents}
+								>
+									{markdownSource}
+								</ReactMarkdown>
+							</DataviewDocumentProvider>
 						</div>
 					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (
 						<Suspense

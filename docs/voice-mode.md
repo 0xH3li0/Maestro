@@ -267,7 +267,7 @@ A document conversation is an ordinary AI tab, tagged with the file it is about,
 
 ## While a session is running
 
-A small draggable HUD appears. It remembers where you put it.
+A small voice HUD appears without taking focus. In the desktop app it is its own window, floating over other apps and Spaces, even while Maestro is minimized. Drag its title strip to move it; resize its edges to change its size. Both position and size are remembered. In the browser build it stays inside Maestro as a draggable panel.
 
 Opening a blocking dialog temporarily hides the HUD without ending the session or closing the microphone. The HUD returns when the last blocking dialog closes.
 
@@ -296,8 +296,8 @@ The same panel has the **send phrase** field. "go maestro" is the only phrase th
 
 With **Hold while busy** off, the HUD can keep a request pending for the exact destination tab while you speak additions in the same scope. Maestro retries when the destination is free. Group Chat accepts another spoken message into its submission queue. **Force Send** allows delivery beside other working tabs when **forced parallel execution** is enabled in Settings. It still waits if the destination tab itself is busy. The toggle resets when the voice session ends.
 
-- **Only `Esc` closes the HUD**, from the keyboard or the ESC pill, and closing ends the session. Shutting the microphone with the talk button keeps the session, its transcript, and its mode. A session that ends on its own (the idle timeout, the stop word) leaves the HUD where it was, showing a closed microphone one click from open.
-- **Minimize collapses the HUD and leaves the session running**, microphone included. The Left Bar shows the indicator, and the composer microphone brings the HUD back; it does not end the session.
+- **Close ends the session.** Use `Esc` or the desktop window's X; the browser panel has an ESC pill. Shutting the microphone with the talk button keeps the session, its transcript, and its mode. A session that ends on its own (the idle timeout, the stop word) leaves the HUD where it was, showing a closed microphone one click from open.
+- **Minimize hides the HUD and leaves the session running**, microphone included. The Left Bar shows the indicator, and the composer microphone brings the HUD back; it does not end the session.
 - The **transcript** panel shows what was heard, what was sent, and which agent and tab each turn landed in. Route chips jump you straight to that tab, reopening it if you had closed or snoozed it.
 - A session that hears nothing goes cold on its own. The idle timeout defaults to **60 seconds** and is adjustable.
 

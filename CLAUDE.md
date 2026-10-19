@@ -52,6 +52,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Vulnerability report, advisory, CVE, or credit     | [SECURITY-RUNBOOK.md](docs/agent-guides/SECURITY-RUNBOOK.md)     |
 | Plugin media isolation or a bounded native tool    | [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) |
 | Docs or site screenshot                            | [SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md) |
+| Dataview query, vault index, or DataviewJS sandbox | [DATAVIEW.md](docs/agent-guides/DATAVIEW.md)                     |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
@@ -88,6 +89,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
+- **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **Safe remote file writes and links:** `writeFileAtomicRemote()`, `createExclusiveRemote()`, `lstatRemote()`, `realpathRemote()`, `readlinkRemote()`, `symlinkRemote()` in `src/main/utils/remote-fs.ts`
 - **Remote native directory names:** `readDirNamesRemote()` in `src/main/utils/remote-fs.ts`
@@ -101,6 +104,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **Writing a JSON file atomically from synchronous code:** `atomicWriteJsonSync(filePath, value, opts?)` in `src/shared/atomicJsonSync.ts` (the async twin is `atomicWriteJson()` in `src/main/utils/atomic-json-store.ts`)
+- **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
@@ -115,6 +119,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Main process: stores, persistence, platform
 
+- **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
@@ -152,6 +157,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Where model files are downloaded from (a Hugging Face mirror):** `resolveDownloadBase()`, `rebaseSourceUrl()`, `downloadBaseProblem()` in `src/shared/local-models/download-base.ts`; `currentDownloadBase()` in `src/main/local-models/download-base.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
+- **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
 - **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)`, `isEncoreFeatureEnabled()`, `requireEncoreFeature()` in `src/shared/encoreFeatureDefaults.ts`; background services follow the flag via `createEncoreFeatureLifecycle()` in `src/main/encore-feature-lifecycle.ts`
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
@@ -382,6 +388,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a surface is the topmost layer:** `useIsTopLayer(priority)` in `src/renderer/hooks/ui/useIsTopLayer.ts`
 - **Modal / find-bar ESC pill:** `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`
 - **A modal default sized to the screen:** `viewportModalSize({ width, height })` in `src/renderer/utils/modalSizing.ts`
+- **A widget that floats over the whole desktop:** `createFloatingWidgetWindow()` in `src/main/floating-widgets/floating-widget-window.ts`, `publishStoreState()` / `mirrorStoreState()` in `src/renderer/utils/windowStoreMirror.ts`, `floatingWidgetsAvailable()` in `src/renderer/utils/floatingWidgetMode.ts`
 - **Audio/video playback:** media NEVER becomes a tab: `handleOpenFileTab()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts` diverts it to `useMediaPlaybackStore` and the one `FloatingMediaPlayer`; `file://` links go through `openFileUrl()` in `src/renderer/utils/openFileUrl.ts`
 - **Opening a clicked link:** `openUrl(url, { ctrlKey })` in `src/renderer/utils/openUrl.ts`, over `parseUrlRoutingHint()` / `isWebUrl()` / `stripUrlRoutingHint()` in `src/shared/urlRoutingHint.ts`
 - **Right-click menu on an image:** already app-wide via `<ImageContextMenuHost>` in `src/renderer/components/ImageContextMenuHost.tsx`; opt a surface out with `data-no-image-menu`
@@ -551,6 +558,15 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Saving the user's own font setup:** `captureTypographySnapshot()`, `typographySnapshotPatch()`, `typographySnapshotMatches()` in `src/shared/typographySnapshot.ts`; keys from `TYPOGRAPHY_SURFACE_LIST` in `src/shared/typography.ts`
 - **Font zoom on a reading pane:** `useFontScale(storageKey)` in `src/renderer/hooks/ui/useFontScale.ts`, `<FontScaleControl>` in `src/renderer/components/ui/FontScaleControl.tsx`, range math in `src/shared/scaleRange.ts`
 
+#### Dataview (Obsidian queries and DataviewJS)
+
+- **Parsing or running a Dataview query, and finding a note's Dataview blocks:** `parseQuery()`, `executeDql()`, `executeInlineDql()`, `extractDataviewBlocks()` in `src/shared/dataview/index.ts` (never import `src/shared/dataview/vendor/`)
+- **One markdown file to one Dataview page:** `parsePage()`, `parseRawPage()`, `finishPage()` in `src/shared/dataview/page.ts`
+- **The Dataview vault index (query, status, rebuild, change events):** `DataviewService`, `getDataviewService()` in `src/main/dataview/dataview-service.ts`
+- **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
+- **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
+- **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
+
 #### Layout, scroll, sizing, and hook utilities
 
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
@@ -681,7 +697,7 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
 
 - **A Cappella** - The voice interface, gated as an Encore Feature and off by default. Speech in, routing to an agent and tab, spoken reply back. The session itself lives in the MAIN process (`src/main/acappella/voice-session-service.ts`); every renderer holds a projection of its event stream, never authority. Architecture: [docs/architecture/acappella/](docs/architecture/acappella/). User docs: [docs/voice-mode.md](docs/voice-mode.md).
 - **Conductor** - The routing model that decides which agent and tab an utterance meant. It is a router, not a second assistant: it never answers a question itself.
-- **Voice HUD** - The one on-screen surface for a session (`VoiceHud.tsx`). Minimize keeps the session and hands the indicator to the Left Bar; close ENDS it.
+- **Voice HUD** - The one on-screen surface for a session (`VoiceHud.tsx`), in a desktop floating widget (`acappella-voice`) or the browser's in-app panel. The originating app window publishes its projection; the widget mirrors it and sends controls back. Minimize keeps the session and hands the indicator to the Left Bar; close ENDS it.
 - **Voice floor** - Which microphone currently holds the session. One floor app-wide, held locally or by a paired device.
 - **Local Models** - The core service A Cappella CONSUMES for everything that is a model: the catalog, downloads and verification, the native runtimes, the speech-to-text engines, and the assigned Brain (`src/shared/local-models/`, `src/main/local-models/`). It is not an Encore Feature and it serves other features too (tab naming, AI command mode, semantic search, the Cue gate, dictation), so voice owns no model stack: voice words for a model (slot, capability, setup bundle) live in `src/shared/acappella/voice-models.ts` keyed by core model id, and a local voice provider leases or loads through the core. Architecture: [docs/architecture/local-models.md](docs/architecture/local-models.md). User docs: [docs/local-models.md](docs/local-models.md).
 
