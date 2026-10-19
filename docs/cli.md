@@ -2124,6 +2124,40 @@ maestro-cli cue list --json
 
 Shows each subscription's name, event type, agent, enabled status, and last trigger time.
 
+### Recent Runs
+
+```bash
+# The 20 newest runs across every agent
+maestro-cli cue activity
+
+# One agent's 5 newest, as JSON
+maestro-cli cue activity --agent <agent-id> --limit 5 --json
+```
+
+Each line is a run's start time, status (`running`, `completed`, `failed`), subscription, event type, and duration (or how long a running one has run so far).
+
+### Turning a Subscription On or Off
+
+```bash
+maestro-cli cue disable nightly-report
+maestro-cli cue enable nightly-report --agent <agent-id>
+```
+
+This writes the subscription's `enabled` flag into its cue.yaml, as the switch on the Cue dashboard does. Pass `--agent`, or the full id from `cue list --json`, when two agents share the name.
+
+### Where the Answer Comes From
+
+`cue list`, `cue activity`, `cue enable`, and `cue disable` ask whatever serves the data directory (`--data-dir`, or `MAESTRO_USER_DATA`, or the platform default):
+
+| Serving the data directory                                                                                      | `cue list` / `cue activity`                                                                                                                                                                | `cue enable` / `cue disable`                 |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| The desktop app                                                                                                 | The app's engine answers, run output included                                                                                                                                              | The app's engine writes it                   |
+| `maestro-cli host`, running Cue                                                                                 | The host's engine answers, the same rows the desktop shows, run output included                                                                                                            | The host's engine writes it                  |
+| `maestro-cli host`, not running Cue (another engine holds the Cue lock, or Cue did not start), or an older host | Read from each agent's cue.yaml and from `cue.db`. A run in flight in another engine still reads `running`. Run output is not included, and a line on stderr says where the list came from | Refused, with the reason and what to do      |
+| Nothing (`cue activity` only)                                                                                   | Read from `cue.db`, with the same stderr note. `cue list` reports that the app is not running (exit 3)                                                                                     | Reports that the app is not running (exit 3) |
+
+An older desktop build that does not know a command, or a peer that does not answer in time, is still reported as an error (exit 4 or 5): the CLI never covers a real failure with figures from disk. With Maestro Cue switched off in Encore Features every `cue` verb is refused before it asks anyone. `cue pipeline` edits the desktop Pipeline Graph layout and is not served by a host; beside one it says so and points at cue.yaml.
+
 ### Scheduling Tasks
 
 `cue schedule` is the command surface for anything time-driven: a one-shot reminder, a daily job, or a repeating check. It writes straight to the agent's `.maestro/cue.yaml`, so it works with the desktop app closed, and everything it creates shows up in the app under **Maestro Cue → Scheduled Tasks** (`maestro-cli open cue --tab scheduled`).

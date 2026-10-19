@@ -23,6 +23,7 @@ import {
 	requestHostStop,
 	writeCliServerInfoTo,
 } from '../../../shared/maestro-lib';
+import { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
 
 describe('startRuntimeHost', () => {
 	let dir: string;
@@ -47,6 +48,7 @@ describe('startRuntimeHost', () => {
 		drain: async () => undefined,
 		forceStop: () => undefined,
 		stop: async () => undefined,
+		answer: async () => undefined,
 	});
 	// The temp directory is no bundle, so the prompt probe is answered for it.
 	const noCue = { startCue: async () => idleCue(), promptsLoad: () => true };
@@ -117,6 +119,34 @@ describe('startRuntimeHost', () => {
 			version: '1.2.3',
 			cue: { state: 'disabled' },
 		});
+	});
+
+	it('serves the Cue answers of the engine it runs, and echoes the ones it cannot give', async () => {
+		const host = await startRuntimeHost(options(), {
+			...noCue,
+			startCue: async () => ({
+				...idleCue(),
+				state: () => ({ state: 'running' as const }),
+				answer: async (message) =>
+					message.type === 'get_cue_subscriptions'
+						? { type: 'cue_subscriptions', subscriptions: [{ id: 'a1::beat::beat' }] }
+						: undefined,
+			}),
+		});
+		running.push(host);
+
+		const connection = new BridgeConnection({ userDataDir: dir });
+		await connection.connect();
+		try {
+			await expect(
+				connection.sendCommand({ type: 'get_cue_subscriptions' }, 'cue_subscriptions')
+			).resolves.toMatchObject({ subscriptions: [{ id: 'a1::beat::beat' }] });
+			await expect(
+				connection.sendCommand({ type: 'get_cue_activity' }, 'cue_activity')
+			).rejects.toMatchObject({ name: 'UnsupportedCommandError', hostKind: 'headless' });
+		} finally {
+			connection.disconnect();
+		}
 	});
 
 	it('unpublishes first on stop, releases the lock, and closes the port', async () => {

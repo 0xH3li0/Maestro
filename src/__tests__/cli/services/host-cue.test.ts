@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CueAutoRunLaunchParams } from '../../../main/cue/cue-autorun-executor';
 import type { CueEngineLockInfo } from '../../../main/cue/cue-engine-lock';
 import {
+	answerCueMessage,
 	runAutoRunInRuntime,
 	startHostCue,
 	type HostCueDeps,
@@ -13,6 +14,7 @@ import type { AutoRunProgress } from '../../../shared/maestro-lib/autorun/progre
 import { createEventBus } from '../../../shared/maestro-lib/client/event-bus';
 import type { AutoRunOutcome, ClientResult } from '../../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
+import type { CueGraphSession, CueRunResult } from '../../../shared/cue/contracts';
 
 const PATHS = { userDataDir: '/data', settingsFile: '/data/maestro-settings.json' };
 const PID = 4242;
@@ -32,6 +34,9 @@ function fakeEngine(overrides: Partial<HostCueEngine> = {}): HostCueEngine {
 		forceStop: vi.fn(),
 		refreshSession: vi.fn(),
 		removeSession: vi.fn(),
+		getActivityLog: vi.fn(() => []),
+		getGraphData: vi.fn(() => []),
+		setSubscriptionEnabled: vi.fn(async () => true),
 		...overrides,
 	};
 }
@@ -839,5 +844,203 @@ describe('runAutoRunInRuntime', () => {
 		);
 		expect(answer).toMatchObject({ started: false, error: expect.stringContaining('worktree') });
 		expect(fake.launch).not.toHaveBeenCalled();
+	});
+});
+
+describe('the Cue answers a host gives the CLI', () => {
+	const run = (id: string, sessionId: string, stdout: string): CueRunResult => ({
+		runId: id,
+		sessionId,
+		sessionName: sessionId,
+		subscriptionName: 'beat',
+		event: {
+			id,
+			type: 'time.heartbeat',
+			timestamp: '2026-10-19T07:00:00.000Z',
+			triggerName: 'beat',
+			payload: {},
+		},
+		status: 'completed',
+		stdout,
+		stderr: '',
+		exitCode: 0,
+		durationMs: 1200,
+		startedAt: '2026-10-19T07:00:00.000Z',
+		endedAt: '2026-10-19T07:00:01.200Z',
+	});
+	const graph = [
+		{
+			sessionId: 'a1',
+			sessionName: 'One',
+			toolType: 'claude-code',
+			subscriptions: [{ name: 'beat', event: 'time.heartbeat', prompt: 'p', interval_minutes: 5 }],
+		},
+		{
+			sessionId: 'a2',
+			sessionName: 'Two',
+			toolType: 'codex',
+			subscriptions: [{ name: 'other', event: 'file.changed', prompt: 'p', enabled: false }],
+		},
+	] as unknown as CueGraphSession[];
+	const running = { state: 'running' } as const;
+
+	it('lists subscriptions from the engine, with the desktop reply type and mapping', async () => {
+		const engine = fakeEngine({ getGraphData: vi.fn(() => graph) });
+		const reply = await answerCueMessage(
+			{ type: 'get_cue_subscriptions', sessionId: 'a1' },
+			engine,
+			running
+		);
+		expect(reply).toMatchObject({
+			type: 'cue_subscriptions',
+			subscriptions: [
+				{
+					id: 'a1::beat::beat',
+					name: 'beat',
+					eventType: 'time.heartbeat',
+					schedule: 'every 5m',
+					sessionId: 'a1',
+					sessionName: 'One',
+					enabled: true,
+					triggerCount: 0,
+				},
+			],
+		});
+	});
+
+	it('answers activity from the engine log, newest first, limited, with run output', async () => {
+		const engine = fakeEngine({
+			getActivityLog: vi.fn(() => [
+				run('r1', 'a1', 'first'),
+				run('r2', 'a2', 'x'),
+				run('r3', 'a1', 'third'),
+			]),
+		});
+		const reply = await answerCueMessage(
+			{ type: 'get_cue_activity', sessionId: 'a1', limit: 1 },
+			engine,
+			running
+		);
+		expect(reply?.type).toBe('cue_activity');
+		expect(reply?.entries).toEqual([
+			expect.objectContaining({ id: 'r3', status: 'completed', result: 'third', duration: 1200 }),
+		]);
+	});
+
+	it('toggles through the engine, and validates the message as the desktop does', async () => {
+		const engine = fakeEngine();
+		await expect(
+			answerCueMessage(
+				{ type: 'toggle_cue_subscription', subscriptionId: 'a1::beat::beat', enabled: false },
+				engine,
+				running
+			)
+		).resolves.toMatchObject({
+			type: 'toggle_cue_subscription_result',
+			success: true,
+			subscriptionId: 'a1::beat::beat',
+			enabled: false,
+		});
+		expect(engine.setSubscriptionEnabled).toHaveBeenCalledWith('a1::beat::beat', false);
+
+		await expect(
+			answerCueMessage({ type: 'toggle_cue_subscription', subscriptionId: 'x' }, engine, running)
+		).resolves.toEqual({ type: 'error', message: 'Missing or invalid enabled flag' });
+	});
+
+	it('reports a toggle the engine could not write as an error frame', async () => {
+		const engine = fakeEngine({
+			setSubscriptionEnabled: vi.fn(async () => {
+				throw new Error('cue.yaml is read-only');
+			}),
+		});
+		await expect(
+			answerCueMessage(
+				{ type: 'toggle_cue_subscription', subscriptionId: 'x', enabled: true },
+				engine,
+				running
+			)
+		).resolves.toEqual({
+			type: 'error',
+			message: 'Failed to toggle Cue subscription: cue.yaml is read-only',
+		});
+	});
+
+	it('triggers through the engine', async () => {
+		const engine = fakeEngine();
+		await expect(
+			answerCueMessage(
+				{ type: 'trigger_cue_subscription', subscriptionName: 'beat', prompt: 'now' },
+				engine,
+				running
+			)
+		).resolves.toMatchObject({ type: 'trigger_cue_subscription_result', success: true });
+		expect(engine.triggerSubscription).toHaveBeenCalledWith('beat', 'now', undefined);
+	});
+
+	it('leaves a read unanswered without a running engine, so the CLI reads disk', async () => {
+		for (const state of [
+			{ state: 'held', mode: 'standalone', pid: 77 } as const,
+			{ state: 'disabled' } as const,
+			{ state: 'failed', reason: 'cue.db is locked' } as const,
+		]) {
+			await expect(
+				answerCueMessage({ type: 'get_cue_activity' }, undefined, state)
+			).resolves.toBeUndefined();
+			await expect(
+				answerCueMessage({ type: 'get_cue_subscriptions' }, undefined, state)
+			).resolves.toBeUndefined();
+		}
+	});
+
+	it('refuses a change without a running engine, naming why and what to do', async () => {
+		const held = await answerCueMessage(
+			{ type: 'toggle_cue_subscription', subscriptionId: 'x', enabled: true },
+			undefined,
+			{ state: 'held', mode: 'standalone', pid: 77 }
+		);
+		expect(held).toEqual({
+			type: 'error',
+			message: expect.stringContaining('a standalone Cue engine (pid 77) holds the Cue lock'),
+		});
+		const failed = await answerCueMessage(
+			{ type: 'trigger_cue_subscription', subscriptionName: 'beat' },
+			undefined,
+			{ state: 'failed', reason: 'cue.db is locked' }
+		);
+		expect(failed).toEqual({
+			type: 'error',
+			message: "This host's Cue engine did not start: cue.db is locked",
+		});
+	});
+
+	it('leaves every other message to the echo', async () => {
+		await expect(
+			answerCueMessage({ type: 'cue_pipeline_list' }, fakeEngine(), running)
+		).resolves.toBeUndefined();
+		await expect(
+			answerCueMessage({ type: 'list_sessions' }, undefined, running)
+		).resolves.toBeUndefined();
+	});
+
+	it('answers from the engine only while the host runs it', async () => {
+		const { all, engine } = deps();
+		vi.mocked(engine.getGraphData).mockReturnValue(graph);
+		const cue = await startHostCue(PATHS, all);
+		await expect(cue.answer({ type: 'get_cue_subscriptions' })).resolves.toMatchObject({
+			type: 'cue_subscriptions',
+		});
+
+		await cue.stop();
+		await expect(cue.answer({ type: 'get_cue_subscriptions' })).resolves.toBeUndefined();
+	});
+
+	it('answers nothing when another engine holds the lock', async () => {
+		const { all } = deps({ readLock: () => lock(77, 'standalone') });
+		const cue = await startHostCue(PATHS, all);
+		await expect(cue.answer({ type: 'get_cue_activity' })).resolves.toBeUndefined();
+		await expect(
+			cue.answer({ type: 'toggle_cue_subscription', subscriptionId: 'x', enabled: true })
+		).resolves.toMatchObject({ type: 'error' });
 	});
 });

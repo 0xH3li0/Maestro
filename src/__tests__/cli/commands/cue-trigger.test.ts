@@ -197,4 +197,21 @@ describe('cueTrigger command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
+
+	describe('beside a headless host that is not running Cue', () => {
+		it('reports the reason the host gives, not "not found"', async () => {
+			const refusal = "This host's Cue engine did not start: cue.db is locked";
+			vi.mocked(withMaestroClient).mockImplementation(async (fn) =>
+				fn({
+					sendCommand: vi.fn().mockResolvedValue({ type: 'error', message: refusal }),
+				} as any)
+			);
+
+			await cueTrigger('my-sub', { json: true });
+
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ success: false, error: refusal }));
+			expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('not found'));
+		});
+	});
 });

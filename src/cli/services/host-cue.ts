@@ -24,12 +24,15 @@
  * built around it, ends the runs the engine would otherwise orphan, and reports the new holder.
  */
 
+import { toCueActivityEntries } from '../../main/cue/cue-activity-entries';
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
 import {
 	isCueEngineLockOwnedByThisProcess,
 	readCueEngineLock,
 	type CueEngineLockInfo,
 } from '../../main/cue/cue-engine-lock';
+import { toCueSubscriptionInfos } from '../../main/cue/cue-subscription-entries';
+import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import type { HostCueState } from '../../shared/maestro-lib/client/host-control';
 import type {
@@ -69,6 +72,12 @@ export interface HostCueEngine {
 	/** Re-read one agent's `cue.yaml` from `projectRoot` and rebuild its subscriptions. */
 	refreshSession(sessionId: string, projectRoot: string): void;
 	removeSession(sessionId: string): void;
+	/** The activity log: runs in flight and the window restored from cue.db, oldest first. */
+	getActivityLog(): CueRunResult[];
+	/** Every agent's subscriptions, as the desktop's `cue list` reads them. */
+	getGraphData(): CueGraphSession[];
+	/** Write one subscription's `enabled` flag into its cue.yaml, as the dashboard switch does. */
+	setSubscriptionEnabled(subscriptionId: string, enabled: boolean): Promise<boolean>;
 }
 
 /** The part of the in-process runtime Cue uses: Auto Runs to launch, and the events that say what changed. */
@@ -115,6 +124,11 @@ export interface HostCue {
 	forceStop(): void;
 	/** Shut Cue down: the drain already under way, or one with no wait. Idempotent. */
 	stop(): Promise<void>;
+	/**
+	 * Answer a desktop bridge Cue message from this host's engine, with the desktop's reply type and
+	 * shape, or `undefined` for a message that is not Cue's. See {@link answerCueMessage}.
+	 */
+	answer(message: Record<string, unknown>): Promise<Record<string, unknown> | undefined>;
 }
 
 async function encoreCueEnabled(settingsFile: string): Promise<boolean> {
@@ -285,6 +299,112 @@ async function followAgents(runtime: HostCueRuntime, engine: HostCueEngine): Pro
 		}
 	}
 	return unsubscribe;
+}
+
+// ---------------------------------------------------------------------------
+// Answering the CLI's Cue verbs
+// ---------------------------------------------------------------------------
+
+/** The messages `cue list` and `cue activity` send: a read the CLI can also make from disk. */
+const CUE_READ_MESSAGES = new Set(['get_cue_subscriptions', 'get_cue_activity']);
+/** The messages `cue enable|disable` and `cue trigger` send: a change only a running engine can make. */
+const CUE_WRITE_MESSAGES = new Set(['toggle_cue_subscription', 'trigger_cue_subscription']);
+
+/** Why a Cue change cannot be made here, and what to do instead. */
+export function cueUnavailableMessage(state: HostCueState): string {
+	switch (state.state) {
+		case 'disabled':
+			return "Maestro Cue is off in this data directory's settings, so this host runs no Cue engine. Turn it on in Encore Features.";
+		case 'held':
+			return (
+				`This host does not run Cue: a ${state.mode} Cue engine (pid ${state.pid}) holds the Cue lock for this data directory. ` +
+				'Make the change where that engine runs, or stop it and restart the host so the host runs Cue.'
+			);
+		case 'failed':
+			return `This host's Cue engine did not start: ${state.reason}`;
+		case 'running':
+			return 'This host is still starting its Cue engine. Retry in a moment.';
+	}
+}
+
+/**
+ * The desktop's Cue answers (`messageHandlers/cue.ts` over `cueCallbacks.ts`), from the engine this
+ * host runs: the same reply types, the same mappings, the same validation.
+ *
+ * Without a running engine a READ is left unanswered (`undefined`), which the server echoes and the
+ * CLI reads as "this host cannot answer": it then reads cue.yaml or cue.db itself, which is right
+ * whatever the reason (Cue held by another engine, failed, or just being switched). A WRITE has no
+ * such fallback, so it is refused with the reason and what to do about it. Errors are the desktop's
+ * `{ type: 'error', message }` frame, which the CLI's `errorFrameMessage` reads.
+ */
+export async function answerCueMessage(
+	message: Record<string, unknown>,
+	engine: HostCueEngine | undefined,
+	state: HostCueState
+): Promise<Record<string, unknown> | undefined> {
+	const type = message.type;
+	if (typeof type !== 'string') return undefined;
+	if (!CUE_READ_MESSAGES.has(type) && !CUE_WRITE_MESSAGES.has(type)) return undefined;
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+	const error = (text: string): Record<string, unknown> => ({ type: 'error', message: text });
+
+	if (!engine)
+		return CUE_WRITE_MESSAGES.has(type) ? error(cueUnavailableMessage(state)) : undefined;
+
+	switch (type) {
+		case 'get_cue_subscriptions':
+			return {
+				type: 'cue_subscriptions',
+				subscriptions: toCueSubscriptionInfos(engine.getGraphData(), sessionId),
+				timestamp: Date.now(),
+			};
+		case 'get_cue_activity': {
+			const limit = typeof message.limit === 'number' ? message.limit : 50;
+			return {
+				type: 'cue_activity',
+				entries: toCueActivityEntries(engine.getActivityLog(), { sessionId, limit }),
+				timestamp: Date.now(),
+			};
+		}
+		case 'toggle_cue_subscription': {
+			const { subscriptionId, enabled } = message;
+			if (typeof subscriptionId !== 'string' || subscriptionId === '') {
+				return error('Missing subscriptionId');
+			}
+			if (typeof enabled !== 'boolean') return error('Missing or invalid enabled flag');
+			try {
+				const success = await engine.setSubscriptionEnabled(subscriptionId, enabled);
+				return {
+					type: 'toggle_cue_subscription_result',
+					success,
+					subscriptionId,
+					enabled,
+					timestamp: Date.now(),
+				};
+			} catch (caught) {
+				return error(`Failed to toggle Cue subscription: ${errorText(caught)}`);
+			}
+		}
+		default: {
+			// trigger_cue_subscription
+			const { subscriptionName, prompt, sourceAgentId } = message;
+			if (typeof subscriptionName !== 'string' || subscriptionName.trim() === '') {
+				return error('Missing subscriptionName');
+			}
+			if (prompt !== undefined && typeof prompt !== 'string') {
+				return error('Invalid prompt: must be a string when provided');
+			}
+			if (sourceAgentId !== undefined && typeof sourceAgentId !== 'string') {
+				return error('Invalid sourceAgentId: must be a string when provided');
+			}
+			return {
+				type: 'trigger_cue_subscription_result',
+				success: engine.triggerSubscription(subscriptionName, prompt, sourceAgentId),
+				subscriptionName,
+				timestamp: Date.now(),
+			};
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +657,7 @@ export async function startHostCue(
 		state: () => current,
 		// Runs a drain is still waiting for count, so the host waits for them too.
 		activeRuns: () => live?.engine.getActiveRuns().length ?? 0,
+		answer: (message) => answerCueMessage(message, live?.engine, current),
 		drain,
 		forceStop: () => {
 			forceRequested = true;

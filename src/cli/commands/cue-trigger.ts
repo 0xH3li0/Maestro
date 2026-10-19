@@ -3,7 +3,11 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { submitCueTrigger } from '../services/cue-trigger-inbox';
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
-import { exitIfMaestroNotRunning } from '../services/session-command';
+import {
+	errorFrameMessage,
+	exitIfMaestroNotRunning,
+	failCommand,
+} from '../services/session-command';
 import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 
 interface CueTriggerOptions {
@@ -53,6 +57,11 @@ export async function cueTrigger(
 							'trigger_cue_subscription_result'
 						);
 					});
+
+		// A refusal with a reason (a headless host not running Cue says why and
+		// what to do), not a subscription that was not found.
+		const frameError = errorFrameMessage(result);
+		if (frameError) failCommand(frameError, options.json);
 
 		if (options.json) {
 			console.log(

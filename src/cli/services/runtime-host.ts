@@ -129,6 +129,7 @@ export async function startRuntimeHost(
 		drain: async () => undefined,
 		forceStop: () => undefined,
 		stop: async () => undefined,
+		answer: async () => undefined,
 	};
 	let stopping: Promise<void> | undefined;
 	let finish!: () => void;
@@ -184,6 +185,8 @@ export async function startRuntimeHost(
 			cliSecret,
 			port: options.port,
 			onStopRequested: () => void stop(),
+			// `cue list`, `cue activity`, `cue enable|disable`: the host runs the engine they ask about.
+			answer: (message) => cue.answer(message),
 			describe: () => ({
 				cue: cue.state(),
 				cueRuns: cue.activeRuns(),
