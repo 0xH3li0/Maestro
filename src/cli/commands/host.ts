@@ -414,7 +414,7 @@ function describeCue(cue: HostCueState): string {
 		case 'held':
 			return `not running here: ${cue.mode} pid ${cue.pid} holds the Cue lock`;
 		case 'failed':
-			return `failed to start: ${cue.reason}`;
+			return `not running: ${cue.reason}`;
 	}
 }
 

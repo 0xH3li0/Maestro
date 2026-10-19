@@ -350,6 +350,247 @@ describe('what the engine learns after it started', () => {
 	});
 });
 
+describe('another engine taking the lock over', () => {
+	/**
+	 * A host running Cue over a lock the test controls. `takeOver` does what the engine's heartbeat
+	 * does on a lost lock: the new holder's lock is on disk, `onLockLost` is called, then the engine
+	 * stops itself.
+	 */
+	async function hosted(
+		options: {
+			runs?: unknown[];
+			runtime?: HostCueRuntime;
+			waitForRunsToEnd?: () => Promise<unknown>;
+		} = {}
+	) {
+		let held: CueEngineLockInfo | null = null;
+		let enabled = true;
+		/** While set, reading the settings waits on it: a settings change held in progress. */
+		let settingsGate: Promise<void> | undefined;
+		let lockLost: (() => void) | undefined;
+		const runs = options.runs ?? [];
+		const order: string[] = [];
+		const engine = fakeEngine({
+			start: vi.fn(() => {
+				held = lock(PID);
+			}),
+			stop: vi.fn(() => void order.push('stop')),
+			stopAll: vi.fn(() => {
+				order.push('stopAll');
+				runs.length = 0;
+			}),
+			getActiveRuns: () => runs,
+		});
+		const engines = [engine];
+		const { all, stopInbox } = deps({
+			engine,
+			isEnabled: async () => {
+				if (settingsGate) await settingsGate;
+				return enabled;
+			},
+			readLock: () => held,
+			createEngine: vi.fn(async ({ onLockLost }) => {
+				lockLost = onLockLost;
+				return engines.shift() ?? fakeEngine();
+			}),
+			...(options.waitForRunsToEnd ? { waitForRunsToEnd: options.waitForRunsToEnd } : {}),
+		});
+		const cue = await startHostCue(
+			{ ...PATHS, ...(options.runtime ? { runtime: options.runtime } : {}) },
+			all
+		);
+		const takeOver = (holder: CueEngineLockInfo | null = lock(99, 'desktop')): void => {
+			held = holder;
+			lockLost?.();
+			engine.stop();
+		};
+		return {
+			cue,
+			all,
+			engine,
+			stopInbox,
+			order,
+			takeOver,
+			setEnabled: (on: boolean) => {
+				enabled = on;
+			},
+			/** Hold the next settings read until the returned release is called. */
+			holdSettings: (): (() => void) => {
+				let release!: () => void;
+				settingsGate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				return () => {
+					settingsGate = undefined;
+					release();
+				};
+			},
+		};
+	}
+
+	it('reports the new holder and gives up the inbox and agent following', async () => {
+		const fake = fakeRuntime();
+		const { cue, engine, stopInbox, takeOver } = await hosted({ runtime: fake.runtime });
+		expect(cue.state()).toEqual({ state: 'running' });
+
+		takeOver();
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
+		expect(cue.activeRuns()).toBe(0);
+		expect(stopInbox).toHaveBeenCalledTimes(1);
+		fake.bus.emit({ type: 'agent.added', agent: agentRecord('a2', '/two') });
+		expect(engine.refreshSession).not.toHaveBeenCalled();
+	});
+
+	it('reads a lock under another token, at this pid, as the new holder', async () => {
+		const { cue, takeOver } = await hosted();
+		takeOver({ ...lock(PID), token: 'another-container' });
+		expect(cue.state()).toEqual({ state: 'held', mode: 'standalone', pid: PID });
+	});
+
+	it('reports a failure, not running, when the lock cannot be read after the loss', async () => {
+		const { cue, takeOver } = await hosted();
+		takeOver(null);
+		expect(cue.state()).toMatchObject({ state: 'failed' });
+		expect((cue.state() as { reason: string }).reason).toContain('took the Cue lock over');
+	});
+
+	it('ends the runs in flight before the engine forgets them, and a stop waits for their processes', async () => {
+		let exited!: () => void;
+		const waitForRunsToEnd = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					exited = resolve;
+				})
+		);
+		const { cue, order, takeOver } = await hosted({
+			runs: [{ runId: 'r1' }],
+			waitForRunsToEnd,
+		});
+		expect(cue.activeRuns()).toBe(1);
+
+		takeOver();
+		// stopAll first: the engine's own stop() right after forgets the runs without ending them.
+		expect(order).toEqual(['stopAll', 'stop']);
+		expect(cue.activeRuns()).toBe(0);
+
+		let stopped = false;
+		const stopping = cue.stop().then(() => {
+			stopped = true;
+		});
+		await vi.waitFor(() => expect(waitForRunsToEnd).toHaveBeenCalledTimes(1));
+		await Promise.resolve();
+		expect(stopped).toBe(false);
+		exited();
+		await stopping;
+		expect(stopped).toBe(true);
+	});
+
+	it('resolves a later stop cleanly, without ending anything a second time', async () => {
+		const { cue, engine, stopInbox, takeOver } = await hosted();
+		takeOver();
+		await expect(cue.stop()).resolves.toBeUndefined();
+		await expect(cue.stop()).resolves.toBeUndefined();
+		expect(engine.stopAll).toHaveBeenCalledTimes(1);
+		expect(engine.stop).toHaveBeenCalledTimes(1);
+		expect(stopInbox).toHaveBeenCalledTimes(1);
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
+	});
+
+	it('still ends the runs when the loss lands while a stop is queued', async () => {
+		let exited!: () => void;
+		const fake = fakeRuntime();
+		const { cue, engine, takeOver, holdSettings } = await hosted({
+			runtime: fake.runtime,
+			runs: [{ runId: 'r1' }],
+			waitForRunsToEnd: () =>
+				new Promise<void>((resolve) => {
+					exited = resolve;
+				}),
+		});
+		// A settings change in progress holds the queue, so the stop below waits behind it.
+		const release = holdSettings();
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		let stopped = false;
+		const stopping = cue.stop().then(() => {
+			stopped = true;
+		});
+		await Promise.resolve();
+		expect(engine.stopAll).not.toHaveBeenCalled();
+
+		takeOver();
+		expect(engine.stopAll).toHaveBeenCalledTimes(1);
+		release();
+		// The stop was queued before the loss, and still waits for the runs the loss ended.
+		await vi.waitFor(() => expect(exited).toBeDefined());
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(stopped).toBe(false);
+		exited();
+		await stopping;
+		expect(engine.stopAll).toHaveBeenCalledTimes(1);
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
+	});
+
+	it('does nothing when the loss lands during a bring-down, which ends the runs itself', async () => {
+		let exited!: () => void;
+		const fake = fakeRuntime();
+		const { cue, engine, stopInbox, takeOver, setEnabled } = await hosted({
+			runtime: fake.runtime,
+			waitForRunsToEnd: () =>
+				new Promise<void>((resolve) => {
+					exited = resolve;
+				}),
+		});
+		setEnabled(false);
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		await vi.waitFor(() => expect(engine.stopAll).toHaveBeenCalledTimes(1));
+
+		expect(() => takeOver()).not.toThrow();
+		expect(engine.stopAll).toHaveBeenCalledTimes(1);
+		expect(stopInbox).toHaveBeenCalledTimes(1);
+		exited();
+		await vi.waitFor(() => expect(cue.state()).toEqual({ state: 'disabled' }));
+		await expect(cue.stop()).resolves.toBeUndefined();
+	});
+
+	it('reports Cue off when it is switched off after the loss', async () => {
+		const fake = fakeRuntime();
+		const { cue, takeOver, setEnabled } = await hosted({ runtime: fake.runtime });
+		takeOver();
+		setEnabled(false);
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		await vi.waitFor(() => expect(cue.state()).toEqual({ state: 'disabled' }));
+	});
+
+	it('reports the holder, and starts no engine, when Cue is switched on again after the loss', async () => {
+		const fake = fakeRuntime();
+		const { cue, all, takeOver, setEnabled } = await hosted({ runtime: fake.runtime });
+		takeOver();
+		setEnabled(false);
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		await vi.waitFor(() => expect(cue.state()).toEqual({ state: 'disabled' }));
+
+		setEnabled(true);
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		await vi.waitFor(() =>
+			expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 })
+		);
+		expect(all.createEngine).toHaveBeenCalledTimes(1);
+		await cue.stop();
+	});
+
+	it('survives a host step that throws, and still reports the holder', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const { cue, engine, stopInbox, takeOver } = await hosted();
+		stopInbox.mockImplementation(() => {
+			throw new Error('inbox gone');
+		});
+		expect(() => takeOver()).not.toThrow();
+		expect(engine.stopAll).toHaveBeenCalledTimes(1);
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
+		vi.restoreAllMocks();
+	});
+});
+
 describe('runAutoRunInRuntime', () => {
 	const params = (overrides: Partial<CueAutoRunLaunchParams> = {}): CueAutoRunLaunchParams => ({
 		sessionId: 'a1',

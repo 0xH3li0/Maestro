@@ -183,7 +183,7 @@ describe('maestro-cli host', () => {
 			);
 			const text = out.join('\n');
 			expect(text).toContain('Host started (pid');
-			expect(text).toContain('Cue: failed to start: better-sqlite3 could not be loaded');
+			expect(text).toContain('Cue: not running: better-sqlite3 could not be loaded');
 			expect(text).toContain('The host is up, but Cue is not');
 			// The host itself did start, and the output says exactly that.
 			expect(process.exitCode).toBeUndefined();

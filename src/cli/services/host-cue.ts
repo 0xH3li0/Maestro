@@ -13,6 +13,10 @@
  * directory, and Cue switched on or off in the settings. It is also what gives the engine a runtime
  * to run an `action: autorun` subscription in, and the one that stops the engine's runs before the
  * process goes away, because the engine's own `stop()` forgets its runs without ending them.
+ *
+ * The lock can also be taken from under a running engine (this process was suspended past the stale
+ * window, say). The engine notices on its heartbeat and stops itself; the host then gives up what it
+ * built around it, ends the runs the engine would otherwise orphan, and reports the new holder.
  */
 
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
@@ -70,7 +74,7 @@ export interface HostCueDeps {
 	isEnabled(settingsFile: string): Promise<boolean>;
 	readLock(dataDir: string): CueEngineLockInfo | null;
 	createEngine(
-		options: Pick<StandaloneCueEngineOptions, 'onLog' | 'runAutoRun'>
+		options: Pick<StandaloneCueEngineOptions, 'onLog' | 'runAutoRun' | 'onLockLost'>
 	): Promise<HostCueEngine>;
 	/** Serve `maestro-cli cue trigger`, which has no desktop WebSocket to reach this process by. Returns the stop. */
 	startInbox(engine: HostCueEngine, dataDir: string): () => void;
@@ -305,6 +309,71 @@ export async function startHostCue(
 	let live: LiveEngine | undefined;
 	let closed = false;
 
+	// One change at a time: a toggle that arrives while the engine is still stopping waits for it.
+	let pending: Promise<void> = Promise.resolve();
+	const inOrder = (change: () => Promise<void>): Promise<void> => {
+		pending = pending.then(change, change);
+		return pending;
+	};
+
+	/** Who holds the lock now that this host lost it. */
+	const stateAfterLoss = (): HostCueState => {
+		try {
+			const holder = deps.readLock(host.userDataDir);
+			if (holder && !ownsLock(holder)) return { state: 'held', mode: holder.mode, pid: holder.pid };
+		} catch {
+			// Unreadable is reported below, the same as absent.
+		}
+		return {
+			state: 'failed',
+			reason:
+				'another Cue engine took the Cue lock over, so Cue stopped here, and the lock cannot be read now to say whose it is (see the host log)',
+		};
+	};
+
+	/**
+	 * The engine's heartbeat found another engine holding the lock. It calls this from a timer, then
+	 * stops itself, so this runs outside `inOrder` and must not throw: a throw would skip that stop.
+	 *
+	 * Its runs are ended here rather than left to finish. The engine's `stop()` forgets them without
+	 * ending them, so a run left going would keep editing files and pushing beside the new holder,
+	 * which owns the same triggers and may fire the same subscription again, while its row says
+	 * `running` for good. Ending it records `stopped`, which says what happened.
+	 */
+	const lockLost = (lost: HostCueEngine): void => {
+		const was = live;
+		// A bring-down already under way has taken the engine out of `live` and ends its runs itself.
+		// A stop still queued has not, and the engine forgets its runs as soon as this returns, so
+		// they are ended here even then.
+		if (!was || was.engine !== lost) return;
+		live = undefined;
+		current = stateAfterLoss();
+		const steps: Array<[string, () => void]> = [
+			['stop the trigger inbox', was.stopInbox],
+			['stop following agents', was.unfollowAgents],
+			['stop the runs in flight', () => was.engine.stopAll()],
+		];
+		for (const [step, run] of steps) {
+			try {
+				run();
+			} catch (error) {
+				consoleCueLog(
+					'error',
+					`[CUE] After losing the Cue lock, could not ${step}: ${errorText(error)}`
+				);
+			}
+		}
+		// A stop or a toggle queued from here on waits for those processes to exit.
+		inOrder(async () => {
+			await deps.waitForRunsToEnd();
+		}).catch((error: unknown) => {
+			consoleCueLog(
+				'error',
+				`[CUE] Waiting for the stopped runs to exit failed: ${errorText(error)}`
+			);
+		});
+	};
+
 	const bringUp = async (): Promise<void> => {
 		let engine: HostCueEngine | undefined;
 		let unfollowAgents: Unsubscribe = () => undefined;
@@ -328,6 +397,9 @@ export async function startHostCue(
 					consoleCueLog(level, message);
 				},
 				...(runtime ? { runAutoRun: runAutoRunInRuntime(runtime) } : {}),
+				onLockLost: () => {
+					if (engine) lockLost(engine);
+				},
 			});
 			if (runtime) unfollowAgents = await followAgents(runtime, engine);
 			engine.start('system-boot');
@@ -367,13 +439,6 @@ export async function startHostCue(
 		}
 	};
 
-	// One change at a time: a toggle that arrives while the engine is still stopping waits for it.
-	let pending: Promise<void> = Promise.resolve();
-	const inOrder = (change: () => Promise<void>): Promise<void> => {
-		pending = pending.then(change, change);
-		return pending;
-	};
-
 	await inOrder(bringUp);
 
 	// Cue switched on or off in the settings while the host runs: the same rules, applied again.
@@ -407,7 +472,8 @@ export async function startHostCue(
 				closed = true;
 				unwatchSettings();
 			}
-			return inOrder(bringDown);
+			// Then whatever a lock loss queued behind it: the wait for the runs it ended.
+			return inOrder(bringDown).then(() => pending);
 		},
 	};
 }

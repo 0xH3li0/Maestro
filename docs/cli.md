@@ -2048,7 +2048,7 @@ Starts the host as a detached process and returns once it is listening. The host
 
 ### `host status`
 
-Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
+Reports the host's pid, uptime, version, the holder of the data directory's lock, how many clients are attached, the work in flight, and the Cue state. If another Cue engine takes the Cue lock over while the host runs (the host was suspended long enough for its lock to go stale, say), the host stops its Cue runs and gives Cue up, and the Cue state names the new holder (`not running here: desktop pid 1234 holds the Cue lock`) instead of `running`. The host does not take Cue back on its own: switching Cue off and on again in the settings, or restarting the host, tries again. With no host it exits with code `3` and names whoever holds the lock, if anyone does (a TUI hosting in its own process, say).
 
 | Flag                | Description                        | Default                       |
 | ------------------- | ---------------------------------- | ----------------------------- |
