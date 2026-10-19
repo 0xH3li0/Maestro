@@ -1594,6 +1594,15 @@ Switch an agent between "ai" and "terminal" mode
 | `--focus`      | Switch even when the agent is the one on screen (default)                                             | -       |
 | `--json`       | Output as JSON (for scripting)                                                                        | -       |
 
+## `maestro-cli interrupt <agent-id>`
+
+Stop an agent's running turn (every busy tab, like the Stop pill), or one tab's with --tab
+
+| Option           | Description                                               | Default |
+| ---------------- | --------------------------------------------------------- | ------- |
+| `--tab <tab-id>` | Stop only this tab (exact id, unique prefix, or "active") | -       |
+| `--json`         | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli tab`
 
 Manage an agent's tabs in the desktop app

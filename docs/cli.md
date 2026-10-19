@@ -839,6 +839,28 @@ Bookmark, unread, star, and save-to-history are explicit set operations rather t
 
 `model`, `effort`, and `enter-to-send` are per-tab overrides: `inherit` clears the override so the tab follows the agent's model/effort or the global `enterToSendAI` setting again. That is not the same as `false` - `tab enter-to-send <tab-id> false` pins the tab to Cmd+Enter even when the global default is Enter. Agent-wide defaults still live on `maestro-cli update-agent <id> --model/--effort`. `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
 
+### Stopping a Running Turn (`interrupt`)
+
+Stop a turn another agent cannot get out of, the same as clicking the red Stop pill. It requires the desktop app to be running.
+
+```bash
+# Stop every busy tab of an agent (what the Stop pill does)
+maestro-cli interrupt <agent-id>
+
+# Stop one tab only: an exact tab ID, a unique prefix, or "active"
+maestro-cli interrupt <agent-id> --tab <tab-id>
+maestro-cli interrupt <agent-id> --tab active
+
+# Machine-readable result
+maestro-cli interrupt <agent-id> --json
+```
+
+The stop goes through the same code as the desktop: it signals the tab's own process, cancels a pending auto-retry, context compaction, hand-off, or consult for that scope, and settles the tab to idle. With no `--tab`, every busy tab of the agent stops; `--tab` leaves the agent's other tabs running.
+
+The verb is safe to re-run. When nothing is running it prints `Nothing to stop` and exits 0 (`wasBusy: false` in JSON). A failed stop exits 1, and a desktop that never answered exits 5. The JSON payload is `{ success, agentId, tabId, wasBusy, interrupted, stoppedTabIds, exited }`. `exited: true` means the stopped processes are gone, so `maestro-cli tab show <tab-id>` (the `State` row) and `maestro-cli session list --json` (field `state`) already read idle; when it is `false`, the CLI prints the `tab show` command to check again.
+
+An agent cannot interrupt itself from inside its own turn: the verb refuses the caller's own agent, or `--tab` naming the caller's own tab. A sibling tab of the same agent is allowed.
+
 ### Listing Resources
 
 ```bash

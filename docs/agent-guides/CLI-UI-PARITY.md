@@ -299,6 +299,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Read one tab's settings back                                                                                                                                                                                                                                                                                                                                     | `tab show`, or `session list --json`                                                                                                                                                                                                                                                                                                                                                                     |
 | Move Tab to First / Last                                                                                                                                                                                                                                                                                                                                         | `tab move <tab-id> first\|last\|<index>`                                                                                                                                                                                                                                                                                                                                                                 |
 | Send a message, or run a shell command                                                                                                                                                                                                                                                                                                                           | `send`, `dispatch`, `send-terminal`                                                                                                                                                                                                                                                                                                                                                                      |
+| Stop a running turn (the Stop pill; no key is bound to Stop)                                                                                                                                                                                                                                                                                                     | `interrupt <agent>` stops every busy tab, as the pill does; `interrupt <agent> --tab <id\|active>` stops one tab (read back with `tab show`)                                                                                                                                                                                                                                                             |
 | Consult another agent (`@mention`)                                                                                                                                                                                                                                                                                                                               | `ask <agent> "<question>" --from <caller>`                                                                                                                                                                                                                                                                                                                                                               |
 | List the execution queue, remove a queued card                                                                                                                                                                                                                                                                                                                   | `queue list [--agent <id>]`, `queue remove <item-id> --agent <id>` (read back with `queue list`)                                                                                                                                                                                                                                                                                                         |
 | Hold / Resume a queued card                                                                                                                                                                                                                                                                                                                                      | `queue hold <item-id> --agent <id>`, `queue resume <item-id> --agent <id>` (read back with `queue list`, which shows `paused`)                                                                                                                                                                                                                                                                           |
@@ -441,54 +442,44 @@ Ranked by how often an agent is likely to hit them. Every entry is buildable
 work; UI actions left without a verb on purpose are listed under
 [Not mirrored by design](#not-mirrored-by-design).
 
-1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
-   no CLI equivalent and no WS message behind one. This is the largest remaining
-   gap: an agent that starts a runaway turn on another agent cannot stop it.
-
-   Beyond "no CLI verb": the only backend (REST
-   `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
-   legacy `${sessionId}-ai` process id, which misses per-tab processes
-   (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
-   then add `interrupt <agent> [--tab]`.
-
-2. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
+1. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
    runtime-only and never persisted, so the CLI cannot see the stack to restore
    from it. Closing this means persisting that history first.
-3. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
+2. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
    options (what to copy). `create-agent` can approximate it, but there is no
    one-shot duplicate.
-4. **Toggle Live mode** (`isLive`) for the web interface.
-5. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+3. **Toggle Live mode** (`isLive`) for the web interface.
+4. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation.
-6. **Auto Run state in a CLI-built support package.** The desktop's Create
+5. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-7. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+6. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-8. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+7. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
    reachable over the WS bridge. Every mode IS reachable from the CLI through
    the prompt's wording, which `inferMentionTiming()` reads on every path, so
    this is a convenience gap, not a capability gap. Closing it means threading
    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-9. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+8. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
    Cue modal panel could render its gaps directly; it is CLI first because it
    exists for unattended servers, where nobody opens the desktop.
-10. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
-    have no CLI read. An agent needs one to check plan usage, and it is also
-    how an agent would verify a provider login (see **Log in to a provider
-    account** under Not mirrored by design).
+9. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+   have no CLI read. An agent needs one to check plan usage, and it is also
+   how an agent would verify a provider login (see **Log in to a provider
+   account** under Not mirrored by design).
 
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
