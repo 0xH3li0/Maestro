@@ -27,10 +27,12 @@
 
 import { create } from 'zustand';
 import type { ThroughputLayout } from '../../shared/throughputGauge';
-import type {
-	ThroughputHistory,
-	ThroughputMetric,
-	ThroughputRates,
+import {
+	EMPTY_THROUGHPUT_HISTORY,
+	ZERO_THROUGHPUT_RATES,
+	type ThroughputHistory,
+	type ThroughputMetric,
+	type ThroughputRates,
 } from '../../shared/throughputRate';
 import {
 	sanitizeGaugeRects,
@@ -49,8 +51,6 @@ export const THROUGHPUT_HISTORY_LENGTH = 60;
 
 export type { ThroughputHistory };
 
-const ZERO_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
-const EMPTY_HISTORY: ThroughputHistory = { in: [], out: [], combined: [] };
 const METRICS: readonly ThroughputMetric[] = ['in', 'out', 'combined'];
 
 function loadVisible(): boolean {
@@ -124,9 +124,9 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 
 	return {
 		visible: loadVisible(),
-		rates: ZERO_RATES,
-		peak: ZERO_RATES,
-		history: EMPTY_HISTORY,
+		rates: ZERO_THROUGHPUT_RATES,
+		peak: ZERO_THROUGHPUT_RATES,
+		history: EMPTY_THROUGHPUT_HISTORY,
 		rects: loadRects(),
 
 		show: () => setVisible(true),
@@ -135,7 +135,7 @@ export const useThroughputGaugeStore = create<ThroughputGaugeStore>()((set, get)
 
 		resetPeak: () => set({ peak: get().rates }),
 
-		restartReadings: () => set({ peak: ZERO_RATES, history: EMPTY_HISTORY }),
+		restartReadings: () => set({ peak: ZERO_THROUGHPUT_RATES, history: EMPTY_THROUGHPUT_HISTORY }),
 
 		publish: (rates) => {
 			const state = get();

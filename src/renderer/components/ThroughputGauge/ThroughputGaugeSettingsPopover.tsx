@@ -55,17 +55,24 @@ interface ThroughputGaugeSettingsPopoverProps {
 	/** The gear button. Clicks on it count as inside, so it can toggle the popover. */
 	anchorRef: RefObject<HTMLElement | null>;
 	onClose: () => void;
+	/**
+	 * Reset peak. Defaults to this window's gauge store; the desktop widget
+	 * window passes a command to the primary window, which owns the readings.
+	 */
+	onResetPeak?: () => void;
 }
 
 export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSettingsPopover({
 	theme,
 	anchorRef,
 	onClose,
+	onResetPeak,
 }: ThroughputGaugeSettingsPopoverProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const settings = useSettingsStore((s) => s.throughputGaugeSettings);
 	const setSettings = useSettingsStore((s) => s.setThroughputGaugeSettings);
-	const resetPeak = useThroughputGaugeStore((s) => s.resetPeak);
+	const storeResetPeak = useThroughputGaugeStore((s) => s.resetPeak);
+	const resetPeak = onResetPeak ?? storeResetPeak;
 
 	// Decided once, at open: flipping while open would jump the menu under the cursor.
 	const [placement] = useState(() => placementFor(anchorRef.current));

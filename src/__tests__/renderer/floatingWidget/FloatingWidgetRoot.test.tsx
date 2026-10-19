@@ -25,7 +25,14 @@ async function renderRoot() {
 
 beforeEach(() => {
 	ready = vi.fn();
-	maestro.floatingWidgets = { ready, hide: vi.fn().mockResolvedValue(false) };
+	maestro.floatingWidgets = {
+		ready,
+		hide: vi.fn().mockResolvedValue(false),
+		// The gauge body mirrors the primary window's readings.
+		onState: vi.fn(() => () => {}),
+		getState: vi.fn().mockResolvedValue(null),
+		sendCommand: vi.fn(),
+	};
 });
 
 afterEach(() => {
@@ -57,6 +64,7 @@ describe('FloatingWidgetRoot', () => {
 		await renderRoot();
 		expect(screen.getByTestId('floating-widget-frame')).toBeInTheDocument();
 		expect(screen.getByTestId('floating-widget-title-strip')).toHaveTextContent('Throughput');
+		expect(screen.getByTestId('throughput-gauge-widget')).toBeInTheDocument();
 	});
 
 	it('renders the media player body for its id', async () => {

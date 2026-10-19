@@ -22,6 +22,7 @@ import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { logger } from '../utils/logger';
 import type { Theme } from '../types';
 import { FloatingWidgetFrame } from './FloatingWidgetFrame';
+import { ThroughputGaugeWidget } from './ThroughputGaugeWidget';
 
 /** The URL parameter that names the widget a window hosts. */
 export const FLOATING_WIDGET_QUERY_PARAM = 'floatingWidget';
@@ -31,7 +32,7 @@ export interface FloatingWidgetBodyProps {
 }
 
 /**
- * Temporary body until the real widget lands (phases 03 and 04 of the
+ * Temporary body until the real widget lands (phase 04 of the
  * floating-widgets plan). Its close hides the window, which main keeps.
  */
 function placeholderBody(
@@ -62,7 +63,7 @@ function placeholderBody(
 
 /** The body each widget id renders. */
 const WIDGET_BODIES: Record<FloatingWidgetId, ComponentType<FloatingWidgetBodyProps>> = {
-	'throughput-gauge': placeholderBody('throughput-gauge', 'Throughput'),
+	'throughput-gauge': ThroughputGaugeWidget,
 	'media-player': placeholderBody('media-player', 'Media Player'),
 };
 
