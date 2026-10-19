@@ -282,9 +282,10 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Change working directory                                                                                                                                                                                                                                                                                                                                         | `update-agent --cwd`                                                                                                                                                                                                                                                                                                                                                                                     |
 | SSH remote execution config                                                                                                                                                                                                                                                                                                                                      | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                                                                                                                                                                                                                                                                                                                             |
 | Edit an SSH remote, incl. its `ssh -o` list                                                                                                                                                                                                                                                                                                                      | `update-ssh-remote --ssh-option / --clear-ssh-options`                                                                                                                                                                                                                                                                                                                                                   |
+| Test an SSH remote, enable / disable it, set the default                                                                                                                                                                                                                                                                                                         | `test-ssh-remote <remote-id>`, `update-ssh-remote --enabled true\|false`, `update-ssh-remote --set-default` (read back with `list ssh-remotes --json`)                                                                                                                                                                                                                                                   |
 | Focus an agent, switch AI/Shell mode                                                                                                                                                                                                                                                                                                                             | `focus-agent`, `switch-mode`                                                                                                                                                                                                                                                                                                                                                                             |
 | Create / rename / remove a group                                                                                                                                                                                                                                                                                                                                 | `create-group`, `rename-group`, `remove-group`                                                                                                                                                                                                                                                                                                                                                           |
-| Group icon, color, and nesting                                                                                                                                                                                                                                                                                                                                   | `create-group --icon/--color/--parent`, `update-group`                                                                                                                                                                                                                                                                                                                                                   |
+| Group emoji, icon, color, and nesting                                                                                                                                                                                                                                                                                                                            | `create-group --emoji/--icon/--color/--parent`, `update-group`                                                                                                                                                                                                                                                                                                                                           |
 | Hide / show a group in the Left Bar                                                                                                                                                                                                                                                                                                                              | `update-group --hide / --show` (read back with `list groups --json`)                                                                                                                                                                                                                                                                                                                                     |
 | Move an agent or a whole group to another window                                                                                                                                                                                                                                                                                                                 | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                                                                                                                                                                                                                                                                                    |
 | Create a worktree agent                                                                                                                                                                                                                                                                                                                                          | `create-worktree`                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -299,6 +300,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Move Tab to First / Last                                                                                                                                                                                                                                                                                                                                         | `tab move <tab-id> first\|last\|<index>`                                                                                                                                                                                                                                                                                                                                                                 |
 | Send a message, or run a shell command                                                                                                                                                                                                                                                                                                                           | `send`, `dispatch`, `send-terminal`                                                                                                                                                                                                                                                                                                                                                                      |
 | Consult another agent (`@mention`)                                                                                                                                                                                                                                                                                                                               | `ask <agent> "<question>" --from <caller>`                                                                                                                                                                                                                                                                                                                                                               |
+| List the execution queue, remove a queued card                                                                                                                                                                                                                                                                                                                   | `queue list [--agent <id>]`, `queue remove <item-id> --agent <id>` (read back with `queue list`)                                                                                                                                                                                                                                                                                                         |
 | Hold / Resume a queued card                                                                                                                                                                                                                                                                                                                                      | `queue hold <item-id> --agent <id>`, `queue resume <item-id> --agent <id>` (read back with `queue list`, which shows `paused`)                                                                                                                                                                                                                                                                           |
 | Merge a queued card into the one above                                                                                                                                                                                                                                                                                                                           | `queue merge <item-id> --agent <id>` (read back with `queue list`: the item is gone and the one above carries both texts)                                                                                                                                                                                                                                                                                |
 | Group chat: Steer a queued message into the running round (moderator or working participants)                                                                                                                                                                                                                                                                    | `group-chat steer <chat> --item <queued-id>` (find the id with `group-chat status`), or `group-chat steer <chat> "<message>"` for new text                                                                                                                                                                                                                                                               |
@@ -435,12 +437,20 @@ acting again.
 
 ## Open gaps
 
-Ranked by how often an agent is likely to hit them. Most are not built yet;
-deliberate design constraints, including protected host consent, are noted below.
+Ranked by how often an agent is likely to hit them. Every entry is buildable
+work; UI actions left without a verb on purpose are listed under
+[Not mirrored by design](#not-mirrored-by-design).
 
 1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
    no CLI equivalent and no WS message behind one. This is the largest remaining
    gap: an agent that starts a runaway turn on another agent cannot stop it.
+
+   Beyond "no CLI verb": the only backend (REST
+   `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
+   legacy `${sessionId}-ai` process id, which misses per-tab processes
+   (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
+   then add `interrupt <agent> [--tab]`.
+
 2. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
    runtime-only and never persisted, so the CLI cannot see the stack to restore
    from it. Closing this means persisting that history first.
@@ -449,108 +459,117 @@ deliberate design constraints, including protected host consent, are noted below
    one-shot duplicate.
 4. **Toggle Live mode** (`isLive`) for the web interface.
 5. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
-   presentation; low value for automation, which is why they are last.
-6. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
-   Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
-   agent already has `git` and `gh` in its shell, which is strictly more capable.
-   Only the modal-opening is unavailable, not the capability.
-7. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
-   Tab Switcher, Search: Messages). These are interactive by definition; the
-   underlying data is reachable through `list`, `session show`, and
-   `director-notes history`.
-8. **Auto Run state in a CLI-built support package.** The desktop's Create
+   presentation; low value for automation.
+6. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-9. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+7. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-10. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
-    `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
-    legacy `${sessionId}-ai` process id, which misses per-tab processes
-    (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
-    then add `interrupt <agent> [--tab]`.
-11. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
-    an element already rendered in a transcript or document
-    (`openZoomViewer(element)`), and a transcript element has no address the
-    CLI can name. The capability is still reachable: `open-file <image>` opens
-    the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
-    an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
-    viewing; there is no result for an agent to read back.
-12. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
-    document dropdown's height via `useResizableDropdownHeight`, the Document
-    Graph preview width via `usePersistedPanelWidth`). Pure view preferences
-    with nothing for an agent to act on; the values never reach main, so a
-    verb needs a renderer round trip. Double-click on the grip resets them.
-13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
-    palette "Reauthenticate Provider"). The login is an interactive OAuth or
-    device-code flow in a PTY, so there is nothing a non-interactive verb could
-    complete. The capability is reachable from an agent's shell as
-    `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
-    `/login`. There is no CLI read of the quota snapshots yet, so verifying the
-    login from the CLI is part of this gap.
-14. **Host LAN and Tailscale access controls** (enable, disable, select a LAN
-    interface, and inspect access state in Connect another device / Manage access).
-    These remain in the protected native host window as a deliberate human-consent
-    design choice. Enabling a private listener requires the host owner's review;
-    no CLI verbs expose these controls.
-15. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
-    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
-    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
-    reachable over the WS bridge. Every mode IS reachable from the CLI through
-    the prompt's wording, which `inferMentionTiming()` reads on every path, so
-    this is a convenience gap, not a capability gap. Closing it means threading
-    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-16. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
-    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
-    Cue modal panel could render its gaps directly; it is CLI first because it
-    exists for unattended servers, where nobody opens the desktop.
-17. **Run a DataviewJS block again, or Run once** (Run again on a block whose
-    script timed out, crashed its sandbox, or failed to load; Run once on the
-    trust prompt of a block in a vault that is not trusted, and Run on an
-    inline `$=` span there). The CLI can trust
-    the vault (`dataview trust <root>`), which is what Run once avoids, but it
-    cannot run one block. Deliberate: DataviewJS renders
-    in the desktop app only (spec D8), so the CLI never runs note scripts, and
-    `dataview query` on a `dataviewjs` block exits 2. The block's source is
-    readable with `dataview query <file> --json`; there is no rendered output
-    for an agent to read back.
+8. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+   routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
+   `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
+   reachable over the WS bridge. Every mode IS reachable from the CLI through
+   the prompt's wording, which `inferMentionTiming()` reads on every path, so
+   this is a convenience gap, not a capability gap. Closing it means threading
+   the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
+9. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+   is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
+   Cue modal panel could render its gaps directly; it is CLI first because it
+   exists for unattended servers, where nobody opens the desktop.
+10. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+    have no CLI read. An agent needs one to check plan usage, and it is also
+    how an agent would verify a provider login (see **Log in to a provider
+    account** under Not mirrored by design).
 
-### Audit backlog (2026-09-27)
+### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
 A full sweep of the palette, shortcuts, context menus, and modals found these
 still missing. Grouped, highest value first:
 
-- **Execution queue:** list, remove, edit, reorder, hold, force-send (`queue ...`).
+- **Execution queue:** edit, reorder, and force-send a queued item (`queue ...`).
 - **Composer:** send images with a prompt (`dispatch --image`); fork a tab from a
   message (`tab fork --at`); resume a stored provider session into a tab
-  (`tab new --resume`), read a stored transcript (`session read`).
+  (`tab new --resume`); read the transcript of a stored session that has no
+  open tab (`session read`).
 - **Tabs of every kind:** `tab close/rename/move` resolve AI tabs only; no
-  listing of file/terminal/browser tabs; bulk close (others/left/right);
-  terminal close, restart, startup command; `read-browser` page text;
-  `open-browser` refuses `file://`.
+  listing of file/browser tabs; bulk close (others/left/right); terminal close,
+  restart, and changing an open terminal's startup command; `read-browser` page
+  text; `open-browser` refuses `file://`.
 - **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
 - **Group chat:** delete, rename, archive, edit moderator/participants, export.
 - **History:** delete an entry, toggle validated, generate a synopsis now, search.
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
-  logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.
-- **SSH remotes:** test, edit, enable/disable, set default.
+  logs (`logs`), reset stuck busy state, restart agent, retry.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
-- **Web access:** dashboard URL, QR pairing, persistent token, tunnel.
+- **Web access:** dashboard URL, QR pairing, tunnel.
 - **Updates:** check/download/install.
 - **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
-- **Media player:** play/pause/next/prev/seek/volume, queue management.
-- **Cue:** engine start/stop, stop a run, backups, global settings, rename pipeline.
-- **Agents/groups:** worktree folder + scan, group emoji, `remove-agent --erase`.
-- **Symphony** contributions; **low value:** devtools, tour, leaderboard,
-  `notify clear`, clear terminal, `gist --file`, deep link, reveal in Finder.
+- **Media player:** play/pause/next/prev/seek/volume; list, remove, and reorder
+  the play queue.
+- **Cue:** the desktop engine's own on/off, stop a run, backups, global settings,
+  rename pipeline.
+- **Agents/groups:** worktree folder + scan, `remove-agent --erase`.
+- **Symphony** contributions; **low value:** devtools, tour, leaderboard, clear
+  terminal, `gist --file`, deep link, reveal in Finder.
+
+## Not mirrored by design
+
+These are UI actions deliberately left without a CLI verb. Each entry states
+why: the action is interactive by nature, sits behind a human-consent boundary,
+or is a pure view preference with nothing for an agent to read back. A new
+entry needs a stated reason, the same way a Covered row needs a verb.
+
+- **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
+  Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
+  agent already has `git` and `gh` in its shell, which is strictly more capable.
+  Only the modal-opening is unavailable, not the capability.
+- **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+  Tab Switcher, Search: Messages). These are interactive by definition; the
+  underlying data is reachable through `list`, `session show`, and
+  `director-notes history`.
+- **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+  an element already rendered in a transcript or document
+  (`openZoomViewer(element)`), and a transcript element has no address the
+  CLI can name. The capability is still reachable: `open-file <image>` opens
+  the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
+  an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
+  viewing; there is no result for an agent to read back.
+- **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+  document dropdown's height via `useResizableDropdownHeight`, the Document
+  Graph preview width via `usePersistedPanelWidth`). Pure view preferences
+  with nothing for an agent to act on; the values never reach main, so a
+  verb needs a renderer round trip. Double-click on the grip resets them.
+- **Log in to a provider account** (Usage Dashboard quota row "Log in",
+  palette "Reauthenticate Provider"). The login is an interactive OAuth or
+  device-code flow in a PTY, so there is nothing a non-interactive verb could
+  complete. The capability is reachable from an agent's shell as
+  `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
+  `/login`. Verifying the login afterwards is the Open gaps entry **Read
+  provider quota snapshots**.
+- **Host LAN and Tailscale access controls** (enable, disable, select a LAN
+  interface, and inspect access state in Connect another device / Manage access).
+  These remain in the protected native host window as a deliberate human-consent
+  design choice. Enabling a private listener requires the host owner's review;
+  no CLI verbs expose these controls.
+- **Run a DataviewJS block again, or Run once** (Run again on a block whose
+  script timed out, crashed its sandbox, or failed to load; Run once on the
+  trust prompt of a block in a vault that is not trusted, and Run on an
+  inline `$=` span there). The CLI can trust
+  the vault (`dataview trust <root>`), which is what Run once avoids, but it
+  cannot run one block. Deliberate: DataviewJS renders
+  in the desktop app only (spec D8), so the CLI never runs note scripts, and
+  `dataview query` on a `dataviewjs` block exits 2. The block's source is
+  readable with `dataview query <file> --json`; there is no rendered output
+  for an agent to read back.
 
 ### Backstage plugin updates
 
