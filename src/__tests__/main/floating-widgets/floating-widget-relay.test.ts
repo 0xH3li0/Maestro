@@ -126,6 +126,7 @@ function setup(
 	const otherAppWindow = makeWindow(2);
 	const gauge = makeController('throughput-gauge', 10);
 	const media = makeController('media-player', 20);
+	const voice = makeController('acappella-voice', 30);
 	const authorities: Record<FloatingWidgetId, FakeWindow | null> = {
 		'throughput-gauge': appWindow,
 		'media-player': null,
@@ -137,8 +138,7 @@ function setup(
 		controllers: {
 			'throughput-gauge': gauge.controller as unknown as FloatingWidgetController,
 			'media-player': media.controller as unknown as FloatingWidgetController,
-			'acappella-voice': makeController('acappella-voice', 30)
-				.controller as unknown as FloatingWidgetController,
+			'acappella-voice': voice.controller as unknown as FloatingWidgetController,
 		},
 		// Like the real wiring: the media player's authority is its own window.
 		getAuthorityWindow: (id) =>
@@ -152,7 +152,7 @@ function setup(
 				.filter((w): w is FakeWindow => w !== null)
 				.map(asWindow),
 	});
-	return { relay, appWindow, otherAppWindow, gauge, media, authorities };
+	return { relay, appWindow, otherAppWindow, gauge, media, voice, authorities };
 }
 
 const sender = (id: number) => ({ sender: { id } });
@@ -498,7 +498,17 @@ describe('voice widget authority', () => {
 	});
 	it('rejects stale visibility changes after ownership moves to another app window', async () => {
 		let owner = 1;
-		const { relay } = setup((id, senderId) => id !== 'acappella-voice' || senderId === owner);
+		const { relay, voice } = setup(
+			(id, senderId) => id !== 'acappella-voice' || senderId === owner
+		);
+		let visible = false;
+		voice.controller.isVisible.mockImplementation(() => visible);
+		voice.controller.show.mockImplementation(() => {
+			visible = true;
+		});
+		voice.controller.hide.mockImplementation(() => {
+			visible = false;
+		});
 		relay.init();
 		const show = handlers.get('floatingWidgets:show')!;
 		const hide = handlers.get('floatingWidgets:hide')!;

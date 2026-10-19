@@ -23,6 +23,14 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'host start': ['maestro-cli host start --dev'],
 	'host status': ['maestro-cli host status --dev --json'],
 	'host stop': ['maestro-cli host stop --dev --wait'],
+	// Dataview commands introduced by RC also participate in the CLI help audit.
+	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
+	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],
+	'dataview index status': ['maestro-cli dataview index status --json'],
+	'dataview index rebuild': ['maestro-cli dataview index rebuild <vault-root>'],
+	'dataview trust': ['maestro-cli dataview trust <vault-root>'],
+	'dataview untrust': ['maestro-cli dataview untrust <vault-root>'],
+	'dataview trusted': ['maestro-cli dataview trusted --json'],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

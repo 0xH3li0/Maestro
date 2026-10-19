@@ -5323,6 +5323,10 @@ Run a note's dataview blocks with `this` bound to the note (DataviewJS blocks ar
 | `--agent <id>` | Agent the note belongs to (default: the agent whose folder holds it)      | -       |
 | `--json`       | Output as JSON (for scripting)                                            | -       |
 
+```bash
+maestro-cli dataview query <file> --agent <agent-id> --json
+```
+
 ## `maestro-cli dataview eval <file> <dql>`
 
 Run an ad-hoc DQL query with `this` bound to the note; start with = for an inline expression
@@ -5331,6 +5335,10 @@ Run an ad-hoc DQL query with `this` bound to the note; start with = for an inlin
 | -------------- | -------------------------------------------------------------------- | ------- |
 | `--agent <id>` | Agent the note belongs to (default: the agent whose folder holds it) | -       |
 | `--json`       | Output as JSON (for scripting)                                       | -       |
+
+```bash
+maestro-cli dataview eval <file> "LIST FROM #meeting" --json
+```
 
 ## `maestro-cli dataview index`
 
@@ -5345,6 +5353,10 @@ Show the open vault indexes, or one vault root (pages, revision, watcher, cache)
 | `--agent <id>` | Agent whose SSH remote holds the root (default: a local root) | -       |
 | `--json`       | Output as JSON (for scripting)                                | -       |
 
+```bash
+maestro-cli dataview index status --json
+```
+
 ## `maestro-cli dataview index rebuild <root>`
 
 Drop a vault root's index cache and index it again from scratch
@@ -5354,6 +5366,10 @@ Drop a vault root's index cache and index it again from scratch
 | `--agent <id>` | Agent whose SSH remote holds the root (default: a local root) | -       |
 | `--json`       | Output as JSON (for scripting)                                | -       |
 
+```bash
+maestro-cli dataview index rebuild <vault-root>
+```
+
 ## `maestro-cli dataview trust <root>`
 
 Trust a vault root: its DataviewJS blocks run in the sandbox without asking
@@ -5361,6 +5377,10 @@ Trust a vault root: its DataviewJS blocks run in the sandbox without asking
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli dataview trust <vault-root>
+```
 
 ## `maestro-cli dataview untrust <root>`
 
@@ -5370,6 +5390,10 @@ Stop trusting a vault root: its DataviewJS blocks ask before they run
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+```bash
+maestro-cli dataview untrust <vault-root>
+```
+
 ## `maestro-cli dataview trusted`
 
 List the vault roots whose DataviewJS blocks run without asking
@@ -5377,6 +5401,10 @@ List the vault roots whose DataviewJS blocks run without asking
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli dataview trusted --json
+```
 
 ## `maestro-cli quick-chat`
 
