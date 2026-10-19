@@ -2,13 +2,18 @@
  * Tests for MediaPlayerWidget, the media player's desktop-window body. This
  * window is the authority: it owns the one media element, shows and hides its
  * window from the store, dismisses on its X, applies commands the primary
- * window forwards, and hydrates the persisted queue.
+ * window forwards, hydrates the persisted queue, and sizes its window to the
+ * media until the user resizes it.
  */
 import { useEffect } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MediaPlayerWidget } from '../../../renderer/floatingWidget/MediaPlayerWidget';
+import {
+	MEDIA_WINDOW_BASELINE_STORAGE_KEY,
+	MediaPlayerWidget,
+} from '../../../renderer/floatingWidget/MediaPlayerWidget';
+import { mediaWindowSizeFor } from '../../../renderer/floatingWidget/mediaWindowSize';
 import {
 	MEDIA_QUEUE_SETTINGS_KEY,
 	setMediaQueuePersistEnabled,
@@ -42,11 +47,28 @@ const podcast: MediaItem = {
 	kind: 'audio',
 };
 
+const movie: MediaItem = {
+	id: 's1::/files/movie.mp4',
+	path: '/files/movie.mp4',
+	name: 'movie.mp4',
+	sessionId: 's1',
+	sessionName: 'Agent One',
+	kind: 'video',
+};
+
+/** The size the widget asks for before the transport is measured (the mock never reports it). */
+const audioSize = mediaWindowSizeFor({ kind: 'audio', transportHeight: null });
+const videoSize = mediaWindowSizeFor({ kind: 'video', transportHeight: null });
+
+let bounds: { x: number; y: number; width: number; height: number };
+
 let api: {
 	show: ReturnType<typeof vi.fn>;
 	hide: ReturnType<typeof vi.fn>;
 	publishState: ReturnType<typeof vi.fn>;
 	onCommand: ReturnType<typeof vi.fn>;
+	getBounds: ReturnType<typeof vi.fn>;
+	setBounds: ReturnType<typeof vi.fn>;
 };
 let commandHandler: ((command: unknown) => void) | null;
 
@@ -86,8 +108,16 @@ beforeEach(() => {
 				commandHandler = null;
 			};
 		}),
+		// A real window: setBounds resizes it and reports where it ended up.
+		getBounds: vi.fn(() => Promise.resolve({ ...bounds })),
+		setBounds: vi.fn((_id: string, next: { width: number; height: number }) => {
+			bounds = { ...bounds, ...next };
+			return Promise.resolve({ ...bounds });
+		}),
 	};
+	bounds = { x: 100, y: 100, width: 420, height: 96 };
 	maestro.floatingWidgets = api;
+	localStorage.removeItem(MEDIA_WINDOW_BASELINE_STORAGE_KEY);
 	resetStore();
 });
 
@@ -193,6 +223,56 @@ describe('MediaPlayerWidget', () => {
 		// Anything outside the command union is dropped.
 		act(() => commandHandler?.({ type: 'action', action: 'setPlaying', args: [true] }));
 		expect(useMediaPlaybackStore.getState().playing).toBe(false);
+	});
+
+	describe('window size', () => {
+		it('sizes the window for the loaded kind', async () => {
+			load(podcast);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledWith('media-player', audioSize));
+		});
+
+		it('re-sizes when the kind changes and the user left the size alone', async () => {
+			load(podcast);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledTimes(1));
+
+			act(() =>
+				useMediaPlaybackStore.setState({ items: [podcast, movie], activeItemId: movie.id })
+			);
+			await waitFor(() =>
+				expect(api.setBounds).toHaveBeenLastCalledWith('media-player', videoSize)
+			);
+		});
+
+		it('keeps the size the user chose across a kind change', async () => {
+			load(podcast);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledTimes(1));
+
+			// The user drags the window wider.
+			bounds = { ...bounds, width: 640 };
+			act(() =>
+				useMediaPlaybackStore.setState({ items: [podcast, movie], activeItemId: movie.id })
+			);
+			await waitFor(() => expect(api.getBounds).toHaveBeenCalledTimes(2));
+			await act(async () => {});
+			expect(api.setBounds).toHaveBeenCalledTimes(1);
+		});
+
+		it('follows the video aspect once the file reports it', async () => {
+			load(movie);
+			renderWidget();
+			await waitFor(() => expect(api.setBounds).toHaveBeenCalledWith('media-player', videoSize));
+
+			act(() => useMediaPlaybackStore.getState().rememberAspect(movie.id, 1));
+			await waitFor(() =>
+				expect(api.setBounds).toHaveBeenLastCalledWith(
+					'media-player',
+					mediaWindowSizeFor({ kind: 'video', aspect: 1, transportHeight: null })
+				)
+			);
+		});
 	});
 
 	describe('persisted queue', () => {

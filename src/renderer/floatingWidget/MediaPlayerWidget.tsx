@@ -17,9 +17,13 @@
  * otherwise. The X and Escape dismiss (minimize): the audio keeps going and the
  * primary window's Now Playing pill brings the window back. The stop button is
  * what releases the player.
+ *
+ * The window sizes itself to what it plays (a transport strip for audio, the
+ * picture plus transport for video) until the user resizes it; see
+ * `mediaWindowSize.ts` for when it re-sizes and when it leaves the user's size.
  */
 
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, FileAudio, FileVideo, Square } from 'lucide-react';
 
 import { ActiveMediaPlayer } from '../components/MediaPlayback/ActiveMediaPlayer';
@@ -34,9 +38,87 @@ import {
 } from '../stores/mediaPlaybackStore';
 import { installMediaPlaybackAuthority } from '../stores/mediaPlaybackReplica';
 import type { Theme } from '../types';
+import type { MediaKind } from '../../shared/mediaTypes';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
+import { captureException } from '../utils/sentry';
 import { FloatingWidgetFrame } from './FloatingWidgetFrame';
+import {
+	mediaWindowBaselineAfter,
+	planMediaWindowSize,
+	sanitizeMediaWindowBaseline,
+	type MediaWindowBaseline,
+} from './mediaWindowSize';
 
 const WIDGET_ID = 'media-player';
+
+/**
+ * Where the last size the widget gave its window is kept. Per device, like the
+ * window's own bounds, and across launches: without it a size the user chose
+ * last session would read as "never resized" and be overwritten on the next.
+ */
+export const MEDIA_WINDOW_BASELINE_STORAGE_KEY = 'maestro:mediaWindowBaseline';
+
+function readMediaWindowBaseline(): MediaWindowBaseline | null {
+	const raw = safeStorageGet(MEDIA_WINDOW_BASELINE_STORAGE_KEY);
+	if (!raw) return null;
+	try {
+		return sanitizeMediaWindowBaseline(JSON.parse(raw));
+	} catch {
+		// A damaged value means no baseline, which only costs one re-size.
+		return null;
+	}
+}
+
+function writeMediaWindowBaseline(baseline: MediaWindowBaseline | null): void {
+	if (baseline) safeStorageSet(MEDIA_WINDOW_BASELINE_STORAGE_KEY, JSON.stringify(baseline));
+}
+
+/**
+ * Size the window to the loaded media while the user has not resized it.
+ *
+ * Runs when the kind changes and when what the size is computed from arrives
+ * (a video's aspect, the transport's measured height). Each pass reads the
+ * window's bounds and the baseline fresh, and passes run one at a time, so a
+ * pass never plans against a size an earlier pass is still setting.
+ */
+function useMediaWindowSizing(
+	kind: MediaKind | null,
+	aspect: number | undefined,
+	transportHeight: number | null
+): void {
+	const queue = useRef<Promise<void>>(Promise.resolve());
+
+	useEffect(() => {
+		const api = window.maestro?.floatingWidgets;
+		if (!kind || !api) return;
+		let cancelled = false;
+		const fit = { kind, aspect: kind === 'video' ? aspect : undefined, transportHeight };
+
+		const pass = async () => {
+			if (cancelled) return;
+			const current = await api.getBounds(WIDGET_ID);
+			// A newer fit superseded this one while the bounds were in flight.
+			if (cancelled) return;
+			const stored = readMediaWindowBaseline();
+			const plan = planMediaWindowSize(fit, current, stored);
+			if (!plan.apply) {
+				if (plan.baseline !== stored) writeMediaWindowBaseline(plan.baseline);
+				return;
+			}
+			const actual = await api.setBounds(WIDGET_ID, plan.apply);
+			writeMediaWindowBaseline(mediaWindowBaselineAfter(kind, plan.apply, actual));
+		};
+		// A failed pass is reported, not left to break the chain: the next fit
+		// still gets its turn.
+		queue.current = queue.current.then(pass).catch((error) => {
+			captureException(error, { extra: { action: 'media-window-size' } });
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [kind, aspect, transportHeight]);
+}
 
 interface MediaPlayerWidgetProps {
 	theme: Theme;
@@ -49,8 +131,17 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 	const dismissed = useMediaPlaybackStore((s) => s.dismissed);
 	const dismiss = useMediaPlaybackStore((s) => s.dismiss);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
+	const aspect = useMediaPlaybackStore((s) =>
+		s.activeItemId ? s.aspects[s.activeItemId] : undefined
+	);
+
+	// The transport is the same strip whatever is loaded, so one measurement
+	// serves every file (the in-app player does the same).
+	const [transportHeight, setTransportHeight] = useState<number | null>(null);
 
 	useEffect(() => installMediaPlaybackAuthority(), []);
+
+	useMediaWindowSizing(active?.kind ?? null, aspect, transportHeight);
 
 	// Queue writes are debounced, so a window closing mid-debounce would lose the
 	// last position (or the last thing queued). Flush before it goes away.
@@ -118,7 +209,11 @@ export const MediaPlayerWidget = memo(function MediaPlayerWidget({
 			}
 		>
 			<div data-testid="media-player-widget" className="flex-1 min-h-0">
-				<ActiveMediaPlayer item={active} theme={theme} />
+				<ActiveMediaPlayer
+					item={active}
+					onTransportHeightChange={setTransportHeight}
+					theme={theme}
+				/>
 			</div>
 			{listMenus}
 		</FloatingWidgetFrame>
