@@ -228,6 +228,7 @@ import {
 	type FloatingWidgetController,
 } from './floating-widgets/floating-widget-window';
 import { createFloatingWidgetRelay } from './floating-widgets/floating-widget-relay';
+import { restoreMediaWindowAtLaunch } from './floating-widgets/media-window-launch';
 import {
 	FLOATING_WIDGET_IDS,
 	FLOATING_WIDGET_SPECS,
@@ -3421,6 +3422,12 @@ app
 		// Quick Chat registers its own hotkey through the same manager.
 		quickChatController.init();
 		floatingWidgetRelay.init();
+		// The media window owns the saved play queue: create it (hidden) now when
+		// there is one, or no window would show it until the next open-file.
+		restoreMediaWindowAtLaunch(
+			store.get('mediaPlayerQueue'),
+			floatingWidgetControllers['media-player']
+		);
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
