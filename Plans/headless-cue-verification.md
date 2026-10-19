@@ -247,6 +247,193 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
 
+## Packaged v1.1.0-RC, Linux CLI, 2026-10-19
+
+First run of the `maestro-cli` that ships inside the released Linux packages,
+rather than one built from source. Release `v1.1.0-RC` (tag at `6400a6da0`,
+published 2026-10-19T01:45:45Z; #1747's `00cec5631` is an ancestor). The
+behaviour judged is the RC's, not that of `fix/host-cue-lock-loss-and-drain`.
+Verification only: no code was changed.
+
+**Assets.** Downloaded with `gh release download` into an empty scratch
+directory; both sha256 values match the digests the release lists.
+
+| Asset                              | sha256                                                             |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `maestro-1.1.0-RC-x86_64.AppImage` | `fbb901e45be9a7cf9af3d33fd54b11951087989228d87bee243d1b7921561f7d` |
+| `maestro-1.1.0-RC-amd64.deb`       | `c1fec95d03efbf8adde2c7519d3916a69ea44ff7de204b40f02f64efa9fd40e2` |
+
+**How the CLI ships and how it was launched.** Neither package installs a CLI
+wrapper: the deb's `postinst` only links `/usr/bin/maestro`, sets up
+`chrome-sandbox` and AppArmor. The wrapper comes from the app at runtime,
+`MaestroCliManager.writeUnixShim` (`src/main/maestro-cli-manager.ts`), written
+to `~/.local/bin/maestro-cli` only on a user action
+(`maestroCli:installOrUpdate`), as
+`ELECTRON_RUN_AS_NODE=1 '<process.execPath>' '<resources>/maestro-cli.js' "$@"`.
+The bundle resolves `better-sqlite3` from
+`resources/app.asar.unpacked/node_modules` (built for Electron, ABI 145). The
+AppImage was unpacked with `--appimage-extract` and the deb with `dpkg-deb -x`,
+both into scratch; their `maestro-cli.js` (`4cf5e2c730a9ddc9`), `prompts/` and
+Electron binary (`09f76150ca151b0d`) are byte-identical. All checks ran through
+a scratch shim of exactly that shape, pointing at the extracted AppImage's
+`maestro` and `resources/maestro-cli.js`; the SIGTERM cases ran the same
+command without the bash wrapper so the signal reached the host itself. One
+smoke pass (`--version`, `host start`, `cue trigger`, `host stop`,
+`cue activity`) from the extracted deb tree passed too. `--version` prints
+`1.1.0-RC`, and `host` is registered on the RC (the "no `host` command" row in
+Known limits does not hold for the RC).
+
+**Isolation.** Before starting: the only Maestro processes were the
+`server-maestro-cue-1` container (its own filesystem, data dir
+`/var/lib/maestro/data`, only `127.0.0.1:17997` published) and the
+`maestro-vm` incus VM, so neither shares a data directory or Cue lock with this
+host. `maestro-cli status` with the real environment: `Maestro desktop app is
+not running or not reachable`. Every run set `HOME`, `XDG_CONFIG_HOME`,
+`XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `MAESTRO_USER_DATA` into
+scratch. The scratch `HOME` and XDG directories were still empty at the end:
+the host wrote only inside `MAESTRO_USER_DATA`.
+
+**Setup.** An empty data directory (`run1`). `encoreFeatures.maestroCue` is on
+by default, so no setting was changed. A detached host, then `create-agent RcA
+-d <projA> -t claude-code` through it (no provider binary is needed for the
+subscriptions below), with `<projA>/.maestro/cue.yaml` holding three
+`action: command` shell subscriptions and no pipeline: `beat`
+(`time.heartbeat`, `interval_minutes: 1`, appends the time to `beat.log`),
+`manual` (`cli.trigger`, appends to `manual.log`) and `slow` (`cli.trigger`,
+`sleep 40` then appends to `slow.log`). `max_concurrent` left at its default
+of 1. No real agent turn: a `claude` binary is installed, but its sign-in lives
+under the real `HOME`, and using it would have broken the isolation. Times are
+UTC; `cue activity` prints local time (UTC-4).
+
+### Results
+
+| Check                                                                              | Result                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host start` (detached) on the empty directory                                     | Pass, 0.7 s: `Host started (pid 549324, port 32985). Log: <data>/logs/maestro-host.log`, `Cue: running`. `--json` (on `run2`): `"started": true`, pid, port, log, `"cue": {"state": "running"}`                                                                                                                                                                                                      |
+| `host status`, plain and `--json`                                                  | Pass: pid, uptime, version `1.1.0-RC`, lock `host pid 549324`, `Clients: 1`, `Work: idle` (`Work: 0 turns, 1 Cue run` with `slow` running), `Cue: running`. `--json` has `work.cueRuns` (a count) and `cue.state`. With no host: `No host is running.`, exit 3                                                                                                                                       |
+| `create-agent` through the host                                                    | Pass: `{"success":true,"agentId":"0339a466-...","name":"RcA",...}`; the host log shows `Initialized session "RcA" with 3 active subscription(s)`                                                                                                                                                                                                                                                     |
+| Heartbeat firing on its own                                                        | Pass: `"beat" triggered (time.heartbeat, initial)` at 17:34:35, then the interval run at 17:35:35, both `completed`                                                                                                                                                                                                                                                                                  |
+| `cue trigger manual`, plain and `--json`                                           | Pass: `Triggered Cue subscription "manual"`, `{"type":"trigger_result","success":true,"subscriptionName":"manual"}`; two lines in `manual.log` a second apart                                                                                                                                                                                                                                        |
+| `cue activity` with the host running                                               | **Fail** (F1 below): `Error: The headless Maestro host (maestro-cli host) does not support the 'get_cue_activity' command. It may need the desktop app, or a newer build of the host.`, exit 4. Same with `--agent RcA`, `--agent <id prefix>`, `-n 1 --json` (`{"success":false,"error":...}`) and `--data-dir <data>`                                                                              |
+| `cue list` with the host running (not in the brief; noticed on the way)            | **Fail**, same cause: `does not support the 'get_cue_subscriptions' command`                                                                                                                                                                                                                                                                                                                         |
+| `cue engine check`, clean                                                          | Pass: `Ready: 1 agent(s), 1 workspace(s), 3 subscription(s) checked, no gaps.`, exit 0 (also with the host running)                                                                                                                                                                                                                                                                                  |
+| `cue engine check` with a deliberate gap (a `github.pull_request` with no `repo:`) | Pass: `Not ready: 1 gap(s) across 1 agent(s), 1 workspace(s), 4 subscription(s).` and `[github-repo-missing] GitHub trigger "gh-norepo" in <projA> has no "repo:", ...`, exit 1; `--json` `"ready": false` with one gap of kind `github-repo-missing`. Ready again, exit 0, once the line was removed                                                                                                |
+| `host stop` with `slow` in flight                                                  | Pass: `The host has work in flight (0 turns, 1 Cue run). Wait for it with --wait, or stop it anyway with --force.`, exit 1, host left running                                                                                                                                                                                                                                                        |
+| `host stop --wait 120` with `slow` in flight                                       | Pass: `Waiting up to 1m 59s for the work in flight (0 turns, 1 Cue run)...`, then `Host stopped (pid 549324).` after 37.5 s, exit 0; `slow.log` written at the same second. The lock files, `cli-server.json` and the `cue.db` sidecars are gone afterwards                                                                                                                                          |
+| `cue activity` after the host stopped                                              | Pass: stderr `Read from cue.db: the desktop app is not running, so run output is not included.`, then five runs newest first (`completed  slow  [cli.trigger]  40.0s` on top). `--agent RcA --limit 2` gives the top two; `-n 1 --json` one entry with `"status": "completed", "duration": 40014`; `--agent nosuch`: `Agent not found: nosuch`, exit 1. `cue.db` `6313957daf1e6a82` before and after |
+| `host start --foreground`                                                          | Pass: `Host serving <data> on 127.0.0.1:36349 (pid 555208).`, `Host started (pid 555208, port 36349).`, `Cue: running`; serves `host status` and `cue trigger` like the detached one                                                                                                                                                                                                                 |
+| `host start` on a directory a host already holds                                   | Pass with a docs nuance: `A host is already running (pid 563353, port 43375).`, exit 0, nothing started (deliberate in `hostStart`; only a desktop holder is an error)                                                                                                                                                                                                                               |
+| `bundle export --agent RcA --output rca.zip`, `bundle validate`, `bundle inspect`  | Pass: `1 agent, 1 workspace, 3 files`, sha256 `fdf6bd9e964bbe44...`; the zip holds `README.md`, `manifest.json`, the agent JSON and `workspaces/proja/.maestro/cue.yaml`, no `.log` file. `PASS ... (0 errors, 0 warnings)`. Inspect: `exported by Maestro 1.1.0-RC, needs Cue engine 0.18.0 or newer`, events `cli.trigger, time.heartbeat`, no tools, no secrets                                   |
+| `bundle import --dry-run` into a second empty data dir (`run2`)                    | Pass: plan `RcA (claude-code) new`, `cue.yaml (proja): added beat, manual, slow` and the three shell commands; both the data dir and the workspace folder still empty                                                                                                                                                                                                                                |
+| `bundle import --workspace proja=<run2>/work/app`, then `cue engine check`         | Pass: `Imported agent "RcA" into <run2>/data`, `list agents` shows it, `Ready: 1 agent(s), 1 workspace(s), 3 subscription(s) checked, no gaps.`                                                                                                                                                                                                                                                      |
+| The imported subscriptions run on a host over `run2`                               | Pass: `beat` ran on its own at 17:41:45 and `cue trigger manual` at 17:41:49, both in the new workspace's logs and in `cue activity` after `host stop`                                                                                                                                                                                                                                               |
+| The `docs/cli.md` Linux wrapper (`node "/opt/Maestro/resources/maestro-cli.js"`)   | **Fail** (F3 below), with system Node v24.21.0 on the extracted deb: `host start` exits 0 with `Cue: failed to start: ... better-sqlite3 cannot be loaded under Node.js v24.21.0 (NODE_MODULE_VERSION 137)` and `The host is up, but Cue is not`; `cue activity`: `Cannot find module 'better-sqlite3'`, exit 1                                                                                      |
+
+### SIGTERM baseline (the RC, for the branch fix to be compared against)
+
+Foreground host, `slow` triggered, then `manual` triggered a second later, which
+queues behind it (`Event queued for "RcA" (1/512 in queue, 1/1 concurrent)`),
+then SIGTERM to the host process.
+
+| Case                                                                              | What the RC does                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. `--stop-grace 60`, SIGTERM at 17:37:27 with `slow` running and `manual` queued | `Received SIGTERM: waiting up to 1m 0s for the work in flight (0 turns, 1 Cue run) before stopping. Send it again to stop now.` The queue keeps dispatching during the wait: `manual` started as soon as `slow` finished (both written at 17:38:01), then `Engine stopped`, `Host stopped.`, exit 0 at 17:38:02 (35 s after the signal) |
+| B. `--stop-grace 10`, SIGTERM at 17:40:35 with `slow` running and `manual` queued | `The grace period ran out with work still in flight (0 turns, 1 Cue run); stopping it.`, `Run stopped: <runId>`, exit 0 at 17:40:46 (10.1 s). No `sleep 40` left. `slow` recorded `failed` (13.6 s); the queued `manual` never ran and is not in `cue.db`                                                                               |
+| B, then `host start` on the same directory                                        | The queue is **not persisted**: no `manual` run after the restart (`manual.log` still absent 8 s later, nothing about a restored queue in the host log)                                                                                                                                                                                 |
+| C. `--stop-grace 60`, SIGTERM, then a second SIGTERM 2 s later                    | `Received SIGTERM again: stopping now.`, `Run stopped: <runId>`, exit 0 0.5 s after the second signal; `slow` recorded `failed` (4.0 s). The service mode's forced stop exits 1 (see [Summary](#summary)); the host exits 0                                                                                                             |
+
+So on the RC the grace waits for the run in flight and lets queued events run
+while it waits; at the deadline, or on a second signal, the run in flight is
+stopped and recorded `failed`, and anything still queued is dropped. The exit
+code is 0 in every case.
+
+### #1813 on the RC (read only)
+
+With `MAESTRO_USER_DATA` and `XDG_CONFIG_HOME` unset and the real `HOME`, one
+read-only `cue engine check`: `Maestro data directory not found at
+/home/hp/.config/Maestro. Found instead: /home/hp/.config/maestro,
+/home/hp/.config/maestro-dev. Set MAESTRO_USER_DATA to the directory the
+desktop app uses.`, exit 1. `~/.config` was listed before and after: no
+`Maestro` created, `~/.config/maestro` mtime unchanged. The same read in a fake
+home holding only `.config/maestro` gave the same answer for `cue engine
+check` and `cue engine status`; `cue activity` there names
+`<home>/.config/Maestro/cue.db does not exist`. In the fake home only, `host
+start` with no `--data-dir` created `<home>/.config/Maestro` and served it with
+`Cue: running` and no agents, beside the untouched `.config/maestro`; it was
+stopped at once.
+
+### Failures, with repros
+
+**F1. `cue activity` (and `cue list`) fail while a headless host runs.**
+`cueActivity` in `src/cli/commands/cue-control.ts` falls back to `cue.db` only
+on `MaestroNotRunningError`. With a host up, the client finds its
+`cli-server.json`, sends `get_cue_activity`, the host answers that it does not
+support the command, and the CLI fails instead of reading the database.
+`--data-dir` does not change the route. Repro:
+
+```bash
+export MAESTRO_USER_DATA=$(mktemp -d)
+P=$(mktemp -d)
+maestro-cli host start
+maestro-cli create-agent A -d "$P"
+maestro-cli cue activity     # exit 4: 'get_cue_activity' not supported
+maestro-cli cue list         # same, for 'get_cue_subscriptions'
+maestro-cli host stop
+maestro-cli cue activity     # works, from cue.db
+```
+
+Possible fix, not written: have the host answer `get_cue_activity` and
+`get_cue_subscriptions` from its own engine, or have the CLI fall back to the
+`cue.db` read when the answer is the host's "does not support".
+
+**F2. #1813, unchanged on the RC.** As above: with the default paths the CLI
+resolves `~/.config/Maestro` while the app writes `~/.config/maestro`; the
+readers refuse with a clear message, but `host start` silently creates and
+serves a new empty directory. Repro: `env -u MAESTRO_USER_DATA -u
+XDG_CONFIG_HOME maestro-cli cue engine check` on a machine where only
+`~/.config/maestro` exists. Fix in PR #1814, not merged.
+
+**F3. The Linux wrapper in `docs/cli.md` cannot run Cue.** The Installation
+section writes `node "/opt/Maestro/resources/maestro-cli.js"`, but the bundled
+`better-sqlite3` is built for the app's Electron, so under a system Node the
+host comes up with Cue failed and `cue activity` cannot read `cue.db`. Repro:
+`node /opt/Maestro/resources/maestro-cli.js host start` with Node 24 and a deb
+install. The wrapper the app itself writes (`ELECTRON_RUN_AS_NODE=1
+/opt/Maestro/maestro /opt/Maestro/resources/maestro-cli.js`) works. Possible
+fix, not written: change the Linux (and the matching macOS and Windows) lines
+to that form.
+
+### Differences from `docs/cli.md` at `v1.1.0-RC`
+
+- `cue activity`, `cue engine check` and `bundle` have no section in
+  `docs/cli.md`; they are documented only in `docs/maestro-cue-server.md`.
+- "`host start` refuses a directory ... another host already holds": it reports
+  the running host and exits 0 (on purpose, see Results).
+- `host stop` "names the work": it names the counts (`0 turns, 1 Cue run`), not
+  the subscription.
+- `host status` reports the Cue state and a count of Cue runs, not the runs.
+- `cue engine status` beside a host says `Running: standalone (pid <host pid>)`.
+
+### Not verified
+
+- The AppImage run as an AppImage: this machine has no FUSE 2 (`dlopen():
+error loading libfuse.so.2`), so only the extracted tree was run. Read from
+  the source and not run: inside a mounted AppImage `process.execPath` is the
+  `/tmp/.mount_*` path, and nothing in `src/` reads `APPIMAGE`, so a wrapper
+  the AppImage writes points into a mount that is gone once the app quits.
+  Worth a check on a machine with FUSE before the release notes promise a
+  headless CLI from the AppImage.
+- A real agent turn, rpm and arm64 packages, and `host stop --force`.
+- Side observation: `settings get encoreFeatures` prints nothing, exit 0,
+  while `settings list` shows the value.
+
+**State as left.** Every host started here was stopped (`host status` exits 3
+on `run1`, `run2` and the fake home); no process from the scratch directory and
+no `sleep 40` left. Nothing was written under the real `~/.config` or
+`~/.local/bin`; `server-maestro-cue-1` was only looked at (running, healthy, 0
+restarts). The downloads, both extracted packages and the data directories stay
+in the session's scratch directory and are not committed.
+
 ## cue activity, runs in flight, container, 2026-10-16
 
 Live check of `ae686ceca` (`cue activity` keeps a run in flight as `running`
