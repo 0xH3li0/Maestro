@@ -757,8 +757,8 @@ const mockMaestro = {
 		// mirroring the preload contract so useCrossAgentDispatch's mount effect
 		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
 		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
-		// Stop calls this for every interrupt in AI mode, so it has to exist or
-		// handleInterrupt throws before it ever signals a process.
+		// Stop calls this for every interrupt (any input mode), so it has to exist or
+		// interruptTurn throws before it ever signals a process.
 		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},

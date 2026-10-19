@@ -69,6 +69,7 @@ vi.mock('../../cli/services/pianola-store', async (importOriginal) => {
 
 import { MAESTRO_NOT_RUNNING_MESSAGE } from '../../cli/services/maestro-not-running';
 import { focusAgent, switchMode } from '../../cli/commands/agent-control';
+import { interrupt } from '../../cli/commands/interrupt';
 import {
 	autoRunFolder,
 	autoRunStatus,
@@ -188,6 +189,9 @@ const rows: Row[] = [
 	{ name: 'remove-playbook', run: (json) => removePlaybook('agent-1', 'pb-1', j(json)) },
 	{ name: 'focus-agent', run: (json) => focusAgent('agent-1', j(json)) },
 	{ name: 'switch-mode', run: (json) => switchMode('agent-1', 'ai', j(json)) },
+	// interrupt: the agent-scope stop, and --tab, whose tab lookup is the first bridge call
+	{ name: 'interrupt', run: (json) => interrupt('agent-1', j(json)) },
+	{ name: 'interrupt --tab', run: (json) => interrupt('agent-1', { tab: 'tab-1', ...j(json) }) },
 	// failCommand family
 	{ name: 'auto-run stop', run: (json) => stopAutoRun('agent-1', j(json)) },
 	{ name: 'auto-run status', run: (json) => autoRunStatus('agent-1', j(json)) },

@@ -1026,30 +1026,84 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('interruptSessionCallback behavior', () => {
-		it('should return false when mainWindow is null', async () => {
-			deps.getMainWindow = vi.fn().mockReturnValue(null);
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
+		const interruptCallback = () => {
+			const server = createWebServerFactory(deps)();
 			const setInterruptCallback = server.setInterruptSessionCallback as ReturnType<typeof vi.fn>;
-			const callback = setInterruptCallback.mock.calls[0][0];
+			return setInterruptCallback.mock.calls[0][0];
+		};
+		/** Answer the renderer side of the `remote:interrupt` request. */
+		const answerInterrupt = (reply: unknown) => {
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:interrupt'
+			);
+			const responseChannel = request?.[request.length - 1];
+			vi.mocked(ipcMain.on).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
+				{ sender: mockWebContents } as never,
+				reply
+			);
+			return request;
+		};
 
-			const result = await callback('session-1');
+		it('answers RENDERER_UNAVAILABLE when no window owns the agent', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
 
-			expect(result).toBe(false);
+			const result = await interruptCallback()('session-1');
+
+			expect(result).toMatchObject({
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+				sessionId: 'session-1',
+				tabId: null,
+			});
 		});
 
-		it('should send interrupt to renderer', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
+		it('forwards the tab to the renderer and reports exited once its turn is gone', async () => {
+			// The turn is live when the request arrives and gone when main checks.
+			mockProcessManager.getAll = vi
+				.fn()
+				.mockReturnValue([{ sessionId: 'session-1-ai-tab-1', startTime: 5, isTerminal: false }]);
 
-			const setInterruptCallback = server.setInterruptSessionCallback as ReturnType<typeof vi.fn>;
-			const callback = setInterruptCallback.mock.calls[0][0];
+			const resultPromise = interruptCallback()('session-1', 'tab-1');
+			const request = answerInterrupt({
+				success: true,
+				sessionId: 'spoofed',
+				tabId: 'spoofed',
+				wasBusy: true,
+				interrupted: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
 
-			const result = await callback('session-1');
+			expect(request).toEqual(['remote:interrupt', 'session-1', 'tab-1', expect.any(String)]);
+			// Ids come from the request, never the reply; `exited` is main's own read.
+			await expect(resultPromise).resolves.toEqual({
+				success: true,
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				wasBusy: true,
+				interrupted: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
+		});
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith('remote:interrupt', 'session-1');
+		it('sends a null tab for an agent-level stop and returns a failure without waiting', async () => {
+			mockProcessManager.getAll = vi.fn().mockReturnValue([]);
+
+			const resultPromise = interruptCallback()('session-1');
+			const request = answerInterrupt({
+				success: false,
+				code: 'SIGNAL_FAILED',
+				error: 'kill failed',
+			});
+
+			expect(request).toEqual(['remote:interrupt', 'session-1', null, expect.any(String)]);
+			await expect(resultPromise).resolves.toMatchObject({
+				success: false,
+				code: 'SIGNAL_FAILED',
+				error: 'kill failed',
+				exited: false,
+			});
 		});
 	});
 

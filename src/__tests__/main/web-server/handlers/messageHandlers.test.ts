@@ -148,6 +148,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
 		noteAgentDelegation: vi.fn(),
 		switchMode: vi.fn().mockResolvedValue(true),
+		interruptSession: vi.fn().mockResolvedValue({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-1'],
+			exited: true,
+		}),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
@@ -969,6 +978,96 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
+		});
+	});
+
+	describe('Interrupt Turn (maestro-cli interrupt)', () => {
+		const lastReply = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('stops the whole agent when no tab is named and echoes the requestId', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', undefined);
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				requestId: 'req-1',
+				success: true,
+				tabId: null,
+				wasBusy: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
+		});
+
+		it('narrows the stop to the named tab', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', 'tab-2');
+		});
+
+		it('passes nothing-to-stop through as a success', async () => {
+			(callbacks.interruptSession as any).mockResolvedValueOnce({
+				success: true,
+				sessionId: 'session-1',
+				tabId: null,
+				wasBusy: false,
+				interrupted: false,
+				stoppedTabIds: [],
+				exited: false,
+			});
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({ success: true, wasBusy: false });
+		});
+
+		it('rejects a missing sessionId without calling the desktop', () => {
+			handler.handleMessage(client, { type: 'interrupt_turn', requestId: 'req-3' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				error: 'Missing sessionId',
+				requestId: 'req-3',
+			});
+			expect(callbacks.interruptSession).not.toHaveBeenCalled();
+		});
+
+		it('answers RENDERER_UNAVAILABLE when no desktop callback is wired', () => {
+			const bare = new WebSocketMessageHandler();
+			bare.setCallbacks({ ...createMockCallbacks(), interruptSession: undefined } as any);
+			bare.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+			});
+		});
+
+		it('reports a thrown callback as an error frame', async () => {
+			(callbacks.interruptSession as any).mockRejectedValueOnce(new Error('bridge down'));
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('bridge down'),
+			});
 		});
 	});
 

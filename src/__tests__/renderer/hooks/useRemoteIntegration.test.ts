@@ -82,7 +82,9 @@ describe('useRemoteIntegration', () => {
 		| Parameters<typeof window.maestro.process.onRemoteCommand>[0]
 		| undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
-	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteInterruptHandler:
+		| Parameters<typeof window.maestro.process.onRemoteInterrupt>[0]
+		| undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
 	let onRemoteSelectTabHandler:
 		| ((
@@ -209,6 +211,7 @@ describe('useRemoteIntegration', () => {
 			onRemoteInterruptHandler = handler;
 			return () => {};
 		}),
+		sendRemoteInterruptResponse: vi.fn(),
 		onRemoteSelectSession: vi.fn().mockImplementation((handler) => {
 			onRemoteSelectSessionHandler = handler;
 			return () => {};
@@ -991,44 +994,100 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote interrupt handling', () => {
-		it('sends interrupt and sets session to idle', async () => {
-			const session = createMockSession({ id: 'session-1', state: 'busy', inputMode: 'ai' });
-			const deps = createDeps({ sessions: [session] });
+		// Every AI tab runs its turn as `{id}-ai-{tabId}`; the bare `{id}-ai` the
+		// listener used to signal is spawned by nothing, so a REST stop ended
+		// nothing while writing the agent idle.
+		const busyAgent = () => {
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy' });
+			return createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				busySource: 'ai',
+				inputMode: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+			});
+		};
+
+		it('signals every busy tab by its per-tab process id when no tab is named', async () => {
+			const deps = createDeps({ sessions: [busyAgent()] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('session-1');
+				await onRemoteInterruptHandler?.('session-1', undefined, 'interrupt-reply-1');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai');
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-a');
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-b');
+			expect(mockProcess.interrupt).not.toHaveBeenCalledWith('session-1-ai');
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.state).toBe('idle');
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-1',
+				expect.objectContaining({
+					success: true,
+					sessionId: 'session-1',
+					tabId: null,
+					wasBusy: true,
+					stoppedTabIds: expect.arrayContaining(['tab-a', 'tab-b']),
+				})
+			);
 		});
 
-		it('ignores interrupt when session not found', async () => {
+		it('stops only the named tab and leaves the other turn running', async () => {
+			const deps = createDeps({ sessions: [busyAgent()] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteInterruptHandler?.('session-1', 'tab-b', 'interrupt-reply-2');
+			});
+
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-b');
+			expect(mockProcess.interrupt).not.toHaveBeenCalledWith('session-1-ai-tab-a');
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.aiTabs.find((t) => t.id === 'tab-b')?.state).toBe('idle');
+			expect(updated?.aiTabs.find((t) => t.id === 'tab-a')?.state).toBe('busy');
+			expect(updated?.state).toBe('busy');
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-2',
+				expect.objectContaining({ success: true, tabId: 'tab-b', stoppedTabIds: ['tab-b'] })
+			);
+		});
+
+		it('answers AGENT_NOT_FOUND without signalling anything', async () => {
 			const deps = createDeps({ sessions: [] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('nonexistent');
+				await onRemoteInterruptHandler?.('nonexistent', undefined, 'interrupt-reply-3');
 			});
 
 			expect(mockProcess.interrupt).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-3',
+				expect.objectContaining({ success: false, code: 'AGENT_NOT_FOUND' })
+			);
 		});
 
-		it('interrupts terminal process when session is in terminal mode', async () => {
-			const session = createMockSession({ id: 'session-1', state: 'busy', inputMode: 'terminal' });
+		it('reports an idle agent as nothing to stop', async () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle', inputMode: 'ai' });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('session-1');
+				await onRemoteInterruptHandler?.('session-1', undefined, 'interrupt-reply-4');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-terminal');
+			expect(mockProcess.interrupt).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-4',
+				expect.objectContaining({ success: true, wasBusy: false, interrupted: false })
+			);
 		});
 	});
 
