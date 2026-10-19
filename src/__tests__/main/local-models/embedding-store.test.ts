@@ -70,6 +70,52 @@ describe.skipIf(!canLoadNodeSqlite())('EmbeddingStore', () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 
+	describe('index management', () => {
+		it('browses source groups with bounded pages and model/source filters', () => {
+			store.upsertChunks([
+				chunk({ sourceId: 'a', chunkIndex: 0, vector: [1, 0], createdAt: 100 }),
+				chunk({ sourceId: 'a', chunkIndex: 1, vector: [0, 1], createdAt: 200 }),
+				chunk({ sourceId: 'b', sourceType: 'transcript', vector: [1, 0], createdAt: 300 }),
+				chunk({ sourceId: 'old-model', modelId: OTHER_MODEL, vector: [1, 0], createdAt: 400 }),
+			]);
+			const first = store.browse({ modelId: MODEL, limit: 1 });
+			expect(first.total).toBe(2);
+			expect(first.entries.map((entry) => entry.sourceId)).toEqual(['b']);
+			const second = store.browse({ modelId: MODEL, limit: 1, offset: 1 });
+			expect(second.entries[0]).toMatchObject({ sourceId: 'a', chunks: 2, indexedAt: 200 });
+			expect(second.entries[0]).not.toHaveProperty('vector');
+			expect(store.browse({ modelId: MODEL, sourceType: 'history' }).total).toBe(1);
+			expect(store.browse({ modelId: OTHER_MODEL }).entries[0].sourceId).toBe('old-model');
+			expect(store.browse({ modelId: MODEL, limit: 10_000 }).limit).toBe(50);
+		});
+
+		it('reports the database and sidecar file sizes without assuming a checkpoint', async () => {
+			store.upsertChunks([chunk({ vector: [1, 0] })]);
+			const expected = ['', '-wal', '-shm'].reduce((sum, suffix) => {
+				const file = dbPath + suffix;
+				return sum + (fs.existsSync(file) ? fs.statSync(file).size : 0);
+			}, 0);
+			expect(await store.diskUsageBytes()).toBe(expected);
+			expect(expected).toBeGreaterThan(0);
+		});
+
+		it('clears all models, invalidates search memory, and reclaims unused disk pages', async () => {
+			const vector = Array.from({ length: 1024 }, (_, index) => (index === 0 ? 1 : 0));
+			store.upsertChunks(
+				Array.from({ length: 128 }, (_, index) => chunk({ sourceId: `large-${index}`, vector }))
+			);
+			store.upsertChunks([chunk({ sourceId: 'old', modelId: OTHER_MODEL, vector })]);
+			store.search(Float32Array.from(vector), { modelId: MODEL });
+			const before = await store.diskUsageBytes();
+			store.clearAndCompact();
+			expect(store.stats()).toMatchObject({ totalChunks: 0, models: [] });
+			expect(store.search(Float32Array.from(vector), { modelId: MODEL })).toEqual([]);
+			expect(await store.diskUsageBytes()).toBeLessThan(before);
+			store.upsertChunks([chunk({ vector: [1, 0] })]);
+			expect(store.stats().totalChunks).toBe(1);
+		});
+	});
+
 	describe('upsertChunks', () => {
 		it('stores chunks and reports them per model and source type', () => {
 			const written = store.upsertChunks([

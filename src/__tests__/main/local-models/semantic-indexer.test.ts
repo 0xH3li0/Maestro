@@ -26,6 +26,8 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import {
 	INDEX_BATCH_CHUNKS,
+	INDEX_MIN_BATCH_REST_MS,
+	INDEX_MAX_BATCH_REST_MS,
 	INDEX_INCREMENTAL_DELAY_MS,
 	INDEX_REFRESH_DELAY_MS,
 	INDEX_REPASS_INTERVAL_MS,
@@ -205,6 +207,7 @@ function harness(
 				};
 			}),
 		yieldToEventLoop: async () => {},
+		restBetweenBatches: async () => {},
 		...overrides,
 	});
 	return {
@@ -287,7 +290,7 @@ describe('SemanticIndexer', () => {
 			indexer.stop();
 		});
 
-		it('sends the model small batches of whole sources', async () => {
+		it('sends the model small batches of short sources', async () => {
 			const many = Array.from({ length: INDEX_BATCH_CHUNKS * 2 + 3 }, (_, i) =>
 				item(`e${i}`, `entry ${i}`)
 			);
@@ -300,6 +303,65 @@ describe('SemanticIndexer', () => {
 				INDEX_BATCH_CHUNKS,
 				3,
 			]);
+			indexer.stop();
+		});
+	});
+
+	describe('long sources', () => {
+		it('bounds inference and commits only after every slice succeeds', async () => {
+			const sentences = Array.from(
+				{ length: INDEX_BATCH_CHUNKS * 2 + 1 },
+				(_, i) => `part ${i} has words.`
+			);
+			const { indexer, embed, store, embedded } = harness([
+				reader('transcript', {
+					'agent-a': [item('long', sentences.join(' '), { sourceType: 'transcript' })],
+				}),
+			]);
+			embed.mockImplementation(async (texts) => {
+				expect(store.chunksOf('long')).toEqual([]);
+				return {
+					status: 'ok',
+					vectors: texts.map((text) => new Float32Array([text.length, 1])),
+					source: BGE,
+					durationMs: 1,
+				};
+			});
+			indexer.start();
+			await indexer.runPass();
+
+			expect(embed.mock.calls.map(([texts]) => texts.length)).toEqual([
+				INDEX_BATCH_CHUNKS,
+				INDEX_BATCH_CHUNKS,
+				1,
+			]);
+			expect(embedded()).toEqual(sentences);
+			expect(store.chunksOf('long').map((row) => row.chunkIndex)).toEqual(
+				sentences.map((_, index) => index)
+			);
+			expect(indexer.getProgress()).toMatchObject({ indexed: 1, total: 1 });
+			indexer.stop();
+		});
+
+		it('keeps a partially embedded source out of the store after cancellation', async () => {
+			const text = Array.from(
+				{ length: INDEX_BATCH_CHUNKS + 1 },
+				(_, i) => `part ${i} has words.`
+			).join(' ');
+			const { indexer, embed, store } = harness([reader('history', { a: [item('long', text)] })]);
+			embed.mockResolvedValueOnce({
+				status: 'ok',
+				vectors: Array.from({ length: INDEX_BATCH_CHUNKS }, () => new Float32Array([1, 0])),
+				source: BGE,
+				durationMs: 1,
+			});
+			embed.mockResolvedValueOnce({ status: 'cancelled', source: BGE });
+			indexer.start();
+			await indexer.runPass();
+
+			expect(embed).toHaveBeenCalledTimes(2);
+			expect(store.chunksOf('long')).toEqual([]);
+			expect(indexer.getProgress().indexed).toBe(0);
 			indexer.stop();
 		});
 	});
@@ -675,7 +737,108 @@ describe('SemanticIndexer', () => {
 		});
 	});
 
+	describe('clearing the cache', () => {
+		it('discards an in-flight batch before clearing and defers a full rebuild', async () => {
+			const { indexer, embed, store } = harness([reader('history', { a: [item('e1', 'alpha')] })]);
+			let finish!: (value: EmbeddingTaskResult) => void;
+			embed.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			indexer.start();
+			const pass = indexer.runPass();
+			await vi.advanceTimersByTimeAsync(0);
+			const clear = vi.fn(() => store.rows.clear());
+			const clearing = indexer.clearIndex(clear);
+			expect(clear).not.toHaveBeenCalled();
+			finish({ status: 'ok', vectors: [new Float32Array([1, 0])], source: BGE, durationMs: 1 });
+			await Promise.all([pass, clearing]);
+			expect(clear).toHaveBeenCalledOnce();
+			expect(store.rows.size).toBe(0);
+			expect(indexer.getProgress()).toMatchObject({ state: 'idle', indexed: 0, total: 1 });
+			await vi.advanceTimersByTimeAsync(INDEX_REPASS_INTERVAL_MS - 1);
+			expect(embed).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(store.ids()).toEqual(['e1']);
+			indexer.stop();
+		});
+
+		it('clears even while an interactive task keeps the indexer paused', async () => {
+			const { indexer, state, embed } = harness([reader('history', { a: [item('e1', 'alpha')] })]);
+			state.busy = true;
+			indexer.start();
+			const pass = indexer.runPass();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(indexer.getProgress().state).toBe('paused');
+			const clear = vi.fn();
+			await Promise.all([pass, indexer.clearIndex(clear)]);
+			expect(clear).toHaveBeenCalledOnce();
+			expect(embed).not.toHaveBeenCalled();
+			indexer.stop();
+		});
+
+		it('reports a clear failure to the caller while leaving future passes usable', async () => {
+			const { indexer } = harness([]);
+			indexer.start();
+			await expect(
+				indexer.clearIndex(() => {
+					throw new Error('disk is full');
+				})
+			).rejects.toThrow('disk is full');
+			await indexer.runPass();
+			expect(indexer.getProgress().state).toBe('idle');
+			indexer.stop();
+		});
+	});
+
 	describe('scheduling', () => {
+		it.each([0, 200, 10_000])(
+			'rests after a %i ms model call within the background limits',
+			async (runtimeMs) => {
+				let now = 0;
+				const rest = vi.fn(async () => {});
+				const { indexer, embed } = harness([reader('history', { a: [item('e1', 'alpha')] })], {
+					now: () => now,
+					restBetweenBatches: rest,
+				});
+				embed.mockImplementation(async (texts) => {
+					now += runtimeMs;
+					return {
+						status: 'ok',
+						vectors: texts.map(() => new Float32Array([1, 0])),
+						source: BGE,
+						durationMs: runtimeMs,
+					};
+				});
+				indexer.start();
+				await indexer.runPass();
+				expect(rest).toHaveBeenCalledWith(
+					Math.min(INDEX_MAX_BATCH_REST_MS, Math.max(INDEX_MIN_BATCH_REST_MS, runtimeMs)),
+					expect.any(AbortSignal)
+				);
+				indexer.stop();
+			}
+		);
+
+		it('aborts the production rest timer when indexing is switched off', async () => {
+			const { indexer, embed, state, store } = harness(
+				[reader('history', { a: [item('e1', 'alpha')] })],
+				{ restBetweenBatches: undefined }
+			);
+			indexer.start('on');
+			const pass = indexer.runPass();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(embed).toHaveBeenCalledTimes(1);
+			state.source = null;
+			indexer.refresh('off');
+			await pass;
+			expect(store.rows.size).toBe(0);
+			expect(indexer.getProgress().state).toBe('off');
+			expect(vi.getTimerCount()).toBe(0);
+		});
+
 		it('waits a minute after launch, then passes again on an interval', async () => {
 			const history = reader('history', { 'agent-a': [item('e1', 'alpha')] });
 			const { indexer, store } = harness([history]);
@@ -705,6 +868,36 @@ describe('SemanticIndexer', () => {
 	});
 
 	describe('standing aside for interactive tasks', () => {
+		it('lets an interactive request run between slices of one long source', async () => {
+			const text = Array.from(
+				{ length: INDEX_BATCH_CHUNKS + 1 },
+				(_, i) => `part ${i} has words.`
+			).join(' ');
+			const { indexer, embed, state, store } = harness([
+				reader('history', { a: [item('long', text)] }),
+			]);
+			embed.mockImplementation(async (texts) => {
+				if (embed.mock.calls.length === 1) state.busy = true;
+				return {
+					status: 'ok',
+					vectors: texts.map(() => new Float32Array([1, 0])),
+					source: BGE,
+					durationMs: 1,
+				};
+			});
+			indexer.start();
+			const pass = indexer.runPass();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(indexer.getProgress().state).toBe('paused');
+			expect(embed).toHaveBeenCalledTimes(1);
+			expect(store.chunksOf('long')).toEqual([]);
+			state.releaseBusy();
+			await pass;
+			expect(embed).toHaveBeenCalledTimes(2);
+			expect(store.chunksOf('long')).toHaveLength(INDEX_BATCH_CHUNKS + 1);
+			indexer.stop();
+		});
+
 		it('pauses before a batch while one is running, and resumes when it ends', async () => {
 			const history = reader('history', { 'agent-a': [item('e1', 'alpha')] });
 			const { indexer, embed, state, store } = harness([history]);

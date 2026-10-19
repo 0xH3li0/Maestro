@@ -38,12 +38,15 @@
  * wiring is {@link startSemanticIndexer}.
  */
 
+import { setTimeout as delay } from 'timers/promises';
+import { addAbortListener } from 'events';
 import {
 	EMBEDDING_SOURCE_TYPES,
 	emptySemanticIndexProgress,
 	type EmbeddingSourceType,
 	type SemanticIndexProgress,
 	type SemanticIndexState,
+	type SemanticIndexStorage,
 } from '../../shared/local-models/embedding-index';
 import { estimateTokenCount } from '../../shared/formatters';
 import { resolveLocalModelAssignment } from '../../shared/local-models/tasks';
@@ -101,7 +104,11 @@ export const SEMANTIC_INDEX_TASK_ID = 'semantic-search';
 export const SEMANTIC_INDEX_CUE_SETTING = 'semanticIndexCue';
 
 /** Chunks sent to the model per call. Small, so a waiting search is not kept long. */
-export const INDEX_BATCH_CHUNKS = 32;
+export const INDEX_BATCH_CHUNKS = 4;
+
+/** Rest for the previous batch's runtime, bounded so indexing still progresses. */
+export const INDEX_MIN_BATCH_REST_MS = 50;
+export const INDEX_MAX_BATCH_REST_MS = 1_000;
 
 /** Wait after launch before the first pass: startup has better uses for the CPU. */
 export const INDEX_STARTUP_DELAY_MS = 60_000;
@@ -160,6 +167,8 @@ export interface SemanticIndexerDeps {
 	whenInteractiveIdle: () => Promise<void>;
 	/** Give the event loop a turn. Defaults to `setImmediate`. */
 	yieldToEventLoop?: () => Promise<void>;
+	/** Injected in tests; production uses an abortable timer between model calls. */
+	restBetweenBatches?: (delayMs: number, signal: AbortSignal) => Promise<void>;
 	now?: () => number;
 }
 
@@ -203,6 +212,7 @@ export class SemanticIndexer {
 	private incrementalTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Passes and incremental batches run one at a time, in order. */
 	private work: Promise<void> = Promise.resolve();
+	private clearing: Promise<void> | null = null;
 	private abort: AbortController | null = null;
 	/** What the last {@link refresh} saw, so an unrelated settings change is a no-op. */
 	private seenConfig: string | null = null;
@@ -260,6 +270,7 @@ export class SemanticIndexer {
 			return;
 		}
 		if (this.progress.state === 'off') this.setState('idle');
+		if (this.clearing) return;
 		this.schedulePass(INDEX_REFRESH_DELAY_MS);
 	}
 
@@ -268,7 +279,7 @@ export class SemanticIndexer {
 	 * within a few seconds instead of at the next pass. Ignored while off.
 	 */
 	noteItem(item: SemanticSourceItem): void {
-		if (!this.started || !this.deps.resolveSource()) return;
+		if (!this.started || this.clearing || !this.deps.resolveSource()) return;
 		this.incoming.push(item);
 		if (this.incrementalTimer) return;
 		this.incrementalTimer = this.timer(INDEX_INCREMENTAL_DELAY_MS, () => {
@@ -299,7 +310,40 @@ export class SemanticIndexer {
 	 * finished, stopped, or been refused; it never rejects.
 	 */
 	runPass(): Promise<void> {
+		if (this.clearing) return Promise.resolve();
 		return this.enqueue(() => this.pass());
+	}
+
+	/** Drain the active batch before clearing, then defer rebuilding to the next sweep. */
+	clearIndex(clearStore: () => void): Promise<void> {
+		if (this.clearing) return this.clearing;
+		this.clearTimers();
+		this.abort?.abort();
+		this.incoming = [];
+		const clear = this.work.then(() => {
+			try {
+				clearStore();
+				this.lastPassAt = undefined;
+				const source = this.deps.resolveSource();
+				const previous = this.progress;
+				this.progress = emptySemanticIndexProgress(source ? 'idle' : 'off');
+				if (source) {
+					this.progress.modelId = localModelSourceKey(source);
+					this.progress.total = previous.total;
+					for (const type of EMBEDDING_SOURCE_TYPES)
+						this.progress.bySourceType[type].total = previous.bySourceType[type].total;
+					this.progress.reason = 'Index cleared. Automatic indexing resumes on the next pass.';
+				}
+				this.emit(true);
+			} finally {
+				this.clearing = null;
+				this.clearTimers();
+				if (this.started && this.deps.resolveSource()) this.schedulePass(INDEX_REPASS_INTERVAL_MS);
+			}
+		});
+		this.clearing = clear;
+		this.work = clear.catch(() => undefined);
+		return clear;
 	}
 
 	// ------------------------------------------------------------------------
@@ -373,7 +417,7 @@ export class SemanticIndexer {
 	// ------------------------------------------------------------------------
 
 	private async pass(): Promise<void> {
-		if (!this.started) return;
+		if (!this.started || this.clearing) return;
 		const source = this.deps.resolveSource();
 		if (!source) {
 			this.progress = emptySemanticIndexProgress('off');
@@ -574,7 +618,7 @@ export class SemanticIndexer {
 	}
 
 	/**
-	 * One call to the model, then one write per source. A source's chunks are
+	 * Bounded calls to the model, then one write per source. A source's chunks are
 	 * written together, so an interrupted pass never leaves half a source
 	 * looking like a whole one.
 	 */
@@ -584,29 +628,57 @@ export class SemanticIndexer {
 		signal: AbortSignal,
 		done: Set<string>
 	): Promise<void> {
-		// Interactive work first. Checked again after the wait: another task may
-		// have started in the meantime.
-		while (this.deps.isInteractiveBusy()) {
-			this.throwIfStopped(signal, modelId);
-			if (this.progress.state !== 'paused') this.setState('paused');
-			await this.deps.whenInteractiveIdle();
-		}
-		this.throwIfStopped(signal, modelId);
-		if (this.progress.state !== 'indexing') this.setState('indexing');
-
 		const texts = batch.flatMap((plan) => plan.needs.map((index) => plan.chunks[index]));
-		const result = await this.deps.embed(texts, signal);
-		if (result.status === 'off') throw new PassStopped('off');
-		if (result.status === 'cancelled') throw new PassStopped('idle');
-		if (result.status === 'unavailable') throw new PassStopped('unavailable', result.reason);
-		// The assignment may have changed while the call was in flight. Vectors
-		// from another model must not be filed under this one.
-		this.throwIfStopped(signal, modelId);
-		if (localModelSourceKey(result.source) !== modelId) throw new PassStopped('idle');
-		if (result.vectors.length !== texts.length) {
-			throw new Error(
-				`Embedding returned ${result.vectors.length} vectors for ${texts.length} texts`
+		const vectors: Float32Array[] = [];
+		for (let start = 0; start < texts.length; start += INDEX_BATCH_CHUNKS) {
+			// Recheck between slices of a long source too, so a waiting search
+			// never sits behind the whole transcript.
+			while (this.deps.isInteractiveBusy()) {
+				this.throwIfStopped(signal, modelId);
+				if (this.progress.state !== 'paused') this.setState('paused');
+				// Clearing the cache must not wait for an unrelated interactive task.
+				let release: ReturnType<typeof addAbortListener> | undefined;
+				try {
+					await Promise.race([
+						this.deps.whenInteractiveIdle(),
+						new Promise<void>((resolve) => {
+							release = addAbortListener(signal, () => resolve());
+						}),
+					]);
+				} finally {
+					release?.[Symbol.dispose]();
+				}
+			}
+			this.throwIfStopped(signal, modelId);
+			if (this.progress.state !== 'indexing') this.setState('indexing');
+
+			const slice = texts.slice(start, start + INDEX_BATCH_CHUNKS);
+			const beganAt = (this.deps.now ?? Date.now)();
+			const result = await this.deps.embed(slice, signal);
+			if (result.status === 'off') throw new PassStopped('off');
+			if (result.status === 'cancelled') throw new PassStopped('idle');
+			if (result.status === 'unavailable') throw new PassStopped('unavailable', result.reason);
+			// A settings change during inference must not misfile these vectors.
+			this.throwIfStopped(signal, modelId);
+			if (localModelSourceKey(result.source) !== modelId) throw new PassStopped('idle');
+			if (result.vectors.length !== slice.length) {
+				throw new Error(
+					`Embedding returned ${result.vectors.length} vectors for ${slice.length} texts`
+				);
+			}
+			vectors.push(...result.vectors);
+
+			const restMs = Math.min(
+				INDEX_MAX_BATCH_REST_MS,
+				Math.max(INDEX_MIN_BATCH_REST_MS, (this.deps.now ?? Date.now)() - beganAt)
 			);
+			try {
+				await (this.deps.restBetweenBatches?.(restMs, signal) ??
+					delay(restMs, undefined, { signal, ref: false }));
+			} catch (error) {
+				if (!signal.aborted) throw error;
+			}
+			this.throwIfStopped(signal, modelId);
 		}
 
 		const store = this.deps.store();
@@ -619,7 +691,7 @@ export class SemanticIndexer {
 				chunkIndex: index,
 				textHash: plan.hashes[index],
 				modelId,
-				vector: result.vectors[cursor++],
+				vector: vectors[cursor++],
 			}));
 			if (plan.replace) store.deleteBySource(plan.item.sourceType, plan.item.sourceId);
 			store.upsertChunks(rows);
@@ -683,7 +755,7 @@ export class SemanticIndexer {
 	private async indexIncoming(): Promise<void> {
 		const items = this.incoming;
 		this.incoming = [];
-		if (!this.started || items.length === 0) return;
+		if (!this.started || this.clearing || items.length === 0) return;
 		const source = this.deps.resolveSource();
 		if (!source) return;
 
@@ -802,6 +874,20 @@ export function getSemanticIndexer(): SemanticIndexer | null {
  */
 export function semanticIndexProgress(): SemanticIndexProgress {
 	return instance?.getProgress() ?? emptySemanticIndexProgress('off');
+}
+
+/** Per-model counts and actual database, WAL, and shared-memory file sizes. */
+export async function semanticIndexStorage(): Promise<SemanticIndexStorage> {
+	const store = getEmbeddingStore();
+	return { ...store.stats(), diskBytes: await store.diskUsageBytes() };
+}
+
+/** Clear vectors only. The source History, notes, and transcripts remain intact. */
+export async function clearSemanticIndex(): Promise<SemanticIndexStorage> {
+	const clear = () => getEmbeddingStore().clearAndCompact();
+	if (instance) await instance.clearIndex(clear);
+	else clear();
+	return semanticIndexStorage();
 }
 
 /**

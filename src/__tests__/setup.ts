@@ -934,6 +934,11 @@ const mockMaestro = {
 			onChanged: vi.fn().mockReturnValue(() => {}),
 		},
 		semanticIndex: {
+			storage: vi
+				.fn()
+				.mockResolvedValue({ totalChunks: 0, models: [], sizeBytes: 0, diskBytes: 0 }),
+			browse: vi.fn().mockResolvedValue({ entries: [], total: 0, offset: 0, limit: 20 }),
+			clear: vi.fn().mockResolvedValue({ totalChunks: 0, models: [], sizeBytes: 0, diskBytes: 0 }),
 			status: vi.fn().mockResolvedValue({
 				state: 'off',
 				indexed: 0,

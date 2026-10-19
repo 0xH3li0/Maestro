@@ -118,19 +118,25 @@ describe('VoiceOutputPanel', () => {
 		);
 	});
 
-	it('persists busy hold and default routing from the shared preferences', async () => {
+	it('persists only changed busy hold and routing preferences', async () => {
 		render(<VoiceOutputPanel theme={mockTheme} enabled />);
 		fireEvent.click(await screen.findByRole('switch', { name: 'Hold while busy' }));
 		await waitFor(() => expect(useVoiceUiStore.getState().holdWhileBusy).toBe(false));
+		await waitFor(() =>
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('acappella', {
+				ui: { holdWhileBusy: false },
+			})
+		);
 		fireEvent.click(screen.getByRole('button', { name: 'Conductor', exact: true }));
 		await waitFor(() =>
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'acappella',
-				expect.objectContaining({
-					ui: expect.objectContaining({ defaultMode: 'conductor', holdWhileBusy: false }),
-				})
-			)
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('acappella', {
+				ui: { defaultMode: 'conductor' },
+			})
 		);
+		expect(useVoiceUiStore.getState()).toMatchObject({
+			holdWhileBusy: false,
+			defaultMode: 'conductor',
+		});
 	});
 
 	it('persists the transcript toggle', async () => {

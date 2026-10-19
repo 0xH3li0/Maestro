@@ -13,7 +13,8 @@
  * `taskReadiness()` lists an endpoint's models only when a task is assigned to
  * one. `draftPullRequest()` reaches a model only when Git drafts is assigned
  * one, and `suggestTabCleanup()` only when Tab cleanup suggestions is.
- * `semanticIndex.*` reads the indexer's in-memory progress. `dictation.start()`
+ * `semanticIndex.*` reports progress and disk usage, browses stored sources,
+ * and clears the derived index cache. `dictation.start()`
  * is the one call that opens a device: the microphone, for this window only.
  * `spokenNotices.*` makes sound on this machine's speakers. `server.start()`
  * launches the model server and `server.installEngine()` downloads its engine.
@@ -51,7 +52,12 @@ import type {
 	DictationResult,
 	DictationStartResult,
 } from '../../shared/local-models/dictation';
-import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
+import type {
+	SemanticIndexProgress,
+	SemanticIndexStorage,
+	SemanticIndexBrowseRequest,
+	SemanticIndexPage,
+} from '../../shared/local-models/embedding-index';
 import type { AgentFinishedNotice, SpokenNoticeResult } from '../../shared/spokenNotices';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
 import type {
@@ -214,14 +220,20 @@ function createHuggingFaceApi() {
 
 /**
  * `window.maestro.localModels.semanticIndex.*` - the background indexer behind
- * semantic search. Read-only: the indexer is driven by the Semantic search
- * assignment and the `semanticIndexCue` setting, not by a call from here.
+ * semantic search. Browsing reads stored sources without running a model.
+ * Clearing stops the active pass and reclaims the cache's unused disk pages.
  */
 function createSemanticIndexApi() {
 	return {
 		/** What the indexer is doing and how far along it is. Reads memory only. */
 		status: (): Promise<SemanticIndexProgress> =>
 			ipcRenderer.invoke('localModels:semanticIndex:status'),
+		storage: (): Promise<SemanticIndexStorage> =>
+			ipcRenderer.invoke('localModels:semanticIndex:storage'),
+		browse: (request: SemanticIndexBrowseRequest): Promise<SemanticIndexPage> =>
+			ipcRenderer.invoke('localModels:semanticIndex:browse', request),
+		clear: (): Promise<SemanticIndexStorage> =>
+			ipcRenderer.invoke('localModels:semanticIndex:clear'),
 
 		/** Progress pushes, throttled at the source. Broadcast to every window. */
 		onProgress: (handler: (progress: SemanticIndexProgress) => void): (() => void) =>

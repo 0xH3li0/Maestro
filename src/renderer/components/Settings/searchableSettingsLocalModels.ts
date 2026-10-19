@@ -522,6 +522,13 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		keywords: [
 			'semantic',
 			'semantic index',
+			'explore index',
+			'indexed sources',
+			'clear index',
+			'clear semantic index',
+			'disk usage',
+			'on disk',
+			'index storage',
 			'semantic search',
 			'index',
 			'indexing',

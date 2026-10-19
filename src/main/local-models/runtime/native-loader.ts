@@ -110,12 +110,14 @@ const realImport: (specifier: string) => Promise<unknown> = new Function(
  * A downloaded runtime is imported by absolute path, and ESM `import()` takes a
  * URL: `/Users/...` happens to parse as one, `C:\Users\...` does not (Node
  * rejects the `c:` scheme), so the path goes through `pathToFileURL` first.
+ * Also used by an encoder worker after the core loader has validated its entry
+ * on main. Keeping that import here preserves the single native import path.
  */
-const dynamicImport = (specifier: string): Promise<unknown> =>
+export const importNativeRuntimeEntry = (specifier: string): Promise<unknown> =>
 	realImport(path.isAbsolute(specifier) ? pathToFileURL(specifier).href : specifier);
 
 /** Injected in tests. Production always uses the real import. */
-let importer: (specifier: string) => Promise<unknown> = dynamicImport;
+let importer: (specifier: string) => Promise<unknown> = importNativeRuntimeEntry;
 
 /**
  * Carries a pre-load refusal out of the reserved cache slot.
@@ -167,7 +169,7 @@ const failures = new Map<NativeRuntimeId, NativeRuntimeUnavailable>();
  * failure paths are the entire point of this module.
  */
 export function __setNativeImporter(fn: ((specifier: string) => Promise<unknown>) | null): void {
-	importer = fn ?? dynamicImport;
+	importer = fn ?? importNativeRuntimeEntry;
 }
 
 /** Forget every cached module and failure. Tests, and the "retry" affordance. */

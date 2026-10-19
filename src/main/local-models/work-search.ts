@@ -27,10 +27,13 @@
 
 import {
 	parseTranscriptSourceId,
+	isEmbeddingSourceType,
 	type EmbeddingSearchHit,
 	type EmbeddingSourceType,
 	EMBEDDING_SOURCE_TYPES,
 	type SemanticIndexProgress,
+	type SemanticIndexBrowseRequest,
+	type SemanticIndexPage,
 } from '../../shared/local-models/embedding-index';
 import {
 	countOccurrences,
@@ -418,6 +421,51 @@ export async function runWorkSearch(
 export type WorkSearchStores = Pick<WorkSearchDeps, 'history' | 'sessions'>;
 
 let configured: WorkSearchDeps | null = null;
+
+/** Reuse search's source readers to preview a page without loading any model. */
+export async function hydrateSemanticIndexPage(
+	deps: WorkSearchDeps,
+	page: SemanticIndexPage
+): Promise<SemanticIndexPage> {
+	const corpus = new WorkCorpus(deps, false);
+	const entries = [];
+	for (const entry of page.entries) {
+		const group = corpus.groupKeyOf(entry);
+		const document =
+			group === null
+				? undefined
+				: (await corpus.group(entry.sourceType, group)).get(entry.sourceId);
+		entries.push({
+			...entry,
+			...(corpus.agentName(entry.agentId) ? { agentName: corpus.agentName(entry.agentId) } : {}),
+			...(document
+				? { title: document.title, snippet: workSearchSnippet(document.item.text, '') }
+				: {}),
+		});
+	}
+	return { ...page, entries };
+}
+
+/** Browse only stored sources, including old models and unavailable originals. */
+export async function browseSemanticIndexRequest(value: unknown): Promise<SemanticIndexPage> {
+	if (typeof value !== 'object' || value === null)
+		throw new Error('An index browse request must be an object.');
+	const raw = value as Record<string, unknown>;
+	if (typeof raw.modelId !== 'string' || raw.modelId.trim() === '')
+		throw new Error('Choose an indexed model.');
+	if (raw.sourceType !== undefined && !isEmbeddingSourceType(raw.sourceType))
+		throw new Error('Unknown index source type.');
+	for (const key of ['offset', 'limit']) {
+		if (
+			raw[key] !== undefined &&
+			(typeof raw[key] !== 'number' || !Number.isSafeInteger(raw[key]) || (raw[key] as number) < 0)
+		) {
+			throw new Error(`Index ${key} must be a non-negative integer.`);
+		}
+	}
+	const page = getEmbeddingStore().browse(raw as unknown as SemanticIndexBrowseRequest);
+	return configured ? hydrateSemanticIndexPage(configured, page) : page;
+}
 
 /**
  * Point the app's search at its stores. Called once at startup, beside the

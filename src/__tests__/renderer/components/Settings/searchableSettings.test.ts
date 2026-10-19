@@ -46,9 +46,6 @@ function collectRenderedSettingIds(): { id: string; file: string }[] {
 
 describe('searchableSettings', () => {
 	it.each([
-		'hold while busy',
-		'default voice mode',
-		'listening mode',
 		'notification center',
 		'queued reply',
 		'expand details',
@@ -60,6 +57,9 @@ describe('searchableSettings', () => {
 
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it.each([
+			['hold while busy', 'encore-a-cappella-hud'],
+			['default voice mode', 'encore-a-cappella-hud'],
+			['listening mode', 'encore-a-cappella-hud'],
 			['hey jarvis', 'encore-a-cappella-wake-word'],
 			['detection light', 'encore-a-cappella-wake-word'],
 			['manage voice models', 'encore-a-cappella-models'],
@@ -459,6 +459,9 @@ describe('searchableSettings', () => {
 			['utility agent', 'local-models-utility-agent'],
 			['context grooming', 'local-models-utility-agent'],
 			['semantic index', 'local-models-semantic-index'],
+			['explore index', 'local-models-semantic-index'],
+			['clear semantic index', 'local-models-semantic-index'],
+			['index storage', 'local-models-semantic-index'],
 			['jev', 'local-models-system-one-engine'],
 			['openjev', 'local-models-system-one-engine'],
 			['local judge', 'local-models-system-one-engine'],

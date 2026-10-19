@@ -37,6 +37,8 @@ import {
 	type EmbeddingSearchHit,
 	type EmbeddingSourceType,
 	type EmbeddingStoreStats,
+	type SemanticIndexBrowseRequest,
+	type SemanticIndexPage,
 } from '../../shared/local-models/embedding-index';
 import { fileTimestampSlug } from '../../shared/formatters';
 import { logger } from '../utils/logger';
@@ -404,6 +406,28 @@ export class EmbeddingStore {
 		return Number(result.changes);
 	}
 
+	/** Clear every model and return SQLite's unused pages to the filesystem. */
+	clearAndCompact(): void {
+		this.clear();
+		this.db.exec('VACUUM');
+		this.db.pragma('wal_checkpoint(TRUNCATE)');
+	}
+
+	/** Count the files actually on disk, including pages not checkpointed yet. */
+	async diskUsageBytes(): Promise<number> {
+		const sizes = await Promise.all(
+			['', '-wal', '-shm'].map(async (suffix) => {
+				try {
+					return (await fs.promises.stat(this.dbPath + suffix)).size;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+					throw error;
+				}
+			})
+		);
+		return sizes.reduce((sum, size) => sum + size, 0);
+	}
+
 	// ------------------------------------------------------------------------
 	// Reads
 	// ------------------------------------------------------------------------
@@ -518,6 +542,43 @@ export class EmbeddingStore {
 			.prepare('SELECT DISTINCT source_id FROM embedding_chunks WHERE source_type = ?')
 			.all(sourceType) as Array<{ source_id: string }>;
 		return rows.map((row) => row.source_id);
+	}
+
+	/** A bounded page of source metadata. Vector BLOBs never leave SQLite. */
+	browse(request: SemanticIndexBrowseRequest): SemanticIndexPage {
+		const offset = Math.max(0, Math.floor(request.offset ?? 0));
+		const limit = Math.max(1, Math.min(50, Math.floor(request.limit ?? 20)));
+		const where = `model_id = ?${request.sourceType ? ' AND source_type = ?' : ''}`;
+		const params = request.sourceType ? [request.modelId, request.sourceType] : [request.modelId];
+		const grouped = `FROM embedding_chunks WHERE ${where} GROUP BY source_type, source_id, agent_id`;
+		const total = this.db
+			.prepare(`SELECT COUNT(*) AS count FROM (SELECT 1 ${grouped})`)
+			.get(...params) as { count: number };
+		const rows = this.db
+			.prepare(
+				`SELECT source_type, source_id, agent_id, COUNT(*) AS chunks, MAX(created_at) AS indexed_at
+				 ${grouped} ORDER BY indexed_at DESC, source_type, source_id, agent_id LIMIT ? OFFSET ?`
+			)
+			.all(...params, limit, offset) as Array<{
+			source_type: EmbeddingSourceType;
+			source_id: string;
+			agent_id: string | null;
+			chunks: number;
+			indexed_at: number;
+		}>;
+		return {
+			offset,
+			limit,
+			total: total.count,
+			entries: rows.map((row) => ({
+				modelId: request.modelId,
+				sourceType: row.source_type,
+				sourceId: row.source_id,
+				agentId: row.agent_id,
+				chunks: row.chunks,
+				indexedAt: row.indexed_at,
+			})),
+		};
 	}
 
 	/** What is on disk, per model. Reads the database, not the in-memory copy. */

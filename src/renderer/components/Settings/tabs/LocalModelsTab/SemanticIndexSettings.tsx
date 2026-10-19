@@ -1,4 +1,6 @@
-import { Search } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Database, RefreshCw, Trash2 } from 'lucide-react';
+import { formatCount, formatSize } from '../../../../../shared/formatters';
 import type {
 	SemanticIndexProgress,
 	SemanticIndexState,
@@ -9,6 +11,9 @@ import type { Theme } from '../../../../types';
 import { ProgressBar } from '../../../ui/ProgressBar';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { ToggleSettingRow } from '../DisplayTab/components/ToggleSettingRow';
+import { ConfirmModal } from '../../../ConfirmModal';
+import { CardButton } from './CardButton';
+import { SemanticIndexExplorer } from './SemanticIndexExplorer';
 
 export interface SemanticIndexSettingsProps {
 	theme: Theme;
@@ -29,6 +34,7 @@ export function semanticIndexSummary(progress: SemanticIndexProgress): string {
 		return 'Assign Semantic search a source above to start indexing.';
 	}
 	if (progress.total === 0) {
+		if (progress.reason && progress.state === 'idle') return 'No cached items.';
 		return progress.lastPassAt === undefined
 			? 'The first pass starts about a minute after launch.'
 			: 'Nothing to index yet.';
@@ -42,8 +48,8 @@ export function semanticIndexSummary(progress: SemanticIndexProgress): string {
  *
  * It sits under the assignments because it has no switch of its own. The
  * indexer runs whenever Semantic search is assigned a source and stops when it
- * is not, so this card only REPORTS (the same record `maestro-cli models index`
- * prints) and offers the Cue toggle.
+ * is not. Storage controls inspect or clear its derived cache; original source
+ * documents are read through the same readers as semantic search.
  *
  * Cue runs are opt-in: they are most of History by volume and mostly the same
  * sentence every few minutes, so indexing them by default would spend the model
@@ -52,7 +58,10 @@ export function semanticIndexSummary(progress: SemanticIndexProgress): string {
 export function SemanticIndexSettings({ theme }: SemanticIndexSettingsProps) {
 	const semanticIndexCue = useSettingsStore((s) => s.semanticIndexCue);
 	const setSemanticIndexCue = useSettingsStore((s) => s.setSemanticIndexCue);
-	const { progress, error } = useSemanticIndexStatus();
+	const { progress, error, storage, storageError, clearing, refreshStorage, clearIndex } =
+		useSemanticIndexStatus();
+	const [exploring, setExploring] = useState(false);
+	const [confirmClear, setConfirmClear] = useState(false);
 	const working = progress?.state === 'indexing' || progress?.state === 'paused';
 
 	return (
@@ -85,7 +94,9 @@ export function SemanticIndexSettings({ theme }: SemanticIndexSettingsProps) {
 										progress.state === 'unavailable' ? theme.colors.warning : theme.colors.textMain,
 								}}
 							>
-								{STATE_LABELS[progress.state]}
+								{progress.state === 'idle' && (progress.indexed < progress.total || progress.reason)
+									? 'Waiting for next pass'
+									: STATE_LABELS[progress.state]}
 							</span>
 							<span className="text-xs opacity-70">{semanticIndexSummary(progress)}</span>
 						</div>
@@ -106,6 +117,56 @@ export function SemanticIndexSettings({ theme }: SemanticIndexSettingsProps) {
 					</div>
 				)}
 
+				<div className="space-y-2 border-t pt-3" style={{ borderColor: theme.colors.border }}>
+					<div className="text-sm font-medium" data-testid="semantic-index-storage">
+						{storage
+							? `${formatSize(storage.diskBytes)} on disk · ${formatCount(storage.totalChunks)} searchable chunks`
+							: 'Measuring index storage...'}
+					</div>
+					<div className="text-xs opacity-70">
+						Includes all index files across all indexed models. Model downloads are stored
+						separately.
+					</div>
+					{storageError && (
+						<div className="text-xs select-text" role="alert" style={{ color: theme.colors.error }}>
+							Index storage: {storageError}
+						</div>
+					)}
+					<div className="flex flex-wrap gap-2">
+						<CardButton
+							theme={theme}
+							icon={Database}
+							label={exploring ? 'Hide index' : 'Explore index'}
+							onClick={() => setExploring((value) => !value)}
+							disabled={clearing || !storage?.totalChunks}
+							testId="semantic-index-explore"
+						/>
+						<CardButton
+							theme={theme}
+							icon={RefreshCw}
+							label="Refresh storage"
+							onClick={() => void refreshStorage()}
+							disabled={clearing}
+							testId="semantic-index-refresh-storage"
+						/>
+						<CardButton
+							theme={theme}
+							icon={Trash2}
+							label={clearing ? 'Clearing index...' : 'Clear index'}
+							onClick={() => setConfirmClear(true)}
+							disabled={clearing || !storage?.diskBytes}
+							testId="semantic-index-clear"
+						/>
+					</div>
+				</div>
+				{exploring && storage && storage.totalChunks > 0 && !clearing && (
+					<SemanticIndexExplorer
+						theme={theme}
+						storage={storage}
+						activeModelId={progress?.modelId}
+					/>
+				)}
+
 				<ToggleSettingRow
 					theme={theme}
 					title="Index Cue runs"
@@ -117,6 +178,17 @@ export function SemanticIndexSettings({ theme }: SemanticIndexSettingsProps) {
 					clickableRow
 				/>
 			</SectionCard>
+			{confirmClear && (
+				<ConfirmModal
+					theme={theme}
+					title="Clear semantic index"
+					confirmLabel="Clear index"
+					message="Remove cached search vectors for every indexed model and reclaim their disk space? Original History entries, Director's Notes, and transcripts are kept. Automatic indexing rebuilds the cache on its next scheduled pass while Semantic search has a model assigned."
+					onConfirm={() => void clearIndex()}
+					onClose={() => setConfirmClear(false)}
+					testId="semantic-index-clear-confirm"
+				/>
+			)}
 		</div>
 	);
 }

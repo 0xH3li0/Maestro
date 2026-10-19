@@ -52,6 +52,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Core Features
 
+- 🔎 **Semantic Index** - Find past work by meaning across History, archived Director's Notes, and tab transcripts. In Settings > Models > System One, inspect disk usage, browse indexed sources by model and source type, or clear the cached vectors. Clearing keeps the original records; automatic indexing can rebuild the cache while Semantic search remains assigned a model.
 - 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Switch seamlessly between AI conversation and shell commands with `Cmd+J`.
 - ⌨️ **[Keyboard-First Design](https://docs.runmaestro.ai/keyboard-shortcuts)** - Full keyboard control with customizable shortcuts and [mastery tracking](https://docs.runmaestro.ai/keyboard-shortcuts#keyboard-mastery) that rewards you for leveling up. `Cmd+K` quick actions, rapid agent switching, and focus management designed for flow state.
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.

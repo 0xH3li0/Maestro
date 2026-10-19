@@ -23,10 +23,17 @@ export interface OnnxSession {
 }
 
 export interface OnnxModule {
-	InferenceSession: { create(path: string): Promise<OnnxSession> };
+	InferenceSession: { create(path: string, options?: OnnxSessionOptions): Promise<OnnxSession> };
 	Tensor: new (
 		type: 'float32' | 'int64' | 'int32' | 'bool',
 		data: OnnxTensorData,
 		dims: readonly number[]
 	) => OnnxTensor;
+}
+
+/** CPU allocation supported by the downloaded Node.js binding. */
+export interface OnnxSessionOptions {
+	intraOpNumThreads: number;
+	interOpNumThreads: number;
+	executionMode: 'sequential';
 }

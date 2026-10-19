@@ -13,6 +13,12 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
+const hardware = vi.hoisted(() => ({ parallelism: 16 }));
+vi.mock('os', async (importOriginal) => ({
+	...(await importOriginal<typeof import('os')>()),
+	availableParallelism: () => hardware.parallelism,
+}));
+
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestro-onnx-encoder-test' } }));
 
 const store = vi.hoisted(() => ({ installed: true }));
@@ -53,6 +59,7 @@ function makePool(overrides: { create?: () => Promise<unknown>; idleUnloadMs?: n
 afterEach(() => {
 	vi.useRealTimers();
 	store.installed = true;
+	hardware.parallelism = 16;
 });
 
 describe('OnnxEncoderPool', () => {
@@ -62,8 +69,23 @@ describe('OnnxEncoderPool', () => {
 		await pool.run('m', 'embedding', 'test', async (encoder) => seen.push(encoder.session));
 		await pool.run('m', 'embedding', 'test', async (encoder) => seen.push(encoder.session));
 		expect(create).toHaveBeenCalledTimes(1);
+		expect(create).toHaveBeenCalledWith(installed.modelPath, {
+			intraOpNumThreads: 2,
+			interOpNumThreads: 1,
+			executionMode: 'sequential',
+		});
 		expect(seen).toEqual([session, session]);
 		expect(pool.loadedModelIds).toEqual(['m']);
+	});
+
+	it('uses one compute thread on a small machine instead of the runtime default', async () => {
+		hardware.parallelism = 2;
+		const { pool, create } = makePool();
+		await pool.run('m', 'embedding', 'test', async () => {});
+		expect(create).toHaveBeenCalledWith(
+			installed.modelPath,
+			expect.objectContaining({ intraOpNumThreads: 1 })
+		);
 	});
 
 	it('frees the session after the idle window, and a later call reopens it', async () => {

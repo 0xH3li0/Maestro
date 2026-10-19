@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { LayerStackProvider } from '../../../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../../../renderer/types';
 import {
 	SemanticIndexSettings,
@@ -40,6 +41,20 @@ function progress(overrides: Partial<SemanticIndexProgress> = {}): SemanticIndex
 
 const api = () => window.maestro.localModels.semanticIndex;
 
+const STORAGE = {
+	totalChunks: 5,
+	sizeBytes: 1024 * 1024,
+	diskBytes: 2 * 1024 * 1024,
+	models: [
+		{
+			modelId: 'local:bge-small-en-v1.5',
+			dimensions: 384,
+			chunks: 5,
+			bySourceType: { history: 3, 'directors-notes': 1, transcript: 1 },
+		},
+	],
+};
+
 /** The handler the component subscribed with, so a test can push progress. */
 function pushProgress(next: SemanticIndexProgress): void {
 	const handler = vi.mocked(api().onProgress).mock.calls.at(-1)?.[0];
@@ -70,10 +85,146 @@ describe('SemanticIndexSettings', () => {
 		useSettingsStore.setState({ semanticIndexCue: false });
 		vi.mocked(api().status).mockResolvedValue(progress({ state: 'off' }));
 		vi.mocked(api().onProgress).mockReturnValue(() => {});
+		vi.mocked(api().storage).mockResolvedValue(STORAGE);
+		vi.mocked(api().clear).mockResolvedValue({
+			totalChunks: 0,
+			models: [],
+			sizeBytes: 4096,
+			diskBytes: 4096,
+		});
+		vi.mocked(api().browse).mockResolvedValue({ entries: [], total: 0, offset: 0, limit: 20 });
 	});
 
-	it('is findable by its setting id', () => {
+	it('shows physical disk bytes including sidecars rather than just database pages', async () => {
 		render(<SemanticIndexSettings theme={theme} />);
+		expect(await screen.findByText(/2\.0 MB on disk/)).toHaveTextContent('5 searchable chunks');
+	});
+
+	it('browses bounded indexed sources and resets pagination when the source filter changes', async () => {
+		vi.mocked(api().browse).mockResolvedValue({
+			offset: 0,
+			limit: 20,
+			total: 21,
+			entries: [
+				{
+					modelId: STORAGE.models[0].modelId,
+					sourceType: 'history',
+					sourceId: 'e1',
+					agentId: 'a',
+					chunks: 3,
+					indexedAt: 1,
+					title: 'Fixed login timeout',
+					snippet: 'The retry delay was reduced.',
+				},
+			],
+		});
+		render(<SemanticIndexSettings theme={theme} />);
+		await waitFor(() => expect(screen.getByTestId('semantic-index-explore')).not.toBeDisabled());
+		fireEvent.click(screen.getByTestId('semantic-index-explore'));
+		expect(await screen.findByText('Fixed login timeout')).toBeTruthy();
+		expect(screen.getByText('The retry delay was reduced.')).toBeTruthy();
+		fireEvent.click(screen.getByTestId('semantic-index-next'));
+		await waitFor(() =>
+			expect(api().browse).toHaveBeenLastCalledWith({
+				modelId: STORAGE.models[0].modelId,
+				limit: 20,
+				offset: 20,
+			})
+		);
+		fireEvent.change(screen.getByLabelText('Index source type'), { target: { value: 'history' } });
+		await waitFor(() =>
+			expect(api().browse).toHaveBeenLastCalledWith({
+				modelId: STORAGE.models[0].modelId,
+				sourceType: 'history',
+				limit: 20,
+				offset: 0,
+			})
+		);
+		expect(window.maestro.localModels.search).not.toHaveBeenCalled();
+	});
+
+	it('clears only after confirmation and updates disk usage from the clear response', async () => {
+		render(
+			<LayerStackProvider>
+				<SemanticIndexSettings theme={theme} />
+			</LayerStackProvider>
+		);
+		await screen.findByText(/2\.0 MB on disk/);
+		fireEvent.click(screen.getByTestId('semantic-index-clear'));
+		expect(api().clear).not.toHaveBeenCalled();
+		const confirm = screen.getByTestId('semantic-index-clear-confirm');
+		expect(confirm).toHaveTextContent('Original History entries');
+		expect(confirm).toHaveTextContent('next scheduled pass');
+		fireEvent.click(within(confirm).getByRole('button', { name: 'Clear index' }));
+		await waitFor(() => expect(api().clear).toHaveBeenCalledOnce());
+		await screen.findByText(/4\.0 KB on disk/);
+		expect(screen.getByTestId('semantic-index-storage')).toHaveTextContent('0 searchable chunks');
+	});
+
+	it('allows clearing an empty index that still occupies disk space', async () => {
+		vi.mocked(api().storage).mockResolvedValue({ ...STORAGE, totalChunks: 0, models: [] });
+		render(<SemanticIndexSettings theme={theme} />);
+		await screen.findByText(/2\.0 MB on disk/);
+		expect(screen.getByTestId('semantic-index-clear')).not.toBeDisabled();
+		expect(screen.getByTestId('semantic-index-explore')).toBeDisabled();
+	});
+
+	it('ignores a stale storage response that arrives after clearing', async () => {
+		render(
+			<LayerStackProvider>
+				<SemanticIndexSettings theme={theme} />
+			</LayerStackProvider>
+		);
+		await screen.findByText(/2\.0 MB on disk/);
+		let answer!: (value: typeof STORAGE) => void;
+		vi.mocked(api().storage).mockReturnValue(
+			new Promise((resolve) => {
+				answer = resolve;
+			})
+		);
+		fireEvent.click(screen.getByTestId('semantic-index-refresh-storage'));
+		fireEvent.click(screen.getByTestId('semantic-index-clear'));
+		fireEvent.click(
+			within(screen.getByTestId('semantic-index-clear-confirm')).getByRole('button', {
+				name: 'Clear index',
+			})
+		);
+		await screen.findByText(/4\.0 KB on disk/);
+		await act(async () => answer(STORAGE));
+		expect(screen.getByTestId('semantic-index-storage')).toHaveTextContent('4.0 KB on disk');
+	});
+
+	it('shows browse failures and allows an explicit retry', async () => {
+		vi.mocked(api().browse).mockRejectedValueOnce(new Error('index read failed'));
+		render(<SemanticIndexSettings theme={theme} />);
+		await screen.findByText(/2\.0 MB on disk/);
+		fireEvent.click(screen.getByTestId('semantic-index-explore'));
+		expect(await screen.findByRole('alert')).toHaveTextContent('index read failed');
+		fireEvent.click(screen.getByTestId('semantic-index-refresh-entries'));
+		expect(await screen.findByText('No indexed sources on this page.')).toBeTruthy();
+	});
+
+	it('preserves the current storage report and reports a failed clear', async () => {
+		vi.mocked(api().clear).mockRejectedValue(new Error('disk is full'));
+		render(
+			<LayerStackProvider>
+				<SemanticIndexSettings theme={theme} />
+			</LayerStackProvider>
+		);
+		await screen.findByText(/2\.0 MB on disk/);
+		fireEvent.click(screen.getByTestId('semantic-index-clear'));
+		fireEvent.click(
+			within(screen.getByTestId('semantic-index-clear-confirm')).getByRole('button', {
+				name: 'Clear index',
+			})
+		);
+		expect(await screen.findByRole('alert')).toHaveTextContent('disk is full');
+		expect(screen.getByTestId('semantic-index-storage')).toHaveTextContent('2.0 MB on disk');
+	});
+
+	it('is findable by its setting id', async () => {
+		render(<SemanticIndexSettings theme={theme} />);
+		await screen.findByTestId('semantic-index-status');
 		expect(screen.getByTestId('semantic-index-settings')).toHaveAttribute(
 			'data-setting-id',
 			'local-models-semantic-index'
@@ -121,6 +272,7 @@ describe('SemanticIndexSettings', () => {
 		expect(screen.getByTestId('semantic-index-status')).toHaveTextContent('40 of 100');
 
 		pushProgress(progress({ state: 'idle', indexed: 100, total: 100, lastPassAt: 5 }));
+		await act(async () => {});
 		expect(screen.getByTestId('semantic-index-status')).toHaveTextContent('Up to date');
 		// A finished index has no bar to fill.
 		expect(screen.queryByTestId('semantic-index-progress')).toBeNull();
@@ -159,10 +311,11 @@ describe('SemanticIndexSettings', () => {
 		expect(window.maestro.settings.set).toHaveBeenCalledWith('semanticIndexCue', true);
 	});
 
-	it('unsubscribes from progress when it unmounts', () => {
+	it('unsubscribes from progress when it unmounts', async () => {
 		const release = vi.fn();
 		vi.mocked(api().onProgress).mockReturnValue(release);
 		const { unmount } = render(<SemanticIndexSettings theme={theme} />);
+		await screen.findByTestId('semantic-index-status');
 
 		unmount();
 

@@ -22,13 +22,14 @@
  * concurrently.
  */
 
+import { availableParallelism } from 'os';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type { LocalEncoderGraph, LocalModelEntry } from '../../shared/local-models/types';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { LocalModelError } from './errors';
 import { isInstalled, modelFilePath } from './model-store';
-import { loadLocalRuntime } from './runtime/load-runtime';
+import { loadOnnxWorkerRuntime } from './runtime/onnx-worker-session';
 import type { OnnxModule, OnnxSession, OnnxTensor } from './runtime/onnx-types';
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { loadTokenizer, type LocalTokenizer, type TokenizedBatch } from './tokenizer';
@@ -61,7 +62,7 @@ export interface OnnxEncoderPoolOptions {
 	/** Idle time before a session is freed. 0 keeps sessions loaded forever. */
 	idleUnloadMs?: number;
 	/** Injected in tests; production goes through `native-loader.ts`. */
-	loadRuntime?: typeof loadLocalRuntime;
+	loadRuntime?: (runtimeId: 'onnx', consumerId: string) => Promise<OnnxModule>;
 	/** Injected in tests; production resolves an installed catalog model. */
 	resolveModel?: (
 		modelId: string,
@@ -132,7 +133,7 @@ interface ResidentEncoder {
  */
 export class OnnxEncoderPool {
 	private readonly idleUnloadMs: number;
-	private readonly loadRuntime: typeof loadLocalRuntime;
+	private readonly loadRuntime: NonNullable<OnnxEncoderPoolOptions['loadRuntime']>;
 	private readonly resolveModel: NonNullable<OnnxEncoderPoolOptions['resolveModel']>;
 	private readonly loadTokenizer: (dir: string) => Promise<LocalTokenizer>;
 	private readonly queue = createKeyedWriteQueue();
@@ -140,7 +141,8 @@ export class OnnxEncoderPool {
 
 	constructor(options: OnnxEncoderPoolOptions = {}) {
 		this.idleUnloadMs = options.idleUnloadMs ?? DEFAULT_ENCODER_IDLE_UNLOAD_MS;
-		this.loadRuntime = options.loadRuntime ?? loadLocalRuntime;
+		this.loadRuntime =
+			options.loadRuntime ?? ((_id, consumerId) => loadOnnxWorkerRuntime(consumerId));
 		this.resolveModel = options.resolveModel ?? resolveInstalledEncoder;
 		this.loadTokenizer = options.loadTokenizer ?? loadTokenizer;
 	}
@@ -205,14 +207,20 @@ export class OnnxEncoderPool {
 		// Both throw classified errors of their own (model-unsupported,
 		// model-not-installed, runtime-unavailable); they pass through untouched.
 		const installed = await this.resolveModel(modelId, kind, consumerId);
-		const ort = await this.loadRuntime<OnnxModule>('onnx', consumerId);
+		const ort = await this.loadRuntime('onnx', consumerId);
 
 		let session: OnnxSession;
 		let tokenizer: LocalTokenizer;
 		try {
 			// An external-weights graph (`.onnx_data`) is opened by a path relative
 			// to the graph, so the graph is always opened from its install location.
-			session = await ort.InferenceSession.create(installed.modelPath);
+			// Keep encoder pools from consuming every physical core. The worker
+			// isolates native inference from main; this cap also leaves CPU for UI.
+			session = await ort.InferenceSession.create(installed.modelPath, {
+				intraOpNumThreads: Math.max(1, Math.min(2, Math.floor(availableParallelism() / 4))),
+				interOpNumThreads: 1,
+				executionMode: 'sequential',
+			});
 		} catch (error) {
 			throw openFailure(installed.entry, consumerId, error);
 		}

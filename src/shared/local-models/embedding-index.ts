@@ -85,6 +85,38 @@ export interface EmbeddingStoreStats {
 	sizeBytes: number;
 }
 
+/** Actual file sizes, including SQLite's write-ahead log and shared memory. */
+export interface SemanticIndexStorage extends EmbeddingStoreStats {
+	diskBytes: number;
+}
+
+export interface SemanticIndexBrowseRequest {
+	modelId: string;
+	sourceType?: EmbeddingSourceType;
+	offset?: number;
+	limit?: number;
+}
+
+/** One indexed source, with readable context when its original still exists. */
+export interface SemanticIndexEntry {
+	modelId: string;
+	sourceType: EmbeddingSourceType;
+	sourceId: string;
+	agentId: string | null;
+	chunks: number;
+	indexedAt: number;
+	title?: string;
+	snippet?: string;
+	agentName?: string;
+}
+
+export interface SemanticIndexPage {
+	entries: SemanticIndexEntry[];
+	total: number;
+	offset: number;
+	limit: number;
+}
+
 /**
  * What the background indexer is doing.
  *

@@ -41,8 +41,11 @@ import {
 	runWorkSearch,
 	searchPastWork,
 	searchPastWorkRequest,
+	hydrateSemanticIndexPage,
+	browseSemanticIndexRequest,
 	type WorkSearchDeps,
 } from '../../../main/local-models/work-search';
+import { getEmbeddingStore } from '../../../main/local-models/embedding-store';
 import {
 	historyEntryText,
 	TRANSCRIPT_SETTLE_MS,
@@ -57,6 +60,45 @@ import type { HistoryEntry } from '../../../shared/types';
 
 const NOW = 10_000_000;
 const SOURCE = { type: 'local' as const, modelId: 'bge-small-en-v1.5' };
+
+describe('index browsing', () => {
+	it('hydrates indexed sources through the shared corpus without loading a model', async () => {
+		const { deps } = makeDeps();
+		const page = await hydrateSemanticIndexPage(deps, {
+			offset: 0,
+			limit: 20,
+			total: 2,
+			entries: ['a-login', 'deleted'].map((sourceId) => ({
+				modelId: 'local:bge-small-en-v1.5',
+				sourceType: 'history' as const,
+				sourceId,
+				agentId: 'agent-a',
+				chunks: 2,
+				indexedAt: NOW,
+			})),
+		});
+		expect(page.entries[0]).toMatchObject({ title: 'Fixed the login timeout', chunks: 2 });
+		expect(page.entries[0].snippet).toContain('Fixed the login timeout');
+		expect(page.entries[1].sourceId).toBe('deleted');
+		expect(page.entries[1].title).toBeUndefined();
+		expect(page.total).toBe(2);
+		expect(deps.embedQuery).not.toHaveBeenCalled();
+		expect(deps.resolveChunkBudget).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		null,
+		{},
+		{ modelId: '' },
+		{ modelId: 'm', sourceType: 'unknown' },
+		{ modelId: 'm', offset: -1 },
+		{ modelId: 'm', limit: Infinity },
+	])('rejects an invalid browse request before reading SQLite: %j', async (request) => {
+		vi.mocked(getEmbeddingStore).mockClear();
+		await expect(browseSemanticIndexRequest(request)).rejects.toThrow();
+		expect(getEmbeddingStore).not.toHaveBeenCalled();
+	});
+});
 
 function entry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
 	return {

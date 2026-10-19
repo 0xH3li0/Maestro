@@ -174,6 +174,18 @@ const semanticIndex = vi.hoisted(() => {
 });
 
 vi.mock('../../../../main/local-models/semantic-indexer', () => ({
+	semanticIndexStorage: vi.fn(async () => ({
+		totalChunks: 3,
+		models: [],
+		sizeBytes: 4096,
+		diskBytes: 8192,
+	})),
+	clearSemanticIndex: vi.fn(async () => ({
+		totalChunks: 0,
+		models: [],
+		sizeBytes: 4096,
+		diskBytes: 4096,
+	})),
 	semanticIndexProgress: vi.fn(() => semanticIndex.progress),
 	onSemanticIndexProgress: vi.fn((listener: (progress: unknown) => void) => {
 		semanticIndex.listeners.add(listener);
@@ -206,6 +218,7 @@ vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 }));
 
 vi.mock('../../../../main/local-models/work-search', () => ({
+	browseSemanticIndexRequest: vi.fn(async () => ({ entries: [], total: 0, offset: 0, limit: 20 })),
 	searchPastWorkRequest: vi.fn(async () => ({ status: 'off' })),
 }));
 
@@ -346,7 +359,11 @@ import {
 import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
-import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+import {
+	searchPastWorkRequest,
+	browseSemanticIndexRequest,
+} from '../../../../main/local-models/work-search';
+import { clearSemanticIndex } from '../../../../main/local-models/semantic-indexer';
 import {
 	ensureTokenProxyPort,
 	readTokenProxyBlock,
@@ -816,6 +833,18 @@ describe('token proxy channels', () => {
 });
 
 describe('semantic index channels', () => {
+	it('exposes actual storage bytes, bounded browsing, and the serialized clear operation', async () => {
+		await expect(handlerFor('localModels:semanticIndex:storage')({})).resolves.toMatchObject({
+			diskBytes: 8192,
+		});
+		const request = { modelId: 'local:bge-small-en-v1.5', offset: 20 };
+		await handlerFor('localModels:semanticIndex:browse')({}, request);
+		expect(browseSemanticIndexRequest).toHaveBeenCalledWith(request);
+		await expect(handlerFor('localModels:semanticIndex:clear')({})).resolves.toMatchObject({
+			totalChunks: 0,
+		});
+		expect(clearSemanticIndex).toHaveBeenCalledOnce();
+	});
 	it('answers status with the indexer record, untouched', async () => {
 		await expect(handlerFor('localModels:semanticIndex:status')({})).resolves.toBe(
 			semanticIndex.progress

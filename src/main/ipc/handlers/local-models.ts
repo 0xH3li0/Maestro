@@ -69,8 +69,10 @@ import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
 import {
 	onSemanticIndexProgress,
 	semanticIndexProgress,
+	semanticIndexStorage,
+	clearSemanticIndex,
 } from '../../local-models/semantic-indexer';
-import { searchPastWorkRequest } from '../../local-models/work-search';
+import { searchPastWorkRequest, browseSemanticIndexRequest } from '../../local-models/work-search';
 import {
 	ensureTokenProxyPort,
 	getTokenProxyReport,
@@ -470,6 +472,19 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('semanticIndex:status'),
 			async (): Promise<SemanticIndexProgress> => semanticIndexProgress()
 		)
+	);
+
+	ipcMain.handle(
+		'localModels:semanticIndex:storage',
+		withIpcErrorLogging(handlerOpts('semanticIndex:storage'), semanticIndexStorage)
+	);
+	ipcMain.handle(
+		'localModels:semanticIndex:browse',
+		withIpcErrorLogging(handlerOpts('semanticIndex:browse'), browseSemanticIndexRequest)
+	);
+	ipcMain.handle(
+		'localModels:semanticIndex:clear',
+		withIpcErrorLogging(handlerOpts('semanticIndex:clear'), clearSemanticIndex)
 	);
 
 	// The Maestro token proxy. `report` and `block` read; `ensurePort` is the
