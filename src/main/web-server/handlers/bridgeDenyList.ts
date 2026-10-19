@@ -52,6 +52,8 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	// Main owns the inbox; a browser marks read or clears through the same delta.
+	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
 	permission: 'respond',
@@ -77,7 +79,9 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
+	// The Auto Run claim and reclaim pair: a browser starts its own runs and takes them
+	// back after a reload (#1470), keyed by its own client instance ID.
+	web: 'abandonAutoRunReclaim broadcastSessionState broadcastTabsChange broadcastUserInput claimAutoRunStart controlAutoRun releaseAutoRunStartClaim requestNewTab startAutoRun takeOrphanedAutoRuns',
 	windows: 'getForSession getState list',
 };
 const EVENTS: Record<string, string> = {
@@ -98,7 +102,7 @@ const EVENTS: Record<string, string> = {
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
 	marketplace: 'manifestChanged',
-	notification: 'commandCompleted',
+	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
