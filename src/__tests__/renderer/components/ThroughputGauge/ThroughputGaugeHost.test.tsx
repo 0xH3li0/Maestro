@@ -8,7 +8,7 @@
  * window. Those run with `window.maestro.floatingWidgets` absent (the browser
  * build); the desktop-window cases at the end install a fake one.
  */
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Window ownership. Unset permits every agent (no WindowProvider, like the
@@ -799,6 +799,9 @@ describe('ThroughputGaugeHost', () => {
 		});
 
 		afterEach(() => {
+			// Unmount while the fake API is still installed: the host hides its
+			// window on unmount, and RTL's own cleanup runs after this hook.
+			cleanup();
 			maestro.floatingWidgets = originalFloatingWidgets;
 		});
 
