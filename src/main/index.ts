@@ -1618,16 +1618,40 @@ app
 			plugins: {
 				reconcile: () => {
 					if (!pluginManager) return;
-					// Copy trusted bundled first-party plugins into the plugins dir
-					// before discovery. Trust-gated + idempotent.
-					seedBundledPlugins({
-						trustedKeys: trustedKeysFor,
-						onLog: (message) => logger.info(message, 'Plugins'),
-						onError: (error) => void captureException(error),
-					});
-					pluginManager.refresh();
-					pluginManager.startWatching();
-					pluginScheduler?.start();
+					const manager = pluginManager;
+					void manager
+						.retireBundledAgentFlow(authStore)
+						.then(({ recoveryPath, preserved }) => {
+							if (preserved) {
+								logger.info(`Agent Flow preserved: ${preserved}`, 'Plugins');
+								return;
+							}
+							if (recoveryPath) logger.info(`Agent Flow retired to ${recoveryPath}`, 'Plugins');
+							if (authStore.isSessionOnly()) {
+								logger.warn(
+									'Agent Flow authorization cleanup is session-only; retirement retries next launch',
+									'Plugins'
+								);
+							}
+						})
+						.catch((error) => {
+							logger.error(`Agent Flow retirement incomplete: ${error}`, 'Plugins');
+							void captureException(error, { operation: 'plugins:retire-agent-flow' });
+						})
+						.then(() => {
+							// A feature toggle may have switched off while the sandbox drained.
+							const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+							if (ef.plugins !== true) return;
+							seedBundledPlugins({
+								trustedKeys: trustedKeysFor,
+								onLog: (message) => logger.info(message, 'Plugins'),
+								onError: (error) => void captureException(error),
+							});
+							manager.refresh();
+							manager.startWatching();
+							pluginScheduler?.start();
+						})
+						.catch((error) => void captureException(error, { operation: 'plugins:startup' }));
 				},
 				stopAll: () => {
 					pluginManager?.stopWatching();
