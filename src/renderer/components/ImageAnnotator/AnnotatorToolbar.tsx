@@ -43,6 +43,7 @@ import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState
 import { ANNOTATOR_PALETTE, paletteHotkeyIndex } from './annotatorConstants';
 import { isAnnotatorTextEntry } from './annotatorKeyboard';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface AnnotatorToolbarProps {
 	state: UseAnnotatorStateReturn;
@@ -373,9 +374,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 							top: '50%',
 							transform: 'translateY(-50%)',
 							minWidth: 200,
-							backgroundColor: theme.colors.bgMain,
-							border: `1px solid ${theme.colors.border}`,
-							boxShadow: '0 8px 24px -8px rgba(0, 0, 0, 0.5)',
+							...elevatedSurfaceStyle(theme),
 							color: theme.colors.textMain,
 							zIndex: 1,
 						}}
@@ -445,9 +444,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 							top: '50%',
 							transform: 'translateY(-50%)',
 							marginRight: 8,
-							backgroundColor: theme.colors.bgMain,
-							border: `1px solid ${theme.colors.border}`,
-							boxShadow: '0 8px 24px -8px rgba(0, 0, 0, 0.5)',
+							...elevatedSurfaceStyle(theme),
 							zIndex: 1,
 						}}
 					>

@@ -3,6 +3,7 @@ import { AppWindow, Edit3, FolderInput, FolderPlus, FolderUp, Plus, Trash2 } fro
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -86,13 +87,12 @@ export function GroupContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
 				// The measured budget, not `100vh`: this menu can be pushed DOWN as
 				// well as up, and a viewport-sized cap on a menu anchored low still

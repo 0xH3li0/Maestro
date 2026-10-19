@@ -113,6 +113,7 @@ import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * How long to keep re-applying a restored scroll offset while the document
@@ -2315,10 +2316,9 @@ export const FilePreview = React.memo(
 								{/* jq syntax help popup */}
 								{searchMode === 'jq' && showJqHelp && (
 									<div
-										className="absolute top-full left-0 right-0 mt-1 rounded-lg shadow-xl overflow-hidden z-50"
+										className="absolute top-full left-0 right-0 mt-1 rounded-lg overflow-hidden z-50"
 										style={{
-											backgroundColor: theme.colors.bgSidebar,
-											border: `1px solid ${theme.colors.border}`,
+											...elevatedSurfaceStyle(theme),
 										}}
 									>
 										<div
@@ -2879,12 +2879,11 @@ export const FilePreview = React.memo(
 							}}
 						/>
 						<div
-							className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+							className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 							style={{
 								left: lineCtxMenu.x,
 								top: lineCtxMenu.y,
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 								minWidth: '14rem',
 							}}
 						>
