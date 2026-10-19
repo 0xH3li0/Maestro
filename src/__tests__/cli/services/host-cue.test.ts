@@ -28,6 +28,8 @@ function fakeEngine(overrides: Partial<HostCueEngine> = {}): HostCueEngine {
 		triggerSubscription: vi.fn(() => true),
 		getActiveRuns: vi.fn(() => []),
 		stopAll: vi.fn(),
+		drain: vi.fn(async () => ({})),
+		forceStop: vi.fn(),
 		refreshSession: vi.fn(),
 		removeSession: vi.fn(),
 		...overrides,
@@ -130,7 +132,10 @@ describe('startHostCue', () => {
 		expect(all.startInbox).toHaveBeenCalledWith(engine, '/data');
 
 		await Promise.all([cue.stop(), cue.stop()]);
-		expect(engine.stop).toHaveBeenCalledTimes(1);
+		// A stop with no signal before it drains with no wait, which still persists the queue.
+		expect(engine.drain).toHaveBeenCalledTimes(1);
+		expect(engine.drain).toHaveBeenCalledWith({ timeoutMs: 0 });
+		expect(engine.stop).not.toHaveBeenCalled();
 		expect(stopInbox).toHaveBeenCalledTimes(1);
 		expect(cue.state()).toEqual({ state: 'disabled' });
 	});
@@ -204,53 +209,118 @@ describe('stopping the host with Cue runs in flight', () => {
 		expect(cue.activeRuns()).toBe(2);
 	});
 
-	it('stops every run, waits for its process to exit, and only then stops the engine', async () => {
+	it('drains instead of stopping: triggers disarm at once, the runs keep counting, and the queue survives', async () => {
+		const runs: unknown[] = [{ runId: 'r1' }];
+		let finishDrain!: () => void;
 		const order: string[] = [];
-		let exited!: () => void;
-		const { all, engine } = deps({
+		const { all, engine, stopInbox } = deps({
 			engine: fakeEngine({
-				stopAll: vi.fn(() => void order.push('stopAll')),
-				stop: vi.fn(() => void order.push('stop')),
+				getActiveRuns: () => runs,
+				drain: vi.fn(
+					() =>
+						new Promise((resolve) => {
+							order.push('drain');
+							finishDrain = () => {
+								runs.length = 0;
+								resolve({});
+							};
+						})
+				),
 			}),
 			readLock: () => lock(PID),
-			waitForRunsToEnd: () =>
-				new Promise<void>((resolve) => {
-					order.push('waiting');
-					exited = () => {
-						order.push('exited');
-						resolve();
-					};
-				}),
 		});
-		const cue = await startHostCue(PATHS, all);
+		const fake = fakeRuntime();
+		const cue = await startHostCue({ ...PATHS, runtime: fake.runtime }, all);
 
+		const drained = cue.drain(30_000);
+		await vi.waitFor(() => expect(engine.drain).toHaveBeenCalledWith({ timeoutMs: 30_000 }));
+		// No `cue trigger` and no yaml re-read while the runs finish.
+		expect(stopInbox).toHaveBeenCalledTimes(1);
+		fake.bus.emit({ type: 'agent.added', agent: agentRecord('a2', '/two') });
+		expect(engine.refreshSession).not.toHaveBeenCalled();
+		// A run still finishing is work the host waits for.
+		expect(cue.activeRuns()).toBe(1);
+		expect(cue.state()).toEqual({ state: 'running' });
+
+		// The host's stop after the grace joins the same drain rather than starting another.
 		let stopped = false;
 		const stopping = cue.stop().then(() => {
 			stopped = true;
 		});
-		await vi.waitFor(() => expect(order).toEqual(['stopAll', 'waiting']));
-		// The engine's own stop forgets its runs without ending them, so it must not run yet.
-		expect(engine.stop).not.toHaveBeenCalled();
+		await Promise.resolve();
 		expect(stopped).toBe(false);
-
-		exited();
-		await stopping;
-		expect(order).toEqual(['stopAll', 'waiting', 'exited', 'stop']);
+		finishDrain();
+		await Promise.all([drained, stopping]);
+		expect(engine.drain).toHaveBeenCalledTimes(1);
+		// `stop()` deletes the persisted queue; nothing may call it after a drain.
+		expect(engine.stop).not.toHaveBeenCalled();
+		expect(engine.stopAll).not.toHaveBeenCalled();
 		expect(cue.activeRuns()).toBe(0);
+		expect(cue.state()).toEqual({ state: 'disabled' });
 	});
 
-	it('still stops the engine when stopping a run throws', async () => {
+	it('no settings change applies once the drain started', async () => {
+		const fake = fakeRuntime();
+		const { all, engine } = deps({ readLock: () => lock(PID) });
+		const createEngine = vi.fn(all.createEngine);
+		const cue = await startHostCue({ ...PATHS, runtime: fake.runtime }, { ...all, createEngine });
+		await cue.drain(10_000);
+		fake.bus.emit({ type: 'settings.changed', keys: ['encoreFeatures'] });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(createEngine).toHaveBeenCalledTimes(1);
+		expect(engine.stopAll).not.toHaveBeenCalled();
+	});
+
+	it('forces the drain on a second signal, and forces one with no wait when none started', async () => {
+		let finishDrain!: () => void;
 		const { all, engine } = deps({
 			engine: fakeEngine({
-				stopAll: vi.fn(() => {
+				drain: vi.fn(
+					() =>
+						new Promise((resolve) => {
+							finishDrain = () => resolve({});
+						})
+				),
+				forceStop: vi.fn(() => finishDrain?.()),
+			}),
+			readLock: () => lock(PID),
+		});
+		const cue = await startHostCue(PATHS, all);
+		const drained = cue.drain(30_000);
+		await vi.waitFor(() => expect(engine.drain).toHaveBeenCalled());
+		cue.forceStop();
+		expect(engine.forceStop).toHaveBeenCalledTimes(1);
+		await drained;
+		await cue.stop();
+		expect(engine.stop).not.toHaveBeenCalled();
+
+		// A second signal with no drain yet: the engine's forceStop starts one with no wait.
+		const second = deps({ readLock: () => lock(PID) });
+		const other = await startHostCue(PATHS, second.all);
+		other.forceStop();
+		await other.stop();
+		expect(second.engine.forceStop).toHaveBeenCalledTimes(1);
+		expect(second.engine.forceStop.mock.invocationCallOrder[0]).toBeLessThan(
+			(second.engine.drain as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		);
+		expect(second.engine.stop).not.toHaveBeenCalled();
+	});
+
+	it('forces a drain that failed, and still resolves the stop without calling stop()', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const { all, engine } = deps({
+			engine: fakeEngine({
+				drain: vi.fn(async () => {
 					throw new Error('db closed');
 				}),
 			}),
 			readLock: () => lock(PID),
 		});
 		const cue = await startHostCue(PATHS, all);
-		await expect(cue.stop()).rejects.toThrow('db closed');
-		expect(engine.stop).toHaveBeenCalledTimes(1);
+		await expect(cue.stop()).resolves.toBeUndefined();
+		expect(engine.forceStop).toHaveBeenCalledTimes(1);
+		expect(engine.stop).not.toHaveBeenCalled();
+		vi.restoreAllMocks();
 	});
 });
 
@@ -328,6 +398,8 @@ describe('what the engine learns after it started', () => {
 		await vi.waitFor(() => expect(cue.state()).toEqual({ state: 'disabled' }));
 		expect(engines[0].stopAll).toHaveBeenCalledTimes(1);
 		expect(engines[0].stop).toHaveBeenCalledTimes(1);
+		// Switched off is not a shutdown: the queue is cleared, as on the desktop, not drained.
+		expect(engines[0].drain).not.toHaveBeenCalled();
 
 		enabled = true;
 		fake.bus.emit({ type: 'settings.changed', keys: 'unknown' });
@@ -336,7 +408,8 @@ describe('what the engine learns after it started', () => {
 		expect(engines[1].start).toHaveBeenCalledWith('system-boot');
 
 		await cue.stop();
-		expect(engines[1].stop).toHaveBeenCalledTimes(1);
+		expect(engines[1].drain).toHaveBeenCalledTimes(1);
+		expect(engines[1].stop).not.toHaveBeenCalled();
 	});
 
 	it('hands the engine a way to run Auto Run actions in the runtime', async () => {
@@ -404,6 +477,12 @@ describe('another engine taking the lock over', () => {
 			lockLost?.();
 			engine.stop();
 		};
+		/** The same during a drain: the engine forces its drain instead of stopping. */
+		const takeOverDuringDrain = (holder: CueEngineLockInfo = lock(99, 'desktop')): void => {
+			held = holder;
+			lockLost?.();
+			engine.forceStop();
+		};
 		return {
 			cue,
 			all,
@@ -411,6 +490,7 @@ describe('another engine taking the lock over', () => {
 			stopInbox,
 			order,
 			takeOver,
+			takeOverDuringDrain,
 			setEnabled: (on: boolean) => {
 				enabled = on;
 			},
@@ -490,6 +570,8 @@ describe('another engine taking the lock over', () => {
 		takeOver();
 		await expect(cue.stop()).resolves.toBeUndefined();
 		await expect(cue.stop()).resolves.toBeUndefined();
+		// Nothing is left to drain: the loss already gave the engine up.
+		expect(engine.drain).not.toHaveBeenCalled();
 		expect(engine.stopAll).toHaveBeenCalledTimes(1);
 		expect(engine.stop).toHaveBeenCalledTimes(1);
 		expect(stopInbox).toHaveBeenCalledTimes(1);
@@ -576,6 +658,32 @@ describe('another engine taking the lock over', () => {
 		);
 		expect(all.createEngine).toHaveBeenCalledTimes(1);
 		await cue.stop();
+	});
+
+	it('leaves a loss during the drain to the drain, which the engine forces itself', async () => {
+		let finishDrain!: () => void;
+		const { cue, engine, takeOverDuringDrain } = await hosted();
+		(engine.drain as ReturnType<typeof vi.fn>).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finishDrain = () => resolve({});
+				})
+		);
+		(engine.forceStop as ReturnType<typeof vi.fn>).mockImplementation(() => finishDrain());
+		const drained = cue.drain(30_000);
+		await vi.waitFor(() => expect(engine.drain).toHaveBeenCalled());
+
+		expect(() => takeOverDuringDrain()).not.toThrow();
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
+		// stopAll would clear the queue the forced drain is about to persist.
+		expect(engine.stopAll).not.toHaveBeenCalled();
+
+		await drained;
+		await cue.stop();
+		expect(engine.drain).toHaveBeenCalledTimes(1);
+		expect(engine.forceStop).toHaveBeenCalledTimes(1);
+		expect(engine.stop).not.toHaveBeenCalled();
+		expect(cue.state()).toEqual({ state: 'held', mode: 'desktop', pid: 99 });
 	});
 
 	it('survives a host step that throws, and still reports the holder', async () => {

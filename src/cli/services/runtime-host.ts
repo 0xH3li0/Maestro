@@ -126,6 +126,8 @@ export async function startRuntimeHost(
 	let cue: HostCue = {
 		state: () => ({ state: 'disabled' }),
 		activeRuns: () => 0,
+		drain: async () => undefined,
+		forceStop: () => undefined,
 		stop: async () => undefined,
 	};
 	let stopping: Promise<void> | undefined;
@@ -138,7 +140,9 @@ export async function startRuntimeHost(
 			// Unpublish first: nothing new should find a host that is going away.
 			deleteCliServerInfoFrom(paths.userDataDir, deps.pid);
 			// Cue first, and waited for: its runs are stopped and their processes gone before the
-			// runtime closes, so none outlives the host. A failure here must not strand the rest.
+			// runtime closes, so none outlives the host. After a signal this is the drain the signal
+			// started; otherwise (`host stop`, a lost directory) a drain with no wait, which still
+			// persists the queue. A failure here must not strand the rest.
 			try {
 				await cue.stop();
 			} catch (error) {
