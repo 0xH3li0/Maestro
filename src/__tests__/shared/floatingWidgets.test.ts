@@ -40,6 +40,11 @@ describe('FLOATING_WIDGET_SPECS', () => {
 		}
 	});
 
+	it('names the window that owns each widget', () => {
+		expect(FLOATING_WIDGET_SPECS['throughput-gauge'].authority).toBe('app');
+		expect(FLOATING_WIDGET_SPECS['media-player'].authority).toBe('widget');
+	});
+
 	it('never opens a widget below its own minimum size', () => {
 		for (const id of FLOATING_WIDGET_IDS) {
 			const { defaultSize, minSize } = FLOATING_WIDGET_SPECS[id];

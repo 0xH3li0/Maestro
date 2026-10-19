@@ -22,9 +22,18 @@ export interface FloatingWidgetSize {
 	height: number;
 }
 
+/**
+ * Which window owns a widget's live state and takes its commands:
+ * - `app`: the primary app window (the gauge's rate engine runs there).
+ * - `widget`: the widget's own window (the media player owns its media element),
+ *   so a command may have to create that window and wait for it to mount.
+ */
+export type FloatingWidgetAuthority = 'app' | 'widget';
+
 /** The fixed shape of one widget's window. */
 export interface FloatingWidgetSpec {
 	id: FloatingWidgetId;
+	authority: FloatingWidgetAuthority;
 	/** The size a widget opens at when nothing was saved. */
 	defaultSize: FloatingWidgetSize;
 	/** The smallest size the window may take, and the smallest size ever saved. */
@@ -34,11 +43,13 @@ export interface FloatingWidgetSpec {
 export const FLOATING_WIDGET_SPECS: Record<FloatingWidgetId, FloatingWidgetSpec> = {
 	'throughput-gauge': {
 		id: 'throughput-gauge',
+		authority: 'app',
 		defaultSize: { width: 300, height: 220 },
 		minSize: { width: 200, height: 150 },
 	},
 	'media-player': {
 		id: 'media-player',
+		authority: 'widget',
 		// Sized for audio: a transport strip. Video grows the window from the widget.
 		defaultSize: { width: 420, height: 96 },
 		minSize: { width: 280, height: 72 },
