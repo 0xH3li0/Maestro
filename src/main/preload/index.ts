@@ -21,6 +21,7 @@ import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
 import { createComputerHistoryApi } from './computerHistory';
 import { createMaestroRunApi } from './maestroRun';
+import { createDataviewApi } from './dataview';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -137,6 +138,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
 	maestroRun: createMaestroRunApi(),
+
+	// Dataview API (DQL queries, index status and rebuild, change push)
+	dataview: createDataviewApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -325,6 +329,8 @@ export {
 	// Computer History
 	createComputerHistoryApi,
 	createMaestroRunApi,
+	// Dataview
+	createDataviewApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

@@ -244,6 +244,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1959,6 +1960,11 @@ interface MaestroAPI {
 	 * the readiness that gates its system-prompt section).
 	 */
 	maestroRun: MaestroRunApi;
+	/**
+	 * Dataview (DQL queries against the main-process vault index, index status and
+	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
+	 */
+	dataview: DataviewApi;
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;

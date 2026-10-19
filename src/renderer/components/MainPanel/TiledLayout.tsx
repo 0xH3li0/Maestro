@@ -379,6 +379,7 @@ function TiledFilePane({
 					htmlRenderMode={fileTab.htmlRenderMode}
 					onHtmlRenderModeChange={(value) => store.setFileTabHtmlRenderMode(fileTabId, value)}
 					sshRemoteId={filePreviewSshRemoteId}
+					sessionId={session.id}
 					// File/wiki links inside the document, resolved against the same tree
 					// and proximity cwd the single view uses.
 					fileTree={actions?.fileTree}
