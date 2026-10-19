@@ -342,10 +342,6 @@ export type ExecuteCommandCallback = (
 ) => Promise<boolean>;
 
 /**
- * Callback type for interrupting a session through the desktop's existing logic.
- * This forwards to the renderer which handles state updates and broadcasts.
- */
-/**
  * Stop a running turn through the renderer's `interruptTurn()`: the whole agent,
  * or one tab when `tabId` is given. Resolves with what the stop did.
  */

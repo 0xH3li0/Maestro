@@ -177,6 +177,7 @@ import {
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
+import { interrupt } from './commands/interrupt';
 import {
 	tabNew,
 	tabClose,
@@ -2014,6 +2015,16 @@ program
 	.option('--focus', 'Switch even when the agent is the one on screen (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, mode, options) => switchMode(agentId, mode, options));
+
+// Interrupt command - the Stop pill: stop an agent's running turn, or one tab's
+program
+	.command('interrupt <agent-id>')
+	.description(
+		"Stop an agent's running turn (every busy tab, like the Stop pill), or one tab's with --tab"
+	)
+	.option('--tab <tab-id>', 'Stop only this tab (exact id, unique prefix, or "active")')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => interrupt(agentId, options));
 
 // Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
 // takes <tab-id> also accepts the literal "active" (with -a to say whose).

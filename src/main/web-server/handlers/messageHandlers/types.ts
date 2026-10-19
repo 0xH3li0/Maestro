@@ -53,6 +53,7 @@ import type {
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
+	InterruptSessionCallback,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type {
@@ -210,6 +211,8 @@ export interface MessageHandlerCallbacks {
 		background?: boolean,
 		hidden?: boolean
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
+	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 	/** Mark a delivered CLI dispatch in the calling agent's transcript. Fire-and-forget. */

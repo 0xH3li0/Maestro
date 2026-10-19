@@ -1377,6 +1377,8 @@ export class WebServer {
 				background?: boolean,
 				hidden?: boolean
 			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, hidden),
+			interruptSession: (sessionId: string, tabId?: string) =>
+				this.callbackRegistry.interruptSession(sessionId, tabId),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
