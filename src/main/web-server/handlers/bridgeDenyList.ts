@@ -79,6 +79,7 @@ const METHODS: Record<string, string> = {
 	tempfile: 'delete read write',
 	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
+	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
 const EVENTS: Record<string, string> = {
 	agent: 'authExpired error',

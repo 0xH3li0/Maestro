@@ -75,6 +75,7 @@ import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
+import { createFloatingWidgetsApi } from './floatingWidgets';
 import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
@@ -300,6 +301,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
 	quickChat: createQuickChatApi(),
+	// Floating widgets (desktop-level widget windows + their state relay)
+	floatingWidgets: createFloatingWidgetsApi(),
 	// Codex `visualize` content references rendered inline
 	codexVisualization: createCodexVisualizationApi(),
 });
@@ -418,6 +421,8 @@ export {
 	createCotExportApi,
 	// Quick Chat
 	createQuickChatApi,
+	// Floating widgets
+	createFloatingWidgetsApi,
 	// Codex visualizations
 	createCodexVisualizationApi,
 };
