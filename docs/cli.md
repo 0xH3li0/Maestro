@@ -4,30 +4,51 @@ description: Send messages to agents, list sessions, run playbooks, and manage M
 icon: square-terminal
 ---
 
-Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. The CLI requires Node.js (which you already have if you're using Claude Code).
+Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. It runs on the Electron runtime that ships inside Maestro, so it needs no separate Node.js.
 
 ## Installation
 
-The CLI is bundled with Maestro as a JavaScript file. Create a shell wrapper to run it:
+The CLI is bundled with Maestro as a JavaScript file, `maestro-cli.js`, in the app's resources folder. It must run under the app's own executable with `ELECTRON_RUN_AS_NODE=1` set, not under a system `node`: its SQLite module (used by Cue, `maestro-cli host`, and `cue activity`) is built for the app's Electron and does not load in a system Node.js, so there `host start` reports Cue as failed and `cue activity` cannot read `cue.db`.
+
+The simplest way is to let the app write the wrapper: **Settings → General → Maestro CLI → Install / Update CLI**. It writes `~/.local/bin/maestro-cli` (`maestro-cli.cmd` on Windows) in exactly that form and adds `~/.local/bin` to your `PATH`. Run it again after moving or updating the app.
+
+To write the wrapper by hand, use the line for your install:
 
 ```bash
-# macOS (after installing Maestro.app)
-printf '#!/bin/bash\nnode "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+# macOS (Maestro.app in /Applications)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 
-# Linux (deb/rpm installs to /opt)
-printf '#!/bin/bash\nnode "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
-
-# Windows (PowerShell as Administrator) - create a batch file
-@"
-@echo off
-node "%ProgramFiles%\Maestro\resources\maestro-cli.js" %*
-"@ | Out-File -FilePath "$env:ProgramFiles\Maestro\maestro-cli.cmd" -Encoding ASCII
+# Linux (deb or rpm, installed to /opt/Maestro)
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "/opt/Maestro/maestro" "/opt/Maestro/resources/maestro-cli.js" "$@"\n' | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
 ```
 
-Alternatively, run directly with Node.js:
+**Linux AppImage.** A running AppImage lives in a temporary mount (`/tmp/.mount_*`) that disappears when it exits, so neither a hand-written wrapper nor **Install / Update CLI** run from the AppImage can point into it. Extract it once to a directory that stays, and point the wrapper there:
 
 ```bash
-node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
+# Extracts to ./squashfs-root; repeat after each AppImage update
+./maestro-<version>-x86_64.AppImage --appimage-extract
+mv squashfs-root "$HOME/maestro-app"    # any directory you keep
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "%s/maestro-app/maestro" "%s/maestro-app/resources/maestro-cli.js" "$@"\n' "$HOME" "$HOME" | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+```
+
+**Windows.** The installer puts Maestro in `%LOCALAPPDATA%\Programs\Maestro` when installed for the current user (the default), or in `%ProgramFiles%\Maestro` when installed for all users; you may also have picked another folder. Set `$MaestroDir` to yours, then run in PowerShell (no Administrator needed):
+
+```powershell
+$MaestroDir = "$env:LOCALAPPDATA\Programs\Maestro"   # or "$env:ProgramFiles\Maestro"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\bin" | Out-Null
+@"
+@echo off
+set "ELECTRON_RUN_AS_NODE=1"
+"$MaestroDir\Maestro.exe" "$MaestroDir\resources\maestro-cli.js" %*
+"@ | Out-File -FilePath "$env:USERPROFILE\.local\bin\maestro-cli.cmd" -Encoding ASCII
+```
+
+Then add `%USERPROFILE%\.local\bin` to your user `PATH`. The portable build (`Maestro-Portable-*.exe`) unpacks itself to a temporary folder on each launch and deletes it on exit, so it cannot back a wrapper; use the installer build for the CLI.
+
+To run a single command without a wrapper, use the same form directly:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 "/Applications/Maestro.app/Contents/MacOS/Maestro" "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
 ```
 
 ## Usage
@@ -2396,7 +2417,7 @@ Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh
 
 ## Agent Integration
 
-Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS.
+Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS. That form runs on whatever `node` is on the agent's `PATH`, which is enough for every command that talks to the running app or host. The Cue commands that open `cue.db` themselves (`cue engine`, `host start`, and `cue activity` when neither the app nor the host answers for Cue) need the app's runtime as described under [Installation](#installation).
 
 This means agents can:
 

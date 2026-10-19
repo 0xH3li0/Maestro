@@ -416,6 +416,46 @@ install. The wrapper the app itself writes (`ELECTRON_RUN_AS_NODE=1
 fix, not written: change the Linux (and the matching macOS and Windows) lines
 to that form.
 
+**Status: fixed in `docs/cli.md` on `fix/cli-cue-on-host` (docs only; the
+new lines were rendered and syntax-checked, not run live against the
+packages).** Every wrapper now runs the app's own executable with
+`ELECTRON_RUN_AS_NODE=1`, as `writeUnixShim` and `writeWindowsShim` in
+`src/main/maestro-cli-manager.ts` do, and the section leads with the app's own
+installer (Settings, General, Maestro CLI, Install / Update CLI). Paths come
+from the packages, not from guesses:
+
+- macOS: the x64 zip lists `Maestro.app/Contents/MacOS/Maestro` and
+  `Maestro.app/Contents/Resources/maestro-cli.js` (read from the zip's central
+  directory over HTTP ranges).
+- Linux: the x86_64 rpm's header lists `/opt/Maestro/maestro` and
+  `/opt/Maestro/resources/maestro-cli.js`, the same layout as the deb above.
+- AppImage: the extracted tree's `maestro` and `resources/maestro-cli.js`
+  (this check). The docs now say to extract it to a directory that stays,
+  since the mount a running AppImage lives in is gone once it exits (see Not
+  verified).
+- Windows: `Maestro.exe` under `%LOCALAPPDATA%\Programs\Maestro` for a
+  per-user install (the default) or `%ProgramFiles%\Maestro` for all users,
+  from electron-builder 26.15.3's `multiUser.nsh` with Maestro's
+  `oneClick: false`. The portable exe unpacks to a temporary folder per launch
+  and removes it on exit (`portable.nsi`), so the docs rule it out for a
+  wrapper. Not run: no Windows machine or `pwsh` here.
+
+**`{{MAESTRO_CLI_PATH}}` (checked, not changed).** It does resolve to plain
+`node "<path>/maestro-cli.js"` (`substituteTemplateVariables` and
+`getMaestroCLIPath` in `src/shared/templateVariables.ts`), so an agent's CLI
+calls run on whatever `node` is on its `PATH`. Only the Cue paths that open
+`cue.db` in the calling process need the Electron-built `better-sqlite3`:
+`cue engine *`, `host start`, and `cue activity` when it falls back to disk.
+An agent beside a running desktop, or beside a host running Cue, never takes
+that fallback (both answer over the bridge), so it does not hit F3's failure.
+An agent beside a host whose Cue is held or failed, or with no app at all,
+gets the loader's `SqliteUnavailableError` message from `cue activity`. A
+fix would render the variable as the Electron runtime form, which needs
+`process.execPath` and a per-shell way to set the variable (bash, cmd and
+PowerShell differ), so it is not small; left for a decision. A second,
+unrelated limit of the same form: an agent with no `node` on its `PATH`
+cannot run the CLI at all.
+
 ### Differences from `docs/cli.md` at `v1.1.0-RC`
 
 - `cue activity`, `cue engine check` and `bundle` have no section in
