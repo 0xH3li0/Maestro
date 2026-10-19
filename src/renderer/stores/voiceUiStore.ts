@@ -98,6 +98,8 @@ interface VoiceUiActions {
 	 * which is what every surface should call.
 	 */
 	setListenMode: (mode: VoiceListenMode) => Promise<void>;
+	setHoldWhileBusy: (enabled: boolean) => Promise<void>;
+	setDefaultMode: (mode: VoiceUiPrefs['defaultMode']) => Promise<void>;
 	/** Re-read the send wait. The stored default can change in Settings at any time. */
 	refreshSendWait: () => Promise<void>;
 	/** Pick a wait for now, or null to return to the stored default. */
@@ -192,6 +194,16 @@ export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
 	setListenMode: async (listenMode) => {
 		set({ listenMode });
 		await persistUi({ listenMode });
+	},
+
+	setHoldWhileBusy: async (holdWhileBusy) => {
+		set({ holdWhileBusy });
+		await persistUi({ holdWhileBusy });
+	},
+
+	setDefaultMode: async (defaultMode) => {
+		set({ defaultMode });
+		await persistUi({ defaultMode });
 	},
 
 	refreshSendWait: async () => {

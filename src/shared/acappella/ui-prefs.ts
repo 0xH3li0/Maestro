@@ -11,6 +11,7 @@
  * and the tests need to widen a half-written blob without a DOM.
  */
 
+import { SWITCHABLE_VOICE_MODES, type SwitchableVoiceMode } from './voice-mode';
 import { DEFAULT_VOICE_LISTEN_MODE, asVoiceListenMode, type VoiceListenMode } from './listen-mode';
 
 /** Where the user dragged the HUD, in viewport pixels from the top-left. */
@@ -47,6 +48,10 @@ export interface VoiceUiPrefs {
 	 * every session is a microphone that opens hot before they can.
 	 */
 	listenMode: VoiceListenMode;
+	/** Pause capture while the addressed conversation is working. */
+	holdWhileBusy: boolean;
+	/** Mode used by an agent composer's microphone. Explicit scopes stay explicit. */
+	defaultMode: SwitchableVoiceMode;
 }
 
 export const DEFAULT_VOICE_UI_PREFS: VoiceUiPrefs = {
@@ -57,6 +62,8 @@ export const DEFAULT_VOICE_UI_PREFS: VoiceUiPrefs = {
 	hudPosition: null,
 	minimizeBehavior: 'manual',
 	listenMode: DEFAULT_VOICE_LISTEN_MODE,
+	holdWhileBusy: true,
+	defaultMode: 'agent',
 };
 
 /** A position is only usable if both numbers are real. Half a position is none. */
@@ -76,6 +83,10 @@ export function readVoiceUiPrefs(stored: Record<string, unknown> | undefined): V
 		hudPosition: readVoiceHudPosition(raw.hudPosition),
 		minimizeBehavior: raw.minimizeBehavior === 'auto-idle' ? 'auto-idle' : 'manual',
 		listenMode: asVoiceListenMode(raw.listenMode),
+		holdWhileBusy: raw.holdWhileBusy !== false,
+		defaultMode: SWITCHABLE_VOICE_MODES.includes(raw.defaultMode as SwitchableVoiceMode)
+			? (raw.defaultMode as SwitchableVoiceMode)
+			: 'agent',
 	};
 }
 

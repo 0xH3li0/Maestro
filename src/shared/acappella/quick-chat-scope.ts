@@ -22,7 +22,6 @@
  */
 
 import type { QuickChatVoiceScope, VoiceScope } from './protocol';
-import type { RouteDecision } from './route-decision';
 
 /** The one Quick Chat scope. It carries no ids, so every instance is equal. */
 export const QUICK_CHAT_VOICE_SCOPE: Readonly<QuickChatVoiceScope> = { kind: 'quick-chat' };
@@ -53,14 +52,7 @@ export function isQuickChatScope(
  * it used. `tabAction` is `current` for the same reason. The executor reads the
  * SCOPE, not these two fields, to know the turn is Quick Chat's.
  */
-export function quickChatScopeDecision(utterance: string): RouteDecision {
-	return {
-		target: 'conductor',
-		tabAction: 'current',
-		prompt: utterance.trim(),
-		confidence: 1,
-	};
-}
+export { conversationScopeDecision as quickChatScopeDecision } from './route-decision';
 
 /**
  * Why a live session bound to `current` cannot be re-bound to `next`, or null

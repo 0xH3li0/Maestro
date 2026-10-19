@@ -163,3 +163,8 @@ export const ROUTE_DECISION_GRAMMAR_SCHEMA = {
 		reply: NULLABLE_STRING,
 	},
 } as const;
+
+/** A bound conversation delivers the whole utterance itself, without consulting a routing brain. */
+export function conversationScopeDecision(utterance: string): RouteDecision {
+	return { target: 'conductor', tabAction: 'current', prompt: utterance.trim(), confidence: 1 };
+}

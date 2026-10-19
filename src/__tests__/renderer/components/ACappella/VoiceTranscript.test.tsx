@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { VoiceTranscript } from '../../../../renderer/components/ACappella/VoiceTranscript';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
+import { useGroupChatStore } from '../../../../renderer/stores/groupChatStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
@@ -118,6 +119,24 @@ describe('VoiceTranscript spoken sentences', () => {
 });
 
 describe('VoiceTranscript route chips', () => {
+	it('returns a Group Chat route chip to its room', async () => {
+		useGroupChatStore.setState({ activeGroupChatId: null });
+		renderTranscript();
+		apply(
+			event('dispatch', {
+				groupChatId: 'room',
+				agentSessionId: 'room',
+				agentName: 'Review',
+				tabId: 'room',
+				action: 'focused',
+				promptSent: true,
+			})
+		);
+		await flushLayout();
+		fireEvent.click(screen.getByTestId('voice-route-chip'));
+		expect(useGroupChatStore.getState().activeGroupChatId).toBe('room');
+	});
+
 	const dispatch = () =>
 		event('dispatch', {
 			agentSessionId: 'agent-1',

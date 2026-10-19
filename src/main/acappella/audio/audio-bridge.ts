@@ -256,9 +256,12 @@ export class VoiceAudioBridge {
 				if (event.paused) {
 					this.pipeline.pause();
 					this.meter.reset();
-				} else if (this.options.session.getState() === 'listening') {
-					// Any other state reaches `listen-start` on its own, and that is
-					// what opens the device once the gate is no longer in the way.
+				} else if (
+					this.options.session.getState() !== 'idle' &&
+					this.options.session.getState() !== 'error'
+				) {
+					// Disabling the busy hold can reopen capture during a running turn.
+					// The session and pipeline still decide when input may interrupt it.
 					this.startCapture();
 				}
 				break;

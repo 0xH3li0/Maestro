@@ -41,11 +41,7 @@ import {
 	voiceScopeAgentId,
 } from '../../shared/acappella/document-scope';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
-import {
-	isQuickChatScope,
-	quickChatScopeDecision,
-	scopeRebindBlocker,
-} from '../../shared/acappella/quick-chat-scope';
+import { isQuickChatScope, scopeRebindBlocker } from '../../shared/acappella/quick-chat-scope';
 import {
 	applyAgentScope,
 	isAgentModeScope,
@@ -55,6 +51,7 @@ import {
 	voiceScopeMode,
 } from '../../shared/acappella/voice-mode';
 import {
+	conversationScopeDecision,
 	isClarification,
 	isConversationalReply,
 	routeTargetSessionId,
@@ -123,6 +120,9 @@ export type VoiceStopReason = 'user' | 'stop-word' | 'timeout' | 'replaced' | 's
 
 /** What the dispatch executor actually did, echoed as a `dispatch` event. */
 export interface VoiceDispatchResult {
+	groupChatId?: string;
+	/** Completed reply for destinations whose round is delivered outside the agent tap. */
+	replyText?: string;
 	agentSessionId: string;
 	agentName: string;
 	tabId: string;
@@ -160,7 +160,13 @@ export class VoiceDispatchBusyError extends VoiceDispatchError {
  */
 export type VoiceRouteExecutor = (
 	decision: RouteDecision,
-	context: { roster: RosterAgent[]; scope: VoiceScope; force?: boolean }
+	context: {
+		roster: RosterAgent[];
+		scope: VoiceScope;
+		force?: boolean;
+		signal?: AbortSignal;
+		onAccepted?: () => void;
+	}
 ) => Promise<VoiceDispatchResult>;
 
 /**
@@ -239,6 +245,8 @@ export interface VoiceSessionServiceOptions {
 	 * is routed, which is what A Cappella did before conversation existed.
 	 */
 	getConversationalMode?: () => boolean;
+	getHoldWhileBusy?: () => boolean;
+	isScopeBusy?: (scope: VoiceScope) => boolean;
 	/**
 	 * The live tap on a dispatched agent's output.
 	 *
@@ -417,6 +425,11 @@ export class VoiceSessionService {
 	 * a paused session is still `listening` as far as the state machine goes.
 	 */
 	private listenPaused = false;
+	private manualListenPaused = false;
+	private busyGateTimer: ReturnType<typeof setInterval> | null = null;
+	private routeAbort: AbortController | null = null;
+	private readonly getHoldWhileBusy: () => boolean;
+	private readonly isScopeBusy: (scope: VoiceScope) => boolean;
 	private sessionId: string | null = null;
 	private scope: VoiceScope | null = null;
 	/**
@@ -498,6 +511,8 @@ export class VoiceSessionService {
 	private timer: TurnTimer | null = null;
 
 	constructor(options: VoiceSessionServiceOptions) {
+		this.getHoldWhileBusy = options.getHoldWhileBusy ?? (() => false);
+		this.isScopeBusy = options.isScopeBusy ?? (() => false);
 		this.getForceSendAllowed = options.getForceSendAllowed ?? (() => false);
 		this.providers = options.providers;
 		this.getRoster = options.getRoster ?? (() => []);
@@ -718,11 +733,14 @@ export class VoiceSessionService {
 
 		// Ahead of the first `listen-start`, so nothing that follows the stream
 		// opens a device it would then have to close.
+		this.manualListenPaused = params.paused === true;
 		if (params.paused) {
 			this.listenPaused = true;
 			this.emit('listen-gate', { paused: true });
 		}
 
+		this.busyGateTimer = setInterval(() => this.refreshListeningGate(), 250);
+		this.busyGateTimer.unref?.();
 		this.transition('listening');
 		this.emit('listen-start', {
 			scope: params.scope,
@@ -753,6 +771,11 @@ export class VoiceSessionService {
 	}
 
 	private async runStopSession(reason: VoiceStopReason): Promise<void> {
+		if (this.busyGateTimer) clearInterval(this.busyGateTimer);
+		this.busyGateTimer = null;
+		this.manualListenPaused = false;
+		this.routeAbort?.abort();
+		this.routeAbort = null;
 		this.turn += 1;
 		this.clearPendingSends();
 		this.forceSend = false;
@@ -826,7 +849,8 @@ export class VoiceSessionService {
 		if (
 			this.state === 'dispatching' &&
 			this.dispatchReadyForInput &&
-			this.getSendState().forceSend
+			(this.getSendState().forceSend ||
+				(this.scope?.kind === 'group-chat' && !this.getHoldWhileBusy()))
 		) {
 			this.turn += 1;
 			this.stopStreaming();
@@ -1294,10 +1318,9 @@ export class VoiceSessionService {
 					return;
 				}
 				decision = tabScopeDecision(utterance, scope);
-			} else if (isQuickChatScope(scope)) {
-				// Quick Chat resolves its own agent and tab when the message lands
-				// (its tab may not exist yet), so there is nothing to check here.
-				decision = quickChatScopeDecision(utterance);
+			} else if (scope.kind === 'group-chat' || isQuickChatScope(scope)) {
+				// The conversation owns delivery; its scope already says where the words go.
+				decision = conversationScopeDecision(utterance);
 			} else {
 				decision = await this.providers.brain.route(utterance, context);
 				if (!this.isCurrentTurn(turn)) return;
@@ -1400,7 +1423,8 @@ export class VoiceSessionService {
 			// A resume has nothing buffered to keep (the pause dropped it), and what it
 			// must not inherit is a release armed before the pause.
 			else if (this.listenPaused) this.composer.cancel();
-			this.setListenPaused(false);
+			this.manualListenPaused = false;
+			this.refreshListeningGate();
 			return true;
 		}
 
@@ -1408,13 +1432,29 @@ export class VoiceSessionService {
 		if (!options.send) this.partialInFlight = false;
 		if (options.send) this.composer.armImmediateSettle();
 		else this.composer.cancel();
-		this.setListenPaused(true);
+		this.manualListenPaused = true;
+		this.refreshListeningGate();
 		return true;
 	}
 
 	/** Whether the microphone is gated shut. False while idle. */
 	isListenPaused(): boolean {
 		return this.listenPaused;
+	}
+
+	private refreshListeningGate(): void {
+		if (!this.scope || this.state === 'idle' || this.state === 'error' || this.stopping) return;
+		const busy =
+			this.getHoldWhileBusy() &&
+			(['transcribing', 'routing', 'dispatching'].includes(this.state) ||
+				this.isScopeBusy(this.scope));
+		const paused = this.manualListenPaused || busy;
+		if (busy && !this.listenPaused) {
+			this.speechActive = false;
+			this.partialInFlight = false;
+			this.composer.cancel();
+		}
+		this.setListenPaused(paused);
 	}
 
 	private setListenPaused(paused: boolean): void {
@@ -1447,6 +1487,7 @@ export class VoiceSessionService {
 			return false;
 		}
 		this.scope = scope;
+		this.refreshListeningGate();
 		this.pendingClarification = null;
 		this.conversation.clear();
 		logger.info(`Voice session switched to ${voiceScopeMode(scope)} mode`, LOG_CONTEXT);
@@ -1504,14 +1545,21 @@ export class VoiceSessionService {
 		const bound = this.bindToDocument(decision, roster, scope);
 
 		let result: VoiceDispatchResult;
+		this.routeAbort?.abort();
+		const routeAbort = new AbortController();
+		this.routeAbort = routeAbort;
 		try {
 			result = await this.executeRoute(bound, {
+				signal: routeAbort.signal,
+				onAccepted: () => {
+					if (this.isCurrentTurn(turn)) this.dispatchReadyForInput = true;
+				},
 				roster,
 				scope,
 				...(this.forceSend && this.getForceSendAllowed() ? { force: true } : {}),
 			});
 		} catch (error) {
-			if (!this.isCurrentTurn(turn)) return;
+			if (!this.isCurrentTurn(turn) || routeAbort.signal.aborted) return;
 			// Only the executor's own classified failure is an event. Anything else
 			// is a bug and belongs in Sentry.
 			if (error instanceof VoiceDispatchBusyError) {
@@ -1538,6 +1586,13 @@ export class VoiceSessionService {
 		}
 
 		this.finishDispatch(bound, result, turn);
+		if (result.replyText !== undefined && this.isCurrentTurn(turn)) {
+			await this.submitAgentReply({
+				agentSessionId: result.agentSessionId,
+				tabId: result.tabId,
+				text: result.replyText,
+			});
+		}
 	}
 
 	private finishDispatch(bound: RouteDecision, result: VoiceDispatchResult, turn: number): void {
@@ -1552,10 +1607,11 @@ export class VoiceSessionService {
 		// the next one is how "now do the same for the other repo" arrives wearing
 		// the last job's context and becomes a second copy of it.
 		this.conversation.clear();
-		this.emit('dispatch', result);
+		const { replyText: _replyText, ...dispatch } = result;
+		this.emit('dispatch', dispatch);
 		// Follow the tab from here, so the reply is spoken as it is written rather
 		// than after it is finished.
-		this.beginStreaming(result, turn);
+		if (!result.groupChatId) this.beginStreaming(result, turn);
 	}
 
 	getSendState(): VoiceSendState {
@@ -2239,6 +2295,11 @@ export class VoiceSessionService {
 	private transition(to: VoiceSessionState): void {
 		assertVoiceStateTransition(this.state, to);
 		this.state = to;
+		if (to === 'error' || to === 'idle') {
+			if (this.busyGateTimer) clearInterval(this.busyGateTimer);
+			this.busyGateTimer = null;
+			this.routeAbort?.abort();
+		} else this.refreshListeningGate();
 	}
 
 	private emitListenStart(): void {

@@ -58,6 +58,7 @@ export type VoiceFeedKind = 'you' | 'assistant' | 'system';
  * the turn went even when that place is gone.
  */
 export interface VoiceFeedRoute {
+	groupChatId?: string;
 	agentSessionId: string;
 	agentName: string;
 	tabId: string;
@@ -552,6 +553,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					route:
 						event.type === 'dispatch'
 							? {
+									groupChatId: event.groupChatId,
 									agentSessionId: event.agentSessionId,
 									agentName: event.agentName,
 									tabId: event.tabId,
@@ -701,6 +703,7 @@ export const selectVoiceScopeLabel = (s: VoiceSessionStore): string => {
 	// so an agent-id test alone would label it with the agent and lose the file.
 	if (isDocumentScope(scope)) return documentScopeName(scope);
 	if (isQuickChatScope(scope)) return QUICK_CHAT_VOICE_LABEL;
+	if (scope?.kind === 'group-chat') return scope.name || 'Group Chat';
 	const agentSessionId = voiceScopeAgentId(scope);
 	if (!agentSessionId) return 'Conductor';
 	return s.roster.find((a) => a.sessionId === agentSessionId)?.name ?? 'Agent';

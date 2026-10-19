@@ -221,6 +221,8 @@ function makeHarness(
 		bargeInGuardMs?: number;
 		getUtteranceComposerConfig?: () => { settleMs?: number; maxHoldMs?: number };
 		getConversationalMode?: () => boolean;
+		getHoldWhileBusy?: () => boolean;
+		isScopeBusy?: () => boolean;
 		/** Roster override, for the tests that need more than one agent running. */
 		getRoster?: () => RosterAgent[];
 		getVocabulary?: () => readonly string[];
@@ -267,6 +269,8 @@ function makeHarness(
 		// Off unless a test asks, which is the shipped default: every utterance is
 		// a command until someone turns conversation on.
 		getConversationalMode: overrides.getConversationalMode,
+		getHoldWhileBusy: overrides.getHoldWhileBusy,
+		isScopeBusy: overrides.isScopeBusy,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -2691,5 +2695,91 @@ describe('VoiceSessionService pending sends', () => {
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(h.service.getState()).toBe('idle');
 		expect(h.service.getSendState().pending).toEqual([]);
+	});
+});
+
+describe('VoiceSessionService busy hold', () => {
+	it('accepts another spoken message during a room round when busy hold is off', async () => {
+		const execute = vi.fn<VoiceRouteExecutor>(async (_decision, context) => {
+			context.onAccepted?.();
+			return new Promise<VoiceDispatchResult>((_resolve, reject) => {
+				context.signal?.addEventListener(
+					'abort',
+					() => reject(new VoiceDispatchError('cancelled')),
+					{ once: true }
+				);
+			});
+		});
+		const h = makeHarness({ executeRoute: execute, getHoldWhileBusy: () => false });
+		await h.service.startSession({ scope: { kind: 'group-chat', groupChatId: 'room' } });
+		h.stt.callbacks?.onFinal('First request.', 0.9);
+		await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+		h.stt.callbacks?.onPartial('Next request.', 0.5);
+		h.stt.callbacks?.onFinal('Next request.', 0.9);
+		await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+		expect(execute.mock.calls[1][0].prompt).toBe('Next request.');
+		await h.service.stopSession();
+	});
+
+	afterEach(() => vi.useRealTimers());
+	it('holds an already busy room and resumes automatically when it becomes idle', async () => {
+		vi.useFakeTimers();
+		let busy = true;
+		const h = makeHarness({ getHoldWhileBusy: () => true, isScopeBusy: () => busy });
+		await h.service.startSession({ scope: { kind: 'group-chat', groupChatId: 'room' } });
+		expect(h.service.isListenPaused()).toBe(true);
+		busy = false;
+		await vi.advanceTimersByTimeAsync(250);
+		expect(h.service.isListenPaused()).toBe(false);
+		await h.service.stopSession();
+	});
+	it('never reopens a manually paused or push-to-talk microphone when busy ends', async () => {
+		vi.useFakeTimers();
+		let busy = true;
+		const h = makeHarness({ getHoldWhileBusy: () => true, isScopeBusy: () => busy });
+		await h.service.startSession({
+			scope: { kind: 'group-chat', groupChatId: 'room' },
+			paused: true,
+		});
+		busy = false;
+		await vi.advanceTimersByTimeAsync(250);
+		expect(h.service.isListenPaused()).toBe(true);
+		h.service.setListening(true);
+		expect(h.service.isListenPaused()).toBe(false);
+		await h.service.stopSession();
+	});
+	it('applies a changed preference to a running busy session', async () => {
+		vi.useFakeTimers();
+		let hold = true;
+		const h = makeHarness({ getHoldWhileBusy: () => hold, isScopeBusy: () => true });
+		await start(h);
+		expect(h.service.isListenPaused()).toBe(true);
+		hold = false;
+		await vi.advanceTimersByTimeAsync(250);
+		expect(h.service.isListenPaused()).toBe(false);
+		h.service.setListening(false);
+		await vi.advanceTimersByTimeAsync(250);
+		expect(h.service.isListenPaused()).toBe(true);
+		await h.service.stopSession();
+	});
+	it('sends a room utterance verbatim without asking the routing brain', async () => {
+		const h = makeHarness();
+		await h.service.startSession({ scope: { kind: 'group-chat', groupChatId: 'room' } });
+		h.brain.decision = {
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'rewritten',
+			confidence: 1,
+		};
+		h.service.submitUtterance('Ask everyone to review this.');
+		await vi.waitFor(() => expect(h.executor).toHaveBeenCalled());
+		expect(h.executor.mock.calls[0][0]).toMatchObject({ prompt: 'Ask everyone to review this.' });
+		expect(h.executor.mock.calls[0][1].scope).toEqual({ kind: 'group-chat', groupChatId: 'room' });
+		expect(
+			h.events.some(
+				(event) => event.type === 'route-decision' && event.brainProviderId === 'group-chat-scope'
+			)
+		).toBe(true);
+		await h.service.stopSession();
 	});
 });

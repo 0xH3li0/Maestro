@@ -68,6 +68,8 @@ export interface OpenVoiceMicOptions {
 	 * rule applies: resume what is live, else restart on the last scope.
 	 */
 	scope?: VoiceScope;
+	/** Surface launch: honor the configured listening mode on a fresh session. */
+	honorListenMode?: boolean;
 	/**
 	 * Told why a session did not start. Defaults to the toast, which a window
 	 * with no toast surface replaces with its own.
@@ -86,6 +88,7 @@ export function openVoiceMic(options: OpenVoiceMicOptions = {}): Promise<void> {
 			const resumable =
 				!options.scope ||
 				(isVoiceSessionActive(live.state) && isSameVoiceScope(live.scope, options.scope));
+			if (options.honorListenMode && resumable && isVoiceSessionActive(live.state)) return;
 			if (resumable && (await window.maestro.voice.setListening({ listening: true, hold }))) {
 				return;
 			}
@@ -93,7 +96,7 @@ export function openVoiceMic(options: OpenVoiceMicOptions = {}): Promise<void> {
 			// so a user who switched to Tab mode is not quietly dropped back to the
 			// Conductor by a session that timed out in between.
 			const scope = options.scope ?? live.scope ?? undefined;
-			await beginVoiceSession(scope, { open: true });
+			await beginVoiceSession(scope, { open: !options.honorListenMode });
 			// A fresh session opens its microphone itself; what it does not know is
 			// that a button is holding it.
 			if (hold) await window.maestro.voice.setListening({ listening: true, hold: true });

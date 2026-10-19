@@ -28,6 +28,7 @@ import { CornerDownRight } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import type { DispatchAction } from '../../../shared/acappella/protocol';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { jumpToVoiceTab } from '../../hooks/voice/useVoiceAgentActions';
 import {
 	useVoiceSessionStore,
@@ -215,8 +216,9 @@ function RouteChip({ theme, route }: { theme: Theme; route: VoiceFeedRoute }) {
 	const description = `${label} (${ACTION_LABELS[route.action]})`;
 
 	const onClick = useCallback(() => {
-		jumpToVoiceTab(route.agentSessionId, route.tabId);
-	}, [route.agentSessionId, route.tabId]);
+		if (route.groupChatId) useGroupChatStore.getState().setActiveGroupChatId(route.groupChatId);
+		else jumpToVoiceTab(route.agentSessionId, route.tabId);
+	}, [route.agentSessionId, route.tabId, route.groupChatId]);
 
 	return (
 		<button

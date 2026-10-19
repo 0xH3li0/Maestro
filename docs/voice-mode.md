@@ -217,7 +217,9 @@ Switching binds to what is on screen: **Agent** means the agent you are looking 
 
 A session started from the [Quick Chat](./quick-chat#talking-to-it) window's microphone is outside these three modes. It is locked to that chat: every sentence is sent to it word for word, the switch does not apply, and it ends when the Quick Chat window is put away.
 
-How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's talk button reopens in whatever mode you last used.
+The **Group Chat** microphone binds voice to that room's moderator. Spoken requests use the same queue and read-only choice as typed messages. Only the moderator's final reply is spoken; participant replies remain in the chat. The HUD names the room and keeps that destination fixed.
+
+How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the **Talk to Current Agent** hotkey and the Left Bar menu open in **Agent** mode. The agent composer microphone uses **Default voice mode** in **Voice and Speed**, which defaults to **Agent**. After that, the HUD's talk button reopens in whatever mode you last used.
 
 ## The two hotkeys
 
@@ -290,7 +292,9 @@ The same panel has the **send phrase** field. "go maestro" is the only phrase th
 
 **Push-to-talk** opens the microphone only while the talk button is held. A pause in the middle of the sentence sends nothing; letting go sends all of it. A session started some other way in this mode (the composer microphone, the palette) opens with the microphone closed and waits for the first hold.
 
-When the destination is busy, the HUD keeps the request pending for that exact tab. You can keep speaking to add to it in the same scope, and Maestro retries when the destination is free. **Force Send** allows delivery beside other working tabs when **forced parallel execution** is enabled in Settings. It still waits if the destination tab itself is busy. The toggle resets when the voice session ends.
+**Hold while busy** pauses microphone input while the conversation is working and resumes it when the destination is free. It is on by default and applies to agent conversations and Group Chat. Change it in the HUD's microphone panel or **Voice and Speed**. A microphone you closed yourself, including a push-to-talk microphone after release, stays closed.
+
+With **Hold while busy** off, the HUD can keep a request pending for the exact destination tab while you speak additions in the same scope. Maestro retries when the destination is free. Group Chat accepts another spoken message into its submission queue. **Force Send** allows delivery beside other working tabs when **forced parallel execution** is enabled in Settings. It still waits if the destination tab itself is busy. The toggle resets when the voice session ends.
 
 - **Only `Esc` closes the HUD**, from the keyboard or the ESC pill, and closing ends the session. Shutting the microphone with the talk button keeps the session, its transcript, and its mode. A session that ends on its own (the idle timeout, the stop word) leaves the HUD where it was, showing a closed microphone one click from open.
 - **Minimize collapses the HUD and leaves the session running**, microphone included. The Left Bar shows the indicator, and the composer microphone brings the HUD back; it does not end the session.

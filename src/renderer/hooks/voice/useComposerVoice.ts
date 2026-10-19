@@ -23,6 +23,12 @@
  * second microphone alongside the session's.
  */
 
+import { scopeForMode } from '../../../shared/acappella/voice-mode';
+import { beginVoiceSession, useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
+import { resolveFocusedAiTabId } from '../../utils/panelLayout';
+import { notifyVoiceStartFailed } from '../../services/voiceListening';
 import { useCallback } from 'react';
 import { useVoiceInput } from '../utils/useVoiceInput';
 import { useVoiceAgentActions } from './useVoiceAgentActions';
@@ -61,6 +67,12 @@ export function useComposerVoice({
 }: UseComposerVoiceOptions): UseComposerVoiceReturn {
 	const voiceActions = useVoiceAgentActions(session);
 	const usesACappella = voiceActions.enabled && !disabled;
+	const defaultMode = useVoiceUiStore((s) => s.defaultMode);
+	const conductorFloor = useVoiceSessionStore(
+		(s) => isVoiceSessionActive(s.state) && s.scope?.kind === 'conductor'
+	);
+	const hasComposerFloor =
+		voiceActions.hasVoiceFloor || (defaultMode === 'conductor' && conductorFloor);
 
 	const webSpeech = useVoiceInput({
 		currentValue,
@@ -78,19 +90,35 @@ export function useComposerVoice({
 			// closes a voice session. It used to hang up here, so minimizing the HUD
 			// and reaching for the microphone again silently stopped the listening
 			// the user had asked to keep.
-			if (voiceActions.hasVoiceFloor) voiceActions.showHud();
-			else void voiceActions.talkToAgent();
+			if (hasComposerFloor) voiceActions.showHud();
+			else
+				void (async () => {
+					try {
+						await useVoiceUiStore.getState().load();
+						const scope = scopeForMode(useVoiceUiStore.getState().defaultMode, {
+							scope: null,
+							lastDispatch: null,
+							focusedAgentId: session?.id ?? null,
+							activeTabOf: () => resolveFocusedAiTabId(session),
+						});
+						if (!scope) throw new Error('Open an AI tab before starting Tab voice mode.');
+						voiceActions.showHud();
+						await beginVoiceSession(scope);
+					} catch (error) {
+						notifyVoiceStartFailed(error);
+					}
+				})();
 			return;
 		}
 		webSpeech.toggleVoiceInput();
-	}, [usesACappella, voiceActions, webSpeech]);
+	}, [usesACappella, voiceActions, webSpeech, session, hasComposerFloor]);
 
 	return {
 		// A Cappella needs no browser support check: the capability gate answers
 		// that question, and it answers it when the session is started rather than
 		// by hiding the button and never saying why.
 		voiceSupported: usesACappella || webSpeech.voiceSupported,
-		isListening: usesACappella ? voiceActions.hasVoiceFloor : webSpeech.isListening,
+		isListening: usesACappella ? hasComposerFloor : webSpeech.isListening,
 		toggle,
 		usesACappella,
 	};

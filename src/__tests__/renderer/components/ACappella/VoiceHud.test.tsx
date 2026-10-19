@@ -192,6 +192,7 @@ beforeEach(() => {
 		muted: false,
 		loaded: true,
 		listenMode: 'hands-free',
+		holdWhileBusy: true,
 		sendWait: null,
 		tabCyclesMode: false,
 	});
@@ -1000,6 +1001,30 @@ describe('VoiceHud minimize versus close', () => {
 });
 
 describe('VoiceHud controls', () => {
+	it('persists the visible busy hold toggle', async () => {
+		renderHud();
+		startSession();
+		const toggle = screen.getByRole('switch', { name: 'Hold while busy' });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await act(async () => fireEvent.click(toggle));
+		expect(useVoiceUiStore.getState().holdWhileBusy).toBe(false);
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			'acappella',
+			expect.objectContaining({ ui: expect.objectContaining({ holdWhileBusy: false }) })
+		);
+	});
+	it('names the room instead of showing agent routing controls for Group Chat', () => {
+		renderHud();
+		const scope = { kind: 'group-chat', groupChatId: 'room', name: 'Review' } as const;
+		emit(
+			event('wake', { source: 'client-button', scope }),
+			event('listen-start', { scope, sttProviderId: 'mock-stt' })
+		);
+		expect(screen.getByTestId('voice-hud-scope')).toHaveTextContent('Review');
+		expect(screen.getByText('Group Chat · Talking to the moderator')).toBeInTheDocument();
+		expect(screen.queryByTestId('voice-hud-mode')).not.toBeInTheDocument();
+	});
+
 	it('toggles the transcript and remembers the answer', async () => {
 		renderHud();
 		startSession();

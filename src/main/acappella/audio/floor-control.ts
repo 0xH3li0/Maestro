@@ -193,6 +193,7 @@ export class FloorController {
 	/** True between a `press()` and its `release()`. Only meaningful in hold mode. */
 	private held = false;
 	private idleTimer: NodeJS.Timeout | null = null;
+	private listenPaused = false;
 	private disposed = false;
 	/** Serialises the async entry points. Never rejects: every link catches. */
 	private queue: Promise<void> = Promise.resolve();
@@ -325,6 +326,9 @@ export class FloorController {
 		if (this.disposed) return;
 
 		switch (event.type) {
+			case 'listen-gate':
+				this.listenPaused = event.paused;
+				break;
 			case 'listen-start':
 				// Covers a session opened by the wake word or by a client that called
 				// the service directly: the floor is open whether we opened it or not.
@@ -332,6 +336,7 @@ export class FloorController {
 				break;
 			case 'listen-stop':
 			case 'stop-word':
+				this.listenPaused = false;
 				this.held = false;
 				if (this.open) this.setFloor(false, 'session-ended');
 				break;
@@ -450,7 +455,8 @@ export class FloorController {
 	 * machine no matter which path got us here.
 	 */
 	private syncIdleTimer(restart = false): void {
-		const listening = !this.disposed && this.options.session.getState() === 'listening';
+		const listening =
+			!this.disposed && !this.listenPaused && this.options.session.getState() === 'listening';
 		if (!listening || this.config.idleTimeoutMs <= 0) {
 			this.clearIdleTimer();
 			return;

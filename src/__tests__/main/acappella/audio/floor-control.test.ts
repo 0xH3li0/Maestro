@@ -337,6 +337,17 @@ describe('press over active speech', () => {
 // ---------------------------------------------------------------------------
 
 describe('idle timeout', () => {
+	it('keeps a busy-held microphone alive and starts the idle budget when input resumes', async () => {
+		const h = harness({ idleTimeoutMs: 10_000 });
+		await h.floor.press();
+		h.floor.handleEvent(event({ type: 'listen-gate', paused: true }));
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(h.session.stops).toEqual([]);
+		h.floor.handleEvent(event({ type: 'listen-gate', paused: false }));
+		await vi.advanceTimersByTimeAsync(10_000);
+		await h.floor.whenSettled();
+		expect(h.session.stops).toEqual(['timeout']);
+	});
 	it('closes a listening session that hears nothing', async () => {
 		const h = harness({ idleTimeoutMs: 10_000 });
 		await h.floor.press();

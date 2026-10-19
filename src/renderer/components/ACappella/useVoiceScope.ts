@@ -86,13 +86,16 @@ export function useVoiceScope(theme: Theme): VoiceScopeDisplay {
 		// session what the user needs confirmed is which file they are talking
 		// about - the agent is an implementation detail of that binding, and it is
 		// still on the row below as the tab the dispatch landed in.
-		const label = isDocumentScope(scope)
-			? documentScopeName(scope)
-			: isQuickChatScope(scope)
-				? QUICK_CHAT_VOICE_LABEL
-				: agentSessionId
-					? (agent?.name ?? 'Agent')
-					: 'Conductor';
+		const label =
+			scope?.kind === 'group-chat'
+				? scope.name || 'Group Chat'
+				: isDocumentScope(scope)
+					? documentScopeName(scope)
+					: isQuickChatScope(scope)
+						? QUICK_CHAT_VOICE_LABEL
+						: agentSessionId
+							? (agent?.name ?? 'Agent')
+							: 'Conductor';
 
 		// Tab mode names its tab from the binding itself, before anything has been
 		// sent: the header is the promise of where the next sentence lands.

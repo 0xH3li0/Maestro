@@ -297,7 +297,7 @@ describe('VoiceAudioBridge microphone gate', () => {
 		expect(h.kinds()).not.toContain('start-capture');
 	});
 
-	it('waits for the floor when the gate lifts mid-reply', () => {
+	it('reopens capture when the busy hold is disabled mid-reply', () => {
 		const h = harness();
 		ready(h);
 		h.session.emit({ type: 'listen-gate', paused: true });
@@ -305,7 +305,7 @@ describe('VoiceAudioBridge microphone gate', () => {
 
 		h.session.state = 'speaking';
 		h.session.emit({ type: 'listen-gate', paused: false });
-		expect(h.kinds()).not.toContain('start-capture');
+		expect(h.kinds()).toContain('start-capture');
 
 		// The reply ends, the floor comes back, and nothing is in the way now.
 		h.session.listen();

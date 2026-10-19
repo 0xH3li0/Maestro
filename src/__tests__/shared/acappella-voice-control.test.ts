@@ -19,6 +19,12 @@ import {
 } from '../../shared/acappella/voice-control';
 
 describe('parseVoiceControlScope', () => {
+	it('preserves a Group Chat binding and refuses one without a room', () => {
+		expect(
+			parseVoiceControlScope({ kind: 'group-chat', groupChatId: 'room', readOnly: true })
+		).toEqual({ kind: 'group-chat', groupChatId: 'room', readOnly: true });
+		expect(parseVoiceControlScope({ kind: 'group-chat' })).toBeNull();
+	});
 	it('reads the Conductor, an agent, a tab and a document', () => {
 		expect(parseVoiceControlScope({ kind: 'conductor' })).toEqual({ kind: 'conductor' });
 		expect(parseVoiceControlScope({ kind: 'agent', sessionId: 'a1' })).toEqual({

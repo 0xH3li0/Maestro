@@ -181,6 +181,11 @@ describe('voice commands', () => {
 	});
 
 	describe('describeVoiceScope', () => {
+		it('names a Group Chat binding without treating it as an agent tab', () => {
+			expect(describeVoiceScope({ kind: 'group-chat', groupChatId: 'room', name: 'Review' })).toBe(
+				'group chat Review'
+			);
+		});
 		it('names the agent, the tab and the document a scope is bound to', () => {
 			expect(describeVoiceScope({ kind: 'conductor' })).toBe('the Conductor');
 			expect(describeVoiceScope({ kind: 'agent', sessionId: 'agent-scout' })).toBe(

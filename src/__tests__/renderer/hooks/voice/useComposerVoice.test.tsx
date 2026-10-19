@@ -55,6 +55,7 @@ beforeEach(() => {
 		loaded: true,
 		minimized: false,
 		listenMode: 'hands-free',
+		defaultMode: 'agent',
 	});
 });
 
@@ -78,6 +79,21 @@ describe('with A Cappella off', () => {
 });
 
 describe('with A Cappella on', () => {
+	it('reveals a live default Conductor session without starting it again', async () => {
+		useVoiceUiStore.setState({ defaultMode: 'conductor', minimized: true });
+		useVoiceSessionStore.setState({ state: 'listening', scope: { kind: 'conductor' } });
+		const { result } = render(true);
+		expect(result.current.isListening).toBe(true);
+		await act(async () => result.current.toggle());
+		expect(useVoiceUiStore.getState().minimized).toBe(false);
+		expect(window.maestro.voice.start).not.toHaveBeenCalled();
+	});
+	it('uses the configured default Conductor mode from the composer', async () => {
+		useVoiceUiStore.setState({ defaultMode: 'conductor' });
+		const { result } = render(true);
+		await act(async () => result.current.toggle());
+		expect(window.maestro.voice.start).toHaveBeenCalledWith({ kind: 'conductor' });
+	});
 	it('opens a voice session bound to this agent instead of dictating', async () => {
 		const { result } = render(true);
 		expect(result.current.usesACappella).toBe(true);

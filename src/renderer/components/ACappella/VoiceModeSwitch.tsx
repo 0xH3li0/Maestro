@@ -16,6 +16,7 @@
  * three tints of the same grey.
  */
 
+import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { Bot, PanelTop, Wand2 } from 'lucide-react';
 
 import type { SwitchableVoiceMode } from '../../../shared/acappella/voice-mode';
@@ -47,6 +48,16 @@ const MODE_OPTIONS: ReadonlyArray<SegmentedOption<SwitchableVoiceMode>> = [
 
 export function VoiceModeSwitch({ theme }: { theme: Theme }) {
 	const { mode, switchTo } = useVoiceModeSwitch();
+	const groupChat = useVoiceSessionStore((s) => s.scope?.kind === 'group-chat');
+	if (groupChat)
+		return (
+			<div
+				className="px-3 py-2 border-b text-xs"
+				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+			>
+				Group Chat · Talking to the moderator
+			</div>
+		);
 
 	return (
 		<div className="px-3 py-2 border-b" style={{ borderColor: theme.colors.border }}>

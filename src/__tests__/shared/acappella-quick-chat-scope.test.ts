@@ -5,6 +5,7 @@
  * it, and the session cannot be re-bound in either direction.
  */
 
+import { conversationScopeDecision } from '../../shared/acappella/route-decision';
 import { describe, it, expect } from 'vitest';
 
 import { voiceScopeAgentId } from '../../shared/acappella/document-scope';
@@ -38,6 +39,10 @@ describe('isQuickChatScope', () => {
 });
 
 describe('quickChatScopeDecision', () => {
+	it('preserves room mentions and line breaks in the shared conversation decision', () => {
+		const prompt = '@Backend review the code.\n@Writer review the copy.';
+		expect(conversationScopeDecision(prompt).prompt).toBe(prompt);
+	});
 	it('sends the utterance whole, with nothing stripped', () => {
 		const decision = quickChatScopeDecision('  tell the backend agent what day it is  ');
 

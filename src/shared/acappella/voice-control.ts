@@ -239,6 +239,17 @@ export function parseVoiceControlScope(raw: unknown): VoiceScope | null {
 	if (!isRecord(raw)) return null;
 	if (raw.kind === 'conductor') return { kind: 'conductor' };
 	if (raw.kind === 'quick-chat') return { ...QUICK_CHAT_VOICE_SCOPE };
+	if (raw.kind === 'group-chat') {
+		const groupChatId = nonEmptyString(raw.groupChatId);
+		return groupChatId
+			? {
+					kind: 'group-chat',
+					groupChatId,
+					...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+					readOnly: raw.readOnly === true,
+				}
+			: null;
+	}
 	const sessionId = nonEmptyString(raw.sessionId);
 	if (!sessionId) return null;
 	if (raw.kind === 'agent') {

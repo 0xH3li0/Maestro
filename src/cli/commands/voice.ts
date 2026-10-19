@@ -90,6 +90,7 @@ export function describeVoiceScope(scope: VoiceScope | null): string {
 	if (!scope) return 'no scope';
 	if (scope.kind === 'conductor') return 'the Conductor';
 	if (scope.kind === 'quick-chat') return `${QUICK_CHAT_VOICE_LABEL} (locked)`;
+	if (scope.kind === 'group-chat') return `group chat ${scope.name || scope.groupChatId}`;
 	if (scope.kind === 'document')
 		return `document ${scope.path}, with ${agentLabel(scope.sessionId)}`;
 	return scope.tabId

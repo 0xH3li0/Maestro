@@ -29,7 +29,7 @@ import type { AgentVoiceScope, RosterAgent, VoiceScope } from './protocol';
 import { isQuickChatScope, QUICK_CHAT_SCOPE_ROUTER_ID } from './quick-chat-scope';
 import type { RouteDecision } from './route-decision';
 
-export type VoiceMode = 'tab' | 'agent' | 'conductor' | 'document' | 'quick-chat';
+export type VoiceMode = 'tab' | 'agent' | 'conductor' | 'document' | 'quick-chat' | 'group-chat';
 
 /**
  * The `brainProviderId` a Tab-mode `route-decision` carries. No Brain ran, and
@@ -47,13 +47,18 @@ export const TAB_SCOPE_ROUTER_ID = 'tab-scope';
  * service stamps the decision and skips the correction path by the same test.
  */
 export function scopeRouterId(scope: VoiceScope | null | undefined): string | null {
+	if (scope?.kind === 'group-chat') return 'group-chat-scope';
 	if (isQuickChatScope(scope)) return QUICK_CHAT_SCOPE_ROUTER_ID;
 	return voiceScopeTabId(scope) ? TAB_SCOPE_ROUTER_ID : null;
 }
 
 /** Whether a `route-decision` was stamped by a scope, not by a Brain. */
 export function isScopeRouterId(brainProviderId: string): boolean {
-	return brainProviderId === TAB_SCOPE_ROUTER_ID || brainProviderId === QUICK_CHAT_SCOPE_ROUTER_ID;
+	return (
+		brainProviderId === TAB_SCOPE_ROUTER_ID ||
+		brainProviderId === QUICK_CHAT_SCOPE_ROUTER_ID ||
+		brainProviderId === 'group-chat-scope'
+	);
 }
 
 /** Which of the modes a scope is. */
@@ -61,6 +66,7 @@ export function voiceScopeMode(scope: VoiceScope | null | undefined): VoiceMode 
 	if (!scope || scope.kind === 'conductor') return 'conductor';
 	if (scope.kind === 'document') return 'document';
 	if (scope.kind === 'quick-chat') return 'quick-chat';
+	if (scope.kind === 'group-chat') return 'group-chat';
 	return scope.tabId ? 'tab' : 'agent';
 }
 
@@ -74,6 +80,8 @@ export function isSameVoiceScope(
 	b: VoiceScope | null | undefined
 ): boolean {
 	if (!a || !b) return false;
+	if (a.kind === 'group-chat')
+		return b.kind === 'group-chat' && a.groupChatId === b.groupChatId && a.readOnly === b.readOnly;
 	if (a.kind === 'agent') {
 		return b.kind === 'agent' && a.sessionId === b.sessionId && a.tabId === b.tabId;
 	}
@@ -181,7 +189,7 @@ export function applyAgentScope(
  * The three modes a user switches between. Document and Quick Chat
  * conversations are opened, not switched to.
  */
-export type SwitchableVoiceMode = Exclude<VoiceMode, 'document' | 'quick-chat'>;
+export type SwitchableVoiceMode = Exclude<VoiceMode, 'document' | 'quick-chat' | 'group-chat'>;
 
 /** In the order the HUD draws them, which is also the order Tab walks them. */
 export const SWITCHABLE_VOICE_MODES: readonly SwitchableVoiceMode[] = ['tab', 'agent', 'conductor'];
@@ -196,7 +204,7 @@ export const SWITCHABLE_VOICE_MODES: readonly SwitchableVoiceMode[] = ['tab', 'a
  */
 export function switchableVoiceMode(scope: VoiceScope | null | undefined): SwitchableVoiceMode {
 	const mode = voiceScopeMode(scope);
-	return mode === 'document' || mode === 'quick-chat' ? 'tab' : mode;
+	return mode === 'document' || mode === 'quick-chat' || mode === 'group-chat' ? 'tab' : mode;
 }
 
 /**

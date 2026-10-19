@@ -44,6 +44,12 @@ function scopeDisplay(scope: VoiceScope | null, lastDispatch: DispatchEvent | nu
 }
 
 describe('useVoiceScope', () => {
+	it('names a Group Chat room without claiming an agent binding', () => {
+		const display = scopeDisplay({ kind: 'group-chat', groupChatId: 'room', name: 'Review' });
+		expect(display.label).toBe('Review');
+		expect(display.agentSessionId).toBeNull();
+	});
+
 	beforeEach(() => {
 		useVoiceSessionStore.setState({ scope: null, roster: [], lastDispatch: null });
 	});

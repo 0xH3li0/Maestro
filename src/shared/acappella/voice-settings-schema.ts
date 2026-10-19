@@ -300,6 +300,18 @@ export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> =
 		values: () => ['manual', 'auto-idle'],
 		description: 'Whether the Voice HUD also collapses on its own when a session goes quiet.',
 	},
+	'ui.holdWhileBusy': {
+		kind: 'boolean',
+		default: true,
+		description:
+			'Pause microphone input while the conversation is working, then resume automatically.',
+	},
+	'ui.defaultMode': {
+		kind: 'enum',
+		default: 'agent',
+		values: () => ['tab', 'agent', 'conductor'],
+		description: 'Default mode for an agent composer microphone.',
+	},
 	'ui.listenMode': {
 		kind: 'enum',
 		default: DEFAULT_VOICE_LISTEN_MODE,

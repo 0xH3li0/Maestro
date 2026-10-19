@@ -46,6 +46,9 @@ function collectRenderedSettingIds(): { id: string; file: string }[] {
 
 describe('searchableSettings', () => {
 	it.each([
+		'hold while busy',
+		'default voice mode',
+		'listening mode',
 		'notification center',
 		'queued reply',
 		'expand details',

@@ -54,6 +54,7 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 
 	const targetFor = useCallback(
 		(next: SwitchableVoiceMode) => {
+			if (scope?.kind === 'group-chat') return null;
 			const { sessions } = useSessionStore.getState();
 			return scopeForMode(next, {
 				scope,

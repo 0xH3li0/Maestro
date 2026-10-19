@@ -66,6 +66,20 @@ beforeEach(() => {
 });
 
 describe('openVoiceMic', () => {
+	it('starts Group Chat gated in push-to-talk mode', async () => {
+		useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+		setListening.mockResolvedValue(false);
+		const scope = { kind: 'group-chat', groupChatId: 'room' } as const;
+		await openVoiceMic({ scope, honorListenMode: true });
+		expect(start).toHaveBeenCalledWith(scope, { paused: true });
+	});
+	it('reveals an existing group session without resuming a manually paused microphone', async () => {
+		const scope = { kind: 'group-chat', groupChatId: 'room' } as const;
+		useVoiceSessionStore.setState({ state: 'listening', scope, listenPaused: true });
+		await openVoiceMic({ scope, honorListenMode: true });
+		expect(setListening).not.toHaveBeenCalled();
+		expect(start).not.toHaveBeenCalled();
+	});
 	it('resumes a live session without starting another', async () => {
 		await openVoiceMic();
 

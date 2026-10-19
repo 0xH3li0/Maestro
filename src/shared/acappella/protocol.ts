@@ -50,13 +50,21 @@ export interface QuickChatVoiceScope {
 	kind: 'quick-chat';
 }
 
+/** One Group Chat room; spoken messages use its moderator and submission queue. */
+export interface GroupChatVoiceScope {
+	kind: 'group-chat';
+	groupChatId: string;
+	name?: string;
+	readOnly?: boolean;
+}
+
 /**
  * What a voice session is bound to. The `sessionId` inside an agent or document
  * scope is an AGENT id; the envelope's `sessionId` is the voice session id. They
  * are never the same value and are never interchangeable.
  *
  * Use `voiceScopeAgentId()` from `./document-scope` rather than testing for
- * `kind === 'agent'`: two of the four kinds are bound to an agent, and a test
+ * `kind === 'agent'`: agent and document scopes carry an agent, and a test
  * that only knows about one silently treats a document conversation as an
  * unbound Conductor session.
  */
@@ -64,7 +72,8 @@ export type VoiceScope =
 	| { kind: 'conductor' }
 	| AgentVoiceScope
 	| DocumentVoiceScope
-	| QuickChatVoiceScope;
+	| QuickChatVoiceScope
+	| GroupChatVoiceScope;
 
 /**
  * Bound to one agent, and optionally to ONE TAB of it.
@@ -276,6 +285,8 @@ export type DispatchAction = 'focused' | 'created' | 'recalled';
  */
 export interface DispatchEvent extends VoiceEventBase {
 	type: 'dispatch';
+	/** Room identity; agentSessionId and tabId identify the room for these replies. */
+	groupChatId?: string;
 	agentSessionId: string;
 	agentName: string;
 	tabId: string;

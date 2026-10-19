@@ -465,3 +465,18 @@ describe('stepping through the modes (the Tab key)', () => {
 		expect(switchableVoiceMode({ kind: 'quick-chat' })).toBe('tab');
 	});
 });
+
+describe('Group Chat voice binding', () => {
+	const scope = { kind: 'group-chat', groupChatId: 'room-a', name: 'Review' } as const;
+	it('bypasses the routing brain and stays with its room when focus changes', () => {
+		expect(voiceScopeMode(scope)).toBe('group-chat');
+		expect(scopeRouterId(scope)).toBe('group-chat-scope');
+		expect(isScopeRouterId('group-chat-scope')).toBe(true);
+		expect(scopeFollowingFocus(scope, { agentSessionId: 'other', tabId: 'tab' })).toBeNull();
+	});
+	it('compares room identity and read-only mode without treating all rooms as equal', () => {
+		expect(isSameVoiceScope(scope, { ...scope, name: 'Renamed' })).toBe(true);
+		expect(isSameVoiceScope(scope, { ...scope, groupChatId: 'room-b' })).toBe(false);
+		expect(isSameVoiceScope(scope, { ...scope, readOnly: true })).toBe(false);
+	});
+});

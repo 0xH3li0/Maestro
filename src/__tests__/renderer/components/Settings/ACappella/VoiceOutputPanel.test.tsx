@@ -33,6 +33,9 @@ describe('VoiceOutputPanel', () => {
 			transcriptVisible: false,
 			hudPosition: null,
 			minimizeBehavior: 'manual',
+			holdWhileBusy: true,
+			defaultMode: 'agent',
+			listenMode: 'hands-free',
 			minimized: false,
 			muted: false,
 			loaded: true,
@@ -111,6 +114,21 @@ describe('VoiceOutputPanel', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledWith(
 				'acappella',
 				expect.objectContaining({ voice: expect.objectContaining({ rate: 1.2 }) })
+			)
+		);
+	});
+
+	it('persists busy hold and default routing from the shared preferences', async () => {
+		render(<VoiceOutputPanel theme={mockTheme} enabled />);
+		fireEvent.click(await screen.findByRole('switch', { name: 'Hold while busy' }));
+		await waitFor(() => expect(useVoiceUiStore.getState().holdWhileBusy).toBe(false));
+		fireEvent.click(screen.getByRole('button', { name: 'Conductor', exact: true }));
+		await waitFor(() =>
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'acappella',
+				expect.objectContaining({
+					ui: expect.objectContaining({ defaultMode: 'conductor', holdWhileBusy: false }),
+				})
 			)
 		);
 	});

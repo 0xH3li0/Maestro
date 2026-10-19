@@ -16,6 +16,10 @@
  * `summariseVoiceEgress`, never written as copy.
  */
 
+import { ToggleSettingRow } from '../tabs/DisplayTab/components/ToggleSettingRow';
+import { setVoiceListenMode } from '../../../services/voiceListening';
+import type { VoiceListenMode } from '../../../../shared/acappella/listen-mode';
+import type { SwitchableVoiceMode } from '../../../../shared/acappella/voice-mode';
 import { useCallback, useEffect, useState } from 'react';
 import { Play, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
 
@@ -325,7 +329,53 @@ export function VoiceOutputPanel({ theme, enabled }: VoiceOutputPanelProps) {
 
 			{/* -- HUD ---------------------------------------------------------- */}
 			<div data-setting-id="encore-a-cappella-hud">
+				<SettingsSectionHeading icon={Sliders}>Voice session</SettingsSectionHeading>
 				<SectionCard theme={theme}>
+					<ToggleSettingRow
+						theme={theme}
+						title="Hold while busy"
+						ariaLabel="Hold while busy"
+						disabled={!enabled}
+						description="Pause microphone input while the conversation is working, then resume automatically. Applies to Group Chat and agent conversations."
+						checked={ui.holdWhileBusy}
+						onChange={(value) => void ui.setHoldWhileBusy(value)}
+						clickableRow
+					/>
+					<div>
+						<div className="font-medium mb-1">Default voice mode</div>
+						<p className="text-xs opacity-70 mb-2">
+							Choose who an agent composer microphone talks to. Group Chat always talks to its
+							moderator.
+						</p>
+						<ToggleButtonGroup
+							theme={theme}
+							value={ui.defaultMode}
+							options={[
+								{ value: 'tab', label: 'Tab' },
+								{ value: 'agent', label: 'Agent' },
+								{ value: 'conductor', label: 'Conductor' },
+							]}
+							disabled={!enabled}
+							onChange={(value) => void ui.setDefaultMode(value as SwitchableVoiceMode)}
+						/>
+					</div>
+					<div>
+						<div className="font-medium mb-1">Listening mode</div>
+						<p className="text-xs opacity-70 mb-2">
+							Hands-free keeps the microphone open. Push-to-talk opens it only while you hold the
+							talk button.
+						</p>
+						<ToggleButtonGroup
+							theme={theme}
+							value={ui.listenMode}
+							options={[
+								{ value: 'hands-free', label: 'Hands-free' },
+								{ value: 'push-to-talk', label: 'Push-to-talk' },
+							]}
+							disabled={!enabled}
+							onChange={(value) => void setVoiceListenMode(value as VoiceListenMode)}
+						/>
+					</div>
 					<div className="flex items-start justify-between gap-3">
 						<div>
 							<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>

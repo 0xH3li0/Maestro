@@ -27,6 +27,10 @@
  * mid-session can still release the floor.
  */
 
+import { readVoiceUiPrefs } from '../../../shared/acappella/ui-prefs';
+import { getGroupChatState } from '../../group-chat/emitters';
+import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
+import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { ProcessLivenessProbe } from '../../utils/agent-busy';
 import { VoiceStudioClient } from '../../acappella/providers/local/voice-studio-tts';
 import {
@@ -210,6 +214,7 @@ import {
 } from '../../acappella/voice-control-service';
 import {
 	VOICE_PREVIEW_LINE,
+	parseVoiceControlScope,
 	type VoiceSessionView,
 	type VoiceWakeHit,
 } from '../../../shared/acappella/voice-control';
@@ -559,6 +564,11 @@ const requireEnabled = requireACappellaEnabled;
 /** An unrecognised scope is conductor scope; a malformed BOUND scope is not. */
 function parseScope(raw: unknown): VoiceScope {
 	if (!isRecord(raw)) return { kind: 'conductor' };
+	if (raw.kind === 'group-chat') {
+		const scope = parseVoiceControlScope(raw);
+		if (!scope) throw new Error('InvalidVoiceScope');
+		return scope;
+	}
 	// Quick Chat carries no ids, so there is nothing about it to be malformed.
 	if (raw.kind === 'quick-chat') return { ...QUICK_CHAT_VOICE_SCOPE };
 	if (raw.kind !== 'agent' && raw.kind !== 'document') return { kind: 'conductor' };
@@ -756,6 +766,24 @@ async function buildService(
 		},
 		pipelineShape: resolution.shape,
 		getRoster: readAgentRoster,
+		getHoldWhileBusy: () =>
+			readVoiceUiPrefs(
+				(deps.settingsStore.get('acappella', {}) as { ui?: Record<string, unknown> }).ui
+			).holdWhileBusy,
+		isScopeBusy: (scope) => {
+			if (scope.kind === 'group-chat') return getGroupChatState(scope.groupChatId) !== 'idle';
+			const id = voiceScopeAgentId(scope);
+			const manager = deps.getProcessManager?.();
+			if (!id || !manager?.get) return false;
+			const probe = { get: manager.get.bind(manager) };
+			const session = getSessionsStore()
+				.get('sessions', [])
+				.find((entry) => entry.id === id);
+			if (!session) return false;
+			return scope.kind === 'agent' && scope.tabId
+				? isAiTabProcessActive(probe, id, scope.tabId, session.activeTabId === scope.tabId)
+				: isAgentBusy(session, probe);
+		},
 		getVocabulary: () => readVoiceProviderSettings(deps.settingsStore).vocabulary ?? [],
 		refineTranscript: correctSpeechVocabulary,
 		getForceSendAllowed: () => deps.settingsStore.get('forcedParallelExecution', false) === true,

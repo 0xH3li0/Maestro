@@ -39,6 +39,16 @@ const SIZE = { width: 340, height: 160 };
 const VIEWPORT = { width: 1440, height: 900 };
 
 describe('readVoiceUiPrefs', () => {
+	it('defaults busy hold on and sanitizes the startup routing mode', () => {
+		expect(readVoiceUiPrefs({ holdWhileBusy: false, defaultMode: 'tab' })).toMatchObject({
+			holdWhileBusy: false,
+			defaultMode: 'tab',
+		});
+		expect(readVoiceUiPrefs({ holdWhileBusy: 'no', defaultMode: 'group-chat' })).toMatchObject({
+			holdWhileBusy: true,
+			defaultMode: 'agent',
+		});
+	});
 	it('reads an empty blob as the shipped defaults', () => {
 		expect(readVoiceUiPrefs(undefined)).toEqual(DEFAULT_VOICE_UI_PREFS);
 		expect(readVoiceUiPrefs({})).toEqual(DEFAULT_VOICE_UI_PREFS);

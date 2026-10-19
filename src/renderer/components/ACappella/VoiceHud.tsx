@@ -180,6 +180,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const muted = useVoiceUiStore((s) => s.muted);
 	const setMuted = useVoiceUiStore((s) => s.setMuted);
 	const listenMode = useVoiceUiStore((s) => s.listenMode);
+	const holdWhileBusy = useVoiceUiStore((s) => s.holdWhileBusy);
+	const setHoldWhileBusy = useVoiceUiStore((s) => s.setHoldWhileBusy);
 	const sendWait = useVoiceUiStore((s) => s.sendWait);
 	const refreshSendWait = useVoiceUiStore((s) => s.refreshSendWait);
 	const setSendWait = useVoiceUiStore((s) => s.setSendWait);
@@ -678,6 +680,15 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				    listening: the swap lands on the next capture, never mid-utterance. */}
 				<div className="px-3 pb-1.5">
 					<VoiceInputPicker theme={theme} devices={inputDevices} compact />
+					<div className="flex items-center justify-between gap-2 pt-2 text-xs">
+						<span>Hold while busy</span>
+						<ToggleSwitch
+							theme={theme}
+							checked={holdWhileBusy}
+							ariaLabel="Hold while busy"
+							onChange={(value) => void setHoldWhileBusy(value)}
+						/>
+					</div>
 				</div>
 
 				{/* The send panel (wait slider and send phrase), opened from the chip in

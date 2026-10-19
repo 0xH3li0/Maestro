@@ -270,6 +270,13 @@ describe('voiceSessionStore projection', () => {
 		expect(selectVoiceScopeLabel(useVoiceSessionStore.getState())).toBe('Backend');
 	});
 
+	it('names a Group Chat session after its room', () => {
+		useVoiceSessionStore.setState({
+			scope: { kind: 'group-chat', groupChatId: 'room', name: 'Review' },
+		});
+		expect(selectVoiceScopeLabel(useVoiceSessionStore.getState())).toBe('Review');
+	});
+
 	it('names a Quick Chat session after Quick Chat, not after the Conductor', () => {
 		// It names no agent, so an agent-id test alone would read it as unbound.
 		apply(event('wake', { source: 'client-button', scope: { kind: 'quick-chat' } }));

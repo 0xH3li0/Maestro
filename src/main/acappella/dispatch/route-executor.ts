@@ -29,6 +29,7 @@ import {
 
 import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
 import type { RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
+import { dispatchToGroupChat } from './group-chat-dispatch';
 import { isQuickChatScope } from '../../../shared/acappella/quick-chat-scope';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { isClarification, routeTargetSessionId } from '../../../shared/acappella/route-decision';
@@ -397,7 +398,13 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
  */
 export async function executeRouteDecision(
 	decision: RouteDecision,
-	context: { roster: RosterAgent[]; scope: VoiceScope; force?: boolean },
+	context: {
+		roster: RosterAgent[];
+		scope: VoiceScope;
+		force?: boolean;
+		signal?: AbortSignal;
+		onAccepted?: () => void;
+	},
 	deps: ResolvedExecutorDeps
 ): Promise<VoiceDispatchResult> {
 	// A clarification is a question, not an instruction. Reaching the executor
@@ -413,6 +420,14 @@ export async function executeRouteDecision(
 	// that opened a tab and lost its receipt; here an identical sentence a few
 	// seconds later ("yes", twice) is the user answering twice, and dropping the
 	// second one would leave the session waiting on a reply nobody asked for.
+	if (context.scope.kind === 'group-chat') {
+		return dispatchToGroupChat(
+			context.scope,
+			decision.prompt.trim(),
+			context.signal,
+			context.onAccepted
+		);
+	}
 	if (isQuickChatScope(context.scope)) {
 		return dispatchToQuickChat(decision.prompt.trim(), deps.getQuickChat?.());
 	}
