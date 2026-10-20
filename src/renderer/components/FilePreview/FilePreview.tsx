@@ -665,6 +665,7 @@ export const FilePreview = React.memo(
 		const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 		const voiceScope = useVoiceSessionStore((s) => s.scope);
 		const voiceState = useVoiceSessionStore((s) => s.state);
+		const voiceSessionId = useVoiceSessionStore((s) => s.sessionId);
 		// Reading and editing are separate typographic jobs, so they are separate
 		// settings: a proportional face is easier to read a document in, while an
 		// editor wants the line-number gutter to stay aligned. Empty means "inherit
@@ -1094,6 +1095,7 @@ export const FilePreview = React.memo(
 		const isTalkingAboutDocument =
 			isVoiceSessionActive(voiceState) &&
 			isDocumentScope(voiceScope) &&
+			(!sessionId || voiceScope.sessionId === sessionId) &&
 			!!file?.path &&
 			voiceScope.path === file.path;
 
@@ -1107,8 +1109,8 @@ export const FilePreview = React.memo(
 				void window.maestro.voice.stop().catch(() => undefined);
 				return;
 			}
-			void talkWithDocument({ path: file.path });
-		}, [file?.path, isTalkingAboutDocument]);
+			void talkWithDocument({ path: file.path, sessionId });
+		}, [file?.path, sessionId, isTalkingAboutDocument]);
 
 		// Delete the previewed file. Shared with the command palette's
 		// "File: Delete" entry, so both raise the same confirmation.
@@ -1603,6 +1605,19 @@ export const FilePreview = React.memo(
 			// file's chat over the new file's contents.
 			documentChat.setOpen(false);
 		}, [file?.path]); // Run on mount and when navigating to a different file
+
+		// Talk with Document is a shortcut into the existing embedded voice chat.
+		// Run after the navigation reset above, including when voice starts before
+		// the file finishes opening. Closing the chat during a session stays closed.
+		useEffect(() => {
+			if (canChatAboutThisFile && isTalkingAboutDocument) documentChat.setOpen(true);
+		}, [
+			file?.path,
+			canChatAboutThisFile,
+			isTalkingAboutDocument,
+			voiceSessionId,
+			documentChat.setOpen,
+		]);
 
 		// Helper to handle escape key - shows confirmation modal if there are unsaved changes
 		// In tab mode: Escape only closes internal UI (search, TOC), not the tab itself
@@ -2957,6 +2972,7 @@ export const FilePreview = React.memo(
 					<DocumentChatOverlay
 						theme={theme}
 						path={file.path}
+						sessionId={sessionId}
 						open={documentChat.open}
 						onOpenChange={documentChat.setOpen}
 						buttonRef={documentChat.buttonRef}

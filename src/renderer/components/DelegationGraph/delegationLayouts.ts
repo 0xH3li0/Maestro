@@ -29,6 +29,7 @@
  */
 
 import type { Edge, Node } from 'reactflow';
+import dagre from '@dagrejs/dagre';
 import type { MindMapNode, MindMapLink } from '../DocumentGraph/MindMap';
 import { buildAdjacencyMap, calculateLayout } from '../DocumentGraph/mindMapLayouts';
 import {
@@ -79,6 +80,7 @@ export interface DelegationLayoutOptions {
 	 * to anything, the agent with the most relationships is used.
 	 */
 	centerId?: string;
+	spacingScale?: number;
 }
 
 export interface DelegationArrangement {
@@ -392,7 +394,7 @@ function applyRadialLayout(
  * agent on it. Nothing saved is read: this is the arrangement the algorithm
  * gives, which the caller then saves over whatever was there.
  */
-export function computeDelegationLayout(
+function computeDelegationLayoutBase(
 	layout: DelegationAlgorithmLayout,
 	model: DelegationGraphModel,
 	options: DelegationLayoutOptions = {}
@@ -402,6 +404,71 @@ export function computeDelegationLayout(
 	const connected = nodes.filter((node) => connectedIds.has(node.id));
 	const isolated = nodes.filter((node) => !connectedIds.has(node.id));
 	const edges = toLayoutEdges(model.edges);
+	// Reuse graphlib's weak components: unrelated teams must never be threaded
+	// through one another by a force simulation or a shared radial ring.
+	const topology = new dagre.graphlib.Graph();
+	for (const node of connected) topology.setNode(node.id, {});
+	for (const edge of edges) topology.setEdge(edge.source, edge.target);
+	const components = dagre.graphlib.alg.components(topology).sort((a, b) => b.length - a.length);
+	if (components.length > 1) {
+		const teams = components.map((ids) => {
+			const members = new Set(ids);
+			const positions = computeDelegationLayoutBase(
+				layout,
+				{
+					nodes: model.nodes.filter((node) => members.has(node.sessionId)),
+					edges: model.edges.filter(
+						(edge) => members.has(edge.sourceId) && members.has(edge.targetId)
+					),
+				},
+				options
+			);
+			const team = connected
+				.filter((node) => members.has(node.id))
+				.map((node) => ({
+					...node,
+					position: positions[node.id],
+				}));
+			return { nodes: team, bounds: boundsOf(team)! };
+		});
+		const gap = ISOLATED_BLOCK_GAP;
+		const first = teams[0].bounds;
+		const wrapWidth = Math.max(
+			first.maxX - first.minX,
+			Math.sqrt(
+				teams.reduce(
+					(area, team) =>
+						area +
+						(team.bounds.maxX - team.bounds.minX + gap) *
+							(team.bounds.maxY - team.bounds.minY + gap),
+					0
+				) * 1.6
+			)
+		);
+		const placed: LayoutNode[] = [];
+		let x = first.minX;
+		let y = first.minY;
+		let rowHeight = 0;
+		for (const team of teams) {
+			const { bounds } = team;
+			const width = bounds.maxX - bounds.minX;
+			const height = bounds.maxY - bounds.minY;
+			if (x !== first.minX && x + width > first.minX + wrapWidth) {
+				x = first.minX;
+				y += rowHeight + gap;
+				rowHeight = 0;
+			}
+			placed.push(
+				...team.nodes.map((node) => ({
+					...node,
+					position: { x: node.position.x + x - bounds.minX, y: node.position.y + y - bounds.minY },
+				}))
+			);
+			x += width + gap;
+			rowHeight = Math.max(rowHeight, height);
+		}
+		return positionsOf([...placed, ...packInGrid(isolated, boundsOf(placed))]);
+	}
 
 	let placed: LayoutNode[];
 	switch (layout) {
@@ -411,12 +478,19 @@ export function computeDelegationLayout(
 				...model,
 				nodes: model.nodes.filter((node) => connectedIds.has(node.sessionId)),
 			});
+			const adjacency = buildAdjacencyMap(data.links);
+			const center =
+				connected.find((node) => node.id === options.centerId)?.id ??
+				[...connected].sort(
+					(a, b) => (adjacency.get(b.id)?.size ?? 0) - (adjacency.get(a.id)?.size ?? 0)
+				)[0]?.id ??
+				'';
 			const result = calculateLayout(
 				layout,
 				data.nodes,
 				data.links,
-				buildAdjacencyMap(data.links),
-				options.centerId ?? data.nodes[0]?.id ?? '',
+				adjacency,
+				center,
 				Math.max(1, data.nodes.length - 1),
 				960,
 				640,
@@ -426,20 +500,30 @@ export function computeDelegationLayout(
 				true,
 				true
 			);
-			placed = [];
-			for (const node of result.nodes) {
+			// Expand the entire pill arrangement to reserve the editor's card
+			// footprints. Pushing individual collisions down destroys its branches
+			// and communities and makes their edges run through other teams.
+			const scaleX = Math.max(
+				1,
+				...result.nodes.map(
+					(node) => (estimateAgentDelegationNodeWidth(node.label) + GRID_GAP) / node.width
+				)
+			);
+			const scaleY = Math.max(
+				1,
+				...result.nodes.map((node) => (AGENT_DELEGATION_NODE_HEIGHT + GRID_GAP) / node.height)
+			);
+			placed = result.nodes.map((node) => {
 				const width = estimateAgentDelegationNodeWidth(node.label);
-				placed.push(
-					moveClearOf(
-						{
-							id: node.id,
-							position: { x: node.x - width / 2, y: node.y - AGENT_DELEGATION_NODE_HEIGHT / 2 },
-							data: { width },
-						},
-						placed
-					)
-				);
-			}
+				return {
+					id: node.id,
+					position: {
+						x: node.x * scaleX - width / 2,
+						y: node.y * scaleY - AGENT_DELEGATION_NODE_HEIGHT / 2,
+					},
+					data: { width },
+				};
+			});
 			break;
 		}
 		case 'hierarchical':
@@ -461,6 +545,39 @@ export function computeDelegationLayout(
 	}
 
 	return positionsOf([...placed, ...packInGrid(isolated, boundsOf(placed))]);
+}
+
+/** Scale centers rather than corners, so cards keep their footprints. */
+export function scaleDelegationPositions(
+	model: DelegationGraphModel,
+	positions: DelegationSavedPositions,
+	scale: number
+): DelegationSavedPositions {
+	if (scale === 1) return positions;
+	const scaled: DelegationSavedPositions = {};
+	for (const node of model.nodes) {
+		const position = positions[node.sessionId];
+		if (!position) continue;
+		const halfWidth = estimateAgentDelegationNodeWidth(node.name) / 2;
+		const halfHeight = AGENT_DELEGATION_NODE_HEIGHT / 2;
+		scaled[node.sessionId] = {
+			x: (position.x + halfWidth) * scale - halfWidth,
+			y: (position.y + halfHeight) * scale - halfHeight,
+		};
+	}
+	return scaled;
+}
+
+export function computeDelegationLayout(
+	layout: DelegationAlgorithmLayout,
+	model: DelegationGraphModel,
+	options: DelegationLayoutOptions = {}
+): DelegationSavedPositions {
+	return scaleDelegationPositions(
+		model,
+		computeDelegationLayoutBase(layout, model, options),
+		options.spacingScale ?? 1
+	);
 }
 
 /**

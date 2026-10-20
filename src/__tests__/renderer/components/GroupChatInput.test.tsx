@@ -94,6 +94,21 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	it.each([true, false])(
+		'pins the toolbar to the composer bottom with A Cappella enabled: %s',
+		(voiceEnabled) => {
+			useSettingsStore.setState({ encoreFeatures: { aCappella: voiceEnabled } } as never);
+			render(<GroupChatInput {...createDefaultProps({ onOpenPromptComposer: vi.fn() })} />);
+
+			const toolbar = screen.getByTitle('Attach Image').parentElement?.parentElement;
+			expect(toolbar).toHaveClass('mt-auto');
+			expect(toolbar?.parentElement).toHaveClass('flex', 'flex-col');
+			expect(toolbar).toContainElement(screen.getByTitle(/^Open Prompt Composer/));
+			expect(toolbar).toContainElement(screen.getByText('Read-Only'));
+			expect(toolbar).toContainElement(screen.getByTitle(/to send/));
+		}
+	);
+
 	it('applies a read-only toggle to the next spoken turn in an active room', async () => {
 		useVoiceSessionStore.setState({
 			state: 'listening',

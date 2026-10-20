@@ -59,6 +59,8 @@ import {
 	type ChangeEvent,
 	type DragEvent as ReactDragEvent,
 	type MouseEvent as ReactMouseEvent,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type RefObject,
 } from 'react';
 import ReactFlow, {
 	Background,
@@ -71,9 +73,21 @@ import ReactFlow, {
 	type Edge,
 	type Node,
 	type NodeChange,
+	PanOnScrollMode,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Eye, Info, Maximize2, Pencil, RotateCcw, Unplug, Users, Waypoints } from 'lucide-react';
+import {
+	Eye,
+	Info,
+	Maximize2,
+	Move,
+	Pencil,
+	RotateCcw,
+	Unplug,
+	Users,
+	Waypoints,
+	ZoomIn,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import {
 	connectedAgentIds,
@@ -95,6 +109,16 @@ import { hasAnyPeerAccess } from '../../../shared/peerAgents';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useElementWidth, useFreeHeightInFlexColumn } from '../../hooks/ui/useElementWidth';
 import { MindMap } from '../DocumentGraph/MindMap';
+import {
+	SPACING_SCALE_DEFAULT,
+	SPACING_SCALE_MIN,
+	SPACING_SCALE_MAX,
+	SPACING_SCALE_STEP,
+} from '../DocumentGraph/mindMapLayouts';
+import { SCROLL_MODE_LABELS, scrollModeFromPans } from '../DocumentGraph/scrollMode';
+import { isTextInputTarget } from '../../utils/messageScrollNavigation';
+import { useFocusAfterRender, useFocusOnClose } from '../../hooks/utils/useFocusAfterRender';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 import { openAgentSettings } from '../../services/agentNavigation';
 import {
 	DELEGATION_EDGE_NEEDS_ACCESS,
@@ -132,6 +156,7 @@ import {
 	arrangeDelegationGraph,
 	computeDelegationLayout,
 	delegationMindMapData,
+	scaleDelegationPositions,
 } from './delegationLayouts';
 import {
 	DEFAULT_DELEGATION_LAYOUT,
@@ -139,6 +164,7 @@ import {
 	DELEGATION_ALGORITHM_LAYOUTS,
 	DELEGATION_LAYOUT_LABELS,
 	isDelegationAlgorithmLayout,
+	nextDelegationLayout,
 	type DelegationAlgorithmLayout,
 	type DelegationLayoutType,
 } from './delegationLayoutTypes';
@@ -161,6 +187,7 @@ export interface DelegationGraphViewProps {
 	theme: Theme;
 	/** The scope the graph opens on. Every agent when absent. */
 	initialScope?: DelegationGraphScope;
+	focusRef?: RefObject<HTMLDivElement>;
 }
 
 /**
@@ -274,9 +301,16 @@ function openPeersTab(sessionId: string): void {
 	if (session) openAgentSettings(session, { tab: 'peers' });
 }
 
-function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps) {
+function DelegationGraphCanvas({ theme, initialScope, focusRef }: DelegationGraphViewProps) {
 	const { colors } = theme;
 	const reactFlow = useReactFlow();
+	const ownContainerRef = useRef<HTMLDivElement>(null);
+	const containerRef = focusRef ?? ownContainerRef;
+	const [shiftPressed, setShiftPressed] = useState(false);
+	useEventListener('blur', () => setShiftPressed(false));
+	const scrollPans = usePersistedToggle('delegationGraph.scrollPans');
+	const scrollMode = scrollModeFromPans(scrollPans.value);
+	const [spacingScale, setSpacingScale] = useState(SPACING_SCALE_DEFAULT);
 	const groups = useSessionStore((store) => store.groups);
 	const activeSessionId = useSessionStore((store) => store.activeSessionId);
 
@@ -307,6 +341,14 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	// of scope, because the user who switched it on is still the one editing.
 	const [mode, setMode] = useState<DelegationGraphMode>(DEFAULT_DELEGATION_GRAPH_MODE);
 	const isEditing = mode === 'edit';
+	// A scope or mode switch can replace the focused canvas. Focus its
+	// replacement once, leaving later clicks on toolbar controls alone.
+	const focusContext = `${scopeKey}:${mode}`;
+	const previousFocusContext = useRef('');
+	useFocusAfterRender(containerRef, previousFocusContext.current !== focusContext);
+	useEffect(() => {
+		previousFocusContext.current = focusContext;
+	}, [focusContext]);
 	const sortedGroups = useMemo(() => delegationScopeGroups(groups), [groups]);
 
 	// The agents the user put on this scope's canvas by hand. Never saved and
@@ -657,16 +699,20 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	);
 
 	const applyLayout = useCallback(
-		(next: DelegationAlgorithmLayout) => {
+		(next: DelegationAlgorithmLayout, spacing = spacingScale) => {
 			saveAlgorithmLayout(
 				next,
-				computeDelegationLayout(next, model, { centerId: selectedId ?? undefined })
+				computeDelegationLayout(next, model, {
+					centerId: selectedId ?? undefined,
+					spacingScale: spacing,
+				})
 			);
 			requestFit();
 		},
-		[saveAlgorithmLayout, model, selectedId, requestFit]
+		[saveAlgorithmLayout, model, selectedId, spacingScale, requestFit]
 	);
 	const applyReset = useCallback(() => {
+		setSpacingScale(SPACING_SCALE_DEFAULT);
 		resetLayout();
 		requestFit();
 	}, [resetLayout, requestFit]);
@@ -790,6 +836,109 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	);
 
 	const legend = usePersistedToggle('delegationGraph.legend.open', true);
+	useFocusOnClose(containerRef, pendingChange !== null || pendingEdge !== null);
+	useEffect(() => setSpacingScale(SPACING_SCALE_DEFAULT), [scopeKey]);
+
+	const changeSpacing = useCallback(
+		(direction: number) => {
+			if (isEmpty) return;
+			const next = Math.min(
+				SPACING_SCALE_MAX,
+				Math.max(
+					SPACING_SCALE_MIN,
+					Math.round((spacingScale + direction * SPACING_SCALE_STEP) * 10) / 10
+				)
+			);
+			if (next === spacingScale) return;
+			if (layout === 'manual') {
+				const scaled = scaleDelegationPositions(
+					model,
+					positionsOfNodes(nodesRef.current),
+					next / spacingScale
+				);
+				onNodesChange(
+					nodesRef.current.map(
+						(node): NodeChange => ({
+							id: node.id,
+							type: 'position',
+							position: scaled[node.id],
+						})
+					)
+				);
+			} else {
+				applyLayout(layout, next);
+			}
+			setSpacingScale(next);
+			requestFit();
+		},
+		[isEmpty, spacingScale, layout, model, onNodesChange, applyLayout, requestFit]
+	);
+
+	const handleKeyDown = useCallback(
+		(event: ReactKeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.metaKey ||
+				event.ctrlKey ||
+				event.altKey ||
+				event.nativeEvent.isComposing ||
+				pendingChange ||
+				pendingEdge ||
+				isTextInputTarget(event.target) ||
+				(event.target instanceof HTMLElement &&
+					event.target.closest('select, [contenteditable="true"]'))
+			)
+				return;
+			switch (event.key.toLowerCase()) {
+				case 'l':
+					handleLayoutChange(nextDelegationLayout(layout));
+					break;
+				case 'f':
+					requestFit();
+					break;
+				case 's':
+					scrollPans.toggle();
+					break;
+				case '+':
+				case '=':
+					changeSpacing(1);
+					break;
+				case '-':
+				case '_':
+					changeSpacing(-1);
+					break;
+				case 'o':
+					if (!isEditing || !selectedId) return;
+					openPeersTab(selectedId);
+					break;
+				case ' ':
+					if (
+						!isEditing ||
+						!selectedId ||
+						(event.target instanceof HTMLElement && event.target.closest('button'))
+					)
+						return;
+					changeScope({ kind: 'agent', sessionId: selectedId });
+					break;
+				default:
+					return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+		},
+		[
+			pendingChange,
+			pendingEdge,
+			layout,
+			handleLayoutChange,
+			requestFit,
+			scrollPans,
+			changeSpacing,
+			isEditing,
+			selectedId,
+			changeScope,
+		]
+	);
 
 	const reactFlowStyle = useMemo(() => ({ backgroundColor: colors.bgMain }), [colors.bgMain]);
 	const connectionLineStyle = useMemo(
@@ -827,7 +976,18 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	const peersTargetName = model.nodes.find((node) => node.sessionId === peersTargetId)?.name;
 
 	return (
-		<div className="flex flex-col h-full w-full min-h-0" data-testid="delegation-graph-view">
+		<div
+			ref={isEditing || isEmpty ? containerRef : undefined}
+			tabIndex={-1}
+			onKeyDown={handleKeyDown}
+			onKeyDownCapture={(event) => setShiftPressed(event.shiftKey)}
+			onKeyUpCapture={(event) => setShiftPressed(event.shiftKey)}
+			onBlurCapture={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget)) setShiftPressed(false);
+			}}
+			className="flex flex-col h-full w-full min-h-0 outline-none"
+			data-testid="delegation-graph-view"
+		>
 			{/* Toolbar */}
 			<div
 				className="flex items-center gap-2 px-3 py-2 border-b shrink-0"
@@ -924,6 +1084,16 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				)}
 
 				<div className="flex-1" />
+				<HeaderActionButton
+					theme={theme}
+					variant="ghost"
+					onClick={scrollPans.toggle}
+					icon={scrollPans.value ? <Move /> : <ZoomIn />}
+					title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
+					testId="delegation-graph-scroll-mode"
+				>
+					Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
+				</HeaderActionButton>
 
 				<label
 					className="flex items-center gap-1.5 text-xs shrink-0 cursor-pointer"
@@ -948,7 +1118,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 					variant="ghost"
 					onClick={requestFit}
 					icon={<Maximize2 />}
-					title="Fit the whole graph in view"
+					title="Fit the whole graph in view (F)"
 					disabled={isEmpty}
 					testId="delegation-graph-fit"
 				>
@@ -1012,6 +1182,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				) : !isEditing ? (
 					<MindMap
 						key={scopeKey}
+						containerRef={containerRef}
 						theme={theme}
 						nodes={mindMapData.nodes}
 						links={mindMapData.links}
@@ -1026,6 +1197,8 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						nodeLabel="agent"
 						selectCenterOnOpen={false}
 						previewCharLimit={0}
+						spacingScale={spacingScale}
+						scrollMode={scrollMode}
 						layoutType={isDelegationAlgorithmLayout(layout) ? layout : defaultLayout}
 						nodePositions={canvasPositions}
 						selectedNodeId={selectedId}
@@ -1093,6 +1266,11 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						nodeDragThreshold={DRAG_THRESHOLD_PX}
 						minZoom={0.1}
 						maxZoom={2}
+						zoomOnScroll={scrollPans.value === shiftPressed}
+						panOnScroll={scrollPans.value !== shiftPressed}
+						panOnScrollMode={PanOnScrollMode.Free}
+						zoomActivationKeyCode={null}
+						selectionKeyCode={null}
 						fitView
 						fitViewOptions={FIT_VIEW_OPTIONS}
 						proOptions={PRO_OPTIONS}
@@ -1121,7 +1299,17 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				)}
 
 				{!isEmpty && legend.value && (
-					<DelegationGraphLegend theme={theme} stats={stats} onClose={legend.toggle} mode={mode} />
+					<DelegationGraphLegend
+						theme={theme}
+						stats={stats}
+						onClose={legend.toggle}
+						mode={mode}
+						onCycleLayout={() => handleLayoutChange(nextDelegationLayout(layout))}
+						onFit={requestFit}
+						onToggleScroll={scrollPans.toggle}
+						onIncreaseSpacing={() => changeSpacing(1)}
+						onDecreaseSpacing={() => changeSpacing(-1)}
+					/>
 				)}
 
 				{placedNames.length > 0 && (

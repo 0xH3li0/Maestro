@@ -8,10 +8,9 @@
  * one did; what Local Models is for, with what "active task" means; and a guide
  * to the five panels, each card a jump to its panel.
  *
- * Tiles and cards share one column count, read from the page's own width
- * (`useElementWidth`), so the six tiles always fill whole rows (3 + 3, or
- * 2 + 2 + 2) and the Library card spans two columns so the five panel cards
- * do too. An auto-fit grid left a tile or a card alone on its last row.
+ * The page's own width (`useElementWidth`) sets the stat tiles to three or two
+ * columns. Panel cards use thirds for Library, Sources, and Gateway, then halves
+ * for System One and System Two. On narrow pages Gateway fills its own row.
  *
  * It reads what the tab's hooks already hold and nothing else: no download, no
  * probe, no engine call. Every number comes from the same state the panels show,
@@ -42,7 +41,6 @@ import {
 	hardwareProfileStat,
 } from '../../../../../shared/local-models/model-fit';
 import {
-	MODELS_SETTINGS_DETAIL_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
 	MODELS_SETTINGS_PANEL_SUMMARIES,
 	modelsSettingsSubTab,
@@ -65,6 +63,9 @@ import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 
 /** Below this page width the tiles and cards go two to a row instead of three. */
 const TWO_COLUMN_BELOW_PX = 560;
+
+/** Infrastructure first, then the two systems that use it. */
+const OVERVIEW_PANEL_ORDER = ['library', 'sources', 'gateway', 'system-one', 'system-two'] as const;
 
 /** The icon each panel carries, here and in the Settings sidebar. */
 export const MODELS_SETTINGS_PANEL_ICONS: Readonly<Record<ModelsSettingsPanel, LucideIcon>> =
@@ -243,8 +244,11 @@ export function ModelsOverview({
 				>
 					Where things live
 				</SettingsSectionHeading>
-				<div className="grid gap-3" style={{ gridTemplateColumns: gridColumns }}>
-					{MODELS_SETTINGS_DETAIL_PANELS.map((panel) => {
+				<div
+					className="grid gap-3"
+					style={{ gridTemplateColumns: `repeat(${columns * 2}, minmax(0, 1fr))` }}
+				>
+					{OVERVIEW_PANEL_ORDER.map((panel) => {
 						const Icon = MODELS_SETTINGS_PANEL_ICONS[panel];
 						return (
 							<button
@@ -258,8 +262,10 @@ export function ModelsOverview({
 									borderColor: theme.colors.border,
 									backgroundColor: theme.colors.bgMain,
 									color: theme.colors.textMain,
-									// The Library card spans two columns so five cards fill whole rows.
-									gridColumn: panel === 'library' ? 'span 2' : undefined,
+									gridColumn:
+										columns === 2 && panel === 'gateway'
+											? '1 / -1'
+											: `span ${columns === 3 && panel.startsWith('system-') ? 3 : 2}`,
 								}}
 								onMouseEnter={(event) => {
 									event.currentTarget.style.borderColor = theme.colors.accent;

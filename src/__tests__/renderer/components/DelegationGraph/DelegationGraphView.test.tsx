@@ -59,7 +59,7 @@ vi.mock('../../../../renderer/components/DocumentGraph/MindMap', async () => {
 				props.height,
 				props.showExternalLinks,
 				props.previewCharLimit ?? 100,
-				1,
+				props.spacingScale ?? 1,
 				props.showOrphans,
 				props.clusterAllNodes
 			);
@@ -70,7 +70,12 @@ vi.mock('../../../../renderer/components/DocumentGraph/MindMap', async () => {
 				])
 			);
 			return (
-				<div data-testid="document-graph-canvas" data-layout={props.layoutType}>
+				<div
+					ref={props.containerRef}
+					tabIndex={0}
+					data-testid="document-graph-canvas"
+					data-layout={props.layoutType}
+				>
 					{props.nodes.map((node) => (
 						<button
 							key={node.id}
@@ -109,6 +114,8 @@ interface FlowProps {
 	onEdgeClick?: (event: ReactMouseEvent, edge: Edge<DelegationEdgeData>) => void;
 	nodesConnectable?: boolean;
 	deleteKeyCode?: string | null;
+	zoomOnScroll?: boolean;
+	panOnScroll?: boolean;
 	// The ways reactflow removes a node or an edge. The view passes none of them.
 	onNodesDelete?: unknown;
 	onEdgesDelete?: unknown;
@@ -637,6 +644,107 @@ describe('DelegationGraphView', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('Document Graph shortcuts', () => {
+		it('focuses the replacement canvas after switching mode or scope', () => {
+			renderView();
+			expect(screen.getByTestId('delegation-graph-view')).toHaveFocus();
+			switchMode('view');
+			expect(screen.getByTestId('document-graph-canvas')).toHaveFocus();
+			changeScope(PLATFORM_KEY);
+			expect(screen.getByTestId('document-graph-canvas')).toHaveFocus();
+		});
+
+		it.each(['view', 'edit'] as const)('cycles all layouts and wraps in %s mode', (mode) => {
+			initialMode = mode;
+			renderView();
+			const view = screen.getByTestId('delegation-graph-view');
+			for (const layout of ['hierarchical', 'force', 'radial', 'mindmap', 'lobes']) {
+				fireEvent.keyDown(view, { key: 'l' });
+				expect(layouts()[ALL_KEY].layout).toBe(layout);
+			}
+		});
+
+		it('uses the same hand-placement confirmation for L as the layout buttons', () => {
+			renderView();
+			drag('a', DRAGGED);
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'L' });
+			expect(screen.getByTestId('delegation-graph-confirm')).toBeInTheDocument();
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'l' });
+			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+		});
+
+		it('leaves selectors, text inputs, modified keys and composition alone', () => {
+			renderView();
+			const view = screen.getByTestId('delegation-graph-view');
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-scope'), { key: 'l' });
+			const input = document.createElement('input');
+			view.append(input);
+			fireEvent.keyDown(input, { key: 'l' });
+			for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'isComposing']) {
+				fireEvent.keyDown(view, { key: 'l', [modifier]: true });
+			}
+			expect(layouts()[ALL_KEY]).toBeUndefined();
+		});
+
+		it('fits on F and persists scroll mode across view and edit', () => {
+			renderView();
+			act(() => vi.advanceTimersByTime(200));
+			flow.fitView.mockClear();
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'f' });
+			act(() => vi.advanceTimersByTime(200));
+			expect(flow.fitView).toHaveBeenCalledTimes(1);
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 's' });
+			expect(flow.props?.panOnScroll).toBe(true);
+			expect(flow.props?.zoomOnScroll).toBe(false);
+			switchMode('view');
+			expect(sharedCanvas.props?.scrollMode).toBe('pan');
+			const before = sharedCanvas.props?.fitToken;
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'F' });
+			expect(sharedCanvas.props?.fitToken).toBe((before ?? 0) + 1);
+		});
+
+		it('reverses scroll behavior on Shift inside the modal and clears it on blur', () => {
+			renderView();
+			const view = screen.getByTestId('delegation-graph-view');
+			expect(flow.props?.zoomOnScroll).toBe(true);
+			fireEvent.keyDown(view, { key: 'Shift', shiftKey: true });
+			expect(flow.props?.panOnScroll).toBe(true);
+			fireEvent.keyUp(view, { key: 'Shift', shiftKey: false });
+			expect(flow.props?.zoomOnScroll).toBe(true);
+			fireEvent.keyDown(view, { key: 's' });
+			fireEvent.keyDown(view, { key: 'Shift', shiftKey: true });
+			expect(flow.props?.zoomOnScroll).toBe(true);
+			fireEvent.blur(window);
+			expect(flow.props?.panOnScroll).toBe(true);
+		});
+
+		it('changes spacing in View and Edit without changing peer rosters', () => {
+			initialMode = 'view';
+			renderView();
+			const sessions = useSessionStore.getState().sessions;
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: '+' });
+			expect(sharedCanvas.props?.spacingScale).toBe(1.1);
+			switchMode('edit');
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: '=' });
+			expect(layouts()[ALL_KEY].layout).toBe('lobes');
+			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(ALL_IDS);
+			expect(useSessionStore.getState().sessions).toBe(sessions);
+		});
+
+		it('resizes manual placement without replacing it with an algorithm', () => {
+			renderView();
+			drag('a', DRAGGED);
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: '+' });
+			rest();
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+			expect(layouts()[ALL_KEY].positions.a.x).toBeGreaterThan(DRAGGED.x);
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: '-' });
+			rest();
+			expect(layouts()[ALL_KEY].positions.a.x).toBeCloseTo(DRAGGED.x);
+		});
 	});
 
 	describe('what it draws', () => {

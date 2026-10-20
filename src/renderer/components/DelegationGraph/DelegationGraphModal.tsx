@@ -20,7 +20,7 @@
  *     `select-text`.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Waypoints } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { DelegationGraphScope } from '../../../shared/delegationGraph';
@@ -46,12 +46,14 @@ export interface DelegationGraphModalProps {
 
 export function DelegationGraphModal({ theme, onClose, scope }: DelegationGraphModalProps) {
 	const defaultSize = useMemo(() => viewportModalSize(DEFAULT_SIZE_RATIO), []);
+	const graphRef = useRef<HTMLDivElement>(null);
 
 	return (
 		<Modal
 			theme={theme}
 			title="Delegation Graph"
 			priority={MODAL_PRIORITIES.DELEGATION_GRAPH}
+			initialFocusRef={graphRef}
 			onClose={onClose}
 			headerIcon={<Waypoints className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			showCloseButton={false}
@@ -67,6 +69,7 @@ export function DelegationGraphModal({ theme, onClose, scope }: DelegationGraphM
 			{/* The view reads its scope once, on mount. Keyed by the scope, a second
 			    open that asks for another scope shows that scope. */}
 			<DelegationGraphView
+				focusRef={graphRef}
 				key={scope ? scopeStorageKey(scope) : 'default'}
 				theme={theme}
 				initialScope={scope}

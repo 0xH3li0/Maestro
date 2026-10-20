@@ -252,7 +252,9 @@ Point a session at one file and the conversation is about that file. Three ways 
 - **Talk with Document** in the **Files panel** right-click menu.
 - **File: Talk with Document** in the command palette, while a file preview is the active tab.
 
-The conversation is held with the agent whose workspace the file is in. The first thing you say opens a new tab named after the file, with the document handed over as the core context, and everything after that continues in the same tab, even if you click away to another one. The agent is not limited to the file: it reads whatever else it needs and uses its tools normally. It just starts from your document rather than from nothing.
+Starting a document session opens the file preview and its chat panel. You can close the panel while continuing to speak; starting another session opens it again.
+
+The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one when needed and continuing it even if you click away to another tab. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
 
 The HUD names the **file** rather than the agent while a document session is running, because what you want confirmed before speaking is which document you are talking about.
 

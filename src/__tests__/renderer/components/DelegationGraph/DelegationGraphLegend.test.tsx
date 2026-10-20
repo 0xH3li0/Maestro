@@ -21,6 +21,45 @@ const STATS: DelegationGraphStats = {
 };
 
 describe('DelegationGraphLegend', () => {
+	it('exposes the shared shortcuts as clickable controls', () => {
+		const onCycleLayout = vi.fn();
+		const onFit = vi.fn();
+		const onToggleScroll = vi.fn();
+		const onIncreaseSpacing = vi.fn();
+		const onDecreaseSpacing = vi.fn();
+		render(
+			<DelegationGraphLegend
+				theme={mockTheme}
+				stats={STATS}
+				onClose={vi.fn()}
+				onCycleLayout={onCycleLayout}
+				onFit={onFit}
+				onToggleScroll={onToggleScroll}
+				onIncreaseSpacing={onIncreaseSpacing}
+				onDecreaseSpacing={onDecreaseSpacing}
+			/>
+		);
+		const shortcuts = within(screen.getByRole('region', { name: 'Legend' }));
+		for (const label of [
+			'Cycle layout',
+			'Fit graph',
+			'Switch scroll mode',
+			'More spacing',
+			'Less spacing',
+		]) {
+			fireEvent.click(shortcuts.getByRole('button', { name: new RegExp(label) }));
+		}
+		for (const handler of [
+			onCycleLayout,
+			onFit,
+			onToggleScroll,
+			onIncreaseSpacing,
+			onDecreaseSpacing,
+		]) {
+			expect(handler).toHaveBeenCalledTimes(1);
+		}
+	});
+
 	it('describes cluster navigation without showing editor-only node states in View', () => {
 		render(<DelegationGraphLegend theme={mockTheme} stats={STATS} onClose={vi.fn()} mode="view" />);
 		expect(screen.getByText(/Double-click an agent/)).toBeInTheDocument();

@@ -86,8 +86,10 @@ export function SpokenNoticesSetting({ theme }: SpokenNoticesSettingProps) {
 				<Megaphone className="w-3 h-3" />
 				Speak When an Agent Finishes
 			</label>
-			<div className="flex flex-wrap items-center gap-2">
-				<ToggleButtonGroup options={MODE_OPTIONS} value={mode} onChange={setMode} theme={theme} />
+			<div className="flex gap-2">
+				<div className="flex-1 min-w-0">
+					<ToggleButtonGroup options={MODE_OPTIONS} value={mode} onChange={setMode} theme={theme} />
+				</div>
 				<button
 					onClick={() => void runTest()}
 					disabled={testing}

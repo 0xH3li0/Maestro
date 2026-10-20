@@ -10,6 +10,7 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RefObject } from 'react';
 import type { DelegationGraphScope } from '../../../../shared/delegationGraph';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -20,12 +21,18 @@ const view = vi.hoisted(() => ({ mounts: 0 }));
 vi.mock('../../../../renderer/components/DelegationGraph/DelegationGraphView', async () => {
 	const React = await import('react');
 	return {
-		DelegationGraphView: ({ initialScope }: { initialScope?: DelegationGraphScope }) => {
+		DelegationGraphView: ({
+			initialScope,
+			focusRef,
+		}: {
+			initialScope?: DelegationGraphScope;
+			focusRef?: RefObject<HTMLDivElement>;
+		}) => {
 			React.useEffect(() => {
 				view.mounts += 1;
 			}, []);
 			return (
-				<div data-testid="delegation-graph-view-stub">
+				<div ref={focusRef} tabIndex={-1} data-testid="delegation-graph-view-stub">
 					{initialScope ? JSON.stringify(initialScope) : 'every agent'}
 				</div>
 			);
@@ -72,6 +79,11 @@ beforeEach(() => {
 });
 
 describe('DelegationGraphModal', () => {
+	it('focuses the graph so its shortcuts work as soon as it opens', async () => {
+		renderModal();
+		await waitFor(() => expect(screen.getByTestId('delegation-graph-view-stub')).toHaveFocus());
+	});
+
 	it('renders the graph inside a dialog named Delegation Graph', () => {
 		renderModal();
 

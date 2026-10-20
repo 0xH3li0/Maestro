@@ -7,7 +7,7 @@
  * the same refusal into the same toast.
  */
 
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { canTalkWithDocument, talkWithDocument } from '../../../renderer/services/documentVoice';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -24,6 +24,7 @@ const SESSION_ID = 'agent-1';
 const DOC_PATH = '/repo/docs/system-overview.md';
 
 let start: Mock;
+let openFile: Mock;
 
 function enableVoice(enabled: boolean): void {
 	useSettingsStore.setState({
@@ -36,6 +37,8 @@ function enableVoice(enabled: boolean): void {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	openFile = vi.fn();
+	window.addEventListener('maestro:openFileTab', openFile);
 
 	start = vi.fn(async () => ({
 		snapshot: { scope: { kind: 'document', sessionId: SESSION_ID, path: DOC_PATH } },
@@ -52,6 +55,10 @@ beforeEach(() => {
 	enableVoice(true);
 });
 
+afterEach(() => {
+	window.removeEventListener('maestro:openFileTab', openFile);
+});
+
 describe('canTalkWithDocument', () => {
 	it('follows the A Cappella Encore flag', () => {
 		expect(canTalkWithDocument()).toBe(true);
@@ -64,6 +71,10 @@ describe('talkWithDocument', () => {
 	it('opens a document-scoped session on the active agent', async () => {
 		await talkWithDocument({ path: DOC_PATH });
 
+		expect(openFile).toHaveBeenCalledWith(
+			expect.objectContaining({ detail: { sessionId: SESSION_ID, filePath: DOC_PATH } })
+		);
+		expect(openFile.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]);
 		expect(start).toHaveBeenCalledWith({
 			kind: 'document',
 			sessionId: SESSION_ID,
@@ -79,6 +90,9 @@ describe('talkWithDocument', () => {
 
 		await talkWithDocument({ path: DOC_PATH, sessionId: 'agent-2' });
 
+		expect(openFile).toHaveBeenCalledWith(
+			expect.objectContaining({ detail: { sessionId: 'agent-2', filePath: DOC_PATH } })
+		);
 		expect(start).toHaveBeenCalledWith({
 			kind: 'document',
 			sessionId: 'agent-2',
@@ -99,6 +113,7 @@ describe('talkWithDocument', () => {
 		await talkWithDocument({ path: DOC_PATH });
 
 		expect(start).not.toHaveBeenCalled();
+		expect(openFile).not.toHaveBeenCalled();
 	});
 
 	it('says so when there is no agent to hold the conversation', async () => {
@@ -107,6 +122,7 @@ describe('talkWithDocument', () => {
 		await talkWithDocument({ path: DOC_PATH });
 
 		expect(start).not.toHaveBeenCalled();
+		expect(openFile).not.toHaveBeenCalled();
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'No agent to talk to' })
 		);

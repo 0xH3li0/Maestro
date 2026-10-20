@@ -772,7 +772,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					</div>
 
 					{/* Bottom toolbar row */}
-					<div className="flex justify-between items-center px-2 pb-2 pt-1">
+					<div className="mt-auto flex justify-between items-center px-2 pb-2 pt-1">
 						{/* Left side - action buttons */}
 						<div className="flex gap-1 items-center">
 							{onOpenPromptComposer && (

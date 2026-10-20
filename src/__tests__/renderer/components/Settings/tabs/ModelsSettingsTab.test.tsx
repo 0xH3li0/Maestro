@@ -129,14 +129,50 @@ describe('ModelsSettingsTab', () => {
 		for (const panel of MODELS_SETTINGS_PANELS.filter((panel) => panel !== 'overview')) {
 			expect(screen.getByTestId(`models-overview-panel-${panel}`)).toBeInTheDocument();
 		}
-		// The Library card spans two columns so the five cards fill whole rows.
-		expect(screen.getByTestId('models-overview-panel-library')).toHaveStyle({
-			gridColumn: 'span 2',
+		// Infrastructure fills the first row; the two systems share the second.
+		const cards = screen.getAllByTestId(/^models-overview-panel-/);
+		expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+			'Open Library',
+			'Open Sources',
+			'Open Gateway',
+			'Open System One',
+			'Open System Two',
+		]);
+		expect(cards[0].parentElement).toHaveStyle({
+			gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
 		});
+		for (const card of cards.slice(0, 3)) {
+			expect(card).toHaveStyle({ gridColumn: 'span 2' });
+		}
+		for (const card of cards.slice(3)) {
+			expect(card).toHaveStyle({ gridColumn: 'span 3' });
+		}
 		// The memory tile fills in once the hardware is read.
 		await waitFor(() => expect(within(stats).queryByText('...')).toBeNull());
 		// Opening the Overview reads; it downloads and probes nothing.
 		expect(window.maestro.localModels.download).not.toHaveBeenCalled();
+	});
+
+	it('keeps Gateway on its own row in a narrow Overview', async () => {
+		const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(480);
+		try {
+			render(<Harness />);
+			const gateway = screen.getByRole('button', { name: 'Open Gateway' });
+			expect(gateway.parentElement).toHaveStyle({
+				gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+			});
+			expect(gateway).toHaveStyle({ gridColumn: '1 / -1' });
+			for (const panel of ['Library', 'Sources', 'System One', 'System Two']) {
+				expect(screen.getByRole('button', { name: `Open ${panel}` })).toHaveStyle({
+					gridColumn: 'span 2',
+				});
+			}
+			await waitFor(() =>
+				expect(within(screen.getByTestId('models-overview-stats')).queryByText('...')).toBeNull()
+			);
+		} finally {
+			width.mockRestore();
+		}
 	});
 
 	it('warns about a model that failed verification, and jumps to its section', async () => {

@@ -74,6 +74,15 @@ export async function talkWithDocument({
 		return;
 	}
 
+	// Reuse the normal file-open path, including SSH reads and existing tabs.
+	// The preview opens its chat when this document gains the voice session, so
+	// it also works when reading the file finishes after voice has started.
+	window.dispatchEvent(
+		new CustomEvent('maestro:openFileTab', {
+			detail: { sessionId: agentSessionId, filePath: path },
+		})
+	);
+
 	useVoiceSessionStore.getState().setDismissed(false);
 	useVoiceUiStore.getState().setMinimized(false);
 

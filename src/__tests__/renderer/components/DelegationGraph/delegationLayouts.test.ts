@@ -11,6 +11,7 @@ import {
 	arrangeDelegationGraph,
 	computeDelegationLayout,
 	delegationMindMapData,
+	scaleDelegationPositions,
 } from '../../../../renderer/components/DelegationGraph/delegationLayouts';
 import {
 	DELEGATION_ALGORITHM_LAYOUTS,
@@ -141,6 +142,24 @@ describe('computeDelegationLayout', () => {
 			expect(overlappingPairs(positions)).toEqual([]);
 		});
 
+		it("keeps unrelated teams in separate rectangles, clear of each other's edges", () => {
+			const main = ['boss', 'dev1', 'dev2', 'qa', 'docs'];
+			const minX = Math.min(...main.map((id) => positions[id].x));
+			const maxX = Math.max(
+				...main.map((id) => positions[id].x + estimateAgentDelegationNodeWidth(id))
+			);
+			const minY = Math.min(...main.map((id) => positions[id].y));
+			const maxY = Math.max(...main.map((id) => positions[id].y + AGENT_DELEGATION_NODE_HEIGHT));
+			for (const id of ['x1', 'x2']) {
+				expect(
+					positions[id].x >= maxX ||
+						positions[id].x + estimateAgentDelegationNodeWidth(id) <= minX ||
+						positions[id].y >= maxY ||
+						positions[id].y + AGENT_DELEGATION_NODE_HEIGHT <= minY
+				).toBe(true);
+			}
+		});
+
 		// Most agents in a fleet have no peers. Handed to the algorithm they make
 		// one row dozens of nodes wide, or drift, so they are packed underneath.
 		it('packs the isolated agents in a block below the connected ones', () => {
@@ -221,12 +240,11 @@ describe('computeDelegationLayout', () => {
 			expect(ringTwo).toBeGreaterThan(ringOne);
 		});
 
-		it('puts agents with no path to the middle on one ring outside the rest', () => {
+		it('gives a disconnected team its own radial center', () => {
 			const positions = computeDelegationLayout('radial', TEAM);
-			const outer = distanceFromOrigin(positions, 'x1');
-
-			expect(distanceFromOrigin(positions, 'x2')).toBeCloseTo(outer);
-			expect(outer).toBeGreaterThan(distanceFromOrigin(positions, 'qa'));
+			const pair = computeDelegationLayout('radial', graph(['x1', 'x2'], [['x1', 'x2']]));
+			expect(positions.x2.x - positions.x1.x).toBeCloseTo(pair.x2.x - pair.x1.x);
+			expect(positions.x2.y - positions.x1.y).toBeCloseTo(pair.x2.y - pair.x1.y);
 		});
 
 		// A branch fans out from its own lead: an agent is nearer to the agent it
@@ -258,6 +276,43 @@ describe('computeDelegationLayout', () => {
 			expect(overlappingPairs(computeDelegationLayout('radial', model))).toEqual([]);
 		});
 	});
+
+	it.each(['mindmap', 'lobes'] as const)(
+		'reserves full card footprints in dense %s layouts',
+		(layout) => {
+			const names = Array.from(
+				{ length: 16 },
+				(_, index) => `Long worktree agent ${index} with a descriptive branch name`
+			);
+			const model = graph(
+				['hub', ...names],
+				names.flatMap(
+					(name): Array<[string, string]> => [
+						['hub', name],
+						[name, 'hub'],
+					]
+				)
+			);
+			expect(overlappingPairs(computeDelegationLayout(layout, model))).toEqual([]);
+		}
+	);
+
+	it('increases spacing while keeping card sizes and relationships unchanged', () => {
+		const model = graph(
+			['lead', 'left', 'right'],
+			[
+				['lead', 'left'],
+				['lead', 'right'],
+			]
+		);
+		const original = computeDelegationLayout('hierarchical', model);
+		const expanded = computeDelegationLayout('hierarchical', model, { spacingScale: 1.5 });
+		const gap = (positions: DelegationSavedPositions) =>
+			centerOf(positions, 'right').x - centerOf(positions, 'left').x;
+		expect(gap(expanded)).toBeCloseTo(gap(original) * 1.5);
+		expect(overlappingPairs(expanded)).toEqual([]);
+		expect(model.edges).toHaveLength(2);
+	});
 });
 
 describe('arrangeDelegationGraph', () => {
@@ -265,6 +320,13 @@ describe('arrangeDelegationGraph', () => {
 		boss: { x: 100, y: 100 },
 		dev1: { x: 100, y: 400 },
 	};
+
+	it('resizes saved placement without mutating its input or adding unsaved nodes', () => {
+		const scaled = scaleDelegationPositions(TEAM, SAVED, 1.5);
+		expect(SAVED).toEqual({ boss: { x: 100, y: 100 }, dev1: { x: 100, y: 400 } });
+		expect(Object.keys(scaled).sort()).toEqual(['boss', 'dev1']);
+		expect(scaleDelegationPositions(TEAM, scaled, 1 / 1.5).boss.x).toBeCloseTo(SAVED.boss.x);
+	});
 
 	it('returns the saved positions unchanged when every agent has one', () => {
 		const everyone = computeDelegationLayout('force', TEAM);

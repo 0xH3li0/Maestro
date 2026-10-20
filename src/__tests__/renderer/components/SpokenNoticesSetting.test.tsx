@@ -60,6 +60,12 @@ describe('SpokenNoticesSetting', () => {
 	it('offers the three modes and stores the one picked', () => {
 		render(<SpokenNoticesSetting theme={theme} />);
 
+		const modeArea = screen.getByRole('button', { name: 'Off' }).parentElement!.parentElement!;
+		expect(modeArea).toHaveClass('flex-1', 'min-w-0');
+		expect(modeArea.nextElementSibling).toBe(screen.getByTestId('spoken-notices-test'));
+		expect(modeArea.parentElement).toHaveClass('flex', 'gap-2');
+		expect(modeArea.parentElement).not.toHaveClass('flex-wrap', 'items-center');
+
 		fireEvent.click(screen.getByRole('button', { name: 'When Maestro is not focused' }));
 		expect(useSettingsStore.getState().spokenNotices).toBe('unfocused');
 		expect(window.maestro.settings.set).toHaveBeenCalledWith('spokenNotices', 'unfocused');

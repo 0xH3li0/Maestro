@@ -214,6 +214,10 @@ To learn more about one relationship or one agent:
 
 The layout control offers **Hierarchical** (top-down rows), **Force**, **Radial**, **Mind Map**, and **Lobes**. The global view defaults to **Lobes**, which groups linked communities, including disconnected clusters. Group and agent-cluster views default to **Hierarchical**. The graph remembers a layout you choose for each scope. **Fit** brings the whole graph into view, and the minimap provides an overview.
 
+In either mode, press **L** to cycle layouts, **F** to fit the graph, **S** to switch the scroll wheel between zoom and pan, and **+ / -** to increase or decrease node spacing. Hold **Shift** while scrolling to use the other scroll action. The legend includes clickable shortcut hints. **O** opens the selected agent's Peers tab; **Space** shows its connected cluster. In View, use the arrow keys to select agents. Shortcuts leave text fields and selectors alone, and cycling away from Manual asks before replacing your placement.
+
+Edit layouts keep disconnected teams in separate blocks and reserve room for the full agent cards. Mind Map and Lobes preserve their branches and communities when making room for cards. Apply a layout again to rearrange a saved graph with this spacing. Dense mutual relationships can still cross; select an agent to dim unrelated edges or show its connected cluster to reduce the graph's scope.
+
 You can drag any agent to a new place, in either mode. The scope is then marked **Manual**, and Maestro leaves every agent where you put it. Positions are saved for each scope separately and are still there after you restart the app. Manual placement hides the algorithm's cluster outlines. **Reset layout** forgets the arrangement and returns to Lobes globally, or Hierarchical for a group or agent cluster.
 
 Moving a box changes where an agent is drawn. It never changes who the agent can reach.

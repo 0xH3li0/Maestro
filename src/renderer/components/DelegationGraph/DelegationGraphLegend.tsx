@@ -13,6 +13,7 @@
 
 import { memo } from 'react';
 import { Plus, Unplug, X } from 'lucide-react';
+import { KeycapHint } from '../ui/Keycap';
 import type { Theme } from '../../types';
 import {
 	describeDelegationGraphStats,
@@ -37,6 +38,11 @@ export interface DelegationGraphLegendProps {
 	stats: DelegationGraphStats;
 	onClose: () => void;
 	mode?: 'view' | 'edit';
+	onCycleLayout?: () => void;
+	onFit?: () => void;
+	onToggleScroll?: () => void;
+	onIncreaseSpacing?: () => void;
+	onDecreaseSpacing?: () => void;
 }
 
 const EDGE_KINDS: readonly DelegationEdgeKind[] = ['consult', 'delegate', 'both'];
@@ -113,6 +119,11 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 	stats,
 	onClose,
 	mode = 'edit',
+	onCycleLayout,
+	onFit,
+	onToggleScroll,
+	onIncreaseSpacing,
+	onDecreaseSpacing,
 }: DelegationGraphLegendProps) {
 	const { colors } = theme;
 	const heading = { color: colors.textDim };
@@ -123,7 +134,7 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 			data-testid="delegation-graph-legend"
 			role="region"
 			aria-label="Legend"
-			className="absolute top-2 left-2 rounded-lg shadow-lg text-xs select-text"
+			className="absolute top-2 left-2 rounded-lg shadow-lg text-xs select-text max-h-[calc(100%-1rem)] overflow-y-auto"
 			style={{
 				width: 250,
 				zIndex: 5,
@@ -196,6 +207,26 @@ export const DelegationGraphLegend = memo(function DelegationGraphLegend({
 					</p>
 				)}
 
+				<section aria-label="Keyboard shortcuts">
+					<h4 className="font-medium mb-1.5" style={heading}>
+						Keyboard shortcuts
+					</h4>
+					<KeycapHint theme={theme} keys={['L']} label="Cycle layout" onClick={onCycleLayout} />
+					<KeycapHint theme={theme} keys={['F']} label="Fit graph" onClick={onFit} />
+					<KeycapHint
+						theme={theme}
+						keys={['S']}
+						label="Switch scroll mode"
+						onClick={onToggleScroll}
+					/>
+					<KeycapHint theme={theme} keys={['+']} label="More spacing" onClick={onIncreaseSpacing} />
+					<KeycapHint theme={theme} keys={['-']} label="Less spacing" onClick={onDecreaseSpacing} />
+					<KeycapHint theme={theme} keys={['O']} label="Open agent Peers" />
+					<KeycapHint theme={theme} keys={['Space']} label="Show connected cluster" />
+					{mode === 'view' && (
+						<KeycapHint theme={theme} keys={['↑', '↓', '←', '→']} label="Select agent" />
+					)}
+				</section>
 				<section data-testid="delegation-graph-stats" style={heading}>
 					{describeDelegationGraphStats(stats).map((line) => (
 						<div key={line}>{line}</div>

@@ -4,6 +4,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
@@ -1232,6 +1233,67 @@ describe('FilePreview', () => {
 	});
 
 	describe('embedded document chat', () => {
+		describe('Talk with Document shortcut', () => {
+			let originalVoiceEnabled: boolean;
+
+			beforeEach(() => {
+				originalVoiceEnabled = useSettingsStore.getState().encoreFeatures.aCappella;
+				useSettingsStore.setState({
+					encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, aCappella: true },
+				});
+				useVoiceSessionStore.getState().reset();
+			});
+
+			afterEach(() => {
+				useVoiceSessionStore.getState().reset();
+				useSettingsStore.setState({
+					encoreFeatures: {
+						...useSettingsStore.getState().encoreFeatures,
+						aCappella: originalVoiceEnabled,
+					},
+				});
+			});
+
+			it('opens the existing chat in voice when the preview is already mounted', () => {
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+				act(() => {
+					useVoiceSessionStore.setState({
+						state: 'listening',
+						scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+					});
+				});
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeInTheDocument();
+			});
+
+			it('opens chat after voice starts before the preview mounts and allows closing it', () => {
+				useVoiceSessionStore.setState({
+					state: 'listening',
+					scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+				});
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+				fireEvent.keyDown(screen.getByTestId('document-chat-input'), { key: 'Escape' });
+				act(() => useVoiceSessionStore.setState({ state: 'speaking' }));
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+				act(() => useVoiceSessionStore.setState({ sessionId: 'new-voice-session' }));
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+			});
+
+			it.each([
+				{ sessionId: 'other-agent', path: defaultProps.file.path },
+				{ sessionId: 'agent-1', path: '/test/other.md' },
+			])('does not open chat for another document scope: %o', (scope) => {
+				useVoiceSessionStore.setState({
+					state: 'listening',
+					scope: { kind: 'document', ...scope },
+				});
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+			});
+		});
+
 		it('docks outside the document scroller and stays open while reading', () => {
 			render(
 				<FilePreview
