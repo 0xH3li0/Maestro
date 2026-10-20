@@ -53,6 +53,7 @@ field still gets the old behaviour, and `--focus` restores it from the CLI.
 | `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
 | `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
 | `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
+| `tab reopen`                                      | `closed_tab_command` (`action: 'reopen'`)             | focuses                                 |
 | `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
 | `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
 | `create-agent`                                    | `create_session`                                      | selects the new agent                   |
@@ -290,6 +291,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Move an agent or a whole group to another window                                                                                                                                                                                                                                                                                                                 | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                                                                                                                                                                                                                                                                                    |
 | Create a worktree agent                                                                                                                                                                                                                                                                                                                                          | `create-worktree`                                                                                                                                                                                                                                                                                                                                                                                        |
 | New / close / rename a tab                                                                                                                                                                                                                                                                                                                                       | `tab new`, `tab close`, `tab rename`                                                                                                                                                                                                                                                                                                                                                                     |
+| Reopen Closed Tab (Cmd+Shift+T)                                                                                                                                                                                                                                                                                                                                  | `tab reopen [--index <n> \| --tab <id>]`, read with `tab closed`                                                                                                                                                                                                                                                                                                                                         |
 | Star a tab (Cmd+Shift+S)                                                                                                                                                                                                                                                                                                                                         | `tab star` / `tab unstar`                                                                                                                                                                                                                                                                                                                                                                                |
 | Mark a tab unread                                                                                                                                                                                                                                                                                                                                                | `tab unread` / `tab read`                                                                                                                                                                                                                                                                                                                                                                                |
 | Toggle Save to History                                                                                                                                                                                                                                                                                                                                           | `tab save-to-history`                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -442,41 +444,38 @@ Ranked by how often an agent is likely to hit them. Every entry is buildable
 work; UI actions left without a verb on purpose are listed under
 [Not mirrored by design](#not-mirrored-by-design).
 
-1. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
-   runtime-only and never persisted, so the CLI cannot see the stack to restore
-   from it. Closing this means persisting that history first.
-2. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
+1. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
    options (what to copy). `create-agent` can approximate it, but there is no
    one-shot duplicate.
-3. **Toggle Live mode** (`isLive`) for the web interface.
-4. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+2. **Toggle Live mode** (`isLive`) for the web interface.
+3. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation.
-5. **Auto Run state in a CLI-built support package.** The desktop's Create
+4. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-6. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+5. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-7. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+6. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
    reachable over the WS bridge. Every mode IS reachable from the CLI through
    the prompt's wording, which `inferMentionTiming()` reads on every path, so
    this is a convenience gap, not a capability gap. Closing it means threading
    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-8. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+7. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
    Cue modal panel could render its gaps directly; it is CLI first because it
    exists for unattended servers, where nobody opens the desktop.
-9. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+8. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
    have no CLI read. An agent needs one to check plan usage, and it is also
    how an agent would verify a provider login (see **Log in to a provider
    account** under Not mirrored by design).

@@ -1745,6 +1745,28 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
 
+## `maestro-cli tab closed`
+
+List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
+
+| Option             | Description                                                    | Default |
+| ------------------ | -------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
+| `--json`           | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli tab reopen`
+
+Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop)   | -       |
+| `--index <n>`      | Position from "tab closed" (0 = newest)                          | -       |
+| `--tab <tab-id>`   | The id the tab had when it was closed (exact or unique prefix)   | -       |
+| `--background`     | Restore the tab without moving the view (agent and tab stay put) | -       |
+| `--focus`          | Switch to the restored tab (default)                             | -       |
+| `--json`           | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli create-ssh-remote <name>`
 
 Create a new SSH remote configuration

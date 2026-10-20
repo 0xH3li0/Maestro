@@ -82,6 +82,7 @@ Maestro's own system prompt tells agents to **pass `--background` by default** a
 | `open-terminal`             | switches to the new terminal                |
 | `open-browser`              | switches to the new browser tab             |
 | `tab new`                   | switches to the new tab                     |
+| `tab reopen`                | switches to the restored tab                |
 | `dispatch --new-tab`        | **background** (as it always was)           |
 | `dispatch` (no `--new-tab`) | selects the target agent                    |
 | `create-agent`              | selects the new agent                       |
@@ -824,12 +825,21 @@ maestro-cli tab enter-to-send <tab-id> false    # "inherit" = global setting
 maestro-cli tab move <tab-id> first
 maestro-cli tab move <tab-id> 2
 
+# Reopen a closed tab, as Cmd+Shift+T does. "tab closed" lists the stack,
+# newest first; reopen takes the newest, or one entry by --index or --tab.
+maestro-cli tab closed -a <agent-id>
+maestro-cli tab reopen -a <agent-id>
+maestro-cli tab reopen -a <agent-id> --index 2
+maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
+
 # Pin an agent to the Bookmarks section at the top of the Left Bar
 maestro-cli bookmark <agent-id>
 maestro-cli unbookmark <agent-id>
 ```
 
-`tab new` and `switch-mode` both take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
+`tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
+
+`tab new`, `tab reopen`, and `switch-mode` take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`). Every verb that takes a `<tab-id>` also accepts the literal `active`, which resolves to the tab the agent currently has selected - `-a <agent-id>` says whose, and without it the CLI uses the agent the desktop has focused.
 
