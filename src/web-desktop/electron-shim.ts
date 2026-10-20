@@ -36,6 +36,7 @@ const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission';
 // IPC queries follow the preload getter/list/read naming convention. The
 // non-prefixed query methods below are explicit exceptions, not error filters.
 const READ_ONLY_CHANNELS = new Set([
+	'acappella:input-devices',
 	'plugins:contributions',
 	'agentRun:events',
 	'agentRun:show',

@@ -17,10 +17,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import {
 	deviceLabel,
 	useVoiceInputDevices,
 } from '../../../../renderer/components/ACappella/useVoiceInputDevices';
+
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+}));
 
 /** The pushed-update handler the hook registered, so a test can drive it. */
 function pushHandler(): (devices: Array<{ deviceId: string; label: string }>) => void {
@@ -52,6 +57,7 @@ function inputs(list: Array<{ deviceId: string; label: string }>): MediaDeviceIn
 describe('useVoiceInputDevices', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		media = new FakeMediaDevices();
 		Object.defineProperty(navigator, 'mediaDevices', { value: media, configurable: true });
 
@@ -114,6 +120,24 @@ describe('useVoiceInputDevices', () => {
 		await waitFor(() => expect(result.current.loading).toBe(false));
 		expect(window.maestro.voice.inputDevices).not.toHaveBeenCalled();
 		expect(media.enumerateDevices).not.toHaveBeenCalled();
+	});
+
+	it('does not access desktop microphones or enumerate browser devices over the web', async () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		const { result } = renderHook(() => useVoiceInputDevices(true));
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await act(async () => {
+			media.dispatchEvent(new Event('devicechange'));
+			await result.current.select('phone-mic');
+		});
+
+		expect(window.maestro.voice.inputDevices).not.toHaveBeenCalled();
+		expect(window.maestro.voice.onInputDevices).not.toHaveBeenCalled();
+		expect(window.maestro.voice.setInputDevice).not.toHaveBeenCalled();
+		expect(media.enumerateDevices).not.toHaveBeenCalled();
+		expect(result.current.devices).toEqual([]);
+		expect(result.current.selectedId).toBe('system-default');
 	});
 
 	it('re-reads on a push, which is how redacted labels are ever filled in', async () => {

@@ -30,6 +30,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ACAPPELLA_SYSTEM_DEFAULT_INPUT } from '../../../shared/acappella/audio-host';
 import { listInputDevices } from '../../acappella-audio/capture';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 export interface VoiceInputDevice {
 	deviceId: string;
@@ -60,6 +61,9 @@ export function deviceLabel(device: VoiceInputDevice, index: number): string {
 }
 
 export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
+	// These pickers configure the desktop audio host. A browser's microphones
+	// belong to its separate voice client and cannot configure the host.
+	const devicesEnabled = enabled && !isWebDesktop();
 	const [devices, setDevices] = useState<VoiceInputDevice[]>([]);
 	const [selectedId, setSelectedId] = useState<string>(ACAPPELLA_SYSTEM_DEFAULT_INPUT);
 	const [loading, setLoading] = useState(true);
@@ -82,7 +86,7 @@ export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
 	}, []);
 
 	useEffect(() => {
-		if (!enabled) {
+		if (!devicesEnabled) {
 			setLoading(false);
 			return;
 		}
@@ -119,16 +123,17 @@ export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
 			cancelled = true;
 			unsubscribe();
 		};
-	}, [enabled, refresh]);
+	}, [devicesEnabled, refresh]);
 
 	// Hot-plugging a headset has to move the list even with no session running,
 	// and main only hears about that through the audio host it has not opened.
 	useEventListener('devicechange', () => void refresh(), {
 		target: typeof navigator === 'undefined' ? null : (navigator.mediaDevices ?? null),
-		enabled,
+		enabled: devicesEnabled,
 	});
 
 	const select = useCallback(async (deviceId: string) => {
+		if (isWebDesktop()) return;
 		// Optimistic, with the rollback target read from a ref rather than captured:
 		// a callback that closed over `selectedId` would either be rebuilt on every
 		// render or restore a device the user had already moved on from.
