@@ -733,6 +733,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+			renameTabGroupShortcut: tabShortcuts?.renameTabGroup,
 		}),
 		...buildTileCommands({
 			activeSession,

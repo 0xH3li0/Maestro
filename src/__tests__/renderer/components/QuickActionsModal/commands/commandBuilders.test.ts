@@ -670,6 +670,21 @@ describe('QuickActions command builders', () => {
 			}).map((a) => a.id);
 			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
 		});
+
+		it('shows the live Rename Tab Group binding on the rename entry', () => {
+			const { session } = groupSession('match');
+			const shortcut = {
+				id: 'renameTabGroup',
+				label: 'Rename Tab Group',
+				keys: ['Meta', 'Alt', 'g'],
+			};
+			const rename = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				renameTabGroupShortcut: shortcut,
+			}).find((a) => a.id === 'renameTabGroup');
+			expect(rename?.shortcut).toBe(shortcut);
+		});
 	});
 });
 

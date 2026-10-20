@@ -335,7 +335,10 @@ export const GroupTabChip = memo(function GroupTabChip({
 								style={{ color: theme.colors.textMain }}
 							>
 								<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								Rename group
+								Rename Tab Group
+								{tabShortcuts.renameTabGroup && (
+									<ShortcutHint keys={tabShortcuts.renameTabGroup.keys} theme={theme} />
+								)}
 							</button>
 						)}
 						{onSetEmoji && (

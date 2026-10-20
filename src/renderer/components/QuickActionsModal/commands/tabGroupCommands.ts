@@ -1,4 +1,4 @@
-import type { Session } from '../../../types';
+import type { Session, Shortcut } from '../../../types';
 import type { QuickAction } from '../types';
 import { useModalStore } from '../../../stores/modalStore';
 import { updateSessionWith } from '../../../stores/sessionStore';
@@ -7,6 +7,8 @@ import { breakApartGroup } from '../../../utils/panelLayout';
 interface BuildTabGroupCommandsArgs {
 	activeSession: Session | undefined;
 	setQuickActionOpen: (open: boolean) => void;
+	/** Live user binding for Rename Tab Group (unbound by default) */
+	renameTabGroupShortcut?: Shortcut;
 }
 
 /**
@@ -22,6 +24,7 @@ interface BuildTabGroupCommandsArgs {
 export function buildTabGroupCommands({
 	activeSession,
 	setQuickActionOpen,
+	renameTabGroupShortcut,
 }: BuildTabGroupCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
 	const groupId = activeSession?.activeGroupId;
@@ -33,6 +36,7 @@ export function buildTabGroupCommands({
 		id: 'renameTabGroup',
 		label: 'Rename Tab Group',
 		subtext: `Rename "${group.name}"`,
+		shortcut: renameTabGroupShortcut,
 		action: () => {
 			// Reuse the shared rename-tab modal, seeded with the group id. On commit,
 			// handleRenameTab detects the group id and routes to the group-rename action.
