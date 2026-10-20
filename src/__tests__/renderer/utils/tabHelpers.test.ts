@@ -3478,6 +3478,38 @@ describe('tabHelpers', () => {
 			expect(reopenUnifiedClosedTab(session)).toBeNull();
 		});
 
+		it('reopens a deeper entry by index and keeps the others in order (tab reopen --index)', () => {
+			const entry = (id: string) => ({
+				type: 'file' as const,
+				tab: createMockFileTab({ id, path: `/test/${id}.ts` }),
+				unifiedIndex: 1,
+				closedAt: 1,
+			});
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [],
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [entry('a'), entry('b'), entry('c')],
+			});
+
+			const result = reopenUnifiedClosedTab(session, 1)!;
+
+			expect(result.session.filePreviewTabs[0].path).toBe('/test/b.ts');
+			expect(result.session.unifiedClosedTabHistory.map((e) => e.tab.id)).toEqual(['a', 'c']);
+			expect(reopenUnifiedClosedTab(session, 3)).toBeNull();
+			expect(reopenUnifiedClosedTab(session, -1)).toBeNull();
+		});
+
+		it('does not fall back to the legacy stack for a non-zero index', () => {
+			const session = createMockSession({
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [{ tab: createMockTab({ id: 'legacy' }), index: 0, closedAt: 1 }],
+			});
+			expect(reopenUnifiedClosedTab(session, 1)).toBeNull();
+			expect(reopenUnifiedClosedTab(session)).not.toBeNull();
+		});
+
 		it('reopens file tab from unified history', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
 			const closedFileTab = createMockFileTab({ id: 'closed-file', path: '/test/closed.ts' });

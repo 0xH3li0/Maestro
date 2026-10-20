@@ -112,6 +112,7 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleClosedTabCommand } from './closedTabs';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
@@ -336,6 +337,10 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'closed_tab_command':
+				handleClosedTabCommand(this.ctx, client, message);
 				break;
 
 			case 'computer_history_command':

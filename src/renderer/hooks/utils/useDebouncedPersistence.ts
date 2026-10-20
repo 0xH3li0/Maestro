@@ -337,8 +337,12 @@ export interface UseDebouncedPersistenceReturn {
 	 * `isPending` flag are both still stale - the no-arg path would flush old
 	 * data or nothing at all. Passing the post-mutation sessions snapshot lets
 	 * the flush persist the just-made change without waiting for the debounce.
+	 *
+	 * Resolves once the write is done (a failed write is logged and still
+	 * resolves; `isPending` stays set for the retry). Callers that must answer
+	 * only after the change is on disk, like `maestro-cli tab reopen`, await it.
 	 */
-	flushNow: (latestSessions?: Session[]) => void;
+	flushNow: (latestSessions?: Session[]) => Promise<void>;
 }
 
 /** Default debounce delay in milliseconds */
@@ -414,6 +418,9 @@ export function useDebouncedPersistence(
 	const flushingRef = useRef(false);
 	// A forced membership save must not disappear behind an older in-flight write.
 	const flushRequestedRef = useRef(false);
+	// Callers of a flush that was folded into the rerun above: they resolve when
+	// that rerun has written, not when the older in-flight write lands.
+	const rerunWaitersRef = useRef<Array<() => void>>([]);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
 	// Captured from the successful initial load. If this hook did not observe
@@ -540,7 +547,7 @@ export function useDebouncedPersistence(
 	const persistSessions = useCallback(async (): Promise<void> => {
 		if (flushingRef.current) {
 			flushRequestedRef.current = true;
-			return;
+			return new Promise<void>((resolve) => rerunWaitersRef.current.push(resolve));
 		}
 
 		flushingRef.current = true;
@@ -573,9 +580,14 @@ export function useDebouncedPersistence(
 			// still pending. Next mutation OR beforeunload will retry.
 		} finally {
 			flushingRef.current = false;
+			const waiters = rerunWaitersRef.current;
+			rerunWaitersRef.current = [];
+			const release = () => waiters.forEach((resolve) => resolve());
 			if (flushRequestedRef.current) {
 				flushRequestedRef.current = false;
-				void persistSessions();
+				void persistSessions().then(release);
+			} else {
+				release();
 			}
 		}
 	}, [persistInternal]);
@@ -603,14 +615,14 @@ export function useDebouncedPersistence(
 			// diffs against the baseline, so a no-op flush is harmless.
 			if (latestSessions) {
 				sessionsRef.current = latestSessions;
-				persistSessions();
-				return;
+				return persistSessions();
 			}
 
 			// No snapshot: only flush if there are known pending changes.
 			if (isPendingRef.current) {
-				persistSessions();
+				return persistSessions();
 			}
+			return Promise.resolve();
 		},
 		[persistSessions]
 	);

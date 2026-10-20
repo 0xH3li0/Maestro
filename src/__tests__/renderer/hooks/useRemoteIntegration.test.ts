@@ -128,6 +128,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteClosedTabCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteThroughputGaugeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
@@ -252,6 +255,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteClosedTabCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteClosedTabCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteClosedTabCommandResponse: vi.fn(),
 		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteThroughputGaugeCommandHandler = handler;
 			return () => {};
@@ -2523,6 +2531,60 @@ describe('useRemoteIntegration', () => {
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
 				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote closed-tab command', () => {
+		// `maestro-cli tab closed` / `tab reopen` block on this reply. The
+		// service is covered in closedTabCommands.test.ts; this pins the wiring.
+		it('lists the live stack on its response channel', async () => {
+			const closed = createMockTab({ id: 'closed-1', name: 'Old chat' });
+			const session = createMockSession({
+				id: 'session-1',
+				unifiedClosedTabHistory: [{ type: 'ai', tab: closed, unifiedIndex: 1, closedAt: 100 }],
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteClosedTabCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'closed-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteClosedTabCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(send).toHaveBeenCalledWith('closed-response', {
+					success: true,
+					closedTabs: [
+						{ index: 0, type: 'ai', label: 'Old chat', tabId: 'closed-1', closedAt: 100 },
+					],
+				})
+			);
+		});
+
+		it('answers an empty stack with a failure rather than silence', async () => {
+			const session = createMockSession({ id: 'session-1', unifiedClosedTabHistory: [] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteClosedTabCommandHandler?.(
+					{ action: 'reopen', sessionId: 'session-1' },
+					'closed-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteClosedTabCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(send).toHaveBeenCalledWith('closed-response', {
+					success: false,
+					error: 'No closed tabs to reopen',
+				})
 			);
 		});
 	});

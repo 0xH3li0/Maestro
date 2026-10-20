@@ -31,9 +31,11 @@ import {
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
@@ -1114,6 +1116,26 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// `maestro-cli tab closed` / `tab reopen`. This window owns the agent's
+		// live closed-tab stack, so it lists and reopens through the same
+		// function Cmd+Shift+T calls. Async: a reopen answers after the tab's
+		// content is read back and the change is flushed.
+		const unsubscribeClosedTabCommand = window.maestro.process.onRemoteClosedTabCommand(
+			(request, responseChannel) => {
+				const reply = (result: ClosedTabCommandResult) =>
+					window.maestro.process.sendRemoteClosedTabCommandResponse(responseChannel, result);
+				runRemoteClosedTabCommand(request, { selectAgent: setActiveSessionId })
+					.then(reply)
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Closed-tab command failed', undefined, error);
+						reply({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
@@ -1405,6 +1427,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
+			unsubscribeClosedTabCommand();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

@@ -232,6 +232,63 @@ describe('useDebouncedPersistence', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// flushNow resolves when the write is done (maestro-cli tab reopen awaits it)
+	// -----------------------------------------------------------------------
+	describe('flushNow promise', () => {
+		function gateWrites() {
+			const releases: Array<() => void> = [];
+			const write = () => new Promise<boolean>((resolve) => releases.push(() => resolve(true)));
+			vi.mocked(window.maestro.sessions.setAll).mockImplementation(write);
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(write);
+			return releases;
+		}
+
+		afterEach(() => {
+			// clearAllMocks keeps implementations; put the setup defaults back.
+			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(undefined as never);
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
+		});
+
+		it('resolves only after the write has finished', async () => {
+			const releases = gateWrites();
+			const hook = renderPersistence(makeInitialLoadRef(true));
+			let done = false;
+
+			const flushed = hook.result.current.flushNow([makeSession()]).then(() => {
+				done = true;
+			});
+			await vi.waitFor(() => expect(releases).toHaveLength(1));
+			expect(done).toBe(false);
+
+			releases[0]();
+			await flushed;
+			expect(done).toBe(true);
+		});
+
+		it('a flush asked for mid-write resolves after the rerun, not the older write', async () => {
+			const releases = gateWrites();
+			const hook = renderPersistence(makeInitialLoadRef(true));
+			const session = makeSession();
+
+			const first = hook.result.current.flushNow([session]);
+			await vi.waitFor(() => expect(releases).toHaveLength(1));
+			let secondDone = false;
+			const second = hook.result.current.flushNow([{ ...session, name: 'Renamed' }]).then(() => {
+				secondDone = true;
+			});
+
+			releases[0]();
+			await first;
+			await vi.waitFor(() => expect(releases).toHaveLength(2));
+			expect(secondDone).toBe(false);
+
+			releases[1]();
+			await second;
+			expect(secondDone).toBe(true);
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// prepareSessionForPersistence (tested indirectly through hook flush)
 	// -----------------------------------------------------------------------
 	describe('prepareSessionForPersistence (via hook flush)', () => {
@@ -593,7 +650,9 @@ describe('useDebouncedPersistence', () => {
 				seedSessions([session]);
 				const { result } = renderPersistence(initialLoadRef);
 
-				act(() => result.current.flushNow(useSessionStore.getState().sessions));
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);

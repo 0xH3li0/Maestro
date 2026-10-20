@@ -232,6 +232,7 @@ import type { FloatingWidgetsApi } from '../main/preload/floatingWidgets';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
 import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
@@ -608,6 +609,14 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli tab closed` / `tab reopen` requests; returns unsubscribe.
+		onRemoteClosedTabCommand: (
+			callback: (request: ClosedTabCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteClosedTabCommandResponse: (
+			responseChannel: string,
+			result: ClosedTabCommandResult
+		) => void;
 		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
 		onRemoteThroughputGaugeCommand: (
 			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void

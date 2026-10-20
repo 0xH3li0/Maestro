@@ -11,6 +11,10 @@ import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type {
+	ClosedTabCommandRequest,
+	ClosedTabCommandResult,
+} from '../../shared/closedTabCommands';
+import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
@@ -420,6 +424,15 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * One closed-tab verb (`maestro-cli tab closed` / `tab reopen`), forwarded to
+ * the renderer that owns the agent - it holds the live closed-tab stack - and
+ * answered with what it found or restored. Resolves rather than rejects on a
+ * miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ClosedTabCommandCallback = (
+	request: ClosedTabCommandRequest
+) => Promise<ClosedTabCommandResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than

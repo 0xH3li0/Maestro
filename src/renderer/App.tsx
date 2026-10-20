@@ -168,6 +168,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
 import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
@@ -2200,6 +2201,10 @@ function MaestroConsoleInner() {
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
 	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(initialLoadComplete);
+	useEffect(() => {
+		registerSessionPersistenceFlush(flushSessionPersistence);
+		return () => registerSessionPersistenceFlush(null);
+	}, [flushSessionPersistence]);
 
 	// Session lifecycle operations (rename, delete, star, unread, groups persistence, nav tracking)
 	// - provided by useSessionLifecycle hook (Phase 2H)

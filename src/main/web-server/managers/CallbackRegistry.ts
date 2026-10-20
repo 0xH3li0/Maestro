@@ -30,6 +30,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	ClosedTabCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -173,6 +174,10 @@ import type {
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type {
+	ClosedTabCommandRequest,
+	ClosedTabCommandResult,
+} from '../../../shared/closedTabCommands';
+import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
@@ -215,6 +220,7 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	closedTabCommand: ClosedTabCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
@@ -332,6 +338,7 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		closedTabCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
@@ -540,6 +547,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Snooze is not configured' };
 		}
 		return this.callbacks.snoozeCommand(request);
+	}
+
+	async closedTabCommand(request: ClosedTabCommandRequest): Promise<ClosedTabCommandResult> {
+		if (!this.callbacks.closedTabCommand) {
+			return { success: false, error: 'Reopening closed tabs is not configured' };
+		}
+		return this.callbacks.closedTabCommand(request);
 	}
 
 	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
@@ -1318,6 +1332,10 @@ export class CallbackRegistry {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbacks.snoozeCommand = callback;
+	}
+
+	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
+		this.callbacks.closedTabCommand = callback;
 	}
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {

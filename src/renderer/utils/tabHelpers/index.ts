@@ -2200,13 +2200,20 @@ export function reopenClosedAiTabById(
 /**
  * Reopen the most recently closed tab into the standalone tab strip.
  *
+ * `index` picks a deeper entry of the stack (`maestro-cli tab reopen --index`);
+ * the default 0 is the Cmd+Shift+T head. An index past the end returns null.
+ *
  * Tiling-aware callers should use `reopenClosedTabWithTiling` in panelLayout.ts,
  * which layers the tile restore on top of this (the dependency only works that
  * way round - panelLayout imports from this module, never the reverse).
  */
-export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTabResult | null {
+export function reopenUnifiedClosedTab(
+	session: Session,
+	index = 0
+): ReopenUnifiedClosedTabResult | null {
 	// Check if there's anything in the unified history
 	if (!session.unifiedClosedTabHistory || session.unifiedClosedTabHistory.length === 0) {
+		if (index !== 0) return null;
 		// Fall back to legacy closedTabHistory for backwards compatibility
 		const legacyResult = reopenClosedTab(session);
 		if (legacyResult) {
@@ -2220,8 +2227,11 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 		return null;
 	}
 
-	// Pop the most recently closed tab from unified history
-	const [closedEntry, ...remainingHistory] = session.unifiedClosedTabHistory;
+	// Take the chosen entry (the most recently closed one by default) off the stack
+	const history = session.unifiedClosedTabHistory;
+	if (!Number.isInteger(index) || index < 0 || index >= history.length) return null;
+	const closedEntry = history[index];
+	const remainingHistory = [...history.slice(0, index), ...history.slice(index + 1)];
 
 	if (closedEntry.type === 'ai') {
 		// Restoring an AI tab. The shared helper handles orphan re-attach and
