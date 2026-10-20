@@ -196,6 +196,9 @@ import {
 	tabShow,
 	tabClosed,
 	tabReopen,
+	tabCompact,
+	tabMerge,
+	tabTransfer,
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
@@ -2207,6 +2210,36 @@ tab
 	.option('--focus', 'Switch to the restored tab (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabReopen(options));
+
+tabTargetOptions(tab.command('compact [tab-id]'))
+	.description(
+		'Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id'
+	)
+	.option('--background', 'Keep the source tab selected (no view change, no toast)')
+	.option('--focus', 'Switch to the compacted tab (default)')
+	.action((tabId, options) => tabCompact(tabId, options));
+
+tabTargetOptions(tab.command('merge [tab-id]'))
+	.description(
+		"Context: Merge Into - send a tab's transcript, verbatim, into another agent's tab (default: the active tab)"
+	)
+	.requiredOption('--into <agent>', 'The agent whose tab receives the context')
+	.option('--target-tab <tab-id>', "The tab that receives it (default: that agent's active tab)")
+	.option(
+		'--background',
+		'Stay put; the context waits on the target tab and sends when that tab is opened'
+	)
+	.option('--focus', 'Jump to the target tab, which sends the context (default)')
+	.action((tabId, options) => tabMerge(tabId, options));
+
+tabTargetOptions(tab.command('transfer [tab-id]'))
+	.description(
+		"Context: Send to Agent - open a new tab in another agent carrying this tab's transcript, verbatim"
+	)
+	.requiredOption('--to <agent>', 'The agent that gets the new tab')
+	.option('--background', 'Add the tab without selecting it or the agent')
+	.option('--focus', 'Jump to the new tab (default)')
+	.action((tabId, options) => tabTransfer(tabId, options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program

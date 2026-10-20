@@ -79,6 +79,25 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 */
 	'tab-reopen': false,
 	/**
+	 * maestro-cli tab compact - Context: Compact selects the compacted tab it
+	 * creates, as the overlay menu does. `--background` keeps the source tab
+	 * selected and skips the success toast; the new tab still lands beside it.
+	 */
+	'tab-compact': false,
+	/**
+	 * maestro-cli tab merge - Context: Merge Into jumps to the target tab, whose
+	 * composer then sends the merged context. `--background` stays put and leaves
+	 * the context staged on the target tab: it sends when that tab is next opened
+	 * (at once if it is the tab on screen). The reply says which happened.
+	 */
+	'tab-merge': false,
+	/**
+	 * maestro-cli tab transfer - Context: Send to Agent jumps to the new tab in
+	 * the target agent. `--background` adds the tab without selecting it or the
+	 * agent; the context is sent (or queued behind a busy target) either way.
+	 */
+	'tab-transfer': false,
+	/**
 	 * maestro-cli dispatch --new-tab - the one verb that is ALREADY background by
 	 * default, with `--focus` to opt out. Leaving it alone is the same
 	 * no-default-changes rule as everything else here, not an exception to it.
