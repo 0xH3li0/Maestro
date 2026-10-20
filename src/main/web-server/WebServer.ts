@@ -192,9 +192,7 @@ import type {
 	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
-	MergeContextCallback,
-	TransferContextCallback,
-	SummarizeContextCallback,
+	TabContextOpCallback,
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
@@ -222,6 +220,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
+import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
@@ -942,16 +941,8 @@ export class WebServer {
 		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
-	setMergeContextCallback(callback: MergeContextCallback): void {
-		this.callbackRegistry.setMergeContextCallback(callback);
-	}
-
-	setTransferContextCallback(callback: TransferContextCallback): void {
-		this.callbackRegistry.setTransferContextCallback(callback);
-	}
-
-	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
-		this.callbackRegistry.setSummarizeContextCallback(callback);
+	setTabContextOpCallback(callback: TabContextOpCallback): void {
+		this.callbackRegistry.setTabContextOpCallback(callback);
 	}
 
 	setCreateGistCallback(callback: CreateGistCallback): void {
@@ -1517,12 +1508,8 @@ export class WebServer {
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
 				this.callbackRegistry.steerGroupChat(chatId, request),
-			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
-			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
-			summarizeContext: async (sessionId: string) =>
-				this.callbackRegistry.summarizeContext(sessionId),
+			tabContextOp: async (request: TabContextOpRequest) =>
+				this.callbackRegistry.tabContextOp(request),
 			createGist: async (
 				sessionId: string,
 				description: string,

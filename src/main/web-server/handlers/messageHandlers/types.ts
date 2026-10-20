@@ -50,6 +50,7 @@ import type {
 	RenameTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -402,9 +403,7 @@ export interface MessageHandlerCallbacks {
 		chatId: string,
 		request: SteerGroupChatRequest
 	) => Promise<GroupChatSteerResult>;
-	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
-	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
-	summarizeContext: (sessionId: string) => Promise<boolean>;
+	tabContextOp: TabContextOpCallback;
 	createGist: (
 		sessionId: string,
 		description: string,

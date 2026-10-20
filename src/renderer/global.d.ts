@@ -234,6 +234,7 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../shared/tabContextOps';
 import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
@@ -617,6 +618,26 @@ interface MaestroAPI {
 		sendRemoteClosedTabCommandResponse: (
 			responseChannel: string,
 			result: ClosedTabCommandResult
+		) => void;
+		// `maestro-cli tab compact|merge|transfer` (the overlay menu's Context items);
+		// each returns unsubscribe and is answered with a TabContextOpResult.
+		onRemoteSummarizeContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSummarizeContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		) => void;
+		onRemoteMergeContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeContextResponse: (responseChannel: string, result: TabContextOpResult) => void;
+		onRemoteTransferContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteTransferContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
 		) => void;
 		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
 		onRemoteThroughputGaugeCommand: (

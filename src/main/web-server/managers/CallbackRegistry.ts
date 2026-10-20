@@ -134,9 +134,7 @@ import type {
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
 	GroupChatState,
-	MergeContextCallback,
-	TransferContextCallback,
-	SummarizeContextCallback,
+	TabContextOpCallback,
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
@@ -177,6 +175,7 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -292,9 +291,7 @@ export interface WebServerCallbacks {
 	stopGroupChat: StopGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
-	mergeContext: MergeContextCallback | null;
-	transferContext: TransferContextCallback | null;
-	summarizeContext: SummarizeContextCallback | null;
+	tabContextOp: TabContextOpCallback | null;
 	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
@@ -408,9 +405,7 @@ export class CallbackRegistry {
 		stopGroupChat: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
-		mergeContext: null,
-		transferContext: null,
-		summarizeContext: null,
+		tabContextOp: null,
 		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
@@ -1085,19 +1080,11 @@ export class CallbackRegistry {
 		return this.callbacks.steerGroupChat(chatId, request);
 	}
 
-	async mergeContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
-		if (!this.callbacks.mergeContext) return false;
-		return this.callbacks.mergeContext(sourceSessionId, targetSessionId);
-	}
-
-	async transferContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
-		if (!this.callbacks.transferContext) return false;
-		return this.callbacks.transferContext(sourceSessionId, targetSessionId);
-	}
-
-	async summarizeContext(sessionId: string): Promise<boolean> {
-		if (!this.callbacks.summarizeContext) return false;
-		return this.callbacks.summarizeContext(sessionId);
+	async tabContextOp(request: TabContextOpRequest): Promise<TabContextOpResult> {
+		if (!this.callbacks.tabContextOp) {
+			return { success: false, error: 'Context operations not configured' };
+		}
+		return this.callbacks.tabContextOp(request);
 	}
 
 	async createGist(
@@ -1610,16 +1597,8 @@ export class CallbackRegistry {
 		this.callbacks.steerGroupChat = callback;
 	}
 
-	setMergeContextCallback(callback: MergeContextCallback): void {
-		this.callbacks.mergeContext = callback;
-	}
-
-	setTransferContextCallback(callback: TransferContextCallback): void {
-		this.callbacks.transferContext = callback;
-	}
-
-	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
-		this.callbacks.summarizeContext = callback;
+	setTabContextOpCallback(callback: TabContextOpCallback): void {
+		this.callbacks.tabContextOp = callback;
 	}
 
 	setCreateGistCallback(callback: CreateGistCallback): void {

@@ -130,9 +130,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setStopGroupChatCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setSteerGroupChatCallback = vi.fn();
-			setMergeContextCallback = vi.fn();
-			setTransferContextCallback = vi.fn();
-			setSummarizeContextCallback = vi.fn();
+			setTabContextOpCallback = vi.fn();
 			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
@@ -1886,48 +1884,100 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
-	describe('contextOpsCallbacks smoke', () => {
-		it('setMergeContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setMergeContextCallback.mock.calls[0][0];
-
-			void callback('source-1', 'target-1');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:mergeContext',
-				'source-1',
-				'target-1',
-				expect.any(String)
+	describe('contextOpsCallbacks', () => {
+		const contextOpCallback = () => {
+			const server = createWebServerFactory(deps)() as any;
+			return server.setTabContextOpCallback.mock.calls[0][0];
+		};
+		/** Answer the renderer side of one context-op request. */
+		const answer = (channel: string, reply: unknown, webContents = mockWebContents) => {
+			const request = (webContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === channel
 			);
+			const responseChannel = request?.[request.length - 1];
+			vi.mocked(ipcMain.on).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
+				{ sender: webContents } as never,
+				reply
+			);
+			return request;
+		};
+
+		it.each([
+			['compact', 'remote:summarizeContext'],
+			['merge', 'remote:mergeContext'],
+			['transfer', 'remote:transferContext'],
+		] as const)('forwards %s on %s with the request object', async (op, channel) => {
+			const request = {
+				op,
+				sessionId: 'source-1',
+				tabId: 'tab-1',
+				...(op !== 'compact' ? { targetSessionId: 'target-1' } : {}),
+			};
+			const resultPromise = contextOpCallback()(request);
+
+			const sent = answer(channel, { success: true, newTabId: 'tab-new' });
+
+			expect(sent?.[1]).toEqual(request);
+			await expect(resultPromise).resolves.toEqual({ success: true, newTabId: 'tab-new' });
 		});
 
-		it('setTransferContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setTransferContextCallback.mock.calls[0][0];
+		it('sends to the window that owns the source agent', () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
 
-			void callback('source-1', 'target-1');
+			void contextOpCallback()({ op: 'compact', sessionId: 'session-2' });
 
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:transferContext',
-				'source-1',
-				'target-1',
-				expect.any(String)
-			);
-		});
-
-		it('setSummarizeContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setSummarizeContextCallback.mock.calls[0][0];
-
-			void callback('session-1');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(deps.getWindowForSession).toHaveBeenCalledWith('session-2');
+			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:summarizeContext',
-				'session-1',
+				{ op: 'compact', sessionId: 'session-2' },
 				expect.any(String)
+			);
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+
+		it('turns a malformed reply into a failure', async () => {
+			const resultPromise = contextOpCallback()({ op: 'compact', sessionId: 'session-1' });
+
+			answer('remote:summarizeContext', 'yes');
+
+			await expect(resultPromise).resolves.toMatchObject({ success: false });
+		});
+
+		it('answers timedOut when the renderer outlives the budget', async () => {
+			vi.useFakeTimers();
+			try {
+				const resultPromise = contextOpCallback()({
+					op: 'merge',
+					sessionId: 'source-1',
+					targetSessionId: 'target-1',
+				});
+
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				await expect(resultPromise).resolves.toMatchObject({
+					success: false,
+					timedOut: true,
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('fails at once when no window is available', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+
+			await expect(contextOpCallback()({ op: 'compact', sessionId: 'session-1' })).resolves.toEqual(
+				{ success: false, error: 'Maestro window is not available' }
 			);
 		});
 	});

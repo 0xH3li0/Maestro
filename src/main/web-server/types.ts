@@ -14,6 +14,7 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -1476,15 +1477,11 @@ export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 // Context Management Callback Types
 // =============================================================================
 
-export type MergeContextCallback = (
-	sourceSessionId: string,
-	targetSessionId: string
-) => Promise<boolean>;
-export type TransferContextCallback = (
-	sourceSessionId: string,
-	targetSessionId: string
-) => Promise<boolean>;
-export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * One overlay-menu context operation (Compact, Merge Into, Send to Agent),
+ * answered by the renderer that owns the source agent.
+ */
+export type TabContextOpCallback = (request: TabContextOpRequest) => Promise<TabContextOpResult>;
 export type CreateGistCallback = (
 	sessionId: string,
 	description: string,
