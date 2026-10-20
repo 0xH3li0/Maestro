@@ -681,6 +681,10 @@ maestro-cli update-group <group-id> --clear-parent
 # Remove appearance you set earlier
 maestro-cli update-group <group-id> --clear-icon --clear-color
 
+# Fold a group in the Left Bar, or unfold it
+maestro-cli update-group <group-id> --collapse
+maestro-cli update-group <group-id> --expand
+
 # Remove an (empty) group
 maestro-cli remove-group <group-id>
 
@@ -709,7 +713,9 @@ Notes on behavior:
 - **Icon and color survive the Groups+ feature gate.** Turning Groups+ off falls back to the legacy emoji presentation but does not discard stored icon and color; turning it back on restores them.
 - Group nesting is one level deep: a root group can hold child groups, but a child group cannot hold its own children.
 
-`maestro-cli list groups --json` reports `icon`, `color`, and `parentGroupId` alongside the existing fields, so a script can read back exactly what it set.
+`maestro-cli list groups --json` reports `icon`, `color`, `parentGroupId`, and `collapsed` alongside the existing fields, so a script can read back exactly what it set.
+
+There is no reorder verb: the Left Bar sorts groups and agents by name, and a drag only changes membership. Move an agent with `update-agent --group` (its worktree children travel with it), and a group with `update-group --parent` / `--clear-parent`.
 
 `create-group` flags:
 
@@ -734,6 +740,8 @@ Notes on behavior:
 | `--clear-icon`        | Remove the icon                                                         | -       |
 | `--clear-color`       | Remove the label color                                                  | -       |
 | `--clear-parent`      | Promote the group to the top level                                      | -       |
+| `--collapse`          | Fold the group in the Left Bar. Mutually exclusive with `--expand`      | -       |
+| `--expand`            | Unfold a collapsed group in the Left Bar                                | -       |
 | `--json`              | Machine-readable JSON output                                            | -       |
 
 `remove-group` flags:
@@ -888,6 +896,27 @@ The stop goes through the same code as the desktop: it signals the tab's own pro
 The verb is safe to re-run. When nothing is running it prints `Nothing to stop` and exits 0 (`wasBusy: false` in JSON). A failed stop exits 1, and a desktop that never answered exits 5. The JSON payload is `{ success, agentId, tabId, wasBusy, interrupted, stoppedTabIds, exited }`. `exited: true` means the stopped processes are gone, so `maestro-cli tab show <tab-id>` (the `State` row) and `maestro-cli session list --json` (field `state`) already read idle; when it is `false`, the CLI prints the `tab show` command to check again.
 
 An agent cannot interrupt itself from inside its own turn: the verb refuses the caller's own agent, or `--tab` naming the caller's own tab. A sibling tab of the same agent is allowed.
+
+### Live Mode (`live`)
+
+Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network. It requires the desktop app to be running.
+
+```bash
+# On or off, the web interface URL, and Remote Control
+maestro-cli live status
+maestro-cli live status --json
+
+# Turn it on or off (each answers with the resulting status)
+maestro-cli live on
+maestro-cli live off --json
+```
+
+`live on` and `live off` run the same main-process switch as the pill, so every open window's pill follows. They are explicit set verbs, safe to re-run: when Live is already in the requested state nothing restarts, the access token stays the same, and the command prints `Live mode was already on` (`changed: false` in JSON). `live off` also stops Remote Control (the tunnel), as the pill does; `live on` never starts it.
+
+Switching Live replaces the server the CLI talks to, so the desktop answers first and then switches. The CLI reconnects and polls `live status` until the switch finishes (up to 20 seconds), then prints the result. A failed switch exits 1 with the desktop's error, which `live status` also shows as `Last error` until the next success. The JSON payload is `{ success, changed, live, url, remoteControl, revision, lastError? }`; `live status --json` has the same fields without `changed`.
+
+> [!WARNING]
+> `live on` opens the web interface to every device that can reach this machine on the network, with no confirmation, the same as clicking the pill. Anyone holding the URL (it carries the access token) can drive your agents.
 
 ### Listing Resources
 

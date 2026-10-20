@@ -290,6 +290,9 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Create / rename / remove a group                                                                                                                                                                                                                                                                                                                                 | `create-group`, `rename-group`, `remove-group`                                                                                                                                                                                                                                                                                                                                                           |
 | Group emoji, icon, color, and nesting                                                                                                                                                                                                                                                                                                                            | `create-group --emoji/--icon/--color/--parent`, `update-group`                                                                                                                                                                                                                                                                                                                                           |
 | Hide / show a group in the Left Bar                                                                                                                                                                                                                                                                                                                              | `update-group --hide / --show` (read back with `list groups --json`)                                                                                                                                                                                                                                                                                                                                     |
+| Collapse / expand a group                                                                                                                                                                                                                                                                                                                                        | `update-group --collapse / --expand` (read back with `list groups --json`, field `collapsed`)                                                                                                                                                                                                                                                                                                            |
+| Reorder agents or groups in the Left Bar                                                                                                                                                                                                                                                                                                                         | No verb: the Left Bar sorts agents and groups by name and stores no order. A drag only changes membership: `update-agent --group` (worktree children move with the agent), `update-group --parent / --clear-parent`                                                                                                                                                                                      |
+| Live mode switch (web interface, the LIVE pill)                                                                                                                                                                                                                                                                                                                  | `live on`, `live off` (read with `live status`; `live off` also stops Remote Control, as the pill does)                                                                                                                                                                                                                                                                                                  |
 | Move an agent or a whole group to another window                                                                                                                                                                                                                                                                                                                 | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                                                                                                                                                                                                                                                                                    |
 | Create a worktree agent                                                                                                                                                                                                                                                                                                                                          | `create-worktree`                                                                                                                                                                                                                                                                                                                                                                                        |
 | New / close / rename a tab                                                                                                                                                                                                                                                                                                                                       | `tab new`, `tab close`, `tab rename`                                                                                                                                                                                                                                                                                                                                                                     |
@@ -446,35 +449,32 @@ Ranked by how often an agent is likely to hit them. Every entry is buildable
 work; UI actions left without a verb on purpose are listed under
 [Not mirrored by design](#not-mirrored-by-design).
 
-1. **Toggle Live mode** (`isLive`) for the web interface.
-2. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
-   presentation; low value for automation.
-3. **Auto Run state in a CLI-built support package.** The desktop's Create
+1. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-4. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+2. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-5. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+3. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
    reachable over the WS bridge. Every mode IS reachable from the CLI through
    the prompt's wording, which `inferMentionTiming()` reads on every path, so
    this is a convenience gap, not a capability gap. Closing it means threading
    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-6. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+4. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
    Cue modal panel could render its gaps directly; it is CLI first because it
    exists for unattended servers, where nobody opens the desktop.
-7. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+5. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
    have no CLI read. An agent needs one to check plan usage, and it is also
    how an agent would verify a provider login (see **Log in to a provider
    account** under Not mirrored by design).
@@ -499,7 +499,7 @@ still missing. Grouped, highest value first:
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
   logs (`logs`), reset stuck busy state, restart agent, retry.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
-- **Web access:** dashboard URL, QR pairing, tunnel.
+- **Web access:** QR pairing, tunnel (the web interface URL is `live status`).
 - **Updates:** check/download/install.
 - **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
 - **Media player:** play/pause/next/prev/seek/volume; list, remove, and reorder
@@ -548,7 +548,8 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   interface, and inspect access state in Connect another device / Manage access).
   These remain in the protected native host window as a deliberate human-consent
   design choice. Enabling a private listener requires the host owner's review;
-  no CLI verbs expose these controls.
+  no CLI verbs expose these controls. This is not Live mode: the LIVE pill
+  has no consent step, so `live on|off` mirrors it (see the Covered row).
 - **Run a DataviewJS block again, or Run once** (Run again on a block whose
   script timed out, crashed its sandbox, or failed to load; Run once on the
   trust prompt of a block in a vault that is not trusted, and Run on an

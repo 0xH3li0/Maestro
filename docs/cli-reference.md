@@ -1492,7 +1492,7 @@ Rename a group in the Maestro desktop app
 
 ## `maestro-cli update-group <group-id>`
 
-Update a group's name, icon, color, parent, or Left Bar visibility in the Maestro desktop app
+Update a group's name, icon, color, parent, Left Bar visibility, or collapsed state in the Maestro desktop app
 
 | Option                | Description                                                                                            | Default |
 | --------------------- | ------------------------------------------------------------------------------------------------------ | ------- |
@@ -1507,6 +1507,8 @@ Update a group's name, icon, color, parent, or Left Bar visibility in the Maestr
 | `--clear-parent`      | Promote the group to the top level                                                                     | -       |
 | `--hide`              | Park the group out of the Left Bar. Its agents stay reachable through search and the switcher          | -       |
 | `--show`              | Bring a hidden group back into the Left Bar                                                            | -       |
+| `--collapse`          | Fold the group in the Left Bar so its agents are tucked away                                           | -       |
+| `--expand`            | Unfold a collapsed group in the Left Bar                                                               | -       |
 | `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli create-worktree`
@@ -1615,6 +1617,36 @@ Stop an agent's running turn (every busy tab, like the Stop pill), or one tab's 
 | ---------------- | --------------------------------------------------------- | ------- |
 | `--tab <tab-id>` | Stop only this tab (exact id, unique prefix, or "active") | -       |
 | `--json`         | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli live`
+
+Read or switch Live mode (the web interface other devices on the network can open)
+
+## `maestro-cli live status`
+
+Show whether Live mode is on, its web interface URL, and Remote Control
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live on`
+
+Turn Live mode on, as the LIVE pill does (no-op when already on; answers with the status)
+
+| Option         | Description                                      | Default |
+| -------------- | ------------------------------------------------ | ------- |
+| `--background` | Accepted for uniformity; Live mode moves no view | -       |
+| `--json`       | Output as JSON (for scripting)                   | -       |
+
+## `maestro-cli live off`
+
+Turn Live mode off and stop Remote Control, as the LIVE pill does (no-op when already off)
+
+| Option         | Description                                      | Default |
+| -------------- | ------------------------------------------------ | ------- |
+| `--background` | Accepted for uniformity; Live mode moves no view | -       |
+| `--json`       | Output as JSON (for scripting)                   | -       |
 
 ## `maestro-cli tab`
 
