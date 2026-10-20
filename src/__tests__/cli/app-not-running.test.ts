@@ -154,6 +154,7 @@ import { tabClose, tabClosed, tabNew, tabRename, tabReopen, tabShow } from '../.
 import { themeSet } from '../../cli/commands/theme';
 import { updateAgent } from '../../cli/commands/update-agent';
 import { updateGroup } from '../../cli/commands/update-group';
+import { liveOff, liveOn, liveStatus } from '../../cli/commands/live';
 import { ask } from '../../cli/commands/ask';
 import { GLOSS_LEVELS } from '../../shared/themeGloss';
 
@@ -215,6 +216,13 @@ const rows: Row[] = [
 	{ name: 'tab reopen --index', run: (json) => tabReopen({ index: '1', json }) },
 	{ name: 'theme set', run: (json) => themeSet(['bgMain=#000000'], j(json)) },
 	{ name: 'update-group', run: (json) => updateGroup('group-1', { name: 'New', json }) },
+	{
+		name: 'update-group --collapse',
+		run: (json) => updateGroup('group-1', { collapse: true, json }),
+	},
+	{ name: 'live status', run: (json) => liveStatus(j(json)) },
+	{ name: 'live on', run: (json) => liveOn(j(json)) },
+	{ name: 'live off', run: (json) => liveOff(j(json)) },
 	// local fail / emitError helpers
 	{ name: 'ask', run: (json) => ask('agent-2', 'What?', j(json)) },
 	{
