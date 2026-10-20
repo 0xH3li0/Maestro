@@ -295,4 +295,29 @@ describe('maestro:remoteUpdateGroup', () => {
 		expect(resultingGroups(setGroups, storeState.groups)[0]).not.toHaveProperty('hidden');
 		expect(updateAck).toHaveBeenCalledWith('ch', true);
 	});
+
+	it('collapses a group and writes it to disk before acking', async () => {
+		storeState.groups = [group({ id: 'g1', collapsed: false })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { collapsed: true });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ collapsed: true });
+		expect(setAll).toHaveBeenCalledWith([expect.objectContaining({ id: 'g1', collapsed: true })]);
+		// `list groups --json` read right after the ack must see the new value.
+		expect(setAll.mock.invocationCallOrder[0]).toBeLessThan(updateAck.mock.invocationCallOrder[0]);
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
+
+	it('expands a collapsed group', async () => {
+		storeState.groups = [group({ id: 'g1', collapsed: true })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { collapsed: false });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ collapsed: false });
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
 });

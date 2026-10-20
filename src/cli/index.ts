@@ -1858,7 +1858,7 @@ program
 program
 	.command('update-group <group-id>')
 	.description(
-		"Update a group's name, icon, color, parent, or Left Bar visibility in the Maestro desktop app"
+		"Update a group's name, icon, color, parent, Left Bar visibility, or collapsed state in the Maestro desktop app"
 	)
 	.option('-n, --name <name>', 'New group name')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
@@ -1879,6 +1879,8 @@ program
 		'Park the group out of the Left Bar. Its agents stay reachable through search and the switcher'
 	)
 	.option('--show', 'Bring a hidden group back into the Left Bar')
+	.option('--collapse', 'Fold the group in the Left Bar so its agents are tucked away')
+	.option('--expand', 'Unfold a collapsed group in the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.hook('preAction', (_command, action) =>
 		requireEncoreForOptions('groupsPlus', action.opts(), GROUPS_PLUS_OPTION_KEYS)

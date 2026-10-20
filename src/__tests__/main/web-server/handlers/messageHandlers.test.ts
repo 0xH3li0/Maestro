@@ -5387,6 +5387,30 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
 		});
+
+		it('forwards a collapse request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: true });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: true });
+			});
+		});
+
+		it('forwards an expand request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: false });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: false });
+			});
+		});
+
+		it('rejects an update_group whose collapsed is not a boolean', () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: 1 });
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.message).toContain('Invalid collapsed');
+		});
 	});
 });
 

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { Session, Group } from '../../types';
 import {
+	setGroupCollapsed,
 	setGroupHidden,
 	setGroupParent as updateGroupParent,
 } from '../../../shared/groupHierarchy';
@@ -94,9 +95,10 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 */
 	const toggleGroup = useCallback(
 		(groupId: string) => {
-			setGroups((prev) =>
-				prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
-			);
+			setGroups((prev) => {
+				const group = prev.find((g) => g.id === groupId);
+				return group ? setGroupCollapsed(prev, groupId, !group.collapsed) : prev;
+			});
 		},
 		[setGroups]
 	);

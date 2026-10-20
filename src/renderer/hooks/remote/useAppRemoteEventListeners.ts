@@ -59,6 +59,7 @@ import {
 	canCreateGroupInside,
 	canSetGroupParent,
 	removeGroupAndPromoteChildren,
+	setGroupCollapsed,
 	setGroupHidden,
 	setGroupParent,
 } from '../../../shared/groupHierarchy';
@@ -111,6 +112,9 @@ function applyGroupUpdate(
 	}
 	if (request.hidden !== undefined) {
 		next = setGroupHidden(next, groupId, request.hidden);
+	}
+	if (request.collapsed !== undefined) {
+		next = setGroupCollapsed(next, groupId, request.collapsed);
 	}
 
 	return next.map((group) => {
@@ -2079,10 +2083,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		window.maestro.process.sendRemoteRenameGroupResponse(responseChannel, true);
 	});
 
-	// Handle a remote group update (name / appearance / parent). The payload is
-	// already validated by the WS handler; what only the renderer can decide is
-	// whether the group exists and whether the requested reparent is legal, so
-	// both are checked before any state is written.
+	// Handle a remote group update (name / appearance / parent / hidden /
+	// collapsed). The payload is already validated by the WS handler; what only
+	// the renderer can decide is whether the group exists and whether the
+	// requested reparent is legal, so both are checked before any state is
+	// written.
 	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
 		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
 			groupId: string;
