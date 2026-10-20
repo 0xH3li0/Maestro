@@ -753,10 +753,17 @@ export class TuiDriver extends EventEmitter {
 		return this.screenCapture;
 	}
 
-	async quit(): Promise<void> {
+	// `discardTypedInput`: the caller knows the typed prompt was never submitted.
+	// Typing `/quit` would append to it in the editor and the Enter would send
+	// "<prompt>/quit" to the model, so the TUI is signalled instead.
+	async quit(options: { discardTypedInput?: boolean } = {}): Promise<void> {
 		if (!this.ptyProcess || this.exited) return;
 		try {
-			this.ptyProcess.write('/quit\r');
+			if (options.discardTypedInput && this.inputTyped) {
+				killPty(this.ptyProcess, 'SIGTERM');
+			} else {
+				this.ptyProcess.write('/quit\r');
+			}
 		} catch {
 			// PTY may already be tearing down - fall through to the grace timer.
 		}
