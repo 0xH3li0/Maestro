@@ -2,13 +2,20 @@
 // addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
 // the same tab on follow-up calls without owning a persistent channel.
 
-import { resolveAgentId, readSettingValue } from '../services/storage';
+import {
+	resolveAgentId,
+	readSettingValue,
+	readLiveSessions,
+	readGroups,
+} from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
+import { parseMentionRoutingField, type MentionRouting } from '../../shared/crossAgentContext';
+import { resolveMentionedTargetSessionIds } from '../../shared/maestro-lib/mentions/roster';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -55,6 +62,12 @@ export interface DispatchOptions {
 	callbackPrompt?: string;
 	/** Give up and fire a `timeout` callback after this many seconds. */
 	callbackTimeout?: string;
+	/**
+	 * How the prompt's `@mentions` run (`parallel`, `consult-first`, `handoff`,
+	 * `only`), as if the composer's routing strip had been set. Without it the
+	 * wording decides, exactly as for a typed message.
+	 */
+	routing?: string;
 }
 
 /** Hard cap mirrored from the main-process registry (24h). */
@@ -257,6 +270,18 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	return { success: false, error: `Command failed: ${msg}`, code: 'COMMAND_FAILED' };
 }
 
+/** Whether `message` `@mentions` any live agent other than `agentId`. */
+function mentionsAnotherAgent(message: string, agentId: string): boolean {
+	return resolveMentionedTargetSessionIds(message, readLiveSessions(), readGroups(), agentId).some(
+		(id) => id !== agentId
+	);
+}
+
+/** The outgoing message field for `--routing`, empty when the wording decides. */
+function mentionRoutingFields(routing: MentionRouting | undefined): Record<string, unknown> {
+	return routing ? { mentionRouting: routing } : {};
+}
+
 /**
  * Run the dispatch flow. Exported separately from the CLI action so
  * programmatic callers (e.g., Maestro-Discord, Cue) and tests can invoke
@@ -318,6 +343,11 @@ export async function runDispatch(
 		};
 	}
 
+	const routingField = parseMentionRoutingField(options.routing);
+	if (!routingField.ok) {
+		return { success: false, error: `--routing: ${routingField.error}`, code: 'INVALID_OPTIONS' };
+	}
+
 	// --force is gated by the `allowConcurrentSend` setting. It's off by default
 	// because concurrent writes can interleave responses in the target tab.
 	if (options.force) {
@@ -342,6 +372,18 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
+	// A routing only steers the consults a message's `@mentions` start, so a
+	// message that mentions no other agent has nothing for it to route. Resolved
+	// with the roster functions the desktop's planner uses, over the same agents.
+	if (routingField.routing && !mentionsAnotherAgent(message, agentId)) {
+		return {
+			success: false,
+			error: `--routing ${routingField.routing} needs an @mention of another agent in the message; this message mentions none, so there is nothing to route`,
+			code: 'INVALID_OPTIONS',
+		};
+	}
+	const routingFields = mentionRoutingFields(routingField.routing);
+
 	// Dispatch runs in the background by default (no focus stealing); only an
 	// explicit `--focus` (Commander: focus === true) tells the desktop to switch
 	// to and focus the target agent/tab. The `background` bit is threaded to both
@@ -358,7 +400,15 @@ export async function runDispatch(
 
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
+		return runQueueDispatch(
+			agentId,
+			message,
+			options,
+			background,
+			callback.fields,
+			routingFields,
+			caller
+		);
 	}
 	try {
 		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
@@ -381,6 +431,7 @@ export async function runDispatch(
 						// target's tab strip. A focused tab is never hidden.
 						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
+						...routingFields,
 						...caller,
 					},
 					'new_ai_tab_with_prompt_result'
@@ -434,6 +485,7 @@ export async function runDispatch(
 					// spread below it.
 					...(background ? { background: true } : {}),
 					...callback.fields,
+					...routingFields,
 					...caller,
 				},
 				'command_result'
@@ -498,6 +550,7 @@ async function runQueueDispatch(
 	options: DispatchOptions,
 	background: boolean,
 	callbackFields: Record<string, unknown>,
+	routingFields: Record<string, unknown>,
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	try {
@@ -521,6 +574,7 @@ async function runQueueDispatch(
 					...(background ? { background: true } : {}),
 					...(options.held ? { held: true } : {}),
 					...callbackFields,
+					...routingFields,
 					...callerFields,
 				},
 				'enqueue_command_result'

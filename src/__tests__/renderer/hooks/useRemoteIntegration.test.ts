@@ -34,7 +34,10 @@ import { captureException } from '../../../renderer/utils/sentry';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
-vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) => ({
+	// The real `queuedMentionFields`, so a CLI-queued item is stamped by the same
+	// function a composer-queued one is.
+	...(await importOriginal<typeof import('../../../renderer/services/crossAgentMentions')>()),
 	planCrossAgentMentions: vi.fn(() => null),
 }));
 
@@ -677,6 +680,40 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote command handling', () => {
+		it('carries a dispatch --routing into the maestro:remoteCommand event', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'check with @Backend',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					true,
+					'consult-first',
+					'receipt-1'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						command: 'check with @Backend',
+						mentionRouting: 'consult-first',
+						receiptChannel: 'receipt-1',
+					}),
+				})
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('dispatches maestro:remoteCommand event when command is received', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
 			const deps = createDeps({ sessions: [session] });
@@ -836,6 +873,7 @@ describe('useRemoteIntegration', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined,
 					'receipt-1'
 				);
 			});
@@ -858,6 +896,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -885,6 +924,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -1608,6 +1648,62 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		it('stamps a dispatch --routing on the prompt a busy agent queues for the new tab', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy', executionQueue: [] });
+			useSessionStore.setState({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				routing: 'parallel',
+				inferredRouting: 'handoff',
+				routingSource: 'explicit',
+				suppressLocal: false,
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'then tell @Reviewer',
+					'chan-route',
+					true,
+					true,
+					'parallel'
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue[0]).toMatchObject({
+				text: 'then tell @Reviewer',
+				tabId: updated.aiTabs.at(-1)!.id,
+				mentionRouting: 'parallel',
+			});
+		});
+
+		it('forwards a dispatch --routing to the remote-command path on an idle agent', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'@Reviewer look',
+					'chan-route-idle',
+					true,
+					true,
+					'only'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ command: '@Reviewer look', mentionRouting: 'only' }),
+				})
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('refuses terminal targets before creating a tab', () => {
 			const session = createMockSession({ id: 'terminal-agent', toolType: 'terminal' });
 			const deps = createDeps({ sessions: [session] });
@@ -2077,13 +2173,104 @@ describe('useRemoteIntegration', () => {
 				);
 			});
 
-			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer check this', 'session-1');
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'@Reviewer check this',
+				'session-1',
+				undefined
+			);
+			// No --routing: nothing is stamped, so the drain still routes by wording.
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === 'session-1')?.executionQueue[0]
+					.mentionRouting
+			).toBeUndefined();
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.executionQueue[0]).toMatchObject({
 				text: '@Reviewer check this',
 				crossAgentMention: true,
 				crossAgentOnly: true,
 			});
+		});
+
+		it('stamps a dispatch --routing on the queued item, as the routing strip does', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				routing: 'handoff',
+				inferredRouting: 'parallel',
+				routingSource: 'explicit',
+				suppressLocal: false,
+			});
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'fix it, @Reviewer too',
+					'chan-r',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					'handoff'
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'fix it, @Reviewer too',
+				'session-1',
+				'handoff'
+			);
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue[0]).toMatchObject({
+				crossAgentMention: true,
+				crossAgentOnly: false,
+				mentionRouting: 'handoff',
+			});
+		});
+
+		it('hands a dispatch --routing to the shared remote-command path on an idle agent', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'@Reviewer look',
+					'chan-ri',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					'only'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ tabId: 'tab-1', mentionRouting: 'only' }),
+				})
+			);
+			dispatchEventSpy.mockRestore();
 		});
 
 		it('appends after existing items so ordering stays FIFO and position advances', () => {
@@ -2246,6 +2433,7 @@ describe('useRemoteIntegration', () => {
 				type: 'message' as const,
 				text: 'queued prompt',
 				tabName: 'PR review',
+				mentionRouting: 'handoff' as const,
 			};
 			const session = createMockSession({
 				id: 'session-1',
@@ -2270,7 +2458,14 @@ describe('useRemoteIntegration', () => {
 					queues: [
 						expect.objectContaining({
 							sessionId: 'session-1',
-							items: [expect.objectContaining({ id: 'q1', text: 'queued prompt' })],
+							// The picked routing is the read-back for `dispatch --routing`.
+							items: [
+								expect.objectContaining({
+									id: 'q1',
+									text: 'queued prompt',
+									mentionRouting: 'handoff',
+								}),
+							],
 						}),
 					],
 				})

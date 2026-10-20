@@ -12,6 +12,7 @@ import { armDispatchCallback } from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
+import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -72,6 +73,16 @@ export function handleSendCommand(
 		return;
 	}
 	const effectiveCommand = command ?? '';
+
+	// `dispatch --routing`: a routing the caller named but that is not one is
+	// refused, never dropped, so the prompt cannot run on the wording's routing
+	// behind a caller who asked for another.
+	const routingField = parseMentionRoutingField(message.mentionRouting);
+	if (!routingField.ok) {
+		ctx.sendError(client, routingField.error, { sessionId });
+		return;
+	}
+	const mentionRouting = routingField.routing;
 
 	// Get session details to check state and determine how to handle
 	const sessionDetail = ctx.callbacks.getSessionDetail?.(sessionId);
@@ -156,7 +167,8 @@ export function handleSendCommand(
 				requestedTabId,
 				force,
 				images,
-				background
+				background,
+				mentionRouting
 			)
 			.then((success) => {
 				if (!success) cancelArmedCallback();

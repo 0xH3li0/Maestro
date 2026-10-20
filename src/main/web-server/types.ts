@@ -36,6 +36,7 @@ import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { WebActingUser } from '../../shared/webLogin';
 import type {
 	ConcertoDesignerAction,
@@ -294,6 +295,12 @@ export interface WebClientMessage {
 	background?: boolean;
 	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
 	hidden?: boolean;
+	/**
+	 * `dispatch --routing`: how the prompt's `@mentions` run, as if the composer's
+	 * routing strip had been set. Accepted on send_command, new_ai_tab_with_prompt
+	 * and enqueue_command; untrusted until `parseMentionRoutingField` reads it.
+	 */
+	mentionRouting?: unknown;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
 	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
@@ -344,7 +351,9 @@ export type ExecuteCommandCallback = (
 	 * (the renderer selects it "for visual feedback"), so the web/mobile client and
 	 * every in-app caller keep focusing exactly as they do now.
 	 */
-	background?: boolean
+	background?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting
 ) => Promise<boolean>;
 
 /**
@@ -565,7 +574,9 @@ export type NewAITabWithPromptCallback = (
 	prompt: string,
 	background?: boolean,
 	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean
+	hidden?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -603,7 +614,9 @@ export type EnqueueCommandCallback = (
 	images?: string[],
 	background?: boolean,
 	/** Queue Held: always queue, paused, even on an idle agent. */
-	held?: boolean
+	held?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -619,6 +632,8 @@ export interface QueuedItemSnapshot {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
+	mentionRouting?: MentionRouting;
 }
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the

@@ -66,6 +66,7 @@ import type {
 } from '../../../cue-bundle-service';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
+import type { MentionRouting } from '../../../../shared/crossAgentContext';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -138,7 +139,8 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		mentionRouting?: MentionRouting
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -213,7 +215,8 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		prompt: string,
 		background?: boolean,
-		hidden?: boolean
+		hidden?: boolean,
+		mentionRouting?: MentionRouting
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
@@ -228,7 +231,8 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
-		held?: boolean
+		held?: boolean,
+		mentionRouting?: MentionRouting
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;

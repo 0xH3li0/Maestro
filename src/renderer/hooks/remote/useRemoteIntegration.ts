@@ -7,6 +7,7 @@ import { flushSync } from 'react-dom';
 import type { Session, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
@@ -356,6 +357,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
@@ -462,7 +464,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
+						detail: {
+							sessionId,
+							command,
+							inputMode,
+							tabId,
+							force,
+							images,
+							mentionRouting,
+							receiptChannel,
+						},
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -737,7 +748,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
 			) => {
 				const ack = (result: {
 					success: boolean;
@@ -824,6 +836,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						tabId: createdTabId,
 						text: prompt,
 						slashCommand: isSlashCommand,
+						mentionRouting,
 					});
 					if (!queued) {
 						logger.warn(
@@ -852,6 +865,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tabId: createdTabId,
 							// Unexpanded provider commands go to the provider as typed.
 							literalPrompt: commandName.startsWith('/'),
+							mentionRouting,
 						},
 					})
 				);
@@ -1202,7 +1216,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: MentionRouting
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1250,7 +1265,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						}
 						window.dispatchEvent(
 							new CustomEvent('maestro:remoteCommand', {
-								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+								detail: {
+									sessionId,
+									command,
+									inputMode: 'ai',
+									tabId: resolvedTabId,
+									images,
+									mentionRouting,
+								},
 							})
 						);
 						reply({ success: true, tabId: resolvedTabId, queued: false });
@@ -1268,6 +1290,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tab: targetTab,
 							text: command,
 							images,
+							mentionRouting,
 						}),
 						...(held && { paused: true }),
 					};
@@ -1326,6 +1349,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 							...(item.paused !== undefined ? { paused: item.paused } : {}),
+							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 						})),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {

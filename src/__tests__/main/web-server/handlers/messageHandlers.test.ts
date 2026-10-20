@@ -574,13 +574,52 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('forwards a dispatch --routing to executeCommand', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'check with @Backend first',
+				inputMode: 'ai',
+				mentionRouting: 'consult-first',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'check with @Backend first',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false,
+					'consult-first'
+				);
+			});
+		});
+
+		it('refuses an unknown routing instead of sending on the wording', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hi @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'sideways',
+			});
+
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Unknown mention routing');
 		});
 
 		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
@@ -659,7 +698,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -725,7 +765,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-explicit',
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -756,7 +797,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -795,7 +837,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -819,7 +862,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -845,7 +889,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -869,7 +914,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2582,6 +2628,40 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('forwards a dispatch --new-tab --routing to newAITabWithPrompt', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'only',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'@Backend look',
+					false,
+					false,
+					'only'
+				);
+			});
+		});
+
+		it('refuses an unknown routing before creating the tab', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'all',
+			});
+
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
+		});
+
 		it('should forward sessionId and prompt to callback', async () => {
 			handler.handleMessage(client, {
 				type: 'new_ai_tab_with_prompt',
@@ -2596,7 +2676,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2622,7 +2703,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2641,7 +2723,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -2660,7 +2743,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2971,7 +3055,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-1',
 					undefined,
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2984,6 +3069,45 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.itemId).toBe('item-1');
 				expect(response.tabId).toBe('tab-mock-123');
 			});
+		});
+
+		it('forwards a dispatch --queue --routing to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'handoff',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'then tell @Backend',
+					'ai',
+					undefined,
+					undefined,
+					false,
+					false,
+					'handoff'
+				);
+			});
+		});
+
+		it('refuses an unknown routing without queuing anything', () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 42,
+			});
+
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
 		});
 
 		it('rejects an enqueue with neither command nor images without calling the callback', () => {
@@ -3167,7 +3291,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					undefined,
 					false,
-					true
+					true,
+					undefined
 				);
 			});
 		});

@@ -383,6 +383,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -397,6 +398,7 @@ describe('CallbackRegistry', () => {
 				'session-5',
 				'npm test',
 				'terminal',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -417,6 +419,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -432,6 +435,7 @@ describe('CallbackRegistry', () => {
 				'follow up',
 				'ai',
 				'tab-xyz',
+				undefined,
 				undefined,
 				undefined,
 				undefined
@@ -450,6 +454,7 @@ describe('CallbackRegistry', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -476,6 +481,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				images,
+				undefined,
 				undefined
 			);
 		});

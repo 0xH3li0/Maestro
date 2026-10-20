@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import type { ConsultAgentResult } from '../types';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
 import {
 	INTERRUPT_TURN_EXIT_WAIT_MS,
@@ -103,7 +104,8 @@ export function registerCommandCallbacks(
 			tabId?: string,
 			force?: boolean,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			mentionRouting?: MentionRouting
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -147,7 +149,7 @@ export function registerCommandCallbacks(
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
 					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseRemoteCommandReceipt,
-					args: [sessionId, command, inputMode, tabId, force, images, background],
+					args: [sessionId, command, inputMode, tabId, force, images, background, mentionRouting],
 				}
 			);
 			if (!receipt.accepted) {

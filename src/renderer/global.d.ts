@@ -555,6 +555,7 @@ interface MaestroAPI {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				receiptChannel?: string
 			) => void
 		) => () => void;
@@ -896,7 +897,8 @@ interface MaestroAPI {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -941,7 +943,8 @@ interface MaestroAPI {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

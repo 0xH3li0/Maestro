@@ -14,6 +14,7 @@ import type {
 import { logger } from '../../utils/logger';
 import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -463,7 +464,8 @@ export class CallbackRegistry {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		mentionRouting?: MentionRouting
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -473,7 +475,8 @@ export class CallbackRegistry {
 			tabId,
 			force,
 			images,
-			background
+			background,
+			mentionRouting
 		);
 	}
 
@@ -675,10 +678,11 @@ export class CallbackRegistry {
 		sessionId: string,
 		prompt: string,
 		background?: boolean,
-		hidden?: boolean
+		hidden?: boolean,
+		mentionRouting?: MentionRouting
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, mentionRouting);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -700,7 +704,8 @@ export class CallbackRegistry {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
-		held?: boolean
+		held?: boolean,
+		mentionRouting?: MentionRouting
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -710,7 +715,8 @@ export class CallbackRegistry {
 			tabId,
 			images,
 			background,
-			held
+			held,
+			mentionRouting
 		);
 	}
 

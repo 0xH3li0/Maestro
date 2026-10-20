@@ -76,6 +76,7 @@ import type {
 	StartAutoRunCallback,
 	ControlAutoRunCallback,
 } from '../../shared/autoRunRemote';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { BatchRunConfig } from '../../shared/types';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -1311,7 +1312,8 @@ export class WebServer {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1320,7 +1322,8 @@ export class WebServer {
 					tabId,
 					force,
 					images,
-					background
+					background,
+					mentionRouting
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1374,8 +1377,16 @@ export class WebServer {
 				sessionId: string,
 				prompt: string,
 				background?: boolean,
-				hidden?: boolean
-			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, hidden),
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
+			) =>
+				this.callbackRegistry.newAITabWithPrompt(
+					sessionId,
+					prompt,
+					background,
+					hidden,
+					mentionRouting
+				),
 			interruptSession: (sessionId: string, tabId?: string) =>
 				this.callbackRegistry.interruptSession(sessionId, tabId),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
@@ -1389,7 +1400,8 @@ export class WebServer {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1398,7 +1410,8 @@ export class WebServer {
 					tabId,
 					images,
 					background,
-					held
+					held,
+					mentionRouting
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>

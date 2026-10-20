@@ -1750,7 +1750,30 @@ describe('web-server/web-server-factory', () => {
 				'tab-1',
 				undefined,
 				undefined,
+				undefined,
 				undefined
+			);
+		});
+
+		it('setEnqueueCommandCallback forwards a dispatch --routing to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+
+			void callback('session-1', 'tell @Backend', 'ai', 'tab-1', undefined, true, false, 'handoff');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'tell @Backend',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				'handoff'
 			);
 		});
 
@@ -2586,6 +2609,7 @@ describe('web-server/web-server-factory', () => {
 				'hello owner',
 				'ai',
 				'tab-1',
+				undefined,
 				undefined,
 				undefined,
 				undefined,

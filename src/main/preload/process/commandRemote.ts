@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 /**
  * Helper to log via the main process logger.
@@ -32,6 +33,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => void
 		): (() => void) => {
@@ -45,6 +47,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => {
 				log('Received remote:executeCommand IPC', {
@@ -55,10 +58,21 @@ export function createCommandRemoteApi() {
 					force,
 					imageCount: images?.length ?? 0,
 					background,
+					mentionRouting,
 					receiptChannel,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images, background, receiptChannel);
+					callback(
+						sessionId,
+						command,
+						inputMode,
+						tabId,
+						force,
+						images,
+						background,
+						mentionRouting,
+						receiptChannel
+					);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',

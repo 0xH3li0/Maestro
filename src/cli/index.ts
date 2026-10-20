@@ -583,6 +583,10 @@ program
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
+		'--routing <mode>',
+		"How the message's @mentions run, like the composer's routing strip: parallel (both answer, this agent waits for the reply), consult-first (the mentioned agent answers first), handoff (this agent's answer is sent on), or only (just the mentioned agents answer). Overrides what the wording implies. Requires an @mention of another agent in the message; read it back with `queue list`."
+	)
+	.option(
 		'--held',
 		"Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id."
 	)
