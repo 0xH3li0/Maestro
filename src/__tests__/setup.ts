@@ -596,6 +596,15 @@ const mockMaestro = {
 		persistCurrentToken: vi.fn().mockResolvedValue({ success: true }),
 		clearPersistentToken: vi.fn().mockResolvedValue({ success: true }),
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
+		getState: vi
+			.fn()
+			.mockResolvedValue({ live: false, url: null, remoteControl: false, revision: 0 }),
+		set: vi.fn().mockResolvedValue({
+			success: true,
+			changed: false,
+			status: { live: false, url: null, remoteControl: false, revision: 0 },
+		}),
+		onStateChanged: vi.fn(() => () => {}),
 	},
 	browserSession: {
 		onRelayRequest: vi.fn(() => () => {}),

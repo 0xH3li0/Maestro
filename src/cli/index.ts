@@ -89,6 +89,7 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
+import { liveStatus, liveOn, liveOff } from './commands/live';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
 import { createWorktree } from './commands/create-worktree';
@@ -2045,6 +2046,38 @@ program
 	.option('--tab <tab-id>', 'Stop only this tab (exact id, unique prefix, or "active")')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, options) => interrupt(agentId, options));
+
+// Live mode commands - the Left Bar LIVE pill: open the web interface to other
+// devices on the network, or close it. Explicit on/off, no toggle.
+const live = program
+	.command('live')
+	.description(
+		'Read or switch Live mode (the web interface other devices on the network can open)'
+	);
+
+live
+	.command('status')
+	.description('Show whether Live mode is on, its web interface URL, and Remote Control')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveStatus(options));
+
+live
+	.command('on')
+	.description(
+		'Turn Live mode on, as the LIVE pill does (no-op when already on; answers with the status)'
+	)
+	.option('--background', 'Accepted for uniformity; Live mode moves no view')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveOn(options));
+
+live
+	.command('off')
+	.description(
+		'Turn Live mode off and stop Remote Control, as the LIVE pill does (no-op when already off)'
+	)
+	.option('--background', 'Accepted for uniformity; Live mode moves no view')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveOff(options));
 
 // Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
 // takes <tab-id> also accepts the literal "active" (with -a to say whose).

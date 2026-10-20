@@ -186,6 +186,7 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -1942,12 +1943,18 @@ interface MaestroAPI {
 		>;
 		broadcastActiveSession: (sessionId: string) => Promise<void>;
 		disableAll: () => Promise<{ success: boolean; count: number }>;
+		/** Live mode as main sees it. */
+		getState: () => Promise<LiveModeStatus>;
+		/** Turn Live mode on or off (idempotent). */
+		set: (live: boolean) => Promise<LiveModeSetResult>;
 		startServer: () => Promise<{ success: boolean; url?: string; error?: string }>;
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
 		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
 		/** Fires when a network change moves the LAN address in the web URL. */
 		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
+		/** Fires after every Live switch, wherever it came from. */
+		onStateChanged: (handler: (state: LiveModeStateEvent) => void) => () => void;
 	};
 	/**
 	 * Web Login accounts. Desktop-only: the web-desktop bridge refuses every

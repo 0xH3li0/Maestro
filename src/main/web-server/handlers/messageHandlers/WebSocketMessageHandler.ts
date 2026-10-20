@@ -27,6 +27,7 @@
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
+ * - live_command: Read or switch Live mode, CLI clients only (CLI: `live status|on|off`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -114,6 +115,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
 import { handleComputerHistoryCommand } from './computerHistory';
+import { handleLiveCommand } from './live';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
@@ -220,11 +222,24 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Helper to send a JSON message to a client with timestamp
+	 * Helper to send a JSON message to a client with timestamp. `onSent` runs
+	 * once the frame is handed to the socket, for a handler whose next step
+	 * closes that socket (a Live switch replaces the server).
 	 */
-	private send(client: WebClient, data: Record<string, unknown>): void {
+	private send(client: WebClient, data: Record<string, unknown>, onSent?: () => void): void {
 		if (client.isAuthorized?.() === false) return;
-		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
+		const frame = JSON.stringify({ ...data, timestamp: Date.now() });
+		if (!onSent) {
+			client.socket.send(frame);
+			return;
+		}
+		client.socket.send(frame, (error?: Error) => {
+			if (error) {
+				logger.warn(`[Web] Reply to ${client.id} failed: ${error.message}`, LOG_CONTEXT);
+				return;
+			}
+			onSent();
+		});
 	}
 
 	/**
@@ -345,6 +360,10 @@ export class WebSocketMessageHandler {
 
 			case 'computer_history_command':
 				void handleComputerHistoryCommand(this.ctx, client, message);
+				break;
+
+			case 'live_command':
+				handleLiveCommand(this.ctx, client, message);
 				break;
 
 			case 'maestro_run_command':

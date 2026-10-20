@@ -118,6 +118,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		setWebServer: deps.setWebServer,
 		createWebServer: deps.createWebServer,
 		settingsStore: deps.settingsStore,
+		tunnelManager,
 	});
 
 	// Web Login account management - desktop-only, the bridge refuses every

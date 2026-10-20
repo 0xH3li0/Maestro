@@ -492,7 +492,8 @@ export interface MessageHandlerCallbacks {
  */
 export interface MessageHandlerContext {
 	callbacks: Partial<MessageHandlerCallbacks>;
-	send: (client: WebClient, data: Record<string, unknown>) => void;
+	/** `onSent` runs once the frame is on the socket (see `live_command`). */
+	send: (client: WebClient, data: Record<string, unknown>, onSent?: () => void) => void;
 	sendError: (client: WebClient, message: string, extra?: Record<string, unknown>) => void;
 	reportHandlerError: (
 		client: WebClient,

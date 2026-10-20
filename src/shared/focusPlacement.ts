@@ -232,6 +232,10 @@ export const ALREADY_QUIET_VERBS = [
 	// Reading the notes and taking one back render nothing.
 	'steer-auto-run-list',
 	'steer-auto-run-cancel',
+	// Live on/off moves no view. Every window's LIVE pill follows the switch,
+	// which is the only indicator the pill's own click gives.
+	'live-on',
+	'live-off',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */
