@@ -14,9 +14,21 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
+vi.mock('../../../main/cue/cue-engine-lock', () => ({
+	readCueEngineLock: vi.fn(() => null),
+}));
+vi.mock('../../../shared/cli-server-discovery', () => ({
+	readCliServerInfo: vi.fn(() => null),
+}));
+vi.mock('../../../cli/services/cue-trigger-inbox', () => ({
+	submitCueTrigger: vi.fn(),
+}));
 
 import { cueTrigger } from '../../../cli/commands/cue-trigger';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { readCueEngineLock } from '../../../main/cue/cue-engine-lock';
+import { readCliServerInfo } from '../../../shared/cli-server-discovery';
+import { submitCueTrigger } from '../../../cli/services/cue-trigger-inbox';
 
 describe('cueTrigger command', () => {
 	let consoleSpy: MockInstance;
@@ -212,6 +224,59 @@ describe('cueTrigger command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 			expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ success: false, error: refusal }));
 			expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('not found'));
+		});
+	});
+
+	describe('which engine is asked', () => {
+		const standaloneLock = (pid: number) =>
+			({ pid, mode: 'standalone', startedAt: '', heartbeatAt: '' }) as ReturnType<
+				typeof readCueEngineLock
+			>;
+		const hostAt = (pid: number) =>
+			({ pid, port: 1, token: 't', startedAt: 0 }) as unknown as ReturnType<
+				typeof readCliServerInfo
+			>;
+		const answeredBy = (reply: Record<string, unknown>) =>
+			vi
+				.mocked(withMaestroClient)
+				.mockImplementation(async (fn) =>
+					fn({ sendCommand: vi.fn().mockResolvedValue(reply) } as any)
+				);
+
+		it('uses the trigger inbox for a standalone engine no host runs', async () => {
+			vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(4242));
+			vi.mocked(submitCueTrigger).mockResolvedValueOnce({ success: true });
+
+			await cueTrigger('my-sub', {});
+
+			expect(submitCueTrigger).toHaveBeenCalledTimes(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('uses the trigger inbox when a host runs but another engine holds the lock', async () => {
+			vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(4242));
+			vi.mocked(readCliServerInfo).mockReturnValueOnce(hostAt(5151));
+			vi.mocked(submitCueTrigger).mockResolvedValueOnce({ success: true });
+
+			await cueTrigger('my-sub', {});
+
+			expect(submitCueTrigger).toHaveBeenCalledTimes(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		// Found live: a drain stops the inbox, so the inbox route timed out with
+		// "did not answer in time" while the host had a reason to give.
+		it("asks the host when the lock is the host's own engine, so a drain's refusal reaches the caller", async () => {
+			const refusal = 'This host is shutting down Cue: its runs in flight are finishing';
+			vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(5151));
+			vi.mocked(readCliServerInfo).mockReturnValueOnce(hostAt(5151));
+			answeredBy({ type: 'error', message: refusal });
+
+			await cueTrigger('my-sub', {});
+
+			expect(submitCueTrigger).not.toHaveBeenCalled();
+			expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(refusal));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 });

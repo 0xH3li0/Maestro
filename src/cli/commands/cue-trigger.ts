@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { submitCueTrigger } from '../services/cue-trigger-inbox';
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import { readCliServerInfo } from '../../shared/cli-server-discovery';
 import {
 	errorFrameMessage,
 	exitIfMaestroNotRunning,
@@ -33,9 +34,13 @@ export async function cueTrigger(
 	try {
 		// Whoever holds the engine lock is the engine that will run it. A
 		// standalone runner has no WebSocket, so it is reached through its
-		// trigger inbox instead (see cue-trigger-inbox.ts).
+		// trigger inbox instead (see cue-trigger-inbox.ts). The exception is the
+		// standalone engine inside `maestro-cli host`, which the client reaches
+		// anyway: the host answers, so a shutdown drain (which stops the inbox)
+		// is refused with its reason instead of timing out.
+		const lock = readCueEngineLock();
 		const result =
-			readCueEngineLock()?.mode === 'standalone'
+			lock?.mode === 'standalone' && readCliServerInfo()?.pid !== lock.pid
 				? await submitCueTrigger({
 						subscriptionName,
 						prompt: options.prompt,
