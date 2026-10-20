@@ -185,7 +185,7 @@ Start only after every release in scope verifies.
    `--dry-run` first. At most 280 weighted characters (a URL counts 23). Name each
    version, lead with the headline feature, and link the release page (both pages
    for `all`, if they fit). The notes style rules apply: one emoji per item, no
-   em or en dashes, and no line from the previous release post (read the last
+   em or en dashes, and no line from the previous release post (read the last <!-- doc-refs-ignore -->
    `scripts/announce-drafts/*-x.md`). Report the tweet URL.
 8. Commit the template, the Discord draft, the art, and the X text
    (`scripts/announce-drafts/<versions>-x.md`) to RunMaestro.ai.
