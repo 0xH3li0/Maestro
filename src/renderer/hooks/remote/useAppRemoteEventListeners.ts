@@ -69,6 +69,7 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 
 // ============================================================================
 // Group update helpers
@@ -2143,9 +2144,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			window.maestro.process.sendRemoteMoveSessionToGroupResponse(responseChannel, false);
 			return;
 		}
-		setSessions((prev: Session[]) =>
-			prev.map((s) => (s.id === sessionId ? { ...s, groupId: groupId || undefined } : s))
-		);
+		setSessions((prev: Session[]) => withAgentInGroup(prev, sessionId, groupId));
 		window.maestro.process.sendRemoteMoveSessionToGroupResponse(responseChannel, true);
 	});
 }

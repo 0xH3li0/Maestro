@@ -199,6 +199,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which client this page is, across a reload:** `getClientInstanceId()` / `isReloadedClientInstance()` in `src/renderer/utils/clientInstance.ts`
 - **Telling the other clients an agent appeared or went away:** `sessions:lifecycleSync`, emitted in `src/main/ipc/handlers/persistence.ts`, applied by `useSessionLifecycleSync` in `src/renderer/hooks/session/useSessionLifecycleSync.ts`
 - **Moving an agent to another directory:** `withWorkingDirectory()`, `workingDirectoryChangeBlocker()`, `isSameDirectory()` in `src/renderer/utils/agentWorkingDirectory.ts`
+- **Moving an agent to another group:** `withAgentInGroup(agents, agentId, groupId)` in `src/shared/maestro-lib/agents/rules.ts`
 - **Per-agent git actions:** `useGitAgentActions(session)` in `src/renderer/hooks/git/useGitAgentActions.ts`
 - **Whether a PR is being opened right now:** `usePRCreationActive()`, `startPRCreation()` in `src/renderer/stores/prCreationStore.ts`
 - **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`

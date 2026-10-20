@@ -5,6 +5,7 @@ import {
 	setGroupHidden,
 	setGroupParent as updateGroupParent,
 } from '../../../shared/groupHierarchy';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 
 /**
  * State returned from useGroupManagement for modal management
@@ -174,14 +175,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	const handleDropOnGroup = useCallback(
 		(groupId: string) => {
 			if (draggingSessionId) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id === draggingSessionId) return { ...s, groupId };
-						// Also update worktree children to keep groupId in sync
-						if (s.parentSessionId === draggingSessionId) return { ...s, groupId };
-						return s;
-					})
-				);
+				setSessions((prev) => withAgentInGroup(prev, draggingSessionId, groupId));
 				setDraggingSessionId(null);
 			}
 		},
@@ -193,14 +187,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 */
 	const handleDropOnUngrouped = useCallback(() => {
 		if (draggingSessionId) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id === draggingSessionId) return { ...s, groupId: undefined };
-					// Also update worktree children to keep groupId in sync
-					if (s.parentSessionId === draggingSessionId) return { ...s, groupId: undefined };
-					return s;
-				})
-			);
+			setSessions((prev) => withAgentInGroup(prev, draggingSessionId, null));
 			setDraggingSessionId(null);
 		}
 	}, [draggingSessionId, setSessions, setDraggingSessionId]);
