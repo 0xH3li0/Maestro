@@ -192,6 +192,8 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabClosed,
+	tabReopen,
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
@@ -2134,6 +2136,24 @@ tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
 tabTargetOptions(tab.command('move <tab-id> <position>'))
 	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
 	.action((tabId, position, options) => tabMove(tabId, position, options));
+
+tab
+	.command('closed')
+	.description('List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)')
+	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabClosed(options));
+
+tab
+	.command('reopen')
+	.description('Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id')
+	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--index <n>', 'Position from "tab closed" (0 = newest)')
+	.option('--tab <tab-id>', 'The id the tab had when it was closed (exact or unique prefix)')
+	.option('--background', 'Restore the tab without moving the view (agent and tab stay put)')
+	.option('--focus', 'Switch to the restored tab (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabReopen(options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program

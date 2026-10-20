@@ -29,6 +29,8 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabClosed,
+	tabReopen,
 } from '../../../cli/commands/tab';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
@@ -330,5 +332,143 @@ describe('tab commands', () => {
 		const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
 		expect(printed.tab.tabId).toBe('tab-bbbb');
 		expect(printed.tab.model).toBe('opus');
+	});
+
+	describe('closed tabs', () => {
+		const CLOSED = [
+			{ index: 0, type: 'ai', label: 'Refactor', tabId: 'tab-old1', closedAt: Date.now() - 60_000 },
+			{
+				index: 1,
+				type: 'file',
+				label: 'notes.md',
+				tabId: 'file-9',
+				closedAt: Date.now() - 120_000,
+				tiled: true,
+			},
+		];
+
+		it("tab closed lists the agent's stack, newest first", async () => {
+			const getPayload = mockTab({ success: true, closedTabs: CLOSED });
+			await tabClosed({ agent: 'agent-1' });
+			expect(getPayload()).toEqual({
+				type: 'closed_tab_command',
+				action: 'list',
+				sessionId: 'agent-1',
+			});
+			const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(printed).toContain('Refactor');
+			expect(printed).toContain('tab-old1');
+			expect(printed).toContain('file, tiled');
+		});
+
+		it('tab closed --json prints the stack as data', async () => {
+			mockTab({ success: true, closedTabs: CLOSED });
+			await tabClosed({ agent: 'agent-1', json: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toEqual({ success: true, sessionId: 'agent-1', closedTabs: CLOSED });
+		});
+
+		it('tab closed on an empty stack says so and exits cleanly', async () => {
+			mockTab({ success: true, closedTabs: [] });
+			await tabClosed({ agent: 'agent-1' });
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith('No closed tabs for agent-1');
+		});
+
+		it("tab closed falls back to the desktop's selected agent", async () => {
+			vi.mocked(readActiveAgentId).mockReturnValue('agent-2');
+			const getPayload = mockTab({ success: true, closedTabs: [] });
+			await tabClosed({});
+			expect(getPayload().sessionId).toBe('agent-2');
+		});
+
+		it('tab closed fails loudly with no --agent and no selected agent', async () => {
+			mockTab({ success: true, closedTabs: [] });
+			await expect(tabClosed({})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No active agent'));
+		});
+
+		it('tab reopen with no target restores the newest entry and focuses it', async () => {
+			const getPayload = mockTab({
+				success: true,
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				reopened: CLOSED[0],
+				content: 'loaded',
+			});
+			await tabReopen({ agent: 'agent-1' });
+			expect(getPayload()).toEqual({
+				type: 'closed_tab_command',
+				action: 'reopen',
+				sessionId: 'agent-1',
+				background: false,
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Reopened "Refactor"'));
+			expect(consoleSpy).toHaveBeenCalledWith('  Tab: tab-new1');
+		});
+
+		it('tab reopen --index sends the position as a number', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'file-9', reopened: CLOSED[1] });
+			await tabReopen({ agent: 'agent-1', index: '1' });
+			expect(getPayload().index).toBe(1);
+			expect(getPayload()).not.toHaveProperty('tabId');
+		});
+
+		it('tab reopen --tab sends the original tab id', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new1', reopened: CLOSED[0] });
+			await tabReopen({ agent: 'agent-1', tab: 'tab-old' });
+			expect(getPayload().tabId).toBe('tab-old');
+			expect(getPayload()).not.toHaveProperty('index');
+		});
+
+		it('tab reopen --background puts background on the wire', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new1', reopened: CLOSED[0] });
+			await tabReopen({ agent: 'agent-1', background: true });
+			expect(getPayload().background).toBe(true);
+		});
+
+		it('tab reopen --json reports the restored tab id', async () => {
+			mockTab({
+				success: true,
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				reopened: CLOSED[0],
+				content: 'pending',
+			});
+			await tabReopen({ agent: 'agent-1', json: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toMatchObject({
+				success: true,
+				sessionId: 'agent-1',
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				wasDuplicate: false,
+				content: 'pending',
+				background: false,
+			});
+			expect(printed.reopened.tabId).toBe('tab-old1');
+		});
+
+		it("tab reopen on an empty stack exits non-zero with the desktop's message", async () => {
+			mockTab({ success: false, error: 'No closed tabs to reopen for agent-1' });
+			await expect(tabReopen({ agent: 'agent-1', json: true })).rejects.toThrow('__exit__');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toEqual({ success: false, error: 'No closed tabs to reopen for agent-1' });
+		});
+
+		it('tab reopen refuses --index and --tab together before contacting the app', async () => {
+			mockTab({ success: true });
+			await expect(tabReopen({ agent: 'agent-1', index: '0', tab: 'tab-old' })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it.each(['-1', '1.5', 'two', ''])('tab reopen refuses --index %j', async (index) => {
+			mockTab({ success: true });
+			await expect(tabReopen({ agent: 'agent-1', index })).rejects.toThrow('__exit__');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
 	});
 });

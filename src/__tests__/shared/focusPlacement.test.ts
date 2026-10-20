@@ -28,6 +28,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-terminal',
 	'open-browser',
 	'tab-new',
+	// Reopening a closed tab focuses it, as Cmd+Shift+T does.
+	'tab-reopen',
 	'dispatch',
 	'create-agent',
 	'create-worktree',

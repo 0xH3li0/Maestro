@@ -13,6 +13,10 @@
 // enter-to-send, save-to-history) are the CLI half of the composer chips: one
 // tab's state, written through the allowlisted + flushed config path so a
 // script can set a value and read it straight back with "tab show".
+//
+// "tab closed" and "tab reopen" are the CLI half of Cmd+Shift+T: they read and
+// restore an agent's closed-tab stack through the closed_tab_command message,
+// which the renderer answers with the shortcut's own reopen function.
 
 import {
 	sendSimpleCommand,
@@ -24,11 +28,15 @@ import {
 	listDesktopTabs,
 	type SimpleResult,
 	exitIfMaestroNotRunning,
+	errorFrameMessage,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { formatRelativeTime } from '../../shared/formatters';
+import type { ClosedTabCommandRequest, ClosedTabSummary } from '../../shared/closedTabCommands';
+import { resolveAgentId, readActiveAgentId } from '../services/storage';
 
 interface TabNewOptions {
 	agent: string;
@@ -456,4 +464,166 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	row('Enter to send', inherited(entry.enterToSend));
 	row('Starred', String(entry.starred));
 	row('Unread', String(entry.hasUnread ?? false));
+}
+
+interface ClosedTabOptions {
+	/** Whose stack. Absent means the agent the desktop has selected. */
+	agent?: string;
+	json?: boolean;
+}
+
+interface TabReopenOptions extends ClosedTabOptions {
+	/** Position in the stack, as typed (0 is what Cmd+Shift+T reopens next). */
+	index?: string;
+	/** The id the tab had when it was closed (exact or unique prefix). */
+	tab?: string;
+	background?: boolean;
+	focus?: boolean;
+}
+
+interface ClosedTabResponse extends SimpleResult {
+	closedTabs?: ClosedTabSummary[];
+	reopened?: ClosedTabSummary;
+	tabId?: string;
+	tabType?: ClosedTabSummary['type'];
+	wasDuplicate?: boolean;
+	content?: string;
+}
+
+/**
+ * The agent whose closed-tab stack a verb acts on: `--agent` when given, else
+ * the agent the desktop has selected (the one Cmd+Shift+T would act on).
+ */
+function resolveClosedTabAgent(options: ClosedTabOptions): string {
+	if (options.agent) return resolveAgentOrFail(options.agent, options.json);
+	const active = readActiveAgentId();
+	if (!active) {
+		return failCommand(
+			'No active agent recorded. Pass --agent <id> to say whose closed tabs you mean.',
+			options.json
+		);
+	}
+	try {
+		return resolveAgentId(active);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+/** Send one closed-tab verb and hand back the desktop's answer, or exit. */
+async function sendClosedTabCommand(
+	request: ClosedTabCommandRequest,
+	json?: boolean
+): Promise<ClosedTabResponse> {
+	let result: ClosedTabResponse;
+	try {
+		result = (await sendSimpleCommand(
+			{ type: 'closed_tab_command', ...request },
+			'closed_tab_command_result'
+		)) as ClosedTabResponse;
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+	// Outside the try, so the desktop's own refusal ("no closed tabs") is what
+	// gets reported rather than being re-caught and re-worded.
+	if (!result.success) {
+		failCommand(result.error || errorFrameMessage(result) || 'Closed-tab command failed', json);
+	}
+	return result;
+}
+
+/** One row of `tab closed`, for a human. */
+function describeClosedTab(entry: ClosedTabSummary): string {
+	const kind = entry.tiled ? `${entry.type}, tiled` : entry.type;
+	return `  ${String(entry.index).padStart(2)}  ${entry.label}  (${kind}, ${entry.tabId}, closed ${formatRelativeTime(entry.closedAt)})`;
+}
+
+/**
+ * `maestro-cli tab closed` - list an agent's closed-tab stack, newest first.
+ * Index 0 is the entry Cmd+Shift+T (and `tab reopen` with no target) restores
+ * next. An empty stack is not an error here: "nothing to reopen" is an answer.
+ */
+export async function tabClosed(options: ClosedTabOptions): Promise<void> {
+	const sessionId = resolveClosedTabAgent(options);
+	const result = await sendClosedTabCommand({ action: 'list', sessionId }, options.json);
+	const closedTabs = result.closedTabs ?? [];
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, sessionId, closedTabs }, null, 2));
+		return;
+	}
+	if (closedTabs.length === 0) {
+		console.log(`No closed tabs for ${sessionId}`);
+		return;
+	}
+	console.log(`Closed tabs for ${sessionId} (newest first):`);
+	for (const entry of closedTabs) console.log(describeClosedTab(entry));
+}
+
+/**
+ * `maestro-cli tab reopen` - restore one closed tab, by default the newest
+ * (exactly what Cmd+Shift+T does), or the one named by `--index` / `--tab`.
+ * Prints the restored tab's id, which is usually NEW for an AI tab.
+ */
+export async function tabReopen(options: TabReopenOptions): Promise<void> {
+	const tabId = options.tab?.trim();
+	if (options.index !== undefined && tabId) {
+		failCommand('Pass --index or --tab, not both', options.json);
+	}
+	let index: number | undefined;
+	if (options.index !== undefined) {
+		const raw = options.index.trim();
+		if (!/^\d+$/.test(raw)) {
+			failCommand(
+				`Invalid index "${options.index}". Use a 0-based position from "tab closed".`,
+				options.json
+			);
+		}
+		index = Number(raw);
+	}
+
+	const sessionId = resolveClosedTabAgent(options);
+	const background = resolveBackgroundFlag(options, 'tab-reopen');
+	const result = await sendClosedTabCommand(
+		{
+			action: 'reopen',
+			sessionId,
+			...(index !== undefined ? { index } : {}),
+			...(tabId ? { tabId } : {}),
+			background,
+		},
+		options.json
+	);
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				sessionId,
+				tabId: result.tabId ?? null,
+				tabType: result.tabType ?? null,
+				reopened: result.reopened ?? null,
+				wasDuplicate: result.wasDuplicate === true,
+				content: result.content ?? null,
+				background,
+			})
+		);
+		return;
+	}
+	const label = result.reopened?.label ?? 'tab';
+	const where = background ? ' (background)' : '';
+	console.log(
+		formatSuccess(
+			result.wasDuplicate
+				? `"${label}" was already open; dropped it from the closed tabs${where}`
+				: `Reopened "${label}" for ${sessionId}${where}`
+		)
+	);
+	if (result.tabId) console.log(`  Tab: ${result.tabId}`);
+	if (result.content === 'pending') {
+		console.log('  Content is still loading in the desktop app.');
+	} else if (result.content === 'unavailable' || result.content === 'failed') {
+		console.log(`  Content could not be read back (${result.content}).`);
+	}
 }

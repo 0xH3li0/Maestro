@@ -149,7 +149,7 @@ import {
 	dataviewTrusted,
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
-import { tabClose, tabNew, tabRename, tabShow } from '../../cli/commands/tab';
+import { tabClose, tabClosed, tabNew, tabRename, tabReopen, tabShow } from '../../cli/commands/tab';
 import { themeSet } from '../../cli/commands/theme';
 import { updateAgent } from '../../cli/commands/update-agent';
 import { updateGroup } from '../../cli/commands/update-group';
@@ -209,6 +209,9 @@ const rows: Row[] = [
 	{ name: 'tab close', run: (json) => tabClose('tab-1', j(json)) },
 	{ name: 'tab rename', run: (json) => tabRename('tab-1', 'New', j(json)) },
 	{ name: 'tab show', run: (json) => tabShow('tab-1', j(json)) },
+	{ name: 'tab closed', run: (json) => tabClosed({ agent: 'agent-1', json }) },
+	{ name: 'tab reopen', run: (json) => tabReopen({ agent: 'agent-1', json }) },
+	{ name: 'tab reopen --index', run: (json) => tabReopen({ index: '1', json }) },
 	{ name: 'theme set', run: (json) => themeSet(['bgMain=#000000'], j(json)) },
 	{ name: 'update-group', run: (json) => updateGroup('group-1', { name: 'New', json }) },
 	// local fail / emitError helpers

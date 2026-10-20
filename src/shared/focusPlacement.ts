@@ -73,6 +73,12 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	/** maestro-cli tab new [--prompt] - focuses today. */
 	'tab-new': false,
 	/**
+	 * maestro-cli tab reopen - the CLI half of Cmd+Shift+T, so it focuses the
+	 * restored tab the way the shortcut does (and the way `tab new` does).
+	 * `--background` restores it without moving the view.
+	 */
+	'tab-reopen': false,
+	/**
 	 * maestro-cli dispatch --new-tab - the one verb that is ALREADY background by
 	 * default, with `--focus` to opt out. Leaving it alone is the same
 	 * no-default-changes rule as everything else here, not an exception to it.
