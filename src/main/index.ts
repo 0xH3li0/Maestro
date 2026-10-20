@@ -210,6 +210,7 @@ import { createWebServerFactory } from './web-server/web-server-factory';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
 import type { DebugPackageDependencies } from './debug-package';
+import { requestAutoRunSnapshots } from './debug-package/autorun-snapshots';
 // Phase 4 refactoring - app lifecycle
 import {
 	setupGlobalErrorHandlers,
@@ -732,6 +733,7 @@ store.onDidChange('encoreFeatures', (value) => encoreLifecycle.apply(value));
 // Collectors for a support (debug) package. One object shared by the debug and
 // feedback IPC handlers and the CLI bridge, so every path builds the same zip.
 // Getters resolve the live instances at package time, not whatever existed here.
+// The Auto Run section asks every app window, since each holds its own runs.
 const debugPackageDeps: DebugPackageDependencies = {
 	getAgentDetector: () => agentDetector,
 	getProcessManager: () => processManager,
@@ -740,6 +742,10 @@ const debugPackageDeps: DebugPackageDependencies = {
 	sessionsStore,
 	groupsStore,
 	bootstrapStore,
+	requestAutoRunSnapshots: () =>
+		requestAutoRunSnapshots(windowRegistry.getAppWindows(), {
+			ownerOf: (sessionId) => windowRegistry.getWindowForSession(sessionId),
+		}),
 };
 
 // The app window that owns an agent, falling back to the primary window.

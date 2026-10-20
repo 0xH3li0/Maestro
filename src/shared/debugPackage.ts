@@ -67,9 +67,9 @@ export interface DebugPackageOptions {
 	includeGroupChats?: boolean; // Default: true
 	includeBatchState?: boolean; // Default: true
 	/**
-	 * Auto Run state captured by the renderer at request time. Omitted when the
-	 * caller has no renderer state to offer; the section then reports that it was
-	 * unavailable rather than silently claiming no runs were active.
+	 * Auto Run state captured by the renderer at request time. When omitted, a
+	 * package main builds asks the app windows for it; if none can answer, the
+	 * section records why rather than silently claiming no runs were active.
 	 */
 	autoRunSnapshots?: AutoRunDebugSnapshot[];
 }
