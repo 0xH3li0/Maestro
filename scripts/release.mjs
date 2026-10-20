@@ -493,7 +493,7 @@ function buildBrief(scope, roles, results) {
 			`- ${mention('main')} owns the stable release from \`main\` (worktree ${roles.main.cwd}).`,
 		roles.rc &&
 			`- ${mention('rc')} owns the release candidate from \`rc\` (worktree ${roles.rc.cwd}).`,
-		`- ${mention('site')} owns the announcement: Discord #announcements and the subscriber email.`,
+		`- ${mention('site')} owns the announcement: Discord #announcements, the subscriber email, then the release art and the X post as the last step.`,
 	].filter(Boolean);
 	return [
 		`# Maestro Release (${scope}), ${today}`,

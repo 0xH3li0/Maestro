@@ -37,7 +37,7 @@ the fix, and an advisory published before the announcement).
 | Moderator     | The group chat moderator              | Sequencing, the dedup check, the final report |
 | Stable owner  | The agent on the `main` checkout      | `main` notes, tag, verify, bump               |
 | RC owner      | The agent on the `rc` worktree        | `rc` notes, tag, verify, bump                 |
-| Announcements | The agent on `RunMaestro.ai`          | Discord #announcements and subscriber email   |
+| Announcements | The agent on `RunMaestro.ai`          | Discord, subscriber email, release art, X     |
 
 ## The mechanics, one command each
 
@@ -169,20 +169,41 @@ Start only after every release in scope verifies.
 5. **Report the Resend contact count every time.** The plan allows 5,000
    contacts. At 4,500 or more, say so in a `> [!WARNING]` so the conductor can
    reconsider the plan before a broadcast gets refused.
-6. Commit the template and Discord draft to RunMaestro.ai.
+6. **Art: one new painting per release.** Generate it in the Artlist AI Toolkit
+   the way the site's art is made (the RunMaestro.ai agent's
+   `maestro-art-source-artlist` memory): a fresh session from
+   `https://toolkit.artlist.io/new?mode=image`, Nano Banana 2, 16:9 at 2K, royal
+   purple velvet, the house style suffix. The scene is drawn from the headline
+   features, and every version in scope is lettered in gold where it can be read
+   (`1.0.3` and `1.1.4 RC` on banners, for example). List `art/artlist/release-*`
+   first and pick a different subject than the last release. Make up to three
+   takes and reject any that misspells a version. Archive every take as
+   `art/artlist/release-<versions>-<subject>-v<n>.png`, and export the pick as a
+   2048px JPEG, `release-<versions>-<subject>-share.jpg`.
+7. **X: the last announcement out.** One post as @RunMaestroAI with the share
+   JPEG: `node scripts/x-post.mjs --text-file <f> --image <share.jpg>`, with
+   `--dry-run` first. At most 280 weighted characters (a URL counts 23). Name each
+   version, lead with the headline feature, and link the release page (both pages
+   for `all`, if they fit). The notes style rules apply: one emoji per item, no
+   em or en dashes, and no line from the previous release post (read the last
+   `scripts/announce-drafts/*-x.md`). Report the tweet URL.
+8. Commit the template, the Discord draft, the art, and the X text
+   (`scripts/announce-drafts/<versions>-x.md`) to RunMaestro.ai.
 
 ## Phase 4: Report (moderator)
 
 One message to the conductor, ending with a BLUF:
 
-| Item                          | Evidence                        |
-| ----------------------------- | ------------------------------- |
-| Each release                  | Release URL, run URL, verify ✅ |
-| Each bump                     | New tip SHA, CI status          |
-| Discord                       | Message ID                      |
-| Email                         | Broadcast ID, recipients        |
-| Resend contacts               | Count (warn at 4,500)           |
-| Anything that needed recovery | What happened, what fixed it    |
+| Item                          | Evidence                         |
+| ----------------------------- | -------------------------------- |
+| Each release                  | Release URL, run URL, verify ✅  |
+| Each bump                     | New tip SHA, CI status           |
+| Discord                       | Message ID                       |
+| Email                         | Broadcast ID, recipients         |
+| Resend contacts               | Count (warn at 4,500)            |
+| Release art                   | Share JPEG path, Artlist session |
+| X                             | Tweet URL                        |
+| Anything that needed recovery | What happened, what fixed it     |
 
 ## Recovery
 
@@ -195,3 +216,5 @@ One message to the conductor, ending with a BLUF:
 | Two release runs for one tag                        | `watch` cancels the twin; nothing to do                                                                                              |
 | An agent's turn hit the 30-minute limit             | Ask it to check state first (`preflight`, `watch`, `verify` are all safe to repeat) and not redo work that landed                    |
 | Resend refuses the broadcast                        | Stop. Report the error; the broadcast stays a draft and can be sent later without rebuilding                                         |
+| Artlist hangs or every Interceptor verb goes stale  | Retry once in a fresh `INTERCEPTOR_GROUP`. A second failure: post nothing to X, report the session URL. The conductor decides        |
+| `x-post.mjs` refuses (wrong account, no compose)    | Nothing was posted. Report the error; the post can go out later from the committed text and the share JPEG                           |
