@@ -65,6 +65,7 @@ field still gets the old behaviour, and `--focus` restores it from the CLI.
 | `switch-mode`                                     | `switch_mode`                                         | switches                                                            |
 | `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)                                 |
 | `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op                             |
+| `live on`, `live off`                             | `live_command`                                        | **already quiet**; flag accepted, no-op                             |
 | `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**                                      |
 
 `focus-agent`, `send --tab`, `open` and `open-graph` exist TO move the view - the
@@ -117,9 +118,10 @@ and the placement flags apply.
 ### Verbs that accept the flag and ignore it
 
 `refresh-files` renders no notice and moves no selection: the Files panel it
-refreshes is only drawn for the agent already on screen. It still accepts
-`--background`, and `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts` is where
-that is recorded.
+refreshes is only drawn for the agent already on screen. `live on` / `live off`
+move no view either: every window's LIVE pill follows the switch. They still
+accept `--background`, and `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts`
+is where that is recorded.
 
 This is not a placeholder. The guidance agents are given is "pass `--background`
 unless the user asked to be taken there", and commander **rejects an unknown
