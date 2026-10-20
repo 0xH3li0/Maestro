@@ -150,7 +150,17 @@ import {
 	dataviewTrusted,
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
-import { tabClose, tabClosed, tabNew, tabRename, tabReopen, tabShow } from '../../cli/commands/tab';
+import {
+	tabClose,
+	tabClosed,
+	tabCompact,
+	tabMerge,
+	tabNew,
+	tabRename,
+	tabReopen,
+	tabShow,
+	tabTransfer,
+} from '../../cli/commands/tab';
 import { themeSet } from '../../cli/commands/theme';
 import { updateAgent } from '../../cli/commands/update-agent';
 import { updateGroup } from '../../cli/commands/update-group';
@@ -214,6 +224,12 @@ const rows: Row[] = [
 	{ name: 'tab closed', run: (json) => tabClosed({ agent: 'agent-1', json }) },
 	{ name: 'tab reopen', run: (json) => tabReopen({ agent: 'agent-1', json }) },
 	{ name: 'tab reopen --index', run: (json) => tabReopen({ index: '1', json }) },
+	{ name: 'tab compact', run: (json) => tabCompact(undefined, { agent: 'agent-1', json }) },
+	{
+		name: 'tab merge',
+		run: (json) => tabMerge('tab-1', { into: 'agent-1', targetTab: 'tab-2', json }),
+	},
+	{ name: 'tab transfer', run: (json) => tabTransfer(undefined, { to: 'agent-2', json }) },
 	{ name: 'theme set', run: (json) => themeSet(['bgMain=#000000'], j(json)) },
 	{ name: 'update-group', run: (json) => updateGroup('group-1', { name: 'New', json }) },
 	{

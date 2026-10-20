@@ -40,6 +40,11 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'snooze-dismiss',
 	// Sending a steering note flashes "Steering note queued", as the click does.
 	'steer-auto-run',
+	// The overlay menu's Context items: Compact selects the compacted tab, Merge
+	// Into and Send to Agent jump to the tab that receives the context.
+	'tab-compact',
+	'tab-merge',
+	'tab-transfer',
 ];
 
 describe('no verb changes its default', () => {
