@@ -815,6 +815,35 @@ describe('persistence IPC handlers', () => {
 			expect(result).toEqual([]);
 		});
 
+		it('heals closed-tab stacks to their stored form and rewrites the store once', async () => {
+			const sessions = [
+				{
+					id: 'session-1',
+					toolType: 'claude-code',
+					closedTabHistory: [
+						{ tab: { id: 'closed', logs: [{ id: 'l1' }] }, index: 0, closedAt: 1 },
+					],
+					unifiedClosedTabHistory: [
+						{
+							type: 'ai',
+							tab: { id: 'closed', agentSessionId: 'provider-1', logs: [{ id: 'l1' }] },
+							unifiedIndex: 0,
+							closedAt: 1,
+						},
+					],
+				},
+				{ id: 'session-2', toolType: 'claude-code', unifiedClosedTabHistory: [] },
+			];
+			mockSessionsStore.get.mockReturnValue(sessions);
+
+			const result = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+
+			expect(result[0]).not.toHaveProperty('closedTabHistory');
+			expect(result[0].unifiedClosedTabHistory[0].tab.logs).toEqual([]);
+			expect(result[1]).not.toHaveProperty('unifiedClosedTabHistory');
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
+		});
+
 		it('should compact oversized tool output before returning legacy sessions', async () => {
 			const oversizedOutput = 'x'.repeat(50_000);
 			const sessions = [
@@ -1700,6 +1729,43 @@ describe('persistence IPC handlers', () => {
 				'sessions',
 				expect.arrayContaining([expect.objectContaining({ id: 's1', name: 'Updated' })])
 			);
+		});
+
+		it('normalizes the closed-tab stack of a raw write with no baseline', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			await handlers.get('sessions:setMany')!(
+				{} as any,
+				[
+					{
+						...baseSession,
+						toolType: 'claude-code',
+						closedTabHistory: [{ tab: { id: 'closed', logs: [] }, index: 0, closedAt: 1 }],
+						unifiedClosedTabHistory: [
+							{
+								type: 'ai',
+								tab: {
+									id: 'closed',
+									agentSessionId: 'provider-1',
+									logs: [{ id: 'l1' }],
+									state: 'busy',
+								},
+								unifiedIndex: 0,
+								closedAt: 1,
+							},
+						],
+					},
+				],
+				[]
+			);
+
+			const persisted = mockSessionsStore.set.mock.calls[0][1];
+			expect(persisted[0]).not.toHaveProperty('closedTabHistory');
+			expect(persisted[0].unifiedClosedTabHistory[0].tab).toMatchObject({
+				id: 'closed',
+				logs: [],
+				state: 'idle',
+			});
 		});
 
 		it('compacts oversized tool output before writing merged sessions', async () => {

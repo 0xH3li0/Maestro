@@ -43,6 +43,7 @@ import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
 	mergeDeferredSessionContent,
 	projectWebSession,
@@ -515,12 +516,18 @@ export function registerPersistenceHandlers(
 		try {
 			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
 			let toolOutputCount = 0;
+			// Closed-tab stacks written before they were stored as pointers (or by a
+			// raw write) carry whole transcripts and the legacy key. Bring them to
+			// the stored form the renderer projects, so its next change merges.
+			let closedTabCount = 0;
 			const compacted = relocated.map((session) => {
-				const result = compactSessionToolOutputs(session);
+				const normalized = normalizeStoredClosedTabs(session);
+				if (normalized !== session) closedTabCount++;
+				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
 				return result.session;
 			});
-			if (imageCount > 0 || toolOutputCount > 0) {
+			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -531,6 +538,12 @@ export function registerPersistenceHandlers(
 				if (toolOutputCount > 0) {
 					logger.info(
 						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (closedTabCount > 0) {
+					logger.info(
+						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -769,8 +782,13 @@ export function registerPersistenceHandlers(
 					if (removeSet.has(newSession.id)) continue;
 					merged.push(mergeDeferredSessionContent(newSession, undefined));
 				}
+				// Normalize after the merge, never before: a peer baseline can hold a
+				// stack in a form the stored side would not, and normalizing only one
+				// side would turn that into a conflict.
 				const sessionsToPersist = merged.map((session) =>
-					touchedIds.has(session.id) ? compactSessionToolOutputs(session).session : session
+					touchedIds.has(session.id)
+						? compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+						: session
 				);
 
 				// Lifecycle logging (parallel to setAll's debug logs)
@@ -945,11 +963,13 @@ export function registerPersistenceHandlers(
 			const sessionsToPersist = sessions.map((session) =>
 				incomingIds.has(session.id)
 					? compactSessionToolOutputs(
-							mergeSessionPersistenceChanges(
-								mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-								previousSessionMap.get(session.id),
-								baselineMap.get(session.id),
-								remote
+							normalizeStoredClosedTabs(
+								mergeSessionPersistenceChanges(
+									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+									previousSessionMap.get(session.id),
+									baselineMap.get(session.id),
+									remote
+								)
 							)
 						).session
 					: session

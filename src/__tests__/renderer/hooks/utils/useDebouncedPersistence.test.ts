@@ -5,6 +5,7 @@ import {
 	DEFAULT_DEBOUNCE_DELAY,
 	SESSION_PERSISTENCE_BASELINE_EVENT,
 } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../../shared/closedTabHistory';
 import type {
 	Session,
 	AITab,
@@ -800,6 +801,44 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].closedTabHistory).toBeUndefined();
+			});
+
+			it('should persist the closed-tab stack as pointers, capped, and omit it when empty', () => {
+				const history = Array.from({ length: MAX_CLOSED_TAB_HISTORY + 3 }, (_, i) => ({
+					type: 'ai' as const,
+					tab: makeTab({
+						id: `closed-${i}`,
+						agentSessionId: `provider-${i}`,
+						logs: [{ id: `l${i}`, timestamp: 1, source: 'user', text: 'hi' }],
+						state: 'busy',
+					}),
+					unifiedIndex: i,
+					closedAt: i,
+				}));
+				const withStack = makeSession({ id: 'with-stack', unifiedClosedTabHistory: history });
+				const empty = makeSession({ id: 'empty-stack', unifiedClosedTabHistory: [] });
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([withStack, empty]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				const stored = persisted.find((s) => s.id === 'with-stack')!.unifiedClosedTabHistory;
+				expect(stored).toHaveLength(MAX_CLOSED_TAB_HISTORY);
+				expect(stored[0].tab.id).toBe('closed-0');
+				expect((stored[0].tab as { logs: unknown[] }).logs).toEqual([]);
+				expect((stored[0].tab as { state: string }).state).toBe('idle');
+				// The in-memory stack keeps the full tab for an in-run reopen.
+				expect(
+					(useSessionStore.getState().sessions[0].unifiedClosedTabHistory[0].tab as any).logs
+				).toHaveLength(1);
+				expect(persisted.find((s) => s.id === 'empty-stack')).not.toHaveProperty(
+					'unifiedClosedTabHistory'
+				);
 			});
 
 			it('should remove session-level agentError', () => {

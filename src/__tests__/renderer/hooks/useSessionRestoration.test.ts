@@ -1105,6 +1105,47 @@ describe('restoreSession - Runtime state reset', () => {
 
 		expect(restored!.closedTabHistory).toEqual([]);
 	});
+
+	it('restores the stored closed-tab stack in stored form, dropping malformed entries', async () => {
+		const session = createMockSession({
+			unifiedClosedTabHistory: [
+				{
+					type: 'ai',
+					tab: { id: 'closed-1', agentSessionId: 'provider-1', logs: [{ id: 'l1' }] },
+					unifiedIndex: -1,
+					closedAt: 5,
+				},
+				{ type: 'mystery', tab: { id: 'x' } },
+				null,
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toHaveLength(1);
+		const [entry] = restored!.unifiedClosedTabHistory;
+		expect(entry.tab.id).toBe('closed-1');
+		// A Claude tab with a provider session id is stored without its logs.
+		expect((entry.tab as { logs: unknown[] }).logs).toEqual([]);
+		expect(entry.unifiedIndex).toBe(Number.MAX_SAFE_INTEGER);
+	});
+
+	it('starts with an empty closed-tab stack for a store written before it persisted', async () => {
+		const session = createMockSession();
+		delete (session as Partial<Session>).unifiedClosedTabHistory;
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toEqual([]);
+	});
 });
 
 // ============================================================================

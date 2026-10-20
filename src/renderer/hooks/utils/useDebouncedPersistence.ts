@@ -43,6 +43,7 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
+import { closedTabHistoryContext, projectClosedTabHistory } from '../../../shared/closedTabHistory';
 import { persistClientSessionView } from '../../utils/activeSessionPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
@@ -72,6 +73,8 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
  * 2. Truncating logs in each AI tab to MAX_PERSISTED_SESSION_LOGS entries
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
+ * 5. Reducing the closed-tab stack (`unifiedClosedTabHistory`) to its stored
+ *    form via `projectClosedTabHistory()`: pointers, not transcripts
  *
  * Exception: a limit pause (a token/API/credit/rate limit the agent can resume
  * from) is deliberately persisted - `state: 'error'`, `agentError`,
@@ -165,7 +168,7 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 
 	const {
 		closedTabHistory: _closedTabHistory,
-		unifiedClosedTabHistory: _unifiedClosedTabHistory,
+		unifiedClosedTabHistory: liveClosedTabHistory,
 		orphanedThinkingTabs: _orphanedThinkingTabs,
 		agentError: _agentError,
 		agentErrorPaused: _agentErrorPaused,
@@ -243,8 +246,21 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 				}
 	);
 
+	// The closed-tab stack persists as pointers (see src/shared/closedTabHistory.ts):
+	// main applies the same projection at load and at every write, so the stored
+	// stack always equals what this produces and the three-way merge can accept
+	// the next change. An empty stack stays off disk. A web-desktop client keeps
+	// its own runtime-only stack and never writes the host's.
+	const storedClosedTabs = isWebDesktop()
+		? undefined
+		: projectClosedTabHistory<Session['unifiedClosedTabHistory'][number]>(
+				liveClosedTabHistory,
+				closedTabHistoryContext(session)
+			);
+
 	const prepared = {
 		...sessionWithoutRuntimeFields,
+		...(storedClosedTabs ? { unifiedClosedTabHistory: storedClosedTabs } : {}),
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
 		executionQueue: sessionWithoutRuntimeFields.executionQueue || [],
