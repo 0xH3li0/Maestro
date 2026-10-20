@@ -143,6 +143,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
+import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
@@ -1023,6 +1024,10 @@ function MaestroConsoleInner() {
 
 	// Let the Feedback chat read this window's live state (read-only).
 	useEffect(() => installFeedbackLiveStateHook(), []);
+
+	// Hand this window's Auto Run state to a package main builds on its own
+	// (`maestro-cli support-package`, Feedback's support package).
+	useEffect(() => installAutoRunSnapshotResponder(), []);
 
 	// Expose notifyToast to window for debugging/testing
 	useEffect(() => {

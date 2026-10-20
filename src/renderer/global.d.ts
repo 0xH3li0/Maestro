@@ -194,7 +194,7 @@ import type {
 	CotFolderValidation,
 	CotSetResult,
 } from '../shared/cotExport/types';
-import type { DebugPackageOptions } from '../shared/debugPackage';
+import type { AutoRunSnapshotReply, DebugPackageOptions } from '../shared/debugPackage';
 import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
 	ParquetFetchProgress,
@@ -3345,6 +3345,9 @@ interface MaestroAPI {
 		}>;
 		// Delete an abandoned temp trace zip from stopProfilingToFile
 		discardTrace: (filePath: string) => Promise<{ success: boolean }>;
+		// Answer main's request for this window's Auto Run snapshots (CLI-built packages)
+		onAutoRunSnapshotRequest: (callback: (responseChannel: string) => void) => () => void;
+		sendAutoRunSnapshotResponse: (responseChannel: string, reply: AutoRunSnapshotReply) => void;
 		onProfilingProgress: (
 			handler: (event: {
 				phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';

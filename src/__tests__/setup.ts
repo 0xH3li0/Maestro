@@ -291,6 +291,8 @@ const mockMaestro = {
 		}),
 		discardTrace: vi.fn().mockResolvedValue({ success: true }),
 		onProfilingProgress: vi.fn(() => () => {}),
+		onAutoRunSnapshotRequest: vi.fn(() => () => {}),
+		sendAutoRunSnapshotResponse: vi.fn(),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),

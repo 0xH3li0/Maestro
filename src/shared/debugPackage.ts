@@ -73,3 +73,21 @@ export interface DebugPackageOptions {
 	 */
 	autoRunSnapshots?: AutoRunDebugSnapshot[];
 }
+
+/**
+ * Main asks every app window for its Auto Run snapshots on this channel when
+ * it builds a package with no renderer in the loop (`maestro-cli
+ * support-package`, Feedback's support package). The request carries a
+ * per-call response channel; see `requestAutoRunSnapshots()` in
+ * `src/main/debug-package/autorun-snapshots.ts`.
+ */
+export const AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL = 'debug:autoRunSnapshotRequest';
+
+/**
+ * A window's answer to `AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL`. A capture that
+ * throws answers `ok: false` at once, so main records the reason instead of
+ * waiting out its timeout.
+ */
+export type AutoRunSnapshotReply =
+	| { ok: true; snapshots: AutoRunDebugSnapshot[] }
+	| { ok: false; error: string };
