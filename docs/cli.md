@@ -86,6 +86,7 @@ Maestro's own system prompt tells agents to **pass `--background` by default** a
 | `dispatch --new-tab`        | **background** (as it always was)           |
 | `dispatch` (no `--new-tab`) | selects the target agent                    |
 | `create-agent`              | selects the new agent                       |
+| `duplicate-agent`           | selects the new agent                       |
 | `create-worktree`           | selects the new agent                       |
 | `switch-mode`               | switches the mode                           |
 | `refresh-auto-run`          | **background** (`--focus` to switch)        |
@@ -528,6 +529,12 @@ maestro-cli create-agent "Full Config" -d /workspace \
 	--ssh-cwd /remote/workdir \
 	--auto-run-folder ~/playbooks/full-config
 
+# Duplicate an agent the way the Left Bar's "Duplicate..." does
+maestro-cli duplicate-agent <agent-id>
+
+# Duplicate into another directory and group, under a new name
+maestro-cli duplicate-agent <agent-id> --name "Reviewer" --cwd ../other-repo -g <group-id> --json
+
 # Remove an agent
 maestro-cli remove-agent <agent-id>
 
@@ -632,6 +639,17 @@ The flag table below covers `create-agent`:
 | `--background`                    | Create the agent without selecting it in the Left Bar    | -                          |
 | `--focus`                         | Select the new agent after creating it (default)         | -                          |
 | `--json`                          | Machine-readable JSON output                             | -                          |
+
+`duplicate-agent <agent>` copies what the Left Bar's **Duplicate...** copies, through the same rules the New Agent modal prefills from: provider, working directory, group, additional directories, nudge and new session messages, custom path, args, env vars, model, effort, context window and provider path, Adaptive Mode, Agent Resilience, Codex automatic resets and transport, and the SSH remote. It does not copy tabs, history, the Auto Run folder (the copy gets `<cwd>/.maestro/playbooks`), or SSH history-sync flags. A name already in use is refused, as in the modal; sharing the source's directory prints a warning. The Pianola manager cannot be duplicated. Read the copy back with `show-agent <new-id>`.
+
+| Flag                | Description                                                                     | Default                |
+| ------------------- | ------------------------------------------------------------------------------- | ---------------------- |
+| `-n, --name <name>` | Name for the copy                                                               | `<source name> (Copy)` |
+| `-g, --group <id>`  | Group ID or prefix for the copy                                                 | the source's group     |
+| `-d, --cwd <path>`  | Working directory for the copy; a remote path, taken as typed, for an SSH agent | the source's directory |
+| `--background`      | Create the copy without selecting it in the Left Bar                            | -                      |
+| `--focus`           | Select the copy after creating it (default)                                     | -                      |
+| `--json`            | Machine-readable JSON output                                                    | -                      |
 
 ### Creating, Updating, and Removing Groups
 

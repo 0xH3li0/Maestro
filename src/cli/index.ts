@@ -88,6 +88,7 @@ import {
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
+import { duplicateAgent } from './commands/duplicate-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
 import { createWorktree } from './commands/create-worktree';
@@ -1782,6 +1783,23 @@ program
 	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
+
+// Duplicate agent command - the Left Bar's "Duplicate...", with the same carry-over rules
+program
+	.command('duplicate-agent <agent>')
+	.description(
+		'Duplicate an agent with the same settings the Left Bar "Duplicate..." copies (read back with show-agent)'
+	)
+	.option('-n, --name <name>', 'Name for the copy (default: "<source name> (Copy)")')
+	.option('-g, --group <id>', "Group ID or prefix for the copy (default: the source agent's group)")
+	.option(
+		'-d, --cwd <path>',
+		"Working directory for the copy (default: the source agent's; a remote path for an SSH agent)"
+	)
+	.option('--background', 'Create the copy without selecting it (Left Bar selection stays put)')
+	.option('--focus', 'Select the copy after creating it (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(duplicateAgent);
 
 // Folders, standard icons and label colors belong to Groups+: their options are
 // left out of --help while it is off, and passing one then is refused.

@@ -1448,6 +1448,19 @@ Create a new agent in the Maestro desktop app
 | `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
 | `--json`                          | Output as JSON (for scripting)                                                                              | -               |
 
+## `maestro-cli duplicate-agent <agent>`
+
+Duplicate an agent with the same settings the Left Bar "Duplicate..." copies (read back with show-agent)
+
+| Option              | Description                                                                                  | Default |
+| ------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| `-n, --name <name>` | Name for the copy (default: "&lt;source name> (Copy)")                                       | -       |
+| `-g, --group <id>`  | Group ID or prefix for the copy (default: the source agent's group)                          | -       |
+| `-d, --cwd <path>`  | Working directory for the copy (default: the source agent's; a remote path for an SSH agent) | -       |
+| `--background`      | Create the copy without selecting it (Left Bar selection stays put)                          | -       |
+| `--focus`           | Select the copy after creating it (default)                                                  | -       |
+| `--json`            | Output as JSON (for scripting)                                                               | -       |
+
 ## `maestro-cli create-group <name>`
 
 Create a new group in the Maestro desktop app

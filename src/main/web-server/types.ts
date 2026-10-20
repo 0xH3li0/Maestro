@@ -23,7 +23,8 @@ import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../shared/throughputGaugeCommands';
-import type { UsageStats } from '../../shared/types';
+import type { AdditionalDirectory, UsageStats } from '../../shared/types';
+import type { CodexTransport } from '../../shared/codexTransport';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
@@ -1274,6 +1275,21 @@ export interface CreateSessionConfig {
 		workingDirOverride?: string;
 	};
 	autoRunFolderPath?: string;
+	/** Extra directories granted beyond the working directory. */
+	additionalDirectories?: AdditionalDirectory[];
+	/** Adaptive Mode (Claude token source). Absent means the agent's default. */
+	enableMaestroP?: boolean;
+	/** Only meaningful with {@link enableMaestroP} on. */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Only meaningful with {@link enableMaestroP} on. */
+	maestroPPath?: string;
+	/** Agent Resilience toggles; absent means ON. */
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+	/** Codex only: spend a reset credit on quota exhaustion. Absent means off. */
+	codexAutoResetOnExhaustion?: boolean;
+	/** Codex only: chat-turn transport. Absent means `exec`. */
+	codexTransport?: CodexTransport;
 }
 
 export type CreateSessionCallback = (

@@ -95,6 +95,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	dispatch: false,
 	/** maestro-cli create-agent - selects the new agent today. */
 	'create-agent': false,
+	/** maestro-cli duplicate-agent - selects the copy, the same as create-agent. */
+	'duplicate-agent': false,
 	/**
 	 * maestro-cli create-worktree - selects the new agent today.
 	 *

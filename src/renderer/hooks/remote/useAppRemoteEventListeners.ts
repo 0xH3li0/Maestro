@@ -13,7 +13,7 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { buildNewAgentRecord } from '../../../shared/newAgentRecord';
+import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { asThinkingMode } from '../../../shared/types';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
@@ -32,7 +32,7 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
+import type { AdditionalDirectory, Session, ToolType, Group, BatchRunConfig } from '../../types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
@@ -1550,6 +1550,30 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
+				// The remaining New Agent modal fields (`duplicate-agent` sends them),
+				// stored the way createNewSession() stores them.
+				...(Array.isArray(config?.additionalDirectories) && {
+					additionalDirectories: config.additionalDirectories as AdditionalDirectory[],
+				}),
+				...(typeof config?.enableMaestroP === 'boolean' && {
+					enableMaestroP: config.enableMaestroP,
+				}),
+				...(config?.enableMaestroP === true &&
+					(config.maestroPMode === 'interactive' || config.maestroPMode === 'dynamic') && {
+						maestroPMode: config.maestroPMode,
+					}),
+				...(config?.enableMaestroP === true &&
+					typeof config.maestroPPath === 'string' &&
+					config.maestroPPath && { maestroPPath: config.maestroPPath }),
+				...(typeof config?.retryOnAvailabilityErrors === 'boolean' && {
+					retryOnAvailabilityErrors: config.retryOnAvailabilityErrors,
+				}),
+				...(typeof config?.retryOnTokenExhaustion === 'boolean' && {
+					retryOnTokenExhaustion: config.retryOnTokenExhaustion,
+				}),
+				...(config?.codexAutoResetOnExhaustion === true && { codexAutoResetOnExhaustion: true }),
+				...(config?.codexTransport === 'app-server' && { codexTransport: 'app-server' as const }),
+				claudeInteractive: newAgentClaudeInteractive(toolType),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);

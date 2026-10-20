@@ -80,6 +80,7 @@ import { autoRun } from '../../cli/commands/auto-run';
 import { setBookmark } from '../../cli/commands/bookmark';
 import { cadenzaClose } from '../../cli/commands/cadenza';
 import { createAgent } from '../../cli/commands/create-agent';
+import { duplicateAgent } from '../../cli/commands/duplicate-agent';
 import { createGroup } from '../../cli/commands/create-group';
 import { createWorktree } from '../../cli/commands/create-worktree';
 import { cueEnable } from '../../cli/commands/cue-control';
@@ -262,6 +263,7 @@ const rows: Row[] = [
 		name: 'create-agent',
 		run: (json) => createAgent('Agent', { cwd: dataDir, type: 'claude-code', json }),
 	},
+	{ name: 'duplicate-agent', run: (json) => duplicateAgent('agent-1', j(json)) },
 	{ name: 'cue list', run: (json) => cueList(j(json)), envelope: { type: 'error' } },
 	{ name: 'cue trigger', run: (json) => cueTrigger('sub', j(json)), envelope: { type: 'error' } },
 	{

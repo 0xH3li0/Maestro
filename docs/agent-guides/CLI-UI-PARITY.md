@@ -57,6 +57,7 @@ field still gets the old behaviour, and `--focus` restores it from the CLI.
 | `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
 | `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
 | `create-agent`                                    | `create_session`                                      | selects the new agent                   |
+| `duplicate-agent`                                 | `create_session`                                      | selects the new agent                   |
 | `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                   |
 | `switch-mode`                                     | `switch_mode`                                         | switches                                |
 | `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)     |
@@ -276,6 +277,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Quick Chat window: hotkey, back to Maestro (Cmd+`), send, attach images (paste, drop, image button), new, keep, pin, thinking, tab picker, text size, agent, open in Maestro, open a message's tab (the pill), send a queued message to a new tab, thumbs-down a routed tab (resend in a new tab), recent chats (History button, recall one), stop, drag, resize | `quick-chat toggle\|show\|hide\|return\|send [--image <path...>]\|new\|keep\|pin\|thinking\|tab\|font\|agent\|reveal [message-id]\|new-tab [message-id]\|recall <chat>\|stop\|bounds`, read with `quick-chat status` (each message, its id, and the tab it went to) and `quick-chat history` (the recent chats) (or bare `quick-chat font`); `open quick-chat`                                           |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                                                                                                                                                                                                                                                                                     | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                                                                                                                                                                                                                                                                                  |
 | Create / rename / remove an agent                                                                                                                                                                                                                                                                                                                                | `create-agent`, `rename-agent`, `remove-agent`                                                                                                                                                                                                                                                                                                                                                           |
+| Duplicate an agent (context menu Duplicate...)                                                                                                                                                                                                                                                                                                                   | `duplicate-agent <agent> [--name] [--group] [--cwd]`, read with `show-agent`; copies what the modal copies via `buildDuplicateAgentInput()`                                                                                                                                                                                                                                                              |
 | Edit Agent modal fields                                                                                                                                                                                                                                                                                                                                          | `update-agent`, `settings agent set`                                                                                                                                                                                                                                                                                                                                                                     |
 | Switch an agent's provider                                                                                                                                                                                                                                                                                                                                       | `update-agent --provider`                                                                                                                                                                                                                                                                                                                                                                                |
 | Codex transport (Standard / App server)                                                                                                                                                                                                                                                                                                                          | `update-agent --codex-transport exec\|app-server`, read back via `show-agent`                                                                                                                                                                                                                                                                                                                            |
@@ -444,38 +446,35 @@ Ranked by how often an agent is likely to hit them. Every entry is buildable
 work; UI actions left without a verb on purpose are listed under
 [Not mirrored by design](#not-mirrored-by-design).
 
-1. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
-   options (what to copy). `create-agent` can approximate it, but there is no
-   one-shot duplicate.
-2. **Toggle Live mode** (`isLive`) for the web interface.
-3. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+1. **Toggle Live mode** (`isLive`) for the web interface.
+2. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation.
-4. **Auto Run state in a CLI-built support package.** The desktop's Create
+3. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-5. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+4. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-6. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+5. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
    reachable over the WS bridge. Every mode IS reachable from the CLI through
    the prompt's wording, which `inferMentionTiming()` reads on every path, so
    this is a convenience gap, not a capability gap. Closing it means threading
    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-7. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+6. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
    Cue modal panel could render its gaps directly; it is CLI first because it
    exists for unattended servers, where nobody opens the desktop.
-8. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+7. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
    have no CLI read. An agent needs one to check plan usage, and it is also
    how an agent would verify a provider login (see **Log in to a provider
    account** under Not mirrored by design).
