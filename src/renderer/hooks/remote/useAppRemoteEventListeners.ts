@@ -70,6 +70,12 @@ import {
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import {
+	TAB_CONTEXT_OP_EVENT,
+	runRemoteTabContextOp,
+	type TabContextOpEventDetail,
+	type TabContextOpHandlers,
+} from '../../services/tabContextOps';
 
 // ============================================================================
 // Group update helpers
@@ -178,6 +184,8 @@ export interface UseAppRemoteEventListenersDeps {
 	skipCurrentDocument: (sessionId: string) => void;
 	/** Abort a paused-on-error batch run entirely */
 	abortBatchOnError: (sessionId: string) => void;
+	/** The AI tab overlay menu's Context handlers (Compact, Merge Into, Send to Agent). */
+	tabContextOps: TabContextOpHandlers;
 }
 
 // ============================================================================
@@ -198,6 +206,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		resumeAfterError,
 		skipCurrentDocument,
 		abortBatchOnError,
+		tabContextOps,
 	} = deps;
 
 	/**
@@ -217,6 +226,27 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		logger.info('[Remote] active agent switched', undefined, { origin, sessionId });
 		setActiveSessionId(sessionId);
 	};
+
+	// --- Context: Compact / Merge Into / Send to Agent ---
+
+	// `maestro-cli tab compact|merge|transfer`, forwarded by useRemoteIntegration.
+	// Runs the overlay menu's own handlers and answers every path, a thrown
+	// handler included, so the CLI never waits out its timeout.
+	useEventListener(TAB_CONTEXT_OP_EVENT, (e: Event) => {
+		const { request, reply } = (e as CustomEvent<TabContextOpEventDetail>).detail;
+		runRemoteTabContextOp(request, tabContextOps)
+			.then(reply)
+			.catch((error: unknown) => {
+				captureException(error, {
+					extra: { event: TAB_CONTEXT_OP_EVENT, op: request.op, sessionId: request.sessionId },
+				});
+				reply({
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+					sessionId: request.sessionId,
+				});
+			});
+	});
 
 	// --- File Operations ---
 

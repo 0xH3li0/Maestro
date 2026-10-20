@@ -36,6 +36,8 @@ import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeC
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
+import { TAB_CONTEXT_OP_EVENT, type TabContextOpEventDetail } from '../../services/tabContextOps';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
@@ -1136,6 +1138,32 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// `maestro-cli tab compact|merge|transfer`: the overlay menu's Context
+		// items. Their handlers live in App's hooks, so the request crosses to
+		// useAppRemoteEventListeners (mounted after them), which answers on the
+		// same response channel. The three preload replies are the same send.
+		const forwardTabContextOp =
+			(respond: (responseChannel: string, result: TabContextOpResult) => void) =>
+			(request: TabContextOpRequest, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent<TabContextOpEventDetail>(TAB_CONTEXT_OP_EVENT, {
+						detail: {
+							request,
+							reply: (result) => respond(responseChannel, result),
+						},
+					})
+				);
+			};
+		const unsubscribeSummarizeContext = window.maestro.process.onRemoteSummarizeContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteSummarizeContextResponse)
+		);
+		const unsubscribeMergeContext = window.maestro.process.onRemoteMergeContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteMergeContextResponse)
+		);
+		const unsubscribeTransferContext = window.maestro.process.onRemoteTransferContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteTransferContextResponse)
+		);
+
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
@@ -1428,6 +1456,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeClosedTabCommand();
+			unsubscribeSummarizeContext();
+			unsubscribeMergeContext();
+			unsubscribeTransferContext();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

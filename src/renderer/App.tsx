@@ -1560,6 +1560,8 @@ function MaestroConsoleInner() {
 		handleSendToAgent,
 		handleMergeWith,
 		handleOpenSendToAgentModal,
+		mergeTabContext,
+		transferTabContext,
 	} = useMergeTransferHandlers({
 		sessionsRef,
 		activeSessionIdRef,
@@ -1579,6 +1581,7 @@ function MaestroConsoleInner() {
 		cancelTab,
 		canSummarize,
 		handleSummarizeAndContinue,
+		summarizeTab,
 	} = useSummarizeAndContinue();
 
 	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
@@ -2044,6 +2047,9 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
+	const activeAiTabAutoSend = activeSession
+		? getActiveTab(activeSession)?.autoSendOnActivate === true
+		: false;
 	useEffect(() => {
 		if (!activeSession) return;
 
@@ -2072,7 +2078,9 @@ function MaestroConsoleInner() {
 		}, 100);
 
 		return () => clearTimeout(timeoutId);
-	}, [activeSession?.id, activeSession?.activeTabId]);
+		// The flag itself is a dependency too: a merge into the tab already on
+		// screen sets it without changing the selection, and must still send.
+	}, [activeSession?.id, activeSession?.activeTabId, activeAiTabAutoSend]);
 
 	// Initialize activity tracker for per-session time tracking
 	useActivityTracker(activeSessionId, setSessions);
@@ -2465,6 +2473,7 @@ function MaestroConsoleInner() {
 		resumeAfterError: resumeAutoRunAfterError,
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
+		tabContextOps: { summarizeTab, mergeTabContext, transferTabContext },
 	});
 
 	/*

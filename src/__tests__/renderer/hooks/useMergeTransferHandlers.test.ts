@@ -1472,7 +1472,8 @@ describe('useMergeTransferHandlers', () => {
 				expect.any(String), // activeTabId
 				'target-session',
 				'target-tab',
-				{ groomContext: true, maxTokens: 5000 }
+				{ groomContext: true, maxTokens: 5000 },
+				{}
 			);
 		});
 	});

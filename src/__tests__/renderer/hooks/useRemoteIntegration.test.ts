@@ -131,6 +131,10 @@ describe('useRemoteIntegration', () => {
 	let onRemoteClosedTabCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	const contextOpHandlers: Record<
+		string,
+		((request: Record<string, unknown>, responseChannel: string) => void) | undefined
+	> = {};
 	let onRemoteThroughputGaugeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
@@ -260,6 +264,21 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteClosedTabCommandResponse: vi.fn(),
+		onRemoteSummarizeContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.compact = handler;
+			return () => {};
+		}),
+		sendRemoteSummarizeContextResponse: vi.fn(),
+		onRemoteMergeContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.merge = handler;
+			return () => {};
+		}),
+		sendRemoteMergeContextResponse: vi.fn(),
+		onRemoteTransferContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.transfer = handler;
+			return () => {};
+		}),
+		sendRemoteTransferContextResponse: vi.fn(),
 		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteThroughputGaugeCommandHandler = handler;
 			return () => {};
@@ -2586,6 +2605,38 @@ describe('useRemoteIntegration', () => {
 					error: 'No closed tabs to reopen',
 				})
 			);
+		});
+	});
+
+	describe('remote context operations', () => {
+		// `maestro-cli tab compact|merge|transfer`. The handlers live in App's
+		// hooks, so this hook only forwards; useAppRemoteEventListeners answers.
+		// Each reply must reach the preload sender for its own channel.
+		it.each([
+			['compact', 'sendRemoteSummarizeContextResponse'],
+			['merge', 'sendRemoteMergeContextResponse'],
+			['transfer', 'sendRemoteTransferContextResponse'],
+		] as const)('forwards %s as a window event whose reply uses %s', (op, sender) => {
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+			const listener = vi.fn((e: Event) => {
+				(e as CustomEvent).detail.reply({ success: true, newTabId: 'tab-new' });
+			});
+			window.addEventListener('maestro:tabContextOp', listener);
+			try {
+				const request = { op, sessionId: 'session-1' };
+				act(() => {
+					contextOpHandlers[op]?.(request, `${op}-response`);
+				});
+
+				expect(listener).toHaveBeenCalledTimes(1);
+				expect((listener.mock.calls[0][0] as CustomEvent).detail.request).toEqual(request);
+				expect(window.maestro.process[sender]).toHaveBeenCalledWith(`${op}-response`, {
+					success: true,
+					newTabId: 'tab-new',
+				});
+			} finally {
+				window.removeEventListener('maestro:tabContextOp', listener);
+			}
 		});
 	});
 
