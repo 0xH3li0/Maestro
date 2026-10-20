@@ -385,6 +385,21 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 	}
 
 	/**
+	 * Drop the whole queue, persisted rows included. Per row rather than a
+	 * table wipe: cue.db is shared by every engine on the data dir, and an
+	 * engine that has lost its lock (or never held it) must not delete the
+	 * queue of the engine that holds it.
+	 */
+	function forgetQueue(): void {
+		for (const queue of eventQueue.values()) {
+			for (const entry of queue) {
+				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+			}
+		}
+		eventQueue.clear();
+	}
+
+	/**
 	 * Attempt a phase transition on an active run.
 	 * Returns the previous phase on success, or null if invalid
 	 * (run not found, already finished, or already in target phase).
@@ -1188,8 +1203,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// function returns there are zero active runs AND zero queued
 			// events - the contract callers (engine shutdown / Cue toggle
 			// off) actually need.
-			eventQueue.clear();
-			deps.queuePersistence?.clearAll();
+			forgetQueue();
 			for (const runId of [...activeRuns.keys()]) {
 				this.stopRun(runId);
 			}
@@ -1355,10 +1369,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			activeRuns.clear();
 			activeRunCount.clear();
 			activeRootKeys.clear();
-			eventQueue.clear();
-			// Reset tears down everything - persisted copies too. Any re-enqueue
-			// after reset() will generate fresh persist IDs.
-			deps.queuePersistence?.clearAll();
+			// Reset tears down persisted copies too. Any re-enqueue after reset()
+			// will generate fresh persist IDs.
+			forgetQueue();
 			notifyIfIdle();
 		},
 	};

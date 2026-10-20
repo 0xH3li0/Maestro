@@ -295,14 +295,6 @@ describe('cue-queue-persistence', () => {
 			expect(restored.has('s-1')).toBe(false);
 			expect(restored.get('s-2')).toHaveLength(1);
 		});
-
-		it('clearAll wipes every row', () => {
-			const p = makePersistence({ known: ['s-1', 's-2'] });
-			p.persist('s-1', 'a', makeEntry());
-			p.persist('s-2', 'b', makeEntry());
-			p.clearAll();
-			expect(p.restoreAll().size).toBe(0);
-		});
 	});
 
 	describe('restore filtering', () => {

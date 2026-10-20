@@ -83,6 +83,7 @@ operator-facing items below in short form.
 | The refusal log line promised the engine would start once the lock was free, though nothing retries                                                                                                                                      | `b47522c3c`                                                                                                                                                                                                                                                                                                                                                                                                                                            | `cue-engine-lock-lost.test.ts`                                                                                                                                                                                                                                                                                                                                   |
 | While an engine is running, `cue activity` without the app listed a run still in flight as `failed` with 0.0 s (seen live on the VM, 2026-10-15)                                                                                         | The 2026-10-16 fix: `readActivityFromCueDb` reads `readCueEngineLock()` before `cue.db` and maps with `keepRunning`; a `running` entry has no duration and prints the time so far. The start-up restore keeps `failed`                                                                                                                                                                                                                                 | Tests (`cue-control.test.ts`, `cue-activity-entries.test.ts`, `cue-engine-activity-hydration.test.ts`); live in the container on a build of `1e63adead`, 2026-10-16 ([checks](#cue-activity-runs-in-flight-container-2026-10-16)): `running ... so far` beside the engine, `completed` with a duration once done, the start-up restore marks the orphan `failed` |
 | F1 from the packaged v1.1.0-RC check (2026-10-19): with `maestro-cli host` running, `cue activity` and `cue list` exit 4 ("host does not support the command"), so a desktop-less server has no CLI view of Cue history or subscriptions | Branch `fix/cli-cue-on-host`: the host answers `get_cue_activity`, `get_cue_subscriptions` and `toggle_cue_subscription` from the engine it runs (run output included); when its Cue is not running (held, failed) or the host is older, the CLI reads `cue.db` / each cue.yaml itself, with a stderr note. `cue enable\|disable` and `cue trigger` beside a host not running Cue now say why. An old desktop build and a timeout still fail as before |
+| An engine that lost its lock (or a desktop that never got it) deleted the whole shared persisted queue on stop or Stop All, including the queue of the engine holding the lock. **Desktop behaviour change**                             | `forgetQueue()` in `cue-run-manager.ts`: `stopAll()` and `reset()` delete only their own rows ([2026-10-20](#lock-loss-and-the-shared-persisted-queue-2026-10-20))                                                                                                                                                                                                                                                                                     | Tests only (`cue-engine-lock-lost.test.ts`, `cue-run-manager.test.ts`); not yet live                                                                                                                                                                                                                                                                             |
 
 ## Service mode verification
 
@@ -248,6 +249,57 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
+
+## Lock loss and the shared persisted queue, 2026-10-20
+
+On `fix/cli-cue-on-host` after merging `origin/rc` (`838403a3b`; the only
+conflict, `docs/agent-guides/CLI-UI-PARITY.md`, kept both sides: rc's rows
+and our two Cue rows, and our `cue pipeline` open gap renumbered 18 behind
+rc's DataviewJS gap 17). **Tests only until the live run on the VM.**
+
+**Finding: real.** `cue.db` is shared by every engine on a data directory, but
+both queue teardowns in the run manager deleted the whole `cue_event_queue`
+table (`clearAll()` -> `clearPersistedQueue()`, a `DELETE` with no `WHERE`):
+
+- `reset()`, run by `CueEngine.stop()`, which is what the lock heartbeat calls
+  on `'lost'` when no drain is in progress;
+- `stopAll()`, which `maestro-cli host` calls from `onLockLost` to end the runs
+  in flight, before the engine stops itself.
+
+So an engine that lost its lock deleted the queued events of the engine that
+had just taken it over. Shown by `cue-engine-lock-lost.test.ts` (two engines on
+one queue table, the old one queues, the new one takes over and queues, the old
+one queues once more, then loses the lock): before the fix the new holder's row
+was gone in both orders (engine alone, and `onLockLost` calling `stopAll()`
+first). The drain path was not affected (`finishDrain` and `forceStop` do not
+reset), nor the reload path (`retainQueue` removes per row already).
+
+**The losing engine's own rows.** Every row it had persisted before the
+takeover was restored by the new holder at its start (removed and re-persisted
+under a new id), so it is the new holder's work now. Rows it persisted after the
+takeover came from triggers fired beside the new holder, the double fire the
+lock exists to prevent, so they are deleted with its queue rather than kept for
+a later restore.
+
+**Fix.** `forgetQueue()` in `cue-run-manager.ts`: `stopAll()` and `reset()`
+remove this manager's queued rows one by one by `persistId`, the rule the
+fan-in tracker's `reset()` already follows. No schema change.
+`CueQueuePersistence.clearAll` had no caller left and was removed.
+
+**Desktop-visible change.** The same engine runs in the desktop app. For an
+engine that holds the lock the table holds exactly its own queue (start-up
+restore removes or re-persists every row it snapshots), so switching Cue off
+and the Cue modal's Stop All still empty the queue as before. What changes: a
+desktop whose Cue start was refused because a standalone engine or a host
+holds the lock no longer deletes that engine's queue when its Stop All is
+pressed, and rows no engine has in memory (a start whose queue read failed
+leaves them for the next start) survive a stop.
+
+Tests: `cue-engine-lock-lost.test.ts` (new two-engine cases, failed before the
+fix), `cue-run-manager.test.ts` (both teardowns remove exactly their own rows;
+`reset()` after `discardInMemory()` leaves the drain's rows), and the
+`src/__tests__/main/cue` suite with the host and `cue list`/`cue activity`/
+`cue enable` command tests: 128 files, 2694 passed.
 
 ## Packaged v1.1.0-RC, Linux CLI, 2026-10-19
 
