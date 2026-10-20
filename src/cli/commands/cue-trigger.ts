@@ -2,7 +2,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { submitCueTrigger } from '../services/cue-trigger-inbox';
-import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import { isCueEngineLockOwnedBy, readCueEngineLock } from '../../main/cue/cue-engine-lock';
 import { readCliServerInfo } from '../../shared/cli-server-discovery';
 import {
 	errorFrameMessage,
@@ -37,10 +37,13 @@ export async function cueTrigger(
 		// trigger inbox instead (see cue-trigger-inbox.ts). The exception is the
 		// standalone engine inside `maestro-cli host`, which the client reaches
 		// anyway: the host answers, so a shutdown drain (which stops the inbox)
-		// is refused with its reason instead of timing out.
+		// is refused with its reason instead of timing out. "The host's own
+		// engine" is decided by the lock token the host publishes, never by pid:
+		// two containers on one data directory both run as pid 1.
 		const lock = readCueEngineLock();
 		const result =
-			lock?.mode === 'standalone' && readCliServerInfo()?.pid !== lock.pid
+			lock?.mode === 'standalone' &&
+			!isCueEngineLockOwnedBy(lock, readCliServerInfo()?.cueLockToken)
 				? await submitCueTrigger({
 						subscriptionName,
 						prompt: options.prompt,

@@ -8,7 +8,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CueEngineLockInfo } from '../../../main/cue/cue-engine-lock';
+import { cueEngineLockOwnerToken, type CueEngineLockInfo } from '../../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue, type HostCueEngine } from '../../../cli/services/host-cue';
 import {
 	HostPromptsMissingError,
@@ -96,6 +96,8 @@ describe('startRuntimeHost', () => {
 			pid: process.pid,
 			version: '1.2.3',
 			hostKind: 'headless',
+			// What `cue trigger` compares with the Cue lock to find this host's own engine.
+			cueLockToken: cueEngineLockOwnerToken(),
 		});
 		expect(info?.cliSecret).toBeTruthy();
 		if (process.platform !== 'win32') {

@@ -25,6 +25,7 @@ import {
 	type RuntimeServer,
 } from '../../shared/maestro-lib';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { cueEngineLockOwnerToken } from '../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue } from './host-cue';
 
 /** The runtime refused the directory: another host, a desktop, a held lock, a corrupt store. */
@@ -200,6 +201,9 @@ export async function startRuntimeHost(
 			startedAt: deps.now(),
 			cliSecret,
 			hostKind: 'headless',
+			// The engine this host runs writes this token into the Cue lock, so the CLI can tell that
+			// lock from another engine's on the same directory (`cue trigger` routes by it).
+			cueLockToken: cueEngineLockOwnerToken(),
 			...(options.version ? { version: options.version } : {}),
 		});
 		log(`Host serving ${paths.userDataDir} on 127.0.0.1:${server.port} (pid ${deps.pid}).`);
