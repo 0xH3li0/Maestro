@@ -402,7 +402,7 @@ describe('PipelineSelector', () => {
 					{...defaultProps}
 					theme={mockTheme}
 					agents={agents}
-					activeAgentId="s2"
+					activeAgent={agents[1]}
 					onSelectAgent={vi.fn()}
 				/>
 			);
@@ -417,7 +417,7 @@ describe('PipelineSelector', () => {
 					theme={mockTheme}
 					selectedPipelineId="p1"
 					agents={agents}
-					activeAgentId="s2"
+					activeAgent={agents[1]}
 					onSelectAgent={vi.fn()}
 				/>
 			);

@@ -269,7 +269,7 @@ describe('CuePipelineEditor agent scope', () => {
 
 	it('hands the renderer each pipeline home agent for the cluster boxes', () => {
 		render(<CuePipelineEditor {...baseProps} />);
-		const homes = lastConversion()[8] as Map<string, { sessionName: string }>;
+		const homes = lastConversion()[7] as Map<string, { sessionName: string }>;
 		expect(homes.get('p1')?.sessionName).toBe('Marketing');
 		// Beta and Gamma name no agent and nobody declares them: no home.
 		expect(homes.has('p2')).toBe(false);

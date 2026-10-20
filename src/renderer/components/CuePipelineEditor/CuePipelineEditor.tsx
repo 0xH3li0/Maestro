@@ -312,7 +312,15 @@ function CuePipelineEditorInner({
 		});
 	}, [pipelineState.pipelines, scopedPipelineIds, pipelineHomes]);
 
-	const activeScope = scopedPipelineIds ? graphScope : null;
+	// The scope as DRAWN: only the pipelines that still exist. The toolbar names
+	// and counts this, so its label always matches the canvas.
+	const activeScope = useMemo<PipelineAgentScope | null>(
+		() =>
+			graphScope && scopedPipelineIds
+				? { ...graphScope, pipelineIds: [...scopedPipelineIds] }
+				: null,
+		[graphScope, scopedPipelineIds]
+	);
 
 	// The scope a single-pipeline view was drilled into from, if any: what the
 	// toolbar's back crumb returns to.

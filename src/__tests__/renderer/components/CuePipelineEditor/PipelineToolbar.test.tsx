@@ -153,7 +153,7 @@ describe('PipelineToolbar', () => {
 			);
 			const props = selectorProps.mock.calls[selectorProps.mock.calls.length - 1][0];
 			expect(props.agents).toEqual([scope]);
-			expect(props.activeAgentId).toBe('sess-1');
+			expect(props.activeAgent).toBe(scope);
 			expect(props.onSelectAgent).toBe(onSelectAgentScope);
 		});
 

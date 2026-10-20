@@ -89,8 +89,10 @@ export interface PipelineSelectorProps {
 	/** Agents the view can be narrowed to. The Agents section is hidden when
 	 *  this is empty or `onSelectAgent` is absent. */
 	agents?: PipelineAgentScope[];
-	/** The agent All Pipelines is currently narrowed to, if any. */
-	activeAgentId?: string | null;
+	/** The scope All Pipelines is currently narrowed to, if any. Passed whole
+	 *  rather than looked up in `agents` by id, so the trigger names and counts
+	 *  exactly what the canvas draws even when the two lists disagree. */
+	activeAgent?: PipelineAgentScope | null;
 	onSelectAgent?: (agent: PipelineAgentScope) => void;
 	theme?: Theme;
 	textColor?: string;
@@ -106,7 +108,7 @@ export function PipelineSelector({
 	onRenamePipeline,
 	onChangePipelineColor,
 	agents = NO_AGENTS,
-	activeAgentId = null,
+	activeAgent: activeAgentScope = null,
 	onSelectAgent,
 	theme,
 	textColor,
@@ -179,10 +181,7 @@ export function PipelineSelector({
 	const selectedPipeline = selectedPipelineId
 		? pipelines.find((p) => p.id === selectedPipelineId)
 		: null;
-	const activeAgent =
-		selectedPipelineId === null && activeAgentId
-			? (agents.find((a) => a.sessionId === activeAgentId) ?? null)
-			: null;
+	const activeAgent = selectedPipelineId === null ? activeAgentScope : null;
 
 	const sortedPipelines = useMemo(
 		() => [...pipelines].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
