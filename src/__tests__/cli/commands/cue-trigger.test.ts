@@ -31,6 +31,11 @@ import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { readCueEngineLock } from '../../../main/cue/cue-engine-lock';
 import { readCliServerInfo } from '../../../shared/cli-server-discovery';
 import { submitCueTrigger } from '../../../cli/services/cue-trigger-inbox';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
+import {
+	CommandTimeoutError,
+	ConnectionClosedError,
+} from '../../../shared/maestro-lib/client/bridge-connection';
 
 describe('cueTrigger command', () => {
 	let consoleSpy: MockInstance;
@@ -322,6 +327,66 @@ describe('cueTrigger command', () => {
 
 			expect(submitCueTrigger).not.toHaveBeenCalled();
 			expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(refusal));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		// A caller in another container shares the data directory, reads the
+		// matching token, and dials 127.0.0.1 in its own network namespace. The
+		// request never left, so the inbox (which the host's engine also reads)
+		// delivers it without any risk of running it twice.
+		it.each([
+			['refused', new MaestroNotRunningError('connect-failed', 'connect ECONNREFUSED')],
+			['timed out', new MaestroNotRunningError('connect-timeout')],
+		])(
+			"uses the inbox when the host's connection is %s before anything was sent",
+			async (_, connectError) => {
+				vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(1, 'host'));
+				vi.mocked(readCliServerInfo).mockReturnValueOnce(hostAt(1, 'host'));
+				vi.mocked(withMaestroClient).mockRejectedValueOnce(connectError);
+
+				await cueTrigger('my-sub', {});
+
+				expect(withMaestroClient).toHaveBeenCalledTimes(1);
+				expect(submitCueTrigger).toHaveBeenCalledTimes(1);
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
+					expect.stringContaining('Sent through the Cue trigger inbox')
+				);
+				expect(consoleSpy).toHaveBeenCalledWith('Triggered Cue subscription "my-sub"');
+				expect(processExitSpy).not.toHaveBeenCalled();
+			}
+		);
+
+		it('keeps --json output to the one result line when it falls back', async () => {
+			vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(1, 'host'));
+			vi.mocked(readCliServerInfo).mockReturnValueOnce(hostAt(1, 'host'));
+			vi.mocked(withMaestroClient).mockRejectedValueOnce(
+				new MaestroNotRunningError('connect-failed', 'connect ECONNREFUSED')
+			);
+
+			await cueTrigger('my-sub', { json: true });
+
+			expect(submitCueTrigger).toHaveBeenCalledTimes(1);
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				type: 'trigger_result',
+				success: true,
+			});
+		});
+
+		// Once the connection opened the request may have reached the host, so
+		// the inbox could fire it a second time: the host's failure is the answer.
+		it.each([
+			['the reply times out', new CommandTimeoutError('trigger_cue_subscription_result')],
+			['the socket drops', new ConnectionClosedError({ closedByCaller: false, code: 1006 })],
+		])('reports the failure and never uses the inbox when %s', async (_, sendError) => {
+			vi.mocked(readCueEngineLock).mockReturnValueOnce(standaloneLock(1, 'host'));
+			vi.mocked(readCliServerInfo).mockReturnValueOnce(hostAt(1, 'host'));
+			vi.mocked(withMaestroClient).mockRejectedValueOnce(sendError);
+
+			await cueTrigger('my-sub', {});
+
+			expect(submitCueTrigger).not.toHaveBeenCalled();
+			expect(consoleErrorSpy).toHaveBeenCalledWith(`Error: ${sendError.message}`);
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});

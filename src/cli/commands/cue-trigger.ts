@@ -1,6 +1,7 @@
 // Cue trigger command - manually trigger a Cue subscription by name
 
 import { withMaestroClient } from '../services/maestro-client';
+import { MaestroNotRunningError } from '../services/maestro-not-running';
 import { submitCueTrigger } from '../services/cue-trigger-inbox';
 import { isCueEngineLockOwnedBy, readCueEngineLock } from '../../main/cue/cue-engine-lock';
 import { readCliServerInfo } from '../../shared/cli-server-discovery';
@@ -40,31 +41,55 @@ export async function cueTrigger(
 		// is refused with its reason instead of timing out. "The host's own
 		// engine" is decided by the lock token the host publishes, never by pid:
 		// two containers on one data directory both run as pid 1.
-		const lock = readCueEngineLock();
-		const result =
-			lock?.mode === 'standalone' &&
-			!isCueEngineLockOwnedBy(lock, readCliServerInfo()?.cueLockToken)
-				? await submitCueTrigger({
+		const viaInbox = () =>
+			submitCueTrigger({
+				subscriptionName,
+				prompt: options.prompt,
+				sourceAgentId: options.sourceAgentId,
+			});
+		const viaHost = () =>
+			withMaestroClient(async (client) => {
+				return client.sendCommand<{
+					type: string;
+					success: boolean;
+					subscriptionName: string;
+					error?: string;
+				}>(
+					{
+						type: 'trigger_cue_subscription',
 						subscriptionName,
 						prompt: options.prompt,
 						sourceAgentId: options.sourceAgentId,
-					})
-				: await withMaestroClient(async (client) => {
-						return client.sendCommand<{
-							type: string;
-							success: boolean;
-							subscriptionName: string;
-							error?: string;
-						}>(
-							{
-								type: 'trigger_cue_subscription',
-								subscriptionName,
-								prompt: options.prompt,
-								sourceAgentId: options.sourceAgentId,
-							},
-							'trigger_cue_subscription_result'
-						);
-					});
+					},
+					'trigger_cue_subscription_result'
+				);
+			});
+		const lock = readCueEngineLock();
+		let result: Awaited<ReturnType<typeof viaInbox>> | Awaited<ReturnType<typeof viaHost>>;
+		if (lock?.mode !== 'standalone') {
+			result = await viaHost();
+		} else if (!isCueEngineLockOwnedBy(lock, readCliServerInfo()?.cueLockToken)) {
+			result = await viaInbox();
+		} else {
+			try {
+				result = await viaHost();
+			} catch (error) {
+				// The host's engine holds the lock, but its connection never opened
+				// from here: a caller that shares the data directory and not the
+				// host's network (another container) dials its own loopback. The
+				// request was never sent, so the inbox, which that engine also
+				// reads, cannot run the trigger twice. Anything after the
+				// connection opened (a refusal, a timeout, a dropped socket) is the
+				// host's answer and is reported as it is.
+				if (!(error instanceof MaestroNotRunningError)) throw error;
+				if (!options.json) {
+					console.error(
+						'Sent through the Cue trigger inbox: the host that runs this Cue engine could not be reached from here.'
+					);
+				}
+				result = await viaInbox();
+			}
+		}
 
 		// A refusal with a reason (a headless host not running Cue says why and
 		// what to do), not a subscription that was not found.
