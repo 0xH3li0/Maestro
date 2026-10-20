@@ -482,6 +482,15 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat archive <chat>`
+
+Archive a group chat (stops its moderator and participants); --restore brings it back
+
+| Option      | Description                    | Default |
+| ----------- | ------------------------------ | ------- |
+| `--restore` | Unarchive the chat instead     | -       |
+| `--json`    | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)

@@ -149,6 +149,7 @@ import {
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
 	handleStopGroupChat,
+	handleArchiveGroupChat,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -551,6 +552,10 @@ export class WebSocketMessageHandler {
 
 			case 'stop_group_chat':
 				handleStopGroupChat(this.ctx, client, message);
+				break;
+
+			case 'archive_group_chat':
+				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
 			case 'merge_context':

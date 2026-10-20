@@ -224,6 +224,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		startGroupChat: vi.fn().mockResolvedValue({ chatId: 'chat-1' }),
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
+		archiveGroupChat: vi.fn().mockResolvedValue(true),
 		sendGroupChatMessage: vi.fn().mockResolvedValue(true),
 		mergeContext: vi.fn().mockResolvedValue(true),
 		transferContext: vi.fn().mockResolvedValue(true),
@@ -2182,6 +2183,35 @@ describe('WebSocketMessageHandler', () => {
 				message: 'Missing chatId',
 				requestId: 'req-4',
 			});
+		});
+
+		it('archives a chat, and only a literal archived: false restores it', async () => {
+			handler.handleMessage(client, {
+				type: 'archive_group_chat',
+				chatId: 'chat-1',
+				requestId: 'req-5',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'archive_group_chat_result',
+					success: true,
+					chatId: 'chat-1',
+					archived: true,
+					requestId: 'req-5',
+				});
+			});
+			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', true);
+
+			handler.handleMessage(client, {
+				type: 'archive_group_chat',
+				chatId: 'chat-1',
+				archived: false,
+				requestId: 'req-6',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
+			});
+			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
 		});
 	});
 

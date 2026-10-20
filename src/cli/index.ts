@@ -42,6 +42,7 @@ import {
 	groupChatStart,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -726,6 +727,15 @@ groupChat
 	.description("Stop a group chat's moderator and participants")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
+
+groupChat
+	.command('archive <chat>')
+	.description(
+		'Archive a group chat (stops its moderator and participants); --restore brings it back'
+	)
+	.option('--restore', 'Unarchive the chat instead')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatArchive);
 
 // Open file command - open a file in the Maestro desktop app.
 //

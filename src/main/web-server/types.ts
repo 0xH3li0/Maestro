@@ -1359,6 +1359,7 @@ export type StartGroupChatCallback = (
 ) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
+export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 

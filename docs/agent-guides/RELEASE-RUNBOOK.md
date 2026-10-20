@@ -3,7 +3,9 @@
 How the agents cut a Maestro release with no one watching. The conductor starts it
 with `/maestro-release-main`, `/maestro-release-rc`, or `/maestro-release-all`.
 Each command runs `node scripts/release.mjs kickoff --scope <scope>`,
-which opens a group chat whose moderator follows this document.
+which opens a group chat whose moderator follows this document, and schedules a
+Cue task (`release-finish-<chat id prefix>`, every 20 minutes) on the calling
+agent that runs `finish` until the release has shipped.
 
 The process was worked out live during the v0.17.5 / v0.18.6-RC release on
 2026-09-24. Every rule below exists because something went wrong that night or
@@ -22,6 +24,11 @@ the fix, and an advisory published before the announcement).
   conductor only when a step fails in a way this runbook does not cover, or when
   a decision comes up that nobody has made before. "Are these notes OK?" is not
   such a decision.
+- **The moderator's read-only mode is not a gate.** A group chat moderator
+  always runs read-only (plan mode); that is why it delegates. Participants have
+  full write access, so tag, bump, and announce are routed the moment the step
+  before passes. On 2026-10-20 a moderator held v1.0.1 for an hour waiting for
+  someone to turn plan mode off and say "go".
 - **Stop on failure.** A failed build, a missing file, or a failing check stops
   everything downstream. Report the run URL and the failing step.
 - **Keep turns short.** Agent turns end at 30 minutes. Never poll CI to the
@@ -43,15 +50,16 @@ the fix, and an advisory published before the announcement).
 
 All from the Maestro repo root (`node scripts/release.mjs <cmd>`):
 
-| Command                                               | What it does                                                                                                                                                |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preflight --scope main\|rc\|all`                     | Read-only: version, tag, draft, previous two releases per channel, checks, whether rc lacks main commits                                                    |
-| `draft --tag vX --show`                               | Print the draft (or published release) for a tag, with its id and URL                                                                                       |
-| `draft --tag vX --title "vX \| Title" --notes-file f` | Write the notes into the draft. `--create` makes the draft if none exists. Never hand-edit an `untagged-...` URL                                            |
-| `tag --branch main\|rc [--wait-min 15]`               | Refuses unless the version is untagged, exactly one draft with notes exists, rc contains main, and every check passed. Then pushes the tag, which publishes |
-| `watch --tag vX [--max-min 20]`                       | Follows the release run, cancels duplicate runs, then runs `verify`                                                                                         |
-| `verify --tag vX [--repair]`                          | One published release, prerelease flag, "latest", all 16 files by name, sizes, `latest-mac.yml` version, one Full Changelog line, tag commit                |
-| `bump --branch main\|rc`                              | After a release ships: next patch version, committed and pushed without touching any working tree                                                           |
+| Command                                               | What it does                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preflight --scope main\|rc\|all`                     | Read-only: version, tag, draft, previous two releases per channel, checks, whether rc lacks main commits                                                                                                                                                                |
+| `draft --tag vX --show`                               | Print the draft (or published release) for a tag, with its id and URL                                                                                                                                                                                                   |
+| `draft --tag vX --title "vX \| Title" --notes-file f` | Write the notes into the draft. `--create` makes the draft if none exists. Never hand-edit an `untagged-...` URL                                                                                                                                                        |
+| `tag --branch main\|rc [--wait-min 15]`               | Refuses unless the version is untagged, exactly one draft with notes exists, rc contains main, and every check passed. Then pushes the tag, which publishes                                                                                                             |
+| `watch --tag vX [--max-min 20]`                       | Follows the release run, cancels duplicate runs, then runs `verify`                                                                                                                                                                                                     |
+| `verify --tag vX [--repair]`                          | One published release, prerelease flag, "latest", all 16 files by name, sizes, `latest-mac.yml` version, one Full Changelog line, tag commit                                                                                                                            |
+| `bump --branch main\|rc`                              | After a release ships: next patch version, committed and pushed without touching any working tree                                                                                                                                                                       |
+| `finish [--chat <id>] [--wait-min n]`                 | The supervisor. Done means every tag published and verified, every branch bumped past it, and a live tweet URL in a moderator message. Then it archives the chat and cancels its schedule. An idle chat with work left gets a message naming what is missing (exit `3`) |
 
 Exit codes: `0` done, `1` a check failed, `2` precondition not met (nothing
 changed), `3` still running (run it again later).
@@ -192,7 +200,9 @@ Start only after every release in scope verifies.
 
 ## Phase 4: Report (moderator)
 
-One message to the conductor, ending with a BLUF:
+One message to the conductor, ending with a BLUF. The tweet URL in it is what
+`finish` reads to confirm the announcement went out, so write it in full
+(`https://x.com/RunMaestroAI/status/<id>`):
 
 | Item                          | Evidence                         |
 | ----------------------------- | -------------------------------- |

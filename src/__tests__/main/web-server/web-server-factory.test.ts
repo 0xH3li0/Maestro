@@ -118,6 +118,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setStartGroupChatCallback = vi.fn();
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
+			setArchiveGroupChatCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setMergeContextCallback = vi.fn();
 			setTransferContextCallback = vi.fn();
