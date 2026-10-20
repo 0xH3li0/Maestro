@@ -350,6 +350,13 @@ a design constraint; they are simply not built yet.
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
+14. **Pipeline Graph view selection** (the selector's pipeline / agent / All
+    Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
+pipeline` reaches the graph but cannot name what it shows. Pure view state
+    on a read-only canvas, with nothing for an agent to read back; the data it
+    filters is already readable through `cue pipeline` and `cue list`. Closing
+    it means carrying a target through `open_modal` into `CueModal`'s
+    `pendingGraphTarget`.
 
 ### Audit backlog (2026-09-27)
 

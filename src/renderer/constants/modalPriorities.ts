@@ -332,6 +332,13 @@ export const MODAL_PRIORITIES = {
 	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
 	CUE_SCHEDULED_TASK_FILTER: 462,
 
+	/** The Pipeline Graph's pipeline / agent picker, while its menu is open.
+	 *  Same reasoning as CUE_SCHEDULED_TASK_FILTER: the menu holds a filter box,
+	 *  and only a layer above CUE_MODAL can keep Escape from closing the whole
+	 *  Cue modal. No Cue sub-modal can be open while this menu is, so the free
+	 *  slot above them is safe. */
+	CUE_PIPELINE_SELECTOR: 467,
+
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 
