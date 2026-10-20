@@ -1154,7 +1154,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - busy target (queue vs Force Send)
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — busy target', () => {
+	describe('handleSendToAgent - busy target', () => {
 		const setupBusyTarget = () => {
 			const targetSession = createMockSession({
 				id: 'busy-target',

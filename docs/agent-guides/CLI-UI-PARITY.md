@@ -47,22 +47,25 @@ turn that ended with an unflagged refresh yanked the user to that agent. The
 flip is CLI-side (`CLI_BACKGROUND_DEFAULTS`), so a web client that omits the
 field still gets the old behaviour, and `--focus` restores it from the CLI.
 
-| Verb                                              | Message                                               | Default (unchanged)                     |
-| ------------------------------------------------- | ----------------------------------------------------- | --------------------------------------- |
-| `open-file`                                       | `open_file_tab`                                       | focuses                                 |
-| `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
-| `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
-| `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
-| `tab reopen`                                      | `closed_tab_command` (`action: 'reopen'`)             | focuses                                 |
-| `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
-| `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
-| `create-agent`                                    | `create_session`                                      | selects the new agent                   |
-| `duplicate-agent`                                 | `create_session`                                      | selects the new agent                   |
-| `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                   |
-| `switch-mode`                                     | `switch_mode`                                         | switches                                |
-| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)     |
-| `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op |
-| `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**          |
+| Verb                                              | Message                                               | Default (unchanged)                                                 |
+| ------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| `open-file`                                       | `open_file_tab`                                       | focuses                                                             |
+| `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                                             |
+| `open-browser`                                    | `open_browser_tab`                                    | focuses                                                             |
+| `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                                             |
+| `tab reopen`                                      | `closed_tab_command` (`action: 'reopen'`)             | focuses                                                             |
+| `tab compact`                                     | `summarize_context`                                   | selects the compacted tab                                           |
+| `tab merge`                                       | `merge_context`                                       | jumps to the receiving tab; `--background` stages the context there |
+| `tab transfer`                                    | `transfer_context`                                    | jumps to the new tab in the target agent                            |
+| `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)                                   |
+| `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                                            |
+| `create-agent`                                    | `create_session`                                      | selects the new agent                                               |
+| `duplicate-agent`                                 | `create_session`                                      | selects the new agent                                               |
+| `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                                               |
+| `switch-mode`                                     | `switch_mode`                                         | switches                                                            |
+| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)                                 |
+| `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op                             |
+| `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**                                      |
 
 `focus-agent`, `send --tab`, `open` and `open-graph` exist TO move the view - the
 caller named that intent, and the graph is a full-window overlay whose only
@@ -297,6 +300,9 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Create a worktree agent                                                                                                                                                                                                                                                                                                                                          | `create-worktree`                                                                                                                                                                                                                                                                                                                                                                                        |
 | New / close / rename a tab                                                                                                                                                                                                                                                                                                                                       | `tab new`, `tab close`, `tab rename`                                                                                                                                                                                                                                                                                                                                                                     |
 | Reopen Closed Tab (Cmd+Shift+T)                                                                                                                                                                                                                                                                                                                                  | `tab reopen [--index <n> \| --tab <id>]`, read with `tab closed`                                                                                                                                                                                                                                                                                                                                         |
+| Context: Compact (AI tab overlay menu, palette, composer warning)                                                                                                                                                                                                                                                                                                | `tab compact [<tab-id>]`, prints the compacted tab's id; read with `tab show <id>`                                                                                                                                                                                                                                                                                                                       |
+| Context: Merge Into (AI tab overlay menu)                                                                                                                                                                                                                                                                                                                        | `tab merge [<tab-id>] --into <agent> [--target-tab <id>]`, verbatim into an existing tab; read with `tab show <target-tab>`                                                                                                                                                                                                                                                                              |
+| Context: Send to Agent (AI tab overlay menu)                                                                                                                                                                                                                                                                                                                     | `tab transfer [<tab-id>] --to <agent>`, prints the new tab's id (`queued` when the target is busy); read with `tab show <id>`                                                                                                                                                                                                                                                                            |
 | Star a tab (Cmd+Shift+S)                                                                                                                                                                                                                                                                                                                                         | `tab star` / `tab unstar`                                                                                                                                                                                                                                                                                                                                                                                |
 | Mark a tab unread                                                                                                                                                                                                                                                                                                                                                | `tab unread` / `tab read`                                                                                                                                                                                                                                                                                                                                                                                |
 | Toggle Save to History                                                                                                                                                                                                                                                                                                                                           | `tab save-to-history`                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -456,28 +462,26 @@ work; UI actions left without a verb on purpose are listed under
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-2. **Context: Compact, Merge Into, Send to Agent.** The WS messages
-   (`summarize_context`, `merge_context`, `transfer_context`) and the preload
-   listeners exist, but NO renderer code subscribes to
-   `onRemoteSummarizeContext` / `onRemoteMergeContext` /
-   `onRemoteTransferContext`, so every call times out. Closing it means wiring
-   those listeners to the same hooks the tab overlay menu uses, then adding
-   `tab compact / merge / transfer`. Do not wrap the dead messages.
-3. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+2. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
    reachable over the WS bridge. Every mode IS reachable from the CLI through
    the prompt's wording, which `inferMentionTiming()` reads on every path, so
    this is a convenience gap, not a capability gap. Closing it means threading
    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-4. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+3. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
    Cue modal panel could render its gaps directly; it is CLI first because it
    exists for unattended servers, where nobody opens the desktop.
-5. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
+4. **Read provider quota snapshots.** The Usage Dashboard's plan quota rows
    have no CLI read. An agent needs one to check plan usage, and it is also
    how an agent would verify a provider login (see **Log in to a provider
    account** under Not mirrored by design).
+5. **Merge Into a new merged agent.** The Merge Into modal's "create new
+   session" option builds a fresh agent from both transcripts. `tab merge`
+   only merges into an existing tab; the new-agent path reports its result
+   through `onSessionCreated`, which would need the new agent's id threaded
+   back to `runRemoteTabContextOp()`.
 
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
@@ -517,6 +521,11 @@ why: the action is interactive by nature, sits behind a human-consent boundary,
 or is a pure view preference with nothing for an agent to read back. A new
 entry needs a stated reason, the same way a Covered row needs a verb.
 
+- **Grooming on Merge Into and Send to Agent** (the modals' "clean up the
+  context" checkbox). `tab merge` and `tab transfer` always move the
+  transcript verbatim: context carried to another agent or provider is never
+  summarized or trimmed. Only `tab compact` summarizes, because that is what
+  Compact is.
 - **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
   Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
   agent already has `git` and `gh` in its shell, which is strictly more capable.

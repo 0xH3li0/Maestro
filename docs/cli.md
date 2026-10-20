@@ -76,21 +76,24 @@ Maestro's own system prompt tells agents to **pass `--background` by default** a
 
 **The flag is additive: one verb's default changed.** An unflagged call behaves exactly as it always has, except `refresh-auto-run`, which is now background by default because its old focusing default only ever pulled you away from the agent you were looking at.
 
-| Command                     | Default when neither flag is passed         |
-| --------------------------- | ------------------------------------------- |
-| `open-file`                 | switches to the file                        |
-| `open-terminal`             | switches to the new terminal                |
-| `open-browser`              | switches to the new browser tab             |
-| `tab new`                   | switches to the new tab                     |
-| `tab reopen`                | switches to the restored tab                |
-| `dispatch --new-tab`        | **background** (as it always was)           |
-| `dispatch` (no `--new-tab`) | selects the target agent                    |
-| `create-agent`              | selects the new agent                       |
-| `duplicate-agent`           | selects the new agent                       |
-| `create-worktree`           | selects the new agent                       |
-| `switch-mode`               | switches the mode                           |
-| `refresh-auto-run`          | **background** (`--focus` to switch)        |
-| `refresh-files`             | **already quiet**; flag accepted, no effect |
+| Command                     | Default when neither flag is passed                    |
+| --------------------------- | ------------------------------------------------------ |
+| `open-file`                 | switches to the file                                   |
+| `open-terminal`             | switches to the new terminal                           |
+| `open-browser`              | switches to the new browser tab                        |
+| `tab new`                   | switches to the new tab                                |
+| `tab reopen`                | switches to the restored tab                           |
+| `tab compact`               | switches to the compacted tab                          |
+| `tab merge`                 | switches to the receiving tab, which sends the context |
+| `tab transfer`              | switches to the new tab in the target agent            |
+| `dispatch --new-tab`        | **background** (as it always was)                      |
+| `dispatch` (no `--new-tab`) | selects the target agent                               |
+| `create-agent`              | selects the new agent                                  |
+| `duplicate-agent`           | selects the new agent                                  |
+| `create-worktree`           | selects the new agent                                  |
+| `switch-mode`               | switches the mode                                      |
+| `refresh-auto-run`          | **background** (`--focus` to switch)                   |
+| `refresh-files`             | **already quiet**; flag accepted, no effect            |
 
 `focus-agent`, `send --tab`, `open`, and `open-graph` exist _to_ move the view - you named that intent - so they take no placement flag. The graph in particular is a full-window overlay whose only effect is being looked at, so a background one would do nothing at all.
 
@@ -858,6 +861,12 @@ maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
 
+# The tab menu's Context items. Each acts on the active tab unless you name one,
+# and prints the tab it produced. Merge and transfer move the transcript verbatim.
+maestro-cli tab compact -a <agent-id>                         # summarize into a new tab
+maestro-cli tab merge <tab-id> --into <agent-id> [--target-tab <tab-id>]
+maestro-cli tab transfer <tab-id> --to <agent-id> --background
+
 # Pin an agent to the Bookmarks section at the top of the Left Bar
 maestro-cli bookmark <agent-id>
 maestro-cli unbookmark <agent-id>
@@ -865,7 +874,9 @@ maestro-cli unbookmark <agent-id>
 
 `tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
 
-`tab new`, `tab reopen`, and `switch-mode` take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
+`tab compact` prints the compacted tab's ID and how much smaller its context is; it refuses a tab too small to compact. `tab merge` sends into the target agent's active tab unless `--target-tab` names another (another tab of the same agent works too); with `--background` the context waits on that tab and sends when it is next opened, which the output says. `tab transfer` prints the new tab's ID in the target agent; a busy target queues the context behind its running turn. A compaction can take minutes, so the CLI waits up to 10 minutes; if any of the three runs out of time it exits 5 and says the operation may still be running, rather than reporting a failure.
+
+`tab new`, `tab reopen`, `tab compact`, `tab merge`, `tab transfer`, and `switch-mode` take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`). Every verb that takes a `<tab-id>` also accepts the literal `active`, which resolves to the tab the agent currently has selected - `-a <agent-id>` says whose, and without it the CLI uses the agent the desktop has focused.
 

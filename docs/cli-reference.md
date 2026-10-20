@@ -1812,6 +1812,42 @@ Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
 | `--focus`          | Switch to the restored tab (default)                             | -       |
 | `--json`           | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli tab compact [tab-id]`
+
+Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active"          | -       |
+| `--json`           | Output as JSON (for scripting)                          | -       |
+| `--background`     | Keep the source tab selected (no view change, no toast) | -       |
+| `--focus`          | Switch to the compacted tab (default)                   | -       |
+
+## `maestro-cli tab merge [tab-id]`
+
+Context: Merge Into - send a tab's transcript, verbatim, into another agent's tab (default: the active tab)
+
+| Option                  | Description                                                                     | Default |
+| ----------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`      | Whose active tab, when &lt;tab-id> is "active"                                  | -       |
+| `--json`                | Output as JSON (for scripting)                                                  | -       |
+| `--into <agent>`        | The agent whose tab receives the context                                        | -       |
+| `--target-tab <tab-id>` | The tab that receives it (default: that agent's active tab)                     | -       |
+| `--background`          | Stay put; the context waits on the target tab and sends when that tab is opened | -       |
+| `--focus`               | Jump to the target tab, which sends the context (default)                       | -       |
+
+## `maestro-cli tab transfer [tab-id]`
+
+Context: Send to Agent - open a new tab in another agent carrying this tab's transcript, verbatim
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+| `--to <agent>`     | The agent that gets the new tab                | -       |
+| `--background`     | Add the tab without selecting it or the agent  | -       |
+| `--focus`          | Jump to the new tab (default)                  | -       |
+
 ## `maestro-cli create-ssh-remote <name>`
 
 Create a new SSH remote configuration
