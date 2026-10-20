@@ -81,6 +81,7 @@ import {
 	pickPreviewTier,
 	scanLineStats,
 	canScaleFontForView,
+	resolvePreviewScroller,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -563,6 +564,14 @@ export const FilePreview = React.memo(
 			}
 			return undefined;
 		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary, isParquet]);
+
+		// The CSV and JSONL tables scroll themselves (see PREVIEW_SCROLLER_ATTR):
+		// the content column stops scrolling and hands them its full height.
+		const isTablePane =
+			!isImage &&
+			!isBinary &&
+			!markdownEditMode &&
+			(isCsv || isJsonl || (isJson && searchMode === 'jq'));
 
 		// Whether the active preview shows line numbers; gates the regex / line
 		// search chip (left of the Cmd+F input). True for the code editor and the
@@ -1362,8 +1371,14 @@ export const FilePreview = React.memo(
 			const STATS_CHROME_PX = 64;
 			const AT_TOP_PX = 10;
 
-			const handleScroll = () => {
-				const { scrollTop, scrollHeight, clientHeight } = contentEl;
+			// Captured, because a table view scrolls its own element inside the
+			// column and scroll events do not bubble. Only the preview's real
+			// scroller counts: a code block or markdown table scrolling sideways
+			// would otherwise report scrollTop 0 and save the wrong position.
+			const handleScroll = (event: Event) => {
+				const scrollEl = resolvePreviewScroller(contentEl);
+				if (!scrollEl || event.target !== scrollEl) return;
+				const { scrollTop, scrollHeight, clientHeight } = scrollEl;
 				const overflow = scrollHeight - clientHeight;
 				setShowStatsBar((prev) => {
 					if (scrollTop <= AT_TOP_PX) return true;
@@ -1382,15 +1397,15 @@ export const FilePreview = React.memo(
 						clearTimeout(scrollSaveTimerRef.current);
 					}
 					scrollSaveTimerRef.current = setTimeout(() => {
-						onScrollPositionChange(contentEl.scrollTop);
+						onScrollPositionChange(scrollEl.scrollTop);
 						scrollSaveTimerRef.current = null;
 					}, 200);
 				}
 			};
 
-			contentEl.addEventListener('scroll', handleScroll, { passive: true });
+			contentEl.addEventListener('scroll', handleScroll, { passive: true, capture: true });
 			return () => {
-				contentEl.removeEventListener('scroll', handleScroll);
+				contentEl.removeEventListener('scroll', handleScroll, { capture: true });
 				// Clear any pending scroll save timer
 				if (scrollSaveTimerRef.current) {
 					clearTimeout(scrollSaveTimerRef.current);
@@ -1422,6 +1437,8 @@ export const FilePreview = React.memo(
 					// New file without a saved position - reset to top. The container is
 					// reused across files, so leftover scrollTop has to be cleared.
 					contentEl.scrollTop = 0;
+					const scrollEl = resolvePreviewScroller(contentEl);
+					if (scrollEl) scrollEl.scrollTop = 0;
 					hasRestoredScrollRef.current = file.path;
 				}
 				return;
@@ -1438,7 +1455,7 @@ export const FilePreview = React.memo(
 			// actually sticks. `target` is re-derived each pass because scrollHeight
 			// is what changes.
 			const applyScroll = (): boolean => {
-				const el = contentRef.current;
+				const el = resolvePreviewScroller(contentRef.current);
 				if (!el) return true; // Unmounted - stop trying.
 				const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
 				const target = Math.min(initialScrollTop, maxScroll);
@@ -1474,7 +1491,7 @@ export const FilePreview = React.memo(
 							if (applyScroll()) finish();
 						})
 					: undefined;
-			observer?.observe(contentEl);
+			observer?.observe(resolvePreviewScroller(contentEl) ?? contentEl);
 
 			// Hard stop, so a document that never reaches the saved offset (content
 			// shrank, file changed on disk) cannot leave an observer running.
@@ -1817,7 +1834,7 @@ export const FilePreview = React.memo(
 				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
-				const container = contentRef.current;
+				const container = resolvePreviewScroller(contentRef.current);
 				if (!container) return;
 
 				if (e.metaKey || e.ctrlKey) {
@@ -1838,7 +1855,7 @@ export const FilePreview = React.memo(
 				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
-				const container = contentRef.current;
+				const container = resolvePreviewScroller(contentRef.current);
 				if (!container) return;
 
 				if (e.metaKey || e.ctrlKey) {
@@ -2053,12 +2070,16 @@ export const FilePreview = React.memo(
 					ref={contentRef}
 					// The parquet viewer is a full-height application pane with its
 					// own virtualized scroller and a pinned footer, so it takes the
-					// content box edge to edge. Every other view is a document that
-					// scrolls inside this padded column.
+					// content box edge to edge. The CSV / JSONL tables keep the
+					// padding but scroll themselves, so the column stacks the find
+					// bar over them instead of scrolling. Every other view is a
+					// document that scrolls inside this padded column.
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
-							: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+							: isTablePane
+								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
+								: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
 					}
 					style={
 						{
@@ -2103,7 +2124,7 @@ export const FilePreview = React.memo(
 					)}
 					{/* Floating Search */}
 					{searchOpen && (
-						<div className="sticky top-0 z-10 pb-4" ref={jqHelpRef}>
+						<div className="sticky top-0 z-10 shrink-0 pb-4" ref={jqHelpRef}>
 							<div className="relative">
 								<div className="flex items-center gap-2">
 									{/* jq mode toggle for JSON/JSONL files */}
