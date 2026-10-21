@@ -167,6 +167,7 @@ describe('Relay authenticated MCP actual host path', () => {
 		['safe storage', 'valid', 'win32'],
 		['unrelated overlapping project', 'valid', process.platform],
 		['removed worktree', 'valid', process.platform],
+		['removed overlapping worktree', 'valid', process.platform],
 		['unrelated overlapping project', 'forged', process.platform],
 		['unrelated overlapping project', 'revoked before call', process.platform],
 		['unrelated overlapping project', 'revoked during call', process.platform],
@@ -194,7 +195,11 @@ describe('Relay authenticated MCP actual host path', () => {
 				});
 			const authority = productionAuthority(
 				sessions,
-				scenario === 'removed worktree' ? path.resolve('/projects/deleted-worktree') : undefined,
+				scenario === 'removed worktree'
+					? path.resolve('/projects/deleted-worktree')
+					: scenario === 'removed overlapping worktree'
+						? path.resolve('/fixture')
+						: undefined,
 				storagePlatform
 			);
 			const fixtureRoot = path.join(process.cwd(), '.maestro', 'relay-mail-denied-test');
@@ -273,7 +278,10 @@ describe('Relay authenticated MCP actual host path', () => {
 			// storage callback, so red failures reach real run issuance/MCP admission.
 			if (authority.assertToolProofStorageActive) {
 				const assertStorage = authority.assertToolProofStorageActive;
-				if (scenario === 'safe storage' && ['linux', 'darwin'].includes(storagePlatform)) {
+				if (
+					(scenario === 'safe storage' || scenario === 'removed worktree') &&
+					['linux', 'darwin'].includes(storagePlatform)
+				) {
 					expect(() => assertStorage()).not.toThrow();
 				} else {
 					expect(() => assertStorage()).toThrow();
