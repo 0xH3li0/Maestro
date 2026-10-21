@@ -2288,6 +2288,8 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
+		groupChatInputRef,
+		groupChatMessagesRef,
 		starredSectionCollapsed: starredSessionsCollapsed,
 		setStarredSectionCollapsed: setStarredSessionsCollapsed,
 		groupChats,

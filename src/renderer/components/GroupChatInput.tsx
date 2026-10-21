@@ -724,6 +724,10 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							}}
 							onSelect={(e) => mentionOverlay.onSelectionChange(e.currentTarget)}
 							onScroll={mentionOverlay.onScroll}
+							// The window Escape handler only acts while focus is in the main
+							// area, so claim it here the way the AI composer does. A click on
+							// the Left Bar leaves it on 'sidebar' otherwise.
+							onFocus={() => useUIStore.getState().setActiveFocus('main')}
 							onBlur={() => {
 								mentionOverlay.onBlur();
 								flushDraft();
