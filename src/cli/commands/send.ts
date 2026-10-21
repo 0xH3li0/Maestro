@@ -165,6 +165,8 @@ export async function send(
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
+				// The turn runs in the agent's own cwd (#1872).
+				acceptWorkspaceTrust: true,
 			}),
 		(r) => (r.success ? 0 : 1)
 	);
