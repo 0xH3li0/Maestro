@@ -86,6 +86,49 @@ function registryRegisterCallCount(): number {
 }
 
 describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
+	it('projects worktree parent metadata without exposing session content or changing agent IDs', () => {
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isPropertyAssignment(node) &&
+				node.name.getText(sf) === 'listAgents' &&
+				ts.isArrowFunction(node.initializer)
+			)
+				callback = node.initializer;
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback).toBeDefined();
+		const projectPath = path.resolve('synthetic', 'project');
+		const worktreePath = path.resolve('synthetic', 'worktree');
+		const sessions = [
+			{
+				id: 'main',
+				name: 'Main agent',
+				cwd: projectPath,
+				toolType: 'codex',
+				logs: ['private'],
+			},
+			{
+				id: 'child',
+				name: 'Worktree agent',
+				parentSessionId: 'main',
+				cwd: worktreePath,
+				secret: 'private',
+			},
+			{ name: 'invalid' },
+		];
+		const js = ts.transpileModule(`const listAgents = ${callback!.getText(sf)}`, {
+			compilerOptions: { target: ts.ScriptTarget.ES2024 },
+		}).outputText;
+		const list = new Function('getLiveSessions', `${js}\nreturn listAgents;`)(() => sessions);
+		expect(list()).toEqual([
+			{ id: 'main', name: 'Main agent', cwd: projectPath, toolType: 'codex' },
+			{ id: 'child', name: 'Worktree agent', cwd: worktreePath, parentSessionId: 'main' },
+		]);
+		expect(sessions[1].parentSessionId).toBe('main');
+	});
+
 	const keys = depsObjectKeys();
 
 	it('wires the act-verb sinks TOGETHER with the host-owned registry resolver', () => {

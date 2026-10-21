@@ -486,9 +486,9 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.28.0 adds generic verified
+ * The host API version this Maestro build implements. 1.29.0 adds generic verified
  * invocations, consented TLS, opaque secrets, confirmed records and durable plugin
- * Cue events. 1.25.0 adds resumable
+ * Cue events and read-only parentSessionId agent metadata. 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -524,7 +524,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.28.0';
+export const HOST_API_VERSION = '1.29.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

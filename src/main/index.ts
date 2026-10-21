@@ -2943,6 +2943,7 @@ app
 						name?: string;
 						cwd?: string;
 						toolType?: string;
+						parentSessionId?: string;
 					}>;
 					return sessions
 						.filter((s) => typeof s?.id === 'string')
@@ -2951,6 +2952,9 @@ app
 							name: s.name ?? '',
 							...(s.cwd ? { cwd: s.cwd } : {}),
 							...(s.toolType ? { toolType: s.toolType } : {}),
+							...(typeof s.parentSessionId === 'string' && s.parentSessionId
+								? { parentSessionId: s.parentSessionId }
+								: {}),
 						}));
 				},
 				// agents.dispatch + process.spawn (FC2, Plans/feature-complete-workplan.md):

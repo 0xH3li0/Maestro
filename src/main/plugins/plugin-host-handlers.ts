@@ -282,8 +282,14 @@ export interface HostHandlerDeps {
 		action: 'open' | 'close' | 'toggle'
 	) => void;
 
-	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
-	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
+	/** Read-only agent metadata; parentSessionId identifies an existing worktree child. */
+	listAgents: () => Array<{
+		id: string;
+		name: string;
+		cwd?: string;
+		toolType?: string;
+		parentSessionId?: string;
+	}>;
 	/** Optional path for per-plugin private SQLite databases. */
 	storageSqlBaseDir?: string;
 	runStorageSql?: (

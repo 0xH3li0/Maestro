@@ -1,4 +1,4 @@
-# Generic plugin primitives (Host API 1.28)
+# Generic plugin primitives (Host API 1.29)
 
 These JSON-only APIs provide verified invocations, bounded TLS bytes, native secret references,
 confirmed opaque records and authenticated durable Cue admission. They do not interpret protocols,
@@ -124,3 +124,9 @@ record change cancels active leases before persistence and invalidates older que
 metadata. Replay can authenticate an identical enabled/consenting installation while its
 process is temporarily stopped; live publication still requires the current generation.
 The host reads revision numbers only and does not interpret record values or account policy.
+
+## Read-only agent relationship metadata
+
+API 1.29 / SDK 0.23 also projects optional `parentSessionId` for existing worktree
+children from the live agent list. Main agents omit the field. This grants no
+creation, reparenting or selection power and exposes no session content.
