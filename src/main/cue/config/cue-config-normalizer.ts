@@ -1,3 +1,4 @@
+import { parseCuePluginSource } from '../triggers/cue-plugin-trigger-source';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
@@ -421,6 +422,7 @@ function normalizeSubscription(
 				? (sub.gh_state as CueGitHubState)
 				: undefined,
 		webhook: normalizeWebhook(sub.webhook),
+		...(sub.event === 'plugin.event' ? { plugin: parseCuePluginSource(sub.plugin) } : {}),
 		gh_label_target:
 			typeof sub.gh_label_target === 'string' &&
 			CUE_GITHUB_LABEL_TARGETS.includes(sub.gh_label_target as CueGitHubLabelTarget)

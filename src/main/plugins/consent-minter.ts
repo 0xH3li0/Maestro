@@ -1,3 +1,4 @@
+import { parsePluginEndpointScopes } from '../../shared/plugins/primitives';
 /**
  * Consent minter - anti-forgery core (main process).
  *
@@ -214,13 +215,22 @@ export class ConsentMinter {
 		const dispatch = this.deps.store
 			.readGrants?.(pluginId)
 			.find((grant) => grant.capability === 'agents:dispatch');
-		if (!dispatch) return requested;
+		const endpoints = this.deps.store.readGrants?.(pluginId) ?? [];
+		const scopedRequests = requested.map((r) => {
+			const saved = endpoints.find((g) => g.capability === r.capability);
+			return (r.capability === 'net:tls' || r.capability === 'secrets:use') &&
+				saved &&
+				parsePluginEndpointScopes(saved.scope) !== null
+				? { ...r, scope: saved.scope }
+				: r;
+		});
+		if (!dispatch) return scopedRequests;
 		const members = parseAllowlistScope(dispatch.scope);
 		const scope = members && members.every(isValidAllowlistMember) ? members.join(',') : undefined;
 		// An absent scope is an intentional deny-all selection. A malformed saved
 		// scope must not replace the manifest request with an unusable grant.
 		if (dispatch.scope !== undefined && scope === undefined) return requested;
-		return requested.map((request) =>
+		return scopedRequests.map((request) =>
 			request.capability === 'agents:dispatch' ? { ...request, scope } : request
 		);
 	}

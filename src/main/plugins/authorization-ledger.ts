@@ -30,19 +30,39 @@
  * the keyring.
  */
 
+import { PluginAuthorityError, assertPluginAuthority, pluginJson } from './plugin-authority';
+import {
+	PLUGIN_RECORD_KEY_PATTERN,
+	isPluginEndpointScope,
+	parsePluginEndpointScopes,
+	type PluginRecordValue,
+} from '../../shared/plugins/primitives';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac, createHash } from 'crypto';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
 import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
-import { createKeyringAnchor, keyringAnchor, noAnchor } from '../utils/keyring-anchor';
+import { PLUGIN_ID_PATTERN } from '../../shared/plugins/plugin-manifest';
+import {
+	createKeyringAnchor,
+	keyringAnchor,
+	noAnchor,
+	createKeyringEntry,
+} from '../utils/keyring-anchor';
 import type { Anchor, AnchorStore, KeyringEntry, KeyringModule } from '../utils/keyring-anchor';
 import { safeStorageSeal } from '../utils/safe-storage-seal';
 import type { SafeStorageLike, SealProvider } from '../utils/safe-storage-seal';
 
+const AUTHORIZATION_LEDGER_LIMITS = {
+	plaintextBytes: 20 * 1024 * 1024,
+	ciphertextBytes: 24 * 1024 * 1024,
+};
+
 /** Schema version of the sealed ledger payload. */
-export const LEDGER_VERSION = 1 as const;
+export const LEDGER_VERSION = 3 as const;
 
 /** The identity a grant is bound to: the file digest PLUS the signature/trust
  * identity. Trust status drives policy (the transcripts+egress conflict is only
@@ -74,6 +94,14 @@ export interface Tombstone {
 	removedAtEpoch: number;
 }
 
+interface OpaquePluginState {
+	identity: AuthIdentity;
+	records: Record<string, PluginRecordValue>;
+	secrets: Record<
+		string,
+		{ key: string; endpoint: string; ref: string; removal?: 'pending' | 'removed' }
+	>;
+}
 /** The full sealed ledger. */
 export interface AuthorizationLedger {
 	version: typeof LEDGER_VERSION;
@@ -83,6 +111,10 @@ export interface AuthorizationLedger {
 	installSecret: string;
 	entries: Record<string, LedgerEntry>;
 	tombstones: Tombstone[];
+	/** Inert prior-schema fields preserved for explicit disabled import, never authorization. */
+	legacy?: { schemaVersion: number; fields: Record<string, unknown> };
+	opaque?: Record<string, OpaquePluginState>;
+	opaqueArchive?: { pluginId: string; state: OpaquePluginState }[];
 }
 
 // The seal primitive lives in `utils/safe-storage-seal.ts` so every sealed
@@ -92,7 +124,7 @@ export type { SafeStorageLike, SealProvider };
 
 // The freshness anchor and its keyring binding live in `utils/keyring-anchor.ts`
 // for the same reason. Re-exported so this module's importers are unchanged.
-export { createKeyringAnchor, keyringAnchor, noAnchor };
+export { createKeyringAnchor, keyringAnchor, noAnchor, createKeyringEntry };
 export type { Anchor, AnchorStore, KeyringEntry, KeyringModule };
 
 export interface AuthorizationStoreDeps {
@@ -111,11 +143,31 @@ export type LedgerTrustState =
 	| 're-consent'; // tamper / rollback / anchor mismatch: persisted state dropped
 
 function emptyLedger(installSecret: string): AuthorizationLedger {
-	return { version: LEDGER_VERSION, epoch: 0, installSecret, entries: {}, tombstones: [] };
+	return {
+		version: LEDGER_VERSION,
+		epoch: 0,
+		installSecret,
+		entries: {},
+		tombstones: [],
+	};
 }
 
-function isLedger(value: unknown): value is AuthorizationLedger {
+type LoadedLedger = Omit<AuthorizationLedger, 'version'> & { version: 1 | 2 | 3; mail?: unknown };
+
+function isLedger(value: unknown): value is LoadedLedger {
 	if (typeof value !== 'object' || value === null) return false;
+	const allowed = [
+		'version',
+		'epoch',
+		'installSecret',
+		'entries',
+		'tombstones',
+		'mail',
+		'opaque',
+		'opaqueArchive',
+		'legacy',
+	];
+	if (Object.keys(value).some((key) => !allowed.includes(key))) return false;
 	if (
 		!('version' in value) ||
 		!('epoch' in value) ||
@@ -126,9 +178,9 @@ function isLedger(value: unknown): value is AuthorizationLedger {
 		return false;
 	}
 	return (
-		value.version === LEDGER_VERSION &&
+		[1, 2, 3].includes(value.version as number) &&
 		typeof value.epoch === 'number' &&
-		Number.isInteger(value.epoch) &&
+		Number.isSafeInteger(value.epoch) &&
 		value.epoch >= 0 &&
 		typeof value.installSecret === 'string' &&
 		typeof value.entries === 'object' &&
@@ -159,6 +211,17 @@ export function shouldDisablePluginForVerifyResult(result: VerifyResult): boolea
  */
 
 export class AuthorizationStore {
+	private readonly authorizationListeners = new Set<(pluginId: string) => void>();
+	onPluginAuthorizationChange(listener: (pluginId: string) => void): () => void {
+		this.authorizationListeners.add(listener);
+		return () => {
+			this.authorizationListeners.delete(listener);
+		};
+	}
+	private notifyAuthorizationChange(pluginId: string): void {
+		for (const listener of this.authorizationListeners) listener(pluginId);
+	}
+
 	private readonly seal: SealProvider;
 	private readonly anchor: AnchorStore;
 	private readonly ledgerPath: string;
@@ -246,8 +309,36 @@ export class AuthorizationStore {
 
 		let parsed: unknown = null;
 		try {
-			const blob = fs.readFileSync(this.ledgerPath);
-			parsed = JSON.parse(this.seal.unseal(blob));
+			// Bound the opened file, including a concurrent growth, before decrypting.
+			const fd = fs.openSync(this.ledgerPath, 'r');
+			let blob: Buffer;
+			try {
+				const size = fs.fstatSync(fd).size;
+				if (
+					!Number.isSafeInteger(size) ||
+					size < 1 ||
+					size > AUTHORIZATION_LEDGER_LIMITS.ciphertextBytes
+				)
+					throw new Error();
+				blob = Buffer.alloc(size);
+				let offset = 0;
+				while (offset < size) {
+					const count = fs.readSync(fd, blob, offset, size - offset, null);
+					if (!count) throw new Error();
+					offset += count;
+				}
+				if (fs.readSync(fd, Buffer.alloc(1), 0, 1, null)) throw new Error();
+			} finally {
+				fs.closeSync(fd);
+			}
+			const plaintext = this.seal.unseal(blob);
+			if (
+				plaintext.length > AUTHORIZATION_LEDGER_LIMITS.plaintextBytes ||
+				Buffer.byteLength(plaintext) > AUTHORIZATION_LEDGER_LIMITS.plaintextBytes
+			)
+				throw new Error();
+			parsed = JSON.parse(plaintext);
+			if (isLedger(parsed) && parsed.opaque !== undefined) this.validateOpaqueState(parsed.opaque);
 		} catch {
 			parsed = null; // missing, unsealable (tampered/foreign), or unparseable
 		}
@@ -267,8 +358,33 @@ export class AuthorizationStore {
 			return;
 		}
 
-		this.ledger = parsed;
+		this.ledger = {
+			version: LEDGER_VERSION,
+			epoch: parsed.epoch,
+			installSecret: parsed.installSecret,
+			entries: parsed.entries,
+			tombstones: parsed.tombstones,
+			...(parsed.opaque ? { opaque: parsed.opaque } : {}),
+			...(parsed.opaqueArchive ? { opaqueArchive: parsed.opaqueArchive } : {}),
+			...(parsed.version < 3
+				? {
+						legacy: {
+							schemaVersion: parsed.version,
+							fields: {
+								entries: JSON.parse(canonicalJson(parsed.entries)),
+								tombstones: JSON.parse(canonicalJson(parsed.tombstones)),
+								...(Object.prototype.hasOwnProperty.call(parsed, 'mail')
+									? { mail: parsed.mail }
+									: {}),
+							},
+						},
+					}
+				: parsed.legacy
+					? { legacy: parsed.legacy }
+					: {}),
+		};
 		this.storageMode = 'persistent';
+		// Loading never rewrites prior state. A fresh authoritative user action persists schema3.
 	}
 
 	/** Seal + write the ledger and bump/write the anchor. No-op in session-only
@@ -276,13 +392,27 @@ export class AuthorizationStore {
 	private persist(): void {
 		if (this.storageMode === 'session-only') return;
 		try {
+			if (!this.seal.available() || !this.anchor.available()) throw new Error();
+			const plaintext = JSON.stringify(this.ledger);
+			assertSerializedJsonIsSafe(plaintext, 'authorization ledger');
+			if (Buffer.byteLength(plaintext) > AUTHORIZATION_LEDGER_LIMITS.plaintextBytes)
+				throw new Error();
+			const blob = this.seal.seal(plaintext);
+			if (!blob.length || blob.length > AUTHORIZATION_LEDGER_LIMITS.ciphertextBytes)
+				throw new Error();
 			// Anchor first: a locked/unavailable credential store throws here, before
 			// we commit a ledger file the anchor can't vouch for.
 			this.anchor.write({ installSecret: this.ledger.installSecret, epoch: this.ledger.epoch });
+			const confirmed = this.anchor.read();
+			if (
+				confirmed?.installSecret !== this.ledger.installSecret ||
+				confirmed.epoch !== this.ledger.epoch
+			)
+				throw new Error();
 			const dir = path.dirname(this.ledgerPath);
 			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 			const tmp = `${this.ledgerPath}.tmp`;
-			fs.writeFileSync(tmp, this.seal.seal(JSON.stringify(this.ledger)));
+			fs.writeFileSync(tmp, blob, { mode: 0o600 });
 			fs.renameSync(tmp, this.ledgerPath);
 			this.droppedPriorState = false;
 		} catch {
@@ -294,8 +424,333 @@ export class AuthorizationStore {
 		}
 	}
 
+	/** Pure schema check for generic sealed state; never interpret plugin values. */
+	private validateOpaqueState(value: unknown): void {
+		if (
+			!value ||
+			typeof value !== 'object' ||
+			Array.isArray(value) ||
+			Object.keys(value).length > 1024
+		)
+			throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+		for (const [id, item] of Object.entries(value)) {
+			if (!PLUGIN_ID_PATTERN.test(id) || !item || typeof item !== 'object')
+				throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+			const state = item as OpaquePluginState;
+			if (
+				!state.identity ||
+				!state.records ||
+				!state.secrets ||
+				Object.keys(state.records).length > 64 ||
+				Object.keys(state.secrets).length > 64
+			)
+				throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+			for (const [key, record] of Object.entries(state.records)) {
+				if (
+					!PLUGIN_RECORD_KEY_PATTERN.test(key) ||
+					!Number.isSafeInteger(record.revision) ||
+					record.revision < 1
+				)
+					throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+				pluginJson(record.value, 64 * 1024);
+			}
+			for (const [ref, secret] of Object.entries(state.secrets)) {
+				if (
+					!/^[0-9a-f]{64}$/.test(ref) ||
+					secret.ref !== ref ||
+					!PLUGIN_RECORD_KEY_PATTERN.test(secret.key) ||
+					!isPluginEndpointScope(secret.endpoint)
+				)
+					throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+			}
+		}
+	}
+
+	/** Generic storage NEVER inherits the ledger's session-only authorization fallback. */
+	private assertPersistentInstallation(): void {
+		this.ensureLoaded();
+		if (
+			this.storageMode !== 'persistent' ||
+			this.droppedPriorState ||
+			!this.seal.available() ||
+			!this.anchor.available()
+		)
+			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		const anchor = this.anchor.read();
+		if (anchor?.installSecret !== this.ledger.installSecret || anchor.epoch !== this.ledger.epoch)
+			throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+	}
+	assertPluginPersistent(pluginId: string, identity: AuthIdentity): void {
+		this.assertPersistentInstallation();
+		const entry = this.ledger.entries[pluginId];
+		if (!entry?.enabled || canonicalJson(entry.identity) !== canonicalJson(identity))
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+	}
+	private pluginState(pluginId: string, identity: AuthIdentity): OpaquePluginState | undefined {
+		this.assertPluginPersistent(pluginId, identity);
+		const state = this.ledger.opaque?.[pluginId];
+		if (state && canonicalJson(state.identity) !== canonicalJson(identity))
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		return state;
+	}
+	readPluginRecord(
+		pluginId: string,
+		identity: AuthIdentity,
+		key: string
+	): PluginRecordValue | null {
+		if (!PLUGIN_RECORD_KEY_PATTERN.test(key)) throw new PluginAuthorityError('PLUGIN_INVALID');
+		const records = this.pluginState(pluginId, identity)?.records;
+		const value =
+			records && Object.prototype.hasOwnProperty.call(records, key) ? records[key] : undefined;
+		return value ? { revision: value.revision, value: pluginJson(value.value, 64 * 1024) } : null;
+	}
+	/** Host-confirmation only. No RPC may pass its own assertion to this method. */
+	commitPluginRecord(
+		pluginId: string,
+		identity: AuthIdentity,
+		key: string,
+		expectedRevision: number,
+		value: unknown,
+		assertConfirmed: () => void
+	): number {
+		const snapshot = pluginJson(value, 64 * 1024);
+		if (
+			!PLUGIN_RECORD_KEY_PATTERN.test(key) ||
+			!Number.isSafeInteger(expectedRevision) ||
+			expectedRevision < 0 ||
+			expectedRevision >= Number.MAX_SAFE_INTEGER
+		)
+			throw new PluginAuthorityError('PLUGIN_INVALID');
+		assertPluginAuthority(assertConfirmed);
+		const state = this.pluginState(pluginId, identity);
+		if (
+			(state && Object.prototype.hasOwnProperty.call(state.records, key)
+				? state.records[key].revision
+				: 0) !== expectedRevision
+		)
+			throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		if (
+			!(state && Object.prototype.hasOwnProperty.call(state.records, key)) &&
+			Object.keys(state?.records ?? {}).length >= 64
+		)
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		const epoch = this.ledger.epoch;
+		assertPluginAuthority(assertConfirmed);
+		this.assertPluginPersistent(pluginId, identity);
+		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		this.notifyAuthorizationChange(pluginId);
+		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		const next: OpaquePluginState = state ?? {
+			identity: { ...identity },
+			records: {},
+			secrets: {},
+		};
+		this.ledger.opaque ??= {};
+		next.records = { ...next.records, [key]: { revision: expectedRevision + 1, value: snapshot } };
+		this.ledger.opaque[pluginId] = next;
+		this.bump();
+		this.persist();
+		this.assertPluginPersistent(pluginId, identity);
+		return expectedRevision + 1;
+	}
+	/** Host keyring namespace; an installation secret is never returned. */
+	pluginSecretSlot(pluginId: string, identity: AuthIdentity, ref: string): string {
+		this.assertPluginPersistent(pluginId, identity);
+		if (!/^[0-9a-f]{64}$/.test(ref)) throw new PluginAuthorityError('PLUGIN_INVALID');
+		return this.secretSlot(pluginId, identity, ref);
+	}
+	private secretSlot(pluginId: string, identity: AuthIdentity, ref: string): string {
+		return createHmac('sha256', this.ledger.installSecret)
+			.update(canonicalJson(['plugin-secret-v1', pluginId, identity, ref]))
+			.digest('hex');
+	}
+	/** Reserve cleanup provenance durably before any native write; never consumable yet. */
+	registerPluginSecret(
+		pluginId: string,
+		identity: AuthIdentity,
+		key: string,
+		endpoint: string,
+		ref: string,
+		assertConfirmed: () => void
+	): void {
+		if (
+			!PLUGIN_RECORD_KEY_PATTERN.test(key) ||
+			!isPluginEndpointScope(endpoint) ||
+			!/^[0-9a-f]{64}$/.test(ref)
+		)
+			throw new PluginAuthorityError('PLUGIN_INVALID');
+		assertPluginAuthority(assertConfirmed);
+		const state = this.pluginState(pluginId, identity) ?? {
+			identity: { ...identity },
+			records: {},
+			secrets: {},
+		};
+		if (Object.keys(state.secrets).length >= 64 || state.secrets[ref])
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		const epoch = this.ledger.epoch;
+		assertPluginAuthority(assertConfirmed);
+		this.assertPluginPersistent(pluginId, identity);
+		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		this.ledger.opaque ??= {};
+		state.secrets = { ...state.secrets, [ref]: { key, endpoint, ref, removal: 'pending' } };
+		this.ledger.opaque[pluginId] = state;
+		this.bump();
+		this.persist();
+		this.assertPluginPersistent(pluginId, identity);
+	}
+	assertPluginSecret(
+		pluginId: string,
+		identity: AuthIdentity,
+		ref: string,
+		endpoint: string
+	): void {
+		const secret = this.pluginState(pluginId, identity)?.secrets[ref];
+		if (!secret || secret.removal || secret.endpoint !== endpoint)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+	}
+	/** Generic freshness fence: opaque authority revisions, never domain values. */
+	pluginRecordRevision(pluginId: string, identity: AuthIdentity): string {
+		const records = this.pluginState(pluginId, identity)?.records ?? {};
+		return createHash('sha256')
+			.update(
+				canonicalJson(
+					Object.fromEntries(Object.entries(records).map(([key, value]) => [key, value.revision]))
+				)
+			)
+			.digest('hex');
+	}
+	/** Exact authenticated durable source metadata. Not a producer-supplied proof. */
+	pluginEventProof(
+		pluginId: string,
+		identity: AuthIdentity,
+		source: unknown,
+		metadata: unknown
+	): string {
+		this.assertPluginPersistent(pluginId, identity);
+		return createHmac('sha256', this.ledger.installSecret)
+			.update(
+				canonicalJson(['plugin-event-v1', identity, pluginJson(source), pluginJson(metadata)])
+			)
+			.digest('hex');
+	}
+
+	/** Host-owned generic scope editor: no new capability, no wildcard, sealed CAS. */
+	extendPluginEndpoint(
+		pluginId: string,
+		identity: AuthIdentity,
+		endpoint: string,
+		secret: boolean,
+		check: () => void
+	): void {
+		if (!isPluginEndpointScope(endpoint)) throw new PluginAuthorityError('PLUGIN_INVALID');
+		assertPluginAuthority(check);
+		this.assertPluginPersistent(pluginId, identity);
+		const entry = this.ledger.entries[pluginId],
+			epoch = this.ledger.epoch;
+		const caps: PluginCapability[] = secret ? ['net:tls', 'secrets:use'] : ['net:tls'];
+		const next = entry.caps.map((grant) => ({ ...grant }));
+		for (const cap of caps) {
+			const grant = next.find((g) => g.capability === cap);
+			const members = parsePluginEndpointScopes(grant?.scope);
+			if (!grant || members === null) throw new PluginAuthorityError('PLUGIN_DENIED');
+			const scopes = [...new Set([...members, endpoint])];
+			if (scopes.length > 16) throw new PluginAuthorityError('PLUGIN_LIMIT');
+			grant.scope = scopes.join(',');
+		}
+		assertPluginAuthority(check);
+		this.assertPluginPersistent(pluginId, identity);
+		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		this.notifyAuthorizationChange(pluginId);
+		entry.caps = next;
+		this.bump();
+		this.persist();
+		this.assertPluginPersistent(pluginId, identity);
+	}
+	pluginSecretRemoval(
+		pluginId: string,
+		identity: AuthIdentity,
+		ref: string
+	): { endpoint: string; removal?: 'pending' | 'removed' } {
+		const secret = this.pluginState(pluginId, identity)?.secrets[ref];
+		if (!secret) throw new PluginAuthorityError('PLUGIN_DENIED');
+		return { endpoint: secret.endpoint, removal: secret.removal };
+	}
+	/** Host-only setup completion/removal; active requires a pending reservation. */
+	setPluginSecretState(
+		pluginId: string,
+		identity: AuthIdentity,
+		ref: string,
+		next: 'active' | 'pending' | 'removed',
+		check: () => void
+	): void {
+		assertPluginAuthority(check);
+		const state = this.pluginState(pluginId, identity);
+		const secret = state?.secrets[ref];
+		if (
+			!secret ||
+			!['active', 'pending', 'removed'].includes(next) ||
+			(next === 'active' && secret.removal !== 'pending')
+		)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		const epoch = this.ledger.epoch;
+		assertPluginAuthority(check);
+		this.assertPluginPersistent(pluginId, identity);
+		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		state!.secrets = {
+			...state!.secrets,
+			[ref]: { ...secret, removal: next === 'active' ? undefined : next },
+		};
+		this.bump();
+		this.persist();
+		this.assertPluginPersistent(pluginId, identity);
+	}
+
+	/** Trusted uninstall only; never legacy namespaces or another plugin's native entries. */
+	purgePluginPrivateState(pluginId: string, deleteSlot: (slot: string) => void): void {
+		this.ensureLoaded();
+		if (
+			!this.ledger.opaque?.[pluginId] &&
+			!(this.ledger.opaqueArchive ?? []).some((item) => item.pluginId === pluginId)
+		)
+			return;
+		this.assertPersistentInstallation();
+		const states = [
+			...(this.ledger.opaque?.[pluginId] ? [this.ledger.opaque[pluginId]] : []),
+			...(this.ledger.opaqueArchive ?? [])
+				.filter((item) => item.pluginId === pluginId)
+				.map((item) => item.state),
+		];
+		const epoch = this.ledger.epoch;
+		for (const state of states)
+			for (const ref of Object.keys(state.secrets)) {
+				deleteSlot(this.secretSlot(pluginId, state.identity, ref));
+				this.assertPersistentInstallation();
+				if (this.ledger.epoch !== epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+			}
+		if (this.ledger.opaque) delete this.ledger.opaque[pluginId];
+		if (this.ledger.opaqueArchive)
+			this.ledger.opaqueArchive = this.ledger.opaqueArchive.filter(
+				(item) => item.pluginId !== pluginId
+			);
+		this.bump();
+		this.persist();
+		this.assertPersistentInstallation();
+	}
+
+	private retirePluginOpaqueState(pluginId: string): void {
+		const state = this.ledger.opaque?.[pluginId];
+		if (!state) return;
+		if ((this.ledger.opaqueArchive?.length ?? 0) >= 1024)
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		this.ledger.opaqueArchive ??= [];
+		this.ledger.opaqueArchive.push({ pluginId, state });
+		delete this.ledger.opaque![pluginId];
+	}
+
 	/** Advance the monotonic epoch for any authoritative mutation. */
 	private bump(): void {
+		if (!Number.isSafeInteger(this.ledger.epoch) || this.ledger.epoch >= Number.MAX_SAFE_INTEGER)
+			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 		this.ledger.epoch += 1;
 	}
 
@@ -306,8 +761,12 @@ export class AuthorizationStore {
 	 * MUST already have verified sender-frame + nonce + user-activation.
 	 */
 	mint(pluginId: string, caps: PermissionGrant[], identity: AuthIdentity): void {
+		this.notifyAuthorizationChange(pluginId);
 		this.ensureLoaded();
 		this.bump();
+		const previousOpaque = this.ledger.opaque?.[pluginId];
+		if (previousOpaque && canonicalJson(previousOpaque.identity) !== canonicalJson(identity))
+			this.retirePluginOpaqueState(pluginId);
 		this.ledger.entries[pluginId] = {
 			enabled: true,
 			caps: caps.map((c) => ({ ...c })),
@@ -322,9 +781,11 @@ export class AuthorizationStore {
 	/** Revoke a plugin's authorization (disable + drop grants) with a tombstone.
 	 * No-op when the plugin holds no grant (nothing to revoke). */
 	revoke(pluginId: string): void {
+		this.notifyAuthorizationChange(pluginId);
 		this.ensureLoaded();
 		if (!this.ledger.entries[pluginId]) return;
 		this.bump();
+		this.retirePluginOpaqueState(pluginId);
 		delete this.ledger.entries[pluginId];
 		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
 		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
@@ -336,11 +797,13 @@ export class AuthorizationStore {
 	 * enabled - so a later restored folder is recognized as removed-by-user and a
 	 * rolled-back ledger that still enables it fails the epoch check. */
 	uninstall(pluginId: string): void {
+		this.notifyAuthorizationChange(pluginId);
 		this.ensureLoaded();
 		const hadEntry = !!this.ledger.entries[pluginId];
 		const alreadyTombstoned = this.ledger.tombstones.some((t) => t.pluginId === pluginId);
 		if (!hadEntry && alreadyTombstoned) return; // already authoritatively removed
 		this.bump();
+		this.retirePluginOpaqueState(pluginId);
 		delete this.ledger.entries[pluginId];
 		this.ledger.tombstones = this.ledger.tombstones.filter((t) => t.pluginId !== pluginId);
 		this.ledger.tombstones.push({ pluginId, removedAtEpoch: this.ledger.epoch });
@@ -371,6 +834,7 @@ export class AuthorizationStore {
 	): boolean {
 		this.ensureLoaded();
 		if (!isAllowlistScoped(capability)) return false;
+		this.notifyAuthorizationChange(pluginId);
 		const entry = this.ledger.entries[pluginId];
 		if (!entry || !entry.enabled) return false;
 		const idx = entry.caps.findIndex((c) => c.capability === capability);

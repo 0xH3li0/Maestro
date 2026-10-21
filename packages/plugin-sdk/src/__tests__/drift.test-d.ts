@@ -97,3 +97,13 @@ expectTypeOf<MediaProbe>().toEqualTypeOf<SrcMediaProbe>();
 expectTypeOf<MediaRunOptions>().toEqualTypeOf<SrcMediaOptions>();
 expectTypeOf<MediaToolStatus>().toEqualTypeOf<SrcMediaStatus>();
 expectTypeOf<MediaFailure>().toEqualTypeOf<SrcMediaFailure>();
+
+import type { PluginEndpoint, PluginTlsPart, PluginRecordValue } from '../index';
+import type {
+	PluginEndpoint as SourceEndpoint,
+	PluginTlsPart as SourceTlsPart,
+	PluginRecordValue as SourceRecord,
+} from '../../../../src/shared/plugins/primitives';
+expectTypeOf<PluginEndpoint>().toEqualTypeOf<SourceEndpoint>();
+expectTypeOf<PluginTlsPart>().toEqualTypeOf<SourceTlsPart>();
+expectTypeOf<PluginRecordValue>().toEqualTypeOf<SourceRecord>();

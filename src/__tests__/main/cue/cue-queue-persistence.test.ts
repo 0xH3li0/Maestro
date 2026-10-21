@@ -78,6 +78,26 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	it('parks unsupported historical rows without stale/session cleanup or execution', () => {
+		const p = makePersistence({ known: [], now: NOW + 999999999 });
+		const event = { ...makeEvent('app.startup'), type: 'retired.source' } as unknown as CueEvent;
+		p.persist('s-1', 'historical-parked', makeEntry({ event }));
+		expect(p.restoreAll().size).toBe(0);
+		expect(p.persistedIds().has('historical-parked')).toBe(true);
+	});
+	it('acknowledges plugin events only after a matching durable row can be read back', () => {
+		const p = makePersistence();
+		const event = makeEvent('plugin.event');
+		expect(p.persist('s-1', 'mail-row', makeEntry({ event }))).toBe(true);
+		expect(p.restoreAll().get('s-1')![0].event).toEqual(event);
+		const write = vi.spyOn(getSharedDb(), 'persistQueuedEvent').mockImplementation(() => {});
+		expect(p.persist('s-1', 'no-op-row', makeEntry({ event }))).toBe(false);
+		write.mockImplementation(() => {
+			throw new Error('Synthetic disk failure');
+		});
+		expect(p.persist('s-1', 'failed-row', makeEntry({ event }))).toBe(false);
+		write.mockRestore();
+	});
 	describe('restoring only what a previous run left behind', () => {
 		// The engine snapshots persistedIds() before sessions initialize. A row
 		// persisted after that (this boot's own app.startup queued behind a

@@ -1,3 +1,20 @@
+import { realpathSync, lstatSync } from 'fs';
+import { PluginAuthorityError } from './plugins/plugin-authority';
+import { PluginPrivateState } from './plugins/plugin-private-state';
+import { PluginTlsHost } from './plugins/plugin-tls';
+import { PluginCueEvents } from './plugins/plugin-cue-events';
+import { PluginPrimitives } from './plugins/plugin-primitives';
+import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window';
+import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
+import {
+	readPluginEventReceipt,
+	writePluginEventReceipt,
+	pluginEventReceiptCapacityAvailable,
+} from './cue/cue-db';
+import {
+	getPluginRunProofProtectedPaths,
+	pluginToolRunIdentity,
+} from './plugins/plugin-tool-run-identity';
 import {
 	app,
 	BrowserWindow,
@@ -48,6 +65,9 @@ import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
+import { getRecord, type PluginRecord } from '../shared/plugins/plugin-registry';
+import { isValidAgentId } from '../shared/agentIds';
 import { RELAY_PLUGIN_ID } from '../shared/plugins/relay-identity';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
 import { seedBundledPlugins } from './plugins/bundled-plugins';
@@ -59,7 +79,9 @@ import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
 import {
+	getActivePluginManager,
 	setActivePluginManager,
+	stopActivePluginManager,
 	setHeadlessAgentRunner,
 	type HeadlessAgentRunner,
 } from './plugins/plugin-manager-singleton';
@@ -84,6 +106,7 @@ import { createEgressGuard } from './plugins/net-egress-guard';
 import { createRunUiCommand } from './plugins/run-ui-command';
 import {
 	isPermitted,
+	type PluginCapability,
 	isPermittedUnattended,
 	describeCapability,
 	capabilityRisk,
@@ -121,7 +144,6 @@ import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
 import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
-import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { getSessionIdsBusyWithCli } from '../shared/cli-activity';
 import { isAgentBusy } from './utils/agent-busy';
 import {
@@ -1599,6 +1621,105 @@ app
 		});
 		// Expose the same instance to the IPC registration phase below.
 		pluginAuthStore = authStore;
+		// Generic tool identity must survive unavailable optional proof-file storage.
+		// Manager ingress, existing run issuance and sandbox handles share this registry.
+		const toolIdentity = pluginToolRunIdentity;
+		let toolProofFiles: PluginToolRunProofFiles | undefined;
+		const toolProofBase = app.getPath('userData');
+		const assertToolProofLocation = (): void => {
+			if (
+				DEMO_MODE ||
+				!['linux', 'darwin'].includes(process.platform) ||
+				app.getPath('userData') !== toolProofBase ||
+				realpathSync(toolProofBase) !== toolProofBase
+			)
+				throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			// userData is broker-protected, but custom locations must also be outside
+			// every registered local project and any containing Git/Obsidian root.
+			const sessions = sessionsStore.get('sessions', []);
+			if (!Array.isArray(sessions)) throw new PluginAuthorityError('PLUGIN_DENIED');
+			for (const session of sessions) {
+				if (!session || typeof session !== 'object')
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteConfig?.enabled) continue;
+				if (typeof session.cwd !== 'string' || typeof session.projectRoot !== 'string')
+					throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+				for (const project of [session.cwd, session.projectRoot, session.fullPath]) {
+					if (project === undefined) continue;
+					if (typeof project !== 'string' || !path.isAbsolute(project))
+						throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+					const canonical = realpathSync(project);
+					if (
+						[path.relative(canonical, toolProofBase), path.relative(toolProofBase, canonical)].some(
+							(relative) =>
+								relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`))
+						)
+					)
+						throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+				}
+			}
+			let ancestor = toolProofBase;
+			for (let count = 0; ; count++) {
+				if (count >= 64) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+				for (const marker of ['.git', '.obsidian']) {
+					try {
+						lstatSync(path.join(ancestor, marker));
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+						throw error;
+					}
+					throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+				}
+				const next = path.dirname(ancestor);
+				if (next === ancestor) break;
+				ancestor = next;
+			}
+		};
+		const assertToolOwnerActive = (): void => {
+			if (
+				!toolOwner ||
+				pluginManager !== toolOwner ||
+				getActivePluginManager() !== toolOwner ||
+				resolveEncoreFeatures(store.get('encoreFeatures')).plugins !== true
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+		};
+		toolIdentity.setAgentActiveAssertion((agentId) => {
+			assertToolOwnerActive();
+			const sessions = sessionsStore.get('sessions', []);
+			if (!Array.isArray(sessions)) throw new PluginAuthorityError('PLUGIN_DENIED');
+			const matches = sessions.filter((session) => session?.id === agentId);
+			if (
+				matches.length !== 1 ||
+				!isValidAgentId(matches[0].toolType) ||
+				matches[0].toolType === 'terminal' ||
+				matches[0].sessionSshRemoteConfig?.enabled ||
+				matches[0].sshRemoteConfig?.enabled
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			assertToolOwnerActive();
+		});
+		try {
+			assertToolProofLocation();
+			toolProofFiles = PluginToolRunProofFiles.provision(toolIdentity, toolProofBase);
+			assertToolProofLocation();
+		} catch {
+			// Keep optional hardened delivery closed without stopping unrelated tools.
+			try {
+				toolProofFiles?.stop();
+			} catch {
+				// Construction has no run resources. Never log a native path/cause.
+			}
+			toolProofFiles = undefined;
+			logger.warn('Hardened plugin tool proof storage unavailable', 'Plugins');
+		}
+		const assertToolProofStorageActive = (): void => {
+			assertToolOwnerActive();
+			assertToolProofLocation();
+			if (!toolProofFiles) throw new PluginAuthorityError('PLUGIN_DENIED');
+			toolProofFiles.assertIdentity(toolIdentity);
+			assertToolOwnerActive();
+		};
 		const trustedKeysFor = (): string[] => {
 			const keys = store.get('pluginTrustedKeys', []) as unknown;
 			const userKeys = Array.isArray(keys)
@@ -1611,6 +1732,29 @@ app
 		// The live grant source every enforcement seam now reads (sealed, identity-
 		// bound, anti-rollback) instead of the forgeable on-disk store.
 		const grantsOf = (pluginId: string) => authStore.readGrants(pluginId);
+		const assertToolRecordActive = (record: PluginRecord): void => {
+			try {
+				assertToolOwnerActive();
+				toolOwner!.assertToolRecordCurrent(record);
+				const identity = pluginIdentity(record.source, trustedKeysFor());
+				if (
+					!identity ||
+					identity.signatureStatus !== 'trusted' ||
+					!authStore.verify(
+						record.id,
+						identity,
+						(record.manifest?.permissions ?? []).map((permission) => permission.capability)
+					).authorized
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				// Ordinary verified tools use live consent even when sealed mail state is unavailable.
+				// Secret/record/Cue operations independently require anchored persistence.
+				assertToolOwnerActive();
+				toolOwner!.assertToolRecordCurrent(record);
+			} catch {
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			}
+		};
 
 		// First-party plugin bridges (encore-lifts L0): one host-owned lifecycle
 		// bridge per Encore feature definition. Enable mints the definition's
@@ -1763,7 +1907,7 @@ app
 			// cli-server.json token, the plugins dir, plugin KV, supervisor targets,
 			// transcripts) from fs:read AND fs:write, enforced on the symlink-resolved
 			// real path so no plugin fs scope can ever reach it.
-			protectedPaths: () => [app.getPath('userData')],
+			protectedPaths: () => [app.getPath('userData'), ...getPluginRunProofProtectedPaths()],
 			onDecision: (pluginId, method, decision) => {
 				if (decision.allowed) return;
 				logger.warn(
@@ -2541,9 +2685,116 @@ app
 			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
 		setHeadlessAgentRunner(runHeadlessAgent);
+		const primitiveIdentityFor = (id: string, allowStopped = false) => {
+			if (
+				!resolveEncoreFeatures(store.get('encoreFeatures')).plugins ||
+				(!allowStopped && !pluginSandboxHost?.isAcceptingServiceCalls(id))
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			const record = pluginManager
+				?.getActiveRecords()
+				.find((r) => r.id === id && r.signature?.status === 'trusted');
+			if (!record) throw new PluginAuthorityError('PLUGIN_DENIED');
+			const identity = pluginIdentity(record.source, trustedKeysFor());
+			if (
+				!identity ||
+				!authStore.verify(
+					id,
+					identity,
+					(record.manifest?.permissions ?? []).map((p) => p.capability)
+				).authorized
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			return identity;
+		};
+		const capturePrimitive = (id: string) => {
+			const identity = primitiveIdentityFor(id);
+			const lifetime = pluginSandboxHost!.capturePrimitiveLifetime(id);
+			return {
+				...lifetime,
+				assertActive: () => {
+					lifetime.assertActive();
+					const current = primitiveIdentityFor(id);
+					if (
+						current.contentHash !== identity.contentHash ||
+						current.signerKey !== identity.signerKey ||
+						current.signatureStatus !== identity.signatureStatus
+					)
+						throw new PluginAuthorityError('PLUGIN_DENIED');
+					lifetime.assertActive();
+				},
+			};
+		};
+		const assertPrimitiveAllowed = (
+			id: string,
+			capability: PluginCapability,
+			target: string,
+			allowStopped = false
+		) => {
+			primitiveIdentityFor(id, allowStopped);
+			if (!isPermitted(grantsOf(id), capability, target))
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+		};
+		const primitiveState: PluginPrivateState = new PluginPrivateState({
+			store: authStore,
+			identity: pluginToolRunIdentity,
+			confirmation: new PluginConfirmationWindows(__dirname),
+			identityFor: primitiveIdentityFor,
+			capture: capturePrimitive,
+			assertAllowed: assertPrimitiveAllowed,
+			assertDeclared: (id, cap) => {
+				if (!pluginManager?.getRequestedPermissions(id)?.some((p) => p.capability === cap))
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+			},
+			stopTls: (id) => primitiveTls.stopPlugin(id),
+		});
+		const primitiveTls: PluginTlsHost = new PluginTlsHost({
+			identity: pluginToolRunIdentity,
+			egress: pluginEgressGuard,
+			capture: capturePrimitive,
+			assertEndpoint: (id, scope) => assertPrimitiveAllowed(id, 'net:tls', scope),
+			encodeSecret: (id, endpoint, ref, check) =>
+				primitiveState.encodeSecret(id, endpoint, ref, check),
+		});
+		const primitiveEvents = new PluginCueEvents({
+			store: authStore,
+			identity: pluginToolRunIdentity,
+			identityFor: primitiveIdentityFor,
+			capture: capturePrimitive,
+			assertAllowed: (id, topic, queued) =>
+				assertPrimitiveAllowed(id, 'events:publish', topic, queued),
+			assertReceiptCapacity: (id) => {
+				if (!pluginEventReceiptCapacityAvailable(id))
+					throw new PluginAuthorityError('PLUGIN_LIMIT');
+			},
+			readReceipt: readPluginEventReceipt,
+			writeReceipt: writePluginEventReceipt,
+		});
+		configurePluginCueHost(primitiveEvents);
+		authStore.onPluginAuthorizationChange((id) => {
+			pluginToolRunIdentity.revokePlugin(id);
+			primitiveEvents.stopPlugin(id);
+			void primitiveTls.stopPlugin(id).catch(() => {});
+		});
+		const pluginPrimitives = new PluginPrimitives({
+			identity: pluginToolRunIdentity,
+			state: primitiveState,
+			tls: primitiveTls,
+			events: primitiveEvents,
+			capture: capturePrimitive,
+		});
+
 		const sandboxHost = new PluginSandboxHost({
+			toolIdentity,
+			assertToolPluginActive: (pluginId) => {
+				assertToolOwnerActive();
+				const record = getRecord(toolOwner!.getRegistry(), pluginId);
+				if (!record) throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertToolRecordActive(record);
+			},
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
+				primitives: pluginPrimitives,
 				serviceManifest: (id) =>
 					pluginManager
 						?.getActiveRecords()
@@ -2840,6 +3091,10 @@ app
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
+			toolIdentity,
+			toolProofFiles,
+			assertToolProofStorageActive,
+			assertToolRecordActive,
 			serviceAvailable: (id, requirement) => serviceAvailable?.(id, requirement) === true,
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
@@ -2865,6 +3120,8 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
+				authStore.uninstall(id);
+				primitiveState.purgePlugin(id);
 				pluginProviderSessions.purge(id);
 				purgePluginData(id, {
 					kvStore: pluginKvStore,
@@ -2890,6 +3147,7 @@ app
 				}
 			},
 		});
+		const toolOwner = pluginManager;
 
 		let consentWindowRef: OpenedConsentWindow | null = null;
 		const closeConsentWindow = (): void => {
@@ -3551,6 +3809,17 @@ app.on('window-all-closed', () => {
 
 // Create and setup quit handler with dependency injection (Phase 4 refactoring)
 quitHandler = createQuitHandler({
+	stopPluginToolAuthority: () => {
+		const manager = pluginManager;
+		const activeManager = getActivePluginManager();
+		try {
+			// Permanently detach ingress before any retirement callback can reenter.
+			stopActivePluginManager();
+		} finally {
+			// Also retire a constructed manager that has not yet reached registration.
+			if (manager && manager !== activeManager) manager.stopToolAuthority();
+		}
+	},
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
 	getWebServer: () => webServer,

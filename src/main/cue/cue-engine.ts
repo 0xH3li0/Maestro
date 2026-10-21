@@ -1,3 +1,5 @@
+import { CUE_EVENT_TYPES } from '../../shared/cue/contracts';
+import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 /**
  * Cue Engine Core - thin façade for Maestro Cue event-driven automation.
  *
@@ -504,7 +506,7 @@ export class CueEngine {
 				autoRun,
 				turnSettings
 			) => {
-				this.runManager.execute(
+				return this.runManager.execute(
 					sessionId,
 					prompt,
 					event,
@@ -749,13 +751,14 @@ export class CueEngine {
 		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
+				if (!CUE_EVENT_TYPES.includes(entry.event.type)) continue;
 				// Remove the persisted row immediately - runManager.execute will
 				// re-persist with a fresh id when it re-queues (or dispatches
 				// immediately if a slot is available).
-				this.queuePersistence.remove(entry.persistId);
+				if (!isDurableCueEvent(entry.event)) this.queuePersistence.remove(entry.persistId);
 				// Pass the original queuedAt so drainQueue's staleness check
 				// still reflects real user wait time, not the restart time.
-				this.runManager.execute(
+				const accepted = this.runManager.execute(
 					sessionId,
 					entry.prompt,
 					entry.event,
@@ -786,6 +789,8 @@ export class CueEngine {
 					// Work a drain deferred is not buffered overflow: restore all of it.
 					entry.drainedAt !== undefined
 				);
+				if (isDurableCueEvent(entry.event) && accepted === true)
+					this.queuePersistence.remove(entry.persistId);
 			}
 		}
 

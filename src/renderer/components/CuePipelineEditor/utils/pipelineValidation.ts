@@ -1,3 +1,4 @@
+import { parseCuePluginSource } from '../../../../shared/plugins/plugin-json';
 /**
  * pipelineValidation - Pure pipeline graph validation.
  *
@@ -56,6 +57,13 @@ function validateTriggerConfig(
 	const cfg = data.config ?? {};
 	const label = data.customLabel ? `"${data.customLabel}"` : `${data.eventType}`;
 	switch (data.eventType) {
+		case 'plugin.event':
+			try {
+				parseCuePluginSource(cfg.plugin);
+			} catch {
+				errors.push(`"${pipelineName}": ${label} needs a valid plugin source`);
+			}
+			break;
 		case 'time.heartbeat':
 			if (
 				typeof cfg.interval_minutes !== 'number' ||

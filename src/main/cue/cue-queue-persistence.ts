@@ -1,3 +1,5 @@
+import { CUE_EVENT_TYPES } from '../../shared/cue/contracts';
+import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 /**
  * Cue Queue Persistence - Phase 12A.
  *
@@ -25,6 +27,7 @@ import {
 	getQueuedEvents,
 	clearPersistedQueue,
 	safePersistQueuedEvent,
+	persistQueuedEvent,
 	safeRemoveQueuedEvent,
 	safeRecordCueEvent,
 	type CueQueuedEventRecord,
@@ -79,7 +82,7 @@ export interface RestoredQueueEntry extends PersistableQueueEntry {
 const DRAINED_AT_KEY = 'maestroDrainedAt';
 
 export interface CueQueuePersistence {
-	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void;
+	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void | boolean;
 	remove(persistId: string): void;
 	clearSession(sessionId: string): void;
 	clearAll(): void;
@@ -117,7 +120,11 @@ export interface CueQueuePersistenceDeps {
 export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQueuePersistence {
 	const now = deps.now ?? (() => Date.now());
 
-	function persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void {
+	function persist(
+		sessionId: string,
+		persistId: string,
+		entry: PersistableQueueEntry
+	): void | boolean {
 		const record: CueQueuedEventRecord = {
 			id: persistId,
 			sessionId,
@@ -140,6 +147,16 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			notifyJson: entry.notify ? JSON.stringify(entry.notify) : null,
 			turnSettingsJson: entry.turnSettings ? JSON.stringify(entry.turnSettings) : null,
 		};
+		if (isDurableCueEvent(entry.event)) {
+			try {
+				persistQueuedEvent(record);
+				return getQueuedEvents().some(
+					(row) => row.id === record.id && row.eventJson === record.eventJson
+				);
+			} catch {
+				return false;
+			}
+		}
 		safePersistQueuedEvent(record);
 	}
 
@@ -239,6 +256,25 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 
 		for (const row of rows) {
+			// Unsupported historical source rows stay parked on disk for explicit migration.
+			// Do not let ordinary stale/session cleanup destroy a retired producer's data.
+			try {
+				const historical = JSON.parse(row.eventJson);
+				if (
+					historical &&
+					typeof historical.type === 'string' &&
+					!CUE_EVENT_TYPES.includes(historical.type)
+				) {
+					deps.onLog(
+						'warn',
+						'[CUE] Unsupported queued source preserved; explicit migration required'
+					);
+					continue;
+				}
+			} catch {
+				/* the existing malformed-row handling below owns this case */
+			}
+
 			// Drop rows whose session is no longer registered - they'd just be
 			// dead weight in the DB otherwise. Record the drop so a user
 			// inspecting history after deleting/recreating a session still

@@ -2119,3 +2119,51 @@ export function pruneSusFactorBlocks(olderThanMs: number): void {
 		.prepare(`DELETE FROM cue_susfactor_blocks WHERE blocked_at < ?`)
 		.run(Date.now() - olderThanMs);
 }
+
+/** Durable deduplication receipts for generic authenticated plugin sources. No automatic eviction. */
+function pluginReceiptTable(): Database.Database {
+	const db = getDb();
+	db.exec(`CREATE TABLE IF NOT EXISTS cue_plugin_receipts (
+  plugin_id TEXT NOT NULL, event_key TEXT NOT NULL, receipt_id TEXT NOT NULL,
+  payload_hash TEXT NOT NULL, proof TEXT NOT NULL, PRIMARY KEY(plugin_id, event_key))`);
+	return db;
+}
+export function readPluginEventReceipt(
+	pluginId: string,
+	id: string
+): { receiptId: string; payloadHash: string; proof: string } | null {
+	const row = pluginReceiptTable()
+		.prepare(
+			'SELECT receipt_id AS receiptId, payload_hash AS payloadHash, proof FROM cue_plugin_receipts WHERE plugin_id=? AND event_key=?'
+		)
+		.get(pluginId, id);
+	return (row as { receiptId: string; payloadHash: string; proof: string } | undefined) ?? null;
+}
+export function writePluginEventReceipt(
+	pluginId: string,
+	id: string,
+	row: { receiptId: string; payloadHash: string; proof: string }
+): void {
+	const db = pluginReceiptTable();
+	db.transaction(() => {
+		const count = db.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts').get() as {
+			n: number;
+		};
+		const own = db
+			.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts WHERE plugin_id=?')
+			.get(pluginId) as { n: number };
+		if (count.n >= 100000 || own.n >= 4096) throw new Error('PluginReceiptLimit');
+		db.prepare(
+			'INSERT INTO cue_plugin_receipts (plugin_id,event_key,receipt_id,payload_hash,proof) VALUES (?,?,?,?,?)'
+		).run(pluginId, id, row.receiptId, row.payloadHash, row.proof);
+	})();
+}
+
+export function pluginEventReceiptCapacityAvailable(pluginId: string): boolean {
+	const db = pluginReceiptTable();
+	const count = db.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts').get() as { n: number };
+	const own = db
+		.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts WHERE plugin_id=?')
+		.get(pluginId) as { n: number };
+	return count.n < 100000 && own.n < 4096;
+}

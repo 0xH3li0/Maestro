@@ -1,3 +1,5 @@
+import { PLUGIN_PRIMITIVE_METHODS, type PluginPrimitives } from './plugin-primitives';
+import { PluginAuthorityError } from './plugin-authority';
 /**
  * Host-call handlers: the actual implementations behind each brokered RPC.
  *
@@ -130,6 +132,7 @@ export interface PluginSessionMetadata {
 }
 
 export interface HostHandlerDeps {
+	primitives?: PluginPrimitives;
 	serviceManifest?: (pluginId: string) => PluginManifest | undefined;
 	serviceRunning?: (pluginId: string) => boolean;
 	serviceAllowed?: (
@@ -2054,6 +2057,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const cleanupPluginResources = (pluginId: string): Promise<void> => {
 		const drain = Promise.all([
 			services.cleanupPlugin(pluginId),
+			deps.primitives?.cleanupPlugin(pluginId),
 			mediaTools.cleanupPlugin(pluginId),
 		]).then(() => {});
 		void drain.catch(() => {});
@@ -2093,6 +2097,19 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		return drain;
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
+
+	for (const method of PLUGIN_PRIMITIVE_METHODS) {
+		handlers[method] = async (pluginId, params, context) => {
+			if (!deps.primitives) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			try {
+				return await deps.primitives.call(pluginId, method, params, context?.setResponseGuard);
+			} catch (error) {
+				throw error instanceof PluginAuthorityError
+					? error
+					: new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			}
+		};
+	}
 
 	return handlers;
 }

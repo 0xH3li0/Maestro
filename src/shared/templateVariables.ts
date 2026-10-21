@@ -241,6 +241,10 @@ export interface TemplateContext {
 	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
+		pluginId?: string;
+		pluginTopic?: string;
+		pluginEventId?: string;
+		pluginMetadata?: string;
 		eventType?: string;
 		eventTimestamp?: string;
 		triggerName?: string;
@@ -370,6 +374,14 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_ID}}', description: 'Authenticated plugin ID', cueOnly: true },
+	{
+		variable: '{{CUE_PLUGIN_TOPIC}}',
+		description: 'Authenticated plugin event topic',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_PLUGIN_EVENT_ID}}', description: 'Stable plugin event ID', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_METADATA}}', description: 'Opaque plugin event JSON', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
 		variable: '{{CUE_GH_ASSIGNEES}}',
@@ -678,6 +690,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 			: getMaestroCLIPath(),
 
 		// Cue variables
+		CUE_PLUGIN_ID: context.cue?.pluginId ?? '',
+		CUE_PLUGIN_TOPIC: context.cue?.pluginTopic ?? '',
+		CUE_PLUGIN_EVENT_ID: context.cue?.pluginEventId ?? '',
+		CUE_PLUGIN_METADATA: context.cue?.pluginMetadata ?? '',
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
 		CUE_EVENT_TIMESTAMP: context.cue?.eventTimestamp || '',
 		CUE_TRIGGER_NAME: context.cue?.triggerName || '',

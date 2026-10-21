@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.25.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.28.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.25.0');
+		expect(HOST_API_VERSION).toBe('1.28.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -347,4 +347,22 @@ describe('vendored services contract parity', () => {
 		}
 		expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
 	});
+});
+
+import { PLUGIN_PRIMITIVE_ERRORS, parsePluginEndpointScopes } from '../index';
+import {
+	PLUGIN_PRIMITIVE_ERRORS as SOURCE_PRIMITIVE_ERRORS,
+	parsePluginEndpointScopes as sourceEndpointScopes,
+} from '../../../../src/shared/plugins/primitives';
+it('ships the exact generic error vocabulary and endpoint scope grammar', () => {
+	expect(PLUGIN_PRIMITIVE_ERRORS).toEqual(SOURCE_PRIMITIVE_ERRORS);
+	for (const value of [
+		'none',
+		'fixture.example:993',
+		'fixture.example:993,second.example:443',
+		'*',
+		'localhost:993',
+		undefined,
+	])
+		expect(parsePluginEndpointScopes(value)).toEqual(sourceEndpointScopes(value));
 });

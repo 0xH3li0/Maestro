@@ -1,3 +1,5 @@
+import { isDurableCueEvent, authorizePluginCueEvent } from './triggers/cue-plugin-trigger-source';
+
 /**
  * Cue Run Manager - concurrency control, queue management, and run execution.
  *
@@ -261,17 +263,10 @@ export interface CueRunManager {
 		autoRun?: CueAutoRunConfig,
 		/** The subscription's model choice, threaded through the queue. */
 		turnSettings?: CueTurnSettings,
-		/**
-		 * Skip the `queue_size` cap (and the queue_size <= 0 drop) when this
-		 * event has to wait. Passed by the engine when it restores rows a
-		 * drain deferred: those were acknowledged work, not buffered
-		 * overflow, so a drain that deferred three successors for an agent
-		 * with `queue_size: 1` must run all three. Concurrency still applies.
-		 */
 		exemptFromQueueCap?: boolean
-	): void;
+	): void | boolean;
 	stopRun(runId: string): boolean;
-	stopAll(): void;
+	stopAll(): void | boolean;
 	/**
 	 * Drain gate (`CueEngine.drain`). While on, `execute` never starts a run:
 	 * every event is queued and persisted regardless of `queue_size`, and
@@ -307,7 +302,7 @@ export interface CueRunManager {
 	 * Drop a session's queued events. `preserveStartup` keeps `app.startup`
 	 * entries.
 	 */
-	clearQueue(sessionId: string, preserveStartup?: boolean): void;
+	clearQueue(sessionId: string, preserveStartup?: boolean): void | boolean;
 	/**
 	 * Settle a session's queue after a cue.yaml reload. `classify` returns
 	 * null to keep an entry, or why it is dropped. A dropped entry loses its
@@ -320,7 +315,7 @@ export interface CueRunManager {
 		sessionId: string,
 		classify: (entry: QueuedEvent) => CueQueueDropReason | null
 	): number;
-	reset(): void;
+	reset(): void | boolean;
 }
 
 export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
@@ -464,9 +459,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// row first - the dispatch promise may outlive another drain/reset
 			// cycle and we must not leave a ghost row referencing an in-flight run.
 			queue.splice(i, 1);
-			if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+			if (!authorizePluginCueEvent(entry.event, sessionId, entry.subscriptionName)) {
+				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+				continue;
+			}
+			if (entry.persistId && !isDurableCueEvent(entry.event))
+				deps.queuePersistence?.remove(entry.persistId);
 			activeRunCount.set(sessionId, currentCount + 1);
-			doExecuteCueRun(
+			const execution = doExecuteCueRun(
 				sessionId,
 				entry.prompt,
 				entry.event,
@@ -483,6 +483,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.autoRun,
 				entry.turnSettings
 			);
+			if (entry.persistId && isDurableCueEvent(entry.event))
+				void execution.then(
+					() => deps.queuePersistence?.remove(entry.persistId!),
+					() => deps.queuePersistence?.remove(entry.persistId!)
+				);
 		}
 
 		// Clean up empty queue
@@ -567,6 +572,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		autoRun?: CueAutoRunConfig,
 		turnSettings?: CueTurnSettings
 	): Promise<void> {
+		if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) {
+			activeRunCount.set(sessionId, Math.max(0, (activeRunCount.get(sessionId) ?? 1) - 1));
+			return;
+		}
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
 		const runId = crypto.randomUUID();
@@ -635,6 +644,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
 		try {
+			if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return;
 			const runResult = await deps.onCueRun({
 				runId,
 				sessionId,
@@ -707,15 +717,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				const slicedOutput = sliceHeadByChars(result.stdout, SOURCE_OUTPUT_MAX_CHARS);
 
 				const outputRunId = crypto.randomUUID();
-				const outputEvent: CueEvent = {
-					...event,
-					id: crypto.randomUUID(),
-					payload: {
-						...event.payload,
-						sourceOutput: slicedOutput,
-						outputPromptPhase: true,
-					},
-				};
+				// Plugin provenance authenticates the exact opaque metadata. Agent output
+				// belongs in the output prompt/result, never in the authenticated event payload.
+				const outputEvent: CueEvent = isDurableCueEvent(event)
+					? event
+					: {
+							...event,
+							id: crypto.randomUUID(),
+							payload: {
+								...event.payload,
+								sourceOutput: slicedOutput,
+								outputPromptPhase: true,
+							},
+						};
 
 				// Output-prompt phase is logically a child of the parent run:
 				// inherit the same chain root, point parent at the parent run.
@@ -750,6 +764,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				let outputResult: CueRunResult | undefined;
 				let outputStatus: CueRunResult['status'] = 'failed';
 				try {
+					if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return;
 					outputResult = await deps.onCueRun({
 						runId: outputRunId,
 						sessionId,
@@ -972,7 +987,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			autoRun?: CueAutoRunConfig,
 			turnSettings?: CueTurnSettings,
 			exemptFromQueueCap?: boolean
-		): void {
+		): void | boolean {
+			if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return false;
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
 			const queueSize = settings?.queue_size ?? 0;
@@ -1020,7 +1036,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						'cue',
 						`[CUE] Queue disabled for "${sessionName}" (queue_size=${queueSize}), dropping incoming event`
 					);
-					return;
+					return false;
 				}
 
 				if (!eventQueue.has(sessionId)) {
@@ -1033,6 +1049,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// onQueueOverflow callback (12B) - without it the drop is
 					// invisible except to someone scraping logs.
 					const dropped = queue[0];
+					if (isDurableCueEvent(event) || isDurableCueEvent(dropped.event)) return false;
 					deps.onQueueOverflow?.({
 						sessionId,
 						sessionName,
@@ -1076,7 +1093,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// entries that actually made it into the live queue. Safe
 				// wrappers mean a persist failure cannot break the live queue.
 				if (deps.queuePersistence && persistId) {
-					deps.queuePersistence.persist(sessionId, persistId, {
+					const persisted = deps.queuePersistence.persist(sessionId, persistId, {
 						event,
 						subscriptionName,
 						prompt,
@@ -1092,6 +1109,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						notify,
 						turnSettings,
 					});
+					if (isDurableCueEvent(event) && persisted !== true) {
+						queue.splice(queue.indexOf(queuedEntry), 1);
+						deps.queuePersistence.remove(persistId);
+						return false;
+					}
 				}
 
 				deps.onLog(
@@ -1100,12 +1122,41 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						? `[CUE] Event deferred for "${sessionName}" (engine draining, ${queue.length} in queue)`
 						: `[CUE] Event queued for "${sessionName}" (${queue.length}/${queueSize} in queue, ${currentCount}/${maxConcurrent} concurrent)`
 				);
-				return;
+				if (isDurableCueEvent(event) && !deps.queuePersistence) {
+					queue.splice(queue.indexOf(queuedEntry), 1);
+					return false;
+				}
+				return true;
 			}
 
 			// Slot available - dispatch immediately
+			let durablePersistId: string | undefined;
+			if (isDurableCueEvent(event)) {
+				if (!deps.queuePersistence) return false;
+				durablePersistId = crypto.randomUUID();
+				const persisted = deps.queuePersistence.persist(sessionId, durablePersistId, {
+					event,
+					subscriptionName,
+					prompt,
+					outputPrompt,
+					cliOutput,
+					action,
+					command,
+					chainDepth,
+					queuedAt: queuedAtOverride ?? Date.now(),
+					chainRootId,
+					parentEventId,
+					autoRun,
+					notify,
+					turnSettings,
+				});
+				if (persisted !== true || !authorizePluginCueEvent(event, sessionId, subscriptionName)) {
+					deps.queuePersistence.remove(durablePersistId);
+					return false;
+				}
+			}
 			activeRunCount.set(sessionId, currentCount + 1);
-			doExecuteCueRun(
+			const execution = doExecuteCueRun(
 				sessionId,
 				prompt,
 				event,
@@ -1122,6 +1173,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				autoRun,
 				turnSettings
 			);
+			if (durablePersistId)
+				void execution.then(
+					() => deps.queuePersistence?.remove(durablePersistId!),
+					() => deps.queuePersistence?.remove(durablePersistId!)
+				);
+			return true;
 		},
 
 		stopRun(runId: string): boolean {

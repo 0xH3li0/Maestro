@@ -1,0 +1,126 @@
+# Generic plugin primitives (Host API 1.28)
+
+These JSON-only APIs provide verified invocations, bounded TLS bytes, native secret references,
+confirmed opaque records and authenticated durable Cue admission. They do not interpret protocols,
+accounts, message permissions or read-only operations. A trusted plugin owns those decisions.
+The existing media and conversation APIs retain their behavior.
+
+## Identity and transport
+
+Only verified tools receive `context.invocationId`. `maestro.invocations.inspect(invocationId)`
+returns `{callerAgentId,active:true}` under `invocations:inspect`. Model arguments are never caller
+proof. Handles bind the current plugin, actual sandbox generation and owning host run. Settlement,
+revocation, source removal or a 30-second deadline destroys authority.
+
+`net.tlsOpen({host,port,invocationId})` returns `{streamId}`. Read with
+`net.tlsRead({streamId,invocationId,maxBytes}) -> {base64,eof}`; write with
+`net.tlsWrite({streamId,invocationId,parts}) -> {writtenBytes}`; close with
+`net.tlsClose({streamId}) -> {closed:true}`. Close is available to the owning generation after revoke.
+No socket, TLS option, host object, Node import or cleartext transport is exposed.
+
+`net:tls` grants exact endpoint sets: comma-separated lowercase ASCII DNS-name:port entries, at
+most 16, or `none` (zero endpoints). Wildcards, IP literals, localhost, URLs and trailing dots are
+invalid. WSS and historical mail grants authorize no TLS bytes. The egress guard independently
+rejects private/loopback/link-local/metadata addresses and the host server port, pins lookup and
+uses normal certificate/SNI verification. Four streams including pending opens; 30 seconds;
+64 KiB per call; 16 write parts; 256 KiB inbound buffered; 25 MiB cumulative received and 1 MiB
+sent. One pending read/write per stream. Disable/uninstall awaits native teardown; late sockets
+are closed before handles can escape.
+
+A distributable plugin declares `net:tls` and `secrets:use` with scope `none`. Normal plugin consent
+approves only the ability to request endpoint authority. `net.requestTlsConsent({host,port,secret})`
+opens trusted confirmation and extends the exact endpoint scope of already-declared, already-granted
+capabilities (`net:tls`, plus `secrets:use` only when `secret:true`). It never adds a capability or
+uses wildcard consent. Updates require normal consent; the same trusted signer can present the
+user's previous endpoint scopes without automatically widening them.
+
+## Secrets and records
+
+`secrets.requestSetup({key,label,endpoint:{host,port}}) -> {secretRef}` opens host-owned credential
+input. No password argument or read/export method exists. Secret references bind installation,
+plugin content/signer identity and exact endpoint. `tlsWrite.parts` accepts `{base64}` or
+`{secretRef,encoding:'quoted-ascii'}`. The latter encodes 1–4096 printable ASCII bytes as a quoted
+string with quote/backslash escaping. Controls/non-ASCII fail. The plugin selects protocol commands;
+the host makes no read-only claim. Owned byte buffers are erased after write; immutable JavaScript
+strings/native-library copies cannot be reliably erased.
+
+Before any native password write, setup seals the exact owning reference/endpoint as a
+nonconsumable pending entry within the existing 64-reference metadata quota. Reservation/quota
+or persistence failure prevents native writes. Activation waits for native readback, trusted
+confirmation completion and current authority checks. Failed setup returns no reference;
+pending cleanup provenance survives native deletion/readback failure, revoke and disable
+in active or archived sealed state for exact-slot trusted-uninstall retry.
+
+`secrets.remove({secretRef}) -> {removed:true}` first seals a nonconsumable pending tombstone,
+cancels and awaits plugin TLS streams, then deletes/readbacks only the exact native slot. Failure
+retains pending state for retry. Previously removed own references are idempotent; unknown/foreign
+references deny. The operation requires live owning identity and the stored endpoint's secret grant.
+No legacy credential scan or transfer takes place.
+
+`records.read(key) -> {revision,value}|null` requires exact-key `records:read`.
+`records.requestCommit({key,expectedRevision,value,summary}) -> {revision}` requires exact-key
+`records:confirm`. Initial expected revision is zero; CAS rejects stale approvals. Keys match
+`^[a-z][a-z0-9._-]{0,63}$`, values are at most 64 KiB JSON, at most 64 records/plugin. The
+host-owned page displays captured canonical JSON and current/next revision; exact frame, one-use
+nonce and main-observed activation are mandatory. Successful policy edits conservatively cancel
+all plugin invocation leases. Records are sealed in the existing authorization ledger with its
+native-keyring freshness anchor; missing persistence, rollback, tampering or identity change denies.
+Ordinary KV/SQL is suitable for checkpoints, never user authority.
+
+## Durable Cue events
+
+Configure one explicitly enabled `event: plugin.event` subscription with
+`plugin: {pluginId,topic,config}` on its owning agent. Topics match
+`^[a-z][a-z0-9._-]{0,95}$`. Config and metadata are separately bounded to 16 KiB JSON.
+`events:publish` uses an exact-topic allowlist.
+
+`events.consumers(topic)` returns authenticated `{consumerId,callerAgentId,config}[]` for the
+calling plugin. `events.begin(consumerId)` returns `{invocationId,callerAgentId}` for a short-lived
+host-minted consumer run. `events.publish({invocationId,eventId,metadata})` returns
+`{receiptId,status:'accepted'|'duplicate'}` after durable admission and receipt readback. Stable
+IDs match `[A-Za-z0-9._:-]{1,128}`. Host stamps and authenticates source/owner/config/generation;
+plugins cannot supply provenance. Replay/drain requires current matching plugin identity,
+enabled source, owner and consent. Live publication also requires the exact current generation.
+Receipts are limited to 4096/plugin and 100000 total, with no silent eviction. Capacity is checked
+before dispatch. A receipt records durable admission or a durable filtered decision; filtered events do not queue a run. Crash windows can still cause repeated
+downstream actions. Advance a plugin checkpoint only after receipt.
+
+The first version denies fan-out, gates and asynchronous injection-screen admission because that
+check queue is not durable. It never acknowledges unsupported combinations. Generic template
+variables are `CUE_PLUGIN_ID`, `CUE_PLUGIN_TOPIC`, `CUE_PLUGIN_EVENT_ID` and JSON
+`CUE_PLUGIN_METADATA`; the latter is untrusted template input.
+
+All failures use sanitized `PLUGIN_DENIED`, `PLUGIN_INVALID`, `PLUGIN_LIMIT`, `PLUGIN_TIMEOUT`,
+`PLUGIN_CANCELED`, `PLUGIN_UNAVAILABLE`, `PLUGIN_CONFLICT` or `PLUGIN_INTEGRITY` codes on rejected
+SDK promises. Native diagnostics and secrets never cross RPC.
+
+## Migration and rollback
+
+Legacy data and the installed pair remain untouched. Import is user initiated with a secret-free
+preview, disabled account intent, empty Relay account-agent grants and user re-entry of credentials.
+Old Cue consumers remain paused until explicit rebind. No automatic mapping from historical mail,
+network or secret grants exists. Reconfirm exact accounts/agents through Relay's sealed policy.
+Rollback must retain backups and demand fresh consent rather than resurrect stale rights.
+
+Prior authorization schemas are read without rewriting the file. A subsequent explicit
+authoritative user action writes schema 3 and retains prior entries/tombstones/domain
+fields in its inert `legacy` archive. Revoke, uninstall and identity change archive
+current opaque authority as well; re-enable never restores it automatically. Unknown
+historical Cue queue rows remain parked on disk even when stale or their owner is
+absent. Configuration files, native legacy slots and old checkpoint files are not migrated
+or deleted by this source change. Relay handles explicit import and fresh account-agent
+confirmation; credential user re-entry is the qualified transfer path.
+
+Uninstall stops/drains transport before deleting only native entries named by the plugin's
+new sealed namespace (including its inactive snapshots). A failed native deletion/readback
+leaves the authoritative tombstone and exact retry metadata; no legacy slots or another
+plugin's namespace are scanned. Ordinary verified conversation tools do not depend on the
+availability of this sealed domain state. The sandbox's existing 200 calls/second and
+32-in-flight RPC bounds still apply; `PLUGIN_LIMIT` is the sanitized quota failure.
+Inbound TLS uses pause/resume backpressure within the bounded buffered window.
+
+A durable envelope also stamps the hash of current opaque record revisions. A confirmed
+record change cancels active leases before persistence and invalidates older queued
+metadata. Replay can authenticate an identical enabled/consenting installation while its
+process is temporarily stopped; live publication still requires the current generation.
+The host reads revision numbers only and does not interpret record values or account policy.
