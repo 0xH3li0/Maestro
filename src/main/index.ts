@@ -3122,7 +3122,6 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
-				purgePluginEventReceipts(id);
 				authStore.uninstall(id);
 				primitiveState.purgePlugin(id);
 				pluginProviderSessions.purge(id);
@@ -3134,6 +3133,7 @@ app
 				});
 				groupingRegistry.removePlugin(id);
 				backgroundSupervisor.teardown(id);
+				purgePluginEventReceipts(id);
 			},
 			onChange: (registry) => {
 				serviceReconcile?.();
