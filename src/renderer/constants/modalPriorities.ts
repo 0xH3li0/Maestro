@@ -71,6 +71,14 @@ export const MODAL_PRIORITIES = {
 	/** Playbook name input modal - appears on top of BatchRunner */
 	PLAYBOOK_NAME: 940,
 
+	/**
+	 * Usage-data scan progress (a version upgrade re-reading session history).
+	 * The scan is started by opening the Usage Dashboard, About, or the Agent
+	 * Sessions browser, so it must land above all of them; it stays below the
+	 * confirmations, which ask about something the user is doing right now.
+	 */
+	STATS_INDEXING: 930,
+
 	/** Rename instance modal */
 	RENAME_INSTANCE: 900,
 

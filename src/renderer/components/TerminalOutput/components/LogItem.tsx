@@ -270,6 +270,13 @@ export const LogItem = memo(
 			codexDirectivesForBody && codexFollowupTabId
 				? { sessionId, tabId: codexFollowupTabId }
 				: undefined;
+		// A shell fence's Run button follows the same "agent's own output in a live
+		// tab" rule, but for every provider: a command an agent offers is an offer
+		// whoever the agent is. A fence in a user message stays copy-only.
+		const commandRun =
+			codexDirectivesLiveForSource(log.source) && codexFollowupTabId
+				? { sessionId, tabId: codexFollowupTabId }
+				: undefined;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
@@ -825,6 +832,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										displayText
@@ -895,6 +903,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -952,6 +961,7 @@ export const LogItem = memo(
 										chatMath
 										codexDirectives={codexDirectivesForBody}
 										codexFollowup={codexFollowup}
+										commandRun={commandRun}
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)

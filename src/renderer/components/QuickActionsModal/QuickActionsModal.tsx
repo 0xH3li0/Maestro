@@ -56,7 +56,9 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { selectStatsIndexingActive, useStatsIndexingStore } from '../../stores/statsIndexingStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
@@ -172,6 +174,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
@@ -280,6 +283,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// sit open while a queued file advances, and landing on a stale id would open
 	// the player on something the user already finished.
 	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
+	const statsIndexingActive = useStatsIndexingStore(selectStatsIndexingActive);
+	const showStatsIndexingProgress = useStatsIndexingStore((s) => s.bringToFront);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
@@ -549,6 +554,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
 		}),
+		...buildStatsIndexingCommands({
+			scanActive: statsIndexingActive,
+			showScanProgress: showStatsIndexingProgress,
+			setQuickActionOpen,
+		}),
 		...buildConcertoCommands({
 			concertoEnabled,
 			stageOpen: concertoStageOpen,
@@ -734,6 +744,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			activeSession,
 			setQuickActionOpen,
 			renameTabGroupShortcut: tabShortcuts?.renameTabGroup,
+			onCloseTabGroup,
 		}),
 		...buildTileCommands({
 			activeSession,

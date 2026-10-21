@@ -2261,6 +2261,16 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 | `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
 | `--json`              | Output the full token usage object as JSON                       | -       |
 
+## `maestro-cli stats-indexing`
+
+Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--wait`              | Block until no scan is running, printing progress each second | -       |
+| `--timeout <seconds>` | With --wait, give up after this many seconds (exit code 1)    | -       |
+| `--json`              | Output as JSON                                                | -       |
+
 ## `maestro-cli stats-query <sql>`
 
 Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)

@@ -671,6 +671,28 @@ describe('QuickActions command builders', () => {
 			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
 		});
 
+		it('emits Close Tab Group when a close handler is wired, gated by a confirm', () => {
+			const { session, group } = groupSession('match');
+			const onCloseTabGroup = vi.fn();
+			const closeCommand = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				onCloseTabGroup,
+			}).find((a) => a.id === 'closeTabGroup');
+			expect(closeCommand?.subtext).toBe('Close "My Group" and the 2 tabs in it');
+
+			closeCommand?.action();
+			expect(onCloseTabGroup).not.toHaveBeenCalled();
+			const confirm = useModalStore.getState().modals.get('confirm')?.data as {
+				onConfirm: () => void;
+				destructive?: boolean;
+			};
+			expect(confirm.destructive).toBe(true);
+			confirm.onConfirm();
+			expect(onCloseTabGroup).toHaveBeenCalledWith(group.id);
+			useModalStore.getState().closeModal('confirm');
+		});
+
 		it('shows the live Rename Tab Group binding on the rename entry', () => {
 			const { session } = groupSession('match');
 			const shortcut = {

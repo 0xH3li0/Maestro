@@ -125,7 +125,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery, statsTokens } from './commands/stats';
+import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -2530,6 +2530,16 @@ program
 	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
+
+program
+	.command('stats-indexing')
+	.description(
+		'Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)'
+	)
+	.option('--wait', 'Block until no scan is running, printing progress each second')
+	.option('--timeout <seconds>', 'With --wait, give up after this many seconds (exit code 1)')
+	.option('--json', 'Output as JSON')
+	.action(statsIndexing);
 
 program
 	.command('stats-query <sql>')
