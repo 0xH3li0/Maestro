@@ -42,6 +42,7 @@ import {
 	groupChatStart,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -99,6 +100,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
@@ -123,7 +125,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery } from './commands/stats';
+import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -136,6 +138,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -725,6 +728,15 @@ groupChat
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
 
+groupChat
+	.command('archive <chat>')
+	.description(
+		'Archive a group chat (stops its moderator and participants); --restore brings it back'
+	)
+	.option('--restore', 'Unarchive the chat instead')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatArchive);
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -734,7 +746,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -987,6 +999,41 @@ program
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -1865,6 +1912,10 @@ pianola
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Stop watching after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--dry-run', 'Classify and record decisions but never send a message')
 	.option('--once', 'Run a single iteration instead of looping')
 	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
@@ -1985,6 +2036,10 @@ pianolaSupervise
 	.description('Register a supervised tab watcher the desktop keeps alive')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Retire the watcher after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
 
@@ -2108,6 +2163,51 @@ notify
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
+
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				collapse: 'Collapse expanded notification details',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
 
 notify
 	.command('flash <message>')
@@ -2420,6 +2520,26 @@ program
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full aggregation object as JSON')
 	.action(stats);
+
+program
+	.command('stats-tokens')
+	.description(
+		'Show token usage, cost, and tokens per second (average and peak) per provider and model'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
+	.option('--json', 'Output the full token usage object as JSON')
+	.action(statsTokens);
+
+program
+	.command('stats-indexing')
+	.description(
+		'Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)'
+	)
+	.option('--wait', 'Block until no scan is running, printing progress each second')
+	.option('--timeout <seconds>', 'With --wait, give up after this many seconds (exit code 1)')
+	.option('--json', 'Output as JSON')
+	.action(statsIndexing);
 
 program
 	.command('stats-query <sql>')

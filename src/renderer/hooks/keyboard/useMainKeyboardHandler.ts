@@ -15,6 +15,7 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
+import { toggleInAppToasts } from '../../services/inAppToasts';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -758,6 +759,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
 				trackShortcut('openLeaderboard');
+			} else if (ctx.isShortcut(e, 'openNotificationCenter')) {
+				e.preventDefault();
+				useNotificationStore.getState().setNotificationCenterOpen(true);
+				trackShortcut('openNotificationCenter');
+			} else if (ctx.isShortcut(e, 'toggleInAppToasts')) {
+				e.preventDefault();
+				toggleInAppToasts();
+				trackShortcut('toggleInAppToasts');
 			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
 				e.preventDefault();
 				useNotificationStore.getState().clearToasts();
@@ -1454,6 +1463,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.setRenameTabInitialName(renameValue);
 						ctx.setRenameTabModalOpen(true);
 						trackShortcut('renameTab');
+					}
+				}
+				if (ctx.isTabShortcut(e, 'renameTabGroup')) {
+					e.preventDefault();
+					// Targets the GROUP, not its focused pane. Rename commits route through
+					// handleRenameTab, which recognizes a group id and renames the group.
+					const group = activeSession.activeGroupId
+						? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+						: undefined;
+					if (group) {
+						ctx.setRenameTabId(group.id);
+						ctx.setRenameTabInitialName(group.name);
+						ctx.setRenameTabModalOpen(true);
+						trackShortcut('renameTabGroup');
 					}
 				}
 				// AI-tab-specific metadata toggles (read-only, save-to-history,

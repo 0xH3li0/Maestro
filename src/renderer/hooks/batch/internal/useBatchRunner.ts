@@ -41,7 +41,9 @@ import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
 import {
+	clearPendingSteeringNotes,
 	clearSteeringNotes,
+	recordSteeringResponse,
 	takeSteeringNotesForDispatch,
 } from '../../../services/autoRunSteering';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
@@ -443,6 +445,7 @@ export function useBatchRunner({
 					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: initialTotalTasks,
 					completedTasksAcrossAllDocs: initialCheckedTasks,
+					initialCompletedTasks: initialCheckedTasks,
 					loopEnabled,
 					loopIteration: 0,
 					maxLoops,
@@ -945,6 +948,13 @@ export function useBatchRunner({
 						});
 						await progressPoll.start();
 
+						// Consumed here rather than inside processTask so the take
+						// happens exactly once per dispatch: a note the operator sends
+						// after this line belongs to the NEXT task, not to a prompt that
+						// has already been built. Held outside the try so a task that
+						// throws can still report back to the notes it took.
+						const steeringNotes = takeSteeringNotesForDispatch(sessionId);
+
 						try {
 							const taskResult = await documentProcessor.processTask(
 								{
@@ -958,11 +968,7 @@ export function useBatchRunner({
 									taskSelectionMode,
 									sshRemoteId,
 									runOverrides,
-									// Consumed here rather than inside processTask so the take
-									// happens exactly once per dispatch: a note the operator
-									// sends after this line belongs to the NEXT task, not to a
-									// prompt that has already been built.
-									steeringNotes: takeSteeringNotesForDispatch(sessionId),
+									steeringNotes,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -974,6 +980,13 @@ export function useBatchRunner({
 							);
 
 							progressPoll.stop();
+
+							// Bring the task's reply back to the notes it was steered by.
+							recordSteeringResponse(sessionId, steeringNotes, {
+								summary: taskResult.shortSummary,
+								text: taskResult.fullSynopsis,
+								success: taskResult.success,
+							});
 
 							// Track agent session IDs
 							if (taskResult.agentSessionId) {
@@ -1199,6 +1212,20 @@ export function useBatchRunner({
 								});
 							}
 
+							// Optional per-task inbox entries never alter the existing popup/audio policy.
+							if (useSettingsStore.getState().notificationHistoryAutoRunTasks) {
+								notifyToast({
+									type: success ? 'success' : 'error',
+									title: success ? 'Auto Run task complete' : 'Auto Run task failed',
+									message: fullSynopsis || shortSummary,
+									project: session.name,
+									agentSessionId,
+									sessionId,
+									taskDuration: elapsedTimeMs,
+									historyOnly: true,
+								});
+							}
+
 							// Speak the synopsis via TTS if audio feedback is enabled
 							// Use refs to get latest setting values (user may toggle mid-run)
 							if (
@@ -1320,6 +1347,11 @@ export function useBatchRunner({
 								undefined,
 								error
 							);
+							recordSteeringResponse(sessionId, steeringNotes, {
+								summary: `[${docEntry.filename}] Task failed`,
+								text: error instanceof Error ? error.message : String(error),
+								success: false,
+							});
 
 							// Check if an error resolution promise was created (e.g., by onAgentError → pauseBatchOnError)
 							// This handles the case where the agent error (e.g., context limit) triggered a pause,
@@ -1711,8 +1743,10 @@ export function useBatchRunner({
 			flushDebouncedUpdate(sessionId);
 
 			// The run is over, so there is no next task to deliver a note to. Drop
-			// anything still pending rather than letting it ambush a future run.
-			clearSteeringNotes(sessionId);
+			// anything still pending rather than letting it ambush a future run. The
+			// delivered notes stay until the next run starts: the reply to the last
+			// one has only just landed, and it is the one the operator is waiting on.
+			clearPendingSteeringNotes(sessionId);
 
 			// Reset state for this session using COMPLETE_BATCH action
 			// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)

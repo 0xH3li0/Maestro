@@ -24,15 +24,21 @@ import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
-import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
-import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
+import { calculateModelCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
 	GlobalStatsCache,
 	CachedSessionStats,
 	GLOBAL_STATS_CACHE_VERSION,
+	accumulateUpgradeBaseline,
+	finishDerivationUpgrade,
+	isDerivationStale,
+	type DerivationUpgrade,
 } from '../../utils/statsCache';
+import { createCacheCheckpointer } from '../../utils/cache-checkpointer';
+import { runTranscriptParse } from '../../transcript-parse/transcript-parse-pool';
+import { withStatsIndexing } from '../../stats/stats-indexing';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -59,6 +65,7 @@ import {
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
+import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -123,75 +130,17 @@ interface SessionFileInfo {
 }
 
 /**
- * Parse a Claude Code session file and extract stats
+ * Claude fields a derivation upgrade rescales on archived sessions, whose
+ * transcripts are gone and cannot be re-parsed.
  */
-function parseClaudeSessionContent(
-	content: string,
-	sizeBytes: number
-): Omit<CachedSessionStats, 'fileMtimeMs'> {
-	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
-	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
-
-	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		computeClaudeUsageCost(content);
-
-	return {
-		messages: userMessageCount + assistantMessageCount,
-		inputTokens,
-		outputTokens,
-		cacheReadTokens,
-		cacheCreationTokens,
-		cachedInputTokens: 0,
-		sizeBytes,
-		costUsd,
-	};
-}
-
-/**
- * Parse a Codex session file and extract stats
- */
-function parseCodexSessionContent(
-	content: string,
-	sizeBytes: number
-): Omit<CachedSessionStats, 'fileMtimeMs'> {
-	const lines = content.split('\n').filter((l) => l.trim());
-
-	let messageCount = 0;
-	const tokenCounts = new CodexTokenCounts();
-
-	for (const line of lines) {
-		try {
-			const entry = JSON.parse(line);
-
-			// Count messages from response_item entries
-			if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-				const role = entry.payload.role;
-				if (role === 'user' || role === 'assistant') {
-					messageCount++;
-				}
-			}
-
-			// Extract token usage from event_msg with token_count payload.
-			// `total_token_usage` is cumulative, so it must never be summed - see
-			// CodexTokenCounts.
-			if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-				tokenCounts.addTokenCountEvent(entry.payload.info);
-			}
-		} catch {
-			// Skip malformed lines
-		}
-	}
-
-	return {
-		messages: messageCount,
-		inputTokens: tokenCounts.inputTokens,
-		outputTokens: tokenCounts.outputTokens,
-		cacheReadTokens: 0,
-		cacheCreationTokens: 0,
-		cachedInputTokens: tokenCounts.cachedTokens,
-		sizeBytes,
-	};
-}
+const GLOBAL_STATS_UPGRADE_FIELDS = [
+	'inputTokens',
+	'outputTokens',
+	'cacheReadTokens',
+	'cacheCreationTokens',
+	'costUsd',
+	'messages',
+] as const;
 
 /**
  * Read a directory's entry names, or nothing when it is missing or not a
@@ -400,7 +349,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			async (
 				agentId: string,
 				projectPath: string,
-				options?: SessionListOptions,
+				options?: { cursor?: string; limit?: number; ownerAgentId?: string },
 				sshRemoteId?: string
 			): Promise<PaginatedSessionsResult> => {
 				const storage = getSessionStorage(agentId);
@@ -412,7 +361,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				// Get SSH config if provided
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 
-				const result = await storage.listSessionsPaginated(projectPath, options, sshConfig);
+				// List the pool of the account this agent actually runs under: its
+				// provider only resumes sessions from that config dir.
+				const listOptions: SessionListOptions = {
+					cursor: options?.cursor,
+					limit: options?.limit,
+					configDir: options?.ownerAgentId
+						? resolveAgentAccountDir(options.ownerAgentId)
+						: undefined,
+				};
+				const result = await storage.listSessionsPaginated(projectPath, listOptions, sshConfig);
 				logger.info(
 					`Listed paginated sessions for agent ${agentId}: ${result.sessions.length} of ${result.totalCount}${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
@@ -907,227 +865,308 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 	// ============ Get Global Stats (All Providers) ============
 
+	// One scan at a time. The About modal and the Usage Dashboard both ask, and
+	// two concurrent scans would parse every transcript twice, race each other
+	// writing the same cache file, and count double on the indexing bar.
+	let globalStatsScan: Promise<GlobalAgentStats> | null = null;
+
 	ipcMain.handle(
 		'agentSessions:getGlobalStats',
-		withIpcErrorLogging(handlerOpts('getGlobalStats'), async (): Promise<GlobalAgentStats> => {
-			// Helper to build result from cache
-			const buildResultFromCache = (
-				cache: GlobalStatsCache,
-				isComplete: boolean
-			): GlobalAgentStats => {
-				const result: GlobalAgentStats = {
-					totalSessions: 0,
-					totalMessages: 0,
-					totalInputTokens: 0,
-					totalOutputTokens: 0,
-					totalCacheReadTokens: 0,
-					totalCacheCreationTokens: 0,
-					totalCostUsd: 0,
-					hasCostData: false,
-					totalSizeBytes: 0,
-					isComplete,
-					byProvider: {},
-				};
-
-				// Aggregate Claude Code stats
-				const claudeSessions = cache.providers['claude-code']?.sessions || {};
-				const claudeAgg = aggregateProviderStats(claudeSessions, true);
-				if (claudeAgg.sessions > 0) {
-					result.byProvider['claude-code'] = {
-						sessions: claudeAgg.sessions,
-						messages: claudeAgg.messages,
-						inputTokens: claudeAgg.inputTokens,
-						outputTokens: claudeAgg.outputTokens,
-						costUsd: claudeAgg.costUsd,
-						hasCostData: true,
-					};
-					result.totalSessions += claudeAgg.sessions;
-					result.totalMessages += claudeAgg.messages;
-					result.totalInputTokens += claudeAgg.inputTokens;
-					result.totalOutputTokens += claudeAgg.outputTokens;
-					result.totalCacheReadTokens += claudeAgg.cacheReadTokens;
-					result.totalCacheCreationTokens += claudeAgg.cacheCreationTokens;
-					result.totalCostUsd += claudeAgg.costUsd;
-					result.totalSizeBytes += claudeAgg.sizeBytes;
-					result.hasCostData = true;
-				}
-
-				// Aggregate Codex stats
-				const codexSessions = cache.providers['codex']?.sessions || {};
-				const codexAgg = aggregateProviderStats(codexSessions, false);
-				if (codexAgg.sessions > 0) {
-					result.byProvider['codex'] = {
-						sessions: codexAgg.sessions,
-						messages: codexAgg.messages,
-						inputTokens: codexAgg.inputTokens,
-						outputTokens: codexAgg.outputTokens,
-						costUsd: 0,
-						hasCostData: false,
-					};
-					result.totalSessions += codexAgg.sessions;
-					result.totalMessages += codexAgg.messages;
-					result.totalInputTokens += codexAgg.inputTokens;
-					result.totalOutputTokens += codexAgg.outputTokens;
-					result.totalCacheReadTokens += codexAgg.cachedInputTokens;
-					result.totalSizeBytes += codexAgg.sizeBytes;
-				}
-
-				return result;
-			};
-
-			// Helper to send progressive updates
-			const sendUpdate = (cache: GlobalStatsCache, isComplete: boolean) => {
-				const stats = buildResultFromCache(cache, isComplete);
-				safeSend('agentSessions:globalStatsUpdate', stats);
-			};
-
-			// Load existing cache or create new one
-			let cache = await loadGlobalStatsCache();
-			if (!cache) {
-				cache = {
-					version: GLOBAL_STATS_CACHE_VERSION,
-					lastUpdated: Date.now(),
-					providers: {},
-				};
-			}
-
-			// Ensure provider entries exist
-			if (!cache.providers['claude-code']) {
-				cache.providers['claude-code'] = { sessions: {} };
-			}
-			if (!cache.providers['codex']) {
-				cache.providers['codex'] = { sessions: {} };
-			}
-
-			// Discover all session files
-			logger.info('Discovering session files for global stats', LOG_CONTEXT);
-			const [claudeFiles, codexFiles] = await Promise.all([
-				discoverClaudeSessionFiles(),
-				discoverCodexSessionFiles(),
-			]);
-
-			// Build sets of current session keys for archive detection
-			const currentClaudeKeys = new Set(claudeFiles.map((f) => f.sessionKey));
-			const currentCodexKeys = new Set(codexFiles.map((f) => f.sessionKey));
-
-			// Mark deleted sessions as archived (preserve stats for lifetime cost tracking)
-			for (const key of Object.keys(cache.providers['claude-code'].sessions)) {
-				const session = cache.providers['claude-code'].sessions[key];
-				if (!currentClaudeKeys.has(key)) {
-					// Source file deleted - mark as archived to preserve stats
-					session.archived = true;
-				} else if (session.archived) {
-					// Source file reappeared - mark as active (will be re-parsed below)
-					session.archived = false;
-				}
-			}
-			for (const key of Object.keys(cache.providers['codex'].sessions)) {
-				const session = cache.providers['codex'].sessions[key];
-				if (!currentCodexKeys.has(key)) {
-					// Source file deleted - mark as archived to preserve stats
-					session.archived = true;
-				} else if (session.archived) {
-					// Source file reappeared - mark as active (will be re-parsed below)
-					session.archived = false;
-				}
-			}
-
-			// Find sessions that need processing (new or modified)
-			const claudeToProcess = claudeFiles.filter((f) => {
-				const cached = cache!.providers['claude-code'].sessions[f.sessionKey];
-				return !cached || cached.fileMtimeMs < f.mtimeMs;
+		withIpcErrorLogging(handlerOpts('getGlobalStats'), (): Promise<GlobalAgentStats> => {
+			globalStatsScan ??= scanGlobalStats().finally(() => {
+				globalStatsScan = null;
 			});
-			const codexToProcess = codexFiles.filter((f) => {
-				const cached = cache!.providers['codex'].sessions[f.sessionKey];
-				return !cached || cached.fileMtimeMs < f.mtimeMs;
-			});
-
-			const totalToProcess = claudeToProcess.length + codexToProcess.length;
-			const cachedCount = claudeFiles.length + codexFiles.length - totalToProcess;
-
-			logger.info(
-				`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex), ${cachedCount} cached`,
-				LOG_CONTEXT
-			);
-
-			// Send initial update with cached data
-			sendUpdate(cache, totalToProcess === 0);
-
-			// Parse new and modified transcripts through one bounded pool shared by
-			// both providers. The cap is low because each worker holds a whole
-			// transcript in memory, and some run to hundreds of MB.
-			const toProcess = [
-				...claudeToProcess.map((file) => ({ file, provider: 'claude-code' as const })),
-				...codexToProcess.map((file) => ({ file, provider: 'codex' as const })),
-			];
-			let processedCount = 0;
-			await mapWithConcurrency(
-				toProcess,
-				LOCAL_SESSION_PARSE_CONCURRENCY,
-				async ({ file, provider }) => {
-					const label = provider === 'claude-code' ? 'Claude' : 'Codex';
-					try {
-						const content = await fs.readFile(file.filePath, 'utf-8');
-						const stats =
-							provider === 'claude-code'
-								? parseClaudeSessionContent(content, file.sizeBytes)
-								: parseCodexSessionContent(content, file.sizeBytes);
-
-						cache.providers[provider].sessions[file.sessionKey] = {
-							...stats,
-							fileMtimeMs: file.mtimeMs,
-							archived: false,
-						};
-
-						processedCount++;
-
-						// Stream an update every 10 sessions; the final one is sent below
-						if (processedCount % 10 === 0) {
-							sendUpdate(cache, false);
-						}
-					} catch (error) {
-						// A session file too large to read into a single V8 string throws
-						// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
-						// boundary for huge sessions, not a bug - skip it and keep aggregating
-						// the rest. Mirrors the storage-layer carve-out in
-						// claude-/codex-session-storage.ts.
-						if (error instanceof RangeError) {
-							logger.warn(
-								`${label} session file too large to parse: ${file.sessionKey}`,
-								LOG_CONTEXT
-							);
-						} else if (isExpectedSessionReadError(error)) {
-							// Unreadable or vanished transcript - environmental, see
-							// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
-							logger.warn(`${label} session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
-								error,
-							});
-						} else {
-							void captureException(error);
-							logger.warn(`Failed to parse ${label} session: ${file.sessionKey}`, LOG_CONTEXT, {
-								error,
-							});
-						}
-					}
-				}
-			);
-
-			// Update cache timestamp and save
-			cache.lastUpdated = Date.now();
-			await saveGlobalStatsCache(cache);
-
-			// Build final result
-			const result = buildResultFromCache(cache, true);
-
-			logger.info(
-				`Global stats complete: ${result.totalSessions} sessions, ${result.totalMessages} messages, $${result.totalCostUsd.toFixed(2)} (${totalToProcess} processed, ${cachedCount} cached)`,
-				LOG_CONTEXT
-			);
-
-			// Send final update
-			sendUpdate(cache, true);
-
-			return result;
+			return globalStatsScan;
 		})
 	);
+
+	async function scanGlobalStats(): Promise<GlobalAgentStats> {
+		// Helper to build result from cache
+		const buildResultFromCache = (
+			cache: GlobalStatsCache,
+			isComplete: boolean
+		): GlobalAgentStats => {
+			const result: GlobalAgentStats = {
+				totalSessions: 0,
+				totalMessages: 0,
+				totalInputTokens: 0,
+				totalOutputTokens: 0,
+				totalCacheReadTokens: 0,
+				totalCacheCreationTokens: 0,
+				totalCostUsd: 0,
+				hasCostData: false,
+				totalSizeBytes: 0,
+				isComplete,
+				byProvider: {},
+			};
+
+			// Aggregate Claude Code stats
+			const claudeSessions = cache.providers['claude-code']?.sessions || {};
+			const claudeAgg = aggregateProviderStats(claudeSessions, true);
+			if (claudeAgg.sessions > 0) {
+				result.byProvider['claude-code'] = {
+					sessions: claudeAgg.sessions,
+					messages: claudeAgg.messages,
+					inputTokens: claudeAgg.inputTokens,
+					outputTokens: claudeAgg.outputTokens,
+					costUsd: claudeAgg.costUsd,
+					hasCostData: true,
+				};
+				result.totalSessions += claudeAgg.sessions;
+				result.totalMessages += claudeAgg.messages;
+				result.totalInputTokens += claudeAgg.inputTokens;
+				result.totalOutputTokens += claudeAgg.outputTokens;
+				result.totalCacheReadTokens += claudeAgg.cacheReadTokens;
+				result.totalCacheCreationTokens += claudeAgg.cacheCreationTokens;
+				result.totalCostUsd += claudeAgg.costUsd;
+				result.totalSizeBytes += claudeAgg.sizeBytes;
+				result.hasCostData = true;
+			}
+
+			// Aggregate Codex stats
+			const codexSessions = cache.providers['codex']?.sessions || {};
+			const codexAgg = aggregateProviderStats(codexSessions, false);
+			if (codexAgg.sessions > 0) {
+				result.byProvider['codex'] = {
+					sessions: codexAgg.sessions,
+					messages: codexAgg.messages,
+					inputTokens: codexAgg.inputTokens,
+					outputTokens: codexAgg.outputTokens,
+					costUsd: 0,
+					hasCostData: false,
+				};
+				result.totalSessions += codexAgg.sessions;
+				result.totalMessages += codexAgg.messages;
+				result.totalInputTokens += codexAgg.inputTokens;
+				result.totalOutputTokens += codexAgg.outputTokens;
+				result.totalCacheReadTokens += codexAgg.cachedInputTokens;
+				result.totalSizeBytes += codexAgg.sizeBytes;
+			}
+
+			return result;
+		};
+
+		// Helper to send progressive updates
+		const sendUpdate = (cache: GlobalStatsCache, isComplete: boolean) => {
+			const stats = buildResultFromCache(cache, isComplete);
+			safeSend('agentSessions:globalStatsUpdate', stats);
+		};
+
+		// Load existing cache or create new one. An older-but-compatible cache
+		// holds Claude entries from an earlier parser: every live Claude session
+		// is re-parsed and the archived ones rescaled once that is done. The
+		// upgrade is resumable - see `DerivationUpgrade`.
+		const cache: GlobalStatsCache = (await loadGlobalStatsCache()) ?? {
+			version: GLOBAL_STATS_CACHE_VERSION,
+			lastUpdated: Date.now(),
+			providers: {},
+		};
+
+		// Ensure provider entries exist
+		if (!cache.providers['claude-code']) {
+			cache.providers['claude-code'] = { sessions: {} };
+		}
+		if (!cache.providers['codex']) {
+			cache.providers['codex'] = { sessions: {} };
+		}
+
+		// Discover all session files
+		logger.info('Discovering session files for global stats', LOG_CONTEXT);
+		const [claudeFiles, codexFiles] = await Promise.all([
+			discoverClaudeSessionFiles(),
+			discoverCodexSessionFiles(),
+		]);
+
+		// Build sets of current session keys for archive detection
+		const currentClaudeKeys = new Set(claudeFiles.map((f) => f.sessionKey));
+		const currentCodexKeys = new Set(codexFiles.map((f) => f.sessionKey));
+
+		// Mark deleted sessions as archived (preserve stats for lifetime cost tracking)
+		for (const key of Object.keys(cache.providers['claude-code'].sessions)) {
+			const session = cache.providers['claude-code'].sessions[key];
+			if (!currentClaudeKeys.has(key)) {
+				// Source file deleted - mark as archived to preserve stats
+				session.archived = true;
+			} else if (session.archived) {
+				// Source file reappeared - mark as active (will be re-parsed below)
+				session.archived = false;
+			}
+		}
+		for (const key of Object.keys(cache.providers['codex'].sessions)) {
+			const session = cache.providers['codex'].sessions[key];
+			if (!currentCodexKeys.has(key)) {
+				// Source file deleted - mark as archived to preserve stats
+				session.archived = true;
+			} else if (session.archived) {
+				// Source file reappeared - mark as active (will be re-parsed below)
+				session.archived = false;
+			}
+		}
+
+		// A Claude entry derived by an earlier parser is re-parsed even though
+		// its transcript is unchanged. Staleness is per entry, so a checkpoint
+		// saved part way through still knows what is left.
+		const claudeSessions = cache.providers['claude-code'].sessions;
+		const loadedVersion = cache.version;
+		const isClaudeStale = (entry: CachedSessionStats) =>
+			isDerivationStale(entry, loadedVersion, GLOBAL_STATS_CACHE_VERSION);
+		const upgrade: DerivationUpgrade | undefined =
+			loadedVersion < GLOBAL_STATS_CACHE_VERSION
+				? cache.upgrade?.toVersion === GLOBAL_STATS_CACHE_VERSION
+					? cache.upgrade
+					: { toVersion: GLOBAL_STATS_CACHE_VERSION, baseline: {} }
+				: undefined;
+		cache.upgrade = upgrade;
+
+		// Find sessions that need processing (new, modified, or derived by an older parser)
+		const claudeToProcess = claudeFiles.filter((f) => {
+			const cached = claudeSessions[f.sessionKey];
+			return !cached || cached.fileMtimeMs < f.mtimeMs || isClaudeStale(cached);
+		});
+		const codexToProcess = codexFiles.filter((f) => {
+			const cached = cache!.providers['codex'].sessions[f.sessionKey];
+			return !cached || cached.fileMtimeMs < f.mtimeMs;
+		});
+
+		const totalToProcess = claudeToProcess.length + codexToProcess.length;
+		const cachedCount = claudeFiles.length + codexFiles.length - totalToProcess;
+
+		logger.info(
+			`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex), ${cachedCount} cached`,
+			LOG_CONTEXT
+		);
+
+		// Send initial update with cached data
+		sendUpdate(cache, totalToProcess === 0);
+
+		// Parse new and modified transcripts on the worker pool, bounded so at
+		// most a few whole transcripts (some run to hundreds of MB) are in
+		// memory at once. Progress is checkpointed, so a scan the user kills
+		// resumes where it stopped instead of starting over.
+		const toProcess = [
+			...claudeToProcess.map((file) => ({ file, provider: 'claude-code' as const })),
+			...codexToProcess.map((file) => ({ file, provider: 'codex' as const })),
+		];
+		const checkpoint = createCacheCheckpointer(() => {
+			cache.lastUpdated = Date.now();
+			return saveGlobalStatsCache(cache);
+		});
+		let processedCount = 0;
+		await withStatsIndexing(
+			{ id: 'global-stats', label: 'Usage totals', reason: upgrade ? 'upgrade' : 'index' },
+			async (progress) => {
+				progress.addWork(
+					toProcess.length,
+					toProcess.reduce((sum, { file }) => sum + file.sizeBytes, 0)
+				);
+				await mapWithConcurrency(
+					toProcess,
+					LOCAL_SESSION_PARSE_CONCURRENCY,
+					async ({ file, provider }) => {
+						try {
+							await parseGlobalStatsFile(file, provider);
+							processedCount++;
+							// Stream an update every 10 sessions; the final one is sent below
+							if (processedCount % 10 === 0) {
+								sendUpdate(cache, false);
+							}
+						} finally {
+							// A failed file counts as done: it is not retried in this run.
+							progress.advance(1, file.sizeBytes);
+							checkpoint.maybe();
+						}
+					}
+				);
+			}
+		);
+		await checkpoint.settle();
+
+		if (upgrade) {
+			// Live entries that failed to parse keep their old stamp, so the next
+			// scan retries them rather than treating them as upgraded.
+			for (const entry of Object.values(claudeSessions)) {
+				if (!entry.archived && isClaudeStale(entry)) entry.derivedVersion = loadedVersion;
+			}
+			finishDerivationUpgrade(
+				claudeSessions,
+				loadedVersion,
+				GLOBAL_STATS_CACHE_VERSION,
+				upgrade.baseline,
+				GLOBAL_STATS_UPGRADE_FIELDS,
+				['costUsd']
+			);
+			delete cache.upgrade;
+		}
+
+		// Update cache timestamp and save
+		cache.version = GLOBAL_STATS_CACHE_VERSION;
+		cache.lastUpdated = Date.now();
+		await saveGlobalStatsCache(cache);
+
+		// Build final result
+		const result = buildResultFromCache(cache, true);
+
+		logger.info(
+			`Global stats complete: ${result.totalSessions} sessions, ${result.totalMessages} messages, $${result.totalCostUsd.toFixed(2)} (${totalToProcess} processed, ${cachedCount} cached)`,
+			LOG_CONTEXT
+		);
+
+		// Send final update
+		sendUpdate(cache, true);
+
+		return result;
+
+		async function parseGlobalStatsFile(
+			file: SessionFileInfo,
+			provider: 'claude-code' | 'codex'
+		): Promise<void> {
+			const label = provider === 'claude-code' ? 'Claude' : 'Codex';
+			try {
+				const stats = await runTranscriptParse({
+					kind: provider === 'claude-code' ? 'claude-usage-stats' : 'codex-usage-stats',
+					filePath: file.filePath,
+					sizeBytes: file.sizeBytes,
+				});
+				const sessions = cache.providers[provider].sessions;
+				const previous = sessions[file.sessionKey];
+				const next: CachedSessionStats = {
+					...stats,
+					fileMtimeMs: file.mtimeMs,
+					archived: false,
+				};
+				if (provider === 'claude-code') {
+					next.derivedVersion = GLOBAL_STATS_CACHE_VERSION;
+					if (upgrade && previous && isClaudeStale(previous)) {
+						accumulateUpgradeBaseline(
+							upgrade.baseline,
+							previous,
+							next,
+							GLOBAL_STATS_UPGRADE_FIELDS
+						);
+					}
+				}
+				sessions[file.sessionKey] = next;
+			} catch (error) {
+				// A session file too large to read into a single V8 string throws
+				// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
+				// boundary for huge sessions, not a bug - skip it and keep aggregating
+				// the rest. Mirrors the storage-layer carve-out in
+				// claude-/codex-session-storage.ts.
+				if (error instanceof RangeError) {
+					logger.warn(`${label} session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+				} else if (isExpectedSessionReadError(error)) {
+					// Unreadable or vanished transcript - environmental, see
+					// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
+					logger.warn(`${label} session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+						error,
+					});
+				} else {
+					void captureException(error);
+					logger.warn(`Failed to parse ${label} session: ${file.sessionKey}`, LOG_CONTEXT, {
+						error,
+					});
+				}
+			}
+		}
+	}
 }

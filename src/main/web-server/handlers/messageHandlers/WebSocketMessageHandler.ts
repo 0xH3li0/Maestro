@@ -60,7 +60,11 @@ import {
 	handleGetSessionHistory,
 } from './sessions';
 import { handleRefreshFileTree, handleGetFileTree } from './fileTree';
-import { handleNotifyToast, handleNotifyCenterFlash } from './notifications';
+import {
+	handleNotifyToast,
+	handleNotifyCenterFlash,
+	handleNotificationInbox,
+} from './notifications';
 import { handleCadenza } from './cadenza';
 import {
 	handleMovement,
@@ -102,6 +106,7 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -144,6 +149,7 @@ import {
 	handleGetGroupChatState,
 	handleSendGroupChatMessage,
 	handleStopGroupChat,
+	handleArchiveGroupChat,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -171,6 +177,8 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetTokenUsage,
+	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -305,6 +313,10 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':
@@ -543,6 +555,10 @@ export class WebSocketMessageHandler {
 				handleStopGroupChat(this.ctx, client, message);
 				break;
 
+			case 'archive_group_chat':
+				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -603,6 +619,14 @@ export class WebSocketMessageHandler {
 				handleGetStatsAggregation(this.ctx, client, message);
 				break;
 
+			case 'get_token_usage':
+				handleGetTokenUsage(this.ctx, client, message);
+				break;
+
+			case 'get_stats_indexing':
+				handleGetStatsIndexing(this.ctx, client, message);
+				break;
+
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
 				break;
@@ -617,6 +641,10 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				handleTerminalResize(this.ctx, client, message);
+				break;
+
+			case 'notification_inbox':
+				void handleNotificationInbox(this.ctx, client, message);
 				break;
 
 			case 'notify_toast':

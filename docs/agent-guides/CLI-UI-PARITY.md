@@ -225,8 +225,15 @@ of taking a second round trip or trusting a value the caller guessed.
 
 ## Covered
 
+Notification center history uses the live desktop `notificationStore` over a request-response bridge. Main owns durable append/read/clear mutations in `maestro-notification-history.json`; renderer snapshots are synchronized across windows, and CLI results await committed writes. `notify inbox list --unread` filters the snapshot, `read <id>` / `read-all` update read state, `clear` clears history, `dismiss [id]` dismisses one entry or clears visible toasts, and `activate <id>` / `link <id>` run the same entry and inline-link actions as the UI. Every result includes the resulting unread count and history. `detail <id>` / `collapse` expand and collapse the same in-inbox details view. The five opt-in inbox preferences are registered settings and can be changed with `settings set <key> <value>`. `open notification-center` and `notify inbox open` open the app-level popover even when the Main Panel header is absent.
+
 | Point-and-click action                                                   | CLI                                                                                              |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Open / close notification center                                         | `open notification-center`, `notify inbox open` / `close`                                        |
+| Read / clear / activate notification history                             | `notify inbox list`, `read`, `read-all`, `clear`, `activate`, `link`                             |
+| Dismiss one / all visible notifications                                  | `notify inbox dismiss [id]`                                                                      |
+| Expand / collapse full inbox details                                     | `notify inbox detail <id>` / `collapse`                                                          |
+| In-App Toasts switch (bell popover, palette, Toggle In-App Toasts)       | `settings set toastDuration -1` (off) / `settings set toastDuration <seconds>` (on)              |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                             | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
 | Create / rename / remove an agent                                        | `create-agent`, `rename-agent`, `remove-agent`                                                   |
 | Edit Agent modal fields                                                  | `update-agent`, `settings agent set`                                                             |
@@ -249,9 +256,10 @@ of taking a second round trip or trusting a value the caller guessed.
 | Enter-to-send chip                                                       | `tab enter-to-send`                                                                              |
 | Read one tab's settings back                                             | `tab show`, or `session list --json`                                                             |
 | Move Tab to First / Last                                                 | `tab move <tab-id> first\|last\|<index>`                                                         |
-| Send a message, or run a shell command                                   | `send`, `dispatch`, `send-terminal`                                                              |
+| Send a message, or run a shell command (incl. a code fence's Run button) | `send`, `dispatch`, `send-terminal`                                                              |
 | Consult another agent (`@mention`)                                       | `ask <agent> "<question>" --from <caller>`                                                       |
 | Open a file / URL / terminal tab                                         | `open-file`, `open-browser`, `open-terminal`                                                     |
+| Click a folder link (reveal it in the Files panel)                       | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
 | Open a modal or dashboard                                                | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
 | Auto Run: start, stop, resume, skip, abort                               | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
 | Settings, theme, Encore features                                         | `settings`, `theme`, `set-theme`, `encore`                                                       |
@@ -273,7 +281,12 @@ of taking a second round trip or trusting a value the caller guessed.
 | Auto Run panel: progress                                                 | `auto-run-status -a <agent>`                                                                     |
 | Auto Run: save as a playbook (documents must sit in the Auto Run folder) | `auto-run --save-as <name> <docs...>` (read back with `playbook <id> --dry-run`)                 |
 | Auto Run panel: Change folder                                            | `auto-run-folder <path> -a <agent>`                                                              |
+| Thought Stream: Steer Auto Run (send a note, cancel one, read replies)   | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
 | Playbook Exchange: browse, README, install                               | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
+| Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)  | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
+| Usage Dashboard: Activity tab Prompts section (prompt cadence)           | `stats [-r <range>] [--json]` (JSON under `prompts`)                                             |
+| Usage-data scan progress (modal / corner card)                           | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)             |
+| Left Bar: Archive / Unarchive a group chat                               | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
 
 ## Open gaps
 
@@ -338,6 +351,13 @@ a design constraint; they are simply not built yet.
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
+14. **Pipeline Graph view selection** (the selector's pipeline / agent / All
+    Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
+pipeline` reaches the graph but cannot name what it shows. Pure view state
+    on a read-only canvas, with nothing for an agent to read back; the data it
+    filters is already readable through `cue pipeline` and `cue list`. Closing
+    it means carrying a target through `open_modal` into `CueModal`'s
+    `pendingGraphTarget`.
 
 ### Audit backlog (2026-09-27)
 
@@ -352,8 +372,14 @@ still missing. Grouped, highest value first:
   listing of file/terminal/browser tabs; bulk close (others/left/right);
   terminal close, restart, startup command; `read-browser` page text;
   `open-browser` refuses `file://`.
+- **Tiled tab groups:** rename, break apart, and close group (chip menu and
+  palette) have no CLI verbs. `session list` does not expose `tabGroups`, so
+  `resolveTabOwner` cannot resolve a group id; the family should land together
+  as `tab group list|rename|break-apart|close`, routed through
+  `closeTabGroup()` / `breakApartGroup()` so the CLI and the chip share one
+  implementation.
 - **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
-- **Group chat:** delete, rename, archive, edit moderator/participants, export.
+- **Group chat:** delete, rename, edit moderator/participants, export.
 - **History:** delete an entry, toggle validated, generate a synopsis now, search.
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
   logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.

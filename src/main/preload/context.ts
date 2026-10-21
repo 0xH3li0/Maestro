@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
  * Message structure from stored sessions
@@ -66,6 +67,8 @@ export function createContextApi() {
 				// silently. The caller decides because only the caller knows which of
 				// the three it is - the handler just sees a prompt string.
 				cheapTurn?: boolean;
+				// The agent's Claude token source: a TUI agent runs this turn through maestro-p.
+				claudeTokenSource?: ClaudeTokenSourceFields;
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),

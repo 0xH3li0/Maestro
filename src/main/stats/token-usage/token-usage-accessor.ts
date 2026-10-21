@@ -39,6 +39,7 @@ import {
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { providerProfileKey, providerProfileLabel } from '../../../shared/providerProfiles';
 import { normalizeModelId } from '../../../shared/modelPricing';
+import { summarizeTokenSpeed, type TokenSpeedSource } from '../../../shared/tokenSpeed';
 import {
 	getTokenUsageCache,
 	sessionFingerprint,
@@ -213,6 +214,7 @@ function toBreakdown(
 		costUsd: totals.costUsd,
 		costEstimated: totals.costEstimated,
 		coverage,
+		...(info.speed && info.speed.length > 0 ? { speed: info.speed } : {}),
 	};
 }
 
@@ -410,6 +412,7 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		byAccount: toGroups(byAccount),
 		timeline: timelineArr,
 		series: buildSeries(all, sinceMs, untilMs),
+		speed: buildSpeed(all, query),
 		coverageByAgent,
 		generatedAtMs: Date.now(),
 	};
@@ -476,6 +479,28 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 	}
 
 	return series;
+}
+
+/**
+ * Token speed for the window. Filtered per BUCKET (the hour a call finished),
+ * not per session: a session is skipped only when its last activity predates
+ * the window, since then none of its calls can fall inside it.
+ */
+function buildSpeed(all: SessionTokenBreakdown[], query: TokenUsageQuery) {
+	const sinceMs = query.sinceMs ?? -Infinity;
+	const sources: TokenSpeedSource[] = [];
+	for (const s of all) {
+		if (!s.speed || s.speed.length === 0) continue;
+		if (s.timestampMs > 0 && s.timestampMs < sinceMs) continue;
+		sources.push({ agentType: s.agentType, buckets: s.speed });
+	}
+	return summarizeTokenSpeed(sources, {
+		sinceMs: query.sinceMs,
+		untilMs: query.untilMs,
+		agentLabel: getAgentDisplayName,
+		modelKey: (model) => (model ? normalizeModelId(model) : 'unknown'),
+		modelLabel: (key) => (key === 'unknown' ? modelLabel('') : key),
+	});
 }
 
 /** Human label for a model bucket. */
@@ -549,6 +574,7 @@ export const _internal = {
 	accountGroup,
 	bucketStart,
 	buildSeries,
+	buildSpeed,
 	localDayKey,
 	COVERAGE_BY_AGENT,
 };

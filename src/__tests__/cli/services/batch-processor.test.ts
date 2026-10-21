@@ -64,6 +64,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
 	readHistory: vi.fn(),
+	readSettings: vi.fn(() => ({})),
 }));
 
 // Mock cli-activity

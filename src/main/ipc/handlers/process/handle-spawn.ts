@@ -40,6 +40,7 @@ import { requireProcessManager, requireDependency } from '../../../utils/ipcHand
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
 import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder';
+import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
@@ -952,6 +953,22 @@ export async function handleProcessSpawn(
 		}
 	}
 
+	// A background synopsis may still be writing the provider session this
+	// spawn resumes. Two writers on one session fail the turn on Codex and
+	// interleave the transcript on Claude, so wait it out (see the helper).
+	if (agentSessionId) {
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		if (gate.waitedFor.length > 0) {
+			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				agentSessionId,
+				waitedFor: gate.waitedFor,
+				killed: gate.killed,
+				elapsedMs: gate.elapsedMs,
+			});
+		}
+	}
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -1032,17 +1049,18 @@ export async function handleProcessSpawn(
 	// to the renderer on the same channel the init event uses. Local only: the
 	// probe would run this machine's claude, not the remote host's.
 	if (interactiveClaudeBinPath && !sshRemoteUsed && safeSend) {
-		const probeEnvVars = { ...(customEnvVarsToPass ?? {}) };
-		delete probeEnvVars.MAESTRO_CLAUDE_BIN;
-		void probeClaudeSlashCommandsCached(
-			interactiveClaudeBinPath,
-			config.cwd,
-			buildChildProcessEnv(probeEnvVars, false, globalShellEnvVars)
-		).then((commands) => {
-			if (commands && commands.length > 0) {
-				safeSend('process:slash-commands', config.sessionId, commands);
+		// The probe runs claude itself, never maestro-p driving claude, so the
+		// wrapper's pointer is stripped from the FINAL env: it can arrive through
+		// the user's custom vars or be inherited from whatever launched Maestro.
+		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
+		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
+			(commands) => {
+				if (commands && commands.length > 0) {
+					safeSend('process:slash-commands', config.sessionId, commands);
+				}
 			}
-		});
+		);
 	}
 
 	// Arm the interactive-mode replay controller when this turn ran

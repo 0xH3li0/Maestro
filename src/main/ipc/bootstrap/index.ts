@@ -35,11 +35,13 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
@@ -486,6 +488,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
 
+	// Codex `visualize` content references rendered inline in the transcript.
+	registerCodexVisualizationHandlers();
+
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
 
@@ -495,7 +500,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationHistoryHandlers();
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });

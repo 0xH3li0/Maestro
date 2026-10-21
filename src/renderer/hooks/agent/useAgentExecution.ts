@@ -1,5 +1,8 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import {
+	autoRunMaestroPMaxWaitSeconds,
+	getClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
 import {
 	getActiveTab,
@@ -686,6 +689,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							// The agent's TUI setting resolves server-side from the
+							// `{sessionId}-batch-` process id. What main cannot know is the
+							// idle budget: maestro-p's own 300s default would kill a silent
+							// test run long before the Auto Run watchdog above, so hand it
+							// that watchdog's budget (or a day when the watchdog is off).
+							maestroPMaxWaitSeconds: isBatchProcess
+								? autoRunMaestroPMaxWaitSeconds(useSettingsStore.getState())
+								: undefined,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({

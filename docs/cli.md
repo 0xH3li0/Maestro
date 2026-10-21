@@ -1413,6 +1413,8 @@ maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queu
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
 | `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
 
+A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
+
 This is also the verb that plays media. A local audio or video file does not become a tab at all: it goes to the [floating media player](/media-player), so `open-file ~/Music/track.mp3 --agent <id>` is how you or an agent starts playback without handing the file to your system's default player. There is no separate `play` command. `--background` has nothing to suppress in that case, since playback is audible either way, and a file on an SSH remote has no stream to play, so it falls back to the ordinary binary-file path.
 
 `--no-switch` and `--background` are different asks, and this is the one command that offers both. `--no-switch` keeps the Left Bar selection where it is but still activates the new tab inside the target agent - so if you were already on that agent, your view still changes. `--background` changes nothing rendered anywhere. Passing both is fine; `--background` is strictly stronger and wins. If `--no-switch` is what you reached for, `--background` is probably what you meant.
@@ -1833,6 +1835,24 @@ maestro-cli remove-playbook <agent-id> <playbook-id>
 ```
 
 The filename for `reset-auto-run-tasks` is relative to the agent's Auto Run folder; absolute paths and `..` traversal are rejected.
+
+### Steering a Running Auto Run
+
+A steering note changes a run's direction without stopping it: the note parks until the run dispatches its next task, then opens that task's prompt. These are the CLI half of the **Steer Auto Run** button in the Thought Stream. See [Steering a Run in Flight](autorun-playbooks.md#steering-a-run-in-flight) for what the agent is told to do with a note.
+
+```bash
+# Send a note; it is delivered at the start of the next task
+maestro-cli steer-auto-run send "Use the v3 endpoint for the rest of these tasks" -a <agent-id>
+
+# Read the notes still waiting, and each delivered note with its task's reply
+maestro-cli steer-auto-run list -a <agent-id>
+maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full reply
+
+# Take back a note no task has read yet (accepts a unique id prefix)
+maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+```
+
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
 ### Checking Status
 

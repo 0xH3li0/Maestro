@@ -12,6 +12,12 @@ import {
 	isExpectedSessionReadError,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import {
+	GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+	GLOBAL_STATS_CACHE_VERSION,
+	loadGlobalStatsCache,
+	saveGlobalStatsCache,
+} from '../../../../main/utils/statsCache';
 import os from 'os';
 import path from 'path';
 import { promises as realFs } from 'fs';
@@ -587,6 +593,156 @@ describe('agentSessions:getGlobalStats discovery', () => {
 			40 * claudeTranscript.length +
 				'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'.length
 		);
+	});
+
+	it('upgrades a cache from an older Claude parser: re-parses live sessions, rescales archived ones', async () => {
+		const projects = path.join(home, '.claude', 'projects', '-Users-a');
+		await realFs.mkdir(projects, { recursive: true });
+		// One API response written as two lines (one per content block), each
+		// repeating the usage: 1M Sonnet input = $3 once deduplicated.
+		const line = JSON.stringify({
+			type: 'assistant',
+			requestId: 'req_1',
+			message: { id: 'msg_1', model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+		});
+		await realFs.writeFile(path.join(projects, 'live.jsonl'), `${line}\n${line}\n`);
+
+		const cachedEntry = (inputTokens: number, costUsd: number, archived = false) => ({
+			messages: 2,
+			inputTokens,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			cachedInputTokens: 0,
+			sizeBytes: 1,
+			costUsd,
+			// Newer than the file, so only the version can force the re-parse.
+			fileMtimeMs: Date.now() + 60_000,
+			archived,
+		});
+		vi.mocked(loadGlobalStatsCache).mockResolvedValueOnce({
+			version: GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+			lastUpdated: 0,
+			providers: {
+				'claude-code': {
+					sessions: {
+						'-Users-a/live': cachedEntry(2_000_000, 6),
+						'-Users-a/gone': cachedEntry(4_000_000, 12, true),
+					},
+				},
+				codex: { sessions: {} },
+			},
+		});
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalCostUsd: number;
+			totalInputTokens: number;
+		};
+
+		// Live re-parsed to $3; the fix halved it, so the archived $12 becomes $6.
+		expect(stats.totalCostUsd).toBeCloseTo(9, 10);
+		expect(stats.totalInputTokens).toBe(3_000_000);
+		const saved = vi.mocked(saveGlobalStatsCache).mock.calls.at(-1)![0];
+		expect(saved.version).toBe(GLOBAL_STATS_CACHE_VERSION);
+	});
+
+	it("prices a Claude session's subagent transcripts into the totals without counting them as sessions", async () => {
+		const project = path.join(home, '.claude', 'projects', '-Users-a');
+		const line = (id: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				requestId: `req_${id}`,
+				message: { id, model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+			});
+		await realFs.mkdir(path.join(project, 's1', 'subagents'), { recursive: true });
+		await realFs.writeFile(path.join(project, 's1.jsonl'), `${line('parent')}\n`);
+		await realFs.writeFile(
+			path.join(project, 's1', 'subagents', 'agent-x.jsonl'),
+			`${line('child')}\n`
+		);
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalSessions: number;
+			totalInputTokens: number;
+			totalCostUsd: number;
+		};
+
+		expect(stats.totalSessions).toBe(1);
+		expect(stats.totalInputTokens).toBe(2_000_000);
+		expect(stats.totalCostUsd).toBeCloseTo(6, 10);
+	});
+
+	it('resumes a part-done upgrade: skips upgraded entries and rescales archived ones once', async () => {
+		const projects = path.join(home, '.claude', 'projects', '-Users-a');
+		await realFs.mkdir(projects, { recursive: true });
+		const line = JSON.stringify({
+			type: 'assistant',
+			requestId: 'req_1',
+			message: { id: 'msg_1', model: 'claude-sonnet-4-6', usage: { input_tokens: 1_000_000 } },
+		});
+		await realFs.writeFile(path.join(projects, 'live.jsonl'), `${line}\n`);
+		// Already upgraded by the killed run. Its content would parse to $3, so a
+		// re-parse would show up in the total.
+		await realFs.writeFile(path.join(projects, 'done.jsonl'), `${line}\n`);
+
+		const cachedEntry = (inputTokens: number, costUsd: number, extra = {}) => ({
+			messages: 1,
+			inputTokens,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			cachedInputTokens: 0,
+			sizeBytes: 1,
+			costUsd,
+			fileMtimeMs: Date.now() + 60_000,
+			...extra,
+		});
+		vi.mocked(loadGlobalStatsCache).mockResolvedValueOnce({
+			version: GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
+			lastUpdated: 0,
+			upgrade: {
+				toVersion: GLOBAL_STATS_CACHE_VERSION,
+				baseline: {
+					costUsd: { oldSum: 4, newSum: 2 },
+					inputTokens: { oldSum: 2_000_000, newSum: 1_000_000 },
+				},
+			},
+			providers: {
+				'claude-code': {
+					sessions: {
+						'-Users-a/live': cachedEntry(2_000_000, 6),
+						'-Users-a/done': cachedEntry(5_000_000, 15, {
+							derivedVersion: GLOBAL_STATS_CACHE_VERSION,
+						}),
+						'-Users-a/gone': cachedEntry(4_000_000, 12, { archived: true }),
+					},
+				},
+				codex: { sessions: {} },
+			},
+		});
+
+		const stats = (await getGlobalStats()) as unknown as {
+			totalCostUsd: number;
+			totalInputTokens: number;
+		};
+
+		// live $6 -> $3 (re-parsed), done $15 (kept), gone $12 scaled by both
+		// runs' sums ($10 -> $5) to $6.
+		expect(stats.totalCostUsd).toBeCloseTo(24, 10);
+		expect(stats.totalInputTokens).toBe(8_000_000);
+		const saved = vi.mocked(saveGlobalStatsCache).mock.calls.at(-1)![0];
+		expect(saved.version).toBe(GLOBAL_STATS_CACHE_VERSION);
+		expect(saved.upgrade).toBeUndefined();
+		expect(saved.providers['claude-code'].sessions['-Users-a/gone'].derivedVersion).toBe(
+			GLOBAL_STATS_CACHE_VERSION
+		);
+	});
+
+	it('shares one scan between concurrent requests', async () => {
+		vi.mocked(loadGlobalStatsCache).mockClear();
+		const [first, second] = await Promise.all([getGlobalStats(), getGlobalStats()]);
+		expect(vi.mocked(loadGlobalStatsCache)).toHaveBeenCalledTimes(1);
+		expect(second).toEqual(first);
 	});
 
 	it('reports zero when neither provider has a transcript directory', async () => {

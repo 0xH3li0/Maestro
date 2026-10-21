@@ -1,3 +1,5 @@
+import { parseToastClickAction } from '../../../shared/toastClickAction';
+import { requestFromRenderer } from '../../web-server/callbacks/remoteRequest';
 /**
  * Notification IPC Handlers
  *
@@ -13,7 +15,7 @@
 import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
-import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { createSafeSend, isWebContentsAvailable, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
@@ -456,6 +458,27 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 	// Capture the window getter for the module-level queue helpers so completion
 	// events reach both the desktop renderer and web-desktop bridge clients.
 	commandCompletedSafeSend = createSafeSend(deps?.getMainWindow ?? (() => null));
+
+	ipcMain.handle(
+		'notification:navigateToSource',
+		async (_event, sessionId: string, tabId?: string, rawAction?: unknown) => {
+			if (typeof sessionId !== 'string' || (tabId !== undefined && typeof tabId !== 'string'))
+				return { success: false };
+			const { action, error } = parseToastClickAction(rawAction);
+			if (error || (action && (!('sessionId' in action) || action.sessionId !== sessionId)))
+				return { success: false };
+			const parsed = parseDeepLink(buildSessionDeepLink(sessionId, tabId));
+			const win = resolveNotificationClickWindow(sessionId, deps);
+			if (!parsed || !isWebContentsAvailable(win)) return { success: false };
+			dispatchDeepLink({ action: 'focus' }, () => win);
+			const success = await requestFromRenderer<boolean>(win, 'notification:activateAction', {
+				fallback: false,
+				parse: (raw) => raw === true,
+				args: [action ?? { kind: 'jump-session', sessionId, tabId }],
+			});
+			return { success };
+		}
+	);
 
 	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(

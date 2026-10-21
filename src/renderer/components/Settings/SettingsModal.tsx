@@ -506,6 +506,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 						{activeTab === 'notifications' && (
 							<NotificationsPanel
+								onConfigureNotificationShortcut={() => setActiveTab('shortcuts')}
 								osNotificationsEnabled={osNotificationsEnabled}
 								setOsNotificationsEnabled={setOsNotificationsEnabled}
 								audioFeedbackEnabled={audioFeedbackEnabled}

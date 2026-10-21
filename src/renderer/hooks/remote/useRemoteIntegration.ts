@@ -1,3 +1,7 @@
+import { dispatchToastClickAction } from '../../services/toastClickActions';
+import { jumpToAgent } from '../../services/agentNavigation';
+import { startNotificationHistorySync } from '../../stores/notificationStore';
+import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
@@ -19,7 +23,9 @@ import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
@@ -1268,6 +1274,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	useEffect(() => startNotificationHistorySync(), []);
+	useEffect(
+		() =>
+			window.maestro.notification.onActivateAction?.((action) => {
+				return dispatchToastClickAction(action, {
+					onSessionClick: (sessionId, tabId) => jumpToAgent(sessionId, { tabId }),
+				});
+			}),
+		[]
+	);
+
+	useEffect(
+		() => window.maestro.process.onRemoteNotificationInbox?.(performNotificationInboxAction),
+		[]
+	);
+
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
 	// The main process has already validated the surface and tab, so this is a
 	// straight hand-off to the shared opener.
@@ -1366,7 +1388,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				color,
 				title,
 				message,
-				duration: duration !== undefined ? duration * 1000 : undefined,
+				duration,
 				dismissible,
 				sessionId,
 				tabId,
@@ -1791,6 +1813,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				})
 			);
 		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
+	// notes are this renderer's state and its run loop is what reads them, so
+	// every verb is answered here, through the same service the Thought Stream
+	// panel's Steer bar calls.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteAutoRunSteeringCommand(
+			(request, responseChannel) => {
+				const reply = (result: SteeringCommandResult) =>
+					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
+				try {
+					reply(runRemoteSteeringCommand(request));
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
 		return () => {
 			unsubscribe();
 		};

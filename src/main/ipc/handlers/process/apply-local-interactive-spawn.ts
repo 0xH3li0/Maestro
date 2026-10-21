@@ -78,6 +78,7 @@ export function applyLocalInteractiveSpawnDecision(
 		command: claudeCommandForInteractive,
 		args: argsToSpawn,
 		customEnvVars: customEnvVarsToPass,
+		maxWaitSeconds: config.maestroPMaxWaitSeconds,
 	});
 
 	logger.debug('Spawning Claude Code in interactive mode (maestro-p)', LOG_CONTEXT, {

@@ -6,7 +6,11 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
-import { notifyToast, useNotificationStore } from '../../stores/notificationStore';
+import {
+	notifyToast,
+	selectUnreadNotificationCount,
+	useNotificationStore,
+} from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
@@ -52,10 +56,13 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { selectStatsIndexingActive, useStatsIndexingStore } from '../../stores/statsIndexingStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
+import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import {
 	buildGroupChatCommands,
@@ -74,6 +81,7 @@ import {
 	buildSessionJumpCommands,
 	buildSessionManagementCommands,
 } from './commands/sessionCommands';
+import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -167,6 +175,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
@@ -226,6 +235,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
+	const toastsEnabled = useSettingsStore((s) => areToastsEnabled(s.toastDuration));
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -256,6 +266,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -273,8 +284,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// sit open while a queued file advances, and landing on a stale id would open
 	// the player on something the user already finished.
 	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
+	const statsIndexingActive = useStatsIndexingStore(selectStatsIndexingActive);
+	const showStatsIndexingProgress = useStatsIndexingStore((s) => s.bringToFront);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -526,6 +540,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		jumpSlots,
 	});
 
+	// Starred Sessions: the Left Bar's list (open tabs + closed starred sessions),
+	// published to sidebarNavStore and activated exactly like clicking the row.
+	const starredItems = useSidebarNavStore((s) => s.starredItems);
+	const activateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
+	const starredActions = buildStarredSessionCommands({ starredItems, activateStarredItem });
+
 	const groupChatActions = buildGroupChatJumpCommands({
 		groupChats,
 		onOpenGroupChat,
@@ -534,11 +554,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const mainActions: QuickAction[] = [
 		...sessionActions,
+		...starredActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
+			setQuickActionOpen,
+		}),
+		...buildStatsIndexingCommands({
+			scanActive: statsIndexingActive,
+			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -558,7 +584,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			unreadNotificationCount,
+			openNotificationCenter: () => useNotificationStore.getState().setNotificationCenterOpen(true),
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
+			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
+			toastsEnabled,
+			toggleInAppToastsShortcut: shortcuts.toggleInAppToasts,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,
@@ -720,6 +751,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+			renameTabGroupShortcut: tabShortcuts?.renameTabGroup,
+			onCloseTabGroup,
 		}),
 		...buildTileCommands({
 			activeSession,
@@ -955,6 +988,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
 			activeBatchSessionIds,
+			batchRunStates,
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,

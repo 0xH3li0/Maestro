@@ -1,3 +1,7 @@
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../../shared/notificationInbox';
 /**
  * Shared types for WebSocket message handlers.
  *
@@ -41,6 +45,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -146,6 +151,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
@@ -163,6 +170,7 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
@@ -357,6 +365,7 @@ export interface MessageHandlerCallbacks {
 	) => Promise<StartGroupChatResult | null>;
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
+	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;

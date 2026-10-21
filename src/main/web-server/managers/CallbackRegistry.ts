@@ -5,6 +5,11 @@
  * This separates callback management from the core WebServer logic.
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
+
 import { logger } from '../../utils/logger';
 import type {
 	GetSessionsCallback,
@@ -21,6 +26,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -112,6 +118,7 @@ import type {
 	StartGroupChatResult,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
 	GroupChatState,
 	MergeContextCallback,
@@ -153,6 +160,10 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
@@ -180,12 +191,16 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
 	openDocumentGraph: OpenDocumentGraphCallback | null;
 	openModal: OpenModalCallback | null;
+	notificationInbox:
+		| ((request: NotificationInboxRequest) => Promise<NotificationInboxResult>)
+		| null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
@@ -239,6 +254,7 @@ export interface WebServerCallbacks {
 	startGroupChat: StartGroupChatCallback | null;
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
+	archiveGroupChat: ArchiveGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
@@ -285,12 +301,14 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		autoRunSteeringCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
 		openDocumentGraph: null,
 		openModal: null,
+		notificationInbox: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
@@ -344,6 +362,7 @@ export class CallbackRegistry {
 		startGroupChat: null,
 		getGroupChatState: null,
 		stopGroupChat: null,
+		archiveGroupChat: null,
 		sendGroupChatMessage: null,
 		mergeContext: null,
 		transferContext: null,
@@ -473,6 +492,13 @@ export class CallbackRegistry {
 		return this.callbacks.snoozeCommand(request);
 	}
 
+	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
+		if (!this.callbacks.autoRunSteeringCommand) {
+			return { success: false, error: 'Auto Run steering is not configured' };
+		}
+		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
 		if (!this.callbacks.windowCommand) {
 			return { success: false, error: 'Window commands are not configured' };
@@ -502,6 +528,21 @@ export class CallbackRegistry {
 	async openDocumentGraph(params: OpenDocumentGraphParams): Promise<boolean> {
 		if (!this.callbacks.openDocumentGraph) return false;
 		return this.callbacks.openDocumentGraph(params);
+	}
+
+	/** Execute a history operation in the desktop renderer. */
+	async notificationInbox(request: NotificationInboxRequest): Promise<NotificationInboxResult> {
+		return (
+			this.callbacks.notificationInbox?.(request) ?? {
+				success: false,
+				error: 'Notification inbox unavailable',
+			}
+		);
+	}
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbacks.notificationInbox = callback;
 	}
 
 	async openModal(params: OpenModalParams): Promise<boolean> {
@@ -906,6 +947,11 @@ export class CallbackRegistry {
 		return this.callbacks.stopGroupChat(chatId);
 	}
 
+	async archiveGroupChat(chatId: string, archived: boolean): Promise<boolean> {
+		if (!this.callbacks.archiveGroupChat) return false;
+		return this.callbacks.archiveGroupChat(chatId, archived);
+	}
+
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
 		if (!this.callbacks.sendGroupChatMessage) return false;
 		return this.callbacks.sendGroupChatMessage(chatId, message);
@@ -1155,6 +1201,10 @@ export class CallbackRegistry {
 		this.callbacks.snoozeCommand = callback;
 	}
 
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1389,6 +1439,10 @@ export class CallbackRegistry {
 
 	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
 		this.callbacks.stopGroupChat = callback;
+	}
+
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbacks.archiveGroupChat = callback;
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {

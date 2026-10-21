@@ -1,3 +1,4 @@
+import { NotificationCenterHost } from './NotificationCenter';
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -310,6 +311,7 @@ function AppStandaloneModalsInner({
 
 	return (
 		<>
+			<NotificationCenterHost theme={theme} />
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal
 				theme={theme}

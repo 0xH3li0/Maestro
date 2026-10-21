@@ -6,6 +6,10 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -389,6 +393,14 @@ export type StarTabCallback = (
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
 /**
+ * One Auto Run steering verb, forwarded to the renderer - which holds the notes
+ * its run loop reads - and answered with whatever it did. Resolves rather than
+ * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type AutoRunSteeringCommandCallback = (
+	request: SteeringCommandRequest
+) => Promise<SteeringCommandResult>;
+/**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
@@ -760,7 +772,7 @@ export interface NotifyToastParams {
 	message: string;
 	/** One of the 5 canonical colors. Default: `'theme'`. */
 	color: NotifyToastColor;
-	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	/** Normalized auto-dismiss milliseconds; the raw WebSocket duration remains seconds. */
 	duration?: number;
 	/**
 	 * Sticky toast - no auto-dismiss, requires the user to click the close
@@ -1347,6 +1359,7 @@ export type StartGroupChatCallback = (
 ) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
+export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 
