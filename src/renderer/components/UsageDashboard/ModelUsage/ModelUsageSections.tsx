@@ -16,7 +16,7 @@
  * is not set up yet is named rather than missing.
  */
 
-import { memo, useMemo, type ReactNode } from 'react';
+import { Fragment, memo, useMemo, type ReactNode } from 'react';
 import {
 	Activity,
 	Bot,
@@ -41,7 +41,6 @@ import {
 	type ModelUsageSystemOne,
 	type ModelUsageTask,
 } from '../../../../shared/local-models/model-usage';
-import { modelsSettingsLocation } from '../../../../shared/local-models/settings-location';
 import { SYSTEM_ONE_LEDGER_OUTCOME_LABELS } from '../../../../shared/local-models/system-one-ledger';
 import { formatSystemOneCost } from '../../../../shared/local-models/system-one-spend';
 import {
@@ -86,6 +85,11 @@ const TH_CLASS = 'text-xs font-medium uppercase tracking-wider px-3 py-2 border-
 const TD_CLASS = 'px-3 py-2 align-top';
 const TD_NUMBER_CLASS = `${TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`;
 
+interface ModelSetupAction {
+	label: string;
+	onClick: () => void;
+}
+
 function plural(count: number, one: string, many = `${one}s`): string {
 	return `${formatNumber(count)} ${count === 1 ? one : many}`;
 }
@@ -95,14 +99,29 @@ function SectionEmpty({
 	theme,
 	children,
 	testId,
+	actions,
 }: {
 	theme: Theme;
 	children: ReactNode;
 	testId?: string;
+	actions?: readonly ModelSetupAction[];
 }) {
 	return (
 		<p className="text-sm" style={{ color: theme.colors.textDim }} data-testid={testId}>
 			{children}
+			{actions?.map((action, index) => (
+				<Fragment key={action.label}>
+					{index === 0 ? ' ' : ' · '}
+					<button
+						type="button"
+						onClick={action.onClick}
+						className="underline underline-offset-2 rounded focus-ring hover:opacity-80"
+						style={{ color: theme.colors.accent }}
+					>
+						{action.label}
+					</button>
+				</Fragment>
+			))}
 		</p>
 	);
 }
@@ -491,9 +510,11 @@ const TASK_COLUMNS: Array<{ key: TaskSortKey; label: string; title: string }> = 
 export const ModelTasksTable = memo(function ModelTasksTable({
 	theme,
 	tasks,
+	setupActions,
 }: {
 	theme: Theme;
 	tasks: ModelUsageTask[];
+	setupActions?: readonly ModelSetupAction[];
 }) {
 	const { sortKey, direction, isDescending, toggleSort } = useTableSort<TaskSortKey>('runs', {
 		defaultDirectionFor: defaultSortDirection,
@@ -507,9 +528,8 @@ export const ModelTasksTable = memo(function ModelTasksTable({
 	return (
 		<SectionCard theme={theme} title="Tasks" icon={ListChecks}>
 			{tasks.length === 0 ? (
-				<SectionEmpty theme={theme} testId="model-usage-tasks-empty">
-					No housekeeping or System One task ran in this range. Assign a task a source under{' '}
-					{modelsSettingsLocation('system-two')}.
+				<SectionEmpty theme={theme} testId="model-usage-tasks-empty" actions={setupActions}>
+					No housekeeping or System One task ran in this range. Configure task assignments:
 				</SectionEmpty>
 			) : (
 				<div className="overflow-x-auto">
@@ -621,15 +641,17 @@ function runOnAgentStats(agent: ModelUsageAgent): EntityTileStat[] {
 export const RunOnAgentTiles = memo(function RunOnAgentTiles({
 	theme,
 	agents,
+	setupActions,
 }: {
 	theme: Theme;
 	agents: ModelUsageAgent[];
+	setupActions?: readonly ModelSetupAction[];
 }) {
 	const runOn = useMemo(() => runOnAgents(agents), [agents]);
 	return (
 		<SectionCard theme={theme} title="Run On Agents" icon={Bot}>
 			{runOn.length === 0 ? (
-				<SectionEmpty theme={theme} testId="model-usage-agents-empty">
+				<SectionEmpty theme={theme} testId="model-usage-agents-empty" actions={setupActions}>
 					No agent ran a turn on another model in this range. Set a Run on target on the Models tab
 					of an agent&apos;s settings.
 				</SectionEmpty>
@@ -703,10 +725,12 @@ export const SystemOneSection = memo(function SystemOneSection({
 	theme,
 	systemOne,
 	colorBlindMode = false,
+	setupActions,
 }: {
 	theme: Theme;
 	systemOne: ModelUsageSystemOne;
 	colorBlindMode?: boolean;
+	setupActions?: readonly ModelSetupAction[];
 }) {
 	const routedTurns = routedTurnCount(systemOne.routedTiers);
 	const outcomeSlices = useMemo(
@@ -721,9 +745,8 @@ export const SystemOneSection = memo(function SystemOneSection({
 	if (systemOne.decisions === 0 && routedTurns === 0) {
 		return (
 			<SectionCard theme={theme} title="System One" icon={Scale}>
-				<SectionEmpty theme={theme} testId="model-usage-system-one-empty">
-					No System One decision in this range. Choose an engine and assign it a task under{' '}
-					{modelsSettingsLocation('system-one')}.
+				<SectionEmpty theme={theme} testId="model-usage-system-one-empty" actions={setupActions}>
+					No System One decision in this range. Choose an engine and assign it a task:
 				</SectionEmpty>
 			</SectionCard>
 		);
@@ -881,16 +904,18 @@ export const SystemOneSection = memo(function SystemOneSection({
 export const ProxySavingsSection = memo(function ProxySavingsSection({
 	theme,
 	proxy,
+	setupActions,
 }: {
 	theme: Theme;
 	proxy: ModelUsageProxy;
+	setupActions?: readonly ModelSetupAction[];
 }) {
 	if (proxy.totals.requests === 0) {
 		return (
 			<SectionCard theme={theme} title="Token Proxy Savings" icon={Minimize2}>
-				<SectionEmpty theme={theme} testId="model-usage-proxy-empty">
-					No request went through the Maestro token proxy in this range. Turn it on for an agent
-					under {modelsSettingsLocation('gateway')}.
+				<SectionEmpty theme={theme} testId="model-usage-proxy-empty" actions={setupActions}>
+					No request went through the Maestro token proxy in this range. Turn it on for an agent in
+					Gateway settings.
 				</SectionEmpty>
 			</SectionCard>
 		);

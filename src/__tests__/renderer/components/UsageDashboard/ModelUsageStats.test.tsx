@@ -19,10 +19,12 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { ModelUsageStats } from '../../../../renderer/components/UsageDashboard/ModelUsage';
 import { useFooterSummaryStore } from '../../../../renderer/components/UsageDashboard/useFooterSummary';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { ModelUsage } from '../../../../shared/local-models/model-usage';
 import { TOKEN_PROXY_ESTIMATE_NOTE } from '../../../../shared/local-models/token-proxy';
 import { BUSY_MODEL_USAGE, EMPTY_MODEL_USAGE } from '../../../helpers/modelUsageFixtures';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { createMockSession } from '../../../helpers/mockSession';
 
 vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -35,6 +37,7 @@ beforeEach(() => {
 	statsUpdate = null;
 	useFooterSummaryStore.setState({ summaries: {} });
 	useModalStore.getState().closeAll();
+	useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		stats: {
 			getModelUsage: mockGetModelUsage,
@@ -306,14 +309,16 @@ describe('ModelUsageStats', () => {
 	});
 
 	describe('with a block that has nothing', () => {
+		const [server] = BUSY_MODEL_USAGE.sources;
+		const partialUsage: ModelUsage = {
+			...EMPTY_MODEL_USAGE,
+			totals: { ...EMPTY_MODEL_USAGE.totals, requests: 1, otherModelRequests: 1 },
+			sources: [{ ...server, requests: 1, runs: 1, turns: 0, routed: 0 }],
+		};
+
 		it('keeps the block and names what would fill it', async () => {
 			// One housekeeping run on a local model, and nothing else.
-			const [server] = BUSY_MODEL_USAGE.sources;
-			await renderLoaded({
-				...EMPTY_MODEL_USAGE,
-				totals: { ...EMPTY_MODEL_USAGE.totals, requests: 1, otherModelRequests: 1 },
-				sources: [{ ...server, requests: 1, runs: 1, turns: 0, routed: 0 }],
-			});
+			await renderLoaded(partialUsage);
 
 			expect(screen.getByTestId('model-usage-sources')).toBeInTheDocument();
 			expect(screen.getByTestId('model-usage-tasks-empty')).toHaveTextContent(
@@ -328,6 +333,93 @@ describe('ModelUsageStats', () => {
 			);
 			// No provider and no turn-only source, so neither footnote applies.
 			expect(screen.queryByTestId('model-usage-provider-note')).not.toBeInTheDocument();
+		});
+
+		it.each([
+			['tasks', 'System One', 'system-one'],
+			['tasks', 'System Two', 'system-two'],
+			['system-one', 'System One', 'system-one'],
+			['proxy', 'Gateway', 'gateway'],
+		] as const)(
+			'opens the %s setup link for %s on its exact panel',
+			async (section, label, panel) => {
+				useModalStore.getState().openModal('usageDashboard');
+				await renderLoaded(partialUsage);
+				fireEvent.click(
+					within(screen.getByTestId(`model-usage-${section}-empty`)).getByRole('button', {
+						name: `Settings > Models > ${label}`,
+					})
+				);
+
+				const modals = useModalStore.getState();
+				expect(modals.isOpen('settings')).toBe(true);
+				expect(modals.getData('settings')).toMatchObject({ tab: 'models', subTab: panel });
+				expect(modals.isOpen('usageDashboard')).toBe(false);
+			}
+		);
+
+		it('opens the named active agent on its Models tab for Run on setup', async () => {
+			const session = createMockSession({ id: 'alpha', name: 'Alpha' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			useModalStore.getState().openModal('usageDashboard');
+			await renderLoaded(partialUsage);
+
+			// Settings must receive the live record, even when the link label stays the same.
+			act(() => useSessionStore.setState({ sessions: [{ ...session, cwd: '/updated/project' }] }));
+			fireEvent.click(screen.getByRole('button', { name: "Open Alpha's Models settings" }));
+
+			const modals = useModalStore.getState();
+			expect(modals.isOpen('editAgent')).toBe(true);
+			expect(modals.getData('editAgent')).toMatchObject({
+				session: { id: 'alpha', cwd: '/updated/project' },
+				initialTab: 'models',
+			});
+			// Per-agent settings stack, so closing them returns to these stats.
+			expect(modals.isOpen('usageDashboard')).toBe(true);
+			act(() => modals.closeModal('editAgent'));
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(true);
+		});
+
+		it('updates the Run on shortcut when the active agent changes', async () => {
+			const alpha = createMockSession({ id: 'alpha', name: 'Alpha' });
+			const beta = createMockSession({ id: 'beta', name: 'Beta' });
+			useSessionStore.setState({ sessions: [alpha, beta], activeSessionId: alpha.id });
+			await renderLoaded(partialUsage);
+
+			act(() => useSessionStore.setState({ activeSessionId: beta.id }));
+			expect(
+				screen.queryByRole('button', { name: "Open Alpha's Models settings" })
+			).not.toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: "Open Beta's Models settings" }));
+			expect(useModalStore.getState().getData('editAgent')).toMatchObject({
+				session: { id: 'beta' },
+				initialTab: 'models',
+			});
+		});
+
+		it('removes the Run on shortcut when the active agent is removed', async () => {
+			const session = createMockSession({ id: 'alpha', name: 'Alpha' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			await renderLoaded(partialUsage);
+			expect(
+				screen.getByRole('button', { name: "Open Alpha's Models settings" })
+			).toBeInTheDocument();
+
+			act(() => useSessionStore.setState({ sessions: [] }));
+			expect(
+				within(screen.getByTestId('model-usage-agents-empty')).queryByRole('button')
+			).not.toBeInTheDocument();
+		});
+
+		it.each(['none', 'terminal'] as const)('offers no Run on shortcut for %s', async (kind) => {
+			if (kind === 'terminal') {
+				const session = createMockSession({ toolType: 'terminal' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			}
+			await renderLoaded(partialUsage);
+			expect(
+				within(screen.getByTestId('model-usage-agents-empty')).queryByRole('button')
+			).not.toBeInTheDocument();
 		});
 
 		it('says nothing about retention when the ledger covers the range', async () => {

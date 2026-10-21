@@ -14,11 +14,23 @@
  */
 
 import { memo, useCallback, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { isModelUsageEmpty } from '../../../../shared/local-models/model-usage';
-import { MODELS_SETTINGS_LOCATION } from '../../../../shared/local-models/settings-location';
+import {
+	MODELS_SETTINGS_LOCATION,
+	modelsSettingsLocation,
+	modelsSettingsSubTab,
+	type ModelsSettingsPanel,
+} from '../../../../shared/local-models/settings-location';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
 import { useModelUsage } from '../../../hooks/stats/useModelUsage';
+import { openAgentSettings } from '../../../services/agentNavigation';
 import { getModalActions } from '../../../stores/modalStore';
+import {
+	selectActiveSession,
+	selectSessionById,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 import type { Theme } from '../../../types';
 import { ChartErrorBoundary } from '../ChartErrorBoundary';
 import {
@@ -66,10 +78,26 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 	colorBlindMode = false,
 }: ModelUsageStatsProps) {
 	const { usage, loading, error, reload } = useModelUsage(timeRange);
+	const activeAgent = useSessionStore(
+		useShallow((state) => {
+			const session = selectActiveSession(state);
+			return session && session.toolType !== 'terminal'
+				? { id: session.id, name: session.name }
+				: null;
+		})
+	);
 
 	// Settings is a destination surface, so opening it hands the window over
 	// from the dashboard: the user lands on Models, not on two stacked modals.
-	const openModelsSettings = useCallback(() => getModalActions().openSettings('models'), []);
+	const openModelsSettings = useCallback(
+		(panel?: ModelsSettingsPanel) =>
+			getModalActions().openSettings(
+				'models',
+				undefined,
+				panel ? modelsSettingsSubTab(panel) : undefined
+			),
+		[]
+	);
 
 	const footerSummary = useMemo(() => {
 		if (!usage) return null;
@@ -108,7 +136,7 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 				theme={theme}
 				title="No model usage in this range"
 				message={`This tab fills in when work runs on a model other than a provider's own: a housekeeping task on a local model, an agent with a Run on target, a System One decision, or a request through the token proxy. Set them up in ${MODELS_SETTINGS_LOCATION}.`}
-				action={{ label: `Open ${MODELS_SETTINGS_LOCATION}`, onClick: openModelsSettings }}
+				action={{ label: `Open ${MODELS_SETTINGS_LOCATION}`, onClick: () => openModelsSettings() }}
 			/>
 		);
 	}
@@ -120,8 +148,41 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 			name: 'Latency by Source',
 			node: <ModelLatencySection theme={theme} sources={usage.sources} />,
 		},
-		{ name: 'Model Tasks', node: <ModelTasksTable theme={theme} tasks={usage.byTask} /> },
-		{ name: 'Run On Agents', node: <RunOnAgentTiles theme={theme} agents={usage.byAgent} /> },
+		{
+			name: 'Model Tasks',
+			node: (
+				<ModelTasksTable
+					theme={theme}
+					tasks={usage.byTask}
+					setupActions={(['system-one', 'system-two'] as const).map((panel) => ({
+						label: modelsSettingsLocation(panel),
+						onClick: () => openModelsSettings(panel),
+					}))}
+				/>
+			),
+		},
+		{
+			name: 'Run On Agents',
+			node: (
+				<RunOnAgentTiles
+					theme={theme}
+					agents={usage.byAgent}
+					setupActions={
+						activeAgent
+							? [
+									{
+										label: `Open ${activeAgent.name}'s Models settings`,
+										onClick: () => {
+											const session = selectSessionById(activeAgent.id)(useSessionStore.getState());
+											if (session) openAgentSettings(session, { tab: 'models' });
+										},
+									},
+								]
+							: undefined
+					}
+				/>
+			),
+		},
 		{
 			name: 'System One',
 			node: (
@@ -129,12 +190,29 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 					theme={theme}
 					systemOne={usage.systemOne}
 					colorBlindMode={colorBlindMode}
+					setupActions={[
+						{
+							label: modelsSettingsLocation('system-one'),
+							onClick: () => openModelsSettings('system-one'),
+						},
+					]}
 				/>
 			),
 		},
 		{
 			name: 'Token Proxy Savings',
-			node: <ProxySavingsSection theme={theme} proxy={usage.proxy} />,
+			node: (
+				<ProxySavingsSection
+					theme={theme}
+					proxy={usage.proxy}
+					setupActions={[
+						{
+							label: modelsSettingsLocation('gateway'),
+							onClick: () => openModelsSettings('gateway'),
+						},
+					]}
+				/>
+			),
 		},
 	];
 

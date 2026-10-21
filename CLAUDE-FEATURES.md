@@ -39,6 +39,19 @@ src/renderer/components/UsageDashboard/
 └── EmptyState.tsx               # Empty state when no data
 ```
 
+### Models tab setup links
+
+`ModelUsage/ModelUsageStats.tsx` supplies setup actions to the empty sections in
+`ModelUsageSections.tsx`. Tasks links open System One or System Two, the System One
+link opens its own panel, and Token Proxy Savings opens Gateway. Use
+`modelsSettingsLocation()` for labels and `modelsSettingsSubTab()` with
+`getModalActions().openSettings()` for navigation; opening Settings closes the dashboard.
+
+The Run On Agents shortcut opens the active non-terminal agent's Models settings
+through `openAgentSettings()`, keeping the dashboard open underneath. Read the live
+session by ID when clicked so the form receives current values. Hide the shortcut
+when there is no active agent or the active session is a terminal.
+
 ### Backend Components
 
 ```
