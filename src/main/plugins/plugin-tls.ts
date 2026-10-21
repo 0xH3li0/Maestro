@@ -29,6 +29,8 @@ export interface PluginTlsDeps {
 	identity: PluginToolRunIdentity;
 	egress: EgressGuard;
 	capture(pluginId: string): PluginPrimitiveLifetime;
+	/** Exact current child ownership, available for release after consent revocation. */
+	generation(pluginId: string): string;
 	assertEndpoint(pluginId: string, scope: string): void;
 	encodeSecret(pluginId: string, endpoint: PluginEndpoint, ref: string, check: () => void): Buffer;
 	/** Host-only transport injection for offline fixtures. */
@@ -81,7 +83,7 @@ export class PluginTlsHost {
 		if (
 			!s ||
 			s.pluginId !== pluginId ||
-			this.deps.capture(pluginId).generation !== s.lifetime.generation ||
+			this.deps.generation(pluginId) !== s.lifetime.generation ||
 			(invocationId !== undefined && invocationId !== s.invocationId)
 		)
 			throw new PluginAuthorityError('PLUGIN_DENIED');

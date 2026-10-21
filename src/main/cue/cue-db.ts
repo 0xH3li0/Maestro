@@ -2167,3 +2167,18 @@ export function pluginEventReceiptCapacityAvailable(pluginId: string): boolean {
 		.get(pluginId) as { n: number };
 	return count.n < 100000 && own.n < 4096;
 }
+
+/** Uninstall purges the owning namespace even when the Cue engine is stopped. */
+export function purgePluginEventReceipts(pluginId: string, dbPathOverride?: string): void {
+	const receiptPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	if (!db && !fs.existsSync(receiptPath)) return;
+	const receiptDb = db ?? new Database(receiptPath, { fileMustExist: true });
+	try {
+		const table = receiptDb
+			.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cue_plugin_receipts'")
+			.get();
+		if (table) receiptDb.prepare('DELETE FROM cue_plugin_receipts WHERE plugin_id=?').run(pluginId);
+	} finally {
+		if (receiptDb !== db) receiptDb.close();
+	}
+}

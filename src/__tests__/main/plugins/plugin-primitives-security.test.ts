@@ -1,3 +1,4 @@
+import { PluginPrimitives } from '../../../main/plugins/plugin-primitives';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
@@ -132,6 +133,7 @@ function transport() {
 	});
 	const encodeSecret = vi.fn(() => Buffer.from('"dummy"'));
 	const host = new PluginTlsHost({
+		generation: () => generation,
 		identity,
 		egress,
 		capture: () => ({ generation, signal: pluginLifetime.signal, assertActive: check }),
@@ -983,5 +985,47 @@ describe('authenticated durable Cue plugin source', () => {
 		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(false);
 		expect(() => events.publish(plugin, args)).toThrow();
 		identity.stop();
+	});
+});
+
+describe('primitive release after consent revocation', () => {
+	it('lets the same child close through the public dispatcher after full capture is denied', async () => {
+		const h = transport();
+		const opened = await h.open();
+		const primitives = new PluginPrimitives({
+			identity: h.identity,
+			state: {} as never,
+			tls: h.host,
+			events: {} as never,
+			capture: () => {
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			},
+		});
+		h.deny();
+		await expect(
+			primitives.call(plugin, 'net.tlsClose', { streamId: opened.streamId })
+		).resolves.toEqual({ closed: true });
+		expect(h.sockets[0].destroyed).toBe(true);
+	});
+	it('rejects another plugin and a replacement child at that release boundary', async () => {
+		const h = transport();
+		const opened = await h.open();
+		const primitives = new PluginPrimitives({
+			identity: h.identity,
+			state: {} as never,
+			tls: h.host,
+			events: {} as never,
+			capture: () => {
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			},
+		});
+		await expect(
+			primitives.call(foreign, 'net.tlsClose', { streamId: opened.streamId })
+		).rejects.toMatchObject({ code: 'PLUGIN_DENIED' });
+		h.generation();
+		await expect(
+			primitives.call(plugin, 'net.tlsClose', { streamId: opened.streamId })
+		).rejects.toMatchObject({ code: 'PLUGIN_DENIED' });
+		await h.host.stopPlugin(plugin);
 	});
 });

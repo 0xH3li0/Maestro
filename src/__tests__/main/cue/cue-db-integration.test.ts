@@ -759,3 +759,29 @@ describe.skipIf(!canLoadBetterSqlite3())(
 		});
 	}
 );
+
+describe.skipIf(!canLoadBetterSqlite3())('real SQLite: plugin receipt uninstall lifecycle', () => {
+	it('restores capacity for only the uninstalled plugin and permits a fresh installation', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-plugin-purge-'));
+		const cueDb = await import('../../../main/cue/cue-db');
+		const receipt = { receiptId: 'receipt', payloadHash: 'hash', proof: 'proof' };
+		try {
+			cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+			for (let index = 0; index < 4096; index++)
+				cueDb.writePluginEventReceipt('com.example.owner', String(index), receipt);
+			cueDb.writePluginEventReceipt('com.example.other', 'kept', receipt);
+			expect(cueDb.pluginEventReceiptCapacityAvailable('com.example.owner')).toBe(false);
+			cueDb.closeCueDb();
+			cueDb.purgePluginEventReceipts('com.example.owner', path.join(dir, 'cue.db'));
+			cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+			expect(cueDb.pluginEventReceiptCapacityAvailable('com.example.owner')).toBe(true);
+			expect(cueDb.readPluginEventReceipt('com.example.owner', '0')).toBeNull();
+			expect(cueDb.readPluginEventReceipt('com.example.other', 'kept')).toEqual(receipt);
+			cueDb.writePluginEventReceipt('com.example.owner', '0', receipt);
+			expect(cueDb.readPluginEventReceipt('com.example.owner', '0')).toEqual(receipt);
+		} finally {
+			cueDb.closeCueDb();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}, 60_000);
+});

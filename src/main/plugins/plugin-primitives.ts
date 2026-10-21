@@ -37,6 +37,8 @@ export class PluginPrimitives {
 		params: unknown,
 		guard?: (check: () => void) => void
 	): Promise<unknown> {
+		// Release confers no new authority; TLS checks the exact owning child generation.
+		if (method === 'net.tlsClose') return this.deps.tls.close(pluginId, params);
 		const lifetime = this.deps.capture(pluginId);
 		let openedStream: string | undefined;
 		let begunInvocation: string | undefined;
@@ -92,8 +94,6 @@ export class PluginPrimitives {
 				return this.deps.tls.read(pluginId, params);
 			case 'net.tlsWrite':
 				return this.deps.tls.write(pluginId, params);
-			case 'net.tlsClose':
-				return this.deps.tls.close(pluginId, params);
 			case 'secrets.requestSetup':
 				return this.deps.state.setupSecret(pluginId, params);
 			case 'records.read':

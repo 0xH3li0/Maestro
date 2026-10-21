@@ -8,6 +8,7 @@ import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window'
 import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
 import {
 	readPluginEventReceipt,
+	purgePluginEventReceipts,
 	writePluginEventReceipt,
 	pluginEventReceiptCapacityAvailable,
 } from './cue/cue-db';
@@ -2749,6 +2750,7 @@ app
 			stopTls: (id) => primitiveTls.stopPlugin(id),
 		});
 		const primitiveTls: PluginTlsHost = new PluginTlsHost({
+			generation: (id) => pluginSandboxHost!.getToolGeneration(id),
 			identity: pluginToolRunIdentity,
 			egress: pluginEgressGuard,
 			capture: capturePrimitive,
@@ -3120,6 +3122,7 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
+				purgePluginEventReceipts(id);
 				authStore.uninstall(id);
 				primitiveState.purgePlugin(id);
 				pluginProviderSessions.purge(id);
