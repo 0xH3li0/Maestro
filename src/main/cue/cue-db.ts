@@ -12,6 +12,8 @@ import * as fs from 'fs';
 import { captureException } from '../utils/sentry';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { buildCuePersistedOutput } from './cue-text-utils';
+import { PLUGIN_RECEIPT_KEY_PREFIX } from '../../shared/plugins/primitives';
+import { PluginAuthorityError } from '../plugins/plugin-authority';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -2146,21 +2148,39 @@ export function writePluginEventReceipt(
 ): void {
 	const db = pluginReceiptTable();
 	db.transaction(() => {
-		const count = db.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts').get() as {
-			n: number;
-		};
-		const own = db
-			.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts WHERE plugin_id=?')
-			.get(pluginId) as { n: number };
-		if (count.n >= 100000 || own.n >= 4096) throw new Error('PluginReceiptLimit');
+		const stableFormatOnly = id.startsWith(PLUGIN_RECEIPT_KEY_PREFIX);
+		if (stableFormatOnly && !/^[0-9a-f]{64}$/.test(id.slice(PLUGIN_RECEIPT_KEY_PREFIX.length)))
+			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		if (!pluginEventReceiptCapacityAvailable(pluginId, { stableFormatOnly }))
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
 		db.prepare(
 			'INSERT INTO cue_plugin_receipts (plugin_id,event_key,receipt_id,payload_hash,proof) VALUES (?,?,?,?,?)'
 		).run(pluginId, id, row.receiptId, row.payloadHash, row.proof);
 	})();
 }
 
-export function pluginEventReceiptCapacityAvailable(pluginId: string): boolean {
+export function pluginEventReceiptCapacityAvailable(
+	pluginId: string,
+	options: { stableFormatOnly?: boolean } = {}
+): boolean {
 	const db = pluginReceiptTable();
+	// v1 hashes omitted the original signer/consumer/event identity. Never guess a
+	// migration or dispatch again: retain the namespace and require explicit migration.
+	if (
+		options.stableFormatOnly &&
+		db
+			.prepare(
+				`SELECT 1 FROM cue_plugin_receipts WHERE plugin_id=? AND
+		(event_key NOT GLOB ? OR length(event_key) != ? OR substr(event_key, ?) GLOB '*[^0-9a-f]*') LIMIT 1`
+			)
+			.get(
+				pluginId,
+				PLUGIN_RECEIPT_KEY_PREFIX + '*',
+				PLUGIN_RECEIPT_KEY_PREFIX.length + 64,
+				PLUGIN_RECEIPT_KEY_PREFIX.length + 1
+			)
+	)
+		throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 	const count = db.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts').get() as { n: number };
 	const own = db
 		.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts WHERE plugin_id=?')

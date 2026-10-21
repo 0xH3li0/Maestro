@@ -33,6 +33,9 @@ export interface PluginConsumer {
 	callerAgentId: string;
 	config: PluginJson;
 }
+/** Explicit on-disk format; unlike v1, receipt identity survives same-signer updates. */
+export const PLUGIN_RECEIPT_KEY_PREFIX = 'receipt-v2:';
+
 export interface PluginReceipt {
 	receiptId: string;
 	status: 'accepted' | 'duplicate';

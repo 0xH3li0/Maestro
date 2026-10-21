@@ -4,6 +4,7 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import type { CueEvent, CuePluginSource } from '../../shared/cue/contracts';
 import {
 	PLUGIN_TOPIC_PATTERN,
+	PLUGIN_RECEIPT_KEY_PREFIX,
 	type PluginConsumer,
 	type PluginReceipt,
 } from '../../shared/plugins/primitives';
@@ -192,18 +193,26 @@ export class PluginCueEvents implements PluginCueHost {
 		this.checkLease(pluginId, lease);
 		const c = lease.consumer,
 			identity = this.deps.identityFor(pluginId);
+		if (identity.signatureStatus !== 'trusted' || !identity.signerKey)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		const receiptKey =
+			PLUGIN_RECEIPT_KEY_PREFIX +
+			createHash('sha256')
+				.update(canonicalJson(['plugin-receipt-v2', pluginId, identity.signerKey, c.id, p.eventId]))
+				.digest('hex');
 		const id = createHash('sha256')
 			.update(canonicalJson([pluginId, identity, c.id, p.eventId]))
 			.digest('hex');
 		const payloadHash = createHash('sha256').update(canonicalJson(metadata)).digest('hex');
-		const old = this.deps.readReceipt(pluginId, id);
+		const old = this.deps.readReceipt(pluginId, receiptKey);
 		this.checkLease(pluginId, lease);
 		if (old) {
 			const expected = this.deps.store.pluginEventProof(
 				pluginId,
 				identity,
-				{ id, receiptId: old.receiptId },
-				{ payloadHash }
+				{ id: receiptKey, receiptId: old.receiptId },
+				{ payloadHash },
+				'receipt'
 			);
 			if (old.payloadHash !== payloadHash || old.proof !== expected)
 				throw new PluginAuthorityError('PLUGIN_CONFLICT');
@@ -243,13 +252,14 @@ export class PluginCueEvents implements PluginCueHost {
 			proof: this.deps.store.pluginEventProof(
 				pluginId,
 				identity,
-				{ id, receiptId },
-				{ payloadHash }
+				{ id: receiptKey, receiptId },
+				{ payloadHash },
+				'receipt'
 			),
 		};
-		this.deps.writeReceipt(pluginId, id, row);
+		this.deps.writeReceipt(pluginId, receiptKey, row);
 		this.checkLease(pluginId, lease);
-		if (canonicalJson(this.deps.readReceipt(pluginId, id)) !== canonicalJson(row))
+		if (canonicalJson(this.deps.readReceipt(pluginId, receiptKey)) !== canonicalJson(row))
 			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 		return { receiptId, status: 'accepted' };
 	}

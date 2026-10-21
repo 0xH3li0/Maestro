@@ -1491,6 +1491,10 @@ app
 		// Initialize Cue Engine for event-driven automation
 		const cueHealthToastAt = new Map<string, number>();
 		cueEngine = new CueEngine({
+			hasStoredSession: (id) => {
+				const stored = getSessionsStore().get('sessions', []);
+				return !Array.isArray(stored) || stored.some((session) => session.id === id);
+			},
 			getSessions: () => {
 				// Live agents only: a dormant Pianola (flag off) is never watched.
 				const stored = getLiveSessions();
@@ -2766,7 +2770,7 @@ app
 			assertAllowed: (id, topic, queued) =>
 				assertPrimitiveAllowed(id, 'events:publish', topic, queued),
 			assertReceiptCapacity: (id) => {
-				if (!pluginEventReceiptCapacityAvailable(id))
+				if (!pluginEventReceiptCapacityAvailable(id, { stableFormatOnly: true }))
 					throw new PluginAuthorityError('PLUGIN_LIMIT');
 			},
 			readReceipt: readPluginEventReceipt,

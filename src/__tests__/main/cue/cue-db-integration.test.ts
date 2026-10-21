@@ -761,6 +761,61 @@ describe.skipIf(!canLoadBetterSqlite3())(
 );
 
 describe.skipIf(!canLoadBetterSqlite3())('real SQLite: plugin receipt uninstall lifecycle', () => {
+	it.each([
+		'a'.repeat(64),
+		'receipt-v3:' + 'b'.repeat(64),
+		'receipt-v2:' + 'g'.repeat(64),
+		'receipt-v2:' + 'a'.repeat(63),
+	])(
+		'retains unresolved receipt format %s and blocks only its owner before a stable write',
+		async (legacyKey) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-plugin-legacy-'));
+			const cueDb = await import('../../../main/cue/cue-db');
+			const receipt = { receiptId: 'receipt', payloadHash: 'hash', proof: 'proof' };
+			const stableKey = 'receipt-v2:' + 'c'.repeat(64);
+			try {
+				cueDb.initCueDb(undefined, path.join(dir, 'cue.db'));
+				// Historical/malformed input is seeded directly, not through the new-format writer.
+				cueDb.writePluginEventReceipt('com.example.seed', 'seed', receipt);
+				const Database = (await import('better-sqlite3')).default;
+				const raw = new Database(path.join(dir, 'cue.db'));
+				try {
+					raw
+						.prepare('INSERT INTO cue_plugin_receipts VALUES (?,?,?,?,?)')
+						.run(
+							'com.example.owner',
+							legacyKey,
+							receipt.receiptId,
+							receipt.payloadHash,
+							receipt.proof
+						);
+				} finally {
+					raw.close();
+				}
+				expect(() =>
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.owner', { stableFormatOnly: true })
+				).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				expect(() =>
+					cueDb.writePluginEventReceipt('com.example.owner', stableKey, receipt)
+				).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				expect(cueDb.readPluginEventReceipt('com.example.owner', legacyKey)).toEqual(receipt);
+				expect(cueDb.readPluginEventReceipt('com.example.owner', stableKey)).toBeNull();
+				expect(
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+				cueDb.writePluginEventReceipt('com.example.other', stableKey, receipt);
+				expect(cueDb.readPluginEventReceipt('com.example.other', stableKey)).toEqual(receipt);
+				expect(
+					cueDb.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+				// Read/admission checks do not rewrite the unresolved namespace.
+				expect(cueDb.readPluginEventReceipt('com.example.owner', legacyKey)).toEqual(receipt);
+			} finally {
+				cueDb.closeCueDb();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
 	it('restores capacity for only the uninstalled plugin and permits a fresh installation', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-plugin-purge-'));
 		const cueDb = await import('../../../main/cue/cue-db');

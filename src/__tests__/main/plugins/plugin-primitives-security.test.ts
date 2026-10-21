@@ -1100,101 +1100,187 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 });
 
 describe('authenticated durable Cue plugin source', () => {
-	it('binds exact consumer owner, deduplicates durably, rejects forgery and revokes on source stop', () => {
-		const { store } = privateStore();
-		const identity = new PluginToolRunIdentity(),
-			lifetime = new AbortController();
-		const receipts = new Map();
-		const emitted: CueEvent[] = [];
-		let running = true;
-		let atCapacity = false;
-		const events = new PluginCueEvents({
-			store,
-			identity,
-			identityFor: (_id, queued = false) => {
-				if (!running && !queued) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-				return ident;
-			},
-			capture: () => {
-				if (!running) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-				return { generation: 'generation', signal: lifetime.signal, assertActive() {} };
-			},
-			assertAllowed() {},
-			assertReceiptCapacity() {
-				if (atCapacity) throw new PluginAuthorityError('PLUGIN_LIMIT');
-			},
-			readReceipt: (_p, id) => receipts.get(id) ?? null,
-			writeReceipt: (_p, id, row) => {
-				receipts.set(id, row);
-			},
-		});
-		const ctx = {
-			session: { id: 'agent-owner' },
-			subscription: { name: 'fixture', event: 'plugin.event', enabled: true },
-			enabled: () => true,
-			onLog() {},
-			emit: (event: CueEvent) => {
-				emitted.push(event);
-				return 1;
-			},
-		} as unknown as CueTriggerSourceContext;
-		const invalidContext = {
-			...ctx,
-			session: { id: 'invalid-owner' },
-			subscription: { ...ctx.subscription, fan_out: ['other-agent'] },
-		} as unknown as CueTriggerSourceContext;
-		const stopInvalid = events.register(invalidContext, {
-			pluginId: plugin,
-			topic: 'fixture.received',
-			config: {},
-		});
-		const stop = events.register(ctx, {
-			pluginId: plugin,
-			topic: 'fixture.received',
-			config: { opaque: 'config' },
-		});
-		const [consumer] = events.list(plugin, { topic: 'fixture.received' });
-		expect(consumer.callerAgentId).toBe('agent-owner');
-		expect(events.list(plugin, { topic: 'fixture.received' })).toHaveLength(1);
-		stopInvalid();
-		expect(events.list(foreign, { topic: 'fixture.received' })).toEqual([]);
-		expect(() => events.begin(foreign, { consumerId: consumer.consumerId })).toThrow();
-		const lease = events.begin(plugin, { consumerId: consumer.consumerId });
-		const args = {
-			invocationId: lease.invocationId,
-			eventId: 'stable:1',
-			metadata: { reference: 'opaque' },
-		};
-		expect(events.publish(plugin, args).status).toBe('accepted');
-		atCapacity = true;
-		expect(events.publish(plugin, args).status).toBe('duplicate');
-		expect(() => events.publish(plugin, { ...args, eventId: 'stable:2' })).toThrow(
-			expect.objectContaining({ code: 'PLUGIN_LIMIT' })
-		);
-		expect(receipts.size).toBe(1);
-		expect(emitted).toHaveLength(1);
-		expect(() => events.publish(plugin, { ...args, metadata: { changed: true } })).toThrow();
-		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(true);
-		expect(events.authorize(emitted[0], 'foreign-agent', 'fixture', true)).toBe(false);
-		expect(
-			events.authorize(
-				{ ...emitted[0], payload: { metadata: { forged: true } } },
-				'agent-owner',
-				'fixture',
-				true
-			)
-		).toBe(false);
-		running = false;
-		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(true);
-		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', false)).toBe(false);
-		running = true;
-		store.commitPluginRecord(plugin, ident, 'policy', 0, { changed: true }, () => {});
-		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(false);
-		stop();
-		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(false);
-		expect(() => events.publish(plugin, args)).toThrow();
-		identity.stop();
-	});
+	it.each(['unchanged', 'same-signer', 'new-signer', 'unsigned', 'untrusted'] as const)(
+		'binds consumer authority and durable receipts across %s updates',
+		(update) => {
+			const { store } = privateStore();
+			const identity = new PluginToolRunIdentity(),
+				lifetime = new AbortController();
+			store.onPluginAuthorizationChange((id) => identity.revokePlugin(id));
+			const receipts = new Map();
+			const emitted: CueEvent[] = [];
+			let running = true;
+			let atCapacity = false;
+			let legacyHistory = false;
+			let currentIdentity = ident;
+			const events = new PluginCueEvents({
+				store,
+				identity,
+				identityFor: (_id, queued = false) => {
+					if (!running && !queued) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+					return currentIdentity;
+				},
+				capture: () => {
+					if (!running) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+					return { generation: 'generation', signal: lifetime.signal, assertActive() {} };
+				},
+				assertAllowed() {},
+				assertReceiptCapacity() {
+					if (legacyHistory) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+					if (atCapacity) throw new PluginAuthorityError('PLUGIN_LIMIT');
+				},
+				readReceipt: (_p, id) => receipts.get(id) ?? null,
+				writeReceipt: (_p, id, row) => {
+					receipts.set(id, row);
+				},
+			});
+			const ctx = {
+				session: { id: 'agent-owner' },
+				subscription: { name: 'fixture', event: 'plugin.event', enabled: true },
+				enabled: () => true,
+				onLog() {},
+				emit: (event: CueEvent) => {
+					emitted.push(event);
+					return 1;
+				},
+			} as unknown as CueTriggerSourceContext;
+			const invalidContext = {
+				...ctx,
+				session: { id: 'invalid-owner' },
+				subscription: { ...ctx.subscription, fan_out: ['other-agent'] },
+			} as unknown as CueTriggerSourceContext;
+			const stopInvalid = events.register(invalidContext, {
+				pluginId: plugin,
+				topic: 'fixture.received',
+				config: {},
+			});
+			const stop = events.register(ctx, {
+				pluginId: plugin,
+				topic: 'fixture.received',
+				config: { opaque: 'config' },
+			});
+			const [consumer] = events.list(plugin, { topic: 'fixture.received' });
+			expect(consumer.callerAgentId).toBe('agent-owner');
+			expect(events.list(plugin, { topic: 'fixture.received' })).toHaveLength(1);
+			stopInvalid();
+			expect(events.list(foreign, { topic: 'fixture.received' })).toEqual([]);
+			expect(() => events.begin(foreign, { consumerId: consumer.consumerId })).toThrow();
+			const lease = events.begin(plugin, { consumerId: consumer.consumerId });
+			const args = {
+				invocationId: lease.invocationId,
+				eventId: 'stable:1',
+				metadata: { reference: 'opaque' },
+			};
+			expect(events.publish(plugin, args).status).toBe('accepted');
+			atCapacity = true;
+			expect(events.publish(plugin, args).status).toBe('duplicate');
+			expect(() => events.publish(plugin, { ...args, eventId: 'stable:2' })).toThrow(
+				expect.objectContaining({ code: 'PLUGIN_LIMIT' })
+			);
+			expect(receipts.size).toBe(1);
+			expect(emitted).toHaveLength(1);
+			legacyHistory = true;
+			expect(events.publish(plugin, args).status).toBe('duplicate');
+			for (const filter of [undefined, { 'metadata.reference': 'does-not-match' }]) {
+				ctx.subscription.filter = filter;
+				expect(() => events.publish(plugin, { ...args, eventId: 'unresolved-history' })).toThrow(
+					expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' })
+				);
+				expect(emitted).toHaveLength(1);
+				expect(receipts.size).toBe(1);
+			}
+			ctx.subscription.filter = undefined;
+			legacyHistory = false;
+			expect(() => events.publish(plugin, { ...args, metadata: { changed: true } })).toThrow();
+			expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(true);
+			expect(events.authorize(emitted[0], 'foreign-agent', 'fixture', true)).toBe(false);
+			expect(
+				events.authorize(
+					{ ...emitted[0], payload: { metadata: { forged: true } } },
+					'agent-owner',
+					'fixture',
+					true
+				)
+			).toBe(false);
+			let activeEvent = emitted[0];
+			if (update !== 'unchanged') {
+				currentIdentity = {
+					...ident,
+					contentHash: 'b'.repeat(64),
+					...(update === 'new-signer' ? { signerKey: 'replacement-key' } : {}),
+					...(update === 'unsigned'
+						? { signatureStatus: 'unsigned' as const, signerKey: null }
+						: {}),
+					...(update === 'untrusted' ? { signatureStatus: 'untrusted' as const } : {}),
+				};
+				// Synthetic consent for the new version; never reuse the old live/queued authority.
+				store.mint(plugin, store.readGrants(plugin), currentIdentity);
+				expect(() => events.publish(plugin, args)).toThrow(
+					expect.objectContaining({ code: 'PLUGIN_DENIED' })
+				);
+				expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
+				const updatedLease = events.begin(plugin, { consumerId: consumer.consumerId });
+				const updatedArgs = { ...args, invocationId: updatedLease.invocationId };
+				if (update === 'unsigned' || update === 'untrusted') {
+					expect(() => events.publish(plugin, updatedArgs)).toThrow(
+						expect.objectContaining({ code: 'PLUGIN_DENIED' })
+					);
+					stop();
+					identity.stop();
+					return;
+				}
+				if (update === 'same-signer') {
+					const originalReceipt = [...receipts.values()][0].receiptId;
+					expect(events.publish(plugin, updatedArgs)).toEqual({
+						receiptId: originalReceipt,
+						status: 'duplicate',
+					});
+					expect(emitted).toHaveLength(1);
+				}
+				atCapacity = false;
+				expect(
+					events.publish(plugin, {
+						...updatedArgs,
+						eventId: update === 'new-signer' ? 'stable:1' : 'stable:2',
+					}).status
+				).toBe('accepted');
+				activeEvent = emitted.at(-1)!;
+				expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(true);
+			}
+			if (update === 'unchanged') {
+				atCapacity = false;
+				const stopChanged = events.register(ctx, {
+					pluginId: plugin,
+					topic: 'fixture.received',
+					config: { opaque: 'changed-config' },
+				});
+				const changed = events
+					.list(plugin, { topic: 'fixture.received' })
+					.find((item) => (item.config as { opaque: string }).opaque === 'changed-config')!;
+				const changedLease = events.begin(plugin, { consumerId: changed.consumerId });
+				const priorReceipt = [...receipts.values()][0].receiptId;
+				const changedReceipt = events.publish(plugin, {
+					...args,
+					invocationId: changedLease.invocationId,
+				});
+				expect(changedReceipt.status).toBe('accepted');
+				expect(changedReceipt.receiptId).not.toBe(priorReceipt);
+				expect(emitted).toHaveLength(2);
+				expect(receipts.size).toBe(2);
+				stopChanged();
+			}
+			running = false;
+			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(true);
+			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', false)).toBe(false);
+			running = true;
+			store.commitPluginRecord(plugin, currentIdentity, 'policy', 0, { changed: true }, () => {});
+			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
+			stop();
+			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
+			expect(() => events.publish(plugin, args)).toThrow();
+			identity.stop();
+		}
+	);
 });
 
 describe('primitive release after consent revocation', () => {

@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueConfig, CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
+import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 import {
 	createInMemoryCueDb,
 	buildCueDbModuleMock,
@@ -39,7 +40,7 @@ vi.mock('../../../main/cue/cue-db', () => buildCueDbModuleMock(() => getSharedDb
 
 const configsByProject = new Map<string, CueConfig>();
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
-const mockLoadDetailed = vi.fn((root: string) => {
+const mockLoadDetailed = vi.fn((root: string): LoadCueConfigDetailedResult => {
 	const cfg = configsByProject.get(root);
 	return cfg
 		? { ok: true as const, config: cfg, warnings: [] as string[] }
@@ -218,6 +219,12 @@ describe('CueEngine.drain', () => {
 		{ queueSize: 1, failure: 'restore' },
 		{ queueSize: 1, failure: 'terminal' },
 		{ queueSize: 1, failure: 'remove' },
+		{ queueSize: 1, failure: 'late-owner' },
+		{ queueSize: 1, failure: 'late-config' },
+		{ queueSize: 1, failure: 'teardown' },
+		{ queueSize: 1, failure: 'hidden-before-teardown' },
+		{ queueSize: 1, failure: 'removed-source' },
+		{ queueSize: 1, failure: 'removed-config' },
 	])(
 		'retries acknowledged plugin rows after activation without duplicates ($queueSize/$failure)',
 		async ({ queueSize, failure }) => {
@@ -270,8 +277,15 @@ describe('CueEngine.drain', () => {
 					throw Error('synthetic read failure');
 				return read(id);
 			});
-			const getSessions = vi.fn(() => [alpha]);
-			const { engine, exec } = boot({ getSessions });
+			let storedOwner = true;
+			const getSessions = vi.fn(() => (failure === 'late-owner' ? [] : [alpha]));
+			if (failure === 'late-config')
+				mockLoadDetailed.mockReturnValueOnce({
+					ok: false,
+					reason: 'parse-error',
+					message: 'synthetic mid-edit YAML',
+				});
+			const { engine, exec } = boot({ getSessions, hasStoredSession: () => storedOwner });
 			blockedReads = false;
 			const retry = () =>
 				(
@@ -283,8 +297,21 @@ describe('CueEngine.drain', () => {
 				expect(exec.calls).toEqual([]);
 				retry(); // Unavailable plugins keep both original durable rows.
 				expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
-				if (failure === 'terminal') {
-					getSessions.mockReturnValue([]);
+				if (
+					failure === 'terminal' ||
+					failure === 'removed-source' ||
+					failure === 'removed-config'
+				) {
+					if (failure === 'terminal') {
+						storedOwner = false;
+						getSessions.mockReturnValue([]);
+						engine.removeSession(alpha.id);
+					} else {
+						if (failure === 'removed-source')
+							configsByProject.set('/p/a', { subscriptions: [], settings });
+						else configsByProject.delete('/p/a');
+						engine.refreshSession(alpha.id, '/p/a');
+					}
 					retry();
 					expect(queueRows()).toEqual([]);
 					const lastReadCount = reads;
@@ -298,8 +325,34 @@ describe('CueEngine.drain', () => {
 						if (id !== 'first') remove(id); // Simulate one failed old-row removal.
 					});
 				}
+				const discoveredLater = [
+					'late-owner',
+					'late-config',
+					'teardown',
+					'hidden-before-teardown',
+				].includes(failure);
+				if (failure === 'hidden-before-teardown') {
+					getSessions.mockReturnValue([]);
+					available = true; // Registry still exists; the live owner has disappeared.
+					retry();
+					expect(exec.calls).toEqual([]);
+					expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				}
+				if (failure === 'teardown') {
+					engine.removeSession(alpha.id); // Root moves/live filtering keep the stored owner.
+					retry();
+					expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				}
+				if (discoveredLater) {
+					const lastReadCount = reads;
+					await vi.advanceTimersByTimeAsync(30_000);
+					expect(reads).toBe(lastReadCount); // Deferred owners do not cause full-queue polling.
+				}
 				available = true;
-				retry();
+				if (discoveredLater) {
+					getSessions.mockReturnValue([alpha]);
+					engine.refreshSession(alpha.id, '/p/a');
+				} else retry();
 				await flush();
 				expect(exec.calls).toEqual(['plugin-sub']);
 				expect(exec.onCueRun.mock.calls[0][0]).toMatchObject({ prompt: 'stored first' });

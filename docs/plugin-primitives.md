@@ -83,7 +83,17 @@ plugins cannot supply provenance. Replay/drain requires current matching plugin 
 enabled source, owner and consent. Live publication also requires the exact current generation.
 Receipts are limited to 4096/plugin and 100000 total, with no silent eviction. Capacity is checked
 before dispatch for new IDs; authenticated existing duplicates still return their original receipt
-at capacity. There is no time-based replay window: receipts remain until that plugin is removed.
+at capacity. New receipts use a tagged v2 storage key and signer-bound receipt proof: the exact
+plugin ID, trusted signer, consumer and event ID survive a same-signer content update. The new
+version still needs fresh current authorization; execution envelopes remain bound to the current
+full content identity. A different signer has a separate receipt namespace.
+
+Legacy receipts contain only version-bound hashes and cannot be automatically mapped back to their
+original signer/consumer/event IDs. Any unresolved legacy or unknown-format receipt blocks new
+IDs for its owning plugin with `PLUGIN_UNAVAILABLE`, before dispatch and again at receipt write;
+rows are retained. Other plugins and authentic existing v2 duplicates are unaffected. This is an
+explicit migration/release gate for preview installations, not a completed migration or a grant
+upgrade. There is no time-based replay window: receipts remain until that plugin is removed.
 Long-running publishers must treat `PLUGIN_LIMIT` as backpressure and leave their checkpoint
 unchanged. Silently evicting old receipts would allow acknowledged IDs to dispatch again; safe
 online retirement requires a separate explicit replay/retirement contract. A receipt records durable admission or a durable filtered decision; filtered events do not queue a run. Crash windows can still cause repeated

@@ -661,12 +661,25 @@ export class AuthorizationStore {
 		pluginId: string,
 		identity: AuthIdentity,
 		source: unknown,
-		metadata: unknown
+		metadata: unknown,
+		purpose: 'event' | 'receipt' = 'event'
 	): string {
 		this.assertPluginPersistent(pluginId, identity);
+		if (purpose === 'receipt' && (identity.signatureStatus !== 'trusted' || !identity.signerKey))
+			throw new PluginAuthorityError('PLUGIN_DENIED');
 		return createHmac('sha256', this.ledger.installSecret)
 			.update(
-				canonicalJson(['plugin-event-v1', identity, pluginJson(source), pluginJson(metadata)])
+				canonicalJson(
+					purpose === 'receipt'
+						? [
+								'plugin-receipt-v2',
+								pluginId,
+								identity.signerKey,
+								pluginJson(source),
+								pluginJson(metadata),
+							]
+						: ['plugin-event-v1', identity, pluginJson(source), pluginJson(metadata)]
+				)
 			)
 			.digest('hex');
 	}

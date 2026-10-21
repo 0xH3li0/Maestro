@@ -69,6 +69,7 @@ import {
 	createCueQueuePersistence,
 	type CueQueuePersistence,
 	type RestoredQueueEntry,
+	type DurableRestoreState,
 } from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents } from './cue-db';
 import { CUE_ACTIVITY_LOG_MAX, cueEventRecordsToRunResults } from './cue-activity-entries';
@@ -101,6 +102,8 @@ const MAX_CHAIN_DEPTH = 10;
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
 	getSessions: () => SessionInfo[];
+	/** Raw persisted membership, never the live/feature-filtered agent list. */
+	hasStoredSession?: (sessionId: string) => boolean;
 	onCueRun: (request: {
 		runId: string;
 		sessionId: string;
@@ -265,6 +268,11 @@ export class CueEngine {
 	/** Only rejected restore rows: accepted live queue rows must never be replayed. */
 	private pendingPluginRestoreIds: Set<string> | null = new Set();
 	private retryingPluginRestore = false;
+	private deferredPluginRestoreOwners = new Map<
+		string,
+		{ sessionId: string; subscriptionName: string }
+	>();
+	private confirmedRemovedCueOwners = new Set<string>();
 	/** Durable fan-in progress; standalone runner only (see cue-fan-in-persistence.ts). */
 	private fanInPersistence: CueFanInPersistence | undefined;
 	private deps: CueEngineDeps;
@@ -352,6 +360,7 @@ export class CueEngine {
 				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
 			},
 			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+			durableSourceState: (id, name) => this.durableRestoreState(id, name),
 			knownSubscriptionNames: () => {
 				const names = new Set<string>();
 				for (const state of this.registry.snapshot().values()) {
@@ -730,6 +739,8 @@ export class CueEngine {
 		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
 		this.pendingPluginRestoreIds = new Set();
+		this.deferredPluginRestoreOwners.clear();
+		this.confirmedRemovedCueOwners.clear();
 		// Reset metrics so startedAt reflects THIS start, not the collector's
 		// construction. Without this, startedAt is fixed at engine-instance
 		// creation time, making "uptime" rate calcs wrong across stop/start
@@ -775,7 +786,27 @@ export class CueEngine {
 		this.heartbeat.start();
 	}
 
+	private durableRestoreState(sessionId: string, name: string): DurableRestoreState {
+		if (this.confirmedRemovedCueOwners.has(sessionId)) return 'removed';
+		if (!this.deps.getSessions().some((session) => session.id === sessionId)) return 'deferred';
+		const state = this.registry.get(sessionId);
+		if (!state) return 'deferred';
+		return state.config.subscriptions.some(
+			(sub) => sub.name === name && sub.event === 'plugin.event'
+		)
+			? 'ready'
+			: 'removed';
+	}
+
 	private restoreQueueEntry(sessionId: string, entry: RestoredQueueEntry): void {
+		if (entry.deferred) {
+			this.pendingPluginRestoreIds?.add(entry.persistId);
+			this.deferredPluginRestoreOwners.set(entry.persistId, {
+				sessionId,
+				subscriptionName: entry.subscriptionName,
+			});
+			return;
+		}
 		if (!CUE_EVENT_TYPES.includes(entry.event.type)) return;
 		// Remove the persisted row immediately - runManager.execute will
 		// re-persist with a fresh id when it re-queues (or dispatches
@@ -839,12 +870,25 @@ export class CueEngine {
 				this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
 				if (this.pendingPluginRestoreIds === null) return;
 			}
-			const restored = this.queuePersistence.restoreAll(this.pendingPluginRestoreIds);
+			const eligible = new Set(
+				[...this.pendingPluginRestoreIds].filter((id) => {
+					const owner = this.deferredPluginRestoreOwners.get(id);
+					return (
+						!owner ||
+						this.durableRestoreState(owner.sessionId, owner.subscriptionName) !== 'deferred'
+					);
+				})
+			);
+			if (eligible.size === 0) return;
+			const restored = this.queuePersistence.restoreAll(eligible);
 			if (restored === null) return;
-			// A successful read also confirms terminal drops and absent rows.
-			// Rebuild only rejected durable IDs, excluding every accepted row
-			// even if removal of its old persist ID subsequently fails.
-			this.pendingPluginRestoreIds = new Set();
+			// Drop only this successful read's candidates. Parked owners stay
+			// pending without DB polling; accepted IDs stay excluded even if
+			// removing the old row failed.
+			for (const id of eligible) {
+				this.pendingPluginRestoreIds.delete(id);
+				this.deferredPluginRestoreOwners.delete(id);
+			}
 			for (const [sessionId, entries] of restored) {
 				for (const entry of entries) this.restoreQueueEntry(sessionId, entry);
 			}
@@ -859,6 +903,8 @@ export class CueEngine {
 
 		this.enabled = false;
 		this.pendingPluginRestoreIds = new Set();
+		this.deferredPluginRestoreOwners.clear();
+		this.confirmedRemovedCueOwners.clear();
 		this.startReason = null;
 		if (this.lockHeartbeat) {
 			clearInterval(this.lockHeartbeat);
@@ -1156,6 +1202,9 @@ export class CueEngine {
 		const reason = this.startReason ?? 'refresh';
 		cueDebugLog('engine:refreshSession:start', { sessionId, projectRoot, reason });
 		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		if (result.reloaded) this.confirmedRemovedCueOwners.delete(sessionId);
+		else if (result.configRemoved) this.confirmedRemovedCueOwners.add(sessionId);
+		this.retryPendingPluginEvents();
 		cueDebugLog('engine:refreshSession:result', {
 			sessionId,
 			projectRoot,
@@ -1182,6 +1231,13 @@ export class CueEngine {
 	/** Teardown all subscriptions for a session */
 	removeSession(sessionId: string): void {
 		this.sessionRuntimeService.removeSession(sessionId);
+		// This API also tears down root moves and dormant agents. Only the
+		// raw-store deletion together with this explicit teardown is terminal.
+		if (this.deps.hasStoredSession?.(sessionId) === false) {
+			this.confirmedRemovedCueOwners.add(sessionId);
+			this.queuePersistence.clearSession(sessionId, { includeDurable: true });
+		} else this.confirmedRemovedCueOwners.delete(sessionId);
+		this.retryPendingPluginEvents();
 	}
 
 	/** Returns status of all sessions with Cue configs */

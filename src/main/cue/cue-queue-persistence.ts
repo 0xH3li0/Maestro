@@ -70,7 +70,11 @@ export interface PersistableQueueEntry {
 	turnSettings?: CueTurnSettings;
 }
 
+export type DurableRestoreState = 'ready' | 'deferred' | 'removed';
+
 export interface RestoredQueueEntry extends PersistableQueueEntry {
+	/** Owner/config not yet discovered; this entry must not be executed. */
+	deferred?: boolean;
 	persistId: string;
 }
 
@@ -84,7 +88,7 @@ const DRAINED_AT_KEY = 'maestroDrainedAt';
 export interface CueQueuePersistence {
 	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void | boolean;
 	remove(persistId: string): void;
-	clearSession(sessionId: string): void;
+	clearSession(sessionId: string, options?: { includeDurable?: boolean }): void;
 	clearAll(): void;
 	/** Start a new engine cycle's exclusion epoch before initializing sessions. */
 	beginRestoreEpoch(): void;
@@ -105,7 +109,7 @@ export interface CueQueuePersistenceDeps {
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/** Per-session timeout - used to discard stale rows at restore time. */
 	getSessionTimeoutMs: (sessionId: string) => number;
-	/** Membership check: drop persisted entries whose session is no longer registered. */
+	/** Live membership for ordinary rows; unknown durable owners are deferred. */
 	knownSessionIds: () => Set<string>;
 	/**
 	 * Every subscription name in a registered agent's current config. A row
@@ -117,6 +121,8 @@ export interface CueQueuePersistenceDeps {
 	 * the check.
 	 */
 	knownSubscriptionNames?: () => Set<string>;
+	/** Distinguish unavailable live state from confirmed source/owner removal. */
+	durableSourceState?: (sessionId: string, subscriptionName: string) => DurableRestoreState;
 	/** Override for testing - defaults to Date.now. */
 	now?: () => number;
 }
@@ -177,24 +183,25 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 	// Lifecycle clearing must not erase already acknowledged plugin deliveries.
 	// Terminal completion and explicit source/authority removal still use remove().
-	function clearNonDurableRows(sessionId?: string): void {
+	function clearRows(sessionId?: string, includeDurable = false): void {
 		for (const row of getQueuedEvents(sessionId)) {
-			let durable = false;
+			let durable = false,
+				pluginEvent = false;
 			try {
 				const event = JSON.parse(row.eventJson);
+				pluginEvent = isDurableCueEvent(event);
 				durable =
-					isDurableCueEvent(event) ||
-					(typeof event?.type === 'string' && !CUE_EVENT_TYPES.includes(event.type));
+					pluginEvent || (typeof event?.type === 'string' && !CUE_EVENT_TYPES.includes(event.type));
 			} catch {
 				/* corrupt ordinary row is discardable */
 			}
-			if (!durable) removeQueuedEvent(row.id);
+			if (!durable || (includeDurable && pluginEvent)) removeQueuedEvent(row.id);
 		}
 	}
 
-	function clearSession(sessionId: string): void {
+	function clearSession(sessionId: string, options?: { includeDurable?: boolean }): void {
 		try {
-			clearNonDurableRows(sessionId);
+			clearRows(sessionId, options?.includeDurable);
 		} catch (err) {
 			void captureException(err, {
 				operation: 'cueQueuePersistence.clearSession',
@@ -209,7 +216,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 	function clearAll(): void {
 		try {
-			clearNonDurableRows();
+			clearRows();
 		} catch (err) {
 			void captureException(err, { operation: 'cueQueuePersistence.clearAll' });
 			deps.onLog(
@@ -309,24 +316,6 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				/* the existing malformed-row handling below owns this case */
 			}
 
-			// Drop rows whose session is no longer registered - they'd just be
-			// dead weight in the DB otherwise. Record the drop so a user
-			// inspecting history after deleting/recreating a session still
-			// sees what happened to their queued events.
-			if (!knownSessions.has(row.sessionId)) {
-				recordRestoredDrop(row, 'session-missing');
-				safeRemoveQueuedEvent(row.id);
-				droppedMissingSession++;
-				continue;
-			}
-
-			if (knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
-				recordRestoredDrop(row, 'subscription-missing');
-				safeRemoveQueuedEvent(row.id);
-				droppedMissingSubscription++;
-				continue;
-			}
-
 			// Deserialize. Any JSON failure is a data integrity problem - drop the
 			// row so it doesn't stall restore every time the engine starts.
 			let event: CueEvent;
@@ -360,6 +349,28 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
+			const durableState = isDurableCueEvent(event)
+				? (deps.durableSourceState?.(row.sessionId, row.subscriptionName) ??
+					(!knownSessions.has(row.sessionId) ||
+					(knownSubscriptions && !knownSubscriptions.has(row.subscriptionName))
+						? 'deferred'
+						: 'ready'))
+				: undefined;
+			if (durableState === 'removed' || (!durableState && !knownSessions.has(row.sessionId))) {
+				const sessionMissing = !knownSessions.has(row.sessionId);
+				recordRestoredDrop(row, sessionMissing ? 'session-missing' : 'subscription-missing');
+				safeRemoveQueuedEvent(row.id);
+				if (sessionMissing) droppedMissingSession++;
+				else droppedMissingSubscription++;
+				continue;
+			}
+			if (!durableState && knownSubscriptions && !knownSubscriptions.has(row.subscriptionName)) {
+				recordRestoredDrop(row, 'subscription-missing');
+				safeRemoveQueuedEvent(row.id);
+				droppedMissingSubscription++;
+				continue;
+			}
+
 			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
 			// A drained row's age is the time it waited while an engine was up:
 			// downtime does not count against work a drain deferred.
@@ -377,6 +388,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 			const entry: RestoredQueueEntry = {
 				persistId: row.id,
+				...(durableState === 'deferred' ? { deferred: true } : {}),
 				event,
 				subscriptionName: row.subscriptionName,
 				prompt: row.prompt,
