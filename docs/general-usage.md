@@ -371,6 +371,12 @@ You will know you are in command mode: a `$` appears at the left of the input, t
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
+### Running a Command from an Agent's Reply
+
+When an agent answers with a shell code block (`bash`, `sh`, `zsh`, `console`), the block gets a **Run** button beside its copy button. Clicking it runs the command exactly as if you had typed it after `!`: same card, same working directory, same recall history. **Alt-click** puts the command in the composer in command mode instead, so you can edit it before pressing Enter. Hover the button to see the full command line, which matters when a long line scrolls off the side of the block.
+
+A block written as a terminal session (`$ npm test` followed by its output) runs only the `$` lines, so the sample output is never executed. Blocks in your own messages, and blocks in other languages, have no Run button.
+
 ### Tab Completion in Command Mode
 
 Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
@@ -1068,11 +1074,12 @@ Hover the chip to reveal its menu:
 | **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
 | **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
 | **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Close group**                  | Closes every tab in the group after a confirmation (`Enter` confirms). Focus moves to the chip beside it. Closed AI tabs can be reopened like any other.     |
 | **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
 
 **Double-click the chip** to rename it without opening the menu.
 
-Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+Renaming, breaking apart, and closing are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group**, **Break Apart Tab Group**, and **Close Tab Group**, which act on the group currently showing. Break apart and close both ask for confirmation first. Breaking apart closes nothing - the panes become ordinary tabs again and you can tile them whenever you like.
 
 <Note>
 **Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.

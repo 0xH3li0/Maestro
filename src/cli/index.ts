@@ -59,6 +59,7 @@ import {
 	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -161,7 +162,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery, statsTokens } from './commands/stats';
+import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -917,6 +918,15 @@ groupChat
 	.description("Stop a group chat's moderator and participants")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
+
+groupChat
+	.command('archive <chat>')
+	.description(
+		'Archive a group chat (stops its moderator and participants); --restore brings it back'
+	)
+	.option('--restore', 'Unarchive the chat instead')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatArchive);
 
 // Open file command - open a file in the Maestro desktop app.
 //
@@ -3468,6 +3478,16 @@ encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
 	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
+
+program
+	.command('stats-indexing')
+	.description(
+		'Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)'
+	)
+	.option('--wait', 'Block until no scan is running, printing progress each second')
+	.option('--timeout <seconds>', 'With --wait, give up after this many seconds (exit code 1)')
+	.option('--json', 'Output as JSON')
+	.action(statsIndexing);
 
 encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	.description('Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)')

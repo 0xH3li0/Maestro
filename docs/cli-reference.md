@@ -744,6 +744,15 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat archive <chat>`
+
+Archive a group chat (stops its moderator and participants); --restore brings it back
+
+| Option      | Description                    | Default |
+| ----------- | ------------------------------ | ------- |
+| `--restore` | Unarchive the chat instead     | -       |
+| `--json`    | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -3087,6 +3096,16 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 | `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
 | `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
 | `--json`              | Output the full token usage object as JSON                       | -       |
+
+## `maestro-cli stats-indexing`
+
+Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--wait`              | Block until no scan is running, printing progress each second | -       |
+| `--timeout <seconds>` | With --wait, give up after this many seconds (exit code 1)    | -       |
+| `--json`              | Output as JSON                                                | -       |
 
 ## `maestro-cli stats-query <sql>`
 
