@@ -36,6 +36,9 @@ describe('headless process supervision', () => {
 		controller.abort();
 		await vi.advanceTimersByTimeAsync(10_000);
 		expect(onForcedStop).toHaveBeenCalledOnce();
+		expect(child.stdout.destroy).toHaveBeenCalledOnce();
+		expect(child.stderr.destroy).toHaveBeenCalledOnce();
+		expect(vi.getTimerCount()).toBe(0);
 		expect(exited).toBe(false);
 		child.pid = 123;
 		child.emit('error', new Error('synthetic kill failure'));

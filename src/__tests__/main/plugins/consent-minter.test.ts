@@ -634,6 +634,7 @@ describe('original audio export consent', () => {
 		expect(mints[0].caps[0].scope).toBe(
 			accepted ? 'discord-voice,discord-original-audio' : 'discord-voice'
 		);
+		expect(mints[0].caps[0].originalAudioExport).toBe(accepted ? true : undefined);
 	});
 	it('does not upgrade an existing voice-only offer even with export checked', async () => {
 		const { minter, captured, mints } = setup({
@@ -647,5 +648,6 @@ describe('original audio export consent', () => {
 			originalAudioExport: true,
 		});
 		expect(mints[0].caps[0].scope).toBe('discord-voice');
+		expect(mints[0].caps[0]).not.toHaveProperty('originalAudioExport');
 	});
 });

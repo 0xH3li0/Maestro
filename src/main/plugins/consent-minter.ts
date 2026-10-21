@@ -326,9 +326,14 @@ export class ConsentMinter {
 		const unattendedSet = new Set(unattended);
 		// The separate, revocable unattended flag is minted ONLY from the
 		// explicit unattended acceptance - never inferred from the grant itself.
-		const grants = grantsFromRequests(toGrant, this.now()).map((g) =>
-			unattendedSet.has(g.capability) ? { ...g, unattended: true } : g
-		);
+		const grants = grantsFromRequests(toGrant, this.now()).map((g) => {
+			const grant = unattendedSet.has(g.capability) ? { ...g, unattended: true } : g;
+			return g.capability === 'media:tools' &&
+				req.originalAudioExport === true &&
+				parseAllowlistScope(g.scope)?.includes('discord-original-audio')
+				? { ...grant, originalAudioExport: true }
+				: grant;
+		});
 		const conflict = transcriptReadEgressConflict(grants, {
 			trusted: identity.signatureStatus === 'trusted',
 		});

@@ -3017,36 +3017,39 @@ describe('agents.send original audio gate', () => {
 			expect(sendAgent).not.toHaveBeenCalled();
 		}
 	);
-	it('keeps voice-only grants voice-only and rejects export before consuming the handle', async () => {
-		const forward = vi.spyOn(PluginMediaTools.prototype, 'forwardOriginal');
-		try {
-			const grants: PermissionGrant[] = [
-				{ capability: 'agents:dispatch', scope: 'a', grantedAt: 1 },
-				{ capability: 'media:tools', scope: 'discord-voice', grantedAt: 1 },
-			];
-			const sendAgent = vi.fn();
-			const handlers = buildHostCallHandlers(
-				makeDeps({
-					broker: brokerFor(() => grants),
-					sendAgent,
-					isPluginTrusted: () => true,
-					dispatchUnattendedAllowed: () => true,
-					serviceAllowed: (id, capability, target) => isPermitted(grants, capability, target),
-				})
-			);
-			await expect(
-				handlers['agents.send']!('p', {
-					agentId: 'a',
-					prompt: 'hello',
-					opts: { originalAttachments: [ref] },
-				})
-			).rejects.toMatchObject({ code: 'MediaDenied' });
-			expect(forward).not.toHaveBeenCalled();
-			expect(sendAgent).not.toHaveBeenCalled();
-		} finally {
-			forward.mockRestore();
+	it.each(['discord-voice', 'discord-voice,discord-original-audio'])(
+		'rejects an unmarked legacy grant %s before consuming the handle',
+		async (scope) => {
+			const forward = vi.spyOn(PluginMediaTools.prototype, 'forwardOriginal');
+			try {
+				const grants: PermissionGrant[] = [
+					{ capability: 'agents:dispatch', scope: 'a', grantedAt: 1 },
+					{ capability: 'media:tools', scope, grantedAt: 1 },
+				];
+				const sendAgent = vi.fn();
+				const handlers = buildHostCallHandlers(
+					makeDeps({
+						broker: brokerFor(() => grants),
+						sendAgent,
+						isPluginTrusted: () => true,
+						dispatchUnattendedAllowed: () => true,
+						serviceAllowed: (id, capability, target) => isPermitted(grants, capability, target),
+					})
+				);
+				await expect(
+					handlers['agents.send']!('p', {
+						agentId: 'a',
+						prompt: 'hello',
+						opts: { originalAttachments: [ref] },
+					})
+				).rejects.toMatchObject({ code: 'MediaDenied' });
+				expect(forward).not.toHaveBeenCalled();
+				expect(sendAgent).not.toHaveBeenCalled();
+			} finally {
+				forward.mockRestore();
+			}
 		}
-	});
+	);
 });
 
 it.each(['recording', 'cleanup'])(
