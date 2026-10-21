@@ -242,7 +242,3 @@ This extraction retains the current `rc` 60-minute runner bound (61-minute proof
 completion bound); original-audio preflight consumes that budget. Ordinary sends
 retain their existing full runner budget after preflight. The silence-based
 watchdog in upstream PR #1847 is a separate change.
-
-The same API revision exposes optional read-only `parentSessionId` in agent
-metadata: existing worktree children identify their parent, while main agents
-omit it. This does not create, reparent, or select an agent.

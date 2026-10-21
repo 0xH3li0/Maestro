@@ -23,7 +23,6 @@ import semver from 'semver';
 /**
  * The host API version this Maestro build implements. 1.30.0 adds separately
  * consented bounded original-audio staging for supported local agent sends.
- * It also includes the read-only parentSessionId agent metadata introduced in 1.29.
  * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
