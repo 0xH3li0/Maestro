@@ -82,6 +82,7 @@ export function createPluginHeadlessAgentRunner(
 				agent.customArgs ||
 				config?.customArgs ||
 				isAutoModel(agent.customModel) ||
+				isAutoModel(config?.model) ||
 				(agent.toolType === 'claude-code' && getClaudeTokenMode(agent) !== 'api')
 			)
 				throw new MediaError('MediaUnavailable');

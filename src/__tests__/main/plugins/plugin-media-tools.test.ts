@@ -150,6 +150,9 @@ describe('media tools boundary', () => {
 		'ssh',
 		'routed',
 		'auto',
+		'provider-auto',
+		'provider-auto-spaced',
+		'provider-model',
 		'custom',
 		'provider-custom',
 		'cached-custom',
@@ -191,7 +194,13 @@ describe('media tools boundary', () => {
 						? { customPath: '/provider/wrapper' }
 						: destination === 'sandbox'
 							? { customArgs: '--sandbox' }
-							: {},
+							: destination === 'provider-auto'
+								? { model: 'auto' }
+								: destination === 'provider-auto-spaced'
+									? { model: ' Auto ' }
+									: destination === 'provider-model'
+										? { model: 'gpt-5.4' }
+										: {},
 				detectAgent: async () => ({
 					available: true,
 					path: '/fixture/codex',
@@ -224,7 +233,7 @@ describe('media tools boundary', () => {
 						{ originalAttachment: lease }
 					)
 			);
-			if (destination === 'local') {
+			if (destination === 'local' || destination === 'provider-model') {
 				await expect(result).resolves.toMatchObject({
 					success: true,
 					originalAttachments: [
