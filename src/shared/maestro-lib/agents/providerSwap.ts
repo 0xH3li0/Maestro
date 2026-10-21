@@ -20,8 +20,9 @@
  *   - `Session.providerOverrides` parks the agent-level overrides named in
  *     {@link PROVIDER_OVERRIDE_KEYS}.
  *
- * {@link switchAgentProvider} parks provider state for the headless runtime.
- * Desktop provider changes use native translation instead. Both paths use
+ * {@link switchAgentProvider} parks provider state. The headless runtime and a
+ * plain desktop switch both use it; a desktop switch that opts into converting
+ * memory and session history uses native translation instead. Both paths use
  * `translation/session.ts` for the same per-tab parking invariant.
  *
  * The types below name only the fields a switch reads or writes. The desktop's
@@ -34,7 +35,8 @@ import { isValidAgentId } from '../../agentIds';
 import type { RunOnTarget } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType, UsageStats } from '../../types';
-import { switchTabProvider } from '../translation/session';
+import { mapAgentAiTabs, switchTabProvider } from '../translation/session';
+import type { AiTabContainers } from '../translation/session';
 
 export { switchTabProvider } from '../translation/session';
 
@@ -132,10 +134,13 @@ export interface ProviderSwitchQueuedItem {
 }
 
 /** The agent fields a provider switch reads and writes. */
-export interface ProviderSwitchAgent extends ProviderAgentOverrides {
+export interface ProviderSwitchAgent
+	extends ProviderAgentOverrides, Omit<AiTabContainers, 'aiTabs'> {
 	toolType: ToolType;
 	runOn?: RunOnTarget;
 	aiTabs?: ProviderSwitchTab[];
+	/** Tabs the native translation inventory still owns; parked like the tabs themselves. */
+	providerTranslationTabInventory?: Array<Omit<ProviderSwitchTab, 'id'> & { id: string }>;
 	/**
 	 * Parked agent-level overrides for every provider this agent is NOT
 	 * currently using. Never holds an entry for `toolType`.
@@ -467,8 +472,13 @@ export function switchAgentProvider<A extends ProviderSwitchAgent>(
 		toolType: newProvider,
 		...restoredOverrides,
 		providerOverrides: Object.keys(parked).length > 0 ? parked : undefined,
-		...(agent.aiTabs && {
-			aiTabs: agent.aiTabs.map((tab) =>
+		// Closed, snoozed, and orphaned tabs too: reopening one must not resume
+		// the old provider's session ID under the new provider.
+		...mapAgentAiTabs(agent, (tab) =>
+			tab.tabProvider === undefined ? switchTabProvider(tab, fromProvider, newProvider) : tab
+		),
+		...(agent.providerTranslationTabInventory && {
+			providerTranslationTabInventory: agent.providerTranslationTabInventory.map((tab) =>
 				tab.tabProvider === undefined ? switchTabProvider(tab, fromProvider, newProvider) : tab
 			),
 		}),

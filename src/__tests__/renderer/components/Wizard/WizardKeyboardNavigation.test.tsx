@@ -132,7 +132,6 @@ vi.mock('../../../../renderer/utils/markdownConfig', () => ({
 	generateProseStyles: () => '',
 	generateInlineWizardPreviewProseStyles: () => '',
 	createMarkdownComponents: () => ({}),
-	createWizardBubbleMarkdownComponents: () => ({}),
 	createReleaseNotesMarkdownComponents: () => ({}),
 }));
 

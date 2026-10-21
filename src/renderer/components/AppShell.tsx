@@ -26,6 +26,7 @@ import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
+import { StatsIndexingHost } from './StatsIndexing/StatsIndexingHost';
 import { CadenzaLayer } from './Cadenza';
 import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
 import { VoiceHud } from './ACappella';
@@ -339,6 +340,10 @@ export function AppShell({
 			    protocol event twice. Renders nothing, and subscribes to nothing,
 			    while the Encore Feature is off. */}
 			<VoiceHud theme={theme} enabled={aCappellaEnabled} />
+			{/* --- USAGE DATA SCAN PROGRESS (single, app-wide) ---
+			    A version upgrade re-reads all session history once; this shows it
+			    as a modal, then a corner card, instead of a silent stall. */}
+			<StatsIndexingHost theme={theme} />
 			{/* --- CONCERTO ---
 			    Cadenzas float over the app; the movement stage lives in its own
 			    resizable window (Alt+C / command palette / hamburger menu). Both stay

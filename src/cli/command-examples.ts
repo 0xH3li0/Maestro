@@ -43,6 +43,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'steer-auto-run cancel': ['maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>'],
 	'quick-chat tab': ['maestro-cli quick-chat tab new'],
 	'quick-chat thinking': ['maestro-cli quick-chat thinking sticky'],
+	'quick-chat steer': ['maestro-cli quick-chat steer <message-id>'],
+	'group-chat archive': [
+		'maestro-cli group-chat archive <chat>',
+		'maestro-cli group-chat archive <chat> --restore',
+	],
 	'quick-chat history': ['maestro-cli quick-chat history'],
 	'quick-chat recall': ['maestro-cli quick-chat recall <chat>'],
 	'notify inbox list': ['maestro-cli notify inbox list'],
@@ -211,6 +216,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'cue engine inspect': ['maestro-cli cue engine inspect --json'],
 	'bundle export': [
 		'maestro-cli bundle export --agent <agent-id> --output agent.maestro-bundle.zip',
+		'maestro-cli bundle export --agent <agent-id> --exact --output exact-agent.maestro-bundle.zip',
 	],
 	'bundle validate': ['maestro-cli bundle validate agent.maestro-bundle.zip'],
 	'bundle inspect': ['maestro-cli bundle inspect agent.maestro-bundle.zip --json'],
@@ -253,6 +259,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'remove-agent': ['maestro-cli remove-agent <agent-id>'],
 	'update-agent': [
 		'maestro-cli update-agent <agent-id> --model opus --effort high',
+		'maestro-cli update-agent <agent-id> --provider codex --convert --accept-translation-limitations',
 		'maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id> --run-on-context 65536',
 		'maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent',
 	],
@@ -604,6 +611,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	],
 	'feedback subscribe': ['maestro-cli feedback subscribe 1234 --comment "Also seen on 1.4"'],
 	stats: ['maestro-cli stats --range month --json'],
+	'stats-indexing': [
+		'maestro-cli stats-indexing --json',
+		'maestro-cli stats-indexing --wait --timeout 300',
+	],
 	'stats-tokens': ['maestro-cli stats-tokens --range week --json'],
 	'stats models': ['maestro-cli stats models --range week --json'],
 	'stats-query': [

@@ -816,7 +816,7 @@ describe('update-agent command', () => {
 			action({ sendCommand } as never)
 		);
 
-		await updateAgent('agent-1', { provider: 'codex' });
+		await updateAgent('agent-1', { provider: 'codex', convert: true });
 
 		expect(sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -832,7 +832,7 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('uses the dedicated translation verb for --provider with --force', async () => {
+	it('switches without converting when --convert is not passed', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({
 			id: 'full-session-id',
@@ -841,27 +841,68 @@ describe('update-agent command', () => {
 		const sendCommand = vi.fn().mockResolvedValue({
 			type: 'provider_translation_result',
 			success: true,
+			notices: [],
 		});
 		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
 			action({ sendCommand } as never)
 		);
 
-		await updateAgent('agent-1', { provider: 'codex', force: true });
+		await updateAgent('agent-1', { provider: 'codex', json: true });
 
 		expect(sendCommand).toHaveBeenCalledWith(
-			expect.objectContaining({
+			{
 				type: 'provider_translation',
 				sessionId: 'full-session-id',
-				configPatch: {
-					toolType: 'codex',
-					migrationAction: 'apply',
-					acceptTranslationLimitations: true,
-				},
-			}),
-			'provider_translation_result',
-			120000
+				configPatch: { toolType: 'codex', migrationAction: 'switch' },
+			},
+			'provider_translation_result'
 		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			JSON.stringify({
+				success: true,
+				agentId: 'full-session-id',
+				provider: 'codex',
+				converted: false,
+				notices: [],
+			})
+		);
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
+
+	it.each(['force', 'projectResources'] as const)(
+		'uses the dedicated translation verb with %s',
+		async (flag) => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'provider_translation_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+
+			await updateAgent('agent-1', { provider: 'codex', [flag]: true });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'provider_translation',
+					sessionId: 'full-session-id',
+					configPatch: {
+						toolType: 'codex',
+						migrationAction: 'apply',
+						acceptTranslationLimitations: flag === 'force',
+						...(flag === 'projectResources' && { projectResourcesIntoRepo: true }),
+					},
+				}),
+				'provider_translation_result',
+				120000
+			);
+		}
+	);
 
 	it('rejects a non-boolean --sync-history-to-remote value', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');

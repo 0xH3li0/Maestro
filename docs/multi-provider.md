@@ -443,9 +443,13 @@ not native certification. Untested versions
 keep the plan unverified even if the direction later gains certification;
 blocking history or resource limitations still prevent conversion on any version.
 
-In **Edit Agent**, destinations with a **Carry Over** pill have a carry-over adapter.
-Selecting one reads a conversion plan; **Save Changes** applies it after any
-listed warnings are accepted. Blocking limitations prevent the switch. See
+Changing the provider in **Edit Agent** is a plain switch by default: tabs and
+transcripts stay, each tab starts a fresh conversation on the new provider, and
+switching back resumes the old one. Destinations with a **Carry Over** pill also
+offer **Convert memory and session history**, which is opt-in. Checking it reads
+a conversion plan and lists any warnings. Accept the listed limitations beside
+**Save Changes**, then save to apply it. If preflight is blocked or fails, a notice says so and saving switches providers
+without converting. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
 for the steps, scope, CLI examples and activity indicator.
 

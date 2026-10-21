@@ -34,6 +34,7 @@ import {
 	type AnchoredMenuPlacement,
 } from '../../hooks/ui/useAnchoredMenuPosition';
 import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
@@ -128,14 +129,13 @@ export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSetti
 			tabIndex={-1}
 			onKeyDown={handleKeyDown}
 			// Above the card (60), far below modals so it never covers an overlay.
-			className="fixed z-[100] w-64 p-2 rounded shadow-xl border overflow-y-auto select-none outline-none space-y-2"
+			className="fixed z-[100] w-64 p-2 rounded overflow-y-auto select-none outline-none space-y-2"
 			style={{
 				left,
 				top,
 				maxHeight,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgActivity,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 			}}
 		>
 			<div className="flex items-center gap-2 pl-1">

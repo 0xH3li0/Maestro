@@ -1070,6 +1070,20 @@ Stop a group chat's moderator and participants
 maestro-cli group-chat stop <chat>
 ```
 
+## `maestro-cli group-chat archive <chat>`
+
+Archive a group chat (stops its moderator and participants); --restore brings it back
+
+| Option      | Description                    | Default |
+| ----------- | ------------------------------ | ------- |
+| `--restore` | Unarchive the chat instead     | -       |
+| `--json`    | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli group-chat archive <chat>
+maestro-cli group-chat archive <chat> --restore
+```
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -1832,21 +1846,24 @@ Export, validate, inspect, and import portable Cue pipeline and agent bundles
 
 Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate
 
-| Option                     | Description                                                                               | Default |
-| -------------------------- | ----------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                                             | -       |
-| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)                                         | -       |
-| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)                                    | -       |
-| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret                                   | -       |
-| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default                            | -       |
-| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time                                     | -       |
-| `--no-claude-skills`       | Leave out Claude Code skills (.claude/skills)                                             | -       |
-| `--no-claude-mcp`          | Leave out .mcp.json (exported with secrets as $\{VAR\} references)                        | -       |
-| `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted) | -       |
-| `--json`                   | Output as JSON (for scripting)                                                            | -       |
+| Option                     | Description                                                                                                                                                                               | Default |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                                                                                                                                             | -       |
+| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)                                                                                                                                         | -       |
+| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)                                                                                                                                    | -       |
+| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret                                                                                                                                   | -       |
+| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default                                                                                                                            | -       |
+| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time                                                                                                                                     | -       |
+| `--no-claude-skills`       | Leave out Claude Code skills (.claude/skills)                                                                                                                                             | -       |
+| `--no-claude-mcp`          | Leave out .mcp.json (exported with secrets as $\{VAR\} references)                                                                                                                        | -       |
+| `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)                                                                                                 | -       |
+| `--no-cue`                 | Leave out the agent's Cue subscriptions (--agent only)                                                                                                                                    | -       |
+| `--exact`                  | Exact copy: also carry secret values, binary paths, SSH and other providers settings, and local folders, so an import on this machine restores the agent as it was. Do not share the file | -       |
+| `--json`                   | Output as JSON (for scripting)                                                                                                                                                            | -       |
 
 ```bash
 maestro-cli bundle export --agent <agent-id> --output agent.maestro-bundle.zip
+maestro-cli bundle export --agent <agent-id> --exact --output exact-agent.maestro-bundle.zip
 ```
 
 ## `maestro-cli bundle validate <bundle>`
@@ -1885,6 +1902,8 @@ Import a bundle into the running app, or with it closed into a data directory, p
 | `--data-dir <path>`          | Import into this Maestro data directory instead of the default                          | -       |
 | `--dry-run`                  | Report everything the import would do, including conflicts; write nothing               | -       |
 | `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths                | -       |
+| `-g, --group <id>`           | Put the agents the import creates in this Left Bar group                                | -       |
+| `--no-local`                 | Ignore an exact copy's machine data (secret values, binary paths, SSH, folders)         | -       |
 | `--reject-shell-commands`    | Refuse the import, before anything is written, if any subscription runs a shell command | -       |
 | `--json`                     | Output as JSON (for scripting): one document, after the import                          | -       |
 
@@ -2287,7 +2306,8 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--env-park <KEY>`                      | Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with                                                                                                                                                                                                                                                  | `[]`    |
 | `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                                                                                                                                                                                   | `[]`    |
 | `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's .maestro/history/ (true/false; for an agent another Maestro controls; agent must be stopped)                                                                                                                                                                                                                | -       |
-| `--provider <type>`                     | Translate owned conversations and selected project knowledge to another provider                                                                                                                                                                                                                                                                            | -       |
+| `--provider <type>`                     | Switch to another provider; tabs keep their transcripts and start fresh conversations there                                                                                                                                                                                                                                                                 | -       |
+| `--convert`                             | With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below)                                                                                                                                                                                                                         | -       |
 | `--project-resources`                   | Install native project resources and add local git exclude entries                                                                                                                                                                                                                                                                                          | -       |
 | `--force`                               | Alias for --accept-translation-limitations                                                                                                                                                                                                                                                                                                                  | -       |
 | `--dry-run`                             | Plan provider migration without native writes (requires --provider)                                                                                                                                                                                                                                                                                         | -       |
@@ -2299,6 +2319,7 @@ Update an existing agent's group, working directory, and per-agent settings
 
 ```bash
 maestro-cli update-agent <agent-id> --model opus --effort high
+maestro-cli update-agent <agent-id> --provider codex --convert --accept-translation-limitations
 maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id> --run-on-context 65536
 maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent
 ```
@@ -5592,6 +5613,18 @@ Send a message to a new tab instead of the tab it went to: out of the queue, or 
 maestro-cli quick-chat new-tab <message-id>
 ```
 
+## `maestro-cli quick-chat steer [message-id]`
+
+Steer a queued message into the reply already running in its tab, so the agent changes course now instead of answering it afterwards (default: the latest steerable one)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli quick-chat steer <message-id>
+```
+
 ## `maestro-cli quick-chat history`
 
 List the recent chats, newest first (what the window's History button shows)
@@ -6016,6 +6049,21 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 
 ```bash
 maestro-cli stats-tokens --range week --json
+```
+
+## `maestro-cli stats-indexing`
+
+Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--wait`              | Block until no scan is running, printing progress each second | -       |
+| `--timeout <seconds>` | With --wait, give up after this many seconds (exit code 1)    | -       |
+| `--json`              | Output as JSON                                                | -       |
+
+```bash
+maestro-cli stats-indexing --json
+maestro-cli stats-indexing --wait --timeout 300
 ```
 
 ## `maestro-cli stats-query <sql>`

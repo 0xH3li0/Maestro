@@ -604,6 +604,9 @@ maestro-cli update-agent <agent-id> --system-one on
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
+# Switch provider without converting (tabs keep transcripts, start fresh on Codex)
+maestro-cli update-agent <agent-id> --provider codex
+
 # Review native provider translation before applying it (desktop required)
 maestro-cli update-agent <agent-id> --provider codex --dry-run --json
 
@@ -663,7 +666,9 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 - `--env-park KEY` keeps the variable in the agent's settings and stops spawning with it, the Edit Agent toggle for the same thing. `--env-unpark KEY` reverses it. Neither is for `--clear-env`, which deletes. `show agent` lists parked variables apart from the effective environment.
 - `--share-history-to-project-dir` is for an agent whose project another Maestro install controls: it mirrors History entries into the project's `.maestro/history/` folder. The agent must be stopped.
 
-`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
+`--provider` on its own is a plain switch, the same as Edit Agent with **Convert memory and session history** unchecked: tabs keep their transcripts, each starts a fresh conversation on the new provider, and switching back resumes the old one. Provider-specific settings are parked per provider and restored on the way back. JSON output reports `converted: false` and any `notices` (queued messages whose model or effort could not carry across).
+
+`--convert` opts into the desktop's native conversation translation flow; every translation option below implies it. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
 
 | Flag                                    | Description                                                                                                                                                                                     | Default |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -684,7 +689,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--token-source <mode>`                 | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                                                                  | -       |
 | `--maestro-p-path <path>`               | Override the maestro-p binary path. Empty string clears                                                                                                                                         | -       |
 | `--codex-transport <transport>`         | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only                                                                           | -       |
-| `--provider <type>`                     | Translate native conversations to another provider (desktop required)                                                                                                                           | -       |
+| `--provider <type>`                     | Switch the agent to another provider without converting (desktop required)                                                                                                                      | -       |
 | `--force`                               | Alias for `--accept-translation-limitations`                                                                                                                                                    | -       |
 | `--json`                                | Machine-readable JSON output                                                                                                                                                                    | -       |
 | `--gateway-url <url\|none>`             | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                                                                         | -       |
@@ -708,6 +713,12 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--env-park <KEY>`                      | Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with                                                                                      | -       |
 | `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                       | -       |
 | `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's `.maestro/history/`, for an agent another Maestro controls. Agent must be stopped                                                               | -       |
+| `--convert`                             | With `--provider`: convert native conversations and project memory too (opt-in)                                                                                                                 | -       |
+| `--dry-run`                             | Plan translation without native writes; requires `--provider`                                                                                                                                   | -       |
+| `--accept-translation-limitations`      | Accept the reported conversion limits; blocked plans remain blocked                                                                                                                             | -       |
+| `--migration <action>`                  | Plan, apply, inspect status, recover, or roll back a migration                                                                                                                                  | -       |
+| `--migration-plan <id>`                 | Apply a reviewed plan or inspect, recover, or roll back a specific operation                                                                                                                    | -       |
+| `--translation-resource <path>`         | Include one selected user resource; repeatable, without importing account-global data                                                                                                           | -       |
 
 The flag table below covers `create-agent`:
 

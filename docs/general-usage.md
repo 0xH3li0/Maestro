@@ -411,6 +411,12 @@ You will know you are in command mode: a `$` appears at the left of the input, t
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
+### Running a Command from an Agent's Reply
+
+When an agent answers with a shell code block (`bash`, `sh`, `zsh`, `console`), the block gets a **Run** button beside its copy button. Clicking it runs the command exactly as if you had typed it after `!`: same card, same working directory, same recall history. **Alt-click** puts the command in the composer in command mode instead, so you can edit it before pressing Enter. Hover the button to see the full command line, which matters when a long line scrolls off the side of the block.
+
+A block written as a terminal session (`$ npm test` followed by its output) runs only the `$` lines, so the sample output is never executed. Blocks in your own messages, and blocks in other languages, have no Run button.
+
 ### Tab Completion in Command Mode
 
 Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
@@ -892,7 +898,9 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (Run on target, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
-Changing the **Agent Provider** here opens a native conversation translation preflight. Tabs, transcripts, drafts, queued messages, and file previews are preserved. Review the reported limits and accept them before saving. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded.
+Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
+
+Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits, and saving accepts them. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
 
 ### Deleting Agents
 
@@ -1119,11 +1127,12 @@ Hover the chip to reveal its menu:
 | **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
 | **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
 | **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Close group**                  | Closes every tab in the group after a confirmation (`Enter` confirms). Focus moves to the chip beside it. Closed AI tabs can be reopened like any other.     |
 | **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
 
 **Double-click the chip** to rename it without opening the menu.
 
-Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+Renaming, breaking apart, and closing are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group**, **Break Apart Tab Group**, and **Close Tab Group**, which act on the group currently showing. Break apart and close both ask for confirmation first. Breaking apart closes nothing - the panes become ordinary tabs again and you can tile them whenever you like.
 
 <Note>
 **Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.

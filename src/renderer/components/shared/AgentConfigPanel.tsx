@@ -37,6 +37,7 @@ import {
 } from '../../../shared/autoTurn';
 import type { TierTargetAgent } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -229,10 +230,9 @@ function ModelTextInput({
 					{/* Custom dropdown */}
 					{isModelField && showDropdown && filteredModels.length > 0 && (
 						<div
-							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded border shadow-lg"
+							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							{filteredModels.map((model) => (

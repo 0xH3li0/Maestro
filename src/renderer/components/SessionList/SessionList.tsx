@@ -79,6 +79,7 @@ import {
 	scopeSessionsToOwningWindow,
 } from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
+import { canExportAgent } from '../../utils/agentBundles';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { BusyWand } from './BusyWand';
@@ -2516,6 +2517,14 @@ function SessionListInner(props: SessionListProps) {
 							.openModal('newInstance', { duplicatingSessionId: contextMenuSession.id });
 						setContextMenu(null);
 					}}
+					onExport={
+						canExportAgent(contextMenuSession)
+							? () =>
+									useModalStore
+										.getState()
+										.openModal('agentExport', { sessionId: contextMenuSession.id })
+							: undefined
+					}
 					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
 					showGroupActions={!activeVirtualGrouping}
 					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
@@ -2630,6 +2639,15 @@ function SessionListInner(props: SessionListProps) {
 						useModalStore.getState().openModal('newInstance', {
 							duplicatingSessionId: null,
 							presetGroupId: groupContextMenuGroup.id,
+						});
+					}}
+					onImportAgent={() => {
+						// Expand the group so the imported agents are visible when they land.
+						if (groupContextMenuGroup.collapsed) {
+							toggleGroup(groupContextMenuGroup.id);
+						}
+						useModalStore.getState().openModal('agentImport', {
+							groupId: groupContextMenuGroup.id,
 						});
 					}}
 					onDelete={

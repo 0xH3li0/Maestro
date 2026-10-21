@@ -1426,7 +1426,7 @@ function pruneLayoutToLiveTabs(
  * pointer. Does NOT touch activeGroupId (callers clear it as part of the dissolve).
  * A `group` ref (never a leaf) yields an empty patch.
  */
-function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
+export function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
 	switch (ref.type) {
 		case 'ai':
 			return {

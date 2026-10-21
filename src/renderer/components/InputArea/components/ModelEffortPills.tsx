@@ -8,6 +8,7 @@ import { modelChoiceLabel } from '../../../../shared/autoTurn';
 import { FilterInput } from '../../ui/FilterInput';
 import { ResizeHandles } from '../../ui/ResizeHandles';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
@@ -115,11 +116,10 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 						<div
 							ref={modelMenu.modalRef}
 							data-testid="model-picker"
-							className="absolute bottom-full left-0 mb-1 flex flex-col rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 flex flex-col rounded z-50"
 							style={{
 								...modelMenu.style,
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
@@ -247,10 +247,9 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{effortMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 rounded z-50"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />

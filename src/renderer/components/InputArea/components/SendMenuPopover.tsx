@@ -15,6 +15,7 @@ import { ShortcutKeys } from '../../ui/ShortcutHint';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { useFocusOnMount } from '../../../hooks/utils/useFocusAfterRender';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useComposerInputStore, selectAiComposerValue } from '../../../stores/composerInputStore';
@@ -167,8 +168,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 		right: window.innerWidth - anchorRect.left + 8,
 		width: 300,
 		zIndex: 9999,
-		backgroundColor: theme.colors.bgMain,
-		borderColor: theme.colors.border,
+		...elevatedSurfaceStyle(theme),
 		color: theme.colors.textMain,
 	};
 
@@ -177,7 +177,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 			ref={popoverRef}
 			role="menu"
 			aria-label="Send options"
-			className="rounded-lg border shadow-lg p-1.5 select-none"
+			className="rounded-lg p-1.5 select-none"
 			style={style}
 			tabIndex={-1}
 			data-testid="send-menu-popover"

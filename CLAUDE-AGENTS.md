@@ -8,6 +8,8 @@ With the Ensemble Encore Feature enabled, the composer offers a provider pill on
 
 A committed native translation adds a **Context translated from ...** marker to the transcript. `ContextTranslationCard` discloses the source and destination versions, verification status, record/resource counts, and accepted limitations. The marker stays separate from subsequent replies and survives transcript persistence.
 
+Changing the agent's default provider in Edit Agent is a plain switch unless **Convert memory and session history** is checked. Plain switching parks native sessions across open and retained tabs through `switchAgentProvider()` and `mapAgentAiTabs()`; explicitly pinned Ensemble tabs keep their provider. Conversions retain the reviewed-plan and limitation-acceptance controls. Keep `projectResourcesIntoRepo` and `convertProviderHistory` as separate save arguments so opting into conversion does not install resources into the project.
+
 ## Supported Agents
 
 | ID              | Name            | Status     | Notes                                                                                                                                                                                   |

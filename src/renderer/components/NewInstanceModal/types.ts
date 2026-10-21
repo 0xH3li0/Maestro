@@ -173,7 +173,9 @@ export interface EditAgentModalProps {
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
-		projectResourcesIntoRepo?: boolean
+		projectResourcesIntoRepo?: boolean,
+		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
+		convertProviderHistory?: boolean
 	) => void | Promise<void>;
 	theme: Theme;
 	session: Session | null;

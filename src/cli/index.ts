@@ -59,6 +59,7 @@ import {
 	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -277,7 +278,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsModels, statsQuery, statsTokens } from './commands/stats';
+import { stats, statsIndexing, statsModels, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -1053,6 +1054,15 @@ groupChat
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
 
+groupChat
+	.command('archive <chat>')
+	.description(
+		'Archive a group chat (stops its moderator and participants); --restore brings it back'
+	)
+	.option('--restore', 'Unarchive the chat instead')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatArchive);
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -1775,6 +1785,11 @@ bundle
 		'--no-claude-memory',
 		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
 	)
+	.option('--no-cue', "Leave out the agent's Cue subscriptions (--agent only)")
+	.option(
+		'--exact',
+		'Exact copy: also carry secret values, binary paths, SSH and other providers settings, and local folders, so an import on this machine restores the agent as it was. Do not share the file'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => bundleExport(cliVersion, options));
 
@@ -1816,6 +1831,11 @@ bundle
 	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
 	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
 	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option('-g, --group <id>', 'Put the agents the import creates in this Left Bar group')
+	.option(
+		'--no-local',
+		"Ignore an exact copy's machine data (secret values, binary paths, SSH, folders)"
+	)
 	.option(
 		'--reject-shell-commands',
 		'Refuse the import, before anything is written, if any subscription runs a shell command'
@@ -2432,7 +2452,11 @@ program
 	)
 	.option(
 		'--provider <type>',
-		'Translate owned conversations and selected project knowledge to another provider'
+		'Switch to another provider; tabs keep their transcripts and start fresh conversations there'
+	)
+	.option(
+		'--convert',
+		'With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below)'
 	)
 	.option(
 		'--project-resources',
@@ -4586,6 +4610,14 @@ quickChatCmd
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
+	.command('steer [message-id]')
+	.description(
+		'Steer a queued message into the reply already running in its tab, so the agent changes course now instead of answering it afterwards (default: the latest steerable one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('steer', { messageId }, options));
+
+quickChatCmd
 	.command('history')
 	.description("List the recent chats, newest first (what the window's History button shows)")
 	.option('--json', 'Output as JSON (for scripting)')
@@ -4923,6 +4955,16 @@ encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
 	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
+
+program
+	.command('stats-indexing')
+	.description(
+		'Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)'
+	)
+	.option('--wait', 'Block until no scan is running, printing progress each second')
+	.option('--timeout <seconds>', 'With --wait, give up after this many seconds (exit code 1)')
+	.option('--json', 'Output as JSON')
+	.action(statsIndexing);
 
 encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	.description('Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)')

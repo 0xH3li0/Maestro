@@ -2,6 +2,8 @@ import { requestProviderTranslation } from '../../services/providerTranslation';
 import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
 import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
+import { providerOverridesFor } from '../../../shared/maestro-lib/agents/providerSwap';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
@@ -228,7 +230,6 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
-	const translationRequested = providerChanged || !!translationReview;
 	const translationDestination = translationReview?.provider ?? selectedToolType;
 	/** Live store entry for this agent; the form's session prop is an opening snapshot. */
 	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
@@ -238,6 +239,19 @@ export function EditAgentModal({
 	const [migrationSaving, setMigrationSaving] = useState(false);
 	const [acceptTranslationLimitations, setAcceptTranslationLimitations] = useState(false);
 	const [projectResourcesIntoRepo, setProjectResourcesIntoRepo] = useState(false);
+	// Converting memory and session history is opt-in. Off, a provider change is
+	// a plain switch: tabs and transcripts stay, and each tab starts a fresh
+	// conversation on the new provider.
+	const [convertProviderHistory, setConvertProviderHistory] = useState(false);
+	const canConvertProvider =
+		providerChanged && !!getDeclaredTranslationDirection(session?.toolType ?? '', selectedToolType);
+	const convertingProvider = canConvertProvider && convertProviderHistory;
+	const translationRequested = convertingProvider || !!translationReview;
+	/** What the incoming provider parked when the agent last left it; the form is seeded from it. */
+	const parkedOverrides = useMemo(
+		() => (session && providerChanged ? providerOverridesFor(session, selectedToolType) : {}),
+		[session, providerChanged, selectedToolType]
+	);
 	const carryOverBadge = useMemo(
 		() => (
 			<MiniBadge
@@ -349,6 +363,10 @@ export function EditAgentModal({
 		let stale = false;
 		const activeToolType = selectedToolType;
 		const isProviderSwitch = activeToolType !== session.toolType;
+		// On a provider switch the form edits what the incoming provider parked
+		// when the agent last left it (blank if it never ran there), so saving
+		// keeps the configuration a switch back would restore.
+		const overrides = isProviderSwitch ? providerOverridesFor(session, activeToolType) : session;
 
 		// Load agent definition (for configOptions) and the agent-level config together:
 		// seeding the config panel needs the agent's effort key, which only the
@@ -421,37 +439,29 @@ export function EditAgentModal({
 				// overrides win. Model, contextWindow and effort are per-session: showing
 				// the agent-level effort here while the session override silently drove
 				// the spawn is what made "Effort: high" run at max.
-				if (isProviderSwitch) {
-					// When provider changed, use agent-level defaults for the new provider
-					setAgentConfig(globalConfig);
-					// The new provider's default is the seed, so leaving it alone is not
-					// an edit. The provider switch clears the old override anyway.
-					seededContextWindowRef.current = globalConfig.contextWindow;
-				} else {
-					// Empty string means explicitly cleared, undefined means never set (use agent-level default)
-					const effortKey = getEffortConfigKey(foundAgent);
-					const modelValue =
-						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
-					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
-					// Remember what the control was SEEDED with so save can tell an
-					// actual edit from an untouched round-trip. Seeding from
-					// `globalConfig.contextWindow` when the session has no override is
-					// exactly how the agent-level default gets materialized into a
-					// per-session value just by opening this modal and pressing Save
-					// (finding P1); without this the write would be indistinguishable
-					// from a deliberate choice (finding AD1).
-					seededContextWindowRef.current = contextWindowValue;
-					const effortValue =
-						session.customEffort !== undefined
-							? session.customEffort
-							: (globalConfig[effortKey] ?? '');
-					setAgentConfig({
-						...globalConfig,
-						model: modelValue,
-						contextWindow: contextWindowValue,
-						[effortKey]: effortValue,
-					});
-				}
+				// Empty string means explicitly cleared, undefined means never set (use agent-level default)
+				const effortKey = getEffortConfigKey(foundAgent);
+				const modelValue =
+					overrides.customModel !== undefined ? overrides.customModel : (globalConfig.model ?? '');
+				const contextWindowValue = overrides.customContextWindow ?? globalConfig.contextWindow;
+				// Remember what the control was SEEDED with so save can tell an
+				// actual edit from an untouched round-trip. Seeding from
+				// `globalConfig.contextWindow` when the session has no override is
+				// exactly how the agent-level default gets materialized into a
+				// per-session value just by opening this modal and pressing Save
+				// (finding P1); without this the write would be indistinguishable
+				// from a deliberate choice (finding AD1).
+				seededContextWindowRef.current = contextWindowValue;
+				const effortValue =
+					overrides.customEffort !== undefined
+						? overrides.customEffort
+						: (globalConfig[effortKey] ?? '');
+				setAgentConfig({
+					...globalConfig,
+					model: modelValue,
+					contextWindow: contextWindowValue,
+					[effortKey]: effortValue,
+				});
 			})
 			.catch((err) => {
 				logger.error('Failed to detect agents:', undefined, err);
@@ -496,64 +506,40 @@ export function EditAgentModal({
 			})
 			.catch((err) => logger.error('Failed to load SSH remotes:', undefined, err));
 
-		// Load per-session config (stored on the session/agent instance)
-		// When provider changed, clear provider-specific overrides
-		if (isProviderSwitch) {
-			setCustomPath('');
-			setCustomArgs('');
-			setCustomEnvVars({});
-			setCustomEnvVarsDisabled({});
-			// A gateway URL is provider-specific (it names a proxy that speaks one
-			// provider's API), so it does not carry across a switch.
-			setGatewayUrl('');
-			// A Run on target names a source and a model, not a provider, so it is
-			// carried across. A provider whose harness cannot use one starts over.
-			if (!agentRunOnSupport(activeToolType).supported) {
-				setRunOn({ type: 'provider' });
-				setRunOnError(undefined);
-			}
-			// A tier names a model, and a provider's models are its own, so the
-			// tiers start over with the provider's other model settings.
-			setTierTargets({});
-			setTierTargetsError(undefined);
-			setEnableMaestroP(undefined);
-			setMaestroPMode('dynamic');
-			setMaestroPPath('');
-			setRetryOnAvailabilityErrors(true);
-			setRetryOnTokenExhaustion(true);
-		} else {
-			setCustomPath(session.customPath ?? '');
-			setCustomArgs(session.customArgs ?? '');
-			setCustomEnvVars(session.customEnvVars ?? {});
-			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
-			setGatewayUrl(session.gatewayUrl ?? '');
-			// A stored target that cannot be read is shown as Provider with the
-			// reason, so the launch's refusal is visible where it can be fixed.
-			const storedRunOn = parseRunOnTarget(session.runOn);
-			setRunOn(storedRunOn.ok ? storedRunOn.target : { type: 'provider' });
-			setRunOnError(
-				storedRunOn.ok
-					? undefined
-					: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
-			);
-			// Kept as stored: a target a launch would refuse is shown with the
-			// launch's own words beside its picker, where it can be replaced.
-			setTierTargets({ ...session.tierTargets });
-			setTierTargetsError(undefined);
-			// Preserve the tri-state (undefined stays undefined) so an unconfigured
-			// SSH agent keeps its "unset" signal instead of looking like explicit API.
-			setEnableMaestroP(session.enableMaestroP);
-			setMaestroPMode(session.maestroPMode ?? 'dynamic');
-			setMaestroPPath(session.maestroPPath ?? '');
-			// Both default ON; `undefined` (never configured) reads as enabled.
-			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
-			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
-			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
-			// Read the stored value, not `resolveCodexTransport`: that answers `exec`
-			// for a non-Codex agent, and saving it back would erase the preference
-			// of an agent that was moved off Codex and may move back.
-			setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
-		}
+		// Load per-session config (stored on the session/agent instance). The
+		// provider-specific overrides come from `overrides` above.
+		setCustomPath(overrides.customPath ?? '');
+		setCustomArgs(overrides.customArgs ?? '');
+		setCustomEnvVars(overrides.customEnvVars ?? {});
+		setCustomEnvVarsDisabled(overrides.customEnvVarsDisabled ?? {});
+		// Preserve the tri-state (undefined stays undefined) so an unconfigured
+		// SSH agent keeps its "unset" signal instead of looking like explicit API.
+		setEnableMaestroP(overrides.enableMaestroP);
+		setMaestroPMode(overrides.maestroPMode ?? 'dynamic');
+		setMaestroPPath(overrides.maestroPPath ?? '');
+		// Provider-agnostic: a switch keeps them. Both default ON; `undefined`
+		// (never configured) reads as enabled.
+		setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
+		setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
+		setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+		// Read the stored value, not `resolveCodexTransport`: that answers `exec`
+		// for a non-Codex agent, and saving it back would erase the preference
+		// of an agent that was moved off Codex and may move back.
+		setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
+		setGatewayUrl(isProviderSwitch ? '' : (session.gatewayUrl ?? ''));
+		const storedRunOn = parseRunOnTarget(session.runOn);
+		setRunOn(
+			storedRunOn.ok && agentRunOnSupport(activeToolType).supported
+				? storedRunOn.target
+				: { type: 'provider' }
+		);
+		setRunOnError(
+			storedRunOn.ok
+				? undefined
+				: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
+		);
+		setTierTargets(isProviderSwitch ? {} : { ...session.tierTargets });
+		setTierTargetsError(undefined);
 
 		return () => {
 			stale = true;
@@ -579,6 +565,7 @@ export function EditAgentModal({
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 			setProjectResourcesIntoRepo(false);
 			setAcceptTranslationLimitations(false);
+			setConvertProviderHistory(false);
 		}
 	}, [isOpen, session?.id]);
 
@@ -720,10 +707,24 @@ export function EditAgentModal({
 		};
 	}, [liveSession, session, providerChanged]);
 
+	// The opted-in conversion was refused or failed. Saving is never blocked on
+	// it: the notice says so, and the save switches providers without converting.
+	const conversionFailed =
+		convertingProvider &&
+		!migrationLoading &&
+		!migrationSaving &&
+		(!!migrationError || migrationPlan?.status === 'blocked');
+	const conversionRunnable =
+		convertingProvider &&
+		!!migrationPlan &&
+		migrationPlan.status !== 'blocked' &&
+		!migrationError &&
+		!migrationLoading;
+
 	const handleSave = useCallback(async () => {
 		if (!session || migrationSaving) return;
 		if (
-			translationRequested &&
+			(!!translationReview || conversionRunnable) &&
 			(!migrationPlan ||
 				migrationLoading ||
 				migrationPlan.status === 'blocked' ||
@@ -758,6 +759,8 @@ export function EditAgentModal({
 			return;
 		}
 
+		if (translationRequested && migrationLoading) return;
+		const converting = conversionRunnable;
 		const name = instanceName.trim();
 		if (!name) return;
 
@@ -811,7 +814,9 @@ export function EditAgentModal({
 					undefined
 				: contextWindowValue !== seededContextWindowRef.current
 					? ('user-edited' as const)
-					: session.contextWindowSource;
+					: providerChanged
+						? parkedOverrides.contextWindowSource
+						: session.contextWindowSource;
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
@@ -838,6 +843,17 @@ export function EditAgentModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
+		const formCustomPath = customPath.trim() || undefined;
+		const formCustomArgs = customArgs.trim() || undefined;
+		const formCustomEnvVars = Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined;
+		// A conversion owns the binary, arguments and account environment, so
+		// only a value the user actually changed from the parked seed is sent
+		// (and refused by the save, which asks for it in a separate edit).
+		const editedFromParked = <T,>(value: T | undefined, parked: T | undefined) =>
+			converting && canonicalJson(value ?? null) === canonicalJson(parked ?? null)
+				? undefined
+				: value;
+
 		// Save with per-session config fields including model, contextWindow, and SSH config
 		setMigrationSaving(true);
 		setMigrationError('');
@@ -848,9 +864,9 @@ export function EditAgentModal({
 				providerChanged ? selectedToolType : undefined,
 				nudgeMessage.trim() || undefined,
 				newSessionMessage.trim() || undefined,
-				customPath.trim() || undefined,
-				customArgs.trim() || undefined,
-				Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
+				editedFromParked(formCustomPath, parkedOverrides.customPath),
+				editedFromParked(formCustomArgs, parkedOverrides.customArgs),
+				editedFromParked(formCustomEnvVars, parkedOverrides.customEnvVars),
 				modelValue,
 				effortValue,
 				contextWindowValue,
@@ -880,11 +896,12 @@ export function EditAgentModal({
 					worktreePeerAccess,
 				},
 			];
-			if (providerChanged) {
+			if (converting) {
 				saveArguments[27] = acceptTranslationLimitations;
 				saveArguments[28] = [];
 				saveArguments[29] = migrationPlan?.id;
 				saveArguments[30] = projectResourcesIntoRepo;
+				saveArguments[31] = true;
 			}
 			const saved = onSave(...saveArguments);
 			if (saved) await saved;
@@ -898,6 +915,9 @@ export function EditAgentModal({
 		translationReview,
 		translationRequested,
 		migrationSaving,
+		convertingProvider,
+		conversionRunnable,
+		parkedOverrides,
 		migrationPlan,
 		migrationLoading,
 		acceptTranslationLimitations,
@@ -980,6 +1000,7 @@ export function EditAgentModal({
 			!newWorkingDirUnverified &&
 			!migrationSaving &&
 			(!translationRequested ||
+				(!translationReview && conversionFailed) ||
 				(!!migrationPlan &&
 					!migrationLoading &&
 					migrationPlan.status !== 'blocked' &&
@@ -993,6 +1014,8 @@ export function EditAgentModal({
 		newWorkingDirUnverified,
 		migrationSaving,
 		translationRequested,
+		translationReview,
+		conversionFailed,
 		migrationPlan,
 		migrationLoading,
 		acceptTranslationLimitations,
@@ -1196,6 +1219,8 @@ export function EditAgentModal({
 								</label>
 							) : migrationLoading ? (
 								'Checking carry-over…'
+							) : conversionFailed ? (
+								'Saving switches without converting.'
 							) : migrationError || migrationPlan?.status === 'blocked' ? (
 								'Provider switch blocked. Review the Provider tab.'
 							) : null}
@@ -1315,6 +1340,8 @@ export function EditAgentModal({
 									options={providerOptions}
 									onChange={(providerId) => {
 										setProjectResourcesIntoRepo(false);
+										setConvertProviderHistory(false);
+										setAcceptTranslationLimitations(false);
 										setSelectedToolType(providerId as ToolType);
 									}}
 								>
@@ -1322,7 +1349,7 @@ export function EditAgentModal({
 										Some providers support the ability to transfer sessions, memories, subagents,
 										etc between them. They are denoted as {carryOverBadge} in the list.
 									</div>
-									{translationRequested && (
+									{(providerChanged || translationReview) && (
 										<div
 											className="mt-2 p-2 rounded border text-xs space-y-2"
 											style={{
@@ -1334,69 +1361,87 @@ export function EditAgentModal({
 											<div className="flex items-start gap-2">
 												<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 												<span>
-													Tabs, transcripts, drafts, queue and file previews are preserved. Native
-													conversion remains unverified until resume and round-trip acceptance are
-													proved.
+													{translationRequested
+														? 'Tabs, transcripts, drafts, queue and file previews are preserved. Native conversion remains unverified until resume and round-trip acceptance are proved.'
+														: `Tabs, transcripts, drafts, queue and file previews are kept. Each tab that follows the agent starts a new ${agentName} conversation; switching back to ${getAgentDisplayName(session.toolType)} resumes where it left off. Explicitly pinned tabs keep their provider.`}
 												</span>
 											</div>
-											<label className="flex items-center gap-2">
-												<input
-													type="checkbox"
-													checked={projectResourcesIntoRepo}
-													disabled={migrationSaving}
-													onChange={(e) => setProjectResourcesIntoRepo(e.target.checked)}
-												/>
-												Also install skills and subagents into the project (git-excluded)
-											</label>
-											{migrationPlan && !migrationLoading && (
-												<StatCardGrid
-													theme={theme}
-													minColumnWidth={120}
-													cards={[
-														{ label: 'Sessions', value: migrationPlan.tabs.length },
-														{
-															label:
-																migrationPlan.counts.messages === undefined
-																	? 'Records'
-																	: 'Messages',
-															value: migrationPlan.counts.messages ?? migrationPlan.counts.records,
-															displayValue: formatCount(
-																migrationPlan.counts.messages ?? migrationPlan.counts.records
-															),
-														},
-														{
-															label: 'On next use',
-															value: migrationPlan.deferredTabs?.length ?? 0,
-														},
-													]}
-												/>
+											{canConvertProvider && !translationReview && (
+												<label className="flex items-center gap-2">
+													<input
+														type="checkbox"
+														checked={convertProviderHistory}
+														disabled={migrationSaving}
+														onChange={(event) => setConvertProviderHistory(event.target.checked)}
+													/>
+													Convert memory and session history
+												</label>
 											)}
-											<div role="status" aria-live="polite" className="flex items-center gap-2">
-												{migrationActivity && (
-													<Spinner size={14} color={theme.colors.accent} decorative />
-												)}
-												<span>
-													{migrationActivity ??
-														(migrationError || migrationPlan?.status === 'blocked'
-															? 'Resolve the issue below to switch providers.'
-															: migrationPlan?.status === 'deferred'
-																? 'Ready. The switch will wait for the current turn to finish.'
-																: 'Ready to switch providers.')}
-												</span>
-											</div>
-											{migrationNotices.map((limit) => (
-												<div
-													key={`${limit.severity}-${limit.code}-${limit.message}`}
-													style={{
-														color:
-															limit.severity === 'block'
-																? theme.colors.error
-																: theme.colors.textDim,
-													}}
-												>
-													{limit.message}
-												</div>
-											))}
+											{translationRequested && (
+												<>
+													<label className="flex items-center gap-2">
+														<input
+															type="checkbox"
+															checked={projectResourcesIntoRepo}
+															disabled={migrationSaving}
+															onChange={(e) => setProjectResourcesIntoRepo(e.target.checked)}
+														/>
+														Also install skills and subagents into the project (git-excluded)
+													</label>
+													{migrationPlan && !migrationLoading && (
+														<StatCardGrid
+															theme={theme}
+															minColumnWidth={120}
+															cards={[
+																{ label: 'Sessions', value: migrationPlan.tabs.length },
+																{
+																	label:
+																		migrationPlan.counts.messages === undefined
+																			? 'Records'
+																			: 'Messages',
+																	value:
+																		migrationPlan.counts.messages ?? migrationPlan.counts.records,
+																	displayValue: formatCount(
+																		migrationPlan.counts.messages ?? migrationPlan.counts.records
+																	),
+																},
+																{
+																	label: 'On next use',
+																	value: migrationPlan.deferredTabs?.length ?? 0,
+																},
+															]}
+														/>
+													)}
+													<div role="status" aria-live="polite" className="flex items-center gap-2">
+														{migrationActivity && (
+															<Spinner size={14} color={theme.colors.accent} decorative />
+														)}
+														<span>
+															{migrationActivity ??
+																(conversionFailed
+																	? 'Saving switches without converting.'
+																	: migrationError || migrationPlan?.status === 'blocked'
+																		? 'Resolve the issue below to switch providers.'
+																		: migrationPlan?.status === 'deferred'
+																			? 'Ready. The switch will wait for the current turn to finish.'
+																			: 'Ready to switch providers.')}
+														</span>
+													</div>
+													{migrationNotices.map((limit) => (
+														<div
+															key={`${limit.severity}-${limit.code}-${limit.message}`}
+															style={{
+																color:
+																	limit.severity === 'block'
+																		? theme.colors.error
+																		: theme.colors.textDim,
+															}}
+														>
+															{limit.message}
+														</div>
+													))}
+												</>
+											)}
 										</div>
 									)}
 									{migrationError && (
@@ -1406,6 +1451,11 @@ export function EditAgentModal({
 											style={{ color: theme.colors.error }}
 										>
 											{migrationError}
+										</div>
+									)}
+									{conversionFailed && (
+										<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+											The conversion cannot run, so saving switches providers without converting.
 										</div>
 									)}
 								</AgentProviderSelect>

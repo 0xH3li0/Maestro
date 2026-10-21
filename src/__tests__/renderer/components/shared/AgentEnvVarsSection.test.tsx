@@ -131,4 +131,13 @@ describe('AgentEnvVarsSection', () => {
 		expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
 		expect(screen.getByText('1 (when resuming)')).toBeInTheDocument();
 	});
+
+	it('keeps the built-in variable tooltip distinct from the form surface', () => {
+		const theme = createMockTheme({ colors: { surfaceElevated: '#312449' } });
+		render(<AgentEnvVarsSection {...createProps({ theme, showBuiltInEnvVars: true })} />);
+		fireEvent.click(screen.getByTitle('What is this?'));
+		expect(screen.getByText(/Set to "1" when resuming/)).toHaveStyle({
+			backgroundColor: '#312449',
+		});
+	});
 });

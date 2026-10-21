@@ -5,6 +5,7 @@
  * provider swap.
  *
  * Parking and turn attribution come from `maestro-lib/agents/providerSwap.ts`.
+ * A provider change parks native state unless conversion is selected.
  * Desktop and headless sends translate missing native context through the
  * same library gate before launching the captured provider.
  * Re-exports keep existing renderer import sites on the shared helpers.

@@ -7,6 +7,7 @@ import {
 	FolderInput,
 	FolderPlus,
 	FolderUp,
+	PackagePlus,
 	Plus,
 	Settings,
 	Trash2,
@@ -16,6 +17,7 @@ import type { Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -31,6 +33,8 @@ interface GroupContextMenuProps {
 	/** Open the Delegation Graph on this group. */
 	onOpenDelegationGraph?: () => void;
 	onNewAgent: () => void;
+	/** Import a bundled agent into this group. */
+	onImportAgent?: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
 	deleteLabel?: string;
@@ -62,6 +66,7 @@ export function GroupContextMenu({
 	onGroupSettings,
 	onOpenDelegationGraph,
 	onNewAgent,
+	onImportAgent,
 	onDelete,
 	deleteLabel,
 	eligibleParentGroups = [],
@@ -108,13 +113,12 @@ export function GroupContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
 				// The measured budget, not `100vh`: this menu can be pushed DOWN as
 				// well as up, and a viewport-sized cap on a menu anchored low still
@@ -131,6 +135,36 @@ export function GroupContextMenu({
 				<span className="truncate max-w-[12rem]">{group.name}</span>
 			</div>
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
+			<button
+				type="button"
+				onClick={() => {
+					onNewAgent();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.accent }}
+			>
+				<Plus className="w-3.5 h-3.5" />
+				New Agent in Group...
+			</button>
+
+			{/* Right under New Agent: the other way an agent arrives in a group. */}
+			{onImportAgent && (
+				<button
+					type="button"
+					onClick={() => {
+						onImportAgent();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<PackagePlus className="w-3.5 h-3.5" />
+					Import Agent...
+				</button>
+			)}
 
 			<button
 				type="button"
@@ -179,19 +213,6 @@ export function GroupContextMenu({
 					Delegation Graph
 				</button>
 			)}
-
-			<button
-				type="button"
-				onClick={() => {
-					onNewAgent();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.accent }}
-			>
-				<Plus className="w-3.5 h-3.5" />
-				New Agent in Group...
-			</button>
 
 			{showMoveToWindow && (
 				<div>

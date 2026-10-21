@@ -1014,6 +1014,8 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getIndexingState: vi.fn().mockResolvedValue({ jobs: [] }),
+		onIndexingUpdate: vi.fn(() => () => {}),
 		getTokenUsage: vi.fn().mockResolvedValue({
 			totals: {
 				inputTokens: 0,
