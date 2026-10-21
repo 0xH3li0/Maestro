@@ -31,6 +31,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 	'webhook.received': 'Webhook',
+	'plugin.event': 'Plugin Event',
 };
 
 /** True when a trigger's webhook settings carry a secret (env var or literal). */
