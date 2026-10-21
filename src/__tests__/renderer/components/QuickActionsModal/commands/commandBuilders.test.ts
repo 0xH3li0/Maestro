@@ -56,6 +56,29 @@ describe('QuickActions command builders', () => {
 		});
 		expect(management.map((a) => a.id)).toContain('toggleBookmark');
 		expect(management.map((a) => a.id)).toContain('clearAllBookmarks');
+
+		// Export opens the Export Agent modal on the active agent; Import uses its group.
+		management.find((a) => a.id === 'exportAgent')!.action();
+		expect(useModalStore.getState().getData('agentExport')).toEqual({ sessionId: 's1' });
+		management.find((a) => a.id === 'importAgent')!.action();
+		expect(useModalStore.getState().isOpen('agentImport')).toBe(true);
+	});
+
+	it('offers no Export Agent for a terminal agent', () => {
+		const terminal = createMockSession({ id: 't1', name: 'Shell', toolType: 'terminal' });
+		const management = buildSessionManagementCommands({
+			activeSession: terminal,
+			activeSessionId: 't1',
+			sessions: [terminal],
+			setSessions,
+			setQuickActionOpen: close,
+			setRenameInstanceModalOpen: vi.fn(),
+			setRenameInstanceValue: vi.fn(),
+			deleteSession: vi.fn(),
+			openClearBookmarksConfirm: vi.fn(),
+		});
+		expect(management.map((a) => a.id)).not.toContain('exportAgent');
+		expect(management.map((a) => a.id)).toContain('importAgent');
 	});
 
 	it('builds agent panel, move-to-group, switcher, and group-chat commands', () => {

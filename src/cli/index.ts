@@ -1586,6 +1586,11 @@ bundle
 		'--no-claude-memory',
 		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
 	)
+	.option('--no-cue', "Leave out the agent's Cue subscriptions (--agent only)")
+	.option(
+		'--exact',
+		'Exact copy: also carry secret values, binary paths, SSH and other providers settings, and local folders, so an import on this machine restores the agent as it was. Do not share the file'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => bundleExport(cliVersion, options));
 
@@ -1627,6 +1632,11 @@ bundle
 	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
 	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
 	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option('-g, --group <id>', 'Put the agents the import creates in this Left Bar group')
+	.option(
+		'--no-local',
+		"Ignore an exact copy's machine data (secret values, binary paths, SSH, folders)"
+	)
 	.option(
 		'--reject-shell-commands',
 		'Refuse the import, before anything is written, if any subscription runs a shell command'
@@ -1951,7 +1961,11 @@ program
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
-		'Translate owned conversations and selected project knowledge to another provider'
+		'Switch to another provider; tabs keep their transcripts and start fresh conversations there'
+	)
+	.option(
+		'--convert',
+		'With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below)'
 	)
 	.option('--force', 'Alias for --accept-translation-limitations')
 	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
@@ -3131,6 +3145,14 @@ quickChatCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
+
+quickChatCmd
+	.command('steer [message-id]')
+	.description(
+		'Steer a queued message into the reply already running in its tab, so the agent changes course now instead of answering it afterwards (default: the latest steerable one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('steer', { messageId }, options));
 
 quickChatCmd
 	.command('history')

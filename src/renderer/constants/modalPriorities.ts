@@ -99,6 +99,12 @@ export const MODAL_PRIORITIES = {
 	/** Rename group modal */
 	RENAME_GROUP: 850,
 
+	/** Export Agent modal (Left Bar right-click on an agent) */
+	AGENT_EXPORT: 830,
+
+	/** Import Agent modal (Left Bar right-click on a group) */
+	AGENT_IMPORT: 829,
+
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 
