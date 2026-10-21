@@ -647,6 +647,58 @@ describe('DelegationGraphView', () => {
 	});
 
 	describe('Document Graph shortcuts', () => {
+		it.each(['metaKey', 'ctrlKey'] as const)(
+			'toggles View and Edit with %s+E, consumes the chord and focuses the canvas',
+			(modifier) => {
+				initialMode = 'view';
+				const sessionsBefore = useSessionStore.getState().sessions;
+				renderView();
+				const canvas = screen.getByTestId('document-graph-canvas');
+				const event = createEvent.keyDown(canvas, { key: 'e', [modifier]: true });
+				fireEvent(canvas, event);
+				expect(event.defaultPrevented).toBe(true);
+				expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+				expect(screen.getByTestId('delegation-graph-view')).toHaveFocus();
+				fireEvent.keyDown(screen.getByTestId('delegation-graph-scope'), {
+					key: 'E',
+					[modifier]: true,
+				});
+				expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
+				expect(screen.getByTestId('document-graph-canvas')).toHaveFocus();
+				expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			}
+		);
+
+		it('ignores plain E, repeated chords, other modifiers, composition and text editing', () => {
+			renderView();
+			const view = screen.getByTestId('delegation-graph-view');
+			fireEvent.keyDown(view, { key: 'e' });
+			for (const flag of ['repeat', 'shiftKey', 'altKey', 'isComposing']) {
+				fireEvent.keyDown(view, { key: 'e', metaKey: true, [flag]: true });
+			}
+			const input = document.createElement('input');
+			view.append(input);
+			fireEvent.keyDown(input, { key: 'e', metaKey: true });
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('leaves a pending relationship open on Cmd+E', () => {
+			renderView();
+			connect('a', 'e');
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'e', metaKey: true });
+			expect(edgeEditor()).toBeInTheDocument();
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('leaves a layout confirmation open on Cmd+E', () => {
+			renderView();
+			drag('a', DRAGGED);
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'l' });
+			fireEvent.keyDown(screen.getByTestId('delegation-graph-view'), { key: 'e', metaKey: true });
+			expect(screen.getByTestId('delegation-graph-confirm')).toBeInTheDocument();
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+		});
+
 		it('focuses the replacement canvas after switching mode or scope', () => {
 			renderView();
 			expect(screen.getByTestId('delegation-graph-view')).toHaveFocus();
@@ -930,7 +982,9 @@ describe('DelegationGraphView', () => {
 
 		it('offers the shared layout choices and keeps the chosen layout per scope', () => {
 			renderView();
-			fireEvent.click(screen.getByTestId('delegation-graph-layout-mindmap'));
+			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
+				target: { value: 'mindmap' },
+			});
 			expect(sharedCanvas.props?.layoutType).toBe('mindmap');
 			changeScope(PLATFORM_KEY);
 			expect(sharedCanvas.props?.layoutType).toBe('hierarchical');
@@ -2100,7 +2154,7 @@ describe('DelegationGraphView', () => {
 				});
 				expect(writeCount()).toBe(1);
 				expect(positionsOnCanvas()).toEqual({ ...before, c: GAMMA_DROP });
-				expect(screen.getByTestId('delegation-graph-layout-manual')).toBeInTheDocument();
+				expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('manual');
 			});
 
 			it('keeps the agent where it was dropped after the drag ends and the write settles', () => {
@@ -2478,7 +2532,7 @@ describe('DelegationGraphView', () => {
 	describe('dragging', () => {
 		it('turns the scope manual on the first move and saves every agent', () => {
 			renderView();
-			expect(screen.queryByTestId('delegation-graph-layout-manual')).toBeNull();
+			expect(screen.getByRole('combobox', { name: 'Layout' })).not.toHaveValue('manual');
 			expect(screen.getByTestId('delegation-graph-reset')).toBeDisabled();
 			const before = positionsOnCanvas();
 
@@ -2488,7 +2542,7 @@ describe('DelegationGraphView', () => {
 				layout: 'manual',
 				positions: { ...before, a: DRAGGED },
 			});
-			expect(screen.getByTestId('delegation-graph-layout-manual')).toBeInTheDocument();
+			expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('manual');
 			expect(screen.getByTestId('delegation-graph-reset')).toBeEnabled();
 		});
 
@@ -2503,27 +2557,41 @@ describe('DelegationGraphView', () => {
 	});
 
 	describe('a named layout', () => {
+		it('offers every algorithm in a compact picker and shows manual placement without making it selectable', () => {
+			renderView();
+			const picker = screen.getByRole('combobox', { name: 'Layout' });
+			expect(
+				within(picker)
+					.getAllByRole('option')
+					.map((option) => option.getAttribute('value'))
+			).toEqual(['hierarchical', 'force', 'radial', 'mindmap', 'lobes']);
+			drag('a', DRAGGED);
+			expect(picker).toHaveValue('manual');
+			expect(within(picker).getByRole('option', { name: 'Manual' })).toBeDisabled();
+		});
+
 		// Moving between two algorithms destroys nothing the user made.
 		it('is applied at once when nothing was placed by hand', () => {
 			renderView();
 
-			fireEvent.click(screen.getByTestId('delegation-graph-layout-force'));
+			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
+				target: { value: 'force' },
+			});
 
 			expect(screen.queryByTestId('delegation-graph-confirm')).toBeNull();
 			expect(layouts()[ALL_KEY].layout).toBe('force');
 			expect(Object.keys(layouts()[ALL_KEY].positions).sort()).toEqual(ALL_IDS);
 			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
-			expect(screen.getByTestId('delegation-graph-layout-force')).toHaveAttribute(
-				'aria-checked',
-				'true'
-			);
+			expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('force');
 		});
 
 		it('asks first when the scope was arranged by hand, and changes nothing on Cancel', () => {
 			renderView();
 			drag('a', DRAGGED);
 
-			fireEvent.click(screen.getByTestId('delegation-graph-layout-radial'));
+			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
+				target: { value: 'radial' },
+			});
 			const dialog = screen.getByTestId('delegation-graph-confirm');
 			expect(layouts()[ALL_KEY].layout).toBe('manual');
 
@@ -2538,7 +2606,9 @@ describe('DelegationGraphView', () => {
 			renderView();
 			drag('a', DRAGGED);
 
-			fireEvent.click(screen.getByTestId('delegation-graph-layout-radial'));
+			fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), {
+				target: { value: 'radial' },
+			});
 			fireEvent.click(
 				within(screen.getByTestId('delegation-graph-confirm')).getByRole('button', {
 					name: `Apply ${DELEGATION_LAYOUT_LABELS.radial.name}`,
@@ -2549,7 +2619,7 @@ describe('DelegationGraphView', () => {
 			expect(layouts()[ALL_KEY].layout).toBe('radial');
 			expect(positionOf('a')).not.toEqual(DRAGGED);
 			expect(positionsOnCanvas()).toEqual(layouts()[ALL_KEY].positions);
-			expect(screen.queryByTestId('delegation-graph-layout-manual')).toBeNull();
+			expect(screen.getByRole('combobox', { name: 'Layout' })).not.toHaveValue('manual');
 		});
 
 		it('forgets the arrangement on a confirmed reset', () => {
