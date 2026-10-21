@@ -167,7 +167,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		if (isDurableCueEvent(entry.event)) {
 			try {
 				persistQueuedEvent(record);
-				return getQueuedEvents().some(
+				return getQueuedEvents(sessionId).some(
 					(row) => row.id === record.id && row.eventJson === record.eventJson
 				);
 			} catch {

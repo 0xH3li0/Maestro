@@ -373,6 +373,10 @@ export class CueEngine {
 		this.runManager = createCueRunManager({
 			getSessions: deps.getSessions,
 			getSessionSettings: (sessionId) => this.registry.get(sessionId)?.config.settings,
+			canDrainSession: (sessionId) =>
+				this.enabled &&
+				this.registry.has(sessionId) &&
+				deps.getSessions().some((session) => session.id === sessionId),
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,

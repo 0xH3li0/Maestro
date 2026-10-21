@@ -90,6 +90,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			parentEventId?: string
 		): number {
 			if (!authorizePluginCueEvent(event, ownerSessionId, sub.name, false)) return 0;
+			// Durable fan-out has no atomic admission contract in this API version.
+			if (isDurableCueEvent(event) && sub.fan_out?.length) return 0;
 			// Telemetry: one `trigger_fired` per subscription dispatch (not per
 			// fan-out target). Best-effort and gated on Encore flags inside the
 			// telemetry module - never throws into the dispatch path.
@@ -123,17 +125,15 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						continue;
 					}
 
-					const fanOutEvent: CueEvent = isDurableCueEvent(event)
-						? event
-						: {
-								...event,
-								id: crypto.randomUUID(),
-								payload: {
-									...event.payload,
-									fanOutSource: sourceSessionName,
-									fanOutIndex: i,
-								},
-							};
+					const fanOutEvent: CueEvent = {
+						...event,
+						id: crypto.randomUUID(),
+						payload: {
+							...event.payload,
+							fanOutSource: sourceSessionName,
+							fanOutIndex: i,
+						},
+					};
 					// The normalizer (cue-config-normalizer.ts) resolves prompt_file → prompt
 					// content at config load time. sub.prompt is always a string post-normalization.
 					const perTargetPrompt = sub.fan_out_prompts?.[i];
@@ -163,7 +163,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						undefined, // autoRun: same
 						turnSettings
 					);
-					if (isDurableCueEvent(event) ? accepted === true : accepted !== false) dispatched++;
+					if (accepted !== false) dispatched++;
 				}
 				// If every fan-out target was skipped the user sees nothing happen -
 				// surface a loud error so they can fix the broken prompts. This was
@@ -175,7 +175,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						`[CUE] "${sub.name}": no fan-out targets ran (${skippedTargets.join('; ')}). Check that each agent has a prompt configured.`
 					);
 				}
-				return isDurableCueEvent(event) && dispatched !== sub.fan_out.length ? 0 : dispatched;
+				return dispatched;
 			}
 
 			// For `action: notify` the prompt slot carries the resolved toast

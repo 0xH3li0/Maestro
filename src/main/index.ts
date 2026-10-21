@@ -1653,7 +1653,14 @@ app
 					if (project === undefined) continue;
 					if (typeof project !== 'string' || !path.isAbsolute(project))
 						throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-					const canonical = realpathSync(project);
+					let canonical: string;
+					try {
+						canonical = realpathSync(project);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT')
+							throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+						canonical = path.resolve(project);
+					}
 					if (
 						[path.relative(canonical, toolProofBase), path.relative(toolProofBase, canonical)].some(
 							(relative) =>

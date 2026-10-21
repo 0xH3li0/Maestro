@@ -591,7 +591,11 @@ export function createPluginRunProofFile(
 }
 export function removePluginRunProofFile(file: string): void {
 	const dir = path.dirname(file);
-	if (path.basename(file) !== 'proof' || !path.basename(dir).startsWith('maestro-plugin-run-'))
+	if (
+		path.basename(file) !== 'proof' ||
+		!path.basename(dir).startsWith('maestro-plugin-run-') ||
+		!proofDirectories.has(dir)
+	)
 		return;
 	fs.rmSync(dir, { recursive: true, force: true });
 	proofDirectories.delete(dir);

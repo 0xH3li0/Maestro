@@ -223,6 +223,11 @@ describe('CueEngine.drain', () => {
 		{ queueSize: 1, failure: 'late-config' },
 		{ queueSize: 1, failure: 'teardown' },
 		{ queueSize: 1, failure: 'hidden-before-teardown' },
+		{ queueSize: 1, failure: 'live-watch-refresh' },
+		{ queueSize: 1, failure: 'live-watch-completion' },
+		{ queueSize: 1, failure: 'live-watch-revoke' },
+		{ queueSize: 1, failure: 'live-watch-remove' },
+		{ queueSize: 1, failure: 'live-watch-stop' },
 		{ queueSize: 1, failure: 'removed-source' },
 		{ queueSize: 1, failure: 'removed-config' },
 	])(
@@ -365,6 +370,41 @@ describe('CueEngine.drain', () => {
 					parentEventId: 'original-parent',
 					turnSettingsJson: JSON.stringify({ model: 'stored-model' }),
 				});
+				if (failure.startsWith('live-watch-')) {
+					getSessions.mockReturnValue([]);
+					engine.refreshSession(alpha.id, '/p/a');
+					expect(queueRows()).toEqual(queued);
+					if (failure !== 'live-watch-refresh') {
+						exec.finish('plugin-sub');
+						await flush();
+						expect(exec.calls).toHaveLength(1);
+						expect(queueRows()).toHaveLength(1);
+					}
+					getSessions.mockReturnValue([alpha]);
+					engine.refreshSession(alpha.id, '/p/a');
+					if (['live-watch-revoke', 'live-watch-remove', 'live-watch-stop'].includes(failure)) {
+						if (failure === 'live-watch-revoke') available = false;
+						else if (failure === 'live-watch-remove') {
+							storedOwner = false;
+							getSessions.mockReturnValue([]);
+							engine.removeSession(alpha.id);
+						} else engine.stop();
+						await flush();
+						expect(exec.calls).toHaveLength(1);
+						expect(queueRows()).toHaveLength(failure === 'live-watch-stop' ? 1 : 0);
+						return;
+					}
+					if (failure !== 'live-watch-refresh') {
+						await flush();
+						expect(exec.calls).toHaveLength(2);
+						expect(exec.onCueRun.mock.calls[1][0]).toMatchObject({ prompt: 'stored second' });
+						exec.finish('plugin-sub');
+						await flush();
+						expect(queueRows()).toEqual([]);
+						return;
+					}
+					expect(queueRows()).toEqual(queued);
+				}
 				retry();
 				expect(queueRows()).toEqual(queued);
 				exec.finish('plugin-sub');

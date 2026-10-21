@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 import {
 	PluginToolRunIdentity,
@@ -158,6 +159,18 @@ describe('PluginToolRunIdentity', () => {
 			expect(runs.getReceipts(token)).toEqual([]);
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+
+	it('preserves an unregistered lookalike proof directory during cleanup', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-plugin-run-'));
+		const file = path.join(dir, 'proof');
+		try {
+			fs.writeFileSync(file, 'foreign fixture');
+			removePluginRunProofFile(file);
+			expect(fs.readFileSync(file, 'utf8')).toBe('foreign fixture');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 

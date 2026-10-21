@@ -1093,6 +1093,44 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 		expect(unregister).toHaveBeenCalledTimes(1);
 	});
 
+	it('holds acknowledged plugin queue entries when a YAML refresh loses only live owner visibility', () => {
+		const session = createMockSession();
+		mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
+		mockDetailedResult = null;
+		let visible = true;
+		const retainQueue = vi.fn<Parameters<typeof createCueSessionRuntimeService>[0]['retainQueue']>(
+			() => 0
+		);
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => (visible ? [session] : []),
+			onRefreshRequested: vi.fn(),
+			onLog: vi.fn(),
+			registry: createCueSessionRegistry(),
+			dispatchSubscription: vi.fn(),
+			clearQueue: vi.fn(),
+			retainQueue,
+			clearFanInState: vi.fn(),
+		});
+		try {
+			service.initSession(session, { reason: 'system-boot' });
+			visible = false;
+			expect(service.refreshSession(session.id, session.projectRoot)).toMatchObject({
+				reloaded: false,
+				configRemoved: false,
+			});
+			expect(retainQueue).toHaveBeenCalledTimes(1);
+			const decide = retainQueue.mock.calls[0][1] as (entry: {
+				event: { type: string };
+			}) => string | null;
+			expect(decide({ event: { type: 'plugin.event' } })).toBeNull();
+			expect(decide({ event: { type: 'app.startup' } })).toBeNull();
+			expect(decide({ event: { type: 'time.heartbeat' } })).toBe('session-missing');
+		} finally {
+			service.teardownSession(session.id);
+		}
+	});
+
 	it.each([0, 1])('returns actual admission count %s to the durable publisher', (accepted) => {
 		const session = createMockSession();
 		const sub = {

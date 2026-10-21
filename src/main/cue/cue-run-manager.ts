@@ -139,6 +139,8 @@ export interface QueuedEvent {
 export interface CueRunManagerDeps {
 	getSessions: () => { id: string; name: string }[];
 	getSessionSettings: (sessionId: string) => CueSettings | undefined;
+	/** Live owner and loaded runtime readiness; distinct from current plugin authority. */
+	canDrainSession?: (sessionId: string) => boolean;
 	onCueRun: (request: {
 		runId: string;
 		sessionId: string;
@@ -409,6 +411,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			if (currentCount >= maxConcurrent) break;
 
 			const entry = queue[i];
+			if (isDurableCueEvent(entry.event) && deps.canDrainSession?.(sessionId) === false) {
+				i++;
+				continue;
+			}
 			const ageMs = Date.now() - entry.queuedAt;
 
 			// Check for stale events
@@ -1459,6 +1465,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					{ type: 'queueDropped', sessionId, count, reason } satisfies CueLogPayload
 				);
 			}
+			// Refresh registers sources synchronously after settling this queue.
+			// Recheck the current map/readiness in the next microtask, never a
+			// captured entry; stop/reset/deletion can empty it before then.
+			if (kept.some((entry) => isDurableCueEvent(entry.event)))
+				queueMicrotask(() => {
+					if (deps.canDrainSession?.(sessionId) !== false) drainQueue(sessionId);
+				});
 			return dropped;
 		},
 

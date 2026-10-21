@@ -2225,6 +2225,32 @@ describe('durable plugin admission and revocation', () => {
 			},
 		};
 	}
+	it('keeps a mixed startup and durable queue paused until the refreshed owner is ready', async () => {
+		const h = harness();
+		let ready = false;
+		h.deps.canDrainSession = () => ready;
+		h.manager.setDraining(true);
+		h.manager.execute('session-1', 'durable', h.mail, 'mail-sub');
+		h.manager.execute('session-1', 'startup', createEvent({ type: 'app.startup' }), 'startup-sub');
+		h.manager.setDraining(false);
+		try {
+			h.manager.retainQueue('session-1', () => null);
+			await Promise.resolve();
+			expect(h.deps.onCueRun).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().get('session-1')).toBe(2);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			ready = true;
+			h.manager.retainQueue('session-1', () => null);
+			await Promise.resolve();
+			expect(h.deps.onCueRun).toHaveBeenCalledTimes(1);
+			h.completion.resolve(makeResult());
+			await vi.waitFor(() => expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0));
+			expect(h.deps.onCueRun).toHaveBeenCalledTimes(2);
+		} finally {
+			h.manager.discardInMemory();
+			h.completion.resolve(makeResult());
+		}
+	});
 	it('persists an immediately admitted event until its terminal result', async () => {
 		const h = harness();
 		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(true);

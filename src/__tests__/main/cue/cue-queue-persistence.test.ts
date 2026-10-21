@@ -78,6 +78,23 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	it('acknowledges durable persistence without reading unrelated sessions', () => {
+		const p = makePersistence();
+		const db = getSharedDb(),
+			originalRead = db.getQueuedEvents.bind(db);
+		const read = vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+			if (id === undefined) throw Error('synthetic unrelated backlog unavailable');
+			return originalRead(id);
+		});
+		try {
+			expect(
+				p.persist('s-1', 'bounded-readback', makeEntry({ event: makeEvent('plugin.event') }))
+			).toBe(true);
+		} finally {
+			read.mockRestore();
+		}
+	});
+
 	it('recovers a failed startup snapshot without including new writes and resets exclusions next start', () => {
 		const p = makePersistence();
 		p.persist('s-1', 'old', makeEntry({ event: makeEvent('plugin.event') }));

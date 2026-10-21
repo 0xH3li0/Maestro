@@ -31,6 +31,7 @@ import { RELAY_PLUGIN_ID } from '../../../shared/plugins/relay-identity';
 import { getProviderProfileConfig } from '../../../shared/providerProfiles';
 
 vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+import { PluginAuthorityError } from '../../../main/plugins/plugin-authority';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 
 const indexPath = path.join(__dirname, '../../../main/index.ts');
@@ -86,6 +87,72 @@ function registryRegisterCallCount(): number {
 }
 
 describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
+	it.each(['missing', 'permission-error', 'overlap', 'appears'] as const)(
+		'keeps proof-location admission safe when registered project state is %s',
+		(mode) => {
+			let callback: ts.ArrowFunction | undefined;
+			const visit = (node: ts.Node): void => {
+				if (
+					ts.isVariableDeclaration(node) &&
+					ts.isIdentifier(node.name) &&
+					node.name.text === 'assertToolProofLocation' &&
+					node.initializer &&
+					ts.isArrowFunction(node.initializer)
+				)
+					callback = node.initializer;
+				ts.forEachChild(node, visit);
+			};
+			visit(sf);
+			expect(callback).toBeDefined();
+			const base = path.resolve('synthetic-proof-base'),
+				project = path.resolve('synthetic-deleted-project');
+			let appeared = false;
+			const realpath = (target: string) => {
+				if (target !== project) return target;
+				if (mode === 'overlap' || appeared) return base;
+				throw Object.assign(new Error('private filesystem diagnostic'), {
+					code: mode === 'permission-error' ? 'EACCES' : 'ENOENT',
+				});
+			};
+			const code = ts.transpileModule(`const assertLocation = ${callback!.getText(sf)}`, {
+				compilerOptions: { target: ts.ScriptTarget.ES2024 },
+			}).outputText;
+			const assertLocation = new Function(
+				'DEMO_MODE',
+				'process',
+				'app',
+				'toolProofBase',
+				'realpathSync',
+				'sessionsStore',
+				'path',
+				'PluginAuthorityError',
+				'lstatSync',
+				`${code}\nreturn assertLocation;`
+			)(
+				false,
+				{ platform: 'linux' },
+				{ getPath: () => base },
+				base,
+				realpath,
+				{ get: () => [{ cwd: project, projectRoot: project }] },
+				path,
+				PluginAuthorityError,
+				() => {
+					throw Object.assign(new Error(), { code: 'ENOENT' });
+				}
+			);
+			if (mode === 'permission-error' || mode === 'overlap')
+				expect(assertLocation).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+			else {
+				expect(assertLocation).not.toThrow();
+				if (mode === 'appears') {
+					appeared = true;
+					expect(assertLocation).toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
+				}
+			}
+		}
+	);
+
 	it('projects worktree parent metadata without exposing session content or changing agent IDs', () => {
 		let callback: ts.ArrowFunction | undefined;
 		const visit = (node: ts.Node): void => {
