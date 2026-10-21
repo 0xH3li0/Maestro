@@ -424,6 +424,10 @@ export class PluginMediaTools {
 					this.check(job);
 					job.stagedDir = await fs.mkdtemp(path.join(cwd, '.maestro-audio-'));
 					await fs.chmod(job.stagedDir, 0o700);
+					await fs.writeFile(path.join(job.stagedDir, '.gitignore'), '*\n', {
+						flag: 'wx',
+						mode: 0o600,
+					});
 					this.check(job);
 					const filename = `${randomUUID()}.ogg`;
 					const file = path.join(job.stagedDir, filename);

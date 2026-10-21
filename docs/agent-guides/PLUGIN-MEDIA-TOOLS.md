@@ -206,7 +206,10 @@ upgrade old grants. Exact agent dispatch, Unattended, signature, provider-sessio
 ownership and the existing prompt risk policy apply unchanged.
 
 The Host probes the original and stages a byte-identical copy in a private random
-directory under the actual agent cwd, with a random `.ogg` basename. The final
+directory under the actual agent cwd, with a random `.ogg` basename. A private
+`.gitignore` containing `*` is written before any original bytes, excluding staging
+from ordinary Git adds. This is accidental-commit protection, not a restriction
+on a deliberately forced add by the already permitted agent. The final
 prompt receives the generated local path, byte count and SHA-256. No uploader
 filename or CDN URL is copied into this block. The result's optional
 `originalAttachments: [{filename,bytes,sha256}]` proves staging only, never model

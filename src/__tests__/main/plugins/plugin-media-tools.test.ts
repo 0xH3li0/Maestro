@@ -244,6 +244,41 @@ describe('media tools boundary', () => {
 		}
 	);
 
+	it('keeps a staged original out of a normal git add while its provider lease is live', async () => {
+		const { execFileSync } =
+			await vi.importActual<typeof import('node:child_process')>('node:child_process');
+		const cwd = path.join(root, 'project');
+		await fs.mkdir(cwd);
+		execFileSync('git', ['init', '--quiet', cwd]);
+		await fs.writeFile(path.join(cwd, 'README.md'), 'synthetic project');
+		const jobId = await open(),
+			audioId = await download(jobId);
+		await tools.forwardOriginal(
+			'p',
+			{ jobId, audioId },
+			() => {},
+			async (lease) => {
+				const staged = await lease.prepare(cwd);
+				const relative = path.relative(cwd, staged.path).split(path.sep).join('/');
+				expect(
+					execFileSync('git', ['check-ignore', '--', relative], { cwd, encoding: 'utf8' }).trim()
+				).toBe(relative);
+				expect(await fs.readFile(path.join(path.dirname(staged.path), '.gitignore'), 'utf8')).toBe(
+					'*\n'
+				);
+				if (process.platform !== 'win32')
+					expect(
+						(await fs.stat(path.join(path.dirname(staged.path), '.gitignore'))).mode & 0o777
+					).toBe(0o600);
+				execFileSync('git', ['add', '-A'], { cwd });
+				expect(execFileSync('git', ['ls-files'], { cwd, encoding: 'utf8' }).trim()).toBe(
+					'README.md'
+				);
+				expect(await fs.readFile(staged.path)).toEqual(Buffer.from([79, 103, 103, 83, 255]));
+			}
+		);
+	});
+
 	it.each(['foreign', 'incomplete', 'decoded', 'alias'] as const)(
 		'rejects %s handles before staging',
 		async (mode) => {
