@@ -166,6 +166,7 @@ type SpawnOverrides = Pick<
 	| 'timeoutMs'
 	| 'onProgress'
 	| 'onProcessStarted'
+	| 'requireProcessExit'
 	| 'maestroPMaxWaitSeconds'
 >;
 
@@ -1074,6 +1075,7 @@ async function spawnClaudeAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1480,6 +1482,7 @@ async function spawnJsonLineAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1533,6 +1536,12 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/**
+	 * Host-owned original attachments must outlive the actual child. On an
+	 * unconfirmed stop, retain this call and its caller's resources until exit,
+	 * close or a failed spawn is observed. Generic turns keep their bounded stop.
+	 */
+	requireProcessExit?: boolean;
 	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
 	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
@@ -1662,6 +1671,7 @@ async function spawnAgentOnce(
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
+		requireProcessExit: options?.requireProcessExit,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,
