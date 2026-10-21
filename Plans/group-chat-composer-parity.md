@@ -177,9 +177,18 @@ Rows 11, 35, 36, 40, 43 and 45 have no Group Chat version, so nothing is kept.
 - Cmd+. from the room composer focuses `terminalOutputRef` (`useMainKeyboardHandler.ts:925`), which belongs to the AI transcript.
 - Transcript rendering differs (`GroupChatMessages.tsx` vs `TerminalOutput` / `LogItem`), including message actions; not compared here.
 
+## Group Chat only features (outside the composer)
+
+Chat features a room has and AI chat does not. Not composer rows, so they are not in the feature tables or the Summary counts. Verified against `origin/rc` at `1109c8197` (2026-10-21). File locations are in the [appendix](#group-chat-only-features).
+
+- **G1, "Only work with agents that are free"** (`requireIdleParticipants`, on by default; a chat saved without the field counts as on). A toggle under "Agent Availability" in the New and Edit Group Chat modal, stored per chat. When it is on and the moderator delegates to a participant whose agent is busy with its own conversation, an Auto Run or a CLI run, the router posts a "Waiting for @agent" line, holds the delegation, and sends it once the agent is free. The wait polls every 5 seconds and re-reads the setting on each poll, so turning it off mid-wait releases the held request within about 5 seconds; it gives up after 15 minutes. Introduced in `d0cdaba91`, on rc and main.
+  - **AI chat today.** The nearest case is an `@mention` consult to a busy agent. The consult service never checks whether the target is busy: it spawns an ephemeral `cross-agent-<requestId>` process in the target's working directory straight away, beside whatever that agent is already running. A consult is read-only unless `crossAgentMentionsWritable` is on (default off), but a hand-off gets write access by default (`crossAgentHandoffsWritable`, default on).
+  - **Open question for the maintainer:** should a consult or hand-off to a busy agent wait the same way? Not proposed here.
+  - **CLI gap.** No `maestro-cli` path: `group-chat start` takes `--participant`, `--moderator`, `--message` and `--message-file`, with no availability option, so a CLI-started chat always gets the default (on), and no `group-chat` verb edits an existing chat's settings. Recorded here only; the row in `docs/agent-guides/CLI-UI-PARITY.md` is left for a separate change.
+
 ## Summary
 
-59 rows: the 57 audited features, row 12 split into 12a and 12b, and new row 58 (image viewer). 15 already shared. 38 proposed for sharing (26 as is, 12 with Group Chat behaviour). 11 left out. 10 not applicable. No open proposals.
+59 rows: the 57 audited features, row 12 split into 12a and 12b, and new row 58 (image viewer). 15 already shared. 38 proposed for sharing (26 as is, 12 with Group Chat behaviour). 11 left out. 10 not applicable. No open proposals. The Group Chat only setting G1 is listed separately and not counted.
 
 ## Appendix: file locations
 
@@ -246,3 +255,17 @@ Keyed by row number in the feature tables. Paths are relative to `src/renderer/`
 | 56  | `NotificationSendControls.tsx:86`, `ToolbarControls.tsx:317, 347`                                                                               | `title` only on send and toolbar buttons (`GroupChatInput.tsx:852`)                                                       |
 | 57  | `ToolbarControls.tsx:397, 488, 527`                                                                                                             | Prompt Composer only (`GroupChatInput.tsx:761`); Read-Only tooltip has no chord                                           |
 | 58  | `LightboxModal.tsx` at `AppModals/AppUtilityModals.tsx:704`, opened via `useModalHandlers.ts:592`                                               | Same modal; room delete and annotate at `useModalHandlers.ts:625`                                                         |
+
+### Group Chat only features
+
+Paths are relative to the repo root. Lines are on `origin/rc` at `1109c8197`.
+
+| Item | Where                                                                                                                                                                                                                                                                                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | Default `requiresIdleParticipants` in `src/shared/group-chat-types.ts:349`                                                                                                                                                                                                                                                                                |
+| G1   | Router `src/shared/maestro-lib/groupchat/router.ts`: `isDelegationBlockedByBusyAgent` `:295`, poll `:304` (5s), give-up `:312` (15 min), `waitForAgentToFree` `:1518`, `queueDelegationUntilAgentIsFree` `:1639` (calls the wait at `:1657`), delegation checks `:2059, 2306`                                                                             |
+| G1   | Busy probe `isAgentBusy` via `src/main/ipc/bootstrap/session-mention-mapper.ts:26`                                                                                                                                                                                                                                                                        |
+| G1   | IPC `src/main/ipc/handlers/groupChat.ts`: create `:287-298` (`requireIdleParticipants !== false`), update `:413, 441`; preload `src/main/preload/groupChat.ts:82, 106`; type `src/renderer/global.d.ts:181`                                                                                                                                               |
+| G1   | UI `src/renderer/components/GroupChatModal.tsx` (state `:67`, section `:297`, placed at `:614` edit and `:647` create), wired through `src/renderer/components/AppModals/AppModals.tsx:406, 421`, `src/renderer/components/AppModals/AppGroupChatModals.tsx:24, 45`, `src/renderer/hooks/groupChat/useGroupChatHandlers.ts:578` (create), `:668` (update) |
+| G1   | CLI `src/cli/index.ts:863` (`group-chat` verbs; none takes the setting)                                                                                                                                                                                                                                                                                   |
+| G1   | AI chat comparison: consult spawn `src/shared/maestro-lib/agents/consult.ts:309-321` (no busy check), write access `src/main/ipc/handlers/cross-agent.ts:72`                                                                                                                                                                                              |
