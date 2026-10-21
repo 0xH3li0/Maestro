@@ -15,7 +15,9 @@ export function PluginSettingsCard({ panel, theme }: { panel: PanelContribution;
 			data-setting-id={pluginSettingsId(panel.id)}
 		>
 			<SettingsSectionHeading icon={Puzzle} description={`Settings from ${panel.pluginId}.`}>
-				{panel.title}
+				<span className="min-w-0 truncate" title={panel.title}>
+					{panel.title}
+				</span>
 			</SettingsSectionHeading>
 			<SectionCard theme={theme} className="flex flex-col flex-1 min-h-0 gap-3 overflow-hidden">
 				<div className="flex-1 min-h-0 min-w-0">
