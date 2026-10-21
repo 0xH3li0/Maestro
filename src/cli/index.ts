@@ -309,8 +309,6 @@ import {
 	tabThinking,
 	tabReadOnly,
 	tabModel,
-	tabProvider,
-	tabRunOn,
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
@@ -2609,20 +2607,6 @@ tabTargetOptions(tab.command('save-to-history <tab-id> <bool>'))
 tabTargetOptions(tab.command('show <tab-id>'))
 	.description("Show one tab's settings (model, effort, thinking, access, history)")
 	.action((tabId, options) => tabShow(tabId, options));
-
-tabTargetOptions(tab.command('provider <tab-id> [provider]'))
-	.description('Read or select the provider for one Ensemble tab')
-	.option('--inherit', 'Use the agent default provider')
-	.option('--model <model>', 'Set the destination model, or inherit')
-	.option('--effort <effort>', 'Set the destination effort, or inherit')
-	.option('--run-on <target>', 'Use provider, <source id>:<model>, or inherit')
-	.action((tabId, provider, options) => tabProvider(tabId, provider, options));
-
-tabTargetOptions(tab.command('run-on <tab-id> [target]'))
-	.description(
-		'Read or set where this Ensemble tab runs: provider, <source id>:<model>, or inherit'
-	)
-	.action((tabId, target, options) => tabRunOn(tabId, target, options));
 
 tabTargetOptions(tab.command('thinking <tab-id> <mode>'))
 	.description('Set the thinking display: off, on, sticky, or cycle')

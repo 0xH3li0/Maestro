@@ -46,7 +46,6 @@ export type FirstPartyEncoreFlag =
 	| 'quickChat'
 	| 'maestroRun'
 	| 'throughputGauge'
-	| 'ensemble'
 	| 'dataview';
 
 /** A supervised background service a first-party plugin runs. */
@@ -1483,41 +1482,6 @@ export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
-/** Ensemble shares the host-owned tab and provider settings infrastructure. */
-export const ENSEMBLE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
-	id: 'com.maestro.ensemble',
-	name: 'Ensemble',
-	description:
-		'Switch a tab between providers and keep its conversation. Model and effort are remembered per provider.',
-	firstParty: true,
-	category: 'agents',
-	permissions: [
-		{
-			capability: 'settings:read',
-			reason: 'Read the Ensemble Encore flag before offering tab provider controls.',
-		},
-	],
-	settingsNamespace: 'ensemble',
-	encoreFlag: 'ensemble',
-	releaseDate: '2026-10-17',
-	backgroundServices: [],
-	usage: {
-		overview: [
-			'Switch a tab between providers and keep its conversation. Model and effort are remembered per provider.',
-		],
-		access: [{ label: 'Manage Ensemble', menu: 'Settings > Plugins > Ensemble' }],
-		agentCommands: [
-			{ label: 'Enable Ensemble', command: 'maestro-cli encore enable ensemble' },
-			{ label: 'Disable Ensemble', command: 'maestro-cli encore disable ensemble' },
-			{ label: 'Read Encore flags', command: 'maestro-cli encore list --json' },
-		],
-		notes: [
-			'Ensemble is off by default. This registration adds its settings toggle; tab provider controls are still in development.',
-		],
-		docsSlug: 'encore-features#ensemble',
-	},
-};
-
 /**
  * Dataview renders Obsidian Dataview queries in File Preview and the Auto Run
  * preview. The index of each vault root lives in the main process
@@ -1607,7 +1571,6 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
-	ENSEMBLE_FIRST_PARTY_PLUGIN,
 	DATAVIEW_FIRST_PARTY_PLUGIN,
 ];
 
@@ -1635,6 +1598,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	throughputGauge: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
-	ensemble: ENSEMBLE_FIRST_PARTY_PLUGIN,
 	dataview: DATAVIEW_FIRST_PARTY_PLUGIN,
 };

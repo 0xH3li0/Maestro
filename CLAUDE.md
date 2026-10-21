@@ -218,7 +218,6 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
-- **Choosing a tab provider in the composer:** `useTabProviderChoice()` in `src/renderer/components/InputArea/hooks/useTabProviderChoice.ts`; `tabProviderSwitchProblem()` in `src/renderer/utils/providerAvailability.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
 - **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
@@ -233,7 +232,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rendering a Codex `visualize` reference inline:** `loadCodexVisualization()` in `src/main/codex-visualization.ts`, drawn by `CodexVisualizationFrame` in `src/renderer/components/Markdown/components/CodexVisualizationFrame.tsx`
 - **Acting on a clicked Codex followup chip:** `requestCodexFollowup()`, `resolveCodexFollowup()`, `codexDirectivesLiveForSource()` in `src/renderer/services/codexFollowup.ts`, drawn by `FollowupChip`
 - **Changing an agent's provider:** `switchAgentProvider()`, `switchTabProvider()`, `resolveTurnProvider()`, `resolveErrorProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
-- **Selecting one tab's provider:** `resolveTabProvider()`, `resolveTabNativeProvider()`, `switchTabProviderFor()` in `src/shared/maestro-lib/agents/providerSwap.ts`; `useTabStore.setTabProvider()` in `src/renderer/stores/tabStore.ts`
+- **Selecting one tab's provider:** `resolveTabProvider()`, `resolveTabNativeProvider()`, `switchTabProviderFor()` in `src/shared/maestro-lib/agents/providerSwap.ts`; `useTabStore.setTabSettings()` in `src/renderer/stores/tabStore.ts`
 - **Inspecting tab providers:** `inspectTabProvider()`, `TabProviderInspection`, `TabConfigResult` in `src/shared/desktopTabs.ts`
 - **Projecting one tab for launch:** `projectTabProvider()` in `src/shared/maestro-lib/agents/providerSwap.ts`
 

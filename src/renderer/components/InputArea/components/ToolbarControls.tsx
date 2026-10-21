@@ -42,13 +42,9 @@ import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { projectTabProvider } from '../../../utils/providerTabSessions';
-import { useTabProviderChoice } from '../hooks/useTabProviderChoice';
-import { ProviderPill } from './ProviderPill';
 
 interface ToolbarControlsProps {
 	session: Session;
-	/** One selection owner supplies both provider control presentations. */
-	providerChoice?: { pill: React.ReactNode; row: React.ReactNode };
 	theme: Theme;
 	isTerminalMode: boolean;
 	canAttachImages: boolean;
@@ -109,7 +105,6 @@ interface ToolbarControlsProps {
 
 export const ToolbarControls = memo(function ToolbarControls({
 	session,
-	providerChoice,
 	theme,
 	isTerminalMode,
 	canAttachImages,
@@ -200,8 +195,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
 	const provider = useMemo(() => projectTabProvider(session, activeTab), [session, activeTab]);
-	const ensemble = useSettingsStore((s) => s.encoreFeatures.ensemble);
-	const tabProviderChoice = useTabProviderChoice(session, !!ensemble && isAiMode);
 	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
@@ -411,8 +404,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 						onClose={() => setOptionsSheetOpen(false)}
 						theme={theme}
 						agentId={provider.agent.toolType}
-						providerControl={ensemble ? providerChoice?.row : undefined}
-						providerChoice={ensemble && !providerChoice ? tabProviderChoice : undefined}
 						tabSaveToHistory={tabSaveToHistory}
 						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 						hasReadOnlyCapability={hasReadOnlyCapability}
@@ -496,21 +487,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 					/>
 				)}
 				{imageFileInput}
-				{isAiMode && ensemble && !providerChoice && (
-					<ProviderPill
-						key={`${session.id}:${activeTabId}`}
-						theme={theme}
-						choice={tabProviderChoice}
-						onOpen={() => {
-							setModelMenuOpen(false);
-							setEffortMenuOpen(false);
-						}}
-					/>
-				)}
 				<ModelEffortPills
 					key={provider.agent.toolType}
 					isVisible={isAiMode}
-					providerControl={ensemble ? providerChoice?.pill : undefined}
 					theme={theme}
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}

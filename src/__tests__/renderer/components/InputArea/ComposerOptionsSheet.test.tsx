@@ -6,10 +6,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ComposerOptionsSheet } from '../../../../renderer/components/InputArea/components/ComposerOptionsSheet';
 import { mockTheme } from '../../../helpers/mockTheme';
-import type { TabProviderChoice } from '../../../../renderer/components/InputArea/hooks/useTabProviderChoice';
 
 function renderSheet(overrides: Partial<React.ComponentProps<typeof ComposerOptionsSheet>> = {}) {
 	const props: React.ComponentProps<typeof ComposerOptionsSheet> = {
@@ -38,69 +37,11 @@ function renderSheet(overrides: Partial<React.ComponentProps<typeof ComposerOpti
 }
 
 describe('ComposerOptionsSheet', () => {
-	it('uses the same provider choices and keeps only one accordion open', async () => {
-		const select = vi.fn().mockResolvedValue(true);
-		const choice: TabProviderChoice = {
-			current: 'claude-code',
-			label: 'Claude Code',
-			select,
-			loading: false,
-			pending: false,
-			showAll: false,
-			setShowAll: vi.fn(),
-			problem: undefined,
-			error: undefined,
-			options: [
-				{
-					provider: 'codex',
-					label: 'Codex',
-					selected: false,
-					problem: undefined,
-					description: 'Context translation is unverified; review required before sending.',
-				},
-				{
-					provider: 'opencode',
-					label: 'OpenCode',
-					selected: false,
-					problem: 'Context translation from Claude Code to OpenCode is not available.',
-					description: undefined,
-				},
-			],
-		};
-		renderSheet({ providerChoice: choice });
-		fireEvent.click(screen.getByTestId('composer-options-model'));
-		fireEvent.click(screen.getByTestId('composer-options-provider'));
-		expect(screen.getByTestId('composer-options-model')).toHaveAttribute('aria-expanded', 'false');
-		const disabled = screen.getByRole('button', { name: /^OpenCode/ });
-		expect(disabled).toBeDisabled();
-		fireEvent.click(disabled);
-		expect(select).not.toHaveBeenCalled();
-		fireEvent.click(screen.getByRole('button', { name: /^Codex/ }));
-		expect(select).toHaveBeenCalledWith('codex');
-		await waitFor(() =>
-			expect(screen.getByTestId('composer-options-provider')).toHaveAttribute(
-				'aria-expanded',
-				'false'
-			)
-		);
-	});
-
 	it('keeps Run on configuration out of the quick model section on phones', () => {
 		renderSheet();
 		fireEvent.click(screen.getByTestId('composer-options-model'));
 		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
-	});
-
-	it('places the shared provider row before model and effort', () => {
-		renderSheet({ providerControl: <button>Provider</button> });
-		const provider = screen.getByRole('button', { name: 'Provider' });
-		for (const id of ['model', 'effort']) {
-			expect(
-				provider.compareDocumentPosition(screen.getByTestId(`composer-options-${id}`)) &
-					Node.DOCUMENT_POSITION_FOLLOWING
-			).toBeTruthy();
-		}
 	});
 
 	it('renders nothing while closed', () => {

@@ -65,18 +65,6 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 **Usage & Stats is the one to know about.** It is what records the activity every other reporting surface reads. With it off, the Usage Dashboard has nothing to show, and the gap is permanent - Maestro does not backfill activity from a period when recording was disabled.
 </Warning>
 
-## Ensemble
-
-Ensemble is an opt-in feature for switching a tab between providers while keeping its conversation. Model and effort are remembered per provider. It starts **off**. Its tile and Help content live in **Settings > Plugins > Ensemble**.
-
-Enable it to show the composer provider pill and the phone composer options' **Provider** section. The CLI uses the same per-tab switch operation. See [Ensemble](/multi-provider#ensemble) for switching steps, remembered model/effort/Run on choices, conversation carry limits and direction status. Claude Code to Codex and Codex to Claude Code remain unverified; SSH switching is disabled.
-
-```bash
-maestro-cli encore enable ensemble
-maestro-cli encore disable ensemble
-maestro-cli encore list --json
-```
-
 ## For Developers
 
 Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.

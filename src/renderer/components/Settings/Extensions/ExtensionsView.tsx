@@ -151,7 +151,6 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 			    this view; the registry/DOM parity contract needs the literal
 			    attribute present where the search should scroll to. */}
 			<span data-setting-id="encore-pianola" aria-hidden="true" />
-			<span data-setting-id="encore-ensemble" aria-hidden="true" />
 			<span data-setting-id="encore-concerto" aria-hidden="true" />
 			<span data-setting-id="encore-groups-plus" aria-hidden="true" />
 			<span data-setting-id="encore-a-cappella" aria-hidden="true" />

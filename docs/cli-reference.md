@@ -2527,38 +2527,6 @@ Show one tab's settings (model, effort, thinking, access, history)
 maestro-cli tab show active --agent <agent-id>
 ```
 
-## `maestro-cli tab provider <tab-id> [provider]`
-
-Read or select the provider for one Ensemble tab
-
-| Option              | Description                                         | Default |
-| ------------------- | --------------------------------------------------- | ------- |
-| `-a, --agent <id>`  | Whose active tab, when &lt;tab-id> is "active"      | -       |
-| `--json`            | Output as JSON (for scripting)                      | -       |
-| `--inherit`         | Use the agent default provider                      | -       |
-| `--model <model>`   | Set the destination model, or inherit               | -       |
-| `--effort <effort>` | Set the destination effort, or inherit              | -       |
-| `--run-on <target>` | Use provider, &lt;source id>:&lt;model>, or inherit | -       |
-
-```bash
-maestro-cli tab provider <tab-id>
-maestro-cli tab provider <tab-id> codex --model auto
-maestro-cli tab provider <tab-id> --inherit
-```
-
-## `maestro-cli tab run-on <tab-id> [target]`
-
-Read or set where this Ensemble tab runs: provider, &lt;source id>:&lt;model>, or inherit
-
-| Option             | Description                                    | Default |
-| ------------------ | ---------------------------------------------- | ------- |
-| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
-| `--json`           | Output as JSON (for scripting)                 | -       |
-
-```bash
-maestro-cli tab run-on <tab-id> provider
-```
-
 ## `maestro-cli tab thinking <tab-id> <mode>`
 
 Set the thinking display: off, on, sticky, or cycle

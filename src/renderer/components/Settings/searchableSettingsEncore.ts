@@ -10,32 +10,6 @@ import type { SearchableSetting } from './searchableSettings';
 
 export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
-		id: 'encore-ensemble',
-		encoreTile: 'ensemble',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Ensemble',
-		description:
-			'Switch a tab between providers and keep its conversation. Model and effort are remembered per provider.',
-		keywords: [
-			'provider',
-			'harness',
-			'switch provider',
-			'tab provider',
-			'conversation',
-			'model',
-			'effort',
-			'remembered',
-			'manage ensemble',
-			'enable ensemble',
-			'disable ensemble',
-			'read encore flags',
-			'off by default',
-			'tab provider controls',
-			'still in development',
-		],
-	},
-	{
 		id: 'encore-usage-stats',
 		encoreTile: 'usageStats',
 		tab: 'encore',

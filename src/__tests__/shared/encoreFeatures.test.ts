@@ -26,13 +26,12 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.throughputGauge).toBe(false);
 	});
 
-	it('ships Ensemble off for new and older settings', () => {
-		expect(ENCORE_FEATURE_DEFAULTS.ensemble).toBe(false);
-		expect(resolveEncoreFeatures(undefined).ensemble).toBe(false);
-		expect(resolveEncoreFeatures({ symphony: true }).ensemble).toBe(false);
-		expect(resolveEncoreFeatures({ ensemble: 'true' }).ensemble).toBe(false);
-		expect(resolveEncoreFeatures({ ensemble: true }).ensemble).toBe(true);
-		expect(resolveEncoreFeatures({ ensemble: false }).ensemble).toBe(false);
+	it('ignores the retired Ensemble flag in saved settings', () => {
+		expect(ENCORE_FEATURE_DEFAULTS).not.toHaveProperty('ensemble');
+		expect(resolveEncoreFeatures({ ensemble: true, symphony: false })).not.toHaveProperty(
+			'ensemble'
+		);
+		expect(resolveEncoreFeatures({ ensemble: true, symphony: false }).symphony).toBe(false);
 	});
 
 	it('ships Dataview off', () => {

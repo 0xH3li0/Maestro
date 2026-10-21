@@ -10,9 +10,6 @@ import { describe, it, expect } from 'vitest';
 import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
 
 describe('modalPriorities', () => {
-	it('lets the provider menu take Escape before the floating voice surfaces', () => {
-		expect(MODAL_PRIORITIES.PROVIDER_PILL_MENU).toBeGreaterThan(MODAL_PRIORITIES.VOICE_HUD);
-	});
 	describe('child modal priority ordering', () => {
 		/**
 		 * When a modal opens another modal, the child must have higher priority

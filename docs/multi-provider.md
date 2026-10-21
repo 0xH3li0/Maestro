@@ -35,8 +35,8 @@ account, and the split is a workspace split rather than a quota split.
 
 <Note>
 This page covers **one provider, different accounts** and preview conversion
-between providers. Use [Ensemble](#ensemble) to choose a provider for one tab,
-or [Switching Providers](#switching-providers) to change the agent default.
+between providers. See [Switching Providers](#switching-providers) to change
+the agent default and optionally convert memory and session history.
 </Note>
 
 ## Setting the Variable in Maestro
@@ -317,108 +317,6 @@ the table at the top of this page.
 
 ---
 
-## Ensemble
-
-Ensemble lets each AI tab choose its own provider without changing the agent's
-default or its other tabs. It starts **off**. Open **Settings > Plugins >
-Ensemble** and click **Enable**, or run:
-
-```bash
-maestro-cli encore enable ensemble
-```
-
-See [Encore Features](/encore-features#ensemble) for the feature toggle.
-
-### Switching one tab
-
-1. Open the provider pill to the left of the model and effort pills in the
-   composer. On a phone, open composer options (`...`) and expand **Provider**.
-2. Choose an available provider. The menu shows installed providers by default;
-   **Show all providers** also lists missing providers. Disabled choices explain
-   missing installations or unavailable translation directions.
-3. Choose a model and, where supported, an effort level for that provider. The
-   model menu also offers **Auto** and **Run on** where supported. Returning to
-   a provider restores this tab's last model, effort and Run on choices for it.
-4. Send your next message. Choosing the provider alone does not translate context
-   or start a process. Before sending, Maestro plans the native conversion and
-   holds the message if warnings need acceptance or a limitation blocks it.
-   Open the conversion review in Edit Agent from the offered toast.
-
-With the desktop pill focused, Enter or Space opens its menu, arrow keys move
-between choices, Enter selects an enabled choice, and Escape closes it and
-returns focus to the pill. Disabled reasons can be read with the keyboard.
-
-**Use agent default** removes the tab's explicit choice. A new tab also inherits
-the agent default. Choosing a named provider pins the tab, even if that provider
-currently matches the default. A later Edit Agent provider change affects
-inheriting tabs; pinned tabs keep their provider.
-
-### What carries over
-
-| Item                        | Behavior when switching one tab                                                                                                                                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Conversation                | The transcript stays visible. Supported native history is converted before the next send; the plan lists anything that cannot carry over.                                                                                                                  |
-| Model, effort and Run on    | Remembered separately for each provider in this tab, including Auto. An unseen provider starts with its own defaults. Auto chooses within that provider. A missing saved model or endpoint can still block sending.                                        |
-| Draft and tab preferences   | Draft, History preference, permission mode and Thinking preference stay with the tab; available controls follow the selected provider's capabilities.                                                                                                      |
-| Running and queued messages | A running turn finishes with its captured provider. Queued messages retain the provider, model, effort and Run on captured when queued, including their Auto routing settings. Changing the pill affects later sends.                                      |
-| Transcript attribution      | Finished turns show their provider on the first attributed turn and when it changes. After a conversion commits, a context-translation marker expands to show the plan, versions, counts and accepted warnings. Selecting a provider alone adds no marker. |
-
-Providers keep separate native session IDs, usage and configuration. A switch
-does not copy credentials, binary paths or provider-specific settings from the
-outgoing provider. The destination uses its own configured account and defaults.
-Native tool state and unsupported records are subject to the conversion plan;
-conversation carry does not guarantee identical behavior or native recall.
-
-Project memory is carried through managed knowledge. Native skills, subagents
-and instruction aliases are not installed by default. See
-[Knowledge and project resources](#knowledge-and-project-resources) for the
-explicit installation option and its limits.
-
-### Verified directions and limits
-
-As of **2026-10-18, no translation direction is native-certified**. The declared
-local directions are:
-
-| Direction            | Schema-tested versions               | Native acceptance                                   |
-| -------------------- | ------------------------------------ | --------------------------------------------------- |
-| Claude Code to Codex | Claude Code 2.1.296 to Codex 0.162.1 | Unverified; limited live QA, certification deferred |
-| Codex to Claude Code | Codex 0.162.1 to Claude Code 2.1.296 | Unverified; limited live QA, certification deferred |
-
-Installed local destinations in these directions can be selected, but selection
-does not accept conversion warnings. Other directions are disabled, including
-on empty tabs. Both supported providers must meet their minimum versions;
-untested newer versions need warning review. See
-[Switching Providers](#switching-providers) for version and conversion checks.
-
-**Ensemble provider switching is disabled for SSH agents.** Live SSH acceptance
-was skipped, so the remote translation infrastructure does not establish a
-verified switching direction. See [SSH agents](#ssh-agents).
-
-### CLI and disabling Ensemble
-
-The CLI uses the same tab switch operation as the composer:
-
-```bash
-# Inspect the tab's effective provider and settings
-maestro-cli tab provider <tab-id> --json
-# Select Codex for this tab
-maestro-cli tab provider <tab-id> codex
-# Return to inheritance from the agent default
-maestro-cli tab provider <tab-id> --inherit
-# Inspect provider ownership even with Ensemble off
-maestro-cli session show <tab-id> --json
-```
-
-Add `--model <model>` and `--effort <effort>` to set the destination's choices
-with the switch. Readback separates the effective provider, explicit tab choice,
-agent default and captured turn provider. See the
-[CLI reference](/cli-reference) for options.
-
-Disable Ensemble in its plugin card or with `maestro-cli encore disable ensemble`.
-This hides the desktop and phone provider controls and refuses `tab provider`
-reads and writes. Saved tab choices and queued messages keep working; re-enabling
-the feature restores access to those choices.
-
 ## Switching Providers
 
 Everything above is about **one provider, several accounts**. That is the
@@ -474,8 +372,8 @@ The headless runtime uses the same conversion checks and retains held messages.
 
 SSH translation infrastructure is implemented, but **the live check was skipped
 on 2026-10-17**. Both Claude Code to Codex and Codex to Claude Code remain
-unverified over SSH. SSH Ensemble provider choices must remain disabled until
-live evidence is recorded; certification is deferred.
+unverified over SSH. Native certification remains deferred until
+live evidence is recorded.
 
 The source and destination providers run on the agent's configured remote host.
 Provider versions, accounts, project paths and memory are resolved there, and

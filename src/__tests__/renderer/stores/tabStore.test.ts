@@ -2,14 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTabStore } from '../../../renderer/stores/tabStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type {
-	Session,
-	AITab,
-	FilePreviewTab,
-	TerminalTab,
-	LogEntry,
-} from '../../../renderer/types';
+import type { Session, AITab, FilePreviewTab, TerminalTab } from '../../../renderer/types';
 import {
 	createMockAITab as createBaseMockAITab,
 	createMockFileTab as createBaseMockFileTab,
@@ -83,9 +76,6 @@ function setupSessionWithTabs(
 
 describe('tabStore', () => {
 	beforeEach(() => {
-		useSettingsStore.setState((state) => ({
-			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
-		}));
 		// Reset both stores before each test
 		useTabStore.setState({
 			tabGistContent: null,
@@ -468,167 +458,116 @@ describe('tabStore', () => {
 			expect(session.aiTabs[0].starred).toBe(false);
 		});
 
-		it('persists one tab provider through session mutations without changing its siblings', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			vi.mocked(window.maestro.agents.get).mockResolvedValue({ available: true } as never);
+		it('edits a saved tab provider slot without changing its ownership or siblings', async () => {
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue(['high']);
 			const tab = createMockAITab({
 				id: 'tab-1',
-				agentSessionId: 'claude-native',
-				customModel: 'auto',
+				tabProvider: 'codex',
+				agentSessionId: 'codex-native',
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-native' } },
 			});
 			const sibling = createMockAITab({ id: 'tab-2' });
 			const sessionId = setupSessionWithTabs([tab, sibling]);
 			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
-			await useTabStore.getState().setTabProvider(sessionId, tab.id, 'codex');
-			const switched = useSessionStore.getState().sessions[0];
-			expect(switched.toolType).toBe('claude-code');
-			expect(switched.activeTabId).toBe(tab.id);
-			expect(switched.aiTabs[1]).toBe(sibling);
-			expect(switched.aiTabs[0]).toMatchObject({
-				tabProvider: 'codex',
-				pendingTranslation: 'claude-code',
-				agentSessionId: null,
-				providerSessions: {
-					'claude-code': { agentSessionId: 'claude-native', customModel: 'auto' },
-				},
-			});
-			await useTabStore.getState().setTabProvider(sessionId, tab.id, undefined);
-			const restored = useSessionStore.getState().sessions[0].aiTabs[0];
-			expect(restored.agentSessionId).toBe('claude-native');
-			expect(restored.tabProvider).toBeUndefined();
-			expect(restored.pendingTranslation).toBeUndefined();
-		});
-
-		it('rejects provider selection while Ensemble is off without changing persisted state', async () => {
-			const sessionId = setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
-			const before = useSessionStore.getState().sessions;
-			await expect(
-				useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')
-			).rejects.toThrow('Ensemble is disabled');
-			expect(useSessionStore.getState().sessions).toBe(before);
-		});
-
-		it('rejects unsupported directions and unverified SSH selection without changing state', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			const sessionId = setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
-			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
-			const before = useSessionStore.getState().sessions;
-			await expect(
-				useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'opencode')
-			).rejects.toThrow('Context translation');
-			expect(useSessionStore.getState().sessions).toBe(before);
-			useSessionStore.getState().updateSession(sessionId, {
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-host' },
-			});
-			const sshBefore = useSessionStore.getState().sessions;
-			await expect(
-				useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')
-			).rejects.toThrow('SSH switching is disabled');
-			expect(useSessionStore.getState().sessions).toBe(sshBefore);
-		});
-
-		it('refuses a provider change during a migration without dropping native state', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			const sessionId = setupSessionWithTabs([
-				createMockAITab({ id: 'tab-1', agentSessionId: 'native' }),
-			]);
-			useSessionStore.getState().updateSession(sessionId, {
-				providerMigration: {
-					operationId: 'migration',
-					destination: 'codex',
-					state: 'staging',
-					verification: 'unverified',
-				},
-			});
-			const before = useSessionStore.getState().sessions;
-			await expect(
-				useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex')
-			).rejects.toThrow('Finish the current provider translation');
-			expect(useSessionStore.getState().sessions).toBe(before);
-		});
-
-		it('rejects invalid effort before parking and applies valid destination settings atomically', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			vi.mocked(window.maestro.agents.get).mockResolvedValue({ available: true } as never);
-			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue(['high']);
-			const sessionId = setupSessionWithTabs([
-				createMockAITab({ id: 'tab-1', agentSessionId: 'claude-native' }),
-			]);
-			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
-			const before = useSessionStore.getState().sessions;
-			await expect(
-				useTabStore
-					.getState()
-					.setTabProvider(sessionId, 'tab-1', 'codex', { model: 'gpt-x', effort: 'typo' })
-			).rejects.toThrow('Invalid effort for codex');
-			expect(useSessionStore.getState().sessions).toBe(before);
-			await useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex', {
+			await useTabStore.getState().setTabSettings(sessionId, tab.id, {
 				model: 'gpt-x',
 				effort: 'high',
 				runOn: { type: 'provider' },
 			});
-			expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+			const saved = useSessionStore.getState().sessions[0];
+			expect(saved.toolType).toBe('claude-code');
+			expect(saved.aiTabs[1]).toBe(sibling);
+			expect(saved.aiTabs[0]).toMatchObject({
 				tabProvider: 'codex',
+				agentSessionId: 'codex-native',
+				providerSessions: tab.providerSessions,
 				customModel: 'gpt-x',
 				customEffort: 'high',
 				runOn: { type: 'provider' },
-				providerSessions: { 'claude-code': { agentSessionId: 'claude-native' } },
 			});
 		});
 
-		it('allows a running tab to switch without discarding streamed output or captured ownership', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			let finish!: (value: never) => void;
-			vi.mocked(window.maestro.agents.get).mockReturnValue(
-				new Promise((resolve) => {
+		it('rejects invalid effort for the saved provider without changing native state', async () => {
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue(['high']);
+			const sessionId = setupSessionWithTabs([
+				createMockAITab({ id: 'tab-1', tabProvider: 'codex', agentSessionId: 'native' }),
+			]);
+			const before = useSessionStore.getState().sessions;
+			await expect(
+				useTabStore.getState().setTabSettings(sessionId, 'tab-1', {
+					model: 'gpt-x',
+					effort: 'typo',
+				})
+			).rejects.toThrow('Invalid effort for codex');
+			expect(useSessionStore.getState().sessions).toBe(before);
+		});
+
+		it('preserves streamed output and captured ownership while validating settings', async () => {
+			let finish!: (value: string[]) => void;
+			vi.mocked(window.maestro.agents.getConfigOptions).mockReturnValue(
+				new Promise<string[]>((resolve) => {
 					finish = resolve;
 				})
 			);
-			const tab = createMockAITab({ id: 'tab-1', state: 'busy', turnProvider: 'claude-code' });
+			const tab = createMockAITab({ id: 'tab-1', tabProvider: 'codex', state: 'busy' });
 			const sessionId = setupSessionWithTabs([tab]);
-			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
-			const pending = useTabStore.getState().setTabProvider(sessionId, tab.id, 'codex');
+			const pending = useTabStore.getState().setTabSettings(sessionId, tab.id, { effort: 'high' });
 			const streamed = {
 				...tab,
 				agentSessionId: 'latest-native',
-				logs: [{ id: 'stream', text: 'latest', source: 'ai', timestamp: 1 } as LogEntry],
+				turnProvider: 'codex' as const,
+				logs: [{ id: 'stream', text: 'latest', source: 'ai' as const, timestamp: 1 }],
 			};
 			useSessionStore.getState().updateSession(sessionId, { aiTabs: [streamed] });
-			finish({ available: true } as never);
+			finish(['high']);
 			await pending;
 			expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
-				tabProvider: 'codex',
-				turnProvider: 'claude-code',
-				logs: streamed.logs,
-				providerSessions: { 'claude-code': { agentSessionId: 'latest-native' } },
+				...streamed,
+				customEffort: 'high',
 			});
 		});
 
-		it('rejects a stale provider validation after its target closes', async () => {
-			useSettingsStore.setState((state) => ({
-				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-			}));
-			let finish!: (value: never) => void;
-			vi.mocked(window.maestro.agents.get).mockReturnValue(
-				new Promise((resolve) => {
-					finish = resolve;
-				})
-			);
+		it.each(['before', 'during'])(
+			'refuses settings when a migration starts %s validation',
+			async (timing) => {
+				let finish!: (value: string[]) => void;
+				vi.mocked(window.maestro.agents.getConfigOptions).mockReturnValue(
+					new Promise<string[]>((resolve) => {
+						finish = resolve;
+					})
+				);
+				const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'native' });
+				const sessionId = setupSessionWithTabs([tab]);
+				const startMigration = () =>
+					useSessionStore.getState().updateSession(sessionId, {
+						providerMigration: {
+							operationId: 'migration',
+							destination: 'codex',
+							state: 'staging',
+							verification: 'unverified',
+						},
+					});
+				if (timing === 'before') startMigration();
+				const pending = useTabStore
+					.getState()
+					.setTabSettings(sessionId, tab.id, { effort: 'high' });
+				if (timing === 'during') startMigration();
+				if (timing === 'during') finish(['high']);
+				await expect(pending).rejects.toThrow('Finish the current provider translation');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0]).toBe(tab);
+			}
+		);
+
+		it('rejects a stale settings validation after its target closes', async () => {
+			let finish!: (value: string[]) => void;
+			const validation = new Promise<string[]>((resolve) => {
+				finish = resolve;
+			});
+			vi.mocked(window.maestro.agents.getConfigOptions).mockReturnValue(validation);
 			const sessionId = setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
-			useSessionStore.getState().updateSession(sessionId, { toolType: 'claude-code' });
-			const pending = useTabStore.getState().setTabProvider(sessionId, 'tab-1', 'codex');
+			const pending = useTabStore.getState().setTabSettings(sessionId, 'tab-1', { effort: 'high' });
 			useSessionStore.getState().updateSession(sessionId, { aiTabs: [] });
-			finish({ available: true } as never);
+			finish(['high']);
 			await expect(pending).rejects.toThrow('Tab changed');
 			expect(useSessionStore.getState().sessions[0].aiTabs).toEqual([]);
 		});

@@ -40,7 +40,7 @@ export function ComposerRunOnField({
 				setError(undefined);
 				void useTabStore
 					.getState()
-					.setTabProvider(agent.id, tabId, agent.toolType, { settingsOnly: true, runOn: target })
+					.setTabSettings(agent.id, tabId, { runOn: target })
 					.catch((failure: unknown) => {
 						setError(failure instanceof Error ? failure.message : String(failure));
 					})

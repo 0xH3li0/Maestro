@@ -12,8 +12,6 @@ import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
-	/** Ensemble provider pill, supplied by the shared toolbar choice. */
-	providerControl?: React.ReactNode;
 	theme: Theme;
 	/**
 	 * Chord for the full-screen model/effort switcher, pinned as a hint row at
@@ -50,7 +48,6 @@ interface ModelEffortPillsProps {
 
 export const ModelEffortPills = memo(function ModelEffortPills({
 	isVisible,
-	providerControl,
 	theme,
 	shortcutKeys,
 	currentModel,
@@ -88,7 +85,6 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 
 	return (
 		<>
-			{providerControl}
 			{onModelChange && availableModels.length > 0 && (
 				<div className="relative" ref={modelMenuRef} data-tour="model-selector">
 					<button

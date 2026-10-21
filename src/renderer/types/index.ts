@@ -2028,9 +2028,6 @@ export interface EncoreFeatureFlags {
 	// agents. Off by default. Optional so older fixtures and persisted settings
 	// remain valid.
 	throughputGauge?: boolean;
-	// Ensemble - switch a tab's provider while keeping its conversation and
-	// remembering model and effort per provider. Off by default.
-	ensemble?: boolean;
 	// Dataview - render Obsidian Dataview queries in File Preview and the Auto
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.

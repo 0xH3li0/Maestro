@@ -20,9 +20,8 @@
  * and the file-preview actions sheet cannot drift on tap-target heights.
  */
 
-import { memo, useState, type ReactNode } from 'react';
-import { Brain, Eye, Gauge, History, Layers, Sparkles } from 'lucide-react';
-import type { TabProviderChoice } from '../hooks/useTabProviderChoice';
+import { memo, useState } from 'react';
+import { Brain, Eye, Gauge, History, Sparkles } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../types';
 import { getPermissionModeLabel } from '../../../../shared/agentMetadata';
 import { isAutoModel } from '../../../../shared/autoModel';
@@ -39,9 +38,6 @@ export type PermissionMode = 'full' | 'standard' | 'readonly';
 
 interface ComposerOptionsSheetProps {
 	open: boolean;
-	/** Ensemble phone row, from the same choice as the desktop pill. */
-	providerControl?: ReactNode;
-	providerChoice?: TabProviderChoice;
 	onClose: () => void;
 	theme: Theme;
 	/** Provider id, so read-only reads as the agent's own word for it. */
@@ -74,8 +70,6 @@ const THINKING_LABELS: Record<ThinkingMode, string> = {
 
 export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	open,
-	providerControl,
-	providerChoice,
 	onClose,
 	theme,
 	agentId,
@@ -195,49 +189,6 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 							theme={theme}
 						/>
 					))}
-				</PhoneSheetSection>
-			)}
-
-			{providerControl}
-			{providerChoice && (
-				<PhoneSheetSection
-					icon={Layers}
-					label="Provider"
-					value={providerChoice.label}
-					accent={theme.colors.accent}
-					expanded={expanded === 'provider'}
-					onToggle={() => toggle('provider')}
-					theme={theme}
-					testId="composer-options-provider"
-				>
-					{providerChoice.options.map((option) => (
-						<PhoneSheetOptionRow
-							key={option.provider ?? 'inherit'}
-							label={option.label}
-							description={option.problem ?? option.description}
-							disabled={!!option.problem}
-							selected={option.selected}
-							accent={theme.colors.accent}
-							theme={theme}
-							onSelect={() => {
-								void providerChoice.select(option.provider).then((ok) => {
-									if (ok) setExpanded(null);
-								});
-							}}
-						/>
-					))}
-					<PhoneSheetOptionRow
-						label={providerChoice.showAll ? 'Show installed providers' : 'Show all providers'}
-						selected={providerChoice.showAll}
-						accent={theme.colors.accent}
-						theme={theme}
-						onSelect={() => providerChoice.setShowAll(!providerChoice.showAll)}
-					/>
-					{providerChoice.error && (
-						<p role="alert" className="px-4 py-2 text-xs" style={{ color: theme.colors.error }}>
-							{providerChoice.error}
-						</p>
-					)}
 				</PhoneSheetSection>
 			)}
 

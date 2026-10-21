@@ -71,15 +71,12 @@ import {
 	updateAiTab as updateSessionAiTab,
 } from './sessionStore';
 import { useSettingsStore } from './settingsStore';
-import type { ToolType } from '../../shared/types';
 import {
 	resolveTabProvider,
-	switchTabProviderFor,
 	PROVIDER_OVERRIDE_KEYS,
 } from '../../shared/maestro-lib/agents/providerSwap';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 import { projectTabProvider } from '../utils/providerTabSessions';
-import { tabProviderSwitchProblem } from '../utils/providerAvailability';
 import { autoModelProblem } from '../../shared/autoTurn';
 import { isAutoModel, AUTO_MODEL } from '../../shared/autoModel';
 import { parseRunOnEdit } from '../../shared/local-models/run-on';
@@ -316,16 +313,14 @@ export interface TabStoreActions {
 	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
 	 */
 	setTabModel: (tabId: string, model: string | undefined) => void;
-	/** Select a tab harness through the shared parking operation and session mutation. */
-	setTabProvider: (
+	/** Validate model, effort and Run on without changing the tab's native ownership. */
+	setTabSettings: (
 		sessionId: string,
 		tabId: string,
-		provider: ToolType | undefined,
 		settings?: {
 			model?: string | null;
 			effort?: string | null;
 			runOn?: unknown;
-			settingsOnly?: boolean;
 		}
 	) => Promise<void>;
 
@@ -762,27 +757,15 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateAiTab(tabId, { customModel: model || undefined });
 	},
 
-	setTabProvider: async (sessionId, tabId, provider, settings = {}) => {
+	setTabSettings: async (sessionId, tabId, settings = {}) => {
 		const snapshot = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 		const snapshotTab = snapshot?.aiTabs.find((t) => t.id === tabId);
 		if (!snapshot || !snapshotTab) throw new Error('Tab not found');
-		const destination = settings.settingsOnly
-			? resolveTabProvider(snapshotTab, snapshot)
-			: (provider ?? snapshot.toolType);
-		if (!settings.settingsOnly) {
-			const problem = tabProviderSwitchProblem(
-				snapshot,
-				snapshotTab,
-				destination,
-				!!useSettingsStore.getState().encoreFeatures.ensemble
-			);
-			if (problem) throw new Error(problem);
-		}
+		const destination = resolveTabProvider(snapshotTab, snapshot);
 		if (!getAgentPickerMeta(destination))
-			throw new Error(`Provider cannot run an Ensemble tab: ${destination}`);
+			throw new Error(`Provider cannot run an AI tab: ${destination}`);
 		if (migrationHoldsTurns(snapshot.providerMigration))
 			throw new Error('Finish the current provider translation before changing providers.');
-		const changing = destination !== resolveTabProvider(snapshotTab, snapshot);
 		const projected = projectTabProvider(snapshot, snapshotTab, destination);
 		const patch: Partial<AITab> = {};
 		if (settings.model !== undefined) {
@@ -830,10 +813,6 @@ export const useTabStore = create<TabStore>()((set) => ({
 					throw new Error('Run on sources are not available for SSH tabs.');
 			}
 		}
-		if (changing) {
-			const detected = await window.maestro.agents.get(destination);
-			if (!detected?.available) throw new Error(`${destination} is not installed on this host.`);
-		}
 		if (
 			!useSessionStore
 				.getState()
@@ -857,12 +836,10 @@ export const useTabStore = create<TabStore>()((set) => ({
 				tab.runOn !== snapshotTab.runOn
 			)
 				throw new Error('Tab changed while validating provider settings; retry the operation.');
-			if (!settings.settingsOnly && !useSettingsStore.getState().encoreFeatures.ensemble)
-				throw new Error('Ensemble is disabled. Enable Ensemble in Encore Features.');
 			if (migrationHoldsTurns(session.providerMigration))
 				throw new Error('Finish the current provider translation before changing providers.');
 			return {
-				...(settings.settingsOnly ? tab : switchTabProviderFor(tab, session, provider)),
+				...tab,
 				...patch,
 			};
 		});

@@ -93,7 +93,7 @@ describe('update_session_config', () => {
 		return agent.value;
 	};
 
-	it('refuses tab-provider mutations through generic patches and the desktop-only verb', async () => {
+	it('refuses tab-provider mutations through generic patches and the retired quick-switch verb', async () => {
 		for (const patch of [
 			{ tabId: 't1', tabProvider: 'claude-code', customModel: 'opus' },
 			{ tabId: 't1', tabProviderSelection: { provider: 'claude-code' } },
@@ -105,7 +105,7 @@ describe('update_session_config', () => {
 		}
 		expect(
 			await handle({ type: 'tab_provider', sessionId: 'a1', tabId: 't1', provider: 'claude-code' })
-		).toMatchObject({ success: false, error: expect.stringContaining('desktop app') });
+		).toMatchObject({ success: false, error: expect.stringContaining('has been removed') });
 		expect((await stored()).toolType).toBe('codex');
 	});
 

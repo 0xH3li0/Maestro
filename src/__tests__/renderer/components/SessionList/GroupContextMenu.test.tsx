@@ -116,12 +116,12 @@ describe('GroupContextMenu', () => {
 	});
 
 	describe('Group Settings', () => {
-		it('sits between Rename and New Agent for a user group', () => {
+		it('sits between Rename and nested group creation for a user group', () => {
 			setup({ onGroupSettings: vi.fn() });
 			const labels = screen.getAllByRole('button').map((button) => button.textContent);
 			const at = labels.indexOf('Group Settings...');
 			expect(labels[at - 1]).toBe('Rename Group...');
-			expect(labels[at + 1]).toBe('New Agent in Group...');
+			expect(labels[at + 1]).toBe('New group inside...');
 		});
 
 		it('opens Group Settings and dismisses the menu', () => {
@@ -154,12 +154,12 @@ describe('GroupContextMenu', () => {
 	});
 
 	describe('Delegation Graph', () => {
-		it('sits after Group Settings and before New Agent', () => {
+		it('sits after Group Settings and before nested group creation', () => {
 			setup({ onGroupSettings: vi.fn(), onOpenDelegationGraph: vi.fn() });
 			const labels = screen.getAllByRole('button').map((button) => button.textContent);
 			const at = labels.indexOf('Delegation Graph');
 			expect(labels[at - 1]).toBe('Group Settings...');
-			expect(labels[at + 1]).toBe('New Agent in Group...');
+			expect(labels[at + 1]).toBe('New group inside...');
 		});
 
 		it('opens the graph and dismisses the menu', () => {

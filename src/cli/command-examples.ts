@@ -284,12 +284,6 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'tab show': ['maestro-cli tab show active --agent <agent-id>'],
 	'tab thinking': ['maestro-cli tab thinking <tab-id> sticky'],
 	'tab read-only': ['maestro-cli tab read-only <tab-id> true'],
-	'tab provider': [
-		'maestro-cli tab provider <tab-id>',
-		'maestro-cli tab provider <tab-id> codex --model auto',
-		'maestro-cli tab provider <tab-id> --inherit',
-	],
-	'tab run-on': ['maestro-cli tab run-on <tab-id> provider'],
 	'tab model': ['maestro-cli tab model <tab-id> opus', 'maestro-cli tab model <tab-id> inherit'],
 	'tab effort': ['maestro-cli tab effort <tab-id> high'],
 	'tab enter-to-send': ['maestro-cli tab enter-to-send <tab-id> false'],

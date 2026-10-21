@@ -30,7 +30,6 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	quickChat: true,
 	maestroRun: false,
 	throughputGauge: false,
-	ensemble: false,
 	dataview: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 

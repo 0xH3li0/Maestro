@@ -2,13 +2,13 @@
 
 Agent support documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]]. For detailed integration instructions, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
-## Ensemble tab providers
+## Provider switching and translation
 
-With the Ensemble Encore Feature enabled, the composer offers a provider pill on desktop and a Provider accordion on phones. `useTabProviderChoice()` shares discovery and selection state; `tabProviderSwitchProblem()` shares refusal reasons with `tabStore.setTabProvider()`. Keep model, effort, and Run on edits scoped to the selected tab. Provider changes use the native translation gate before sending, and unverified directions still require review. SSH provider switching remains disabled because live SSH acceptance was skipped.
+The Ensemble plugin and composer provider selector have been removed. Change the agent default in Edit Agent. Preserve existing tab provider pins, captured turn ownership and parked native sessions for compatibility; native translation before sending and its warning review remain intact.
 
 A committed native translation adds a **Context translated from ...** marker to the transcript. `ContextTranslationCard` discloses the source and destination versions, verification status, record/resource counts, and accepted limitations. The marker stays separate from subsequent replies and survives transcript persistence.
 
-Changing the agent's default provider in Edit Agent is a plain switch unless **Convert memory and session history** is checked. Plain switching parks native sessions across open and retained tabs through `switchAgentProvider()` and `mapAgentAiTabs()`; explicitly pinned Ensemble tabs keep their provider. Conversions retain the reviewed-plan and limitation-acceptance controls. Keep `projectResourcesIntoRepo` and `convertProviderHistory` as separate save arguments so opting into conversion does not install resources into the project.
+Changing the agent's default provider in Edit Agent is a plain switch unless **Convert memory and session history** is checked. Plain switching parks native sessions across open and retained tabs through `switchAgentProvider()` and `mapAgentAiTabs()`; explicitly pinned tabs keep their provider. Conversions retain the reviewed-plan and limitation-acceptance controls. Keep `projectResourcesIntoRepo` and `convertProviderHistory` as separate save arguments so opting into conversion does not install resources into the project.
 
 ## Supported Agents
 
@@ -204,7 +204,7 @@ Keep picker hints and native registration on the renderer-safe declarations in `
 
 SSH translation selects `resolveSshTranslationHost()` and `createSshTranslationFs()` before native access. The native host resolves remote identity and discovery; its shared `TranslationFs` port handles native reads/writes, readback and rollback; archives, checkpoints, journals and process locks stay local. An unresolved remote fails without local fallback. Remote prerequisites include supported provider binaries, POSIX `sh`, `base64 -d`, `realpath` or working `readlink -f`, Git and GNU/BSD filesystem tools. Only the Codex import channel uses remote `codex app-server` with a pinned destination `CODEX_HOME`; ordinary SSH turns stay on `codex exec`. See [SSH boundaries and prerequisites](PROVIDER-SUPPORT.md#ssh-translation-boundaries-and-prerequisites).
 
-Remote knowledge launch bindings require the saved SSH config fingerprint and home through `MAESTRO_TRANSLATION_KNOWLEDGE_REMOTE`; local or mismatched hosts cannot use them. **2026-10-17: SSH live check skipped** under the explicit acceptance input. Both SSH directions remain unverified, SSH Ensemble choices must stay disabled, and certification is deferred. Fake-remote regression cases were authored and statically checked, not executed; the evidence ledger is [[Plans/provider-translation-layer]].
+Remote knowledge launch bindings require the saved SSH config fingerprint and home through `MAESTRO_TRANSLATION_KNOWLEDGE_REMOTE`; local or mismatched hosts cannot use them. **2026-10-17: SSH live check skipped** under the explicit acceptance input. Both SSH directions remain unverified and native certification is deferred. Fake-remote regression cases were authored and statically checked, not executed; the evidence ledger is [[Plans/provider-translation-layer]].
 
 Managed knowledge stays outside the project: `<userData>/provider-knowledge/<agent-hash>/<operation-id>/` for local agents, or `<remote HOME>/.maestro/provider-knowledge/<agent-hash>/<operation-id>/` for SSH agents. The host supplies `TranslationTransactionHost.knowledgeRoot`; shared launches validate the operation directory against their trusted root and bind `knowledge-index.md` through `MAESTRO_TRANSLATION_KNOWLEDGE`. Claude also receives `--add-dir` and per-launch memory settings. Reuse the existing Memory Viewer. File access does not certify recall.
 

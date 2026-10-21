@@ -421,7 +421,7 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 			case 'tab_provider':
 				return refusal(
 					'tab_provider_result',
-					'Ensemble provider selection requires the desktop app.'
+					'Per-tab provider switching has been removed. Change the provider in Edit Agent.'
 				);
 			case 'update_session_config': {
 				const config = obj(message.configPatch) ?? {};

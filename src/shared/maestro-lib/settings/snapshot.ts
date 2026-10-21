@@ -68,7 +68,6 @@ export const ENCORE_FEATURE_LABELS: Record<EncoreFlag, string> = {
 	quickChat: 'Quick Chat',
 	maestroRun: 'MaestroRun',
 	throughputGauge: 'Throughput Gauge',
-	ensemble: 'Ensemble',
 	dataview: 'Dataview',
 };
 

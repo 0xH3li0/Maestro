@@ -55,8 +55,6 @@ import {
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
-import { inspectTabProvider } from '../../../shared/desktopTabs';
-import { isValidAgentId } from '../../../shared/agentIds';
 import { TAB_EDITABLE_KEYS } from '../../../shared/maestro-lib/agents/rules';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
@@ -1827,61 +1825,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const patchObj = configPatch as Record<string, unknown>;
 		if ('tabProviderSelection' in patchObj) {
-			try {
-				if (!useSettingsStore.getState().encoreFeatures.ensemble)
-					throw new Error('Ensemble is disabled. Enable Ensemble in Encore Features.');
-				const selection = patchObj.tabProviderSelection;
-				if (!selection || typeof selection !== 'object' || Array.isArray(selection))
-					throw new Error('Invalid tab provider selection');
-				const edit = selection as Record<string, unknown>;
-				if (
-					Object.keys(edit).some((key) => !['provider', 'model', 'effort', 'runOn'].includes(key))
-				)
-					throw new Error('Unknown tab provider setting');
-				const tabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : '';
-				const owner = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-				const tab = owner?.aiTabs.find((t) => t.id === tabId);
-				if (!tab) throw new Error('Tab not found');
-				if (
-					'provider' in edit &&
-					edit.provider !== null &&
-					(typeof edit.provider !== 'string' || !isValidAgentId(edit.provider))
-				)
-					throw new Error('Invalid tab provider');
-				for (const key of ['model', 'effort']) {
-					if (key in edit && edit[key] !== null && typeof edit[key] !== 'string')
-						throw new Error(`Invalid tab ${key}`);
-				}
-				if (Object.keys(edit).length) {
-					await useTabStore
-						.getState()
-						.setTabProvider(
-							sessionId,
-							tabId,
-							'provider' in edit
-								? ((edit.provider as ToolType | null) ?? undefined)
-								: tab.tabProvider,
-							{
-								...('model' in edit ? { model: edit.model as string | null } : {}),
-								...('effort' in edit ? { effort: edit.effort as string | null } : {}),
-								...('runOn' in edit ? { runOn: edit.runOn } : {}),
-							}
-						);
-				}
-				const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-				const currentTab = current?.aiTabs.find((t) => t.id === tabId);
-				if (!current || !currentTab) throw new Error('Tab not found');
-				if (Object.keys(edit).length) await window.maestro.sessions.setMany([current as any], []);
-				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-					success: true,
-					tab: inspectTabProvider(currentTab, current),
-				});
-			} catch (error) {
-				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-					success: false,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: 'Per-tab provider switching has been removed. Change the provider in Edit Agent.',
+			});
 			return;
 		}
 
@@ -2005,8 +1952,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			if ('customModel' in tabPatch || 'customEffort' in tabPatch) {
 				try {
-					await useTabStore.getState().setTabProvider(sessionId, targetTabId, undefined, {
-						settingsOnly: true,
+					await useTabStore.getState().setTabSettings(sessionId, targetTabId, {
 						...('customModel' in tabPatch
 							? { model: (tabPatch.customModel as string | undefined) ?? null }
 							: {}),

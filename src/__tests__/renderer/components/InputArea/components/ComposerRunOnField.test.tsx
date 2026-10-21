@@ -36,14 +36,13 @@ describe('ComposerRunOnField', () => {
 			],
 		});
 		useSessionStore.setState({ sessions: [session] });
-		const save = vi.spyOn(useTabStore.getState(), 'setTabProvider').mockResolvedValue();
+		const save = vi.spyOn(useTabStore.getState(), 'setTabSettings').mockResolvedValue();
 		const projected = projectTabProvider(session, session.aiTabs[0]);
 		render(<ComposerRunOnField theme={inputAreaTheme} agent={projected.agent} tabId="tab-1" />);
 		expect(screen.getByText('codex:local-model')).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Use cloud' }));
 		await waitFor(() =>
-			expect(save).toHaveBeenCalledWith('agent', 'tab-1', 'codex', {
-				settingsOnly: true,
+			expect(save).toHaveBeenCalledWith('agent', 'tab-1', {
 				runOn: { type: 'provider' },
 			})
 		);
@@ -56,7 +55,7 @@ describe('ComposerRunOnField', () => {
 			aiTabs: [createMockAITab()],
 		});
 		useSessionStore.setState({ sessions: [session] });
-		const save = vi.spyOn(useTabStore.getState(), 'setTabProvider').mockResolvedValue();
+		const save = vi.spyOn(useTabStore.getState(), 'setTabSettings').mockResolvedValue();
 		render(<ComposerRunOnField theme={inputAreaTheme} agent={session} tabId="tab-1" />);
 		useSessionStore
 			.getState()
@@ -69,7 +68,7 @@ describe('ComposerRunOnField', () => {
 	it('surfaces validation failures without changing the displayed target', async () => {
 		const session = createMockSession({ id: 'agent', aiTabs: [createMockAITab()] });
 		useSessionStore.setState({ sessions: [session] });
-		vi.spyOn(useTabStore.getState(), 'setTabProvider').mockRejectedValue(
+		vi.spyOn(useTabStore.getState(), 'setTabSettings').mockRejectedValue(
 			new Error('Source unavailable')
 		);
 		render(<ComposerRunOnField theme={inputAreaTheme} agent={session} tabId="tab-1" />);

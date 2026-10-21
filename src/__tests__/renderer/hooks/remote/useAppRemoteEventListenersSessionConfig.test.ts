@@ -4,7 +4,7 @@ import { useTabStore } from '../../../../renderer/stores/tabStore';
 const { selectTabProvider } = vi.hoisted(() => ({ selectTabProvider: vi.fn() }));
 vi.mock('../../../../renderer/stores/tabStore', () => ({
 	useTabStore: {
-		getState: vi.fn(() => ({ setTabProvider: selectTabProvider })),
+		getState: vi.fn(() => ({ setTabSettings: selectTabProvider })),
 	},
 }));
 import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
@@ -92,7 +92,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(() => {
 	vi.clearAllMocks();
 	selectTabProvider.mockResolvedValue(undefined);
-	vi.mocked(useTabStore.getState).mockReturnValue({ setTabProvider: selectTabProvider } as never);
+	vi.mocked(useTabStore.getState).mockReturnValue({ setTabSettings: selectTabProvider } as never);
 	vi.mocked(useSettingsStore.getState).mockReturnValue({} as never);
 	(window as any).maestro = {
 		process: {
@@ -325,8 +325,7 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		const [updated] = applyUpdate(setSessions, sessions);
 		expect(updated.aiTabs[1].showThinking).toBe('sticky');
 		expect(updated.aiTabs[1].readOnlyMode).toBe(true);
-		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', undefined, {
-			settingsOnly: true,
+		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', {
 			model: 'opus',
 			effort: 'high',
 		});
@@ -344,8 +343,7 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
-		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', undefined, {
-			settingsOnly: true,
+		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', {
 			model: null,
 		});
 		expect(updated.aiTabs[1].customModel).toBe('opus');
@@ -424,29 +422,17 @@ describe('provider migration parity', () => {
 			expect(setMany).not.toHaveBeenCalled();
 		}
 	);
-	it('routes Ensemble selection through the same parking action and returns explicit ownership', async () => {
-		const sessions = [twoTabSession()];
-		setup(sessions);
-		vi.mocked(useSettingsStore.getState).mockReturnValue({
-			encoreFeatures: { ensemble: true },
-		} as never);
-		const select = vi.fn().mockResolvedValue(undefined);
-		vi.mocked(useTabStore.getState).mockReturnValue({ setTabProvider: select } as never);
-		dispatchPatch('session-1', {
-			tabId: 'tab-2',
-			tabProviderSelection: { provider: 'codex', model: 'auto' },
-		});
+	it('rejects retired provider selection without invoking settings or persistence', async () => {
+		const { setSessions } = setup([twoTabSession()]);
+		dispatchPatch('session-1', { tabId: 'tab-2', tabProviderSelection: { provider: 'codex' } });
 		await flush();
-		expect(select).toHaveBeenCalledWith('session-1', 'tab-2', 'codex', { model: 'auto' });
+		expect(selectTabProvider).not.toHaveBeenCalled();
+		expect(setSessions).not.toHaveBeenCalled();
 		expect(ack).toHaveBeenCalledWith(
 			'ch',
 			expect.objectContaining({
-				success: true,
-				tab: expect.objectContaining({
-					provider: sessions[0].toolType,
-					agentProvider: sessions[0].toolType,
-					tabProvider: null,
-				}),
+				success: false,
+				error: expect.stringContaining('has been removed'),
 			})
 		);
 	});
@@ -465,18 +451,15 @@ describe('provider migration parity', () => {
 		);
 	});
 
-	it('refuses Ensemble selection reads with the flag off', async () => {
+	it('refuses retired provider reads', async () => {
 		setup([twoTabSession()]);
-		vi.mocked(useSettingsStore.getState).mockReturnValue({
-			encoreFeatures: { ensemble: false },
-		} as never);
 		dispatchPatch('session-1', { tabId: 'tab-2', tabProviderSelection: {} });
 		await flush();
 		expect(ack).toHaveBeenCalledWith(
 			'ch',
 			expect.objectContaining({
 				success: false,
-				error: expect.stringContaining('Ensemble is disabled'),
+				error: expect.stringContaining('has been removed'),
 			})
 		);
 	});

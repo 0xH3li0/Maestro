@@ -209,7 +209,7 @@ export function switchTabProviderFor<T extends ProviderSwitchTab>(
 ): T {
 	const destination = provider ?? agent.toolType;
 	if (!getAgentPickerMeta(destination))
-		throw new Error(`Provider cannot run an Ensemble tab: ${destination}`);
+		throw new Error(`Provider cannot run an AI tab: ${destination}`);
 	const source = resolveTabProvider(tab, agent);
 	if (source === destination) {
 		return tab.tabProvider === provider ? tab : { ...tab, tabProvider: provider };

@@ -30,9 +30,6 @@ describe('ToolbarControls', () => {
 		restorePointer();
 		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
-		useSettingsStore.setState((state) => ({
-			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
-		}));
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -69,26 +66,21 @@ describe('ToolbarControls', () => {
 		);
 	}
 
-	it.each([false, true])('gates both provider presentations when phone=%s', (phone) => {
-		mockedUsePhoneLayout.mockReturnValue(phone);
-		useSettingsStore.setState((state) => ({
-			encoreFeatures: { ...state.encoreFeatures, ensemble: false },
-		}));
-		const { unmount } = renderToolbar({
-			providerChoice: { pill: <button>Provider pill</button>, row: <button>Provider row</button> },
-		});
-		if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-		expect(screen.queryByText(/Provider (pill|row)/)).not.toBeInTheDocument();
-		unmount();
-		useSettingsStore.setState((state) => ({
-			encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-		}));
-		renderToolbar({
-			providerChoice: { pill: <button>Provider pill</button>, row: <button>Provider row</button> },
-		});
-		if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-		expect(screen.getByText(phone ? 'Provider row' : 'Provider pill')).toBeInTheDocument();
-	});
+	it.each([false, true])(
+		'omits provider switching with a legacy saved flag on phone=%s',
+		(phone) => {
+			mockedUsePhoneLayout.mockReturnValue(phone);
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+			}));
+			renderToolbar();
+			if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+			expect(
+				screen.queryByRole('button', { name: /Provider for this tab/ })
+			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-provider')).not.toBeInTheDocument();
+		}
+	);
 
 	it('keeps Run on configuration out of the desktop quick model picker', () => {
 		renderToolbar({
@@ -109,24 +101,6 @@ describe('ToolbarControls', () => {
 		];
 		renderToolbar({ session });
 		expect(screen.getByText('Read-Only')).toBeInTheDocument();
-	});
-
-	it.each([false, true])('builds the real provider control when phone=%s', (phone) => {
-		mockedUsePhoneLayout.mockReturnValue(phone);
-		useSettingsStore.setState((state) => ({
-			encoreFeatures: { ...state.encoreFeatures, ensemble: true },
-		}));
-		const session = createInputAreaSession({ toolType: 'claude-code' });
-		session.aiTabs[0].tabProvider = 'codex';
-		renderToolbar({ session });
-		if (phone) {
-			fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-			expect(screen.getByTestId('composer-options-provider')).toHaveTextContent('Codex');
-		} else {
-			expect(
-				screen.getByRole('button', { name: 'Provider for this tab: Codex' })
-			).toBeInTheDocument();
-		}
 	});
 
 	describe('dictation', () => {

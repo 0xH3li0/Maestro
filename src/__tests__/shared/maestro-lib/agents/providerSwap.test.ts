@@ -342,7 +342,7 @@ describe('tab provider selection', () => {
 	it.each(['terminal', 'unknown-provider'])('rejects a non-chat target %s', (provider) => {
 		expect(() =>
 			switchTabProviderFor(makeTab(), makeAgent('claude-code'), provider as ToolType)
-		).toThrow('Provider cannot run an Ensemble tab');
+		).toThrow('Provider cannot run an AI tab');
 	});
 
 	it('keeps explicit tabs pinned when the agent default changes', () => {
