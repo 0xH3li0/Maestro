@@ -59,9 +59,8 @@ function open() {
 	);
 	const window = windows[0],
 		wc = window.webContents;
-	const encoded = window.options.webPreferences.additionalArguments[0].split('=')[1];
-	const offer = JSON.parse(Buffer.from(encoded, 'base64').toString());
 	const event = { sender: wc, senderFrame: wc.mainFrame };
+	const offer = ipc.get('plugin-confirmation:offer')!(event);
 	const activate = () => wc.emit('before-mouse-event', {}, { type: 'mouseUp', button: 'left' });
 	const call = (request = { nonce: offer.nonce, approved: true }, e = event) =>
 		ipc.get('plugin-confirmation:call')!(e, request);
@@ -113,5 +112,44 @@ describe('trusted generic confirmation surface', () => {
 		s.activate();
 		expect(s.call()).toMatchObject({ ok: false });
 		expect(s.commit).not.toHaveBeenCalled();
+	});
+});
+
+describe('confirmation offer IPC', () => {
+	it('keeps a large record off the renderer command line and serves only its exact live document', async () => {
+		const host = new PluginConfirmationWindows('/fixture');
+		const controller = new AbortController();
+		const value = { payload: 'x'.repeat(60000) };
+		const promise = host.confirm(
+			{
+				kind: 'record',
+				pluginId: 'com.example.fixture',
+				key: 'large',
+				summary: 'Synthetic record',
+				value,
+			},
+			controller.signal,
+			() => {},
+			vi.fn()
+		);
+		const window = windows[0],
+			wc = window.webContents;
+		try {
+			expect(window.options.webPreferences.additionalArguments).toBeUndefined();
+			const getOffer = ipc.get('plugin-confirmation:offer')!;
+			const event = { sender: wc, senderFrame: wc.mainFrame };
+			expect(getOffer(event)).toMatchObject({ value, nonce: expect.any(String) });
+			expect(getOffer({ ...event, sender: {} })).toBeNull();
+			expect(getOffer({ ...event, senderFrame: { ...wc.mainFrame } })).toBeNull();
+			const url = wc.mainFrame.url;
+			wc.mainFrame.url = 'file:///fixture/other.html';
+			expect(getOffer(event)).toBeNull();
+			wc.mainFrame.url = url;
+			controller.abort();
+			expect(getOffer(event)).toBeNull();
+		} finally {
+			controller.abort();
+			await promise.catch(() => {});
+		}
 	});
 });

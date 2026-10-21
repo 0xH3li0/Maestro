@@ -449,7 +449,7 @@ export function createCueSessionRuntimeService(
 				onLog: deps.onLog,
 				emit: (event) => {
 					state.lastTriggered = event.timestamp;
-					deps.dispatchSubscription(session.id, sub, event, session.name);
+					return deps.dispatchSubscription(session.id, sub, event, session.name);
 				},
 				// The trigger source asks for the sub to be consumed (missed-grace,
 				// or - in theory - any other reason it decides not to fire). The

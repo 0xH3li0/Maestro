@@ -101,7 +101,7 @@ describe('createMcpBridge - callTool', () => {
 	it('forwards the opaque run proof separately from model arguments', async () => {
 		const request = vi.fn();
 		request.mockResolvedValueOnce({ tools: [{ name: 'p__send', toolId: 'p/send' }] });
-		const bridge = createMcpBridge({ serverInfo, request, log, runToken: 'opaque-proof' });
+		const bridge = createMcpBridge({ serverInfo, request, log, runToken: 'a'.repeat(64) });
 		await bridge.listTools();
 		request.mockResolvedValueOnce({ ok: true, result: 'sent' });
 		await bridge.callTool('p__send', { agentId: 'forged' });
@@ -109,7 +109,7 @@ describe('createMcpBridge - callTool', () => {
 			type: 'plugins_call_tool',
 			toolId: 'p/send',
 			args: { agentId: 'forged' },
-			runToken: 'opaque-proof',
+			runToken: 'a'.repeat(64),
 		});
 	});
 });

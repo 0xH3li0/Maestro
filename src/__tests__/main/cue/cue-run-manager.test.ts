@@ -2248,6 +2248,89 @@ describe('durable plugin admission and revocation', () => {
 		expect(h.deps.onCueRun).toHaveBeenCalledTimes(1);
 		expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0);
 	});
+
+	it.each(['before', 'main', 'output'] as const)(
+		'stops revoked authority at the %s boundary without CLI or completion propagation',
+		async (phase) => {
+			mockRunMaestroCliSend.mockClear();
+			const h = harness();
+			const output = Promise.withResolvers<CueRunResult>();
+			if (phase === 'before') h.deps.onRunStarted = () => h.revoke();
+			if (phase === 'output')
+				vi.mocked(h.deps.onCueRun)
+					.mockImplementationOnce(() => h.completion.promise)
+					.mockImplementationOnce(() => output.promise);
+			h.manager.execute(
+				'session-1',
+				'mail',
+				h.mail,
+				'mail-sub',
+				phase === 'output' ? 'Summarize output' : undefined,
+				0,
+				{ target: 'agent-target' }
+			);
+			if (phase === 'output') {
+				h.completion.resolve(makeResult({ stdout: 'synthetic private main output' }));
+				await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(2));
+				h.revoke();
+				output.resolve(
+					makeResult({
+						stdout: 'synthetic private output summary',
+						stderr: 'synthetic private output diagnostic',
+					})
+				);
+			} else {
+				h.revoke();
+				h.completion.resolve(makeResult({ stdout: 'synthetic private main output' }));
+			}
+			await vi.waitFor(() => expect(h.deps.onRunStopped).toHaveBeenCalledTimes(1));
+			expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+			expect(mockRunMaestroCliSend).not.toHaveBeenCalled();
+			expect(JSON.stringify(vi.mocked(updateCueEventStatus).mock.calls)).not.toContain(
+				'synthetic private output'
+			);
+			expect(h.deps.onRunStopped).toHaveBeenCalledWith(
+				expect.objectContaining({ status: 'stopped', stdout: '' })
+			);
+			expect(
+				vi.mocked(updateCueEventStatus).mock.calls.some(([, status]) => status === 'stopped')
+			).toBe(true);
+			expect(h.manager.getActiveRunCount('session-1')).toBe(0);
+		}
+	);
+	it.each([false, true])(
+		'keeps a queued durable row when clearQueue preservesStartup=%s',
+		(preserveStartup) => {
+			const h = harness();
+			h.manager.execute('session-1', 'ordinary', createEvent(), 'ordinary-sub');
+			h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+			h.manager.clearQueue('session-1', preserveStartup);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().size).toBe(0);
+			h.manager.discardInMemory();
+		}
+	);
+
+	it('discards private late results after the active run was forgotten and authority revoked', async () => {
+		const h = harness();
+		h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+		h.manager.discardInMemory();
+		h.revoke();
+		h.completion.resolve(
+			makeResult({ stdout: 'private late discarded result', stderr: 'private late diagnostic' })
+		);
+		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
+		expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+		expect(JSON.stringify(vi.mocked(safeUpdateCueEventStatus).mock.calls)).not.toContain(
+			'private late'
+		);
+		expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+			expect.any(String),
+			'stopped',
+			undefined,
+			expect.objectContaining({ outputExcerpt: null, fullOutput: null, errorMessage: null })
+		);
+	});
 	it('refuses a plugin event when durable persistence is absent', () => {
 		const h = harness();
 		const manager = createCueRunManager(createDeps());

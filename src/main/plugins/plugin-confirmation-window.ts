@@ -1,6 +1,7 @@
 /** Dedicated, host-owned confirmation. Plugin HTML and main SPA cannot confirm. */
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { ConsentNonceRegistry, type ConsentSender } from './consent-minter';
 import { PluginAuthorityError, assertPluginAuthority, pluginRequest } from './plugin-authority';
@@ -26,6 +27,7 @@ interface Surface {
 	sender?: ConsentSender;
 	lastActivation: number;
 	confirm(event: IpcMainInvokeEvent, request: unknown): unknown;
+	offer(event: IpcMainInvokeEvent): unknown;
 	cancel(): void;
 }
 
@@ -33,6 +35,14 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 	private readonly nonces = new ConsentNonceRegistry({ ttlMs: 120000 });
 	private readonly surfaces = new Set<Surface>();
 	constructor(private readonly dir: string) {
+		ipcMain.handle('plugin-confirmation:offer', (event) => {
+			try {
+				const surface = [...this.surfaces].find((s) => s.window.webContents === event.sender);
+				return surface?.offer(event) ?? null;
+			} catch {
+				return null;
+			}
+		});
 		ipcMain.handle('plugin-confirmation:call', (event, request: unknown) => {
 			try {
 				const s = [...this.surfaces].find((s) => s.window.webContents === event.sender);
@@ -54,7 +64,7 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 		if (signal.aborted) return Promise.reject(new PluginAuthorityError('PLUGIN_CANCELED'));
 		if (this.surfaces.size >= 8) return Promise.reject(new PluginAuthorityError('PLUGIN_LIMIT'));
 		const nonce = this.nonces.issue(offer.pluginId, []);
-		const encoded = Buffer.from(JSON.stringify({ ...offer, nonce })).toString('base64');
+		const expectedUrl = pathToFileURL(path.join(this.dir, 'plugin-confirmation.html')).href;
 		const window = new BrowserWindow({
 			width: 640,
 			height: 680,
@@ -66,7 +76,6 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 				contextIsolation: true,
 				sandbox: true,
 				nodeIntegration: false,
-				additionalArguments: [`--plugin-confirmation=${encoded}`],
 			},
 		});
 		window.setMenu(null);
@@ -93,6 +102,20 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 				window,
 				lastActivation: -Infinity,
 				cancel,
+				offer: (event) => {
+					if (
+						settled ||
+						signal.aborted ||
+						window.isDestroyed() ||
+						event.sender !== window.webContents ||
+						event.senderFrame !== window.webContents.mainFrame ||
+						event.senderFrame.url !== expectedUrl
+					)
+						throw new PluginAuthorityError('PLUGIN_DENIED');
+					assertPluginAuthority(check);
+					if (settled || signal.aborted) throw new PluginAuthorityError('PLUGIN_CANCELED');
+					return { ...offer, nonce };
+				},
 				confirm: (event, request) => {
 					const p = pluginRequest(
 						request,

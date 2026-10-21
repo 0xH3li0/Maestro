@@ -25,7 +25,7 @@ import type {
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import {
 	getQueuedEvents,
-	clearPersistedQueue,
+	removeQueuedEvent,
 	safePersistQueuedEvent,
 	persistQueuedEvent,
 	safeRemoveQueuedEvent,
@@ -164,9 +164,26 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		safeRemoveQueuedEvent(persistId);
 	}
 
+	// Lifecycle clearing must not erase already acknowledged plugin deliveries.
+	// Terminal completion and explicit source/authority removal still use remove().
+	function clearNonDurableRows(sessionId?: string): void {
+		for (const row of getQueuedEvents(sessionId)) {
+			let durable = false;
+			try {
+				const event = JSON.parse(row.eventJson);
+				durable =
+					isDurableCueEvent(event) ||
+					(typeof event?.type === 'string' && !CUE_EVENT_TYPES.includes(event.type));
+			} catch {
+				/* corrupt ordinary row is discardable */
+			}
+			if (!durable) removeQueuedEvent(row.id);
+		}
+	}
+
 	function clearSession(sessionId: string): void {
 		try {
-			clearPersistedQueue(sessionId);
+			clearNonDurableRows(sessionId);
 		} catch (err) {
 			void captureException(err, {
 				operation: 'cueQueuePersistence.clearSession',
@@ -181,7 +198,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 	function clearAll(): void {
 		try {
-			clearPersistedQueue();
+			clearNonDurableRows();
 		} catch (err) {
 			void captureException(err, { operation: 'cueQueuePersistence.clearAll' });
 			deps.onLog(

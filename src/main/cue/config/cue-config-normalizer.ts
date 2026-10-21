@@ -279,6 +279,15 @@ function normalizeAutoRun(rawAutoRun: unknown): CueAutoRunConfig | undefined {
 	return result;
 }
 
+// Keep malformed sources visible to validation without aborting unrelated subscriptions.
+function normalizePluginSource(value: unknown) {
+	try {
+		return parseCuePluginSource(value);
+	} catch {
+		return undefined;
+	}
+}
+
 function normalizeSubscription(
 	sub: Record<string, unknown>,
 	projectRoot: string
@@ -422,7 +431,7 @@ function normalizeSubscription(
 				? (sub.gh_state as CueGitHubState)
 				: undefined,
 		webhook: normalizeWebhook(sub.webhook),
-		...(sub.event === 'plugin.event' ? { plugin: parseCuePluginSource(sub.plugin) } : {}),
+		...(sub.event === 'plugin.event' ? { plugin: normalizePluginSource(sub.plugin) } : {}),
 		gh_label_target:
 			typeof sub.gh_label_target === 'string' &&
 			CUE_GITHUB_LABEL_TARGETS.includes(sub.gh_label_target as CueGitHubLabelTarget)

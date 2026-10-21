@@ -493,6 +493,16 @@ export class AuthorizationStore {
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 		return state;
 	}
+	/** Bound admission of new state, never retirement of existing authority.
+	 * Archives are cleanup-only: pluginState never rehydrates them, even on same-identity mint. */
+	private assertOpaqueStateCapacity(pluginId: string): void {
+		if (
+			!this.ledger.opaque?.[pluginId] &&
+			Object.keys(this.ledger.opaque ?? {}).length + (this.ledger.opaqueArchive?.length ?? 0) >=
+				1024
+		)
+			throw new PluginAuthorityError('PLUGIN_LIMIT');
+	}
 	readPluginRecord(
 		pluginId: string,
 		identity: AuthIdentity,
@@ -540,6 +550,7 @@ export class AuthorizationStore {
 		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
 		this.notifyAuthorizationChange(pluginId);
 		if (epoch !== this.ledger.epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		this.assertOpaqueStateCapacity(pluginId);
 		const next: OpaquePluginState = state ?? {
 			identity: { ...identity },
 			records: {},
@@ -580,6 +591,8 @@ export class AuthorizationStore {
 		)
 			throw new PluginAuthorityError('PLUGIN_INVALID');
 		assertPluginAuthority(assertConfirmed);
+		this.pluginState(pluginId, identity);
+		this.assertOpaqueStateCapacity(pluginId);
 		const state = this.pluginState(pluginId, identity) ?? {
 			identity: { ...identity },
 			records: {},
@@ -740,8 +753,7 @@ export class AuthorizationStore {
 	private retirePluginOpaqueState(pluginId: string): void {
 		const state = this.ledger.opaque?.[pluginId];
 		if (!state) return;
-		if ((this.ledger.opaqueArchive?.length ?? 0) >= 1024)
-			throw new PluginAuthorityError('PLUGIN_LIMIT');
+		// Moving an admitted state preserves the total; it cannot block revoke/uninstall.
 		this.ledger.opaqueArchive ??= [];
 		this.ledger.opaqueArchive.push({ pluginId, state });
 		delete this.ledger.opaque![pluginId];

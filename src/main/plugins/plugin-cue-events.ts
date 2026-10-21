@@ -67,7 +67,7 @@ export class PluginCueEvents implements PluginCueHost {
 			consumer.controller.abort();
 		};
 	}
-	private checkConsumer(c: Consumer, pluginId: string, queued = false): void {
+	private consumerEligible(c: Consumer, pluginId: string): boolean {
 		if (
 			this.consumers.get(c.id) !== c ||
 			c.controller.signal.aborted ||
@@ -75,14 +75,18 @@ export class PluginCueEvents implements PluginCueHost {
 			!c.ctx.enabled() ||
 			c.ctx.subscription.enabled === false
 		)
-			throw new PluginAuthorityError('PLUGIN_DENIED');
+			return false;
 		// Narrow first contract: one explicit consumer owner, no fan-out or non-durable gates.
 		if (
 			c.ctx.subscription.fan_out?.length ||
 			('gate' in c.ctx.subscription && c.ctx.subscription.gate) ||
 			('screen_injection' in c.ctx.subscription && c.ctx.subscription.screen_injection)
 		)
-			throw new PluginAuthorityError('PLUGIN_DENIED');
+			return false;
+		return true;
+	}
+	private checkConsumer(c: Consumer, pluginId: string, queued = false): void {
+		if (!this.consumerEligible(c, pluginId)) throw new PluginAuthorityError('PLUGIN_DENIED');
 		assertPluginAuthority(() => this.deps.assertAllowed(pluginId, c.source.topic, queued));
 		this.deps.store.assertPluginPersistent(pluginId, this.deps.identityFor(pluginId, queued));
 	}
@@ -91,9 +95,15 @@ export class PluginCueEvents implements PluginCueHost {
 		if (typeof p.topic !== 'string' || !PLUGIN_TOPIC_PATTERN.test(p.topic))
 			throw new PluginAuthorityError('PLUGIN_INVALID');
 		assertPluginAuthority(() => this.deps.assertAllowed(pluginId, p.topic as string));
+		this.deps.store.assertPluginPersistent(pluginId, this.deps.identityFor(pluginId));
 		const result: PluginConsumer[] = [];
 		for (const c of this.consumers.values()) {
-			if (c.source.pluginId !== pluginId || c.source.topic !== p.topic) continue;
+			if (
+				c.source.pluginId !== pluginId ||
+				c.source.topic !== p.topic ||
+				!this.consumerEligible(c, pluginId)
+			)
+				continue;
 			this.checkConsumer(c, pluginId);
 			result.push({
 				consumerId: c.id,

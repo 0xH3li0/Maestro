@@ -407,57 +407,66 @@ describe('production net:connect wiring (persistent socket sink)', () => {
 });
 
 describe('uninstall authority before optional Cue storage', () => {
-	it('retires authority and other owned resources even when receipt deletion fails', () => {
-		let callback: ts.ArrowFunction | undefined;
-		const visit = (node: ts.Node): void => {
-			if (
-				ts.isPropertyAssignment(node) &&
-				node.name.getText(sf) === 'purgePluginData' &&
-				ts.isArrowFunction(node.initializer)
-			)
-				callback = node.initializer;
-			ts.forEachChild(node, visit);
-		};
-		visit(sf);
-		expect(callback).toBeDefined();
-		const retired = vi.fn();
-		const secrets = vi.fn();
-		const sessions = vi.fn();
-		const groups = vi.fn();
-		const background = vi.fn();
-		const code = ts.transpileModule(`const purge = ${callback!.getText(sf)}`, {
-			compilerOptions: { target: ts.ScriptTarget.ES2024 },
-		}).outputText;
-		const purge = new Function(
-			'authStore',
-			'primitiveState',
-			'pluginProviderSessions',
-			'purgePluginData',
-			'pluginKvStore',
-			'pluginSettingsDeleteNamespace',
-			'eventBus',
-			'pluginHostViews',
-			'groupingRegistry',
-			'backgroundSupervisor',
-			'purgePluginEventReceipts',
-			`${code}\nreturn purge;`
-		)(
-			{ uninstall: retired },
-			{ purgePlugin: secrets },
-			{ purge: sessions },
-			vi.fn(),
-			{},
-			vi.fn(),
-			{},
-			{},
-			{ removePlugin: groups },
-			{ teardown: background },
-			() => {
-				throw new Error('Synthetic locked Cue database');
-			}
-		);
-		expect(() => purge('com.example.owner')).toThrow('Synthetic locked Cue database');
-		for (const operation of [retired, secrets, sessions, groups, background])
-			expect(operation).toHaveBeenCalledWith('com.example.owner');
-	});
+	it.each(['secret', 'receipt'])(
+		'retires other owned resources even when %s deletion fails',
+		(failure) => {
+			let callback: ts.ArrowFunction | undefined;
+			const visit = (node: ts.Node): void => {
+				if (
+					ts.isPropertyAssignment(node) &&
+					node.name.getText(sf) === 'purgePluginData' &&
+					ts.isArrowFunction(node.initializer)
+				)
+					callback = node.initializer;
+				ts.forEachChild(node, visit);
+			};
+			visit(sf);
+			expect(callback).toBeDefined();
+			const retired = vi.fn();
+			const secrets = vi.fn(() => {
+				if (failure === 'secret') throw new Error('Synthetic unavailable native keyring');
+			});
+			const sessions = vi.fn();
+			const groups = vi.fn();
+			const background = vi.fn();
+			const code = ts.transpileModule(`const purge = ${callback!.getText(sf)}`, {
+				compilerOptions: { target: ts.ScriptTarget.ES2024 },
+			}).outputText;
+			const purge = new Function(
+				'authStore',
+				'primitiveState',
+				'pluginProviderSessions',
+				'purgePluginData',
+				'pluginKvStore',
+				'pluginSettingsDeleteNamespace',
+				'eventBus',
+				'pluginHostViews',
+				'groupingRegistry',
+				'backgroundSupervisor',
+				'purgePluginEventReceipts',
+				`${code}\nreturn purge;`
+			)(
+				{ uninstall: retired },
+				{ purgePlugin: secrets },
+				{ purge: sessions },
+				vi.fn(),
+				{},
+				vi.fn(),
+				{},
+				{},
+				{ removePlugin: groups },
+				{ teardown: background },
+				() => {
+					if (failure === 'receipt') throw new Error('Synthetic locked Cue database');
+				}
+			);
+			expect(() => purge('com.example.owner')).toThrow(
+				failure === 'secret'
+					? 'Synthetic unavailable native keyring'
+					: 'Synthetic locked Cue database'
+			);
+			for (const operation of [retired, secrets, sessions, groups, background])
+				expect(operation).toHaveBeenCalledWith('com.example.owner');
+		}
+	);
 });

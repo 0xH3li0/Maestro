@@ -3127,17 +3127,20 @@ app
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
 				authStore.uninstall(id);
-				primitiveState.purgePlugin(id);
-				pluginProviderSessions.purge(id);
-				purgePluginData(id, {
-					kvStore: pluginKvStore,
-					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
-					eventBus,
-					hostViews: pluginHostViews,
-				});
-				groupingRegistry.removePlugin(id);
-				backgroundSupervisor.teardown(id);
-				purgePluginEventReceipts(id);
+				try {
+					primitiveState.purgePlugin(id);
+				} finally {
+					pluginProviderSessions.purge(id);
+					purgePluginData(id, {
+						kvStore: pluginKvStore,
+						settingsDeleteNamespace: pluginSettingsDeleteNamespace,
+						eventBus,
+						hostViews: pluginHostViews,
+					});
+					groupingRegistry.removePlugin(id);
+					backgroundSupervisor.teardown(id);
+					purgePluginEventReceipts(id);
+				}
 			},
 			onChange: (registry) => {
 				serviceReconcile?.();

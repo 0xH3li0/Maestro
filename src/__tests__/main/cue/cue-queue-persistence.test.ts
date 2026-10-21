@@ -83,6 +83,8 @@ describe('cue-queue-persistence', () => {
 		const event = { ...makeEvent('app.startup'), type: 'retired.source' } as unknown as CueEvent;
 		p.persist('s-1', 'historical-parked', makeEntry({ event }));
 		expect(p.restoreAll().size).toBe(0);
+		p.clearSession('s-1');
+		p.clearAll();
 		expect(p.persistedIds().has('historical-parked')).toBe(true);
 	});
 	it('acknowledges plugin events only after a matching durable row can be read back', () => {
@@ -306,6 +308,27 @@ describe('cue-queue-persistence', () => {
 	});
 
 	describe('clear', () => {
+		it.each(['all', 'session'])(
+			'preserves acknowledged plugin rows across %s lifecycle clearing, then restores once',
+			(scope) => {
+				const p = makePersistence({ known: ['s-1', 's-2'] });
+				const event = makeEvent('plugin.event');
+				expect(p.persist('s-1', 'durable', makeEntry({ event }))).toBe(true);
+				p.persist('s-1', 'ordinary', makeEntry());
+				p.persist('s-2', 'other', makeEntry());
+				if (scope === 'all') p.clearAll();
+				else p.clearSession('s-1');
+				expect(p.persistedIds().has('durable')).toBe(true);
+				expect(p.persistedIds().has('ordinary')).toBe(false);
+				expect(p.persistedIds().has('other')).toBe(scope !== 'all');
+				expect(p.restoreAll().get('s-1')).toEqual([
+					expect.objectContaining({ persistId: 'durable', event }),
+				]);
+				p.remove('durable');
+				expect(p.restoreAll().has('s-1')).toBe(false);
+			}
+		);
+
 		it("clearSession drops only that session's rows", () => {
 			const p = makePersistence({ known: ['s-1', 's-2'] });
 			p.persist('s-1', 'a', makeEntry());

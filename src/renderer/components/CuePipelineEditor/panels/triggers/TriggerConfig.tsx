@@ -6,7 +6,7 @@ import { pluginJson } from '../../../../../shared/plugins/plugin-json';
  * file change, agent completed, GitHub PR/issue/label, task pending, webhook).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
@@ -39,6 +39,11 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	const data = node.data as TriggerNodeData;
 	const [localConfig, setLocalConfig] = useState(data.config);
 	const [pluginConfigError, setPluginConfigError] = useState('');
+	const pluginDraftValid = useRef(true);
+	useEffect(() => {
+		pluginDraftValid.current = true;
+		setPluginConfigError('');
+	}, [node.id, data.eventType]);
 	const [localCustomLabel, setLocalCustomLabel] = useState(data.customLabel ?? '');
 	// Whether the GitHub trigger's webhook section is shown. Open whenever the
 	// trigger already carries webhook settings; the checkbox opens it for a new one.
@@ -89,6 +94,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		const unregister = registerPendingEdit(() => {
 			flushConfig();
 			flushLabel();
+			return pluginDraftValid.current;
 		});
 		return () => {
 			flushConfig();
@@ -598,7 +604,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							style={themedInputStyle}
 							rows={6}
 							defaultValue={JSON.stringify(localConfig.plugin?.config ?? {}, null, 2)}
-							onBlur={(event) => {
+							onChange={(event) => {
 								try {
 									const config = pluginJson(JSON.parse(event.target.value));
 									updateConfig('plugin', {
@@ -607,8 +613,10 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 										...localConfig.plugin,
 										config,
 									});
+									pluginDraftValid.current = true;
 									setPluginConfigError('');
 								} catch {
+									pluginDraftValid.current = false;
 									setPluginConfigError('Enter valid JSON up to 16 KiB.');
 								}
 							}}

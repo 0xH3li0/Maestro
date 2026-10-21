@@ -90,6 +90,8 @@ vi.mock('crypto', () => ({
 
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
 import { createCueSessionRuntimeService } from '../../../main/cue/cue-session-runtime-service';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
+import type { CueTriggerSourceContext } from '../../../main/cue/triggers/cue-trigger-source';
 import { createCueSessionRegistry } from '../../../main/cue/cue-session-registry';
 import { createMockSession, createMockConfig, createMockDeps } from './cue-test-helpers';
 
@@ -1003,5 +1005,93 @@ describe('CueEngine session lifecycle', () => {
 
 			engine.stop();
 		});
+	});
+});
+
+describe('plugin source runtime dispatch acknowledgement', () => {
+	it('finishes initialization after dispatching every startup subscription', () => {
+		const session = createMockSession();
+		mockDetailedResult = null;
+		mockLoadCueConfig.mockReturnValue(
+			createMockConfig({
+				subscriptions: ['first', 'second'].map((name) => ({
+					name,
+					event: 'app.startup',
+					enabled: true,
+					prompt: 'work',
+				})),
+			})
+		);
+		const dispatch = vi.fn(() => 1);
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => [session],
+			onRefreshRequested: vi.fn(),
+			onLog: vi.fn(),
+			registry: createCueSessionRegistry(),
+			dispatchSubscription: dispatch,
+			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
+			clearFanInState: vi.fn(),
+		});
+		try {
+			expect(service.initSession(session, { reason: 'system-boot' })).toMatchObject({
+				kind: 'loaded',
+			});
+			expect(dispatch).toHaveBeenCalledTimes(2);
+		} finally {
+			service.teardownSession(session.id);
+		}
+	});
+
+	it.each([0, 1])('returns actual admission count %s to the durable publisher', (accepted) => {
+		const session = createMockSession();
+		const sub = {
+			name: 'plugin-input',
+			event: 'plugin.event' as const,
+			enabled: true,
+			prompt: 'work',
+			plugin: { pluginId: 'com.example.fixture', topic: 'fixture.received', config: {} },
+		};
+		mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [sub] }));
+		mockDetailedResult = null;
+		let context: CueTriggerSourceContext | undefined;
+		configurePluginCueHost({
+			register(ctx) {
+				context = ctx;
+				return vi.fn();
+			},
+			authorize: () => true,
+		});
+		const dispatch = vi.fn(() => accepted);
+		const registry = createCueSessionRegistry();
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => [session],
+			onRefreshRequested: vi.fn(),
+			onLog: vi.fn(),
+			registry,
+			dispatchSubscription: dispatch,
+			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
+			clearFanInState: vi.fn(),
+		});
+		try {
+			service.initSession(session, { reason: 'system-boot' });
+			expect(context).toBeDefined();
+			const event: CueEvent = {
+				id: 'plugin-event',
+				type: 'plugin.event',
+				timestamp: '2026-10-21T12:00:00.000Z',
+				triggerName: 'plugin-input',
+				payload: {},
+			};
+			expect(context!.emit(event)).toBe(accepted);
+			expect(dispatch).toHaveBeenCalledWith(session.id, sub, event, session.name);
+			expect(registry.get(session.id)?.lastTriggered).toBe('2026-10-21T12:00:00.000Z');
+		} finally {
+			service.teardownSession(session.id);
+			configurePluginCueHost(undefined);
+		}
 	});
 });

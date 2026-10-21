@@ -602,6 +602,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			endedAt: '',
 		};
 
+		const retainAuthority = (): boolean => {
+			if (authorizePluginCueEvent(event, sessionId, subscriptionName)) return true;
+			result.status = 'stopped';
+			result.stdout = '';
+			result.stderr = '';
+			return false;
+		};
+
 		// Claim the self-overlap guard for root triggers, synchronously before
 		// the first await, so any concurrent admit/drain sees this run as active
 		// and serializes a same-root sibling instead of overlapping it. Released
@@ -644,7 +652,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
 		try {
-			if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return;
+			if (!retainAuthority()) return;
 			const runResult = await deps.onCueRun({
 				runId,
 				sessionId,
@@ -659,6 +667,16 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				turnSettings,
 				signal: abortController.signal,
 			});
+			if (!retainAuthority()) {
+				if (!activeRuns.has(runId))
+					safeUpdateCueEventStatus(
+						runId,
+						'stopped',
+						runResult.providerSessionId,
+						completionInfoFromResult(result)
+					);
+				return;
+			}
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
 				// flight. The finally block's cleanup is gated on activeRuns
@@ -764,7 +782,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				let outputResult: CueRunResult | undefined;
 				let outputStatus: CueRunResult['status'] = 'failed';
 				try {
-					if (!authorizePluginCueEvent(event, sessionId, subscriptionName)) return;
+					if (!retainAuthority()) {
+						outputStatus = 'stopped';
+						return;
+					}
 					outputResult = await deps.onCueRun({
 						runId: outputRunId,
 						sessionId,
@@ -778,6 +799,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						// The same signal: a stop during this phase cancels its launch too.
 						signal: abortController.signal,
 					});
+					if (!retainAuthority()) {
+						outputStatus = 'stopped';
+						outputResult = { ...outputResult, status: 'stopped', stdout: '', stderr: '' };
+						return;
+					}
 					outputStatus = outputResult.status;
 				} finally {
 					// Use the raw (throwing) updateCueEventStatus with our own
@@ -842,6 +868,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				}
 			}
 
+			if (!retainAuthority()) return;
+
 			// Phase 3: legacy cli_output delivery - shell out to maestro-cli send --live.
 			// New code should use a downstream `action: command` subscription with
 			// `command.mode: 'cli'` instead; this path remains for YAML files that
@@ -877,6 +905,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 							`[CUE] "${subscriptionName}" CLI output target resolved to empty string (raw="${cliOutput.target}") - skipping delivery`
 						);
 					} else {
+						if (!retainAuthority()) return;
 						const sendResult = await runMaestroCliSend(resolvedTarget, result.stdout);
 						if (!sendResult.ok) {
 							throw new Error(`CLI exited with code ${sendResult.exitCode}: ${sendResult.stderr}`);
@@ -912,6 +941,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		} finally {
 			// A stopped run's launch has returned: nothing of it is left to spawn.
 			unsettledStoppedRuns.delete(runId);
+			drainStoppedRuns.delete(runId);
 			// Only clean up if the run is still tracked. If it was already removed
 			// (by stopRun or reset), that caller handled its own cleanup.
 			if (activeRuns.has(runId)) {
@@ -960,7 +990,23 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// the next run dispatched off this completion inherits the
 				// same root identity (or this run's runId, if it was itself
 				// a root).
-				deps.onRunCompleted(sessionId, result, subscriptionName, chainDepth, effectiveChainRootId);
+				if (!retainAuthority()) {
+					safeUpdateCueEventStatus(
+						runId,
+						'stopped',
+						result.providerSessionId,
+						completionInfoFromResult(result)
+					);
+				}
+				if (result.status === 'stopped') deps.onRunStopped(result);
+				else
+					deps.onRunCompleted(
+						sessionId,
+						result,
+						subscriptionName,
+						chainDepth,
+						effectiveChainRootId
+					);
 				// After onRunCompleted, which can queue this run's successors: a drain
 				// waiting for idleness must see them before it persists the queue.
 				notifyIfIdle();
@@ -1337,7 +1383,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				const queue = eventQueue.get(sessionId);
 				if (queue) {
 					for (const entry of queue) {
-						if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+						if (entry.persistId && !isDurableCueEvent(entry.event))
+							deps.queuePersistence?.remove(entry.persistId);
 					}
 				}
 				eventQueue.delete(sessionId);
@@ -1349,7 +1396,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			const kept = queue.filter(keep);
 			// Remove persisted rows for entries we are dropping.
 			for (const entry of queue) {
-				if (!keep(entry) && entry.persistId) {
+				if (!keep(entry) && entry.persistId && !isDurableCueEvent(entry.event)) {
 					deps.queuePersistence?.remove(entry.persistId);
 				}
 			}
@@ -1413,8 +1460,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			activeRunCount.clear();
 			activeRootKeys.clear();
 			eventQueue.clear();
-			// Reset tears down everything - persisted copies too. Any re-enqueue
-			// after reset() will generate fresh persist IDs.
+			// Reset clears ordinary persisted work; acknowledged plugin rows survive for restore.
 			deps.queuePersistence?.clearAll();
 			notifyIfIdle();
 		},

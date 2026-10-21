@@ -406,6 +406,69 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 		store.mint(plugin, [], ident);
 		expect(store.readPluginRecord(plugin, ident, 'policy')).toBeNull();
 	});
+	it.each(['revoke', 'uninstall', 'replace'] as const)(
+		'retires authority with a full archive on %s and retains cleanup-only provenance',
+		(operation) => {
+			const { store, deps } = privateStore();
+			const ref = 'a'.repeat(64),
+				foreignRef = 'b'.repeat(64);
+			store.registerPluginSecret(plugin, ident, 'account', 'fixture.example:993', ref, () => {});
+			store.registerPluginSecret(
+				foreign,
+				ident,
+				'account',
+				'fixture.example:993',
+				foreignRef,
+				() => {}
+			);
+			store.commitPluginRecord(plugin, ident, 'policy', 0, { stale: true }, () => {});
+			const expectedSlot = store.pluginSecretSlot(plugin, ident, ref);
+			const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+			// Pre-fix reachable state: archive limit plus a still-active state.
+			prior.opaqueArchive = Array.from({ length: 1024 }, () => ({
+				pluginId: plugin,
+				state: { identity: ident, records: {}, secrets: {} },
+			}));
+			fs.writeFileSync(deps.ledgerPath, deps.seal.seal(JSON.stringify(prior)));
+			const active = new AuthorizationStore(deps);
+			const nextIdentity = { ...ident, contentHash: 'c'.repeat(64) };
+			expect(() => {
+				if (operation === 'replace') active.mint(plugin, [], nextIdentity);
+				else active[operation](plugin);
+			}).not.toThrow();
+			const reopened = new AuthorizationStore(deps);
+			if (operation === 'replace')
+				expect(() => reopened.assertPluginPersistent(plugin, ident)).toThrow();
+			else expect(reopened.isEnabled(plugin)).toBe(false);
+			reopened.mint(plugin, [], ident);
+			expect(reopened.readPluginRecord(plugin, ident, 'policy')).toBeNull();
+			expect(() => reopened.commitPluginRecord(plugin, ident, 'new', 0, {}, () => {})).toThrowError(
+				expect.objectContaining({ code: 'PLUGIN_LIMIT' })
+			);
+			expect(() =>
+				reopened.registerPluginSecret(
+					plugin,
+					ident,
+					'new',
+					'fixture.example:993',
+					'c'.repeat(64),
+					() => {}
+				)
+			).toThrowError(expect.objectContaining({ code: 'PLUGIN_LIMIT' }));
+			const removed: string[] = [];
+			expect(() =>
+				reopened.purgePluginPrivateState(plugin, () => {
+					throw new Error('native removal unavailable');
+				})
+			).toThrow('native removal unavailable');
+			reopened.purgePluginPrivateState(plugin, (slot) => {
+				removed.push(slot);
+			});
+			expect(removed).toEqual([expectedSlot]);
+			expect(reopened.pluginSecretRemoval(foreign, ident, foreignRef)).toBeDefined();
+			expect(reopened.readPluginRecord(plugin, ident, 'policy')).toBeNull();
+		}
+	);
 	it('preserves prior sealed fields without loading domain authority or rewriting at read time', () => {
 		const { deps } = privateStore();
 		const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
@@ -946,6 +1009,16 @@ describe('authenticated durable Cue plugin source', () => {
 				return 1;
 			},
 		} as unknown as CueTriggerSourceContext;
+		const invalidContext = {
+			...ctx,
+			session: { id: 'invalid-owner' },
+			subscription: { ...ctx.subscription, fan_out: ['other-agent'] },
+		} as unknown as CueTriggerSourceContext;
+		const stopInvalid = events.register(invalidContext, {
+			pluginId: plugin,
+			topic: 'fixture.received',
+			config: {},
+		});
 		const stop = events.register(ctx, {
 			pluginId: plugin,
 			topic: 'fixture.received',
@@ -953,6 +1026,8 @@ describe('authenticated durable Cue plugin source', () => {
 		});
 		const [consumer] = events.list(plugin, { topic: 'fixture.received' });
 		expect(consumer.callerAgentId).toBe('agent-owner');
+		expect(events.list(plugin, { topic: 'fixture.received' })).toHaveLength(1);
+		stopInvalid();
 		expect(events.list(foreign, { topic: 'fixture.received' })).toEqual([]);
 		expect(() => events.begin(foreign, { consumerId: consumer.consumerId })).toThrow();
 		const lease = events.begin(plugin, { consumerId: consumer.consumerId });
