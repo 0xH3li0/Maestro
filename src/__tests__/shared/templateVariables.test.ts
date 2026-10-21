@@ -521,7 +521,7 @@ describe('substituteTemplateVariables', () => {
 			it('should leave no Peer Agents section when the agent has no roster', () => {
 				const result = substituteTemplateVariables(systemPrompt, createTestContext());
 				expect(result).not.toContain('{{PEER_AGENTS}}');
-				expect(result).not.toContain('## Peer Agents');
+				expect(result).not.toMatch(/^## Peer Agents$/m);
 			});
 
 			it('should render the roster ahead of Operating Rules', () => {
@@ -529,7 +529,8 @@ describe('substituteTemplateVariables', () => {
 					systemPrompt,
 					createTestContext({ peerRoster: roster })
 				);
-				const block = result.indexOf('## Peer Agents');
+				const block = result.search(/^## Peer Agents$/m);
+				expect(result.match(/^## Peer Agents$/gm)).toHaveLength(1);
 				expect(block).toBeGreaterThan(
 					result.indexOf('## Critical Directive: Directory Restrictions')
 				);

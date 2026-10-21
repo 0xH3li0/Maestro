@@ -808,6 +808,20 @@ describe('formatPeerAgentsForPrompt', () => {
 			expect(block).toContain('is out of bounds. Say so instead.');
 			expect(block).toContain('Tell the user which peer you reached and why');
 		});
+
+		it('allows user-authorized setup while requiring live verification before new access is used', () => {
+			const cli = 'node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"';
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R)], {
+				agentId: 'me-123',
+				cliCommand: cli,
+			});
+			expect(block).toContain('If the user asks to configure collaboration');
+			expect(block).toContain(`\`${cli} prompts get _maestro-cli\``);
+			expect(block).toContain('Ask about unresolved access and direction before changing grants');
+			expect(block).toContain('never widen access merely to complete a task');
+			expect(block).toContain(`\`${cli} show agent me-123 --json\``);
+			expect(block).toContain('before using it: this table is a snapshot');
+		});
 	});
 
 	describe('the how-to', () => {

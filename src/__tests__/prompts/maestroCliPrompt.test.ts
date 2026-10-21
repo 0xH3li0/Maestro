@@ -36,6 +36,58 @@ describe('_maestro-cli.md peer agents', () => {
 		expect(peerParagraph).toMatch(/out of bounds/);
 	});
 
+	test('distinguishes user-authorized setup from autonomous permission expansion', () => {
+		expect(peerParagraph).toContain('Change grants only for a user-authorized collaboration setup');
+		expect(peerParagraph).toContain('never widen your own access merely to complete a task');
+		expect(peerParagraph).toContain('read back the live roster');
+		expect(peerParagraph).not.toContain('never widen your own access.');
+	});
+
+	test('teaches setup without existing peers and asks for missing access decisions', () => {
+		expect(prompt).toContain('even if no peer table exists yet');
+		expect(prompt).toContain(
+			'A one-time request to ask or send work does not authorize a persistent peer grant'
+		);
+		expect(prompt).toContain('Consult (R), Delegate (W), or both');
+		expect(prompt).toContain('"Work together" alone does not specify `rw` or reciprocal access');
+		expect(prompt).toContain('ask in your normal reply and wait');
+		expect(prompt).toContain(
+			'In unattended runs, report unresolved decisions without changing those grants'
+		);
+	});
+
+	test('keeps communication grants separate from directory access and derived grants', () => {
+		expect(prompt).toContain('R/W is agent communication access, not filesystem access');
+		expect(prompt).toContain('Do not change global writable-consult settings');
+		expect(prompt).toContain('current and future members');
+		expect(prompt).toContain('An explicit row replaces derived access');
+		expect(prompt).toContain('restores derived grants and may leave access in place');
+		expect(prompt).toContain('Do not launch work for a configuration-only request');
+		expect(prompt).toContain('If an update fails, report which changes succeeded and what remains');
+	});
+
+	test('names real flags for setup, verification and correlated delegation', () => {
+		for (const [words, flags] of [
+			[['list', 'agents'], ['--json']],
+			[['show', 'agent'], ['--json']],
+			[['delegation', 'graph'], ['--json']],
+			[
+				['update-agent'],
+				['--peer', '--peer-note', '--remove-peer', '--group-peers', '--worktree-peers'],
+			],
+			[['dispatch'], ['--new-tab', '--notify-on-complete', '--background']],
+		] as const) {
+			const command = descendCommandTree([...words]).command;
+			for (const flag of flags) {
+				expect(
+					declaredFlags(command).has(flag),
+					`${words.join(' ')} does not declare ${flag}`
+				).toBe(true);
+				expect(prompt).toContain(flag);
+			}
+		}
+	});
+
 	test('lists the two group verbs with the agent management verbs', () => {
 		const line = prompt.split('\n').find((l) => l.startsWith('- **create-agent / update-agent'));
 		expect(line).toBeDefined();

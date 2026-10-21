@@ -18,6 +18,8 @@ Prompt templates are stored as `.md` files in `src/prompts/` and stay `.md` all 
 
 The source of truth for which prompts exist is `src/shared/promptDefinitions.ts` (`CORE_PROMPTS`, `PROMPT_IDS`); `src/prompts/index.ts` is a thin re-export of it, not a bundle of prompt text.
 
+Collaboration setup is discoverable from `maestro-system-prompt.md` even when an agent has no peers and `formatPeerAgentsForPrompt()` emits no roster. `_interface-primitives.md` routes natural language setup requests to the procedure in `_maestro-cli.md`. The roster formatter points existing peers to the same procedure. Keep these entry points consistent: a one-time consult does not authorize persistent grants, unresolved access and direction require user input, and authorized changes require live roster verification before use. Regression coverage lives in `src/__tests__/prompts/maestroCollaborationPrompt.test.ts`, `src/__tests__/prompts/maestroCliPrompt.test.ts`, and `src/__tests__/shared/peerAgents.test.ts`.
+
 ```text
 src/prompts/*.md
     |

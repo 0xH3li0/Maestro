@@ -55,6 +55,12 @@ flowchart LR
 
 Here the manager hands work down, and the employee can only ask questions up. That is two rows on two rosters. Maestro never mirrors one from the other.
 
+### Ask an Agent to Set Up Peers
+
+You can ask an agent to configure relationships, even if it has no peers yet. For example, "Let Manager delegate to Docs, and let Docs consult Manager" specifies two directions with different access. If you only say "make these agents peers," the agent asks which directions and permissions you want before changing grants. Asking an agent to consult another agent once does not authorize a persistent peer grant.
+
+The agent resolves names to agent IDs, checks existing grants, applies the authorized changes through `maestro-cli update-agent`, and reads back the affected rosters and Delegation Graph. Configuring relationships does not start work unless you also requested execution. Consult and Delegate are communication permissions; they do not change either agent's directory access or read-only mode.
+
 ## Where Peers Come From
 
 Open **Edit Agent** (right-click an agent in the Left Bar, or `Cmd+K` then "Edit Agent") and go to the **Peers** tab. The same tab is in the New Agent dialog. Three sources feed a roster, and the tab has one control for each:
@@ -108,9 +114,9 @@ The roster is rendered into the agent's system prompt as a `## Peer Agents` sect
 
 Below the table the prompt teaches only the commands the roster allows, so an agent whose peers are all consult only is never shown the delegate command. It also tells the agent to decide for itself, from the notes and what it knows of each peer's scope, whether a peer is the right one to reach, and to tell you which peer it reached and why.
 
-The access column is a hard rule, like a directory permission. Reaching an agent that is not on the table, or going beyond the access listed, is out of bounds.
+The access column is a hard rule, like a directory permission. An agent cannot expand its own access merely to complete a task. When you ask it to configure collaboration, it can apply the access and direction you authorize.
 
-Because the prompt is built when a turn starts, a change you make applies from the **next turn**. A turn already running keeps the roster it started with.
+The prompt table is a snapshot built when a turn starts. After an authorized change, the agent must read back the live roster with `maestro-cli show agent <id> --json` before using the changed access in that turn. The next turn's prompt includes the updated roster. Changing permissions does not reset the consultation budget.
 
 ## A Roster for New Agents
 

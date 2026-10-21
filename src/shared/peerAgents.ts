@@ -774,7 +774,7 @@ export function formatPeerAgentsForPrompt(
 				]
 			: []),
 		...(budgetLine ? [budgetLine] : []),
-		`- Decide for yourself, from ${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching an agent that is not in the table, or exceeding the access listed for one that is, is out of bounds. Say so instead.`,
+		`- Decide for yourself, from ${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching outside this roster on your own is out of bounds. Say so instead. If the user asks to configure collaboration, read \`${cli} prompts get _maestro-cli\` for the setup procedure. Ask about unresolved access and direction before changing grants; never widen access merely to complete a task. After a user-authorized change, verify the live roster with \`${cli} show agent ${self} --json\` before using it: this table is a snapshot.`,
 		'- Tell the user which peer you reached and why, so a consult or a delegation never happens invisibly.',
 	].join('\n');
 
