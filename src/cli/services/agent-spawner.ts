@@ -213,9 +213,13 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 		// Only a single unquoted path or narrowly quoted glob is admitted. Shell
 		// metacharacters, additional statements and environment prefixes fail closed.
 		const read =
-			/^(?:cat|head|tail) (?:-- )?([A-Za-z0-9_./-]+)$/.exec(value) ??
-			/^sed -n '[0-9]+(?:,[0-9]+)?p' ([A-Za-z0-9_./-]+)$/.exec(value);
-		if (read) return readSummary(read[1]);
+			/^(?:cat|head|tail) (?<separator>-- )?(?<file>[A-Za-z0-9_./-]+)$/.exec(value) ??
+			/^sed -n '[0-9]+(?:,[0-9]+)?p' (?<file>[A-Za-z0-9_./-]+)$/.exec(value);
+		if (read) {
+			const file = read.groups?.file;
+			if (!file || (file.startsWith('-') && !read.groups?.separator)) return fallback;
+			return readSummary(file);
+		}
 		const files =
 			/^rg --files(?: -g (?:'([A-Za-z0-9_.*?/-]+)'|"([A-Za-z0-9_.*?/-]+)"|([A-Za-z0-9_.*?/-]+)))?$/.exec(
 				value
@@ -223,7 +227,9 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 		if (files) {
 			const glob = files[1] ?? files[2] ?? files[3];
 			const name = glob ? fileName(glob.replace(/[?*]/g, 'x')) : undefined;
-			return name && glob.length <= 80
+			// Check the text we publish: replacing a wildcard may remove a secret's
+			// word boundary and make the filename validation miss it.
+			return name && glob.length <= 80 && !redactSecrets(glob).redacted
 				? `Searching files for ${glob.split('/').pop()}`
 				: 'Searching files';
 		}

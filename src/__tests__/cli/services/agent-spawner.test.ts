@@ -4019,6 +4019,16 @@ Some text with [x] in it that's not a checkbox
 					],
 					['functions.exec_command', { cmd: "rg --files -g '*.ts'" }, 'Searching files for *.ts'],
 					[
+						'functions.exec_command',
+						{ cmd: "rg --files -g '*ghp_" + 'A'.repeat(36) + "'" },
+						'Searching files',
+					],
+					['Bash', { command: 'cat --help' }, 'Running shell command'],
+					['Bash', { command: 'head -n' }, 'Running shell command'],
+					['Bash', { command: 'tail --version' }, 'Running shell command'],
+					['Bash', { command: 'cat -- -notes.md' }, 'Reading file -notes.md'],
+					['Bash', { command: "sed -n '1,80p' --help" }, 'Running shell command'],
+					[
 						'Bash',
 						{ command: 'git status --short' },
 						'Running shell command to inspect repository status',
