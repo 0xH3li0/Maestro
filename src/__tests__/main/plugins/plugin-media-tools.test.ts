@@ -213,8 +213,6 @@ describe('media tools boundary', () => {
 				revokeRunToken: vi.fn(),
 				cliScriptPath: () => '/fixture/cli',
 				audit: vi.fn(),
-				resolveAutoTurn: vi.fn(),
-				noteAutoSessionLaunch: vi.fn(),
 			});
 			const result = tools.forwardOriginal(
 				'p',
