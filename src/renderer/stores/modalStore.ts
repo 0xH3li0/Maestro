@@ -225,6 +225,16 @@ export interface DeleteAgentModalData {
 	session: Session;
 }
 
+/** Export Agent modal: the agent to export. */
+export interface AgentExportModalData {
+	sessionId: string;
+}
+
+/** Import Agent modal: the Left Bar group the imported agents go in. */
+export interface AgentImportModalData {
+	groupId?: string;
+}
+
 /** Director's Notes modal data */
 export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
@@ -241,7 +251,14 @@ export interface CueModalData {
 	/** Tab the modal opens on. Values match `CueModalTab` in
 	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
 	 *  `shared/uiSurfaces.ts`. */
-	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	initialTab?:
+		| 'dashboard'
+		| 'scheduled'
+		| 'pipeline'
+		| 'pipeline-list'
+		| 'activity'
+		| 'backup'
+		| 'bundles';
 	/**
 	 * Agent to highlight and scroll to in the dashboard's session table.
 	 *
@@ -371,6 +388,8 @@ export type ModalId =
 	| 'newInstance'
 	| 'editAgent'
 	| 'deleteAgent'
+	| 'agentExport'
+	| 'agentImport'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -581,6 +600,8 @@ export interface ModalDataMap {
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	agentExport: AgentExportModalData;
+	agentImport: AgentImportModalData;
 	/**
 	 * Present when opened from the Left Bar's right-click menu, naming the agent
 	 * to configure. Absent when opened from the header or Settings, where the

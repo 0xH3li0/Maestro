@@ -27,7 +27,8 @@
  * the agent already had, or one reopened for a message, is the user's own and is
  * never hidden or deleted:
  * - Ephemeral: a created tab is hidden (no chip in the tab strip). Starting a
- *   new chat deletes it. Whether its turns reach History is a setting.
+ *   new chat deletes it once its reply in progress, if any, has finished.
+ *   Whether its turns reach History is a setting.
  * - Persistent: a created tab is visible on the agent and stays when a new chat
  *   starts, like any other tab.
  */
@@ -140,6 +141,11 @@ export interface QuickChatRoute {
 	tabOpen: boolean;
 	/** When the running reply started (ms epoch), for the elapsed counter. */
 	since: number | null;
+	/**
+	 * On a queued message: whether it can be steered into the reply already
+	 * running in its tab (see getSteerEligibility), rather than wait for it.
+	 */
+	canSteer?: boolean;
 }
 
 /** One line saying where a message went, for `maestro-cli quick-chat status`. */
@@ -150,7 +156,7 @@ export function describeQuickChatRoute(route: QuickChatRoute): string {
 	const tab = `${how} "${route.tabName ?? route.tabId}"`;
 	switch (route.status) {
 		case 'queued':
-			return `queued for ${tab}`;
+			return `queued for ${tab}${route.canSteer ? ', can steer' : ''}`;
 		case 'running':
 			return `running in ${tab}`;
 		case 'cancelled':
@@ -290,6 +296,13 @@ export type QuickChatCommand =
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
+	/**
+	 * Hand a QUEUED message to the reply already running in its tab, so the
+	 * agent can change course now instead of answering it afterwards. Same steer
+	 * as the queue card's Steer button. `messageId` defaults to the latest
+	 * steerable message.
+	 */
+	| { type: 'steer'; messageId?: string }
 	/**
 	 * Bring back a chat from the recent chats list: its agent, its tab (reopened
 	 * when it was closed), and its thread. The chat in progress ends as `new` ends it.
@@ -632,8 +645,11 @@ export interface QuickChatStatus {
 	snapshot: QuickChatSnapshot;
 }
 
-/** Window actions that stay in the main process. */
-export type QuickChatWindowAction = 'show' | 'hide' | 'toggle';
+/**
+ * Window actions that stay in the main process. `return` hides the window and
+ * brings the Maestro window forward (Cmd+` in the window).
+ */
+export type QuickChatWindowAction = 'show' | 'hide' | 'toggle' | 'return';
 
 /** The window's two heights: composer only, or composer plus conversation. */
 export type QuickChatLayout = 'compact' | 'expanded';

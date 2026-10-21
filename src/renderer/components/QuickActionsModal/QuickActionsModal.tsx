@@ -63,10 +63,13 @@ import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
 import { buildQuickChatCommands } from './commands/quickChatCommands';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { selectStatsIndexingActive, useStatsIndexingStore } from '../../stores/statsIndexingStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
+import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import {
 	buildGroupChatCommands,
@@ -181,6 +184,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
@@ -240,6 +244,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
+	const toastsEnabled = useSettingsStore((s) => areToastsEnabled(s.toastDuration));
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -270,6 +275,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -307,9 +313,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// sit open while a queued file advances, and landing on a stale id would open
 	// the player on something the user already finished.
 	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
+	const statsIndexingActive = useStatsIndexingStore(selectStatsIndexingActive);
+	const showStatsIndexingProgress = useStatsIndexingStore((s) => s.bringToFront);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -582,6 +591,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
 		}),
+		...buildStatsIndexingCommands({
+			scanActive: statsIndexingActive,
+			showScanProgress: showStatsIndexingProgress,
+			setQuickActionOpen,
+		}),
 		...buildConcertoCommands({
 			concertoEnabled,
 			stageOpen: concertoStageOpen,
@@ -611,9 +625,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			visibleToastCount,
 			clearToasts,
 			unreadNotificationCount,
-			openNotificationCenter: () => useNotificationStore.getState().setNotificationCenterOpen(true),
+			openNotificationCenter: notificationCenterEnabled
+				? () => useNotificationStore.getState().setNotificationCenterOpen(true)
+				: undefined,
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
+			toastsEnabled,
+			toggleInAppToastsShortcut: shortcuts.toggleInAppToasts,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,
@@ -775,6 +793,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+			renameTabGroupShortcut: tabShortcuts?.renameTabGroup,
+			onCloseTabGroup,
 		}),
 		...buildTileCommands({
 			activeSession,
@@ -941,7 +961,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			searchAllTabsShortcut: shortcuts.searchAllTabs,
 		}),
 		...buildGroupChatCommands({
-			sessions,
+			// The "2+ agents" rule counts only live agents: a dormant Pianola must
+			// not make New Group Chat appear.
+			sessions: switchableSessions,
 			groupChats,
 			activeGroupChatId,
 			onNewGroupChat,
@@ -1019,6 +1041,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
 			activeBatchSessionIds,
+			batchRunStates,
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,

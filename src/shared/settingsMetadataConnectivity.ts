@@ -35,6 +35,20 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 20,
 		category: 'notifications',
 	},
+	notificationCenterEnabled: {
+		description:
+			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	toastDurationBeforeOff: {
+		description:
+			'Toast duration in effect before toasts were last switched off from the bell popover or command palette; restored when they are switched back on.',
+		type: 'number',
+		default: 20,
+		category: 'internal',
+	},
 	notificationCenterLarge: {
 		description: 'Use a wider, taller inbox while keeping it within the window.',
 		type: 'boolean',

@@ -240,6 +240,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		startGroupChat: vi.fn().mockResolvedValue({ chatId: 'chat-1' }),
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
+		archiveGroupChat: vi.fn().mockResolvedValue(true),
 		sendGroupChatMessage: vi.fn().mockResolvedValue(true),
 		steerGroupChat: vi.fn().mockResolvedValue({
 			outcome: 'delivered',
@@ -258,6 +259,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCuePipeline: vi.fn().mockResolvedValue(null),
 		setCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
 		removeCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
+		exportCueBundle: vi.fn().mockResolvedValue({ ok: true, outputPath: '/tmp/b.zip' }),
+		importCueBundle: vi.fn().mockResolvedValue({ ok: true, applied: true, plan: {} }),
 		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
@@ -2371,6 +2374,35 @@ describe('WebSocketMessageHandler', () => {
 				});
 			});
 		});
+
+		it('archives a chat, and only a literal archived: false restores it', async () => {
+			handler.handleMessage(client, {
+				type: 'archive_group_chat',
+				chatId: 'chat-1',
+				requestId: 'req-5',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'archive_group_chat_result',
+					success: true,
+					chatId: 'chat-1',
+					archived: true,
+					requestId: 'req-5',
+				});
+			});
+			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', true);
+
+			handler.handleMessage(client, {
+				type: 'archive_group_chat',
+				chatId: 'chat-1',
+				archived: false,
+				requestId: 'req-6',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
+			});
+			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
+		});
 	});
 
 	describe('Read Terminal Tab (Web → Desktop)', () => {
@@ -4048,6 +4080,59 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
 			expect(response.type).toBe('cue_pipeline_remove_result');
 			expect(response.result).toEqual({ ok: true });
+		});
+
+		it('cue_bundle_export runs the export and returns its outcome', async () => {
+			const request = { agentId: 'a1', outputPath: '/tmp/b.zip' };
+			handler.handleMessage(client, { type: 'cue_bundle_export', request, requestId: 'r1' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.exportCueBundle).toHaveBeenCalledWith(request);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'cue_bundle_export_result',
+				requestId: 'r1',
+				outcome: { ok: true, outputPath: '/tmp/b.zip' },
+			});
+		});
+
+		it('cue_bundle_import passes a refusal through as data', async () => {
+			(callbacks.importCueBundle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				ok: false,
+				code: 'CONFLICTS',
+				message: 'conflicts',
+				details: { conflicts: [{ kind: 'agent', target: 'a1', message: 'exists' }] },
+			});
+			const request = { bundlePath: '/tmp/b.zip', workspaces: { app: '/srv/app' } };
+			handler.handleMessage(client, { type: 'cue_bundle_import', request });
+
+			await vi.waitFor(() => {
+				expect(callbacks.importCueBundle).toHaveBeenCalledWith(request);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_bundle_import_result');
+			expect(response.outcome).toMatchObject({ ok: false, code: 'CONFLICTS' });
+			expect(response.outcome.details.conflicts).toHaveLength(1);
+		});
+
+		it('cue_bundle_import rejects a message with no request', () => {
+			handler.handleMessage(client, { type: 'cue_bundle_import' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing bundle request');
+		});
+
+		it('cue_bundle_export reports a failure to run as an error', async () => {
+			(callbacks.exportCueBundle as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Cue bundles are not ready yet')
+			);
+			handler.handleMessage(client, { type: 'cue_bundle_export', request: { agentId: 'a' } });
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('not ready yet');
+			});
 		});
 	});
 

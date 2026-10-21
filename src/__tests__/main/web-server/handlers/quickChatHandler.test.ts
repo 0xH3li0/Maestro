@@ -94,7 +94,7 @@ describe('quick_chat handler', () => {
 		});
 	});
 
-	it.each(['show', 'hide', 'toggle'] as const)('runs the %s window action', (action) => {
+	it.each(['show', 'hide', 'toggle', 'return'] as const)('runs the %s window action', (action) => {
 		handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r2' });
 		expect(controller.windowAction).toHaveBeenCalledWith(action);
 		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r2' });
@@ -104,6 +104,13 @@ describe('quick_chat handler', () => {
 		controller.windowAction.mockReturnValue({ ...status, enabled: false });
 		handler.handleMessage(client, { type: 'quick_chat', action: 'show', requestId: 'r3' });
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r3' });
+	});
+
+	it.each(['hide', 'return'] as const)('still succeeds at %s when the feature is off', (action) => {
+		controller.windowAction.mockReturnValue({ ...status, enabled: false });
+		handler.handleMessage(client, { type: 'quick_chat', action, requestId: 'r3b' });
+		expect(controller.windowAction).toHaveBeenCalledWith(action);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r3b' });
 	});
 
 	it.each([

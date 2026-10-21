@@ -441,6 +441,8 @@ describe('useRemoteIntegration', () => {
 		sendRemoteGetGroupChatStateResponse: vi.fn(),
 		onRemoteStopGroupChat: vi.fn().mockReturnValue(() => {}),
 		sendRemoteStopGroupChatResponse: vi.fn(),
+		onRemoteArchiveGroupChat: vi.fn().mockReturnValue(() => {}),
+		sendRemoteArchiveGroupChatResponse: vi.fn(),
 		onRemoteSendGroupChatMessage: vi.fn().mockReturnValue(() => {}),
 		sendRemoteSendGroupChatMessageResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
@@ -1226,6 +1228,36 @@ describe('useRemoteIntegration', () => {
 			expect(state.activeSessionId).toBe('other-session');
 			expect(state.sessions[0].activeTabId).toBe(visible.id);
 			expect(state.sessions[0].aiTabs.find((tab) => tab.id === hidden.id)?.hidden).toBe(true);
+		});
+
+		// The snapshot carries tab states only, and the Left Bar dot and the
+		// Thinking pill read the AGENT's. A phone drew a tab mid-turn under a
+		// green "Ready" agent until something else happened to set it.
+		it('derives the agent state from the tab states the snapshot carries', () => {
+			const tab = createMockTab({ id: 'tab-1', state: 'idle' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [
+					{ ...tab, state: 'busy', thinkingStartTime: 1234 },
+				]);
+			});
+			let updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('busy');
+			expect(updated.busySource).toBe('ai');
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [{ ...tab, state: 'idle' }]);
+			});
+			updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
 		});
 
 		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
@@ -3995,7 +4027,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('group chat bridge', () => {
-		it('subscribes to all five group chat requests and unsubscribes on unmount', () => {
+		it('subscribes to all six group chat requests and unsubscribes on unmount', () => {
 			const unsubscribe = vi.fn();
 			const listeners = [
 				mockProcess.onRemoteGetGroupChats,
@@ -4003,6 +4035,7 @@ describe('useRemoteIntegration', () => {
 				mockProcess.onRemoteGetGroupChatState,
 				mockProcess.onRemoteStopGroupChat,
 				mockProcess.onRemoteSendGroupChatMessage,
+				mockProcess.onRemoteArchiveGroupChat,
 			];
 			for (const listener of listeners) listener.mockReturnValue(unsubscribe);
 
@@ -4010,7 +4043,7 @@ describe('useRemoteIntegration', () => {
 			for (const listener of listeners) expect(listener).toHaveBeenCalledTimes(1);
 
 			unmount();
-			expect(unsubscribe).toHaveBeenCalledTimes(5);
+			expect(unsubscribe).toHaveBeenCalledTimes(6);
 		});
 	});
 

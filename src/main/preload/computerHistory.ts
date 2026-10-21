@@ -11,6 +11,7 @@
 import { ipcRenderer } from 'electron';
 import type { ComputerHistoryConfigPatch } from '../../shared/computer-history/config';
 import type { DigestKind } from '../../shared/computer-history/paths';
+import type { BuiltInExclusionView } from '../../shared/computer-history/exclusions';
 import type {
 	ActivitySummary,
 	AppActivity,
@@ -55,8 +56,11 @@ export function createComputerHistoryApi() {
 		pause: (forMs?: number | null): Promise<ComputerHistoryStatus> =>
 			ipcRenderer.invoke('computerHistory:pause', forMs ?? null),
 		resume: (): Promise<ComputerHistoryStatus> => ipcRenderer.invoke('computerHistory:resume'),
-		listRules: (): Promise<{ rules: CaptureRule[]; builtIn: string[] }> =>
-			ipcRenderer.invoke('computerHistory:listRules'),
+		listRules: (): Promise<{
+			rules: CaptureRule[];
+			builtIn: string[];
+			builtInApps: BuiltInExclusionView[];
+		}> => ipcRenderer.invoke('computerHistory:listRules'),
 		addRule: (
 			match: CaptureRuleMatch,
 			value: string,

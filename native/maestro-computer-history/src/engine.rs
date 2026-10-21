@@ -123,8 +123,17 @@ fn cap(s: Option<String>, max: usize) -> Option<String> {
         .filter(|v| !v.trim().is_empty())
 }
 
+/// Whitespace or zero-width only. Rich-text editors report an empty field as
+/// a zero-width character (Discord's Slate editor reads "\u{feff}\n"), and
+/// `trim` keeps those, so a send there never looked like a clear.
 fn is_blank(s: &str) -> bool {
-    s.trim().is_empty()
+    s.chars().all(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+            )
+    })
 }
 
 /// True when a window title carries a private / incognito marker.
@@ -332,6 +341,9 @@ pub struct AppFilter {
     domains: Vec<String>,
     /// "Record only these apps" (include mode). None = every app not blocked.
     allow: Option<HashSet<String>>,
+    /// The user opted in to recording private / incognito windows. False (the
+    /// default) hides them, so a filter built without a configure fails closed.
+    record_private: bool,
 }
 
 fn normalize_app_set(apps: &[String]) -> HashSet<String> {
@@ -348,6 +360,7 @@ impl AppFilter {
             pids: pids.iter().copied().collect(),
             domains: domains.iter().filter_map(|d| normalize_domain(d)).collect(),
             allow: None,
+            record_private: false,
         }
     }
 
@@ -355,6 +368,13 @@ impl AppFilter {
     /// case-insensitive) may be observed. Blocks still win over the list.
     pub fn with_allow(mut self, allow: Option<&[String]>) -> Self {
         self.allow = allow.map(normalize_app_set);
+        self
+    }
+
+    /// Whether private / incognito windows are hidden (the default) or read
+    /// like any other window.
+    pub fn with_skip_private(mut self, skip: bool) -> Self {
+        self.record_private = !skip;
         self
     }
 
@@ -377,11 +397,11 @@ impl AppFilter {
         !self.domains.is_empty()
     }
 
-    /// Private window or blocked domain: emit nothing for this window, not
-    /// even its title.
+    /// Private window (unless the user records them) or blocked domain: emit
+    /// nothing for this window, not even its title.
     pub fn window_hidden(&self, window: Option<&WindowInfo>) -> bool {
         let Some(w) = window else { return false };
-        w.title.as_deref().is_some_and(is_private_title)
+        (!self.record_private && w.title.as_deref().is_some_and(is_private_title))
             || w.url
                 .as_deref()
                 .is_some_and(|u| domain_blocked(u, &self.domains))
@@ -533,7 +553,8 @@ impl From<ConfigureCommand> for Config {
     fn from(c: ConfigureCommand) -> Self {
         Config {
             filter: AppFilter::new(&c.block_apps, &c.block_pids, &c.block_domains)
-                .with_allow(c.allow_apps.as_deref()),
+                .with_allow(c.allow_apps.as_deref())
+                .with_skip_private(c.skip_private_windows),
             snapshots: c.snapshots,
             max_text_bytes: c.max_text_bytes.max(MIN_TEXT_CAP),
             max_snapshot_bytes: c.max_snapshot_bytes.max(MIN_TEXT_CAP),
@@ -1642,6 +1663,7 @@ mod tests {
                 block_pids: vec![1234],
                 block_domains: vec!["bank.example.com".into()],
                 allow_apps: None,
+                skip_private_windows: true,
                 snapshots: false,
                 max_text_bytes: 100,
                 max_snapshot_bytes: 200,
@@ -2173,6 +2195,29 @@ mod tests {
     }
 
     #[test]
+    fn private_windows_are_recorded_when_the_user_opts_in() {
+        let (mut engine, _obs) = configured(ConfigureCommand {
+            skip_private_windows: false,
+            ..Default::default()
+        });
+        activate(
+            &mut engine,
+            "com.google.Chrome",
+            3,
+            "Bank - Google Chrome (Incognito)",
+            0,
+        );
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::AppActivated]);
+        assert_eq!(
+            out[0].window.as_ref().unwrap().title.as_deref(),
+            Some("Bank - Google Chrome (Incognito)")
+        );
+        // An unconfigured filter still hides them (fail closed).
+        assert!(AppFilter::default().window_hidden(Some(&win("x (Incognito)", None))));
+    }
+
+    #[test]
     fn blocked_domains_suppress_window_and_subdomains() {
         let (mut engine, mut obs) = configured(ConfigureCommand {
             block_domains: vec!["bank.example.com".into()],
@@ -2338,6 +2383,41 @@ mod tests {
         assert!(
             engine.drain().is_empty(),
             "the empty field is not committed again"
+        );
+    }
+
+    #[test]
+    fn zero_width_empty_value_counts_as_cleared() {
+        // Discord's editor reads "\u{feff}\n" when empty.
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        activate(&mut engine, "com.hnc.Discord", 7, "general", 0);
+        engine.drain();
+        engine.handle_signal(
+            Signal::FocusChanged {
+                element: Some(field(1, "\u{feff}\n")),
+            },
+            at(0),
+        );
+        engine.handle_signal(
+            Signal::ValueChanged {
+                element: field(1, "ship it"),
+            },
+            at(100),
+        );
+        engine.handle_signal(
+            Signal::ValueChanged {
+                element: field(1, "\u{feff}\n"),
+            },
+            at(300),
+        );
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::TextCommitted]);
+        assert_eq!(out[0].reason, Some(TextCommitReason::Cleared));
+        assert_eq!(out[0].text.as_deref(), Some("ship it"));
+        engine.tick(&mut obs, at(5000));
+        assert!(
+            engine.drain().is_empty(),
+            "the zero-width value is never committed"
         );
     }
 

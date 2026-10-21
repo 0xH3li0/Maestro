@@ -149,6 +149,7 @@ import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -173,6 +174,11 @@ import {
 	resolveCodexFollowup,
 	type CodexFollowupRequest,
 } from './services/codexFollowup';
+import {
+	CODE_FENCE_COMMAND_EVENT,
+	type CodeFenceCommandRequest,
+} from './services/codeFenceCommand';
+import { dispatchShellCommand } from './services/shellCommand';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -244,6 +250,7 @@ import {
 // getSlashCommandDescription moved to useWizardHandlers
 import { useUIStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
+import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 
@@ -570,7 +577,12 @@ function MaestroConsoleInner() {
 	// updates would re-render the entire console shell. Event-time readers use
 	// sessionsRef / getState(); paint leaves self-source with narrow selectors.
 	// Left Bar sort/nav/starred live in sidebarNavStore (SidebarNavSync host).
-	const hasSessions = useSessionStore((s) => s.sessions.length > 0);
+	// Live agents only: a dormant Pianola (flag off) does not count, so the
+	// empty state still shows when it is the only stored agent.
+	const pianolaEnabled = encoreFeatures.pianola;
+	const hasSessions = useSessionStore(
+		(s) => filterLiveAgents(s.sessions, { pianola: pianolaEnabled }).length > 0
+	);
 	const hasNoAgents = !hasSessions;
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -1063,8 +1075,11 @@ function MaestroConsoleInner() {
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
-	// subsystem so it pauses background work when the window is hidden.
-	useCueVisibilityWiring();
+	// subsystem so it pauses background work when the window is hidden. Silent
+	// while the Cue Encore Feature is off.
+	useCueVisibilityWiring(encoreFeatures.maestroCue);
+	// Adds the agents a bundle import brings (Bundles tab or `maestro-cli bundle import`).
+	useCueBundleAgentSync();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	// PERF: Paint/derived tab state lives in MainPanel via getTabDerivedState.
@@ -1081,6 +1096,7 @@ function MaestroConsoleInner() {
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		handleCloseTabGroup,
 		handleCloseCurrentTab,
 		handleRequestTabRename,
 		handleUpdateTabByClaudeSessionId,
@@ -1909,7 +1925,10 @@ function MaestroConsoleInner() {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
-			openWizard: openWizardModal,
+			// The base opener, not openWizardModal: the resume handlers call this
+			// after the resume prompt, and openWizardModal would find the saved
+			// state still on disk and raise the same prompt again (#1835).
+			openWizard: _baseOpenWizardModal,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
@@ -2269,6 +2288,8 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
+		groupChatInputRef,
+		groupChatMessagesRef,
 		starredSectionCollapsed: starredSessionsCollapsed,
 		setStarredSectionCollapsed: setStarredSessionsCollapsed,
 		groupChats,
@@ -2498,6 +2519,53 @@ function MaestroConsoleInner() {
 			notifyCenterFlash({
 				message: 'Conversation moved',
 				detail: 'The follow-up is in the composer, not sent.',
+				color: 'yellow',
+			});
+		}
+	});
+
+	/*
+	 * --- CODE FENCE RUN BUTTONS ---
+	 *
+	 * A shell fence's Run button in an agent's reply. Same targeting rule as the
+	 * follow-up chips above, through the same resolver: the command is
+	 * agent-authored, so it runs only in the conversation it was drawn in, and a
+	 * click that arrives after the user moved away degrades to a command-mode
+	 * prefill in the composer on screen. A run goes through
+	 * `dispatchShellCommand`, the exact path a typed `!command` takes, so it
+	 * lands as the same card and in the same recall history.
+	 */
+	useEventListener(CODE_FENCE_COMMAND_EVENT, (event) => {
+		const request = (event as CustomEvent<CodeFenceCommandRequest>).detail;
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		const resolution = resolveCodexFollowup(
+			request && {
+				prompt: request.command,
+				sessionId: request.sessionId,
+				tabId: request.tabId,
+				mode: request.mode === 'run' ? 'send' : 'prefill',
+			},
+			{
+				activeSessionId: session?.id ?? null,
+				activeTabId: session ? (getActiveTab(session)?.id ?? null) : null,
+			}
+		);
+
+		if (resolution.action === 'ignore') return;
+
+		if (resolution.action === 'send' && session) {
+			void dispatchShellCommand({ session, tabId: resolution.tabId, command: resolution.prompt });
+			return;
+		}
+
+		if (resolution.action !== 'prefill') return;
+		useComposerInputStore.getState().loadAiDraft(resolution.tabId, resolution.prompt, 'shell');
+		inputRef.current?.focus();
+
+		if (resolution.movedAway) {
+			notifyCenterFlash({
+				message: 'Conversation moved',
+				detail: 'The command is in the composer, not run.',
 				color: 'yellow',
 			});
 		}
@@ -2780,6 +2848,7 @@ function MaestroConsoleInner() {
 		// Group chat context
 		activeGroupChatId,
 		groupChatInputRef,
+		groupChatMessagesRef,
 		flushGroupChatDraft,
 		groupChatStagedImages,
 		setGroupChatRightTab,
@@ -3018,6 +3087,7 @@ function MaestroConsoleInner() {
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		handleCloseTabGroup,
 
 		// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 		handleFileTabSelect: handleSelectFileTab,
@@ -3557,6 +3627,7 @@ function MaestroConsoleInner() {
 						onCloseOtherTabs={handleCloseOtherTabs}
 						onCloseTabsLeft={handleCloseTabsLeft}
 						onCloseTabsRight={handleCloseTabsRight}
+						onCloseTabGroup={handleCloseTabGroup}
 						setPlaygroundOpen={setPlaygroundOpen}
 						onQuickActionsRefreshGitFileState={handleQuickActionsRefreshGitFileState}
 						onQuickActionsDebugReleaseQueuedItem={handleQuickActionsDebugReleaseQueuedItem}
@@ -3821,10 +3892,16 @@ function MaestroConsoleInner() {
  * re-render MaestroConsoleInner via this parent.
  */
 function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
-	const sessions = useStoreWithEqualityFn(
+	const storedSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		gitPollSessionEquality
+	);
+	// Live agents only: a dormant Pianola's folder (flag off) is never polled.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const sessions = useMemo(
+		() => filterLiveAgents(storedSessions, { pianola: pianolaEnabled }),
+		[storedSessions, pianolaEnabled]
 	);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	return (

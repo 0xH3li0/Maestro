@@ -177,6 +177,30 @@ describe('ExtensionDetails sub-tabs - configurable first-party tile', () => {
 		expect(screen.queryByTestId('extension-background-service')).not.toBeInTheDocument();
 	});
 
+	it('a settings deep link switches an open pane from Help back to Settings', () => {
+		const props = { ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY };
+		const { rerender } = renderDetails(props);
+		fireEvent.click(screen.getByTestId('extension-subtab-help'));
+		expect(screen.queryByTestId('first-party-body')).not.toBeInTheDocument();
+
+		const base = {
+			theme,
+			contributions: null,
+			busy: false,
+			onTogglePlugin: vi.fn(),
+			onToggleBuiltin: vi.fn(),
+			onUninstall: vi.fn(),
+			onRevoke: vi.fn(),
+			getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
+		};
+		rerender(<ExtensionDetails {...base} {...props} settingsRequest={{ flag: 'usageStats' }} />);
+		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		expect(screen.getByTestId('first-party-body')).toBeInTheDocument();
+	});
+
 	it('reveals capabilities + background services only after clicking Permissions, then back', () => {
 		renderDetails({ ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY });
 

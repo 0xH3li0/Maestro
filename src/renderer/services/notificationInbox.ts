@@ -1,5 +1,8 @@
 /** Shared entry activation and CLI history operations over the live notification store. */
-import { NOTIFICATION_HISTORY_PERSISTENCE_ERROR } from '../../shared/notificationInbox';
+import {
+	NOTIFICATION_CENTER_DISABLED_ERROR,
+	NOTIFICATION_HISTORY_PERSISTENCE_ERROR,
+} from '../../shared/notificationInbox';
 import type {
 	NotificationInboxRequest,
 	NotificationInboxResult,
@@ -18,6 +21,7 @@ import { logger } from '../utils/logger';
 import { jumpToAgent } from './agentNavigation';
 import { runToastClick } from './toastClickActions';
 import { openUrl } from '../utils/openUrl';
+import { areToastsEnabled } from '../../shared/toastDuration';
 
 /** Report a stale source even when the user has disabled floating toasts. */
 function jumpToNotificationSource(sessionId: string, tabId?: string): boolean {
@@ -26,7 +30,7 @@ function jumpToNotificationSource(sessionId: string, tabId?: string): boolean {
 		color: 'yellow',
 		title: 'Agent Not Found',
 		message: 'The agent this notification came from no longer exists.',
-		skipHistory: useNotificationStore.getState().config.defaultDuration !== -1,
+		skipHistory: areToastsEnabled(useNotificationStore.getState().config.defaultDuration),
 	});
 	return false;
 }
@@ -90,6 +94,11 @@ export function openNotificationLink(record: NotificationRecord): void {
 export async function performNotificationInboxAction(
 	request: NotificationInboxRequest
 ): Promise<NotificationInboxResult> {
+	// Dismissing every visible toast is a toast operation, not an inbox one, so
+	// it still works with the inbox off. Everything else needs the inbox.
+	const toastOnly = request.action === 'dismiss' && request.id === undefined;
+	if (!toastOnly && !useSettingsStore.getState().notificationCenterEnabled)
+		return { success: false, error: NOTIFICATION_CENTER_DISABLED_ERROR };
 	const store = useNotificationStore.getState();
 	const record = request.id ? store.history.find((n) => n.id === request.id) : undefined;
 	if (

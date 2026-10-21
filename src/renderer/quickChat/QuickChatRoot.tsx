@@ -63,6 +63,7 @@ import {
 } from '../components/InputArea/components/stagedImageDrag';
 import { moveStagedImage } from '../utils/stagedImageOrder';
 import { imageFilesIn, readBlobAsDataUrl } from '../utils/imageData';
+import { isMacOSPlatform } from '../utils/platformUtils';
 import { openZoomViewer } from '../components/ZoomViewer';
 
 /** The reply box under a conversation: the conversation keeps the room. */
@@ -264,11 +265,13 @@ function MessageView({
 	theme,
 	onOpenTab,
 	onMoveToNewTab,
+	onSteer,
 }: {
 	message: QuickChatMessage;
 	theme: Theme;
 	onOpenTab: (messageId: string) => void;
 	onMoveToNewTab: (messageId: string) => void;
+	onSteer: (messageId: string) => void;
 }) {
 	if (message.role === 'user') {
 		return (
@@ -316,6 +319,7 @@ function MessageView({
 						theme={theme}
 						onOpenTab={() => onOpenTab(message.id)}
 						onMoveToNewTab={() => onMoveToNewTab(message.id)}
+						onSteer={() => onSteer(message.id)}
 					/>
 				)}
 			</div>
@@ -536,6 +540,10 @@ function QuickChatWindow() {
 		(messageId: string) => void run({ type: 'moveToNewTab', messageId }),
 		[run]
 	);
+	const steerMessage = useCallback(
+		(messageId: string) => void run({ type: 'steer', messageId }),
+		[run]
+	);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
 	const togglePinned = useCallback(() => {
@@ -669,6 +677,14 @@ function QuickChatWindow() {
 				return;
 			}
 			if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+			// Cmd+` (either direction) cycles an app's windows on macOS. From the
+			// floating chat that means back to Maestro, which also puts the chat
+			// away; left to the OS it cycles into nothing while the panel stays on top.
+			if (e.metaKey && e.code === 'Backquote' && isMacOSPlatform()) {
+				e.preventDefault();
+				if (!e.repeat) void window.maestro.quickChat.window('return');
+				return;
+			}
 			// Text zoom first: it takes Shift (`+`), and a held key keeps stepping.
 			const zoom = FONT_ZOOM_KEYS[e.key];
 			if (zoom !== undefined) {
@@ -1112,6 +1128,7 @@ function QuickChatWindow() {
 									theme={theme}
 									onOpenTab={openMessageTab}
 									onMoveToNewTab={moveMessageToNewTab}
+									onSteer={steerMessage}
 								/>
 								{turn?.status === 'running' && (
 									<QuickChatWorkingLine since={turn.since} theme={theme} />

@@ -325,13 +325,19 @@ started on one account is intelligible to the other, and in Claude Code's case
 directly resumable.
 
 Different providers use different native formats. Maestro provides preview
-conversion between **Claude Code 2.1.296** and **Codex 0.162.1**, in both
-directions, for session history and project memory. Native resume and repeated
-round-trip continuity remain unverified; other provider/version combinations
-have no supported converter.
+conversion between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**,
+in both directions, for session history and project memory. Live checks on
+2.1.302/0.163.0 verified native conversation recall and carried project resource
+reads. Both directions remain unverified overall; execution continuity and
+repeated incremental synchronization are not certified. Other provider/version
+combinations have no supported converter.
 
-In **Edit Agent**, marked provider destinations have a carry-over adapter.
-Selecting one reads a conversion plan; **Save Changes** applies it after any
-listed warnings are accepted. Blocking limitations prevent the switch. See
+Changing the provider in **Edit Agent** is a plain switch by default: tabs and
+transcripts stay, each tab starts a fresh conversation on the new provider, and
+switching back resumes the old one. Destinations with a **Carry Over** pill also
+offer **Convert memory and session history**, which is opt-in. Checking it reads
+a conversion plan and lists any warnings; **Save Changes** applies it. If the
+conversion is blocked or fails, a notice says so and saving switches providers
+without converting. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
 for the steps, scope, CLI examples and activity indicator.

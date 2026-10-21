@@ -114,6 +114,7 @@ type DirectoryEntry = import('../shared/types').DirectoryEntry;
 type ShellInfo = import('../shared/types').ShellInfo;
 
 type UsageStats = import('../shared/types').UsageStats;
+type CallUsage = import('../shared/types').CallUsage;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
@@ -227,6 +228,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { QuickChatApi } from '../main/preload/quickChat';
+import type { FloatingWidgetsApi } from '../main/preload/floatingWidgets';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
@@ -242,6 +244,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -847,6 +850,10 @@ interface MaestroAPI {
 			callback: (chatId: string, responseChannel: string) => void
 		) => () => void;
 		sendRemoteStopGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteArchiveGroupChat: (
+			callback: (chatId: string, archived: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -1201,6 +1208,7 @@ interface MaestroAPI {
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void) => () => void;
 		onAgentError: (
 			callback: (
 				sessionId: string,
@@ -1962,6 +1970,11 @@ interface MaestroAPI {
 	 * the readiness that gates its system-prompt section).
 	 */
 	maestroRun: MaestroRunApi;
+	/**
+	 * Dataview (DQL queries against the main-process vault index, index status and
+	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
+	 */
+	dataview: DataviewApi;
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -3998,6 +4011,11 @@ interface MaestroAPI {
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
 			force?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
+		// Progress of the long transcript scans behind the usage caches
+		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;
+		onIndexingUpdate: (
+			callback: (state: import('../shared/statsIndexing').StatsIndexingState) => void
+		) => () => void;
 		// Get aggregated stats for dashboard display
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
@@ -4823,6 +4841,9 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
+
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
@@ -5193,6 +5214,17 @@ interface MaestroAPI {
 	};
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;
+	/** Floating widgets: always-on-top desktop windows and the state relay between them. */
+	floatingWidgets: FloatingWidgetsApi;
+	/**
+	 * Codex `visualize` content references. `load` builds the isolated document
+	 * for one fragment and returns the id/revision to frame it by.
+	 */
+	codexVisualization: {
+		load: (
+			request: import('../shared/codexVisualization').CodexVisualizationLoadRequest
+		) => Promise<import('../shared/codexVisualization').CodexVisualizationLoadResult>;
+	};
 }
 
 declare global {

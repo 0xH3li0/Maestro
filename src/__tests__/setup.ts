@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import React from 'react';
+import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
+import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -636,6 +638,16 @@ const mockMaestro = {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
+	cueBundle: {
+		export: vi.fn().mockResolvedValue({ ok: false, code: 'EXPORT_FAILED', message: 'not mocked' }),
+		chooseFile: vi.fn().mockResolvedValue(null),
+		inspect: vi
+			.fn()
+			.mockResolvedValue({ ok: false, code: 'BUNDLE_UNREADABLE', message: 'not mocked' }),
+		import: vi.fn().mockResolvedValue({ ok: false, code: 'WRITE_FAILED', message: 'not mocked' }),
+		onApplyAgents: vi.fn().mockReturnValue(() => {}),
+		sendApplyAgentsResponse: vi.fn(),
+	},
 	shells: {
 		detect: vi.fn().mockResolvedValue([]),
 	},
@@ -656,6 +668,8 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getIndexingState: vi.fn().mockResolvedValue({ jobs: [] }),
+		onIndexingUpdate: vi.fn(() => () => {}),
 		getTokenUsage: vi.fn().mockResolvedValue({
 			totals: {
 				inputTokens: 0,
@@ -678,6 +692,7 @@ const mockMaestro = {
 				bySessionByDay: {},
 				bySource: { user: 0, auto: 0 },
 			},
+			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
 			generatedAtMs: 0,
 		}),
@@ -877,6 +892,22 @@ const mockMaestro = {
 		readyPath: vi.fn().mockResolvedValue(null),
 		onStatusChanged: vi.fn(() => () => {}),
 	},
+	// Dataview (Encore Feature, off by default). Queries never resolve on their
+	// own; a test that renders a block sets the answer it needs.
+	dataview: {
+		query: vi.fn(() => new Promise(() => {})),
+		queryInline: vi.fn(() => new Promise(() => {})),
+		status: vi.fn().mockResolvedValue([]),
+		rebuild: vi.fn().mockResolvedValue(null),
+		jsSnapshot: vi.fn(() => new Promise(() => {})),
+		readInRoot: vi.fn(() => new Promise(() => {})),
+		jsRoot: vi.fn(() => new Promise(() => {})),
+		jsRunOnce: vi.fn(() => new Promise(() => {})),
+		trustedRoots: vi.fn().mockResolvedValue([]),
+		trust: vi.fn(() => new Promise(() => {})),
+		untrust: vi.fn(() => new Promise(() => {})),
+		onChanged: vi.fn(() => () => {}),
+	},
 	// Quick Chat (floating window + its engine). Subscriptions return a no-op
 	// unsubscribe so App's engine hook mounts and cleans up in every render test.
 	quickChat: {
@@ -918,3 +949,10 @@ if (typeof window !== 'undefined') {
 		value: mockMaestro,
 	});
 }
+
+// `useCachedResource` keeps results at module scope so a remounted surface
+// renders instantly. Within one test file that would hand one test's fetched
+// data to the next, so every test starts from an empty cache.
+afterEach(() => {
+	clearCachedResources();
+});

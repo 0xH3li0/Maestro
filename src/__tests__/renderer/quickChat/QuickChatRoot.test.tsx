@@ -435,6 +435,24 @@ describe('Close', () => {
 		await act(async () => fireEvent.keyDown(filter, { key: 'w', metaKey: true }));
 		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('hide');
 	});
+
+	it('Cmd+` goes back to Maestro instead of cycling windows, once per press', async () => {
+		vi.mocked(window.maestro.quickChat.window).mockClear();
+		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
+		const press = (init: KeyboardEventInit) =>
+			act(async () =>
+				fireEvent.keyDown(window, { key: '`', code: 'Backquote', metaKey: true, ...init })
+			);
+
+		await press({});
+		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('return');
+		// Shift reverses the cycle; it is the same trip back.
+		await press({ key: '~', shiftKey: true });
+		expect(window.maestro.quickChat.window).toHaveBeenCalledTimes(2);
+		await press({ repeat: true });
+		expect(window.maestro.quickChat.window).toHaveBeenCalledTimes(2);
+		expect(window.maestro.quickChat.window).not.toHaveBeenCalledWith('hide');
+	});
 });
 
 describe('header', () => {
@@ -616,6 +634,35 @@ describe('where a message went', () => {
 			type: 'moveToNewTab',
 			messageId: 'm7',
 		});
+	});
+
+	it('offers Steer on a queued message the running reply can take', async () => {
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
+			ok: true,
+			snapshot: snapshot(),
+		});
+		await renderWith(
+			snapshot({
+				busy: true,
+				messages: [sentMessage('m8', 'change course', { status: 'queued', canSteer: true })],
+			})
+		);
+		await act(async () => fireEvent.click(screen.getByTestId('quick-chat-route-steer')));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
+			type: 'steer',
+			messageId: 'm8',
+		});
+	});
+
+	it('offers no Steer when the running reply cannot take input', async () => {
+		await renderWith(
+			snapshot({
+				busy: true,
+				messages: [sentMessage('m9', 'later', { status: 'queued', canSteer: false })],
+			})
+		);
+		expect(screen.getByTestId('quick-chat-route-queued')).toBeTruthy();
+		expect(screen.queryByTestId('quick-chat-route-steer')).toBeNull();
 	});
 
 	it('offers no way out for a message that is not waiting', async () => {

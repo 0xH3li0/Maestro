@@ -202,6 +202,8 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
+	setNotificationCenterEnabled: (value: boolean) => void;
 	notificationCenterLarge: boolean;
 	setNotificationCenterLarge: (value: boolean) => void;
 	notificationCenterDetails: boolean;
@@ -427,6 +429,8 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (value: boolean) => void;
 
 	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
 	utilityAgentId: string | null;
@@ -473,6 +477,12 @@ export interface UseSettingsReturn {
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	coworkingBackgroundBrowsersLimit: number;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
+
+	// Dataview: DataviewJS switch and the trusted vault roots (D3)
+	dataviewJsEnabled: boolean;
+	setDataviewJsEnabled: (value: boolean) => void;
+	dataviewJsTrustedRoots: string[];
+	setDataviewJsTrustedRoots: (value: string[]) => void;
 
 	// Forced Parallel Execution
 	forcedParallelExecution: boolean;
