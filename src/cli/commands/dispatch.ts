@@ -8,7 +8,11 @@ import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
-import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
+import {
+	callerMessageFields,
+	readCallerIdentity,
+	type CallerIdentity,
+} from '../../shared/agentDelegation';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -49,7 +53,10 @@ export interface DispatchOptions {
 	 * other runs of the same agent do not trigger it. Requires --new-tab or --tab.
 	 */
 	notifyOnComplete?: string;
-	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	/**
+	 * Specific caller tab to wake. Defaults to the tab that ran this command when
+	 * it notifies its own agent, otherwise to the caller's active AI tab.
+	 */
 	callbackTab?: string;
 	/** Overrides the default callback prompt body ({{DISPATCH_*}} substituted). */
 	callbackPrompt?: string;
@@ -93,10 +100,16 @@ export interface DispatchResponse {
  * mandatory: without `--new-tab` or `--tab` the dispatch lands in whichever tab
  * happens to be active, and there is nothing stable to correlate a completion
  * against.
+ *
+ * When an agent asks to be notified itself and names no `--callback-tab`, the
+ * callback goes back to the tab that ran this command (from its stamped shell
+ * identity). Falling back to the agent's ACTIVE tab dropped the result into
+ * whatever unrelated conversation the user was viewing when the run finished.
  */
 function buildCallbackFields(
 	options: DispatchOptions,
-	targetAgentId: string
+	targetAgentId: string,
+	caller: CallerIdentity | undefined
 ):
 	| { ok: true; fields: Record<string, unknown>; callerAgentId?: string }
 	| { ok: false; response: DispatchResponse } {
@@ -140,10 +153,13 @@ function buildCallbackFields(
 		return { ok: false, response: { success: false, error: msg, code: 'AGENT_NOT_FOUND' } };
 	}
 
+	const callbackTab =
+		options.callbackTab ?? (caller?.agentId === callerAgentId ? caller.tabId : undefined);
+
 	// A callback that wakes the tab it is waiting on never terminates.
 	if (
 		callerAgentId === targetAgentId &&
-		(!options.callbackTab || (options.tab && options.callbackTab === options.tab))
+		(!callbackTab || (options.tab && callbackTab === options.tab))
 	) {
 		return {
 			ok: false,
@@ -177,7 +193,7 @@ function buildCallbackFields(
 		callerAgentId,
 		fields: {
 			notifyOnComplete: callerAgentId,
-			...(options.callbackTab ? { callbackTab: options.callbackTab } : {}),
+			...(callbackTab ? { callbackTab } : {}),
 			...(options.callbackPrompt ? { callbackPrompt: options.callbackPrompt } : {}),
 			...(callbackTimeoutSeconds !== undefined ? { callbackTimeout: callbackTimeoutSeconds } : {}),
 		},
@@ -348,13 +364,14 @@ export async function runDispatch(
 	// the new-tab and existing-tab command paths.
 	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
 
-	const callback = buildCallbackFields(options, agentId);
-	if (!callback.ok) return callback.response;
-
 	// Who is dispatching, when this runs inside a Maestro agent's shell. The
 	// desktop uses it to mark the hand-off in the CALLER's transcript; a human or
 	// an external script has no identity and the message goes out unchanged.
-	const caller = callerMessageFields(readCallerIdentity(process.env));
+	const callerIdentity = readCallerIdentity(process.env);
+	const caller = callerMessageFields(callerIdentity);
+
+	const callback = buildCallbackFields(options, agentId, callerIdentity);
+	if (!callback.ok) return callback.response;
 
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
