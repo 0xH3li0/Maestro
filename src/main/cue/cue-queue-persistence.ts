@@ -351,7 +351,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					? Math.max(0, drainedAt - row.queuedAt)
 					: currentTime - row.queuedAt;
 			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
-			if (timeoutMs > 0 && ageMs > timeoutMs) {
+			if (!isDurableCueEvent(event) && timeoutMs > 0 && ageMs > timeoutMs) {
 				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
 				safeRemoveQueuedEvent(row.id);
 				droppedStale++;

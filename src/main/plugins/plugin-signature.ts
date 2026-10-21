@@ -128,7 +128,7 @@ function verifyEd25519(payload: string, publicKeyB64: string, signatureB64: stri
 export function verifyPluginSignature(
 	pluginDir: string,
 	trustedKeys: readonly string[]
-): SignatureCheck {
+): SignatureCheck & { contentHash?: string } {
 	const sigPath = path.join(pluginDir, SIGNATURE_FILENAME);
 	let raw: string;
 	try {
@@ -161,21 +161,31 @@ export function verifyPluginSignature(
 			detail: err instanceof Error ? err.message : 'could not hash plugin files',
 		};
 	}
+	const contentHash = createHash('sha256')
+		.update(buildSigningPayload(actual), 'utf-8')
+		.digest('hex');
 	if (!fileSetsMatch(actual, manifest.files)) {
 		return {
 			status: 'invalid',
 			signerKey: manifest.publicKey,
 			detail: 'plugin files do not match the signed file set',
+			contentHash,
 		};
 	}
 
 	const payload = buildSigningPayload(manifest.files);
 	if (!verifyEd25519(payload, manifest.publicKey, manifest.signature)) {
-		return { status: 'invalid', signerKey: manifest.publicKey, detail: 'signature did not verify' };
+		return {
+			status: 'invalid',
+			signerKey: manifest.publicKey,
+			detail: 'signature did not verify',
+			contentHash,
+		};
 	}
 
 	return {
 		status: isTrustedKey(manifest.publicKey, trustedKeys) ? 'trusted' : 'untrusted',
+		contentHash,
 		signerKey: manifest.publicKey,
 	};
 }

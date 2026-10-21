@@ -3,6 +3,7 @@ import {
 	type CueEvent,
 	type CuePluginSource,
 } from '../../../shared/cue/contracts';
+import { PluginAuthorityError } from '../../plugins/plugin-authority';
 import { parseCuePluginSource } from '../../../shared/plugins/plugin-json';
 export { parseCuePluginSource } from '../../../shared/plugins/plugin-json';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
@@ -44,7 +45,13 @@ export function createCuePluginTriggerSource(
 	let unregister: (() => void) | undefined;
 	return {
 		start() {
-			if (!unregister && host) unregister = host.register(ctx, source);
+			if (unregister || !host) return;
+			try {
+				unregister = host.register(ctx, source);
+			} catch (error) {
+				const code = error instanceof PluginAuthorityError ? error.code : 'PLUGIN_UNAVAILABLE';
+				ctx.onLog('warn', `[CUE] Plugin source was not registered: ${code}`);
+			}
 		},
 		stop() {
 			unregister?.();

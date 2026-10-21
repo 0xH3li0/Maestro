@@ -339,6 +339,15 @@ export class AuthorizationStore {
 				throw new Error();
 			parsed = JSON.parse(plaintext);
 			if (isLedger(parsed) && parsed.opaque !== undefined) this.validateOpaqueState(parsed.opaque);
+			if (isLedger(parsed) && parsed.opaqueArchive !== undefined) {
+				if (!Array.isArray(parsed.opaqueArchive))
+					throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+				for (const item of parsed.opaqueArchive) {
+					if (!item || typeof item.pluginId !== 'string')
+						throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+					this.validateOpaqueState(Object.fromEntries([[item.pluginId, item.state]]));
+				}
+			}
 		} catch {
 			parsed = null; // missing, unsealable (tampered/foreign), or unparseable
 		}
@@ -365,7 +374,14 @@ export class AuthorizationStore {
 			entries: parsed.entries,
 			tombstones: parsed.tombstones,
 			...(parsed.opaque ? { opaque: parsed.opaque } : {}),
-			...(parsed.opaqueArchive ? { opaqueArchive: parsed.opaqueArchive } : {}),
+			...(parsed.opaqueArchive
+				? {
+						opaqueArchive: parsed.opaqueArchive.flatMap((item) => {
+							const state = this.cleanupOnlyOpaqueState(item.state);
+							return state ? [{ pluginId: item.pluginId, state }] : [];
+						}),
+					}
+				: {}),
 			...(parsed.version < 3
 				? {
 						legacy: {
@@ -439,8 +455,15 @@ export class AuthorizationStore {
 			const state = item as OpaquePluginState;
 			if (
 				!state.identity ||
+				!/^[0-9a-f]{64}$/.test(state.identity.contentHash) ||
+				!['unsigned', 'invalid', 'untrusted', 'trusted'].includes(state.identity.signatureStatus) ||
+				(state.identity.signerKey !== null && typeof state.identity.signerKey !== 'string') ||
 				!state.records ||
+				typeof state.records !== 'object' ||
+				Array.isArray(state.records) ||
 				!state.secrets ||
+				typeof state.secrets !== 'object' ||
+				Array.isArray(state.secrets) ||
 				Object.keys(state.records).length > 64 ||
 				Object.keys(state.secrets).length > 64
 			)
@@ -459,7 +482,8 @@ export class AuthorizationStore {
 					!/^[0-9a-f]{64}$/.test(ref) ||
 					secret.ref !== ref ||
 					!PLUGIN_RECORD_KEY_PATTERN.test(secret.key) ||
-					!isPluginEndpointScope(secret.endpoint)
+					!isPluginEndpointScope(secret.endpoint) ||
+					(secret.removal !== undefined && !['pending', 'removed'].includes(secret.removal))
 				)
 					throw new PluginAuthorityError('PLUGIN_INTEGRITY');
 			}
@@ -750,12 +774,27 @@ export class AuthorizationStore {
 		this.assertPersistentInstallation();
 	}
 
+	/** Retired values confer no authority. Preserve only native cleanup provenance. */
+	private cleanupOnlyOpaqueState(state: OpaquePluginState): OpaquePluginState | undefined {
+		const secrets = Object.fromEntries(
+			Object.entries(state.secrets)
+				.filter(([, secret]) => secret.removal !== 'removed')
+				.map(([ref, secret]) => [ref, { ...secret }])
+		);
+		return Object.keys(secrets).length
+			? { identity: { ...state.identity }, records: {}, secrets }
+			: undefined;
+	}
+
 	private retirePluginOpaqueState(pluginId: string): void {
 		const state = this.ledger.opaque?.[pluginId];
 		if (!state) return;
-		// Moving an admitted state preserves the total; it cannot block revoke/uninstall.
-		this.ledger.opaqueArchive ??= [];
-		this.ledger.opaqueArchive.push({ pluginId, state });
+		// Retirement only reduces admitted state; cleanup capacity cannot block revocation.
+		const cleanup = this.cleanupOnlyOpaqueState(state);
+		if (cleanup) {
+			this.ledger.opaqueArchive ??= [];
+			this.ledger.opaqueArchive.push({ pluginId, state: cleanup });
+		}
 		delete this.ledger.opaque![pluginId];
 	}
 

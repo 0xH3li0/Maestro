@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { pathToFileURL } from 'node:url';
 const { ipc, windows } = vi.hoisted(() => ({
 	ipc: new Map<string, Function>(),
 	windows: [] as any[],
@@ -9,7 +10,7 @@ vi.mock('electron', () => ({
 	BrowserWindow: class extends EventEmitter {
 		webContents = Object.assign(new EventEmitter(), {
 			id: 1,
-			mainFrame: { routingId: 42, url: 'file:///fixture/plugin-confirmation.html' },
+			mainFrame: { routingId: 42, url: '' },
 			setWindowOpenHandler() {},
 		});
 		destroyed = false;
@@ -19,7 +20,9 @@ vi.mock('electron', () => ({
 			windows.push(this);
 		}
 		setMenu() {}
-		async loadFile() {}
+		async loadFile(filename: string) {
+			this.webContents.mainFrame.url = pathToFileURL(filename).href;
+		}
 		show() {}
 		isFocused() {
 			return this.focused;

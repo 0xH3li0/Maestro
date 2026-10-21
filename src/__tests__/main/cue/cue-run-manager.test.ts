@@ -2232,6 +2232,25 @@ describe('durable plugin admission and revocation', () => {
 		h.completion.resolve(makeResult());
 		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
 	});
+	it.each([true, false])(
+		'drains an old durable event only with live authority=%s',
+		async (allowed) => {
+			const h = harness();
+			h.manager.execute('session-1', 'first', createEvent(), 'first-sub');
+			h.manager.execute('session-1', 'durable', h.mail, 'mail-sub');
+			const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 86_400_000);
+			try {
+				if (!allowed) h.revoke();
+				h.completion.resolve(makeResult());
+				await vi.waitFor(() => expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0));
+				expect(h.deps.onCueRun).toHaveBeenCalledTimes(allowed ? 2 : 1);
+			} finally {
+				now.mockRestore();
+				h.manager.discardInMemory();
+			}
+		}
+	);
+
 	it('rejects a failed durable write before starting work', () => {
 		const h = harness(false);
 		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(false);

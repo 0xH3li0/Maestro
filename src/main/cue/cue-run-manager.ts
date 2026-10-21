@@ -415,7 +415,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			const ageMs = Date.now() - entry.queuedAt;
 
 			// Check for stale events
-			if (ageMs > timeoutMs) {
+			if (!isDurableCueEvent(entry.event) && ageMs > timeoutMs) {
 				queue.splice(i, 1);
 				const ageMinutes = Math.round(ageMs / 60000);
 				// Remove the persisted copy - this runtime drain path is the

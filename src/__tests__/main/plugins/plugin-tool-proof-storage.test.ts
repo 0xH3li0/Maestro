@@ -14,6 +14,10 @@ import {
 	type PluginManagerDeps,
 	type PluginSandboxLifecycle,
 } from '../../../main/plugins/plugin-manager';
+import {
+	getActivePluginManager,
+	setActivePluginManager,
+} from '../../../main/plugins/plugin-manager-singleton';
 import { PluginAuthorityError } from '../../../main/plugins/plugin-authority';
 import { PluginToolRunIdentity } from '../../../main/plugins/plugin-tool-run-identity';
 import { PluginToolRunProofFiles } from '../../../main/plugins/plugin-tool-run-proof-file';
@@ -79,6 +83,7 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 
 		afterEach(() => {
 			try {
+				setActivePluginManager(null);
 				manager?.stopToolAuthority();
 				runs?.stop();
 				files?.stop();
@@ -86,6 +91,24 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 				manager = undefined;
 				if (directory) fs.rmSync(directory, { recursive: true, force: true });
 				vi.restoreAllMocks();
+			}
+		});
+
+		it('rejects a replacement sharing only the proof-file owner before stopping active resources', () => {
+			manager = new PluginManager(deps);
+			setActivePluginManager(manager, deps.isEnabled);
+			const otherRegistry = new PluginToolRunIdentity();
+			const candidate = new PluginManager({ ...deps, toolIdentity: otherRegistry });
+			const token = runs.issue('fixture-agent');
+			try {
+				expect(() => setActivePluginManager(candidate, deps.isEnabled)).toThrow(
+					expect.objectContaining({ code: 'PLUGIN_CONFLICT' })
+				);
+				expect(getActivePluginManager()).toBe(manager);
+				expect(runs.resolveVerified(token).callerAgentId).toBe('fixture-agent');
+				expect(() => files.assertIdentity(runs)).not.toThrow();
+			} finally {
+				otherRegistry.stop();
 			}
 		});
 

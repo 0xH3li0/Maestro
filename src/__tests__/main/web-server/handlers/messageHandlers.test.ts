@@ -5341,6 +5341,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	function verifiedManager(declared = tool): PluginManager {
 		const manager = new PluginManager({
 			isEnabled: isPluginsFeatureEnabled,
+			getGrants: () => [],
 			toolIdentity: pluginToolRunIdentity,
 			assertToolRecordActive: () => {
 				if (!consentActive) throw new PluginAuthorityError('PLUGIN_DENIED');

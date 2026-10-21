@@ -16,7 +16,7 @@ import { WebSocket } from 'ws';
 const active = vi.hoisted(() => ({ manager: null as unknown }));
 const { fork } = vi.hoisted(() => ({ fork: vi.fn() }));
 vi.mock('electron', () => ({
-	app: { getPath: () => '/fixture/private-data' },
+	app: { getPath: () => path.resolve('/fixture/private-data') },
 	utilityProcess: { fork },
 }));
 vi.mock('../../../main/utils/logger', () => ({
@@ -53,7 +53,7 @@ import { RELAY_PUBLISHER_KEY } from '../../../shared/plugins/relay-identity';
 const source = fs.readFileSync(path.join(__dirname, '../../../main/index.ts'), 'utf8');
 const sf = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
 const owner = 'fixture-relay-agent';
-const proofBase = '/fixture/private-data';
+const proofBase = path.resolve('/fixture/private-data');
 
 interface FixtureSession {
 	id: string;
@@ -168,20 +168,24 @@ describe('Relay authenticated MCP actual host path', () => {
 			{
 				id: owner,
 				toolType: 'codex',
-				cwd: '/projects/current',
-				projectRoot: '/projects/current',
+				cwd: path.resolve('/projects/current'),
+				projectRoot: path.resolve('/projects/current'),
 			},
 		];
 		if (scenario !== 'safe storage')
 			sessions.push({
 				id: 'unrelated-agent',
 				toolType: 'codex',
-				cwd: scenario === 'removed worktree' ? '/projects/deleted-worktree' : '/fixture',
-				projectRoot: scenario === 'removed worktree' ? '/projects/deleted-worktree' : '/fixture',
+				cwd: path.resolve(
+					scenario === 'removed worktree' ? '/projects/deleted-worktree' : '/fixture'
+				),
+				projectRoot: path.resolve(
+					scenario === 'removed worktree' ? '/projects/deleted-worktree' : '/fixture'
+				),
 			});
 		const authority = productionAuthority(
 			sessions,
-			scenario === 'removed worktree' ? '/projects/deleted-worktree' : undefined
+			scenario === 'removed worktree' ? path.resolve('/projects/deleted-worktree') : undefined
 		);
 		const fixtureRoot = path.join(process.cwd(), '.maestro', 'relay-mail-denied-test');
 		fs.mkdirSync(fixtureRoot, { recursive: true });
@@ -227,6 +231,7 @@ describe('Relay authenticated MCP actual host path', () => {
 		sandbox.start('sh.maestro.relay', fixture, 'entry.js');
 		const manager = new PluginManager({
 			isEnabled: () => true,
+			getGrants: () => [],
 			sandbox,
 			toolIdentity: authority.toolIdentity,
 			toolProofFiles: authority.toolProofFiles,

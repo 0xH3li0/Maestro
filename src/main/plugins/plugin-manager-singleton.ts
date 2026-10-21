@@ -70,6 +70,8 @@ export function setActivePluginManager(
 		if (manager) throw new PluginAuthorityError('PLUGIN_DENIED');
 		return;
 	}
+	if (activePluginManager && manager && activePluginManager !== manager)
+		activePluginManager.assertIndependentToolAuthority(manager);
 	// Even an explicit clear while already detached cancels an older transition.
 	const transition = {};
 	managerTransition = transition;

@@ -406,6 +406,86 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 		store.mint(plugin, [], ident);
 		expect(store.readPluginRecord(plugin, ident, 'policy')).toBeNull();
 	});
+	it('does not retain record values or empty cleanup states after repeated retirements', () => {
+		const { store, deps } = privateStore();
+		let current = ident;
+		for (let index = 0; index < 7; index++) {
+			store.commitPluginRecord(plugin, current, 'policy', 0, { data: 'x'.repeat(60000) }, () => {});
+			const next = { ...ident, contentHash: index.toString(16).padStart(64, '0') };
+			store.mint(plugin, [], next);
+			current = next;
+			const saved = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+			expect(saved.opaqueArchive ?? []).toEqual([]);
+			expect(store.trustState()).toBe('persistent');
+		}
+	});
+
+	it('normalizes historical cleanup archives without read-time writes or losing active/pending slots', () => {
+		const { store, deps } = privateStore();
+		const activeRef = '1'.repeat(64),
+			pendingRef = '2'.repeat(64),
+			removedRef = '3'.repeat(64);
+		for (const ref of [activeRef, pendingRef, removedRef])
+			store.registerPluginSecret(plugin, ident, 'account', 'fixture.example:993', ref, () => {});
+		store.setPluginSecretState(plugin, ident, activeRef, 'active', () => {});
+		store.setPluginSecretState(plugin, ident, removedRef, 'removed', () => {});
+		store.commitPluginRecord(plugin, ident, 'policy', 0, { retired: 'x'.repeat(60000) }, () => {});
+		const slots = [activeRef, pendingRef].map((ref) => store.pluginSecretSlot(plugin, ident, ref));
+		const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+		const historical = prior.opaque[plugin];
+		delete prior.opaque[plugin];
+		prior.opaqueArchive = [
+			{ pluginId: plugin, state: historical },
+			{ pluginId: plugin, state: { identity: ident, records: {}, secrets: {} } },
+		];
+		const bytes = deps.seal.seal(JSON.stringify(prior));
+		fs.writeFileSync(deps.ledgerPath, bytes);
+		const anchor = deps.anchor.read();
+		const reopened = new AuthorizationStore(deps);
+		expect(reopened.readGrants(foreign)).toEqual([]);
+		expect(fs.readFileSync(deps.ledgerPath)).toEqual(bytes);
+		expect(deps.anchor.read()).toEqual(anchor);
+		reopened.mint(foreign, [], ident);
+		const compact = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+		expect(compact.opaqueArchive).toHaveLength(1);
+		expect(compact.opaqueArchive[0].state.records).toEqual({});
+		expect(Object.keys(compact.opaqueArchive[0].state.secrets).sort()).toEqual([
+			activeRef,
+			pendingRef,
+		]);
+		const deleted = vi.fn();
+		reopened.purgePluginPrivateState(plugin, deleted);
+		expect(deleted.mock.calls.map(([slot]) => slot).sort()).toEqual(slots.sort());
+	});
+
+	it.each(['pluginId', 'identity', 'ref', 'endpoint', 'removal'])(
+		'rejects invalid archived cleanup provenance: %s',
+		(field) => {
+			const { deps } = privateStore();
+			const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+			const ref = '4'.repeat(64);
+			const secret = { key: 'account', endpoint: 'fixture.example:993', ref, removal: 'pending' };
+			const archived = {
+				pluginId: plugin,
+				state: { identity: ident, records: {}, secrets: { [ref]: secret } },
+			};
+			if (field === 'pluginId') archived.pluginId = '../foreign';
+			if (field === 'identity') archived.state.identity = { ...ident, contentHash: 'not-a-digest' };
+			if (field === 'ref') secret.ref = 'mismatch';
+			if (field === 'endpoint') secret.endpoint = 'not-an-endpoint';
+			if (field === 'removal') secret.removal = 'unknown';
+			prior.opaqueArchive = [archived];
+			const bytes = deps.seal.seal(JSON.stringify(prior));
+			fs.writeFileSync(deps.ledgerPath, bytes);
+			const reopened = new AuthorizationStore(deps);
+			expect(reopened.trustState()).toBe('re-consent');
+			const deleted = vi.fn();
+			reopened.purgePluginPrivateState(plugin, deleted);
+			expect(deleted).not.toHaveBeenCalled();
+			expect(fs.readFileSync(deps.ledgerPath)).toEqual(bytes);
+		}
+	);
+
 	it.each(['revoke', 'uninstall', 'replace'] as const)(
 		'retires authority with a full archive on %s and retains cleanup-only provenance',
 		(operation) => {
@@ -425,9 +505,20 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			const expectedSlot = store.pluginSecretSlot(plugin, ident, ref);
 			const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
 			// Pre-fix reachable state: archive limit plus a still-active state.
-			prior.opaqueArchive = Array.from({ length: 1024 }, () => ({
-				pluginId: plugin,
-				state: { identity: ident, records: {}, secrets: {} },
+			prior.opaqueArchive = Array.from({ length: 1024 }, (_, index) => ({
+				pluginId: foreign,
+				state: {
+					identity: { ...ident, contentHash: index.toString(16).padStart(64, '0') },
+					records: {},
+					secrets: {
+						[foreignRef]: {
+							key: 'account',
+							endpoint: 'fixture.example:993',
+							ref: foreignRef,
+							removal: 'pending',
+						},
+					},
+				},
 			}));
 			fs.writeFileSync(deps.ledgerPath, deps.seal.seal(JSON.stringify(prior)));
 			const active = new AuthorizationStore(deps);

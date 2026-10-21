@@ -426,6 +426,24 @@ describe('cue-queue-persistence', () => {
 			expect(p.restoreAll().get('s-1')).toHaveLength(1);
 		});
 
+		it('restores an acknowledged old plugin row while ordinary rows still expire', () => {
+			const p = makePersistence({ timeoutMs: 60_000, now: NOW });
+			p.persist(
+				's-1',
+				'durable-old',
+				makeEntry({ event: makeEvent('plugin.event'), queuedAt: NOW - 86_400_000 })
+			);
+			p.persist('s-1', 'ordinary-old', makeEntry({ queuedAt: NOW - 86_400_000 }));
+			expect(
+				p
+					.restoreAll()
+					.get('s-1')
+					?.map((entry) => entry.persistId)
+			).toEqual(['durable-old']);
+			expect(p.persistedIds().has('durable-old')).toBe(true);
+			expect(p.persistedIds().has('ordinary-old')).toBe(false);
+		});
+
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {
 			const p = makePersistence({ timeoutMs: 10 * 60 * 1000, now: NOW });
 			// Queued 20 minutes ago

@@ -39,7 +39,7 @@ user's previous endpoint scopes without automatically widening them.
 `secrets.requestSetup({key,label,endpoint:{host,port}}) -> {secretRef}` opens host-owned credential
 input. No password argument or read/export method exists. Secret references bind installation,
 plugin content/signer identity and exact endpoint. `tlsWrite.parts` accepts `{base64}` or
-`{secretRef,encoding:'quoted-ascii'}`. The latter encodes 1–4096 printable ASCII bytes as a quoted
+`{secretRef,encoding:'quoted-ascii'}`. The latter encodes 1-4096 printable ASCII bytes as a quoted
 string with quote/backslash escaping. Controls/non-ASCII fail. The plugin selects protocol commands;
 the host makes no read-only claim. Owned byte buffers are erased after write; immutable JavaScript
 strings/native-library copies cannot be reliably erased.
@@ -105,7 +105,10 @@ Rollback must retain backups and demand fresh consent rather than resurrect stal
 Prior authorization schemas are read without rewriting the file. A subsequent explicit
 authoritative user action writes schema 3 and retains prior entries/tombstones/domain
 fields in its inert `legacy` archive. Revoke, uninstall and identity change archive
-current opaque authority as well; re-enable never restores it automatically. Unknown
+only exact cleanup provenance for native slots that may remain. Retired record values
+and confirmed-removed slots are discarded; empty archive states are omitted. Older
+valid opaque archives receive the same in-memory compaction after seal/anchor checks,
+without a read-time write or epoch change. Re-enable never restores retired authority. Unknown
 historical Cue queue rows remain parked on disk even when stale or their owner is
 absent. Configuration files, native legacy slots and old checkpoint files are not migrated
 or deleted by this source change. Relay handles explicit import and fresh account-agent
@@ -130,3 +133,19 @@ The host reads revision numbers only and does not interpret record values or acc
 API 1.29 / SDK 0.23 also projects optional `parentSessionId` for existing worktree
 children from the live agent list. Main agents omit the field. This grants no
 creation, reparenting or selection power and exposes no session content.
+
+Host manager replacement requires independent run-registry and proof-file owners. A
+candidate sharing either resource with the active manager is rejected before retiring
+or publishing either owner. This preserves existing proofs on a rejected replacement;
+a supported replacement retires all old proofs before accepting new ones.
+
+Verified tool failures cross the model boundary as allowlisted `PLUGIN_*` codes;
+Relay's raw thread-binding error text is not a separate exception to that rule.
+Durable plugin queue rows do not expire merely because they waited past an ordinary
+queue timeout. Missing session/subscription, revoked authority and terminal completion
+remain removal boundaries. Active run timeout enforcement is unchanged.
+
+Identity verification reuses its freshly verified file map for the authorization digest;
+it never reuses a previous call or a TTL/watch cache. Whole-tree manager checks remain
+synchronous at authority boundaries, so large plugin trees still have a main-thread
+cost. This change does not claim a general performance bound or remove fresh checks.

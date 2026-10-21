@@ -1044,6 +1044,55 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 		}
 	});
 
+	it('continues initializing subscriptions after one plugin consumer registration fails', () => {
+		const session = createMockSession();
+		const subscription = {
+			name: 'failed-plugin',
+			event: 'plugin.event' as const,
+			enabled: true,
+			prompt: 'work',
+			plugin: { pluginId: 'com.example.fixture', topic: 'fixture.received', config: {} },
+		};
+		mockLoadCueConfig.mockReturnValue(
+			createMockConfig({
+				subscriptions: [subscription, { ...subscription, name: 'working-plugin' }],
+			})
+		);
+		mockDetailedResult = null;
+		const unregister = vi.fn();
+		const register = vi
+			.fn()
+			.mockImplementationOnce(() => {
+				throw new Error('synthetic-private-diagnostic');
+			})
+			.mockReturnValue(unregister);
+		configurePluginCueHost({ register, authorize: () => true });
+		const onLog = vi.fn();
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => [session],
+			onRefreshRequested: vi.fn(),
+			onLog,
+			registry: createCueSessionRegistry(),
+			dispatchSubscription: vi.fn(() => 1),
+			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
+			clearFanInState: vi.fn(),
+		});
+		try {
+			expect(service.initSession(session, { reason: 'system-boot' })).toMatchObject({
+				kind: 'loaded',
+			});
+			expect(register).toHaveBeenCalledTimes(2);
+			expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('not registered'));
+			expect(JSON.stringify(onLog.mock.calls)).not.toContain('synthetic-private-diagnostic');
+		} finally {
+			service.teardownSession(session.id);
+			configurePluginCueHost(undefined);
+		}
+		expect(unregister).toHaveBeenCalledTimes(1);
+	});
+
 	it.each([0, 1])('returns actual admission count %s to the durable publisher', (accepted) => {
 		const session = createMockSession();
 		const sub = {

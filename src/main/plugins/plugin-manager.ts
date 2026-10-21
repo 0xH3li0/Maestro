@@ -930,6 +930,16 @@ export class PluginManager {
 		}
 	}
 
+	/** Replacement requires fresh authority owners. Sharing them would permanently
+	 * retire the candidate while stopping its predecessor. Reject before either changes. */
+	assertIndependentToolAuthority(replacement: PluginManager): void {
+		if (
+			(this.toolIdentity && this.toolIdentity === replacement.toolIdentity) ||
+			(this.toolProofFiles && this.toolProofFiles === replacement.toolProofFiles)
+		)
+			throw new PluginAuthorityError('PLUGIN_CONFLICT');
+	}
+
 	/** Host replacement/shutdown only. Ordinary plugin tools remain independent.
 	 * Fence permanently before callbacks; repeated calls retry bounded file cleanup
 	 * without ever restoring proof authority. Feature toggles use stopAllSandboxes. */

@@ -310,11 +310,7 @@ export async function handlePluginsCallTool(
 			error: verified
 				? error instanceof PluginAuthorityError
 					? error.code
-					: message.toolId === RELAY_REPLY_TOOL_ID &&
-						  error instanceof Error &&
-						  error.message === 'Thread is not bound to caller'
-						? 'Thread is not bound to caller'
-						: 'PLUGIN_DENIED'
+					: 'PLUGIN_DENIED'
 				: error instanceof Error
 					? error.message
 					: String(error),
