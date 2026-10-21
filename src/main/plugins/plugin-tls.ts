@@ -195,7 +195,15 @@ export class PluginTlsHost {
 			});
 			socket.on('data', (data: Buffer) => {
 				try {
-					this.check(s);
+					// Buffering is host-private. Fresh identity/consent checks remain at
+					// read/write/publication boundaries, not on every network fragment.
+					if (
+						s.closing ||
+						s.controller.signal.aborted ||
+						s.lifetime.signal.aborted ||
+						s.invocation.signal.aborted
+					)
+						throw new PluginAuthorityError('PLUGIN_CANCELED');
 					if (
 						!Buffer.isBuffer(data) ||
 						s.buffered + data.length > PLUGIN_TLS_LIMITS.bufferedBytes ||

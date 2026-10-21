@@ -1095,7 +1095,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// onQueueOverflow callback (12B) - without it the drop is
 					// invisible except to someone scraping logs.
 					const dropped = queue[0];
-					if (isDurableCueEvent(event) || isDurableCueEvent(dropped.event)) return false;
+					if (isDurableCueEvent(event) || isDurableCueEvent(dropped.event)) {
+						deps.onQueueOverflow?.({
+							sessionId,
+							sessionName,
+							subscriptionName,
+							queuedAt: queuedAtOverride ?? Date.now(),
+						});
+						deps.onLog(
+							'cue',
+							`[CUE] Queue full for "${sessionName}" and durable admission prevents eviction, dropping incoming event`
+						);
+						return false;
+					}
 					deps.onQueueOverflow?.({
 						sessionId,
 						sessionName,

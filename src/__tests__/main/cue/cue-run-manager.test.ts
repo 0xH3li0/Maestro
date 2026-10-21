@@ -2251,6 +2251,56 @@ describe('durable plugin admission and revocation', () => {
 		}
 	);
 
+	it.each(['incoming', 'queued'] as const)(
+		'reports refused queue overflow when the %s event is durable',
+		(durable) => {
+			const h = harness();
+			h.deps.getSessionSettings = vi.fn(() => ({
+				...defaultSettings,
+				max_concurrent: 1,
+				queue_size: 1,
+			}));
+			h.deps.onQueueOverflow = vi.fn();
+			h.manager.execute('session-1', 'first', createEvent(), 'first-sub');
+			expect(
+				h.manager.execute(
+					'session-1',
+					'queued',
+					durable === 'queued' ? h.mail : createEvent(),
+					'queued-sub'
+				)
+			).toBe(true);
+			const writesBefore = h.queue.persist.mock.calls.length;
+			expect(
+				h.manager.execute(
+					'session-1',
+					'incoming',
+					durable === 'incoming' ? h.mail : createEvent(),
+					'incoming-sub',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					123
+				)
+			).toBe(false);
+			expect(h.deps.onQueueOverflow).toHaveBeenCalledWith({
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'incoming-sub',
+				queuedAt: 123,
+			});
+			expect(h.deps.onLog).toHaveBeenCalledWith(
+				'cue',
+				expect.stringMatching(/Queue full.*dropping incoming event/)
+			);
+			expect(h.queue.persist).toHaveBeenCalledTimes(writesBefore);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().get('session-1')).toBe(1);
+			h.manager.discardInMemory();
+		}
+	);
 	it('rejects a failed durable write before starting work', () => {
 		const h = harness(false);
 		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(false);

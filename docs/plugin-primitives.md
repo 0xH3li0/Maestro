@@ -82,7 +82,11 @@ IDs match `[A-Za-z0-9._:-]{1,128}`. Host stamps and authenticates source/owner/c
 plugins cannot supply provenance. Replay/drain requires current matching plugin identity,
 enabled source, owner and consent. Live publication also requires the exact current generation.
 Receipts are limited to 4096/plugin and 100000 total, with no silent eviction. Capacity is checked
-before dispatch. A receipt records durable admission or a durable filtered decision; filtered events do not queue a run. Crash windows can still cause repeated
+before dispatch for new IDs; authenticated existing duplicates still return their original receipt
+at capacity. There is no time-based replay window: receipts remain until that plugin is removed.
+Long-running publishers must treat `PLUGIN_LIMIT` as backpressure and leave their checkpoint
+unchanged. Silently evicting old receipts would allow acknowledged IDs to dispatch again; safe
+online retirement requires a separate explicit replay/retirement contract. A receipt records durable admission or a durable filtered decision; filtered events do not queue a run. Crash windows can still cause repeated
 downstream actions. Advance a plugin checkpoint only after receipt.
 
 The first version denies fan-out, gates and asynchronous injection-screen admission because that

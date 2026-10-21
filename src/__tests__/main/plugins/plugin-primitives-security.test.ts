@@ -105,9 +105,9 @@ function transport() {
 		runLifetime = new AbortController();
 	let allowed = true;
 	let generation = 'one';
-	const check = () => {
+	const check = vi.fn(() => {
 		if (!allowed) throw new PluginAuthorityError('PLUGIN_DENIED');
-	};
+	});
 	const run = identity.issue('agent-a', { signal: runLifetime.signal, assertActive: () => {} });
 	const handle = identity.issueInvocation(identity.resolveVerified(run), plugin, {
 		signal: pluginLifetime.signal,
@@ -143,6 +143,7 @@ function transport() {
 	});
 	return {
 		host,
+		check,
 		identity,
 		run,
 		handle,
@@ -259,6 +260,29 @@ describe('bounded TLS transport', () => {
 		});
 		await t.host.close(plugin, { streamId });
 		t.identity.stop();
+	});
+	it('buffers fragmented TLS data without authority scans and rechecks before exposing bytes', async () => {
+		const t = transport();
+		try {
+			const { streamId } = await t.open();
+			t.check.mockClear();
+			for (let i = 0; i < 64; i++) t.sockets[0].emit('data', Buffer.from('x'));
+			expect(t.check).not.toHaveBeenCalled();
+			expect(await t.host.read(plugin, { streamId, invocationId: t.handle, maxBytes: 64 })).toEqual(
+				{
+					base64: Buffer.from('x'.repeat(64)).toString('base64'),
+					eof: false,
+				}
+			);
+			expect(t.check).toHaveBeenCalled();
+			const pending = t.host.read(plugin, { streamId, invocationId: t.handle, maxBytes: 64 });
+			t.deny();
+			t.sockets[0].emit('data', Buffer.from('private late data'));
+			await expect(pending).rejects.toMatchObject({ code: 'PLUGIN_DENIED' });
+		} finally {
+			await t.host.stopPlugin(plugin);
+			t.identity.stop();
+		}
 	});
 	it('rejects failed certificate validation without exposing a handle', async () => {
 		const t = transport();
@@ -1072,6 +1096,7 @@ describe('authenticated durable Cue plugin source', () => {
 		const receipts = new Map();
 		const emitted: CueEvent[] = [];
 		let running = true;
+		let atCapacity = false;
 		const events = new PluginCueEvents({
 			store,
 			identity,
@@ -1084,7 +1109,9 @@ describe('authenticated durable Cue plugin source', () => {
 				return { generation: 'generation', signal: lifetime.signal, assertActive() {} };
 			},
 			assertAllowed() {},
-			assertReceiptCapacity() {},
+			assertReceiptCapacity() {
+				if (atCapacity) throw new PluginAuthorityError('PLUGIN_LIMIT');
+			},
 			readReceipt: (_p, id) => receipts.get(id) ?? null,
 			writeReceipt: (_p, id, row) => {
 				receipts.set(id, row);
@@ -1128,7 +1155,12 @@ describe('authenticated durable Cue plugin source', () => {
 			metadata: { reference: 'opaque' },
 		};
 		expect(events.publish(plugin, args).status).toBe('accepted');
+		atCapacity = true;
 		expect(events.publish(plugin, args).status).toBe('duplicate');
+		expect(() => events.publish(plugin, { ...args, eventId: 'stable:2' })).toThrow(
+			expect.objectContaining({ code: 'PLUGIN_LIMIT' })
+		);
+		expect(receipts.size).toBe(1);
 		expect(emitted).toHaveLength(1);
 		expect(() => events.publish(plugin, { ...args, metadata: { changed: true } })).toThrow();
 		expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(true);
