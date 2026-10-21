@@ -862,11 +862,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'openImageOrganizer')) {
 				e.preventDefault();
-				// The expanded organizer is InputArea-only, and only has a job with
-				// more than one image. The strip guards both conditions itself; we
-				// mirror the count check here so the shortcut is a clean no-op (not a
-				// tracked event) when there is nothing to organize.
-				if (ctx.stagedImages && ctx.stagedImages.length > 1) {
+				// The organizer belongs to whichever composer's StagedImagesStrip is
+				// mounted: the room's while a group chat is open (MainPanel, and with
+				// it InputArea, is unmounted then), the AI composer's otherwise. It
+				// only has a job with more than one image. The strip guards that
+				// itself; we mirror the count check against the same composer's
+				// images so the shortcut is a clean no-op (not a tracked event) when
+				// there is nothing to organize.
+				const images = ctx.activeGroupChatId ? ctx.groupChatStagedImages : ctx.stagedImages;
+				if (images && images.length > 1) {
 					requestOpenStagedImagesOrganizer();
 					trackShortcut('openImageOrganizer');
 				}

@@ -14,6 +14,7 @@ import { useNotificationStore } from '../../../renderer/stores/notificationStore
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
+import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/stagedImagesOrganizer';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -5166,7 +5167,7 @@ describe('useMainKeyboardHandler - steerSend', () => {
 	});
 });
 
-describe('group chat read-only and image carousel chords', () => {
+describe('group chat read-only and staged image chords', () => {
 	const ROOM_ID = 'room-keys';
 	const aiTab = { id: 'ai-tab-1', name: 'Tab 1', logs: [], readOnlyMode: false };
 	const hiddenSession = {
@@ -5259,13 +5260,95 @@ describe('group chat read-only and image carousel chords', () => {
 		const images = ['data:image/png;base64,a'];
 		const { handleSetLightboxImage } = mountRoom({
 			groupChatStagedImages: images,
-			...matchers({ openImageCarousel: ['Meta', 'Shift', 'y'] }),
+			...matchers({ openImageCarousel: ['Alt', 'Meta', 'o'] }),
 		});
 
 		press({ key: 'y', code: 'KeyY', metaKey: true });
 		expect(handleSetLightboxImage).not.toHaveBeenCalled();
 
-		press({ key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true });
+		press({ key: 'o', code: 'KeyO', metaKey: true, altKey: true });
 		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	describe('image organizer', () => {
+		const ROOM_IMAGES = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const AI_IMAGES = ['data:image/png;base64,c', 'data:image/png;base64,d'];
+		const DEFAULT_CHORD = { key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true };
+		let organizerRequests: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			organizerRequests = vi.fn();
+			window.addEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		it('opens the organizer for 2+ room images even when the AI tab holds none', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({ groupChatStagedImages: ROOM_IMAGES, stagedImages: [], recordShortcutUsage });
+
+			const event = press(DEFAULT_CHORD);
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op with fewer than 2 room images, whatever the AI tab holds', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				groupChatStagedImages: [ROOM_IMAGES[0]],
+				stagedImages: AI_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
+		});
+
+		it('follows a rebound organizer chord in a room', () => {
+			mountRoom({
+				groupChatStagedImages: ROOM_IMAGES,
+				...matchers({ openImageOrganizer: ['Alt', 'Meta', 'k'] }),
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+
+			press({ key: 'k', code: 'KeyK', metaKey: true, altKey: true });
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+		});
+
+		it('still reads the AI composer images in regular chat', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: AI_IMAGES,
+				groupChatStagedImages: [],
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op in regular chat with fewer than 2 AI images', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: [AI_IMAGES[0]],
+				groupChatStagedImages: ROOM_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
+		});
 	});
 });
