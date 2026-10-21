@@ -342,20 +342,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					}
 					return;
 				}
-				// Cmd+R: Toggle read-only mode
-				if (e.key === 'r') {
-					e.preventDefault();
-					e.stopPropagation();
-					setReadOnlyMode(!readOnlyMode);
-					return;
-				}
-				// Cmd+Y: Open image carousel
-				if (e.key === 'y' && stagedImages.length > 0 && onOpenLightbox) {
-					e.preventDefault();
-					e.stopPropagation();
-					onOpenLightbox(stagedImages[0], stagedImages, 'staged');
-					return;
-				}
+				// The read-only and image carousel chords bubble to the window
+				// handler, which reads the live bindings and acts on the room.
 				// Cmd+Enter: Send message (when enterToSend is false) or ignore (when enterToSend is true)
 				// Either way, we must stop propagation to prevent global handler from switching views
 				if (e.key === 'Enter') {
@@ -439,10 +427,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			selectedAtMentionIndex,
 			acceptAtMention,
 			enterToSend,
-			readOnlyMode,
-			setReadOnlyMode,
-			stagedImages,
-			onOpenLightbox,
 			groupChatId,
 		]
 	);

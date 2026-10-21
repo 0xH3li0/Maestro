@@ -1311,6 +1311,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
 					return;
 				}
+				// The read-only chord acts on the room's own flag. The tab shortcuts
+				// below are skipped while a room is open, so this cannot also flip the
+				// hidden AI tab or reload a browser tab. Handled here rather than in
+				// the composer so it honours the live binding and works wherever focus
+				// sits in the room, as it does in AI chat.
+				if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
+					e.preventDefault();
+					useGroupChatStore.getState().setGroupChatReadOnlyMode((prev) => !prev);
+					trackShortcut('toggleReadOnlyMode');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).

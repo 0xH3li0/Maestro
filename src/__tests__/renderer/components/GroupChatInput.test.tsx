@@ -832,6 +832,37 @@ describe('GroupChatInput', () => {
 			expect(onOpenLightbox).toHaveBeenCalledWith(stagedImages[0], stagedImages, 'staged');
 		});
 
+		it('leaves the read-only and carousel chords to the window handler', () => {
+			// The window handler reads the live bindings and acts on the room, so
+			// the composer must neither consume these chords nor act on them itself.
+			const onOpenLightbox = vi.fn();
+			const setReadOnlyMode = vi.fn();
+			const stagedImages = ['data:image/png;base64,a'];
+			const windowKeys = vi.fn();
+			window.addEventListener('keydown', windowKeys);
+
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						stagedImages,
+						setStagedImages: vi.fn(),
+						onOpenLightbox,
+						readOnlyMode: false,
+						setReadOnlyMode,
+					})}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i);
+			fireEvent.keyDown(textarea, { key: 'r', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'y', metaKey: true });
+
+			expect(windowKeys).toHaveBeenCalledTimes(2);
+			expect(setReadOnlyMode).not.toHaveBeenCalled();
+			expect(onOpenLightbox).not.toHaveBeenCalled();
+			window.removeEventListener('keydown', windowKeys);
+		});
+
 		it('removes a staged image by content when its remove button is clicked', () => {
 			const setStagedImages = vi.fn();
 			const stagedImages = ['data:image/png;base64,a', 'data:image/png;base64,b'];

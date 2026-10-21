@@ -1,6 +1,9 @@
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
+import { useKeyboardShortcutHelpers } from '../../../renderer/hooks/keyboard/useKeyboardShortcutHelpers';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import type { Shortcut } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
@@ -5160,5 +5163,109 @@ describe('useMainKeyboardHandler - steerSend', () => {
 
 	it('does nothing while a group chat is on screen', () => {
 		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
+	});
+});
+
+describe('group chat read-only and image carousel chords', () => {
+	const ROOM_ID = 'room-keys';
+	const aiTab = { id: 'ai-tab-1', name: 'Tab 1', logs: [], readOnlyMode: false };
+	const hiddenSession = {
+		id: 'agent-1',
+		name: 'Agent',
+		inputMode: 'ai',
+		aiTabs: [aiTab],
+		activeTabId: 'ai-tab-1',
+	};
+
+	// Real binding lookup over the shipped maps, with per-test rebinding, so the
+	// handler is exercised against the same matcher App gives it.
+	function matchers(rebound: Record<string, string[]> = {}) {
+		const shortcuts: Record<string, Shortcut> = { ...DEFAULT_SHORTCUTS };
+		const tabShortcuts: Record<string, Shortcut> = { ...TAB_SHORTCUTS };
+		for (const [id, keys] of Object.entries(rebound)) {
+			const target = id in tabShortcuts ? tabShortcuts : shortcuts;
+			target[id] = { ...target[id], keys };
+		}
+		const { result } = renderHook(() => useKeyboardShortcutHelpers({ shortcuts, tabShortcuts }));
+		return { isShortcut: result.current.isShortcut, isTabShortcut: result.current.isTabShortcut };
+	}
+
+	function mountRoom(overrides: Record<string, unknown> = {}) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		const setSessions = vi.fn();
+		const handleSetLightboxImage = vi.fn();
+		result.current.keyboardHandlerRef.current = createMockContext({
+			activeSession: hiddenSession,
+			activeGroupChatId: ROOM_ID,
+			setSessions,
+			handleSetLightboxImage,
+			mainPanelRef: { current: { reloadBrowserTab: vi.fn() } },
+			...matchers(),
+			...overrides,
+		});
+		return { setSessions, handleSetLightboxImage };
+	}
+
+	function press(init: KeyboardEventInit) {
+		const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatReadOnlyMode: false });
+	});
+
+	it('toggles the room read-only flag on the default chord and leaves the AI tab alone', () => {
+		const { setSessions } = mountRoom();
+
+		const event = press({ key: 'r', code: 'KeyR', metaKey: true });
+
+		expect(event.defaultPrevented).toBe(true);
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+	});
+
+	it('follows a rebound read-only chord and ignores the old one', () => {
+		const { setSessions } = mountRoom(matchers({ toggleReadOnlyMode: ['Alt', 'Meta', 'x'] }));
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+
+		press({ key: 'x', code: 'KeyX', metaKey: true, altKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('opens the room staged images on the default carousel chord', () => {
+		const images = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			stagedImages: ['data:image/png;base64,ai'],
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+
+		expect(handleSetLightboxImage).toHaveBeenCalledTimes(1);
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	it('opens the room staged images on a rebound carousel chord only', () => {
+		const images = ['data:image/png;base64,a'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			...matchers({ openImageCarousel: ['Meta', 'Shift', 'y'] }),
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+		expect(handleSetLightboxImage).not.toHaveBeenCalled();
+
+		press({ key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true });
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
 	});
 });
