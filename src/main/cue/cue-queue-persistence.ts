@@ -86,15 +86,19 @@ export interface CueQueuePersistence {
 	remove(persistId: string): void;
 	clearSession(sessionId: string): void;
 	clearAll(): void;
+	/** Start a new engine cycle's exclusion epoch before initializing sessions. */
+	beginRestoreEpoch(): void;
 	/**
 	 * Ids of every row currently persisted. The engine snapshots this BEFORE
 	 * it initializes sessions, because initializing one can enqueue (and so
 	 * persist) an `app.startup` or initial `time.heartbeat` event behind a busy
 	 * slot - and restoring that row would run the same event a second time.
+	 * With previousInstanceOnly, exclude this epoch's writes until a snapshot
+	 * succeeds. Null denotes a failed read and keeps that exclusion active.
 	 */
-	persistedIds(): Set<string>;
-	/** Restore persisted rows, limited to `onlyIds` when given (see `persistedIds`). */
-	restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]>;
+	persistedIds(previousInstanceOnly?: boolean): Set<string> | null;
+	/** Restore selected rows; null preserves retry candidates after a failed read. */
+	restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> | null;
 }
 
 export interface CueQueuePersistenceDeps {
@@ -119,12 +123,19 @@ export interface CueQueuePersistenceDeps {
 
 export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQueuePersistence {
 	const now = deps.now ?? (() => Date.now());
+	// Track current-start writes only until the pre-start snapshot succeeds.
+	// IDs remain excluded even if their later removal failed.
+	let currentStartWrites: Set<string> | null = null;
+	function beginRestoreEpoch(): void {
+		currentStartWrites = new Set();
+	}
 
 	function persist(
 		sessionId: string,
 		persistId: string,
 		entry: PersistableQueueEntry
 	): void | boolean {
+		currentStartWrites?.add(persistId);
 		const record: CueQueuedEventRecord = {
 			id: persistId,
 			sessionId,
@@ -208,17 +219,23 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 	}
 
-	function persistedIds(): Set<string> {
+	function persistedIds(previousInstanceOnly = false): Set<string> | null {
 		try {
-			return new Set(getQueuedEvents().map((row) => row.id));
+			const ids = new Set(
+				getQueuedEvents()
+					.filter((row) => !previousInstanceOnly || !currentStartWrites?.has(row.id))
+					.map((row) => row.id)
+			);
+			if (previousInstanceOnly) currentStartWrites = null;
+			return ids;
 		} catch {
-			// restoreAll() reports the same read failure; an empty snapshot just
-			// defers any prior rows to the next start rather than running twice.
-			return new Set();
+			// A failed snapshot is not an empty queue. Keep excluding this
+			// start's writes until a later heartbeat can capture the old IDs.
+			return null;
 		}
 	}
 
-	function restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> {
+	function restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> | null {
 		let rows: CueQueuedEventRecord[];
 		try {
 			rows = getQueuedEvents();
@@ -227,9 +244,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			void captureException(err, { operation: 'cueQueuePersistence.restoreAll' });
 			deps.onLog(
 				'warn',
-				`[CUE] Failed to read persisted queue - starting empty: ${err instanceof Error ? err.message : String(err)}`
+				`[CUE] Failed to read persisted queue - retry deferred: ${err instanceof Error ? err.message : String(err)}`
 			);
-			return new Map();
+			return null;
 		}
 
 		const currentTime = now();
@@ -439,5 +456,5 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		return restored;
 	}
 
-	return { persist, remove, clearSession, clearAll, persistedIds, restoreAll };
+	return { persist, remove, clearSession, clearAll, beginRestoreEpoch, persistedIds, restoreAll };
 }

@@ -2830,6 +2830,7 @@ app
 					queueMicrotask(() => {
 						serviceReconcileQueued = false;
 						pluginManager?.reconcileServiceDependencies();
+						cueEngine?.retryPendingPluginEvents();
 					});
 				},
 				broker: pluginBroker,
@@ -3145,6 +3146,7 @@ app
 			onChange: (registry) => {
 				serviceReconcile?.();
 				pluginManager?.reconcileServiceDependencies();
+				cueEngine?.retryPendingPluginEvents();
 				pluginHostViews.sync();
 				try {
 					mainWindow?.webContents.send(

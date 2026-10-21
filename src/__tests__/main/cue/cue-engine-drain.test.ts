@@ -61,6 +61,7 @@ vi.mock('../../../main/cue/cue-task-scanner', () => ({
 }));
 
 import { CueEngine } from '../../../main/cue/cue-engine';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
 import { BACKGROUND_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
 import { createMockSession, createMockDeps } from './cue-test-helpers';
 
@@ -191,6 +192,7 @@ describe('CueEngine.drain', () => {
 	});
 
 	afterEach(() => {
+		configurePluginCueHost(undefined);
 		vi.useRealTimers();
 	});
 
@@ -208,6 +210,128 @@ describe('CueEngine.drain', () => {
 		engine.start();
 		return { engine, exec, onLog, deps };
 	}
+
+	it.each([
+		{ queueSize: 0, failure: 'none' },
+		{ queueSize: 1, failure: 'none' },
+		{ queueSize: 1, failure: 'snapshot' },
+		{ queueSize: 1, failure: 'restore' },
+		{ queueSize: 1, failure: 'terminal' },
+		{ queueSize: 1, failure: 'remove' },
+	])(
+		'retries acknowledged plugin rows after activation without duplicates ($queueSize/$failure)',
+		async ({ queueSize, failure }) => {
+			let available = false;
+			configurePluginCueHost({ register: () => () => {}, authorize: () => available });
+			configsByProject.set('/p/a', {
+				subscriptions: [
+					{
+						name: 'plugin-sub',
+						event: 'plugin.event',
+						enabled: true,
+						prompt: 'current config',
+						plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+					},
+				],
+				settings: { ...settings, queue_size: queueSize },
+			});
+			const queuedAt = Date.now() - 86_400_000;
+			getSharedDb().initCueDb();
+			for (const id of ['first', 'second']) {
+				getSharedDb().persistQueuedEvent({
+					id,
+					sessionId: alpha.id,
+					subscriptionName: 'plugin-sub',
+					eventJson: JSON.stringify({
+						id,
+						type: 'plugin.event',
+						timestamp: new Date().toISOString(),
+						payload: { receipt: id },
+					}),
+					prompt: `stored ${id}`,
+					outputPrompt: null,
+					cliOutputJson: null,
+					action: null,
+					commandJson: null,
+					chainDepth: 2,
+					queuedAt,
+					chainRootId: 'original-root',
+					parentEventId: 'original-parent',
+					turnSettingsJson: JSON.stringify({ model: 'stored-model' }),
+				});
+			}
+			let blockedReads = failure === 'snapshot' || failure === 'restore',
+				reads = 0;
+			const db = getSharedDb(),
+				read = db.getQueuedEvents.bind(db);
+			vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+				reads++;
+				if (blockedReads && (failure === 'snapshot' || reads > 1))
+					throw Error('synthetic read failure');
+				return read(id);
+			});
+			const getSessions = vi.fn(() => [alpha]);
+			const { engine, exec } = boot({ getSessions });
+			blockedReads = false;
+			const retry = () =>
+				(
+					engine as unknown as {
+						retryPendingPluginEvents?: () => void;
+					}
+				).retryPendingPluginEvents?.();
+			try {
+				expect(exec.calls).toEqual([]);
+				retry(); // Unavailable plugins keep both original durable rows.
+				expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				if (failure === 'terminal') {
+					getSessions.mockReturnValue([]);
+					retry();
+					expect(queueRows()).toEqual([]);
+					const lastReadCount = reads;
+					await vi.advanceTimersByTimeAsync(30_000);
+					expect(reads).toBe(lastReadCount);
+					return;
+				}
+				if (failure === 'remove') {
+					const remove = db.safeRemoveQueuedEvent.bind(db);
+					vi.spyOn(db, 'safeRemoveQueuedEvent').mockImplementation((id) => {
+						if (id !== 'first') remove(id); // Simulate one failed old-row removal.
+					});
+				}
+				available = true;
+				retry();
+				await flush();
+				expect(exec.calls).toEqual(['plugin-sub']);
+				expect(exec.onCueRun.mock.calls[0][0]).toMatchObject({ prompt: 'stored first' });
+				const queued = queueRows();
+				expect(queued).toHaveLength(failure === 'remove' ? 3 : 2);
+				expect(queued.some((row) => row.id === 'first')).toBe(failure === 'remove');
+				expect(queued.find((row) => row.prompt === 'stored second')).toMatchObject({
+					queuedAt,
+					chainRootId: 'original-root',
+					parentEventId: 'original-parent',
+					turnSettingsJson: JSON.stringify({ model: 'stored-model' }),
+				});
+				retry();
+				expect(queueRows()).toEqual(queued);
+				exec.finish('plugin-sub');
+				await flush();
+				// Capacity-rejected restore rows also retry on the existing heartbeat.
+				await vi.advanceTimersByTimeAsync(30_000);
+				expect(exec.calls).toEqual(['plugin-sub', 'plugin-sub']);
+				expect(exec.onCueRun.mock.calls[1][0]).toMatchObject({ prompt: 'stored second' });
+				exec.finish('plugin-sub');
+				await flush();
+				expect(queueRows().map((row) => row.id)).toEqual(failure === 'remove' ? ['first'] : []);
+				retry();
+				expect(exec.calls).toHaveLength(2);
+			} finally {
+				engine.stop();
+			}
+			retry();
+			expect(exec.calls).toHaveLength(2);
+		}
+	);
 
 	it('lets runs finish and defers their successors (single chain and fan-in) to the queue', async () => {
 		const { engine, exec, onLog } = boot();

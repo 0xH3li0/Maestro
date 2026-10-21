@@ -2205,6 +2205,7 @@ describe('durable plugin admission and revocation', () => {
 			remove: vi.fn(),
 			clearSession: vi.fn(),
 			clearAll: vi.fn(),
+			beginRestoreEpoch: () => {},
 			persistedIds: () => new Set<string>(),
 			restoreAll: () => new Map(),
 		} satisfies CueQueuePersistence;
@@ -2435,6 +2436,7 @@ describe('plugin output-prompt boundary', () => {
 				remove: vi.fn(),
 				clearSession: vi.fn(),
 				clearAll: vi.fn(),
+				beginRestoreEpoch: () => {},
 				persistedIds: () => new Set<string>(),
 				restoreAll: () => new Map(),
 			} satisfies CueQueuePersistence;

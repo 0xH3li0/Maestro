@@ -70,6 +70,7 @@ Constructor dependencies (`CueEngineDeps`):
 Key public methods:
 
 - `start(reason?)` / `stop()` - Enable/disable the engine; `reason` (`'system-boot'` vs `'user-toggle'`) gates whether `app.startup` fires
+- `retryPendingPluginEvents()` - Re-admit only rejected durable startup rows after plugin discovery/service activation and on the existing heartbeat; preserve original payload/age, recheck authority, and remove old rows only after acceptance. Accepted live rows are excluded from retries.
 - `refreshSession(sessionId, projectRoot)` - Hot-reloads YAML via `sessionRuntimeService` (tears down old, re-initializes)
 - `removeSession(sessionId)` - Delegates to `sessionRuntimeService` to tear down all subscriptions and clear queue
 - `notifyAgentCompleted(sessionId, completionData?)` - Handles `agent.completed` triggers; routes to `completionService`

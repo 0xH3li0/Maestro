@@ -1038,54 +1038,65 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 		).toThrow();
 		identity.stop();
 	});
-	it('marks a removed secret nonconsumable before awaited teardown and retains retryable deletion failure', async () => {
-		const { store } = privateStore(),
-			identity = new PluginToolRunIdentity(),
-			ref = 'c'.repeat(64);
-		store.registerPluginSecret(plugin, ident, 'fixture', 'fixture.example:993', ref, () => {});
-		let finish: (() => void) | undefined;
-		let value: string | null = 'dummy';
-		let fail = true;
-		const entry = () => ({
-			getPassword: () => value,
-			setPassword() {},
-			deletePassword() {
-				if (fail) throw Error('native details');
-				value = null;
-				return true;
-			},
-		});
-		const state = new PluginPrivateState({
-			store,
-			identity,
-			confirmation: { confirm: async (_o, _s, _c, commit) => commit() },
-			identityFor: () => ident,
-			capture: () => ({
-				generation: 'one',
-				signal: new AbortController().signal,
-				assertActive() {},
-			}),
-			assertAllowed() {},
-			entry,
-			stopTls: () =>
-				new Promise<void>((resolve) => {
-					finish = resolve;
+	it.each(['delete', 'readback', 'absent'] as const)(
+		'retains retryable native %s failures without losing removal state',
+		async (failure) => {
+			const { store } = privateStore(),
+				identity = new PluginToolRunIdentity(),
+				ref = 'c'.repeat(64);
+			store.registerPluginSecret(plugin, ident, 'fixture', 'fixture.example:993', ref, () => {});
+			let finish: (() => void) | undefined;
+			let value: string | null = failure === 'absent' ? null : 'dummy';
+			let fail = true;
+			const entry = () => ({
+				getPassword: () => {
+					if (fail && failure === 'readback') throw Error('native read details');
+					return value;
+				},
+				setPassword() {},
+				deletePassword() {
+					if (fail && failure === 'delete') throw Error('native details');
+					value = null;
+					return failure !== 'absent';
+				},
+			});
+			const state = new PluginPrivateState({
+				store,
+				identity,
+				confirmation: { confirm: async (_o, _s, _c, commit) => commit() },
+				identityFor: () => ident,
+				capture: () => ({
+					generation: 'one',
+					signal: new AbortController().signal,
+					assertActive() {},
 				}),
-		});
-		const pending = state.removeSecret(plugin, { secretRef: ref });
-		expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
-		expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('pending');
-		finish!();
-		await expect(pending).rejects.toMatchObject({ code: 'PLUGIN_UNAVAILABLE' });
-		expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('pending');
-		fail = false;
-		const retry = state.removeSecret(plugin, { secretRef: ref });
-		finish!();
-		expect(await retry).toEqual({ removed: true });
-		expect(await state.removeSecret(plugin, { secretRef: ref })).toEqual({ removed: true });
-		expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
-		identity.stop();
-	});
+				assertAllowed() {},
+				entry,
+				stopTls: () =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					}),
+			});
+			const pending = state.removeSecret(plugin, { secretRef: ref });
+			expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
+			expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('pending');
+			finish!();
+			if (failure === 'absent') {
+				expect(await pending).toEqual({ removed: true });
+				expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('removed');
+			} else {
+				await expect(pending).rejects.toMatchObject({ code: 'PLUGIN_UNAVAILABLE' });
+				expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('pending');
+			}
+			fail = false;
+			const retry = state.removeSecret(plugin, { secretRef: ref });
+			if (failure !== 'absent') finish!();
+			expect(await retry).toEqual({ removed: true });
+			expect(await state.removeSecret(plugin, { secretRef: ref })).toEqual({ removed: true });
+			expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
+			identity.stop();
+		}
+	);
 });
 
 describe('authenticated durable Cue plugin source', () => {
