@@ -4094,7 +4094,7 @@ Some text with [x] in it that's not a checkbox
 											type: 'function_call',
 											name,
 											call_id: `c${index}`,
-											arguments: typeof input === 'string' ? input : JSON.stringify(input),
+											arguments: JSON.stringify(input),
 										},
 									},
 									{
