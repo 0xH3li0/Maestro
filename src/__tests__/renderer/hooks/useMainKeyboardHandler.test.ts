@@ -15,6 +15,7 @@ import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
 import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/stagedImagesOrganizer';
+import { FORCED_PARALLEL_SEND_EVENT } from '../../../renderer/hooks/input/useInputKeyDown';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -5167,7 +5168,7 @@ describe('useMainKeyboardHandler - steerSend', () => {
 	});
 });
 
-describe('group chat read-only and staged image chords', () => {
+describe('group chat chords that must act on the room', () => {
 	const ROOM_ID = 'room-keys';
 	const aiTab = { id: 'ai-tab-1', name: 'Tab 1', logs: [], readOnlyMode: false };
 	const hiddenSession = {
@@ -5268,6 +5269,125 @@ describe('group chat read-only and staged image chords', () => {
 
 		press({ key: 'o', code: 'KeyO', metaKey: true, altKey: true });
 		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	describe('focus input toggle', () => {
+		const CHORD = { key: '.', code: 'Period', metaKey: true };
+		const terminalSession = { ...hiddenSession, inputMode: 'terminal' };
+		let roomInput: HTMLTextAreaElement;
+		let aiInput: HTMLTextAreaElement;
+		let aiOutput: HTMLDivElement;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			roomInput = document.createElement('textarea');
+			aiInput = document.createElement('textarea');
+			aiOutput = document.createElement('div');
+			aiOutput.tabIndex = 0;
+			document.body.append(roomInput, aiInput, aiOutput);
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			roomInput.remove();
+			aiInput.remove();
+			aiOutput.remove();
+		});
+
+		function mountFocusRoom(overrides: Record<string, unknown> = {}) {
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const focusActiveTerminal = vi.fn();
+			mountRoom({
+				activeSession: terminalSession,
+				groupChatInputRef: { current: roomInput },
+				groupChatMessagesRef: { current: roomMessages },
+				inputRef: { current: aiInput },
+				terminalOutputRef: { current: aiOutput },
+				mainPanelRef: { current: { focusActiveTerminal } },
+				...overrides,
+			});
+			return { roomMessages, focusActiveTerminal };
+		}
+
+		it('moves from the room composer to the room transcript, even with a terminal-mode agent underneath', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+			roomInput.focus();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).not.toBe(roomInput);
+			expect(roomMessages.focus).toHaveBeenCalledTimes(1);
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+			expect(document.activeElement).not.toBe(aiOutput);
+		});
+
+		it('moves from elsewhere in the room to the room composer, not the hidden xterm', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).toBe(roomInput);
+			expect(roomMessages.focus).not.toHaveBeenCalled();
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+		});
+
+		it('keeps the AI composer and transcript pair in regular chat', () => {
+			mountFocusRoom({ activeGroupChatId: null, activeSession: hiddenSession });
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiInput);
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiOutput);
+		});
+
+		it('keeps focusing the xterm for a terminal-mode agent in regular chat', () => {
+			const { focusActiveTerminal } = mountFocusRoom({ activeGroupChatId: null });
+
+			press(CHORD);
+
+			expect(focusActiveTerminal).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('forced parallel send', () => {
+		const CHORD = { key: 'Enter', code: 'Enter', metaKey: true, shiftKey: true };
+		let forcedSends: ReturnType<typeof vi.fn>;
+		let previousSetting: boolean;
+
+		beforeEach(() => {
+			previousSetting = useSettingsStore.getState().forcedParallelExecution;
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			forcedSends = vi.fn();
+			window.addEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+			useSettingsStore.setState({ forcedParallelExecution: previousSetting });
+		});
+
+		it('does not reach the hidden agent while a room is open', () => {
+			mountRoom();
+
+			const event = press(CHORD);
+
+			expect(forcedSends).not.toHaveBeenCalled();
+			expect(event.defaultPrevented).toBe(false);
+		});
+
+		it('still fires from outside the composer in regular chat', () => {
+			mountRoom({ activeGroupChatId: null, inputRef: { current: null } });
+
+			const event = press(CHORD);
+
+			expect(forcedSends).toHaveBeenCalledTimes(1);
+			expect(event.defaultPrevented).toBe(true);
+		});
 	});
 
 	describe('image organizer', () => {

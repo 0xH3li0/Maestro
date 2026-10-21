@@ -2848,6 +2848,7 @@ function MaestroConsoleInner() {
 		// Group chat context
 		activeGroupChatId,
 		groupChatInputRef,
+		groupChatMessagesRef,
 		flushGroupChatDraft,
 		groupChatStagedImages,
 		setGroupChatRightTab,

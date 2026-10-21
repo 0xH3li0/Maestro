@@ -915,22 +915,33 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('openWizard');
 			} else if (ctx.isShortcut(e, 'focusInput')) {
 				e.preventDefault();
-				// In terminal mode, Cmd+. focuses the active xterm instance so the user
-				// can resume typing shell commands - mirrors AI mode's input focus toggle.
-				if (activeSession?.inputMode === 'terminal') {
+				if (ctx.activeGroupChatId) {
+					// A room toggles between its own composer and its own transcript,
+					// the same pair Escape uses. The agent selected under the room is
+					// not on screen, so its input mode has no say here.
+					const roomInput = ctx.groupChatInputRef?.current;
+					if (roomInput && document.activeElement === roomInput) {
+						roomInput.blur();
+						ctx.groupChatMessagesRef?.current?.focus();
+					} else {
+						ctx.setActiveFocus('main');
+						setTimeout(() => ctx.groupChatInputRef?.current?.focus(), 0);
+					}
+				} else if (activeSession?.inputMode === 'terminal') {
+					// In terminal mode, Cmd+. focuses the active xterm instance so the user
+					// can resume typing shell commands - mirrors AI mode's input focus toggle.
 					ctx.setActiveFocus('main');
 					ctx.mainPanelRef?.current?.focusActiveTerminal();
 				} else {
 					// AI mode: toggle between input textarea and main panel output
-					const targetInputRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
-					if (document.activeElement === targetInputRef?.current) {
+					if (document.activeElement === ctx.inputRef?.current) {
 						// Input is focused - blur and focus main panel output
-						targetInputRef?.current?.blur();
+						ctx.inputRef?.current?.blur();
 						ctx.terminalOutputRef.current?.focus();
 					} else {
 						// Main panel output (or elsewhere) - focus input
 						ctx.setActiveFocus('main');
-						setTimeout(() => targetInputRef?.current?.focus(), 0);
+						setTimeout(() => ctx.inputRef?.current?.focus(), 0);
 					}
 				}
 				trackShortcut('focusInput');
@@ -1122,9 +1133,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// broken from the one place the user was actually looking at the thing
 				// it acts on. The composer decides what to do with it (see
 				// runForcedParallelSend); this branch only says the chord fired.
-				const composerRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
-				const cameFromComposer = !!composerRef?.current && e.target === composerRef.current;
-				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
+				// A group chat has no Forced Parallel Send, and the listener reads the
+				// agent still selected under the room, so the chord stays out of rooms.
+				const cameFromComposer = !!ctx.inputRef?.current && e.target === ctx.inputRef.current;
+				if (
+					!cameFromComposer &&
+					!ctx.activeGroupChatId &&
+					useSettingsStore.getState().forcedParallelExecution
+				) {
 					e.preventDefault();
 					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
 				}
