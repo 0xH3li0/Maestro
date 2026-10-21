@@ -182,12 +182,9 @@ export interface CueRunManagerDeps {
 	 * overflow (queue already at `queue_size`). The caller is expected to
 	 * surface this to the user (toast, log banner) so the drop is visible.
 	 */
-	onQueueOverflow?: (payload: {
-		sessionId: string;
-		sessionName: string;
-		subscriptionName: string;
-		queuedAt: number;
-	}) => void;
+	onQueueOverflow?: (
+		payload: Omit<Extract<CueLogPayload, { type: 'queueOverflow' }>, 'type'>
+	) => void;
 	/**
 	 * Phase 12A - optional queue persistence façade. When provided, every
 	 * enqueue writes a row to disk and every drain/drop/clear removes it,
@@ -1077,6 +1074,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						sessionName,
 						subscriptionName,
 						queuedAt: queuedAtOverride ?? Date.now(),
+						outcome: 'incoming-rejected',
 					});
 					deps.onLog(
 						'cue',
@@ -1101,6 +1099,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 							sessionName,
 							subscriptionName,
 							queuedAt: queuedAtOverride ?? Date.now(),
+							outcome: 'incoming-rejected',
 						});
 						deps.onLog(
 							'cue',
@@ -1113,6 +1112,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						sessionName,
 						subscriptionName: dropped.subscriptionName,
 						queuedAt: dropped.queuedAt,
+						outcome: 'oldest-evicted',
 					});
 					// Remove the persisted row before shifting from memory so
 					// persistence and in-memory stay in lockstep.

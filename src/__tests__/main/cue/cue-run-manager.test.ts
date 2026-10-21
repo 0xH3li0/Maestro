@@ -1869,6 +1869,7 @@ describe('createCueRunManager', () => {
 					sessionId: 'session-1',
 					sessionName: 'Test Session',
 					subscriptionName: 'sub-2', // oldest queued
+					outcome: 'oldest-evicted',
 				})
 			);
 		});
@@ -1918,7 +1919,7 @@ describe('createCueRunManager', () => {
 			expect(() => manager.execute('session-1', 'p2', createEvent(), 'sub-incoming')).not.toThrow();
 			// Overflow fires for the INCOMING subscription, not a non-existent oldest.
 			expect(onQueueOverflow).toHaveBeenCalledWith(
-				expect.objectContaining({ subscriptionName: 'sub-incoming' })
+				expect.objectContaining({ subscriptionName: 'sub-incoming', outcome: 'incoming-rejected' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
 		});
@@ -2291,6 +2292,7 @@ describe('durable plugin admission and revocation', () => {
 				sessionName: 'Test Session',
 				subscriptionName: 'incoming-sub',
 				queuedAt: 123,
+				outcome: 'incoming-rejected',
 			});
 			expect(h.deps.onLog).toHaveBeenCalledWith(
 				'cue',
