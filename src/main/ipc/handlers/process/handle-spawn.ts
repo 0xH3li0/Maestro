@@ -77,7 +77,7 @@ import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver'
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
-import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { cleanupSessionRelay, preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
@@ -186,10 +186,12 @@ export async function handleProcessSpawn(
 		}
 		try {
 			const result = await handleProcessSpawnImpl(config, deps, proofCleanup, controller.signal);
+			if (!result.success) cleanupSessionRelay(config.sessionId);
 			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
 			return result;
 		} catch (error) {
 			onExit(config.sessionId);
+			cleanupSessionRelay(config.sessionId);
 			try {
 				proofCleanup.release?.();
 			} catch (cleanupError) {
@@ -246,10 +248,12 @@ async function handleProcessSpawnImpl(
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
+	signal.throwIfAborted();
 	let invalidLocalCustomPath = false;
 	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
 		const requestedCustomPath = config.sessionCustomPath;
 		const detection = await checkCustomPath(requestedCustomPath);
+		signal.throwIfAborted();
 		if (detection.exists && detection.path) {
 			config = { ...config, sessionCustomPath: detection.path };
 			if (detection.path !== requestedCustomPath) {
@@ -328,6 +332,7 @@ async function handleProcessSpawnImpl(
 		settingsStore,
 		envLayers: claudeEnvLayers,
 	});
+	signal.throwIfAborted();
 	const {
 		baseSessionId,
 		claudeResolvedMode,
@@ -631,6 +636,7 @@ async function handleProcessSpawnImpl(
 			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
+		signal.throwIfAborted();
 		try {
 			const relayArgs = await preparePermissionRelayArgs({
 				sessionId: config.sessionId,
@@ -657,6 +663,7 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
+	signal.throwIfAborted();
 	// ========================================================================
 	// System prompt delivery (flag / Windows temp file / embed / resume skip).
 	// The rules live in applySystemPromptDelivery so Cue and Group Chat spawns
@@ -673,6 +680,7 @@ async function handleProcessSpawnImpl(
 		agentId: agent?.id,
 		logContext: LOG_CONTEXT,
 	});
+	signal.throwIfAborted();
 	finalArgs = delivered.args;
 	let effectivePrompt = delivered.prompt;
 	const systemPromptTempFile = delivered.tempFile;
@@ -791,6 +799,7 @@ async function handleProcessSpawnImpl(
 		hasPrompt: !!config.prompt,
 	});
 
+	signal.throwIfAborted();
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
 	const contextWindow = getContextWindowValue(
@@ -899,6 +908,7 @@ async function handleProcessSpawnImpl(
 		settingsStore,
 		codexTransport,
 	});
+	signal.throwIfAborted();
 	const sshStdinScript = sshWrap.sshStdinScript;
 	const sshRemoteCommand = sshWrap.sshRemoteCommand;
 	commandToSpawn = sshWrap.commandToSpawn;
@@ -975,10 +985,12 @@ async function handleProcessSpawnImpl(
 			const relativeDetection = localSpawnBinaryPath
 				? await checkCustomPath(localSpawnBinaryPath)
 				: undefined;
+			signal.throwIfAborted();
 			if (relativeDetection?.exists && relativeDetection.path) {
 				ompPrimeBinaryPath = relativeDetection.path;
 			} else {
 				const probed = await checkBinaryExists(agent?.binaryName || localSpawnBinaryPath || 'omp');
+				signal.throwIfAborted();
 				if (probed.exists && probed.path && path.isAbsolute(probed.path)) {
 					ompPrimeBinaryPath = probed.path;
 				}
@@ -1024,6 +1036,7 @@ async function handleProcessSpawnImpl(
 				prime.then(() => false),
 				new Promise<boolean>((resolve) => setTimeout(() => resolve(true), OMP_PRIME_SPAWN_CAP_MS)),
 			]);
+			signal.throwIfAborted();
 			if (primeExceededCap) {
 				// Makes the cold-start theory checkable in the packaged app's log:
 				// the first turn will show the fallback window until the prime lands.
@@ -1074,7 +1087,7 @@ async function handleProcessSpawnImpl(
 	// spawn resumes. Two writers on one session fail the turn on Codex and
 	// interleave the transcript on Claude, so wait it out (see the helper).
 	if (agentSessionId) {
-		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId, { signal });
 		if (gate.waitedFor.length > 0) {
 			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
 				sessionId: config.sessionId,

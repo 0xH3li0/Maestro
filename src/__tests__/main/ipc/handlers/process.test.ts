@@ -16,6 +16,13 @@ vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal)
 });
 
 import { acquireProviderSessionWriter } from '../../../../main/utils/provider-session-writer';
+import { preparePermissionRelayArgs, cleanupSessionRelay } from '../../../../main/permission-relay';
+vi.mock('../../../../main/permission-relay', () => ({
+	initPermissionRelay: vi.fn(),
+	preparePermissionRelayArgs: vi.fn().mockResolvedValue([]),
+	cleanupSessionRelay: vi.fn(),
+	resolvePermissionResponse: vi.fn(),
+}));
 /**
  * Tests for the process IPC handlers
  *
@@ -56,6 +63,7 @@ import {
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
+	app: { getPath: vi.fn(() => '/test-data') },
 	ipcMain: {
 		handle: vi.fn(),
 		on: vi.fn(),
@@ -656,6 +664,8 @@ describe('process IPC handlers', () => {
 			}
 		);
 		it('cancels a desktop turn stopped during asynchronous preflight', async () => {
+			const actor = { id: 'u1', username: 'prior-user', displayName: 'Prior User' };
+			noteTurnActor('cancel-preflight', undefined, actor);
 			let resolveAgent!: (agent: unknown) => void;
 			mockAgentDetector.getAgent.mockImplementationOnce(
 				() =>
@@ -681,6 +691,44 @@ describe('process IPC handlers', () => {
 			expect(await handlers.get('process:interrupt')!({}, 'cancel-preflight')).toBe(true);
 			resolveAgent({ id: 'codex', path: '/usr/bin/codex', requiresPty: false });
 			await outcome;
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(resolveTurnActor('cancel-preflight', undefined)).toEqual(actor);
+		});
+		it('cleans a permission relay prepared while the desktop turn is cancelled', async () => {
+			let finishRelay!: (args: string[]) => void;
+			vi.mocked(preparePermissionRelayArgs).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishRelay = resolve;
+					})
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: [],
+				requiresPty: false,
+			});
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'cancel-relay',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					permissionMode: 'standard',
+				}
+			).then(
+				() => null,
+				(error: Error) => error
+			);
+			await vi.waitFor(() => expect(finishRelay).toBeDefined());
+			expect(await handlers.get('process:interrupt')!({}, 'cancel-relay')).toBe(true);
+			finishRelay([]);
+			expect(await pending).toBeInstanceOf(Error);
+			expect(cleanupSessionRelay).toHaveBeenCalledWith('cancel-relay');
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 		it('waits for Relay, resumes its first provider id and retains the lease through close', async () => {
