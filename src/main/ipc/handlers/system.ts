@@ -35,6 +35,28 @@ import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
+import { isLinux } from '../../../shared/platformDetection';
+
+/**
+ * `shell.openPath` that always settles.
+ *
+ * On Linux, Electron's `platform_util::OpenPath` launches `xdg-open` with
+ * `wait_for_exit = false` and never runs its completion callback, so the promise
+ * `shell.openPath` returns there never resolves (Electron 41,
+ * `shell/common/platform_util_linux.cc`). An IPC handler that awaits it never
+ * replies; once the pending invoke is garbage-collected the renderer gets
+ * "Error invoking remote method 'shell:openPath': reply was never sent"
+ * (MAESTRO-QH, Linux only). Linux reports nothing either way, so there it is
+ * fired and reported as launched; macOS and Windows still return the real
+ * error message.
+ */
+function openPathSettled(target: string): Promise<string> {
+	if (isLinux()) {
+		void shell.openPath(target);
+		return Promise.resolve('');
+	}
+	return shell.openPath(target);
+}
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -246,7 +268,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			// Detect absolute file paths and redirect to openPath - Fixes MAESTRO-FN/FA/F4
 			if (path.isAbsolute(url)) {
 				if (fsSync.existsSync(url)) {
-					const errorMessage = await shell.openPath(url);
+					const errorMessage = await openPathSettled(url);
 					if (errorMessage) {
 						throw new Error(errorMessage);
 					}
@@ -264,7 +286,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			if (!fsSync.existsSync(filePath)) {
 				throw new Error(`Path does not exist: ${filePath}`);
 			}
-			const errorMessage = await shell.openPath(filePath);
+			const errorMessage = await openPathSettled(filePath);
 			if (errorMessage) {
 				throw new Error(errorMessage);
 			}
@@ -347,7 +369,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
 			return;
 		}
-		const errorMessage = await shell.openPath(absolutePath);
+		const errorMessage = await openPathSettled(absolutePath);
 		if (errorMessage) {
 			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
