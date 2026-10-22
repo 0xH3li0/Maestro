@@ -43,13 +43,22 @@ export interface PluginReceipt {
 
 /** Exact DNS endpoint; no numeric/hex final label, IPs, URLs, wildcards or localhost. */
 export function pluginEndpointScope(host: unknown, port: unknown): string | undefined {
+	return endpointScope(host, port, false);
+}
+
+function endpointScope(
+	host: unknown,
+	port: unknown,
+	historicalReference: boolean
+): string | undefined {
 	if (
 		typeof host !== 'string' ||
 		host.length > 253 ||
 		!host.includes('.') ||
 		!host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ||
 		/^[0-9.]+$/.test(host) ||
-		/^(?:[0-9]+|0x[0-9a-f]*)$/.test(host.slice(host.lastIndexOf('.') + 1)) ||
+		(!historicalReference &&
+			/^(?:[0-9]+|0x[0-9a-f]*)$/.test(host.slice(host.lastIndexOf('.') + 1))) ||
 		host.endsWith('.localhost') ||
 		!Number.isInteger(port) ||
 		(port as number) < 1 ||
@@ -63,6 +72,13 @@ export function isPluginEndpointScope(scope: unknown): scope is string {
 	if (typeof scope !== 'string') return false;
 	const [host, port, extra] = scope.split(':');
 	return extra === undefined && pluginEndpointScope(host, Number(port)) === scope;
+}
+
+/** Schema-only historical cleanup provenance; never use this to authorize an endpoint. */
+export function isStoredPluginEndpointScope(scope: unknown): scope is string {
+	if (typeof scope !== 'string') return false;
+	const [host, port, extra] = scope.split(':');
+	return extra === undefined && endpointScope(host, Number(port), true) === scope;
 }
 
 export const PLUGIN_RECORD_KEY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;

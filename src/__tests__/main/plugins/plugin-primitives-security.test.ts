@@ -452,6 +452,39 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 		}
 	});
 
+	it.each(['example.123:993', 'example.0xff:993'])(
+		'retains sealed historical endpoint %s for cleanup without authorizing its use',
+		(endpoint) => {
+			const { store, deps } = privateStore();
+			const ref = '5'.repeat(64);
+			store.registerPluginSecret(plugin, ident, 'account', 'fixture.example:993', ref, () => {});
+			store.setPluginSecretState(plugin, ident, ref, 'active', () => {});
+			store.commitPluginRecord(foreign, ident, 'policy', 0, { retained: true }, () => {});
+			const slot = store.pluginSecretSlot(plugin, ident, ref);
+			const prior = JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath)));
+			prior.opaque[plugin].secrets[ref].endpoint = endpoint;
+			const bytes = deps.seal.seal(JSON.stringify(prior));
+			fs.writeFileSync(deps.ledgerPath, bytes);
+			const anchor = deps.anchor.read();
+			const reopened = new AuthorizationStore(deps);
+			expect(reopened.trustState()).toBe('persistent');
+			expect(reopened.verify(foreign, ident).authorized).toBe(true);
+			expect(reopened.readPluginRecord(foreign, ident, 'policy')?.value).toEqual({
+				retained: true,
+			});
+			expect(() => reopened.assertPluginSecret(plugin, ident, ref, endpoint)).toThrow();
+			expect(fs.readFileSync(deps.ledgerPath)).toEqual(bytes);
+			expect(deps.anchor.read()).toEqual(anchor);
+			reopened.uninstall(plugin);
+			const deleted = vi.fn();
+			reopened.purgePluginPrivateState(plugin, deleted);
+			expect(deleted).toHaveBeenCalledExactlyOnceWith(slot);
+			expect(reopened.readPluginRecord(foreign, ident, 'policy')?.value).toEqual({
+				retained: true,
+			});
+		}
+	);
+
 	it('normalizes historical cleanup archives without read-time writes or losing active/pending slots', () => {
 		const { store, deps } = privateStore();
 		const activeRef = '1'.repeat(64),

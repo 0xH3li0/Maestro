@@ -34,6 +34,7 @@ import { PluginAuthorityError, assertPluginAuthority, pluginJson } from './plugi
 import {
 	PLUGIN_RECORD_KEY_PATTERN,
 	isPluginEndpointScope,
+	isStoredPluginEndpointScope,
 	parsePluginEndpointScopes,
 	type PluginRecordValue,
 } from '../../shared/plugins/primitives';
@@ -482,7 +483,7 @@ export class AuthorizationStore {
 					!/^[0-9a-f]{64}$/.test(ref) ||
 					secret.ref !== ref ||
 					!PLUGIN_RECORD_KEY_PATTERN.test(secret.key) ||
-					!isPluginEndpointScope(secret.endpoint) ||
+					!isStoredPluginEndpointScope(secret.endpoint) ||
 					(secret.removal !== undefined && !['pending', 'removed'].includes(secret.removal))
 				)
 					throw new PluginAuthorityError('PLUGIN_INTEGRITY');
@@ -642,7 +643,12 @@ export class AuthorizationStore {
 		endpoint: string
 	): void {
 		const secret = this.pluginState(pluginId, identity)?.secrets[ref];
-		if (!secret || secret.removal || secret.endpoint !== endpoint)
+		if (
+			!isPluginEndpointScope(endpoint) ||
+			!secret ||
+			secret.removal ||
+			secret.endpoint !== endpoint
+		)
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 	}
 	/** Generic freshness fence: opaque authority revisions, never domain values. */
