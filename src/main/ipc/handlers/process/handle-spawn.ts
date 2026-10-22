@@ -122,15 +122,16 @@ export async function handleProcessSpawn(
 								(!!config.agentSessionId && tab.agentSessionId === config.agentSessionId))
 					)
 			: undefined;
-	// Keep ordinary desktop/automation policy with the existing renderer queue.
-	// Relay-managed conversations additionally share this host reservation.
-	const release = relayTab
-		? await acquireProviderSessionWriter(
-				config.toolType,
-				`${relayTab.agentId}-ai-${relayTab.tab.id}`,
-				config.agentSessionId
-			)
-		: () => {};
+	// The existing queue decides order. Reserve every desktop writer before any
+	// awaits, including an unmarked conversation that Relay may adopt mid-turn.
+	const release =
+		config.toolType === 'terminal'
+			? () => {}
+			: await acquireProviderSessionWriter(
+					config.toolType,
+					config.sessionId,
+					config.agentSessionId
+				);
 	if (relayTab) {
 		const current = records()
 			.find((agent) => agent.id === relayTab.agentId)
@@ -139,10 +140,10 @@ export async function handleProcessSpawn(
 	}
 	const onExit = (id: string) => {
 		if (id !== config.sessionId) return;
-		if (relayTab) manager.off('exit', onExit);
+		if (config.toolType !== 'terminal') manager.off('exit', onExit);
 		release();
 	};
-	if (relayTab) manager.on('exit', onExit);
+	if (config.toolType !== 'terminal') manager.on('exit', onExit);
 	try {
 		const result = await handleProcessSpawnImpl(config, deps, proofCleanup);
 		if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);

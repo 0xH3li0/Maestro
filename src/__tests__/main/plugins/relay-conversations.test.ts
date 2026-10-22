@@ -113,7 +113,10 @@ describe('durable Relay conversations', () => {
 			'desktop-resumed-provider',
 			expect.any(AbortSignal),
 			'relay',
-			undefined
+			undefined,
+			undefined,
+			false,
+			true
 		);
 	});
 	it('serializes two messages for one conversation', async () => {
@@ -137,7 +140,10 @@ describe('durable Relay conversations', () => {
 			'shared-provider',
 			expect.any(AbortSignal),
 			'relay',
-			undefined
+			undefined,
+			undefined,
+			false,
+			true
 		);
 	});
 	it('retains an interrupted receipt and fails closed after restart', async () => {
@@ -242,5 +248,44 @@ describe('durable Relay conversations', () => {
 		expect(deps.run).toHaveBeenCalledTimes(1);
 		expect(agent.aiTabs[0].relayConversation.status).toBe('error');
 		release();
+	});
+	it('purges private receipts on uninstall and fences late and queued writes without removing user history', async () => {
+		let finish!: (result: { success: boolean; response: string; sessionId: string }) => void;
+		vi.mocked(deps.run).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const pending = send();
+		const firstError = expect(pending).rejects.toThrow(/purged/);
+		await vi.waitFor(() => expect(agent.aiTabs[0].relayConversation.status).toBe('running'));
+		const next = send('queued', { messageId: 'message-2' });
+		const queuedError = expect(next).rejects.toThrow(/purged/);
+		host.purge();
+		finish({ success: true, response: 'late', sessionId: 'late-provider' });
+		await Promise.all([firstError, queuedError]);
+		expect(agent.aiTabs).toHaveLength(1);
+		expect(agent.aiTabs[0].logs[0].text).toBe('hello');
+		expect(agent.aiTabs[0].relayConversation.status).toBe('error');
+		expect(fs.existsSync(path.join(baseDir, 'sh.maestro.relay'))).toBe(false);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
+	it('does not resurrect private ledger or tab when restore finishes after uninstall', async () => {
+		let finish!: (
+			logs: Array<{ id: string; source: string; timestamp: number; text: string }>
+		) => void;
+		deps.loadTranscript = () =>
+			new Promise((resolve) => {
+				finish = resolve;
+			});
+		const pending = host.restore('agent', 'old', 'old-provider');
+		const rejection = expect(pending).rejects.toThrow(/purged/);
+		await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+		host.purge();
+		finish([{ id: 'old', source: 'user', timestamp: 1, text: 'old' }]);
+		await rejection;
+		expect(agent.aiTabs).toHaveLength(0);
+		expect(fs.existsSync(path.join(baseDir, 'sh.maestro.relay'))).toBe(false);
 	});
 });

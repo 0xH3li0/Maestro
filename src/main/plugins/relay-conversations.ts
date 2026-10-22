@@ -75,6 +75,8 @@ export class RelayConversations {
 	private readonly store: PluginKvStore;
 	private readonly queue = createKeyedWriteQueue();
 	private readonly pending = new Map<string, number>();
+	private generation = 0;
+	private readonly controllers = new Set<AbortController>();
 	private readonly now: () => number;
 	constructor(private readonly deps: RelayConversationDeps) {
 		this.store = new PluginKvStore({
@@ -82,6 +84,35 @@ export class RelayConversations {
 			limits: { maxKeys: 100_000, maxValueBytes: 8 * 1024 * 1024 },
 		});
 		this.now = deps.now ?? Date.now;
+	}
+	/** Uninstall removes only plugin-private identity/receipts, preserving user transcripts. */
+	purge(): void {
+		this.generation++;
+		for (const key of this.store.keys(RELAY_PLUGIN_ID)) {
+			const mapping = this.read<Mapping>(key);
+			if (!mapping?.tabId || !mapping.agentId) continue;
+			const tab = (this.deps.getAgent(mapping.agentId)?.aiTabs as RelayTab[] | undefined)?.find(
+				(tab) => tab.id === mapping.tabId
+			);
+			if (
+				tab?.relayConversation?.status === 'queued' ||
+				tab?.relayConversation?.status === 'running'
+			)
+				this.patch(
+					mapping,
+					{},
+					{
+						status: 'error',
+						completedAt: undefined,
+						error: 'Relay was uninstalled during this turn',
+					}
+				);
+		}
+		for (const controller of this.controllers) controller.abort();
+		this.store.purge(RELAY_PLUGIN_ID);
+	}
+	private assertGeneration(generation: number): void {
+		if (generation !== this.generation) throw new Error('Relay conversation ledger was purged');
 	}
 	private key(...parts: string[]): string {
 		return createHash('sha256').update(canonicalJson(parts)).digest('hex');
@@ -104,6 +135,13 @@ export class RelayConversations {
 		const agent = this.deps.getAgent(agentId);
 		if (!agent) throw new Error('Relay agent not found');
 		const tabs = (agent.aiTabs ?? []) as RelayTab[];
+		if (
+			!opts.sessionId &&
+			tabs.some((tab) => tab.relayConversation?.conversationId === opts.conversationId)
+		)
+			throw new Error(
+				'Relay conversation ownership was removed; use an explicitly authorized provider binding'
+			);
 		const matches = opts.sessionId ? tabs.filter((t) => t.agentSessionId === opts.sessionId) : [];
 		if (matches.length > 1) throw new Error('Ambiguous Relay provider/tab mapping');
 		if (
@@ -188,10 +226,12 @@ export class RelayConversations {
 		onProgress: Parameters<HeadlessAgentRunner>[5],
 		authorize: () => void
 	): Promise<SendResult> {
+		const generation = this.generation;
 		const conversationKey = this.key('conversation', agentId, opts.conversationId);
 		this.pending.set(conversationKey, (this.pending.get(conversationKey) ?? 0) + 1);
 		try {
 			return await this.queue.enqueue(conversationKey, async () => {
+				this.assertGeneration(generation);
 				authorize();
 				if (signal.aborted) throw new Error('Relay send cancelled');
 				const receiptKey = this.key('message', agentId, opts.conversationId, opts.messageId);
@@ -216,6 +256,7 @@ export class RelayConversations {
 				);
 				if (!tab && mapping.providerSessionId && this.deps.loadTranscript) {
 					const logs = await this.deps.loadTranscript(agentId, mapping.providerSessionId);
+					this.assertGeneration(generation);
 					this.patch(mapping, { logs }, {});
 				}
 				// Desktop continuation may have updated the provider id; the live tab is authoritative.
@@ -242,6 +283,7 @@ export class RelayConversations {
 				if (signal.aborted) controller.abort();
 				const processId = `${agentId}-ai-${mapping.tabId}`;
 				liveRelayTurns.set(processId, controller);
+				this.controllers.add(controller);
 				let release = () => {};
 				try {
 					release = await acquireProviderSessionWriter(
@@ -265,8 +307,12 @@ export class RelayConversations {
 						mapping.providerSessionId,
 						controller.signal,
 						'relay',
-						onProgress
+						onProgress,
+						undefined,
+						false,
+						true
 					);
+					this.assertGeneration(generation);
 					if (result.sessionId) mapping.providerSessionId = result.sessionId;
 					if (mapping.providerSessionId) mapping.interrupted = false;
 					this.write(conversationKey, mapping);
@@ -291,6 +337,7 @@ export class RelayConversations {
 						}
 					);
 					await this.deps.flush?.();
+					this.assertGeneration(generation);
 					// Persist outcome before releasing it. A replay never runs the provider again.
 					this.write(receiptKey, {
 						promptHash: hash,
@@ -300,13 +347,15 @@ export class RelayConversations {
 					authorize();
 					return returned;
 				} catch (error) {
-					this.patch(
-						mapping,
-						{},
-						{ status: 'error', error: String(error), lastActivityAt: this.now() }
-					);
+					if (generation === this.generation)
+						this.patch(
+							mapping,
+							{},
+							{ status: 'error', error: String(error), lastActivityAt: this.now() }
+						);
 					throw error;
 				} finally {
+					this.controllers.delete(controller);
 					signal.removeEventListener('abort', abort);
 					if (liveRelayTurns.get(processId) === controller) liveRelayTurns.delete(processId);
 					release();
@@ -326,8 +375,10 @@ export class RelayConversations {
 		conversationId: string,
 		providerSessionId: string
 	): Promise<SendResult> {
+		const generation = this.generation;
 		const key = this.key('conversation', agentId, conversationId);
 		return this.queue.enqueue(key, async () => {
+			this.assertGeneration(generation);
 			const known = this.read<Mapping>(key);
 			const mapping = this.mapping(agentId, {
 				conversationId,
@@ -339,6 +390,7 @@ export class RelayConversations {
 			);
 			if (!known && !tab) {
 				const logs = (await this.deps.loadTranscript?.(agentId, providerSessionId)) ?? [];
+				this.assertGeneration(generation);
 				this.patch(mapping, { logs }, {});
 			} else if (!known && tab) this.patch(mapping, {}, {});
 			await this.deps.flush?.();
@@ -351,7 +403,7 @@ export class RelayConversations {
 			};
 		});
 	}
-	complete(agentId: string, conversationId: string, messageId: string): void {
+	complete(agentId: string, conversationId: string, messageId: string): Promise<void> | void {
 		const key = this.key('conversation', agentId, conversationId);
 		if (this.pending.has(key)) throw new Error('Relay conversation has pending messages');
 		const mapping = this.read<Mapping>(key);
@@ -371,10 +423,13 @@ export class RelayConversations {
 			tab.relayConversation?.messageId !== messageId ||
 			tab.relayConversation.status !== 'idle' ||
 			tab.state === 'busy' ||
-			agent?.executionQueue?.some((item: { tabId?: string }) => item.tabId === tab.id)
+			agent?.executionQueue?.some(
+				(item: { tabId?: string }) => !item.tabId || item.tabId === tab.id
+			)
 		)
 			throw new Error('Relay completion is stale or the conversation has unfinished work');
 		if (!tab.relayConversation.completedAt) this.patch(mapping, {}, { completedAt: this.now() });
+		return this.deps.flush?.();
 	}
 	/** Host restart cannot turn an unfinished provider run into a completed task. */
 	reconcileInterrupted(): void {

@@ -1,6 +1,12 @@
-# Relay host contract (Host API 1.26.0)
+# Relay host contract (Host API 1.31.0)
 
-## Desktop conversation continuity (1.26.0)
+## Desktop conversation continuity (1.31.0)
+
+Version allocation follows the open API1.29 generic-platform PR1881 and API1.30
+bounded-audio PR1883. This focused rc diff does not implement those preceding
+contracts. Integrate and qualify their documented prerequisites before releasing
+an API1.31 host; semver comparison alone is not runtime completeness enforcement.
+No installer or live archive activation is part of this change.
 
 The trusted, pinned Relay may call `agents.send(agentId, prompt, { conversationId,
 messageId, sessionId?, onProgress? })`. `conversationId` is its persistent real

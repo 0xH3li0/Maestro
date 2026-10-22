@@ -441,7 +441,7 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.26.0 adds durable Relay
+ * The host API version this Maestro build implements. 1.31.0 adds durable Relay
  * conversation/message identity, replay receipts, and explicit task completion.
  * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
@@ -479,7 +479,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.26.0';
+export const HOST_API_VERSION = '1.31.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

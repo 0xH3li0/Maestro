@@ -13,7 +13,8 @@ export function applyRelayConversationRuntime(session: Session, baseline?: Sessi
 	const aiTabs = session.aiTabs.map((tab) => {
 		const relay = tab.relayConversation;
 		const before = baseline?.aiTabs.find((t) => t.id === tab.id)?.relayConversation;
-		if (!relay || (baseline && canonicalJson(before ?? null) === canonicalJson(relay))) return tab;
+		if (!relay?.messageId || (baseline && canonicalJson(before ?? null) === canonicalJson(relay)))
+			return tab;
 		changed = true;
 		return {
 			...tab,

@@ -33,7 +33,9 @@ export type HeadlessAgentRunner = (
 	origin?: 'user' | 'auto' | 'relay',
 	onProgress?: (event: AgentSendProgressEvent) => void,
 	receiptToolId?: string,
-	requirePluginTools?: boolean
+	requirePluginTools?: boolean,
+	/** Host-only: Relay already holds the tab/provider reservation for this run. */
+	writerLeaseHeld?: boolean
 ) => Promise<HeadlessAgentReply>;
 let headlessAgentRunner: HeadlessAgentRunner | null = null;
 

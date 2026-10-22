@@ -1,4 +1,19 @@
+import { RelayConversations } from '../../../../main/plugins/relay-conversations';
+import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
+const writerGate = vi.hoisted(() => ({ enabled: false }));
+vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/utils/provider-session-writer')>();
+	return {
+		...actual,
+		acquireProviderSessionWriter: (
+			...args: Parameters<typeof actual.acquireProviderSessionWriter>
+		) =>
+			writerGate.enabled ? actual.acquireProviderSessionWriter(...args) : Promise.resolve(() => {}),
+	};
+});
+
 import { acquireProviderSessionWriter } from '../../../../main/utils/provider-session-writer';
 /**
  * Tests for the process IPC handlers
@@ -311,6 +326,8 @@ describe('process IPC handlers', () => {
 		resize: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
 		get: ReturnType<typeof vi.fn>;
+		on: ReturnType<typeof vi.fn>;
+		off: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
 		spawnTerminalTab: ReturnType<typeof vi.fn>;
 	};
@@ -332,6 +349,7 @@ describe('process IPC handlers', () => {
 	let deps: ProcessHandlerDependencies;
 
 	beforeEach(() => {
+		writerGate.enabled = false;
 		// Clear mocks
 		vi.clearAllMocks();
 		vi.mocked(checkCustomPath).mockImplementation(async (customPath) => ({
@@ -348,6 +366,8 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
+			on: vi.fn(),
+			off: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
 		};
@@ -478,7 +498,77 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it('protects a running unmarked desktop conversation when Relay first adopts it', async () => {
+			writerGate.enabled = true;
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			let owner: any = {
+				id: 'legacy-agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'legacy-tab', agentSessionId: 'legacy-provider', logs: [] }],
+				unifiedTabOrder: [],
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [owner] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'codex',
+				path: '/usr/bin/codex',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'legacy-agent-ai-legacy-tab';
+			await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: processId,
+					agentSessionId: 'legacy-provider',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: [],
+				}
+			);
+			const root = path.join(process.cwd(), '.maestro', 'scratch');
+			fs.mkdirSync(root, { recursive: true });
+			const baseDir = fs.mkdtempSync(path.join(root, 'adopt-writer-'));
+			const run = vi.fn(async () => ({
+				success: true,
+				response: 'answer',
+				sessionId: 'legacy-provider',
+			}));
+			const service = new RelayConversations({
+				baseDir,
+				getAgent: () => owner,
+				updateAgent: (_id, update) => {
+					owner = update(owner);
+				},
+				run,
+			});
+			try {
+				const pending = service.send(
+					'legacy-agent',
+					'relay',
+					{ conversationId: 'thread', messageId: 'message', sessionId: 'legacy-provider' },
+					new AbortController().signal,
+					undefined,
+					() => {}
+				);
+				await vi.waitFor(() => expect(owner.aiTabs[0].relayConversation?.status).toBe('queued'));
+				expect(run).not.toHaveBeenCalled();
+				events.emit('exit', processId, 0);
+				await pending;
+				expect(run).toHaveBeenCalledTimes(1);
+			} finally {
+				events.emit('exit', processId, 0);
+				fs.rmSync(baseDir, { recursive: true, force: true });
+			}
+		});
 		it('waits for Relay, resumes its first provider id and retains the lease through close', async () => {
+			writerGate.enabled = true;
 			const events = new EventEmitter();
 			Object.assign(mockProcessManager, {
 				on: events.on.bind(events),

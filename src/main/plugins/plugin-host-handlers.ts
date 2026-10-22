@@ -1741,13 +1741,22 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!deps.providerSessions) throw new Error('Provider ownership unavailable');
 			};
 			authorize();
-			const restored = await deps.relayConversations!.restore(
-				p.agentId,
-				p.conversationId,
-				p.sessionId
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					authorize();
+					const restored = await deps.relayConversations!.restore(
+						p.agentId as string,
+						p.conversationId as string,
+						p.sessionId as string
+					);
+					authorize();
+					return restored;
+				}
 			);
-			authorize();
-			return restored;
 		};
 		handlers['agents.completeConversation'] = async (pluginId, params) => {
 			const p = asObject(params);
@@ -1765,12 +1774,20 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
 			)
 				throw new Error('Relay conversation authorization required');
-			deps.relayConversations!.complete(
-				p.agentId as string,
-				p.conversationId as string,
-				p.messageId as string
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					await deps.relayConversations!.complete(
+						p.agentId as string,
+						p.conversationId as string,
+						p.messageId as string
+					);
+					return { success: true };
+				}
 			);
-			return { success: true };
 		};
 	}
 	if (deps.generateTitle) {

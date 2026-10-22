@@ -1,3 +1,4 @@
+import { resetStores } from '../../helpers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -18,6 +19,7 @@ let session: Session;
 let tab: AITab;
 let cleanup: (() => void) | undefined;
 beforeEach(() => {
+	resetStores(useSessionStore, useSettingsStore, useHeadlessActivityStore);
 	session = createMockSession({
 		id: 'agent',
 		activeTabId: 'selected',
@@ -154,5 +156,10 @@ describe('Relay archive and restoration', () => {
 		expect(
 			useSessionStore.getState().sessions[0].aiTabs[0].relayConversation?.completedAt
 		).toBeUndefined();
+	});
+	it('adopts origin without clearing an already active desktop writer', () => {
+		tab.state = 'busy';
+		tab.relayConversation!.messageId = undefined;
+		expect(applyRelayConversationRuntime(session).aiTabs[0].state).toBe('busy');
 	});
 });
