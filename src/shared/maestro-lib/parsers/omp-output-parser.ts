@@ -49,6 +49,7 @@ interface OmpContentBlock {
 }
 
 interface OmpMessage {
+	responseId?: string;
 	role?: string;
 	content?: string | OmpContentBlock[];
 	usage?: OmpUsage;
@@ -158,7 +159,9 @@ export class OmpOutputParser implements AgentOutputParser {
 					return {
 						type: 'usage',
 						sessionId,
-						...(event.id ? { usageEventId: event.id } : {}),
+						...(event.message.responseId || event.id
+							? { usageEventId: event.message.responseId || event.id }
+							: {}),
 						usage: this.extractUsageFromMessage(event.message),
 						raw: event,
 					};

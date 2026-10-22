@@ -335,36 +335,50 @@ describe('semantic inactivity policy', () => {
 		}
 	);
 
-	it('counts distinct Copilot model steps with equal usage but ignores their replays', async () => {
-		supervision.dispose();
-		supervision = superviseAgentProcess(child, {
-			timeoutMs: 21_600_000,
-			usageReporting: 'per-step',
-			idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
-			onStop,
-			onStatus,
-			onForcedStop: vi.fn(),
-		});
-		const parser = createOutputParser('copilot-cli')!;
-		let lastEvent;
-		for (let n = 0; n < 14; n++) {
-			lastEvent = parser.parseJsonLine(
-				JSON.stringify({
-					type: 'assistant.message',
-					id: `step-${n}`,
-					data: { content: '', outputTokens: 10 },
-				})
-			)!;
-			supervision.observe(lastEvent);
-			await vi.advanceTimersByTimeAsync(300_000);
+	it.each(['copilot-cli', 'omp'] as const)(
+		'counts distinct %s model steps with equal or smaller usage but ignores replays',
+		async (provider) => {
+			supervision.dispose();
+			supervision = superviseAgentProcess(child, {
+				timeoutMs: 21_600_000,
+				usageReporting: 'per-step',
+				idle: { warnMs: 600_000, idleMs: 1_200_000, toolMs: 3_600_000 },
+				onStop,
+				onStatus,
+				onForcedStop: vi.fn(),
+			});
+			const parser = createOutputParser(provider)!;
+			let lastEvent;
+			for (let n = 0; n < 14; n++) {
+				lastEvent = parser.parseJsonLine(
+					JSON.stringify({
+						...(provider === 'omp'
+							? {
+									type: 'message_end',
+									message: {
+										role: 'assistant',
+										responseId: `step-${n}`,
+										usage: { input: 20, output: 20 - n },
+									},
+								}
+							: {
+									type: 'assistant.message',
+									id: `step-${n}`,
+									data: { content: '', outputTokens: 10 },
+								}),
+					})
+				)!;
+				supervision.observe(lastEvent);
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).not.toHaveBeenCalled();
+			for (let n = 0; n < 4; n++) {
+				supervision.observe(lastEvent!);
+				await vi.advanceTimersByTimeAsync(300_000);
+			}
+			expect(onStop).toHaveBeenCalledOnce();
 		}
-		expect(onStop).not.toHaveBeenCalled();
-		for (let n = 0; n < 4; n++) {
-			supervision.observe(lastEvent!);
-			await vi.advanceTimersByTimeAsync(300_000);
-		}
-		expect(onStop).toHaveBeenCalledOnce();
-	});
+	);
 
 	it('bounds provider exit with inherited stdio instead of waiting for the idle budget', async () => {
 		supervision.observe({ type: 'text', text: 'initial work', raw: {} });

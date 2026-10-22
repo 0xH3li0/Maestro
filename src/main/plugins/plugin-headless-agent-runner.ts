@@ -124,7 +124,7 @@ export function createPluginHeadlessAgentRunner(
 					response: null,
 					sessionId: null,
 					error: signal?.aborted
-						? 'Agent run timed out or was cancelled'
+						? 'Agent run cancelled'
 						: 'Agent run stopped: absolute runtime ceiling exceeded',
 				};
 			}
