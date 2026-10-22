@@ -468,7 +468,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			const anchor = deps.anchor.read();
 			const reopened = new AuthorizationStore(deps);
 			expect(reopened.trustState()).toBe('persistent');
-			expect(reopened.verify(foreign, ident).authorized).toBe(true);
+			expect(reopened.verify(foreign, ident, []).authorized).toBe(true);
 			expect(reopened.readPluginRecord(foreign, ident, 'policy')?.value).toEqual({
 				retained: true,
 			});
