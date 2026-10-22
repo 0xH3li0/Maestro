@@ -220,6 +220,10 @@ export class RelayConversations {
 					: [...(agent.unifiedTabOrder ?? []), { type: 'ai', id: tab.id }],
 			};
 		});
+	}
+	private async flushMapping(mapping: Mapping, generation: number): Promise<void> {
+		await this.deps.flush?.();
+		this.assertGeneration(generation);
 		if (mapping.materialized === false) {
 			mapping.materialized = true;
 			this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
@@ -282,7 +286,7 @@ export class RelayConversations {
 					},
 					{ id: `${receiptKey}:user`, timestamp: this.now(), source: 'user', text: prompt }
 				);
-				await this.deps.flush?.();
+				await this.flushMapping(mapping, generation);
 				const agent = this.deps.getAgent(agentId)!;
 				const controller = new AbortController();
 				const abort = () => controller.abort();
@@ -353,7 +357,7 @@ export class RelayConversations {
 							text: result.response ?? result.error ?? 'Relay run failed',
 						}
 					);
-					await this.deps.flush?.();
+					await this.flushMapping(mapping, generation);
 					this.assertGeneration(generation);
 					// Persist outcome before releasing it. A replay never runs the provider again.
 					this.write(receiptKey, {
@@ -410,7 +414,7 @@ export class RelayConversations {
 				this.assertGeneration(generation);
 				this.patch(mapping, { logs }, {});
 			} else if ((!known || mapping.materialized === false) && tab) this.patch(mapping, {}, {});
-			await this.deps.flush?.();
+			await this.flushMapping(mapping, generation);
 			return {
 				success: true,
 				response: null,

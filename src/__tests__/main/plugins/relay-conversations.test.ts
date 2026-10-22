@@ -91,6 +91,30 @@ describe('durable Relay conversations', () => {
 		expect(agent.aiTabs).toHaveLength(0);
 		expect(deps.loadTranscript).toHaveBeenCalledTimes(2);
 	});
+	it('retries first materialization after the sessions write fails and memory is reloaded', async () => {
+		deps.loadTranscript = vi.fn().mockResolvedValue([]);
+		deps.flush = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('disk write rejected'))
+			.mockResolvedValue(undefined);
+		await expect(host.restore('agent', opts.conversationId, 'provider')).rejects.toThrow(
+			'disk write rejected'
+		);
+		const tabId = agent.aiTabs[0].id;
+		// Simulate restart: the deferred sessions write failed, while the private ledger reached disk.
+		agent.aiTabs = [];
+		agent.unifiedTabOrder = [];
+		host = new RelayConversations(deps);
+		await expect(host.restore('agent', opts.conversationId, 'provider')).resolves.toMatchObject({
+			success: true,
+			tabId,
+		});
+		expect(agent.aiTabs[0].id).toBe(tabId);
+		expect(deps.loadTranscript).toHaveBeenCalledTimes(2);
+		agent.aiTabs = [];
+		await host.restore('agent', opts.conversationId, 'provider');
+		expect(agent.aiTabs).toHaveLength(0);
+	});
 	it('allows a new message after proven no-start failure but never reexecutes its receipt', async () => {
 		vi.mocked(deps.run).mockResolvedValueOnce({
 			success: false,
