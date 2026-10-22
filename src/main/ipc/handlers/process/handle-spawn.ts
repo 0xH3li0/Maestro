@@ -1,4 +1,7 @@
-import { acquireProviderSessionWriter } from '../../../utils/provider-session-writer';
+import {
+	acquireProviderSessionWriter,
+	bindProviderSessionWriter,
+} from '../../../utils/provider-session-writer';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -138,12 +141,21 @@ export async function handleProcessSpawn(
 			?.aiTabs?.find((tab) => tab.id === relayTab.tab.id);
 		if (current?.agentSessionId) config = { ...config, agentSessionId: current.agentSessionId };
 	}
+	const onSessionId = (id: string, providerId: string) => {
+		if (id === config.sessionId) bindProviderSessionWriter(id, providerId);
+	};
 	const onExit = (id: string) => {
 		if (id !== config.sessionId) return;
-		if (config.toolType !== 'terminal') manager.off('exit', onExit);
+		if (config.toolType !== 'terminal') {
+			manager.off('exit', onExit);
+			manager.off('session-id', onSessionId);
+		}
 		release();
 	};
-	if (config.toolType !== 'terminal') manager.on('exit', onExit);
+	if (config.toolType !== 'terminal') {
+		manager.on('exit', onExit);
+		manager.on('session-id', onSessionId);
+	}
 	try {
 		const result = await handleProcessSpawnImpl(config, deps, proofCleanup);
 		if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);

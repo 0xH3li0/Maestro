@@ -1,3 +1,4 @@
+import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
@@ -498,6 +499,54 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
+			writerGate.enabled = true;
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'codex',
+				path: '/usr/bin/codex',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'first-agent-ai-first-tab';
+			await handlers.get('process:spawn')!(
+				{},
+				{ sessionId: processId, toolType: 'codex', cwd: '/test', command: 'codex', args: [] }
+			);
+			events.emit('session-id', processId, 'newly-announced-provider');
+			const spawn = vi.fn(async () => ({
+				success: true,
+				response: 'cli answer',
+				agentSessionId: 'newly-announced-provider',
+			}));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => ({
+					id: 'first-agent',
+					toolType: 'codex',
+					cwd: '/test',
+					projectRoot: '/test',
+					name: 'fixture',
+				}),
+				detectAgent: async () => ({ available: true, path: '/usr/bin/codex' }),
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const pending = run('first-agent', 'cli followup', 'newly-announced-provider');
+			await Promise.resolve();
+			expect(spawn).not.toHaveBeenCalled();
+			events.emit('exit', processId, 0);
+			await pending;
+			expect(spawn).toHaveBeenCalledTimes(1);
+		});
 		it('protects a running unmarked desktop conversation when Relay first adopts it', async () => {
 			writerGate.enabled = true;
 			const events = new EventEmitter();

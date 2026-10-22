@@ -2,6 +2,12 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 
 const writers = createKeyedWriteQueue();
 const reservations = new Map<string, number>();
+const activeBindings = new Map<string, (providerSessionId: string) => void>();
+
+/** Attach an announced first-turn provider id to its already active tab lease. */
+export function bindProviderSessionWriter(processId: string, providerSessionId: string): void {
+	activeBindings.get(processId)?.(providerSessionId);
+}
 
 export function hasProviderSessionWriter(
 	provider: string,
@@ -29,9 +35,11 @@ export async function acquireProviderSessionWriter(
 	const releases: Array<() => void> = [];
 	for (const key of keys) reservations.set(key, (reservations.get(key) ?? 0) + 1);
 	let released = false;
+	let bind: ((id: string) => void) | undefined;
 	const releaseAll = () => {
 		if (released) return;
 		released = true;
+		if (activeBindings.get(processId) === bind) activeBindings.delete(processId);
 		releases
 			.splice(0)
 			.reverse()
@@ -70,5 +78,22 @@ export async function acquireProviderSessionWriter(
 		releaseAll();
 		throw error;
 	}
+	bind = (id) => {
+		const key = `provider:${provider}:${id}`;
+		if (released || keys.includes(key)) return;
+		keys.push(key);
+		reservations.set(key, (reservations.get(key) ?? 0) + 1);
+		// Enqueue synchronously in the announcement callback. A client learning
+		// the id cannot enter the host before this reservation is in its queue.
+		void writers.enqueue(
+			key,
+			() =>
+				new Promise<void>((release) => {
+					if (released) release();
+					else releases.push(release);
+				})
+		);
+	};
+	activeBindings.set(processId, bind);
 	return releaseAll;
 }
