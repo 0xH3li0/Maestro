@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	searchSettings,
 	ALL_SEARCHABLE_SETTINGS,
+	encoreTileForSetting,
 } from '../../../../renderer/components/Settings/searchableSettings';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -143,6 +144,22 @@ describe('searchableSettings', () => {
 			);
 		});
 
+		// An always-present setting that also touches a feature names it only
+		// through encoreKeywords, so the feature's name leads nowhere while off.
+		it('matches encoreKeywords only while their feature is on', () => {
+			const off = searchSettings('cue', [], { maestroCue: false }).map((s) => s.id);
+			expect(off).not.toContain('general-power');
+			expect(off).not.toContain('display-left-side-panel');
+
+			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
+			expect(on).toEqual(expect.arrayContaining(['general-power', 'display-left-side-panel']));
+
+			// The setting itself stays findable by its own terms either way.
+			expect(searchSettings('prevent sleep', [], { maestroCue: false }).map((s) => s.id)).toContain(
+				'general-power'
+			);
+		});
+
 		it('hides the Throughput Gauge display settings while the gauge is off, but keeps its tile', () => {
 			const off = searchSettings('throughput gauge', [], { throughputGauge: false }).map(
 				(s) => s.id
@@ -153,6 +170,22 @@ describe('searchableSettings', () => {
 			const on = searchSettings('throughput gauge', [], { throughputGauge: true }).map((s) => s.id);
 			expect(on).toEqual(
 				expect.arrayContaining(['encore-throughput-gauge', 'encore-throughput-gauge-display'])
+			);
+		});
+
+		it('hides the DataviewJS settings while Dataview is off, but keeps its tile', () => {
+			const off = searchSettings('dataview', [], { dataview: false }).map((s) => s.id);
+			expect(off).toContain('encore-dataview');
+			expect(off).not.toContain('encore-dataview-js');
+			expect(off).not.toContain('encore-dataview-trusted-roots');
+
+			const on = searchSettings('dataview', [], { dataview: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining([
+					'encore-dataview',
+					'encore-dataview-js',
+					'encore-dataview-trusted-roots',
+				])
 			);
 		});
 
@@ -176,9 +209,37 @@ describe('searchableSettings', () => {
 				'encore-maestro-run',
 				'encore-quick-chat',
 				'encore-throughput-gauge',
+				'encore-dataview',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
+		});
+
+		it('maps a jump to the Plugins tile whose details pane holds it', () => {
+			expect(encoreTileForSetting('encore-computer-history')).toBe('computerHistory');
+			expect(encoreTileForSetting('encore-cue')).toBe('maestroCue');
+			// A sub-setting opens its feature's tile through requiresEncore.
+			expect(encoreTileForSetting('encore-director-notes-provider')).toBe('directorNotes');
+			// Grid-level anchors and other tabs open nothing.
+			expect(encoreTileForSetting('encore-pianola')).toBeUndefined();
+			expect(encoreTileForSetting('encore-plugins')).toBeUndefined();
+			expect(encoreTileForSetting('nope')).toBeUndefined();
+		});
+
+		it('every tile entry with a settings body names its tile', () => {
+			const withBodies = [
+				'encore-usage-stats',
+				'encore-symphony',
+				'encore-cue',
+				'encore-computer-history',
+				'encore-coworking',
+				'encore-director-notes',
+				'encore-maestro-run',
+				'encore-quick-chat',
+				'encore-throughput-gauge',
+				'encore-dataview',
+			];
+			for (const id of withBodies) expect(encoreTileForSetting(id), id).toBeDefined();
 		});
 
 		it('should return no results for gibberish', () => {
@@ -320,6 +381,10 @@ describe('searchableSettings', () => {
 			['sparkline', 'encore-throughput-gauge-display'],
 			['rate window', 'encore-throughput-gauge-display'],
 			['reset peak', 'encore-throughput-gauge-display'],
+			['dataview', 'encore-dataview'],
+			['obsidian', 'encore-dataview'],
+			['dataviewjs', 'encore-dataview-js'],
+			['trusted vaults', 'encore-dataview-trusted-roots'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

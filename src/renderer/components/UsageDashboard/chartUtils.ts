@@ -11,14 +11,40 @@
  */
 
 import type { CSSProperties } from 'react';
-import type { Session } from '../../types';
+import type { Session, Theme } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
+import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 
 // `clampTooltipToViewport` was relocated into the shared widget library (so the
 // library's ChartTooltip primitive owns its geometry without depending back on
 // UsageDashboard). Re-export it here to keep the historical chartUtils API
 // stable for any existing importer.
 export { clampTooltipToViewport } from '../widgets/output/tooltipGeometry';
+
+/** Colors for series after the first, which takes the theme accent. */
+const SERIES_COLORS = [
+	'#10b981',
+	'#8b5cf6',
+	'#ef4444',
+	'#06b6d4',
+	'#ec4899',
+	'#f59e0b',
+	'#84cc16',
+	'#6366f1',
+];
+
+/**
+ * Color for the Nth series of a chart (a provider, an agent, a model). One
+ * mapping for every dashboard chart, so the same index reads as the same color
+ * when two charts sit side by side.
+ */
+export function getSeriesColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
+	if (colorBlindMode) {
+		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
+	}
+	if (index === 0) return theme.colors.accent;
+	return SERIES_COLORS[(index - 1) % SERIES_COLORS.length];
+}
 
 /**
  * Returns true if the session is a worktree child (was spawned from a parent agent).
@@ -215,6 +241,26 @@ export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<numbe
 	}
 
 	return new Set(indices);
+}
+
+/**
+ * Split a dense per-day series into at most `maxGroups` runs of equal length
+ * (the last run may be shorter), for a long range that would otherwise draw
+ * more bars than the chart has pixels for. Returns one single-item group per
+ * day when the series already fits.
+ *
+ * Grouping is by a fixed number of consecutive days rather than by calendar
+ * week: the buckets stay equal width, which is what makes neighbouring bars
+ * comparable, and a partial week at either end can't render as a dip that never
+ * happened.
+ */
+export function chunkIntoEqualGroups<T>(items: readonly T[], maxGroups: number): T[][] {
+	const limit = Math.max(1, maxGroups);
+	if (items.length <= limit) return items.map((item) => [item]);
+	const groupSize = Math.ceil(items.length / limit);
+	const groups: T[][] = [];
+	for (let i = 0; i < items.length; i += groupSize) groups.push(items.slice(i, i + groupSize));
+	return groups;
 }
 
 /**

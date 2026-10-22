@@ -36,11 +36,11 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 
 ## Switching Providers with Memory and Session Carry
 
-Memory and session conversion is available as a preview between **Claude Code 2.1.296** and **Codex 0.162.1**, in both directions. Native resume and repeated round-trip continuity remain unverified. Other provider/version combinations have no supported converter and are blocked by preflight.
+Memory and session conversion is available as a preview between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**, in both directions. Live checks on Claude Code 2.1.302 and Codex 0.163.0 verified native conversation recall in both directions, including a message added after switching, and access to carried project resource definitions. Both adapters remain unverified overall: skill execution, subagent invocation, arbitrary tool/image payloads, and repeated incremental synchronization are not certified. Other provider/version combinations have no supported converter and are blocked by preflight.
 
-In **Edit Agent**, destinations with a converter from the agent's current provider are marked **→ Memory + history (preview)** in the provider list. The marker identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
+In **Edit Agent → Provider**, destinations with a converter from the agent's current provider have a **Carry Over** pill at the right of the provider list. The hint below the selector uses the same pill. It identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
 
-Select the destination to read the conversion plan, review and accept any listed limitations, then click **Save Changes**. Translation runs as part of saving. It carries project memory and session history while preserving tabs, drafts, queued messages and file previews. Additional user-level resources, such as skills, must be selected explicitly; account-global knowledge is excluded.
+Conversion is opt-in. Select the destination and check **Convert memory and session history** to read the conversion plan and see any listed limitations, then click **Save Changes**; saving accepts them. Translation runs as part of saving. Leave the box unchecked for a plain switch: tabs keep their transcripts and start fresh conversations on the new provider. When a plan is blocked or the conversion fails, a notice says so and **Save Changes** switches providers without converting. It carries project memory and session history while preserving tabs, drafts, queued messages and file previews. Additional user-level resources, such as skills, must be selected explicitly; account-global knowledge is excluded.
 
 A spinner shows when Maestro is reading history, waiting for the current turn, translating, or finishing the switch. The status follows the current migration operation. There is no percentage bar because completion units are not measured. A failed conversion reports the error and retains the source provider.
 
@@ -52,7 +52,7 @@ maestro-cli update-agent <agent-id> --provider codex --migration-plan <plan-id> 
 maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json
 ```
 
-Switch back with `--provider claude-code`. The second command accepts conversion warnings; it does not bypass a blocked plan.
+Switch back with `--provider claude-code --convert`. The second command accepts conversion warnings; it does not bypass a blocked plan. `--provider` without `--convert` (or any translation option, which implies it) is a plain switch with no conversion.
 
 `--dry-run` returns the reviewed operation ID as `plan.id`. Passing it with `--migration-plan` rechecks the source and scope before applying; changed evidence requires a fresh plan. `--migration recover` and `--migration rollback` can also address an operation by ID. Failure or a deferred switch exits nonzero; a command-node pipeline must inspect the reported state rather than treating an accepted request as completed translation.
 

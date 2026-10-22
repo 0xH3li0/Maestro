@@ -67,6 +67,20 @@ export interface SearchableSetting {
 	 * user turns the feature on, so it has to stay findable.
 	 */
 	requiresEncore?: keyof EncoreFeatureFlags;
+	/**
+	 * Keywords that match only while the named Encore Feature is on, for an
+	 * always-present setting that also touches a feature (Prevent Sleep counts
+	 * scheduled Cue pipelines). A disabled feature's name must lead nowhere, so
+	 * the description stays feature-neutral and these carry the feature terms.
+	 */
+	encoreKeywords?: { [K in keyof EncoreFeatureFlags]?: string[] };
+	/**
+	 * The Plugins tile whose details pane renders this entry's anchor, when the
+	 * entry is that tile's own (it has no `requiresEncore`). A jump opens the
+	 * tile first: the anchor is not mounted while the grid shows, so without
+	 * this the jump would land on the grid and give up.
+	 */
+	encoreTile?: keyof EncoreFeatureFlags;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +99,32 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...ENCORE_SETTINGS,
 	...PROMPTS_SETTINGS,
 ];
+
+/**
+ * The Plugins tile a jump to `settingId` has to open, or undefined when the
+ * anchor is not inside one. Sub-settings live in their feature's tile, so
+ * `requiresEncore` names it; a tile's own entry names it with `encoreTile`.
+ */
+export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlags | undefined {
+	const entry = ALL_SEARCHABLE_SETTINGS.find((s) => s.id === settingId);
+	if (entry?.tab !== 'encore') return undefined;
+	return entry.encoreTile ?? entry.requiresEncore;
+}
+
+/** The entry's `encoreKeywords` whose feature is on (all of them when no flags are given). */
+function activeEncoreKeywords(
+	setting: SearchableSetting,
+	encoreFeatures: Partial<EncoreFeatureFlags> | undefined
+): string[] {
+	if (!setting.encoreKeywords) return [];
+	const out: string[] = [];
+	for (const [flag, words] of Object.entries(setting.encoreKeywords)) {
+		if (!words) continue;
+		if (encoreFeatures && encoreFeatures[flag as keyof EncoreFeatureFlags] !== true) continue;
+		out.push(...words);
+	}
+	return out;
+}
 
 /**
  * Search settings by query string. Matches against label, description, tab label, and keywords.
@@ -110,7 +150,12 @@ export function searchSettings(
 			const label = setting.label.toLowerCase();
 			const desc = (setting.description || '').toLowerCase();
 			const tabLabel = setting.tabLabel.toLowerCase();
-			const keywords = (setting.keywords || []).join(' ').toLowerCase();
+			const keywords = [
+				...(setting.keywords || []),
+				...activeEncoreKeywords(setting, encoreFeatures),
+			]
+				.join(' ')
+				.toLowerCase();
 			const all = `${label} ${desc} ${tabLabel} ${keywords}`;
 
 			// Every search term must appear somewhere

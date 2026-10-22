@@ -448,6 +448,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Clear All Notifications',
 		keys: [],
 	},
+	// Unbound by default: the bell popover and the palette already reach it, and
+	// listing it here is what lets a user bind it in Settings -> Shortcuts.
+	toggleInAppToasts: {
+		id: 'toggleInAppToasts',
+		label: 'Toggle In-App Toasts',
+		keys: [],
+	},
 	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
 } satisfies Record<string, Shortcut>;
 
@@ -543,6 +550,9 @@ export const TAB_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 't'],
 	},
 	renameTab: { id: 'renameTab', label: 'Rename Tab', keys: ['Meta', 'Shift', 'r'] },
+	// Unbound by default: Rename Tab already reaches a tiled pane, and the group
+	// itself is renamed from its chip or the command palette.
+	renameTabGroup: { id: 'renameTabGroup', label: 'Rename Tab Group', keys: [] },
 	moveTabToStart: {
 		id: 'moveTabToStart',
 		label: 'Move Tab to First',

@@ -18,6 +18,7 @@ import { create } from 'zustand';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import { areToastsEnabled } from '../../shared/toastDuration';
 import { safeLocalStorage, safeStorageGet } from '../utils/safeLocalStorage';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
@@ -117,6 +118,12 @@ export interface NotificationConfig {
 	osNotificationsEnabled: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
+	/**
+	 * Whether toasts are recorded into the history. Mirrors the
+	 * `notificationCenterEnabled` setting: with the inbox off there is nowhere
+	 * to read a record, so none is written.
+	 */
+	historyEnabled: boolean;
 }
 
 // ============================================================================
@@ -160,6 +167,8 @@ export interface NotificationStoreActions {
 	setOsNotifications: (enabled: boolean) => void;
 	/** Configure idle notification (fires when all agents/batches stop). */
 	setIdleNotification: (enabled: boolean, command: string) => void;
+	/** Turn history recording on or off. Off also closes the inbox. */
+	setHistoryEnabled: (enabled: boolean) => void;
 }
 
 export type NotificationStore = NotificationStoreState & NotificationStoreActions;
@@ -199,6 +208,8 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 		osNotificationsEnabled: true,
 		idleNotificationEnabled: false,
 		idleNotificationCommand: '',
+		// Off until settings load says otherwise, matching `notificationCenterEnabled`.
+		historyEnabled: false,
 	},
 
 	// --- Toast CRUD ---
@@ -298,6 +309,12 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 	setIdleNotification: (enabled, command) =>
 		set((s) => ({
 			config: { ...s.config, idleNotificationEnabled: enabled, idleNotificationCommand: command },
+		})),
+
+	setHistoryEnabled: (enabled) =>
+		set((s) => ({
+			config: { ...s.config, historyEnabled: enabled },
+			...(!enabled ? { notificationCenterOpen: false, notificationCenterExpandedId: null } : {}),
 		})),
 }));
 
@@ -403,8 +420,8 @@ export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'
  * 2. Color resolution (color > legacy type > 'theme')
  * 3. Duration calculation (seconds → ms; sticky when dismissible)
  * 4. Adding to visible queue (unless toasts disabled) and to the notification
- *    history (always, unless `skipHistory` - with toasts disabled the history is
- *    the only place the notification shows up)
+ *    history (whenever the Notification Center is on, unless `skipHistory` -
+ *    with toasts disabled the history is the only place the notification shows up)
  * 5. Logging via window.maestro.logger.toast
  * 6. Audio feedback via window.maestro.notification.speak
  * 7. OS notifications via window.maestro.notification.show
@@ -422,7 +439,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 	const { config } = store;
 
 	const id = `toast-${generateId()}`;
-	const toastsDisabled = config.defaultDuration === -1;
+	const toastsDisabled = !areToastsEnabled(config.defaultDuration);
 
 	const color = resolveToastColor(toast);
 	// Legacy `type` field - derive from color for callers that still read it.
@@ -460,7 +477,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 		store.addToast(newToast);
 	}
 
-	if (!toast.skipHistory) {
+	if (!toast.skipHistory && config.historyEnabled) {
 		store.recordNotification(newToast);
 	}
 

@@ -11,6 +11,7 @@ import type { SearchableSetting } from './searchableSettings';
 export const ENCORE_SETTINGS: SearchableSetting[] = [
 	{
 		id: 'encore-usage-stats',
+		encoreTile: 'usageStats',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Usage & Stats',
@@ -34,6 +35,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-symphony',
+		encoreTile: 'symphony',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Maestro Symphony',
@@ -54,6 +56,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-cue',
+		encoreTile: 'maestroCue',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Maestro Cue',
@@ -107,6 +110,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-computer-history',
+		encoreTile: 'computerHistory',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Computer History',
@@ -145,6 +149,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-coworking',
+		encoreTile: 'coworking',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
 		label: 'Coworking',
@@ -188,6 +193,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-director-notes',
+		encoreTile: 'directorNotes',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: "Director's Notes",
@@ -366,6 +372,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-maestro-run',
+		encoreTile: 'maestroRun',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'MaestroRun',
@@ -391,6 +398,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-quick-chat',
+		encoreTile: 'quickChat',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Quick Chat',
@@ -461,6 +469,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-throughput-gauge',
+		encoreTile: 'throughputGauge',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Throughput Gauge',
@@ -520,6 +529,45 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'peak',
 			'reset peak',
 		],
+	},
+	{
+		id: 'encore-dataview',
+		encoreTile: 'dataview',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Dataview',
+		description:
+			'Render Obsidian Dataview queries as live tables, lists, and task lists in File Preview and Auto Run',
+		keywords: [
+			'dataview',
+			'obsidian',
+			'dql',
+			'query',
+			'vault',
+			'table',
+			'task list',
+			'notes',
+			'frontmatter',
+		],
+	},
+	{
+		id: 'encore-dataview-js',
+		requiresEncore: 'dataview',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Run DataviewJS',
+		description:
+			'Run dataviewjs blocks from your notes in an isolated sandbox, in trusted vaults only',
+		keywords: ['dataviewjs', 'dataview js', 'javascript', 'scripts', 'run code', 'sandbox'],
+	},
+	{
+		id: 'encore-dataview-trusted-roots',
+		requiresEncore: 'dataview',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Trusted Vaults',
+		description: 'Vault folders whose DataviewJS scripts run without asking',
+		keywords: ['trusted vaults', 'trust', 'untrust', 'vault roots', 'dataviewjs', 'allow scripts'],
 	},
 	{
 		id: 'encore-plugins',

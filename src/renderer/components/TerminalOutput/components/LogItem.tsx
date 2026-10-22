@@ -15,7 +15,7 @@ import {
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
-import type { LogEntry } from '../../../types';
+import type { LogEntry, Session } from '../../../types';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -32,6 +32,9 @@ import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { DispatchCallbackCard } from '../../DispatchCallbackCard';
+import { parseDispatchCallbackPrompt } from '../../../../shared/dispatchCallbackCard';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
@@ -61,6 +64,29 @@ const sameSubagentLogs = (prev?: LogEntry[], next?: LogEntry[]): boolean => {
 			log.metadata?.toolState?.status === next[i].metadata?.toolState?.status
 	);
 };
+
+/**
+ * The clock in a transcript row's left gutter: the time for today, or the date
+ * over the time for any other day.
+ */
+function LogTimestamp({ timestamp }: { timestamp: number }): React.ReactElement {
+	const logDate = new Date(timestamp);
+	const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	if (logDate.toDateString() === new Date().toDateString()) {
+		return <>{time}</>;
+	}
+	const year = logDate.getFullYear();
+	const month = String(logDate.getMonth() + 1).padStart(2, '0');
+	const day = String(logDate.getDate()).padStart(2, '0');
+	return (
+		<>
+			<div>
+				{year}-{month}-{day}
+			</div>
+			<div>{time}</div>
+		</>
+	);
+}
 
 export const LogItem = memo(
 	({
@@ -251,6 +277,13 @@ export const LogItem = memo(
 			codexDirectivesForBody && codexFollowupTabId
 				? { sessionId, tabId: codexFollowupTabId }
 				: undefined;
+		// A shell fence's Run button follows the same "agent's own output in a live
+		// tab" rule, but for every provider: a command an agent offers is an offer
+		// whoever the agent is. A fence in a user message stays copy-only.
+		const commandRun =
+			codexDirectivesLiveForSource(log.source) && codexFollowupTabId
+				? { sessionId, tabId: codexFollowupTabId }
+				: undefined;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
@@ -394,9 +427,52 @@ export const LogItem = memo(
 					data-log-id={log.id}
 					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
 				>
-					<div className="hidden sm:block w-20 shrink-0" />
+					{/* When the hand-off happened, in the same gutter and format as a message. */}
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+						data-testid="agent-delegation-timestamp"
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// A dispatch this agent sent has finished and woken it. The wake arrives
+		// as the raw `[Maestro dispatch callback]` prompt (it must stay a real
+		// turn the agent reads); here we parse that known text back into a clean
+		// result card for the human. Non-default (`--callback-prompt`) bodies do
+		// not parse and fall through to plain text.
+		const dispatchCallback =
+			log.source === 'user' ? parseDispatchCallbackPrompt(log.text ?? '') : null;
+		if (dispatchCallback) {
+			const targetToolType = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === dispatchCallback.targetAgentId)?.toolType;
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
+					<div className="flex-1 min-w-0">
+						<DispatchCallbackCard
+							parsed={dispatchCallback}
+							theme={theme}
+							targetToolType={targetToolType}
+						/>
 					</div>
 				</div>
 			);
@@ -486,27 +562,7 @@ export const LogItem = memo(
 					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
-					{(() => {
-						const logDate = new Date(log.timestamp);
-						const today = new Date();
-						const isToday = logDate.toDateString() === today.toDateString();
-						const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-						if (isToday) {
-							return time;
-						}
-						// Format: YYYY-MM-DD on first line, time on second
-						const year = logDate.getFullYear();
-						const month = String(logDate.getMonth() + 1).padStart(2, '0');
-						const day = String(logDate.getDate()).padStart(2, '0');
-						return (
-							<>
-								<div>
-									{year}-{month}-{day}
-								</div>
-								<div>{time}</div>
-							</>
-						);
-					})()}
+					<LogTimestamp timestamp={log.timestamp} />
 					{/*
 						Turn time, under the clock. Only ever on an agent reply: a user
 						message is instantaneous, so the same line under it would be
@@ -855,6 +911,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										displayText
@@ -925,6 +982,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -982,6 +1040,7 @@ export const LogItem = memo(
 										chatMath
 										codexDirectives={codexDirectivesForBody}
 										codexFollowup={codexFollowup}
+										commandRun={commandRun}
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)

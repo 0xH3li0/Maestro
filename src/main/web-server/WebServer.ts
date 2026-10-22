@@ -186,6 +186,7 @@ import type {
 	StartGroupChatOptions,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
@@ -928,6 +929,10 @@ export class WebServer {
 		this.callbackRegistry.setStopGroupChatCallback(callback);
 	}
 
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbackRegistry.setArchiveGroupChatCallback(callback);
+	}
+
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
 	}
@@ -1502,6 +1507,8 @@ export class WebServer {
 			) => this.callbackRegistry.startGroupChat(topic, participantIds, options),
 			getGroupChatState: async (chatId: string) => this.callbackRegistry.getGroupChatState(chatId),
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
+			archiveGroupChat: async (chatId: string, archived: boolean) =>
+				this.callbackRegistry.archiveGroupChat(chatId, archived),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
@@ -1551,6 +1558,22 @@ export class WebServer {
 			removeCuePipeline: async (identifier: string) => {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
+			},
+			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// the app context its IPC handlers own (live agents, renderer hand-off).
+			exportCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { exportBundleFromApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return exportBundleFromApp(ctx, request);
+			},
+			importCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { importBundleIntoApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return importBundleIntoApp(ctx, request);
 			},
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),

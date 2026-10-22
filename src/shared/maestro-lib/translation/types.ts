@@ -4,6 +4,8 @@ export interface TranslationIdentity {
 	provider: ToolType;
 	version: string;
 	accountRoot: string;
+	/** Canonical Claude projects directory selected with the account, including shared profile links. */
+	nativeSessionRoot?: string;
 	projectRoot: string;
 	/** Repository identity for default project memory; session cwd remains projectRoot. */
 	memoryProjectRoot?: string;
@@ -215,6 +217,8 @@ export interface TranslationReport {
 	plan?: TranslationPlan;
 	result?: TranslationResult;
 	error?: string;
+	/** A plain switch (no conversion): state that could not be parked, one line each. */
+	notices?: string[];
 }
 
 export class TranslationSourceBusyError extends Error {

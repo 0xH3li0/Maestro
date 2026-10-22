@@ -125,6 +125,7 @@ describe('ComputerHistoryService lifecycle', () => {
 			cmd: 'configure',
 			blockPids: [999],
 			blockDomains: [],
+			skipPrivateWindows: true,
 			snapshots: true,
 			maxTextBytes: 8192,
 			maxSnapshotBytes: 32768,
@@ -199,6 +200,36 @@ describe('ingest pipeline', () => {
 		expect(events[1].window?.title).toBe('Bearer [REDACTED_BEARER_TOKEN]');
 		expect(events[1].window?.url).toBe('https://x.test/cb?access_token=%5BREDACTED_SECRET%5D&q=hi');
 		expect(service.status().eventsStored).toBe(2);
+		await service.stop();
+	});
+
+	it('never stores one-time codes: typed into a code field, or read off the screen', async () => {
+		const service = makeService();
+		await service.start();
+		const codeField = { element: { role: 'text_field', label: 'Device user code' } };
+		expect(await service.ingest(textEvent('WDJB-MJHT', codeField))).toBe(true);
+		expect(await service.ingest(textEvent('482913', { element: { label: 'Code' } }))).toBe(true);
+		expect(await service.ingest(textEvent('482 913', { element: { label: 'Code' } }))).toBe(true);
+		// A normal sentence in a code-labeled field, and a zip code, are kept.
+		expect(await service.ingest(textEvent('see you at 5pm', codeField))).toBe(true);
+		expect(await service.ingest(textEvent('94110', { element: { label: 'ZIP code' } }))).toBe(true);
+		expect(
+			await service.ingest(
+				textEvent('Your verification code is 482913', {
+					kind: 'content.snapshot',
+					element: undefined,
+				})
+			)
+		).toBe(true);
+		const texts = segmentEvents().map((e) => e.text);
+		expect(texts).toEqual([
+			'[REDACTED_CODE]',
+			'[REDACTED_CODE]',
+			'[REDACTED_CODE]',
+			'see you at 5pm',
+			'94110',
+			'Your verification code is [REDACTED_CODE]',
+		]);
 		await service.stop();
 	});
 
@@ -384,11 +415,34 @@ describe('rules', () => {
 		const listing = service.listRules();
 		expect(listing.rules).toHaveLength(1);
 		expect(listing.builtIn).toContain('com.maestro.app');
+		expect(listing.builtInApps).toContainEqual({
+			label: '1Password',
+			category: 'password-manager',
+		});
 		await service.addRule('domain', 'https://bank.example.com/x');
 		expect(await service.removeRule('bank.example.com')).toMatchObject({ match: 'domain' });
 		expect(await service.removeRule(rule.id)).toMatchObject({ id: rule.id });
 		expect(await service.removeRule('nope')).toBeNull();
 		await expect(service.addRule('domain', 'not a domain')).rejects.toThrow(/not a domain/);
+		await service.stop();
+	});
+});
+
+describe('private browser windows', () => {
+	const incognito = { window: { title: 'Bank - Google Chrome (Incognito)' } };
+
+	it('are dropped by default and recorded once the user opts in', async () => {
+		const service = makeService();
+		await service.start();
+		expect(await service.ingest(textEvent('secret', incognito))).toBe(false);
+
+		await service.setConfig({ skipPrivateWindows: false });
+		const configure = sent.filter((c) => c.cmd === 'configure').at(-1) as Record<string, unknown>;
+		expect(configure.skipPrivateWindows).toBe(false);
+		expect(await service.ingest(textEvent('opted in', incognito))).toBe(true);
+
+		await service.setConfig({ skipPrivateWindows: true });
+		expect(await service.ingest(textEvent('secret again', incognito))).toBe(false);
 		await service.stop();
 	});
 });

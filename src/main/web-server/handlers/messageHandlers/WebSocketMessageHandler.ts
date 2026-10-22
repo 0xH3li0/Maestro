@@ -112,6 +112,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
@@ -157,6 +158,7 @@ import {
 	handleSendGroupChatMessage,
 	handleSteerGroupChat,
 	handleStopGroupChat,
+	handleArchiveGroupChat,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -173,6 +175,8 @@ import {
 	handleCuePipelineGet,
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
+	handleCueBundleExport,
+	handleCueBundleImport,
 } from './cue';
 import {
 	handleEnqueueCommand,
@@ -191,6 +195,8 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetTokenUsage,
+	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -334,6 +340,10 @@ export class WebSocketMessageHandler {
 
 			case 'maestro_run_command':
 				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'dataview_command':
+				void handleDataviewCommand(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':
@@ -600,6 +610,10 @@ export class WebSocketMessageHandler {
 				handleStopGroupChat(this.ctx, client, message);
 				break;
 
+			case 'archive_group_chat':
+				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -648,6 +662,14 @@ export class WebSocketMessageHandler {
 				handleCuePipelineRemove(this.ctx, client, message);
 				break;
 
+			case 'cue_bundle_export':
+				handleCueBundleExport(this.ctx, client, message);
+				break;
+
+			case 'cue_bundle_import':
+				handleCueBundleImport(this.ctx, client, message);
+				break;
+
 			case 'get_usage_dashboard':
 				handleGetUsageDashboard(this.ctx, client, message);
 				break;
@@ -658,6 +680,14 @@ export class WebSocketMessageHandler {
 
 			case 'get_stats_aggregation':
 				handleGetStatsAggregation(this.ctx, client, message);
+				break;
+
+			case 'get_token_usage':
+				handleGetTokenUsage(this.ctx, client, message);
+				break;
+
+			case 'get_stats_indexing':
+				handleGetStatsIndexing(this.ctx, client, message);
 				break;
 
 			case 'stats_query':

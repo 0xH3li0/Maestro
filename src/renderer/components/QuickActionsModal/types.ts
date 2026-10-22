@@ -27,6 +27,9 @@ export interface QuickAction {
 	isRunningAgent?: boolean;
 	// Agents-mode only: session is in an active (non-paused) Auto Run batch.
 	isInBatch?: boolean;
+	// Agents-mode only: how far the active Auto Run is, drawn as a fill inside
+	// the AUTO pill. `goalMode` marks the percent as the agent's own estimate.
+	autoRunProgress?: { percent: number; goalMode: boolean };
 	// Agents-mode only: data needed to render rich live status for running agents.
 	runningInfo?: {
 		state: SessionState;
@@ -178,6 +181,8 @@ export interface QuickActionsModalProps {
 	onCloseOtherTabs?: () => void;
 	onCloseTabsLeft?: () => void;
 	onCloseTabsRight?: () => void;
+	/** Close every tab in a tiled group (confirmed by the command first) */
+	onCloseTabGroup?: (groupId: string) => void;
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;

@@ -28,6 +28,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { NotificationCenter } from '../NotificationCenter';
 import {
 	subscribeSidebarReveal,
 	getSidebarRevealToken,
@@ -63,6 +64,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import {
@@ -72,6 +74,7 @@ import {
 	scopeSessionsToOwningWindow,
 } from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
+import { canExportAgent } from '../../utils/agentBundles';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { BusyWand } from './BusyWand';
@@ -125,6 +128,12 @@ const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
  * label thresholds out by the same amount. Shared so the two cannot drift.
  */
 const HEADER_BADGE_WIDTH = 39;
+/**
+ * Room the Notification Center bell takes while that Encore Feature is on: the
+ * icon button plus the band's gap. Charged like the badge, against the
+ * wordmark first.
+ */
+const HEADER_BELL_WIDTH = 30;
 /**
  * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
  * the wand, the wordmark itself, the hamburger, and the row's own padding.
@@ -301,8 +310,16 @@ function SessionListInner(props: SessionListProps) {
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
+	// The agents the Left Bar may surface: drops a dormant Pianola agent (its
+	// Encore flag is off) so header tells - busy wand, unread bell dot, the
+	// "no agents" state, the group-chat agent count - never react to it.
+	const liveSessions = useMemo(
+		() => filterSessionsVisibleInSidebar(sessions, { pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const showLeftPanelCollapsedInitials = useSettingsStore((s) => s.showLeftPanelCollapsedInitials);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
@@ -311,13 +328,13 @@ function SessionListInner(props: SessionListProps) {
 	// than in the one the thresholds below were measured against. Zero when the
 	// user is on the original monospace face.
 	const headerTextDelta = useHeaderTextDelta();
-	// The badge pill occupies part of the header's left cluster, so both label
-	// thresholds below shift by the same amount when it is showing. Its box is
-	// rem-built, so it grows with the root size.
+	// The badge pill and the notification bell occupy part of the indicator
+	// band, so both label thresholds below shift by the same amount when either
+	// is showing. Their boxes are rem-built, so they grow with the root size.
 	const headerBadgeWidth =
-		autoRunStats && autoRunStats.currentBadgeLevel > 0
-			? HEADER_BADGE_WIDTH * headerTextDelta.remScale
-			: 0;
+		(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0) *
+			headerTextDelta.remScale +
+		(notificationCenterEnabled ? HEADER_BELL_WIDTH * headerTextDelta.remScale : 0);
 	// Whether the now-playing pill is on screen, and in which form. Read from the
 	// store's own selector rather than re-derived here, so the reserve below
 	// cannot end up describing a header nobody is looking at.
@@ -402,12 +419,18 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
-	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
+	// Fetched only while the Cue Encore Feature is on. A disabled feature has no
+	// footprint: no status poll, no activity subscription, and no row indicator,
+	// so the map is emptied the moment the flag goes off.
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
 	>(new Map());
 	useEffect(() => {
+		if (!maestroCueEnabled) {
+			setCueSessionMap((prev) => (prev.size === 0 ? prev : new Map()));
+			return;
+		}
 		let mounted = true;
 
 		const fetchCueStatus = async () => {
@@ -457,7 +480,7 @@ function SessionListInner(props: SessionListProps) {
 			unsubscribe();
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
-	}, [sessions.length]);
+	}, [sessions.length, maestroCueEnabled]);
 	// Starred Sessions: prefer sidebarNavStore (shared with Cmd+[ / ] cycling).
 	// Props remain for tests that inject fixtures without mounting SidebarNavSync.
 	const storeStarredItems = useSidebarNavStore((s) => s.starredItems);
@@ -665,10 +688,10 @@ function SessionListInner(props: SessionListProps) {
 	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 	const isAnyBusy = useMemo(
 		() =>
-			sessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
+			liveSessions.some((s) => s.state === 'busy' || (headlessCounts[s.id] ?? 0) > 0) ||
 			activeBatchSessionIds.length > 0 ||
 			isAnyGroupChatBusy,
-		[sessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
+		[liveSessions, activeBatchSessionIds, isAnyGroupChatBusy, headlessCounts]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -708,9 +731,9 @@ function SessionListInner(props: SessionListProps) {
 	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
 		() =>
-			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			liveSessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
 			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
-		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
+		[liveSessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -1548,6 +1571,9 @@ function SessionListInner(props: SessionListProps) {
 									)}
 								</div>
 							)}
+							{/* Notification Center bell (Encore Feature). App-wide history, so it
+							    lives with the other global indicators, not in an agent's header. */}
+							{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						</div>
 						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
@@ -1606,6 +1632,7 @@ function SessionListInner(props: SessionListProps) {
 						{/* Renders nothing unless the player is actually minimized, so
 						    the rail is unchanged for anyone not playing anything. */}
 						<NowPlayingIndicator theme={theme} compact />
+						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
@@ -2372,7 +2399,7 @@ function SessionListInner(props: SessionListProps) {
 						onEditGroupChat &&
 						onRenameGroupChat &&
 						onDeleteGroupChat &&
-						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
+						liveSessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
 								groupChats={groupChats}
@@ -2425,7 +2452,7 @@ function SessionListInner(props: SessionListProps) {
 			<SidebarActions
 				theme={theme}
 				leftSidebarOpen={leftSidebarOpen}
-				hasNoSessions={sessions.length === 0}
+				hasNoSessions={liveSessions.length === 0}
 				shortcuts={shortcuts}
 				showUnreadAgentsOnly={showUnreadAgentsOnly}
 				hasUnreadAgents={hasUnreadAgents}
@@ -2456,6 +2483,14 @@ function SessionListInner(props: SessionListProps) {
 							.openModal('newInstance', { duplicatingSessionId: contextMenuSession.id });
 						setContextMenu(null);
 					}}
+					onExport={
+						canExportAgent(contextMenuSession)
+							? () =>
+									useModalStore
+										.getState()
+										.openModal('agentExport', { sessionId: contextMenuSession.id })
+							: undefined
+					}
 					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
 					showGroupActions={!activeVirtualGrouping}
 					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
@@ -2566,6 +2601,15 @@ function SessionListInner(props: SessionListProps) {
 						useModalStore.getState().openModal('newInstance', {
 							duplicatingSessionId: null,
 							presetGroupId: groupContextMenuGroup.id,
+						});
+					}}
+					onImportAgent={() => {
+						// Expand the group so the imported agents are visible when they land.
+						if (groupContextMenuGroup.collapsed) {
+							toggleGroup(groupContextMenuGroup.id);
+						}
+						useModalStore.getState().openModal('agentImport', {
+							groupId: groupContextMenuGroup.id,
 						});
 					}}
 					onDelete={

@@ -174,6 +174,13 @@ Playbook import and Cue backup inspect/restore only need entry names and bytes. 
 | `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
 | `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
+### Markdown to Plain Text (`src/shared/markdown.ts` - Both)
+
+| Function                        | Signature                                              | Purpose                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stripMarkdown(text, options?)` | `(string, { tables?: 'drop' \| 'flatten' }) => string` | Markdown to plain text for list rows and previews. Drops table grids outright by default, because raw `\| col \|` pipes render as garbage there; `tables: 'flatten'` keeps their cell text instead.                                                                                                                                                                                                         |
+| `flattenMarkdownTables(text)`   | `(string) => string`                                   | Table rows to their cell text joined by a `·` with a space on each side, separator rows dropped, and an escaped pipe inside a cell kept as a literal pipe. Prefer `stripMarkdown(text, { tables: 'flatten' })`, which runs this after fences, inline code and emphasis are unwrapped; on raw text a row wrapped in them is missed. For when the table IS the whole answer, as in `extractCueOutputExcerpt`. |
+
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
 | Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
@@ -249,6 +256,7 @@ because that cost is paid on the main thread on every store write (~40ms on the
 | `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
 | `formatCalendarDay(isoDay)`            | `(string) => string`                   | A `YYYY-MM-DD` day for display: `"Jul 10, 2026"`. Parsed as LOCAL, not UTC.       |
+| `formatHourOfDay(hour)`                | `(number) => string`                   | Hour 0-23 as a clock label: `"12 AM"`, `"1 PM"`.                                  |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
 | `fileTimestampSlug(dateOrTimestamp?)`  | `(Date \| number?) => string`          | `"20260713-142530"` for a generated file name. Local time, sorts chronologically. |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
@@ -529,19 +537,21 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `isMediaStreamUrl(value)`                 | `(string \| null \| undefined) => boolean` | Cheap check for "is this `fs:readFile` result a stream URL".                                         |
 | `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
 | `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
+| `mediaItemId(sessionId, path)`            | `(string, string) => string`               | Queue identity. Same agent + path re-uses the entry, so re-opening resumes.                          |
+| `sanitizeMediaItems(value)`               | `(unknown) => MediaItem[]`                 | Coerce a persisted queue off disk, dropping anything malformed. Main reads it at launch too.         |
 
 ### Media Items (`src/renderer/utils/mediaItems.ts` - Renderer)
 
-| Function                                | Signature                                                    | Purpose                                                                     |
-| --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".                 |
-| `mediaItemId(sessionId, path)`          | `(string, string) => string`                                 | Queue identity. Same agent + path re-uses the entry, so re-opening resumes. |
-| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.                |
-| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                          |
-| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item.     |
-| `sanitizeMediaItems(value)`             | `(unknown) => MediaItem[]`                                   | Coerce a persisted queue off disk, dropping anything malformed.             |
-| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.       |
-| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.             |
+`mediaItemId` and `sanitizeMediaItems` live in `src/shared/mediaTypes.ts` (table above); this module re-exports them.
+
+| Function                                | Signature                                                    | Purpose                                                                 |
+| --------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".             |
+| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.            |
+| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                      |
+| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item. |
+| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.   |
+| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.         |
 
 `openFileUrl(href, onFileClick)` in `src/renderer/utils/openFileUrl.ts` is the one
 handler for a `file://` link clicked in markdown. The file-link plugins emit

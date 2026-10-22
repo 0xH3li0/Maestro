@@ -26,6 +26,9 @@ import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
 	hasUnreadVisibleTab,
@@ -60,7 +63,15 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
+export {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
+	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
+	isAiTabHidden,
+	visibleAiTabs,
+};
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -968,6 +979,110 @@ export function settleTabThinkingState(session: Session, tabId: string): Session
 }
 
 /**
+ * The agent's state once something other than an AI turn stops occupying it: a
+ * terminal-mode command, or a `maestro-cli` playbook run.
+ *
+ * Both take over the agent-level `state` while they run, but an AI tab can be
+ * mid-turn underneath. Ending them hands the agent back to that turn rather
+ * than to idle: going straight to idle (a failed command, `clear`, a playbook
+ * finishing) painted a working agent "Ready" and hid its Thinking pill. A tab
+ * closed mid-turn counts too, and `error` stays, as in `settleTabThinkingState`.
+ * The elapsed timer restarts from the earliest running turn, not from the
+ * command that just ended.
+ */
+export function settleAgentStateFromTabs(session: Session): Session {
+	const running = [
+		...(session.aiTabs?.filter((tab) => tab.state === 'busy') ?? []),
+		...(session.orphanedThinkingTabs ?? []),
+	];
+	const stillThinking = running.length > 0;
+	const starts = running.flatMap((tab) => tab.thinkingStartTime ?? []);
+	return {
+		...session,
+		state: session.state === 'error' ? 'error' : stillThinking ? 'busy' : 'idle',
+		busySource: stillThinking ? 'ai' : undefined,
+		thinkingStartTime: !stillThinking
+			? undefined
+			: starts.length > 0
+				? Math.min(...starts)
+				: session.thinkingStartTime,
+	};
+}
+
+/**
+ * A tab's own process produced output (text, a thinking chunk, a tool call),
+ * which proves its turn is running: mark it busy if this client did not know.
+ *
+ * Event-driven, so it needs no polling, and it covers every path that starts a
+ * turn without telling this client - a web-desktop browser drains its own
+ * queue and nothing broadcasts that send to the desktop, whose tab inventory
+ * then painted the live turn idle on every other client. It cannot strand a
+ * tab: the main process emits a turn's output before its exit, and that exit
+ * settles the tab. Returns the session itself when the tab is unknown or
+ * already busy, so the common case writes nothing.
+ */
+export function markTabBusyFromOutput(session: Session, tabId: string): Session {
+	const tab = session.aiTabs.find((t) => t.id === tabId);
+	if (!tab || tab.state === 'busy') return session;
+
+	const now = Date.now();
+	const aiTabs = session.aiTabs.map((t) =>
+		t.id === tabId ? { ...t, state: 'busy' as const, thinkingStartTime: now } : t
+	);
+	// The blocking error state and a running shell command own the agent-level
+	// state; the tab still shows what it is doing.
+	if (
+		session.state === 'error' ||
+		(session.state === 'busy' && session.busySource === 'terminal')
+	) {
+		return { ...session, aiTabs };
+	}
+	return {
+		...session,
+		aiTabs,
+		state: 'busy',
+		busySource: 'ai',
+		thinkingStartTime: (session.state === 'busy' && session.thinkingStartTime) || now,
+	};
+}
+
+/**
+ * Bring the agent's AI busy state in line with tab states this client learned
+ * from somewhere else: a web-desktop browser applying the desktop's tab
+ * inventory. That snapshot carries each tab's state but not the agent's, and
+ * the Left Bar dot and the Thinking pill read the agent's, so a phone drew a
+ * tab mid-turn under a green "Ready" agent.
+ *
+ * Leaves alone what the tabs do not decide: the blocking `error` state, a
+ * connecting agent, a running shell command, and a CLI playbook run. Returns
+ * the session itself when nothing changes, so a steady snapshot writes nothing.
+ */
+export function syncAgentStateToTabs(session: Session): Session {
+	if (session.state === 'error' || session.state === 'connecting' || session.cliActivity) {
+		return session;
+	}
+	if (session.state === 'busy' && session.busySource === 'terminal') return session;
+
+	const busyTabs = [
+		...session.aiTabs.filter((tab) => tab.state === 'busy'),
+		...(session.orphanedThinkingTabs ?? []).filter((tab) => tab.state === 'busy'),
+	];
+	if (busyTabs.length > 0) {
+		if (session.state === 'busy' && session.busySource === 'ai') return session;
+		const starts = busyTabs.map((tab) => tab.thinkingStartTime).filter((t): t is number => !!t);
+		return {
+			...session,
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime:
+				session.thinkingStartTime ?? (starts.length > 0 ? Math.min(...starts) : Date.now()),
+		};
+	}
+	if (session.state !== 'busy') return session;
+	return { ...session, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
+}
+
+/**
  * Options for creating a new AI tab.
  */
 export interface CreateTabOptions {
@@ -1237,17 +1352,7 @@ export function closeTab(
 	let createdFreshTab = false;
 	let freshTabId = '';
 	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
-		const freshTab: AITab = {
-			id: generateId(),
-			agentSessionId: null,
-			name: null,
-			starred: false,
-			logs: [],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		};
+		const freshTab = createBlankAiTab();
 		// Hidden consult tabs survive alongside the replacement - they are the
 		// user's data, and revealing one later is still their call.
 		updatedTabs = [...updatedTabs, freshTab];
@@ -1614,6 +1719,8 @@ export interface CloseFileTabResult {
 /**
  * Close a file preview tab and add it to the unified closed tab history.
  * When the closed tab was active, selects the next tab in unifiedTabOrder.
+ * Closing the agent's last visible tab lands on a fresh AI chat
+ * (see ensureAgentHasVisibleTab).
  *
  * @param session - The Maestro session containing the file tab
  * @param tabId - The ID of the file tab to close
@@ -1733,7 +1840,8 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newInputMode = 'ai';
 			}
 		} else {
-			// No tabs left - shouldn't happen as AI tabs should always exist
+			// Nothing left in the strip: ensureAgentHasVisibleTab below mints the
+			// blank AI chat and focuses it.
 			newActiveFileTabId = null;
 			newActiveBrowserTabId = null;
 			newActiveTerminalTabId = null;
@@ -1749,7 +1857,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			filePreviewTabs: updatedFilePreviewTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1759,7 +1867,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			activeTabId: newActiveTabId,
 			inputMode: newInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -1840,7 +1948,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			browserTabs: updatedBrowserTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1850,7 +1958,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			activeTerminalTabId: nextActiveTerminalTabId,
 			inputMode: nextInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 

@@ -1,14 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const { toggleInAppToasts } = vi.hoisted(() => ({ toggleInAppToasts: vi.fn() }));
+vi.mock('../../../../../renderer/services/inAppToasts', () => ({ toggleInAppToasts }));
+
 import { buildNotificationCommands } from '../../../../../renderer/components/QuickActionsModal/commands/notificationCommands';
 import type { ToastPosition } from '../../../../../shared/toastPosition';
 
 function harness(
 	visibleToastCount: number,
 	toastPosition: ToastPosition = 'bottom-right',
-	unreadNotificationCount = 0
+	unreadNotificationCount = 0,
+	notificationCenterEnabled = true,
+	toastsEnabled = true
 ) {
 	const clearToasts = vi.fn();
-	const openNotificationCenter = vi.fn();
+	const openNotificationCenter = notificationCenterEnabled ? vi.fn() : undefined;
 	const setToastPosition = vi.fn();
 	const setQuickActionOpen = vi.fn();
 	const actions = buildNotificationCommands({
@@ -16,6 +22,7 @@ function harness(
 		clearToasts,
 		unreadNotificationCount,
 		openNotificationCenter,
+		toastsEnabled,
 		toastPosition,
 		setToastPosition,
 		setQuickActionOpen,
@@ -117,11 +124,49 @@ describe('buildNotificationCommands', () => {
 		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 
+	it('drops Open Notification Center while its Encore Feature is off', () => {
+		const { actions } = harness(0, 'bottom-right', 3, false);
+		expect(actions.some((a) => a.id === 'open-notification-center')).toBe(false);
+		// The toast commands do not depend on the inbox.
+		expect(actions.some((a) => a.id === 'clear-all-notifications')).toBe(true);
+	});
+
 	it('says when nothing is unread, and singularizes a lone one', () => {
 		const subtext = (unread: number) =>
 			harness(0, 'bottom-right', unread).actions.find((a) => a.id === 'open-notification-center')!
 				.subtext;
 		expect(subtext(0)).toBe('No unread notifications');
 		expect(subtext(1)).toBe('1 unread notification');
+	});
+});
+
+describe('toggle in-app toasts command', () => {
+	const find = (enabled: boolean) =>
+		harness(0, 'bottom-right', 0, true, enabled).actions.find(
+			(a) => a.id === 'toggle-in-app-toasts'
+		)!;
+
+	it('offers to turn toasts off while they are on', () => {
+		expect(find(true).label).toBe('Turn Off In-App Toasts');
+	});
+
+	it('only promises the inbox keeps hidden toasts while the Notification Center is on', () => {
+		const subtext = (centerOn: boolean) =>
+			harness(0, 'bottom-right', 0, centerOn, true).actions.find(
+				(a) => a.id === 'toggle-in-app-toasts'
+			)!.subtext;
+		expect(subtext(true)).toContain('notification center');
+		expect(subtext(false)).toBe('Hide floating toasts');
+	});
+
+	it('offers to turn toasts on while they are off', () => {
+		expect(find(false).label).toBe('Turn On In-App Toasts');
+	});
+
+	it('closes the palette and toggles through the shared service', () => {
+		const h = harness(0, 'bottom-right', 0, true, true);
+		h.actions.find((a) => a.id === 'toggle-in-app-toasts')!.action();
+		expect(h.setQuickActionOpen).toHaveBeenCalledWith(false);
+		expect(toggleInAppToasts).toHaveBeenCalledTimes(1);
 	});
 });

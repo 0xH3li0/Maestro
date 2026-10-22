@@ -2,9 +2,9 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
-import { parseCliBool, isInheritValue } from './utils/parse';
+import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -59,6 +59,7 @@ import {
 	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -80,10 +81,13 @@ import {
 } from './commands/cue-pipeline';
 import {
 	cueEngineStart,
+	cueEngineCheck,
 	cueEngineStop,
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
+import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
+import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -126,6 +130,15 @@ import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { quickChat } from './commands/quick-chat';
 import { maestroRun } from './commands/maestro-run';
+import {
+	dataviewEval,
+	dataviewIndexRebuild,
+	dataviewTrust,
+	dataviewTrusted,
+	dataviewUntrust,
+	dataviewIndexStatus,
+	dataviewQuery,
+} from './commands/dataview';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -149,7 +162,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery } from './commands/stats';
+import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -235,6 +248,12 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import {
+	allowWhileEncoreOff,
+	encoreCommand,
+	readEncoreFlagsForHelp,
+	requireEncoreForOptions,
+} from './utils/encore-gate';
 import { logger } from '../main/utils/logger';
 
 import { registerLiteCommands } from './commands/lite';
@@ -251,6 +270,10 @@ const cliVersion: string =
 logger.routeConsoleToStderr();
 
 const program = new Command();
+
+// A switched-off Encore Feature's verbs are registered hidden (absent from
+// --help, `reference` and `completions`) and refuse to run; see encoreCommand.
+const encoreFlags = readEncoreFlagsForHelp();
 
 program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
 
@@ -755,9 +778,12 @@ program
 // Throughput Gauge commands - the CLI half of the floating tokens/sec gauge (an
 // Encore Feature): show and hide, the gear's five settings, Reset peak, and a
 // status read. Every verb answers with the gauge's status after it ran.
-const throughputGauge = program
-	.command('throughput-gauge')
-	.description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
+const throughputGauge = encoreCommand(
+	program,
+	'throughput-gauge',
+	'throughputGauge',
+	encoreFlags
+).description('Show, hide, configure, or read the Throughput Gauge (tokens per second)');
 
 const gaugeFlagHelp = (label: string, field: Parameters<typeof throughputGaugeFlagChoices>[0]) =>
 	`${label}: ${throughputGaugeFlagChoices(field).join(' | ')}`;
@@ -892,6 +918,15 @@ groupChat
 	.description("Stop a group chat's moderator and participants")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
+
+groupChat
+	.command('archive <chat>')
+	.description(
+		'Archive a group chat (stops its moderator and participants); --restore brings it back'
+	)
+	.option('--restore', 'Unarchive the chat instead')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatArchive);
 
 // Open file command - open a file in the Maestro desktop app.
 //
@@ -1228,14 +1263,22 @@ program
 	.action((agentId, playbookId, options) => removePlaybook(agentId, playbookId, options));
 
 // Cue commands - interact with Maestro Cue automation
-const cue = program.command('cue').description('Interact with Maestro Cue automation');
+const cue = encoreCommand(program, 'cue', 'maestroCue', encoreFlags).description(
+	'Interact with Maestro Cue automation'
+);
 
 cue
 	.command('trigger <subscription-name>')
-	.description('Manually trigger a Cue subscription by name')
+	.description(
+		'Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)'
+	)
 	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('--source-agent-id <id>', 'Agent ID to pass as source context for write-back')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueTrigger);
 
 cue
@@ -1258,6 +1301,10 @@ cue
 	.option('--clear-model', "Remove the tier / model and use the agent's own model")
 	.option('--clear-effort', "Remove the effort and use the agent's own effort")
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueModel);
 
 cue
@@ -1280,6 +1327,10 @@ cue
 	.option('-a, --agent <id>', 'Only runs for this agent')
 	.option('-n, --limit <n>', 'How many runs to show (default 20)')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default)'
+	)
 	.action(cueActivity);
 
 // Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
@@ -1422,35 +1473,194 @@ const cueEngine = cue
 
 cueEngine
 	.command('start')
-	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.description(
+		'Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets'
+	)
 	.option('--json', 'Print machine-readable start/failure status')
-	.action(cueEngineStart);
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.addOption(
+		new Option(
+			'--log-format <format>',
+			'Log line format: text, or one JSON object per line on stderr'
+		)
+			.choices(['text', 'json'])
+			.default('text')
+	)
+	.option(
+		'--require-ready',
+		'Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"'
+	)
+	.option(
+		'--status-port <port>',
+		'Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given',
+		(value) => {
+			try {
+				return parseCliPort(value, '--status-port');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		}
+	)
+	.option(
+		'--drain-timeout <seconds>',
+		'On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once',
+		(value) => {
+			try {
+				return parseCliSeconds(value, '--drain-timeout');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		},
+		90
+	)
+	.option(
+		'--notify-webhook <url>',
+		'POST a JSON notice for every notify action and every expired agent login to this http(s) URL'
+	)
+	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
 
 cueEngine
-	.command('stop')
-	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
-	.option('--json', 'Output as JSON (for scripting)')
-	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
-		parseInt(v, 10)
+	.command('check')
+	.description(
+		'Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)'
 	)
-	.action((opts) => cueEngineStop(opts));
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineCheck);
+
+// Stopping takes a footprint away, so it still runs with Cue switched off: an
+// engine started before the switch must not be left running unstoppable.
+allowWhileEncoreOff(
+	cueEngine
+		.command('stop')
+		.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+		.option('--json', 'Output as JSON (for scripting)')
+		.option(
+			'--data-dir <path>',
+			'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+		)
+		.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+			parseInt(v, 10)
+		)
+		.action((opts) => cueEngineStop(opts))
+);
 
 cueEngine
 	.command('status')
 	.description('Report whether an engine is running and its last known heartbeat')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineStatus);
 
 cueEngine
 	.command('inspect')
 	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineInspect);
 
+// Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
+// import one. With the app running (and no --data-dir), export and import go
+// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// write the data directory directly.
+const bundle = program
+	.command('bundle')
+	.description('Export, validate, inspect, and import portable Cue pipeline and agent bundles');
+
+bundle
+	.command('export')
+	.description(
+		'Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate'
+	)
+	.option('-a, --agent <id-or-name>', 'Export this agent (exclusive with --pipeline)')
+	.option('-p, --pipeline <name>', 'Export this Cue pipeline (exclusive with --agent)')
+	.option('-o, --output <path>', 'Zip to write (default: ./<name>.maestro-bundle.zip)')
+	.option('--allow-inline-secrets', 'Export subscriptions that hold a literal webhook.secret')
+	.option('--data-dir <path>', "Read Maestro's data from this directory instead of the default")
+	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
+	.option('--no-claude-skills', 'Leave out Claude Code skills (.claude/skills)')
+	.option('--no-claude-mcp', 'Leave out .mcp.json (exported with secrets as ${VAR} references)')
+	.option(
+		'--no-claude-memory',
+		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
+	)
+	.option('--no-cue', "Leave out the agent's Cue subscriptions (--agent only)")
+	.option(
+		'--exact',
+		'Exact copy: also carry secret values, binary paths, SSH and other providers settings, and local folders, so an import on this machine restores the agent as it was. Do not share the file'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => bundleExport(cliVersion, options));
+
+bundle
+	.command('validate <bundle>')
+	.description(
+		'Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version'
+	)
+	.option(
+		'--check-env',
+		'Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((bundlePath, options) => bundleValidate(cliVersion, bundlePath, options));
+
+bundle
+	.command('inspect <bundle>')
+	.description('Describe a bundle from its manifest and README without unpacking the rest')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(bundleInspect);
+
+bundle
+	.command('import <bundle>')
+	.description(
+		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write'
+	)
+	.option(
+		'-w, --workspace <key=path>',
+		'Map a bundle workspace to its own local folder (repeatable, one per workspace)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--agent-path <tool=path>',
+		'Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
+	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
+	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option('-g, --group <id>', 'Put the agents the import creates in this Left Bar group')
+	.option(
+		'--no-local',
+		"Ignore an exact copy's machine data (secret values, binary paths, SSH, folders)"
+	)
+	.option(
+		'--reject-shell-commands',
+		'Refuse the import, before anything is written, if any subscription runs a shell command'
+	)
+	.option('--json', 'Output as JSON (for scripting): one document, after the import')
+	.action((bundlePath, options) => bundleImport(cliVersion, bundlePath, options));
+
 // Director's Notes commands
-const directorNotes = program
-	.command('director-notes')
-	.description("Director's Notes: unified history and AI synopsis");
+const directorNotes = encoreCommand(
+	program,
+	'director-notes',
+	'directorNotes',
+	encoreFlags
+).description("Director's Notes: unified history and AI synopsis");
 
 directorNotes
 	.command('history')
@@ -1491,6 +1701,51 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
 
+// Host commands - run Maestro's runtime detached (no desktop) and control that process
+const host = program
+	.command('host')
+	.description('Run the Maestro runtime detached, with no desktop app, and control it');
+
+host
+	.command('start')
+	.description('Start a detached host that serves this data directory over the bridge')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--port <port>', 'Port to listen on (default: any free port)')
+	.option(
+		'--foreground',
+		'Serve in this process instead of detaching (what the detached child runs)'
+	)
+	.option(
+		'--stop-grace <seconds>',
+		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStart(options, cliVersion));
+
+host
+	.command('status')
+	.description('Report the host: pid, uptime, lock holder, Cue state, and work in flight')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStatus(options));
+
+host
+	.command('stop')
+	.description(
+		'Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)'
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option(
+		'--wait [seconds]',
+		'Wait for work in flight to finish (default 300s), then stop; never forces'
+	)
+	.option('--force', 'Stop even with work in flight; a run records how it ended first')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStop(options));
+
 // Completions command - emit a shell completion script (introspects the program)
 program
 	.command('completions <shell>')
@@ -1502,6 +1757,7 @@ program
 	.command('reference')
 	.description('Print the full command reference (Markdown, or --format json)')
 	.option('--format <format>', 'Output format: md (default) or json')
+	.option('--all', 'Include the commands of Encore Features that are switched off')
 	.action((options) => reference(program, options));
 
 // Create agent command - create a new agent in the Maestro desktop app
@@ -1544,18 +1800,36 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
+// Folders, standard icons and label colors belong to Groups+: their options are
+// left out of --help while it is off, and passing one then is refused.
+const GROUPS_PLUS_OPTION_KEYS = [
+	'icon',
+	'color',
+	'parent',
+	'clearIcon',
+	'clearColor',
+	'clearParent',
+] as const;
+const groupsPlusOption = (flags: string, description: string): Option =>
+	new Option(flags, description).hideHelp(!encoreFlags.groupsPlus);
+
 // Create group command - create a new group in the Maestro desktop app
 program
 	.command('create-group <name>')
 	.description('Create a new group in the Maestro desktop app')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
-	.option(
-		'--icon <icon-id>',
-		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	.addOption(
+		groupsPlusOption(
+			'--icon <icon-id>',
+			'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+		)
 	)
-	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
-	.option('--parent <group-id>', 'Create inside this root group')
+	.addOption(groupsPlusOption('--color <color>', 'Label color as #RRGGBB, or a plugin color ID'))
+	.addOption(groupsPlusOption('--parent <group-id>', 'Create inside this root group'))
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('groupsPlus', action.opts(), GROUPS_PLUS_OPTION_KEYS)
+	)
 	.action(createGroup);
 
 // Remove group command - delete a group from the Maestro desktop app. Agents
@@ -1586,22 +1860,27 @@ program
 	)
 	.option('-n, --name <name>', 'New group name')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
-	.option(
-		'--icon <icon-id>',
-		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	.addOption(
+		groupsPlusOption(
+			'--icon <icon-id>',
+			'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+		)
 	)
-	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
-	.option('--parent <group-id>', 'Move the group inside this root group')
+	.addOption(groupsPlusOption('--color <color>', 'Label color as #RRGGBB, or a plugin color ID'))
+	.addOption(groupsPlusOption('--parent <group-id>', 'Move the group inside this root group'))
 	.option('--clear-emoji', 'Reset the emoji to the default folder')
-	.option('--clear-icon', 'Remove the icon')
-	.option('--clear-color', 'Remove the label color')
-	.option('--clear-parent', 'Promote the group to the top level')
+	.addOption(groupsPlusOption('--clear-icon', 'Remove the icon'))
+	.addOption(groupsPlusOption('--clear-color', 'Remove the label color'))
+	.addOption(groupsPlusOption('--clear-parent', 'Promote the group to the top level'))
 	.option(
 		'--hide',
 		'Park the group out of the Left Bar. Its agents stay reachable through search and the switcher'
 	)
 	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('groupsPlus', action.opts(), GROUPS_PLUS_OPTION_KEYS)
+	)
 	.action((groupId, options) => updateGroup(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
@@ -1692,7 +1971,11 @@ program
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
-		'Translate owned conversations and selected project knowledge to another provider'
+		'Switch to another provider; tabs keep their transcripts and start fresh conversations there'
+	)
+	.option(
+		'--convert',
+		'With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below)'
 	)
 	.option('--force', 'Alias for --accept-translation-limitations')
 	.option('--dry-run', 'Plan provider migration without native writes (requires --provider)')
@@ -2144,39 +2427,41 @@ theme
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((assignments, options) => themeSet(assignments, options));
 
-// Encore commands - list and toggle experimental Encore features (applies live)
+// Encore commands - list and toggle the optional features on Settings > Plugins
+// (applies live). Always visible: it is how a hidden feature is turned on.
 const encore = program
 	.command('encore')
-	.description('List and toggle experimental Encore features');
+	.description('List and toggle the optional features on Settings > Plugins');
 
 encore
 	.command('list')
-	.description('List Encore features and whether each is enabled')
+	.description('List the optional features and whether each is on')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => encoreList(options));
 
 encore
 	.command('enable <feature>')
-	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun, throughputGauge)'
-	)
+	.description('Turn a feature on (any id from `encore list`, e.g. computerHistory or groups-plus)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
 encore
 	.command('disable <feature>')
-	.description('Disable an Encore feature')
+	.description('Turn a feature off')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
 
 // Computer History - local record of what the user saw and typed (Encore-gated,
 // off by default). Reads come from disk and work with the app closed; writes go
 // to the running app's ComputerHistoryService. Captured content is untrusted.
-const computerHistory = program
-	.command('computer-history')
-	.description(
-		'Computer History: query what the user saw and typed across apps (local, untrusted content)'
-	);
+const computerHistory = encoreCommand(
+	program,
+	'computer-history',
+	'computerHistory',
+	encoreFlags
+).description(
+	'Computer History: query what the user saw and typed across apps (local, untrusted content)'
+);
 
 computerHistory
 	.command('status')
@@ -2212,6 +2497,7 @@ computerHistory
 	)
 	.option('--grep <regex>', 'Case-insensitive regex over text, titles, URLs, and labels')
 	.option('--limit <n>', 'Most recent N matches (default 200)')
+	.option('--drafts', 'Keep text commits a later commit in the same field supersedes')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryQuery(options));
 
@@ -2281,13 +2567,17 @@ computerHistoryRules
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((id, options) => computerHistoryRulesRemove(id, options));
 
-computerHistory
-	.command('clear')
-	.description('Delete recorded history: everything since a time, or all of it')
-	.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
-	.option('--all', 'Delete all recorded history (settings and rules stay)')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => computerHistoryClear(options));
+// Deleting a recording takes a footprint away, so it still runs with the
+// feature switched off: what was recorded must always be removable.
+allowWhileEncoreOff(
+	computerHistory
+		.command('clear')
+		.description('Delete recorded history: everything since a time, or all of it')
+		.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
+		.option('--all', 'Delete all recorded history (settings and rules stay)')
+		.option('--json', 'Output as JSON (for scripting)')
+		.action((options) => computerHistoryClear(options))
+);
 
 computerHistory
 	.command('enable-accessibility')
@@ -2303,6 +2593,10 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option(
+		'--skip-private-windows <on|off>',
+		'Never record private / incognito browser windows (default on)'
+	)
 	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
 	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
 	.option(
@@ -2313,15 +2607,19 @@ computerHistory
 	.action((options) => computerHistoryConfig(options));
 
 // Pianola - the autonomous manager agent (Encore-gated, off by default).
-const pianola = program
-	.command('pianola')
-	.description('Pianola manager agent: watch tabs, auto-answer or escalate per your rules');
+const pianola = encoreCommand(program, 'pianola', 'pianola', encoreFlags).description(
+	'Pianola manager agent: watch tabs, auto-answer or escalate per your rules'
+);
 
 pianola
 	.command('watch <tab-id>')
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Stop watching after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--dry-run', 'Classify and record decisions but never send a message')
 	.option('--once', 'Run a single iteration instead of looping')
 	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
@@ -2442,6 +2740,10 @@ pianolaSupervise
 	.description('Register a supervised tab watcher the desktop keeps alive')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
 	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option(
+		'--idle-hours <hours>',
+		'Retire the watcher after this many hours with no tab activity (default 6, 0 = never)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
 
@@ -2649,11 +2951,9 @@ profiling
 // MaestroRun commands (macOS only) - install the signed launcher that holds
 // Full Disk Access for scheduled scripts, and walk the grant. Each verb is the
 // same action as the matching button on the MaestroRun tile in Settings.
-const maestroRunCmd = program
-	.command('maestro-run')
-	.description(
-		'MaestroRun (macOS): install the launcher and grant it Full Disk Access for scheduled scripts'
-	);
+const maestroRunCmd = encoreCommand(program, 'maestro-run', 'maestroRun', encoreFlags).description(
+	'MaestroRun (macOS): install the launcher and grant it Full Disk Access for scheduled scripts'
+);
 
 maestroRunCmd
 	.command('status')
@@ -2679,11 +2979,77 @@ maestroRunCmd
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => maestroRun('grant', options));
 
+// Dataview commands - run the Dataview queries of a note the way File Preview
+// renders them. Every verb reaches the running app's DataviewService, the same
+// one the preview queries. Hidden and refused while the Dataview Encore Feature
+// is off.
+const dataviewCmd = encoreCommand(program, 'dataview', 'dataview', encoreFlags).description(
+	"Dataview: run a note's Dataview queries, manage the vault index, and choose the vaults DataviewJS trusts"
+);
+
+dataviewCmd
+	.command('query <file>')
+	.description(
+		"Run a note's dataview blocks with `this` bound to the note (DataviewJS blocks are desktop-only)"
+	)
+	.option(
+		'--block <n>',
+		'Run only the n-th dataview block (1-based; dataviewjs fences not counted)'
+	)
+	.option('--agent <id>', 'Agent the note belongs to (default: the agent whose folder holds it)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => dataviewQuery(file, options));
+
+dataviewCmd
+	.command('eval <file> <dql>')
+	.description(
+		'Run an ad-hoc DQL query with `this` bound to the note; start with = for an inline expression'
+	)
+	.option('--agent <id>', 'Agent the note belongs to (default: the agent whose folder holds it)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, dql, options) => dataviewEval(file, dql, options));
+
+const dataviewIndexCmd = dataviewCmd
+	.command('index')
+	.description('Inspect or rebuild the Dataview index of a vault');
+
+dataviewIndexCmd
+	.command('status [root]')
+	.description('Show the open vault indexes, or one vault root (pages, revision, watcher, cache)')
+	.option('--agent <id>', 'Agent whose SSH remote holds the root (default: a local root)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewIndexStatus(root, options));
+
+dataviewIndexCmd
+	.command('rebuild <root>')
+	.description("Drop a vault root's index cache and index it again from scratch")
+	.option('--agent <id>', 'Agent whose SSH remote holds the root (default: a local root)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewIndexRebuild(root, options));
+
+dataviewCmd
+	.command('trust <root>')
+	.description('Trust a vault root: its DataviewJS blocks run in the sandbox without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewTrust(root, options));
+
+dataviewCmd
+	.command('untrust <root>')
+	.description('Stop trusting a vault root: its DataviewJS blocks ask before they run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewUntrust(root, options));
+
+dataviewCmd
+	.command('trusted')
+	.description('List the vault roots whose DataviewJS blocks run without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => dataviewTrusted(options));
+
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.
-const quickChatCmd = program
-	.command('quick-chat')
-	.description('Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey');
+const quickChatCmd = encoreCommand(program, 'quick-chat', 'quickChat', encoreFlags).description(
+	'Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey'
+);
 
 quickChatCmd
 	.command('show')
@@ -2696,6 +3062,12 @@ quickChatCmd
 	.description('Close the Quick Chat window; the conversation is kept')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('hide', {}, options));
+
+quickChatCmd
+	.command('return')
+	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('return', {}, options));
 
 quickChatCmd
 	.command('toggle')
@@ -2720,7 +3092,9 @@ quickChatCmd
 
 quickChatCmd
 	.command('new')
-	.description('Start a new chat (an ephemeral previous chat is deleted)')
+	.description(
+		'Start a new chat (the previous one finishes any reply in progress; an ephemeral one is then deleted)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('new', {}, options));
 
@@ -2783,6 +3157,14 @@ quickChatCmd
 	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
+	.command('steer [message-id]')
+	.description(
+		'Steer a queued message into the reply already running in its tab, so the agent changes course now instead of answering it afterwards (default: the latest steerable one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('steer', { messageId }, options));
+
+quickChatCmd
 	.command('history')
 	.description("List the recent chats, newest first (what the window's History button shows)")
 	.option('--json', 'Output as JSON (for scripting)')
@@ -2815,9 +3197,9 @@ quickChatCmd
 	.action((options) => quickChat('bounds', {}, options));
 
 // Cadenza commands - open small cadenza panels that display or track work.
-const cadenza = program
-	.command('cadenza')
-	.description('Open small cadenza views to display or track work in the Maestro desktop app');
+const cadenza = encoreCommand(program, 'cadenza', 'concerto', encoreFlags).description(
+	'Open small cadenza views to display or track work in the Maestro desktop app'
+);
 
 cadenza
 	.command('open <id>')
@@ -2877,11 +3259,9 @@ cadenza
 // Movement commands - compose the roomy, agent-driven "living view" in the main
 // window. Each item is free-placed at (x, y) and renders a native BlockView or
 // an isolated single-page HTML mockup.
-const movement = program
-	.command('movement')
-	.description(
-		'Compose the agent-driven movement (free-placed data views) in the Maestro main window'
-	);
+const movement = encoreCommand(program, 'movement', 'concerto', encoreFlags).description(
+	'Compose the agent-driven movement (free-placed data views) in the Maestro main window'
+);
 
 movement
 	.command('begin <id>')
@@ -3084,15 +3464,32 @@ feedback
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).
-program
-	.command('stats')
+encoreCommand(program, 'stats', 'usageStats', encoreFlags)
 	.description('Show aggregated Usage Dashboard metrics for a time range')
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full aggregation object as JSON')
 	.action(stats);
 
+encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
+	.description(
+		'Show token usage, cost, and tokens per second (average and peak) per provider and model'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--refresh', "Re-read changed transcripts instead of the app's cached result")
+	.option('--json', 'Output the full token usage object as JSON')
+	.action(statsTokens);
+
 program
-	.command('stats-query <sql>')
+	.command('stats-indexing')
+	.description(
+		'Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)'
+	)
+	.option('--wait', 'Block until no scan is running, printing progress each second')
+	.option('--timeout <seconds>', 'With --wait, give up after this many seconds (exit code 1)')
+	.option('--json', 'Output as JSON')
+	.action(statsIndexing);
+
+encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	.description('Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)')
 	.option(
 		'-p, --param <value>',

@@ -336,6 +336,8 @@ describe('assembleTurn parity with the desktop', () => {
 		const processManager = {
 			spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
 			get: vi.fn(),
+			// The synopsis-writer gate scans running processes before every spawn.
+			getAll: vi.fn(() => []),
 		};
 		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
 		await handleProcessSpawn(config, {
@@ -397,6 +399,8 @@ describe('assembleTurn parity with the desktop', () => {
 						maestroSystem: loader.get('maestro-system-prompt'),
 						imageOnlyDefault: loader.get('image-only-default') ?? '',
 						copilotPreamble: loader.get('copilot-preamble'),
+						// Maestro Cue ships on, so the desktop appends its section.
+						pluginSections: [loader.get('cue-system') ?? ''],
 					},
 					gitBranch: session.isGitRepo ? 'feature/parity' : undefined,
 					historyFilePath: HISTORY_FILE,
@@ -465,12 +469,16 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 		lacks?: string[];
 	}
 
+	// The section's own opening, not the bare `computer-history` slug: the reference
+	// index and the docs list name that slug in every agent's prompt.
+	const COMPUTER_HISTORY_SECTION = 'The user turned on Computer History';
+
 	const FIXTURES: SystemPromptFixture[] = [
 		{
 			name: 'a local agent with Concerto and Computer History on',
 			encoreFeatures: { concerto: true, computerHistory: true },
 			session: { isGitRepo: true },
-			contains: ['concerto', 'computer-history'],
+			contains: ['concerto', COMPUTER_HISTORY_SECTION],
 		},
 		{
 			name: 'an SSH agent: the localOnly sections are dropped',
@@ -478,11 +486,11 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 			session: { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } as never },
 			maestroRunReady: true,
 			contains: ['concerto'],
-			lacks: ['computer-history', RUN_BINARY],
+			lacks: [COMPUTER_HISTORY_SECTION, RUN_BINARY],
 		},
 		{
 			name: 'the Pianola manager with MaestroRun ready',
-			encoreFeatures: { maestroRun: true },
+			encoreFeatures: { maestroRun: true, pianola: true },
 			session: { isPianola: true },
 			maestroRunReady: true,
 			contains: [RUN_BINARY, 'Pianola'],

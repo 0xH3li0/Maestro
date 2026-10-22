@@ -44,7 +44,8 @@ export type FirstPartyEncoreFlag =
 	| 'computerHistory'
 	| 'quickChat'
 	| 'maestroRun'
-	| 'throughputGauge';
+	| 'throughputGauge'
+	| 'dataview';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -169,8 +170,17 @@ export interface FirstPartyPluginDefinition {
 	 * vouch that the feature's setup is complete (see `readyFlags` on
 	 * `systemPromptSectionsFor`). Agents are told about a tool only once it
 	 * works, never the moment a tile is switched on.
+	 *
+	 * `agentOnly` sections speak to an agent about its own workspace and duties,
+	 * so a sections-only spawn with no agent behind it (the Group Chat moderator
+	 * and its synthesis turn) leaves them out.
 	 */
-	systemPromptSection?: { promptId: string; localOnly?: boolean; requiresReady?: boolean };
+	systemPromptSection?: {
+		promptId: string;
+		localOnly?: boolean;
+		requiresReady?: boolean;
+		agentOnly?: boolean;
+	};
 }
 
 /** Whether a first-party feature exists on `platform` (`process.platform`). */
@@ -877,6 +887,10 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				'Cue engine runtime: file watchers, GitHub pollers, schedule timers, and the recovery heartbeat. Stops fully on disable.',
 		},
 	],
+	// Scheduling, triggers, and the duty lookup reach agents only while Cue is
+	// on. In the base prompt they told every agent to inspect Cue, so one with
+	// Cue off still answered "what do you do?" in terms of a switched-off feature.
+	systemPromptSection: { promptId: 'cue-system', agentOnly: true },
 };
 
 /** Broker capabilities Concerto actually touches. The feature lets an agent
@@ -1377,6 +1391,75 @@ export const THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * Dataview renders Obsidian Dataview queries in File Preview and the Auto Run
+ * preview. The index of each vault root lives in the main process
+ * (`src/main/dataview/`), next to the query engine, and exists only while the
+ * flag is on: turning it off disposes every index, watcher, and poller.
+ */
+export const DATAVIEW_FIRST_PARTY_PLUGIN_ID = 'com.maestro.dataview';
+
+export const DATAVIEW_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: DATAVIEW_FIRST_PARTY_PLUGIN_ID,
+	name: 'Dataview',
+	description:
+		'Render Obsidian Dataview queries as live tables, lists, and task lists in File Preview and Auto Run.',
+	firstParty: true,
+	category: 'data',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Dataview Encore flag and the DataviewJS trust settings.',
+		},
+		{
+			// Unscoped by necessity: a vault root is whatever folder holds the
+			// note you open (the nearest `.obsidian/`, else the agent's folder).
+			capability: 'fs:read',
+			reason:
+				'Read the markdown notes under a vault root to build the index that queries run against.',
+		},
+		{
+			capability: 'fs:watch',
+			reason: 'Watch an open vault root so query results refresh when a note changes.',
+		},
+		{
+			capability: 'background:service',
+			reason: 'Keep one index per open vault root while queries use it, and close idle ones.',
+		},
+	],
+	settingsNamespace: 'dataview',
+	encoreFlag: 'dataview',
+	releaseDate: '2026-10-18',
+	backgroundServices: [
+		{
+			id: 'dataview.index',
+			kind: 'supervised',
+			description:
+				'Per-vault index, watcher, and remote poller; idle roots close after 10 minutes, and everything stops when the feature is disabled.',
+		},
+	],
+	usage: {
+		overview: [
+			'Write a `dataview` code block in a note, as you would in Obsidian, and File Preview and the Auto Run preview render its result as a table, a list, or a task list instead of code. Inline `= expr` code spans render their value.',
+			'Queries run against the vault the note sits in: the nearest folder above it that holds `.obsidian/`, or the agent folder when there is none. Results refresh as notes change, links open the note they name, and task checkboxes tick the task in its own file.',
+		],
+		agentCommands: [
+			{ label: 'Run every query in a note', command: 'maestro-cli dataview query <file>' },
+			{
+				label: 'Run an ad-hoc query against a note',
+				command: 'maestro-cli dataview eval <file> "LIST FROM #meeting"',
+			},
+			{ label: 'Check the index of a vault', command: 'maestro-cli dataview index status' },
+		],
+		notes: [
+			'Agent chat messages never run queries. A query an agent shows you stays code.',
+			'DataviewJS runs code from your notes, so it is off until you turn it on below, and a vault has to be trusted before any script in it runs.',
+			'Turning this off stops every index and watcher. Dataview blocks render as plain code again.',
+		],
+		docsSlug: 'dataview',
+	},
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -1395,6 +1478,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
+	DATAVIEW_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -1420,4 +1504,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
 	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	throughputGauge: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
+	dataview: DATAVIEW_FIRST_PARTY_PLUGIN,
 };

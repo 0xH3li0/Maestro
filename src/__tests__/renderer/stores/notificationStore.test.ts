@@ -57,6 +57,8 @@ beforeEach(() => {
 			osNotificationsEnabled: true,
 			idleNotificationEnabled: false,
 			idleNotificationCommand: '',
+			// The Notification Center is on for these tests; the gate has its own cases.
+			historyEnabled: true,
 		},
 	});
 
@@ -1178,6 +1180,31 @@ describe('notificationStore', () => {
 
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 			expect(history()).toHaveLength(1);
+		});
+
+		it('records nothing while the Notification Center is off, but still shows the toast', () => {
+			useNotificationStore.getState().setHistoryEnabled(false);
+			notifyToast({ type: 'info', title: 'Unrecorded', message: 'msg' });
+			notifyToast({ type: 'info', title: 'History only', message: 'msg', historyOnly: true });
+
+			expect(useNotificationStore.getState().toasts.map((t) => t.title)).toEqual(['Unrecorded']);
+			expect(history()).toHaveLength(0);
+		});
+
+		it('closes the inbox when the Notification Center turns off, keeping its history', () => {
+			notifyToast({ type: 'info', title: 'Kept', message: 'msg' });
+			useNotificationStore.setState({
+				notificationCenterOpen: true,
+				notificationCenterExpandedId: history()[0].id,
+			});
+
+			useNotificationStore.getState().setHistoryEnabled(false);
+
+			const state = useNotificationStore.getState();
+			expect(state.config.historyEnabled).toBe(false);
+			expect(state.notificationCenterOpen).toBe(false);
+			expect(state.notificationCenterExpandedId).toBeNull();
+			expect(history().map((n) => n.title)).toEqual(['Kept']);
 		});
 
 		it('leaves a skipHistory toast out', () => {

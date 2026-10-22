@@ -19,6 +19,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Open, focus, or close the window             | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                                                                                                                                                                                                                              |
 | Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                                                                                                                                                                                                   |
 | Close it                                     | `Esc`, `Cmd+W` / `Ctrl+W`, or the **X** in the window                                                                                                                                                                                                                                                                         |
+| Go back to Maestro                           | ``Cmd+` `` (macOS), or the hotkey that summons Maestro. Both close Quick Chat and bring the Maestro window forward                                                                                                                                                                                                            |
 | Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                                                                                                                                                                                               |
 | Bring back an earlier chat                   | `Cmd+Y` / `Ctrl+Y`, or the clock beside the brain. Type to filter (any word you sent matches), then `Enter`. The window switches to that chat's agent, its tab, and its messages. See [Recent chats](#recent-chats)                                                                                                           |
 | Switch agent                                 | Click the agent name at the top left, or `Cmd+O` / `Ctrl+O`. Type to filter, then `Enter`                                                                                                                                                                                                                                     |
@@ -27,7 +28,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Attach images                                | Paste them (`Cmd+V` / `Ctrl+V`), drop image files on the window, or click the image button beside the brain. Thumbnails sit above the draft: click one to view it, drag to reorder, **x** to remove. They go to the tab with the message, like images pasted into the main window. A message of images alone starts a new tab |
 | Stop                                         | The square button, shown beside Send while anything is in motion. It stops the replies in progress and withdraws messages still waiting                                                                                                                                                                                       |
 | Open the tab a message went to               | Click the pill under the message                                                                                                                                                                                                                                                                                              |
-| Stop waiting on a busy tab                   | **Send to a new tab**, shown under a message that is queued                                                                                                                                                                                                                                                                   |
+| Stop waiting on a busy tab                   | **Send to a new tab**, or **Steer** it into the running reply, shown under a message that is queued                                                                                                                                                                                                                           |
 | Disagree with the tab Maestro chose          | The thumbs-down beside the pill. The message is sent to a new tab instead, and the chat continues there                                                                                                                                                                                                                       |
 | Open the chat in Maestro                     | `Cmd+Shift+T` / `Ctrl+Shift+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                                                                                                                                                                                          |
 | View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                                                                                                                                                                                                    |
@@ -68,9 +69,11 @@ When Maestro picks the wrong tab, click the thumbs-down beside the pill. A reply
 
 ### When the tab is busy
 
-A tab answers one message at a time. When a message goes to a tab that is in the middle of a reply (a follow-up sent before the last answer finished, or a first message routed to a busy tab), it waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
+A tab answers one message at a time. When Maestro finds a tab for a message, it skips the agent's tabs that are in the middle of a reply, so a message that matches a busy tab starts a new tab instead of waiting behind it. The chat's own tab is the exception. A follow-up sent before the last answer finished, or a message you sent to a busy tab yourself, waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
 
 If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now, and the chat moves with it: your next message goes to that new tab. The same thing from the command line is `maestro-cli quick-chat new-tab`.
+
+When the running reply can take input, a **Steer** button shows beside **Queued** too. It hands the message to the reply in progress, so the agent can change course now instead of answering it afterwards. It is the same steer as the queue card's [Steer](./general-usage#steer) button in the main window, offered under the same conditions, and the message never sends twice: if the agent does not take it, it goes back to **Queued**. From the command line, `maestro-cli quick-chat steer [message-id]` does the same, and `status` marks a queued message that can be steered.
 
 A message waits only for its own tab, never for the agent's other tabs. This is true whatever **Forced Parallel Execution** is set to: that setting governs **Force Send** in the main window, and Quick Chat has always run beside whatever else the agent is doing.
 
@@ -82,10 +85,12 @@ Two replies running at once on one agent share its working directory. If both ed
 
 A chat has one of two modes, and you can flip between them at any time with the bookmark in the window or `Cmd+S` / `Ctrl+S`. The mode applies only to the tabs the chat **creates**. A tab the agent already had, and a tab reopened for a message, are yours: Quick Chat never hides or deletes them.
 
-| Mode                | What happens to a tab the chat creates                                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted. Whether its turns write [History](/history) entries is a setting. |
-| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
+| Mode                | What happens to a tab the chat creates                                                                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted once any reply in progress has finished. Whether its turns write [History](/history) entries is a setting. |
+| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                                                                       |
+
+Only Stop stops a reply. Closing the window, starting a new chat, switching agents, or bringing back a recent chat never cuts off a message already sent: it goes through out of sight, and its reply lands in the recent chats (`Cmd+Y` / `Ctrl+Y`), where bringing the chat back shows it, live if it is still running.
 
 An ephemeral chat that wrote History entries is still a conversation from the last two weeks, so a later message about the same subject can reopen it.
 
@@ -123,6 +128,7 @@ Every button in the window has a `maestro-cli quick-chat` verb that takes the sa
 maestro-cli quick-chat toggle              # exactly what the hotkey does
 maestro-cli quick-chat show
 maestro-cli quick-chat hide
+maestro-cli quick-chat return            # close the window and bring Maestro forward (Cmd+` in the window)
 maestro-cli quick-chat send "what does this error mean?"
 maestro-cli quick-chat send "what is this?" --image ~/Desktop/shot.png   # attach images (PNG, JPG, GIF, WebP); put the message first
 maestro-cli quick-chat status              # window, agent, mode, and each message with the tab it went to (--json for scripts)

@@ -437,6 +437,43 @@ describe('ClaudeSessionStorage', () => {
 			expect(sessions[0].durationSeconds).toBe(600);
 		});
 
+		it('should time each API call into hourly token speed buckets', async () => {
+			const content = jsonl(userMsg('Start', '2025-06-01T10:00:00Z'), {
+				type: 'assistant',
+				timestamp: '2025-06-01T10:00:20Z',
+				requestId: 'req-1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					model: 'claude-opus-4-8',
+					content: 'Done',
+					usage: { input_tokens: 40, output_tokens: 400, cache_read_input_tokens: 1000 },
+				},
+			});
+
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.readdir).mockResolvedValue(['sess-speed.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.readdir>
+			>);
+			vi.mocked(fs.stat).mockResolvedValue({
+				size: 900,
+				mtimeMs: DEFAULT_STATS.mtimeMs,
+				mtime: new Date(DEFAULT_STATS.mtimeMs),
+			} as unknown as Awaited<ReturnType<typeof fs.stat>>);
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const sessions = await storage.listSessions('/test/project');
+			expect(sessions[0].speed).toEqual([
+				expect.objectContaining({
+					model: 'claude-opus-4-8',
+					calls: 1,
+					durationMs: 20_000,
+					inputTokens: 1040,
+					outputTokens: 400,
+				}),
+			]);
+		});
+
 		it('should truncate firstMessage to FIRST_MESSAGE_PREVIEW_LENGTH (200)', async () => {
 			const longMessage = 'A'.repeat(300);
 			const content = jsonl(assistantMsg(longMessage));

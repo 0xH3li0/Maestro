@@ -1,6 +1,7 @@
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
+import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -21,6 +22,7 @@ import {
 } from '../../shared/maestro-lib/providers/capabilities';
 import {
 	buildAgentLaunchPlan,
+	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import {
@@ -155,6 +157,7 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'requiredSecrets'
 	| 'globalEnvVars'
 	| 'agentConfigValues'
 	| 'agentCommand'
@@ -184,18 +187,89 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 			name !== '.' &&
 			name !== '..' &&
 			name.length <= 80 &&
+			!redactSecrets(name).redacted &&
 			/^[\p{L}\p{N}._ -]+$/u.test(name)
 			? name
 			: undefined;
 	};
 	const targetName = (value: unknown): string | undefined =>
-		typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+		typeof value === 'string' &&
+		!/[\x00-\x1f\x7f]/.test(value) &&
+		/^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) &&
+		!redactSecrets(value).redacted
+			? value
+			: undefined;
+
+	// These labels cross the plugin boundary. Recognize a whole simple command,
+	// never a substring of a pipeline, script, arbitrary argument or description.
+	const readSummary = (value: unknown): string => {
+		const name = fileName(value);
+		if (name === 'SKILL.md' && typeof value === 'string' && /(?:^|[/\\])skills[/\\]/.test(value)) {
+			const skill = targetName(value.replace(/\\/g, '/').split('/').at(-2));
+			if (skill) return `Reading skill ${skill}`;
+		}
+		return name ? `Reading file ${name}` : 'Reading file';
+	};
+	const shellSummary = (value: unknown): string => {
+		const fallback = 'Running shell command';
+		if (typeof value !== 'string' || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value))
+			return fallback;
+		// Only a single unquoted path or narrowly quoted glob is admitted. Shell
+		// metacharacters, additional statements and environment prefixes fail closed.
+		const read =
+			/^(?:cat|head|tail) (?<separator>-- )?(?<file>[A-Za-z0-9_./-]+)$/.exec(value) ??
+			/^sed -n '[0-9]+(?:,[0-9]+)?p' (?<file>[A-Za-z0-9_./-]+)$/.exec(value);
+		if (read) {
+			const file = read.groups?.file;
+			if (!file || (file.startsWith('-') && !read.groups?.separator)) return fallback;
+			return readSummary(file);
+		}
+		const files =
+			/^rg --files(?: -g (?:'([A-Za-z0-9_.*?/-]+)'|"([A-Za-z0-9_.*?/-]+)"|([A-Za-z0-9_.*?/-]+)))?$/.exec(
+				value
+			);
+		if (files) {
+			const glob = files[1] ?? files[2] ?? files[3];
+			const name = glob ? fileName(glob.replace(/[?*]/g, 'x')) : undefined;
+			// Check the text we publish: replacing a wildcard may remove a secret's
+			// word boundary and make the filename validation miss it.
+			return name && glob.length <= 80 && !redactSecrets(glob).redacted
+				? `Searching files for ${glob.split('/').pop()}`
+				: 'Searching files';
+		}
+		const known: Record<string, string> = {
+			'git status': 'inspect repository status',
+			'git status --short': 'inspect repository status',
+			'git diff --stat': 'inspect changed files',
+			'git diff --name-only': 'inspect changed files',
+			pwd: 'inspect the working directory',
+			'npm test': 'run tests',
+			'npm run lint': 'run lint checks',
+			'npm run build:main': 'build the main process',
+		};
+		return Object.prototype.hasOwnProperty.call(known, value)
+			? `${fallback} to ${known[value]}`
+			: fallback;
+	};
 
 	if (tool === 'functions.exec') {
 		// The wrapper's JavaScript is untrusted. Recognize only a tool identifier;
 		// never copy the code, nested arguments, or shell text into progress.
 		const code = typeof input === 'string' ? input : data?.code;
 		if (typeof code !== 'string' || code.length > 64_000) return;
+		// JSON-only single-call wrappers may reuse the same admission above. Never
+		// evaluate JavaScript or infer an action from code that merely mentions it.
+		const single = /^\s*await tools\.exec_command\((\{[\s\S]*\})\);?\s*$/.exec(code);
+		if (single) {
+			try {
+				const args: unknown = JSON.parse(single[1]);
+				if (args && typeof args === 'object' && !Array.isArray(args)) {
+					return shellSummary((args as Record<string, unknown>).cmd);
+				}
+			} catch {
+				// Non-JSON JavaScript stays generic; the wrapper is never executed here.
+			}
+		}
 		const shellCalls = (code.match(/\btools\.exec_command\s*\(/g) ?? []).length;
 		if (shellCalls) return shellCalls === 1 ? 'Running shell command' : 'Running shell commands';
 		return;
@@ -212,11 +286,10 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 			'exec_command',
 		].includes(tool)
 	) {
-		return 'Running shell command';
+		return shellSummary(data?.cmd ?? data?.command);
 	}
 	if (['Read', 'read_file', 'functions.read_file', 'fs.read'].includes(tool)) {
-		const name = fileName(data?.file_path ?? data?.path);
-		return name ? `Reading file ${name}` : 'Reading file';
+		return readSummary(data?.file_path ?? data?.path);
 	}
 	if (
 		['Write', 'Edit', 'MultiEdit', 'write_file', 'functions.apply_patch', 'fs.write'].includes(tool)
@@ -230,7 +303,26 @@ function publicToolSummary(tool: string, input: unknown): string | undefined {
 		const name = targetName(data?.subagent_type ?? data?.task_name ?? data?.agentId);
 		return name ? `Dispatching to agent ${name}` : 'Dispatching to agent';
 	}
-	if (['Grep', 'Glob', 'functions.web__run'].includes(tool)) return 'Searching';
+	if (['Skill', 'skill', 'skills.read'].includes(tool)) {
+		const name = targetName(data?.skill ?? data?.name);
+		return name ? `Reading skill ${name}` : 'Reading skill';
+	}
+	if (['Grep', 'Glob'].includes(tool)) {
+		// Grep's content pattern is private; only an explicit filename glob is public.
+		const value = tool === 'Glob' ? data?.pattern : data?.glob;
+		const glob =
+			typeof value === 'string' &&
+			value.length <= 80 &&
+			!/[\x00-\x1f\x7f]/.test(value) &&
+			!redactSecrets(value).redacted &&
+			/^[A-Za-z0-9_.*?/-]+$/.test(value)
+				? value.split('/').pop()
+				: undefined;
+		return glob && glob !== '.' && glob !== '..'
+			? `Searching files for ${glob}`
+			: 'Searching files';
+	}
+	if (tool === 'functions.web__run') return 'Searching';
 	return;
 }
 
@@ -348,6 +440,7 @@ function planCliLaunch(
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
+		requiredSecrets?: string[];
 	}
 ): AgentLaunchPlanResult {
 	const result = buildAgentLaunchPlan({
@@ -365,7 +458,14 @@ function planCliLaunch(
 		querySource: input.querySource,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
+		requiredSecrets: input.requiredSecrets,
 	});
+	// Names only, on stderr: stdout is the command's result. The turn still
+	// runs, and the agent reports its own auth error if it needed the secret.
+	if (result.ok) {
+		const warning = describeUndeliveredSecrets(def?.name ?? toolType, result.plan.secrets);
+		if (warning) console.error(`[maestro-cli] ${warning}`);
+	}
 	// Desktop-backed local turns use the same blank-unset, path expansion and
 	// environment layering as desktop spawns. The prompt still follows the CLI
 	// wire format, and standalone/remote launches keep their existing rules.
@@ -758,6 +858,7 @@ async function spawnClaudeAgent(
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1297,6 +1398,7 @@ async function spawnJsonLineAgent(
 		isResuming: isResume,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1348,6 +1450,13 @@ async function spawnJsonLineAgent(
 	const parser = createOutputParser(toolType);
 	if (!parser) {
 		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+	}
+	if (toolType === 'antigravity') {
+		// Registers agy's conversation-store reader with maestro-lib (see host.ts),
+		// so the run keeps its thinking text and command status. Loaded on demand:
+		// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
+		// reach through a static import (plain-node-imports.test.ts).
+		await import('../../main/parsers/antigravity-step-store');
 	}
 
 	// The shared capture applies the provider's usage rule (Codex reports a
@@ -1566,6 +1675,12 @@ export interface SpawnAgentOptions {
 	agentConfigValues?: Record<string, unknown>;
 	agentCommand?: string;
 	/**
+	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
+	 * import). Resolved from systemd credentials, `/run/secrets` or the
+	 * environment and put in this agent's environment only.
+	 */
+	requiredSecrets?: string[];
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1688,6 +1803,7 @@ async function spawnAgentOnce(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		requiredSecrets: options?.requiredSecrets,
 		globalEnvVars: options?.globalEnvVars,
 		agentConfigValues: options?.agentConfigValues,
 		agentCommand: options?.agentCommand,

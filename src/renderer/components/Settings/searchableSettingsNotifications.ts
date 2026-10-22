@@ -15,8 +15,13 @@ export const NOTIFICATION_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Notifications',
 		label: 'Notification center',
 		description:
-			'Optional inbox size, full details, keyboard navigation, shortcut setup, queued reply and Auto Run task history.',
+			'Turn the inbox and its Left Bar bell on or off, plus optional inbox size, full details, keyboard navigation, shortcut setup, queued reply and Auto Run task history.',
 		keywords: [
+			'enable',
+			'disable',
+			'turn off',
+			'bell',
+			'unread',
 			'inbox',
 			'notification center',
 			'larger',

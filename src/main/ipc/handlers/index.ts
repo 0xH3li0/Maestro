@@ -50,6 +50,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
 	registerWebHandlers,
@@ -61,6 +62,7 @@ import {
 import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerMaestroRunHandlers } from './maestroRun';
+import { registerDataviewHandlers, DataviewHandlerDependencies } from './dataview';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -72,6 +74,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
@@ -132,6 +135,7 @@ export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerParquetHandlers };
+export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
 export {
@@ -144,6 +148,8 @@ export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
 export { registerComputerHistoryHandlers };
 export { registerMaestroRunHandlers };
+export { registerDataviewHandlers };
+export type { DataviewHandlerDependencies };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
@@ -157,6 +163,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerPluginsHandlers };
@@ -399,15 +406,15 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
+	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
-	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers({
-		sessionsStore: deps.sessionsStore,
-		settingsStore: deps.settingsStore,
-		agentConfigsStore: deps.agentConfigsStore,
-		getAgentDetector: deps.getAgentDetector,
-	});
+	// Register agent Memory handlers (Claude Code per project, Codex per account)
+	registerMemoryHandlers();
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
 	// Register Context Timeline capture handlers (per-agent turn history backfill)
@@ -418,7 +425,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
 	// Register multi-window handlers (windows:* channel surface). The registry

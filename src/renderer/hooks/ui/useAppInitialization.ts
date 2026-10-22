@@ -93,6 +93,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
 	const idleNotificationCommand = useSettingsStore((s) => s.idleNotificationCommand);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
 	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
 	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
@@ -454,6 +455,10 @@ export function useAppInitialization(): AppInitializationReturn {
 			.getState()
 			.setIdleNotification(idleNotificationEnabled, idleNotificationCommand);
 	}, [idleNotificationEnabled, idleNotificationCommand]);
+
+	useEffect(() => {
+		useNotificationStore.getState().setHistoryEnabled(notificationCenterEnabled);
+	}, [notificationCenterEnabled]);
 
 	// --- Playground debug function ---
 	useEffect(() => {
