@@ -541,7 +541,7 @@ describe('process IPC handlers', () => {
 				audit: vi.fn(),
 			});
 			const pending = run('first-agent', 'cli followup', 'newly-announced-provider');
-			await Promise.resolve();
+			await new Promise(setImmediate);
 			expect(spawn).not.toHaveBeenCalled();
 			events.emit('exit', processId, 0);
 			await pending;
@@ -650,7 +650,7 @@ describe('process IPC handlers', () => {
 					prompt: 'desktop followup',
 				}
 			);
-			await Promise.resolve();
+			await new Promise(setImmediate);
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 			tab.agentSessionId = 'relay-first-provider';
 			releaseRelay();
@@ -665,7 +665,7 @@ describe('process IPC handlers', () => {
 					release();
 				}
 			);
-			await Promise.resolve();
+			await new Promise(setImmediate);
 			expect(nextStarted).toBe(false);
 			events.emit('exit', processId, 0);
 			await next;

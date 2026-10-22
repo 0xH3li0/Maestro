@@ -35,7 +35,6 @@ export async function acquireProviderSessionWriter(
 	const releases: Array<() => void> = [];
 	for (const key of keys) reservations.set(key, (reservations.get(key) ?? 0) + 1);
 	let released = false;
-	let bind: ((id: string) => void) | undefined;
 	const releaseAll = () => {
 		if (released) return;
 		released = true;
@@ -78,7 +77,7 @@ export async function acquireProviderSessionWriter(
 		releaseAll();
 		throw error;
 	}
-	bind = (id) => {
+	function bind(id: string): void {
 		const key = `provider:${provider}:${id}`;
 		if (released || keys.includes(key)) return;
 		keys.push(key);
@@ -93,7 +92,7 @@ export async function acquireProviderSessionWriter(
 					else releases.push(release);
 				})
 		);
-	};
+	}
 	activeBindings.set(processId, bind);
 	return releaseAll;
 }

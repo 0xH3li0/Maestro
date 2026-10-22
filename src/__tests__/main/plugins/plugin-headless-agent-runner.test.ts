@@ -47,7 +47,7 @@ describe('plugin headless agent runner', () => {
 		);
 		const cli = run('agent-a', 'cli followup', 'relay-provider');
 		const legacy = run('agent-a', 'legacy followup', 'relay-provider');
-		await Promise.resolve();
+		await new Promise(setImmediate);
 		expect(spawn).not.toHaveBeenCalled();
 		release();
 		await Promise.all([cli, legacy]);
