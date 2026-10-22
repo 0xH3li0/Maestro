@@ -115,6 +115,41 @@ describe('durable Relay conversations', () => {
 		await host.restore('agent', opts.conversationId, 'provider');
 		expect(agent.aiTabs).toHaveLength(0);
 	});
+	it('retries the same message after an initial session flush fails before provider invocation', async () => {
+		deps.flush = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined);
+		await expect(send()).rejects.toThrow('disk full');
+		expect(deps.run).not.toHaveBeenCalled();
+		expect(agent.aiTabs[0].relayConversation.status).toBe('error');
+		host = new RelayConversations(deps);
+		await expect(send()).resolves.toMatchObject({ success: true });
+		expect(deps.run).toHaveBeenCalledTimes(1);
+		await expect(send()).resolves.toMatchObject({ replayed: true });
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
+	it('retries a cancelled writer wait without abandoning protection after provider invocation', async () => {
+		await send();
+		const tab = agent.aiTabs[0];
+		const release = await acquireProviderSessionWriter(
+			'claude-code',
+			'independent-writer',
+			tab.agentSessionId
+		);
+		const pending = send('waiting', { messageId: 'message-2' });
+		const outcome = pending.catch((error: Error) => error);
+		await vi.waitFor(() =>
+			expect(
+				tab.relayConversation.status === 'queued' ||
+					agent.aiTabs[0].relayConversation.status === 'queued'
+			).toBe(true)
+		);
+		expect(cancelRelayConversationTurn(`agent-ai-${tab.id}`)).toBe(true);
+		release();
+		await outcome;
+		await expect(send('waiting', { messageId: 'message-2' })).resolves.toMatchObject({
+			success: true,
+		});
+		expect(deps.run).toHaveBeenCalledTimes(2);
+	});
 	it('allows a new message after proven no-start failure but never reexecutes its receipt', async () => {
 		vi.mocked(deps.run).mockResolvedValueOnce({
 			success: false,

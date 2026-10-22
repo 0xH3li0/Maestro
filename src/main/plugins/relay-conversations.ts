@@ -272,21 +272,6 @@ export class RelayConversations {
 				}
 				// Desktop continuation may have updated the provider id; the live tab is authoritative.
 				mapping.providerSessionId = tab?.agentSessionId ?? mapping.providerSessionId;
-				this.write(receiptKey, { promptHash: hash, messageId: opts.messageId } satisfies Receipt);
-				this.patch(
-					mapping,
-					{ hidden: false, hasUnread: true },
-					{
-						messageId: opts.messageId,
-						status: 'queued',
-						completedAt: undefined,
-						archivedAt: undefined,
-						error: undefined,
-						lastActivityAt: this.now(),
-					},
-					{ id: `${receiptKey}:user`, timestamp: this.now(), source: 'user', text: prompt }
-				);
-				await this.flushMapping(mapping, generation);
 				const agent = this.deps.getAgent(agentId)!;
 				const controller = new AbortController();
 				const abort = () => controller.abort();
@@ -296,7 +281,23 @@ export class RelayConversations {
 				liveRelayTurns.set(processId, controller);
 				this.controllers.add(controller);
 				let release = () => {};
+				let runnerInvoked = false;
 				try {
+					this.write(receiptKey, { promptHash: hash, messageId: opts.messageId } satisfies Receipt);
+					this.patch(
+						mapping,
+						{ hidden: false, hasUnread: true },
+						{
+							messageId: opts.messageId,
+							status: 'queued',
+							completedAt: undefined,
+							archivedAt: undefined,
+							error: undefined,
+							lastActivityAt: this.now(),
+						},
+						{ id: `${receiptKey}:user`, timestamp: this.now(), source: 'user', text: prompt }
+					);
+					await this.flushMapping(mapping, generation);
 					release = await acquireProviderSessionWriter(
 						agent.toolType,
 						processId,
@@ -321,6 +322,7 @@ export class RelayConversations {
 					mapping.interrupted = true;
 					this.write(conversationKey, mapping);
 					this.patch(mapping, {}, { status: 'running' });
+					runnerInvoked = true;
 					const result = await this.deps.run(
 						agentId,
 						prompt,
@@ -368,6 +370,12 @@ export class RelayConversations {
 					authorize();
 					return returned;
 				} catch (error) {
+					if (generation === this.generation && !runnerInvoked) {
+						// No provider call occurred. Keep retries possible; uncertain runs retain receipts.
+						this.store.delete(RELAY_PLUGIN_ID, receiptKey);
+						mapping.interrupted = false;
+						this.write(conversationKey, mapping);
+					}
 					if (generation === this.generation)
 						this.patch(
 							mapping,
