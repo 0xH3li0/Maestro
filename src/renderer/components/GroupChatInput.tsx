@@ -19,7 +19,7 @@ import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
 import { filterLiveAgents } from '../../shared/agentVisibility';
-import { ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
@@ -28,18 +28,19 @@ import type {
 	QueuedItem,
 	Shortcut,
 } from '../types';
-import {
-	formatShortcutKeys,
-	formatEnterToSend,
-	formatEnterToSendTooltip,
-} from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
 import {
 	ComposerSendColumn,
-	ImageAttachInput,
+	GROUP_CHAT_COMPOSER_CAPABILITIES,
 	applyTrimmedTextPaste,
 	clipboardHasImage,
 } from './ChatComposer';
+import { ToolbarControls } from './InputArea/components/ToolbarControls';
+import { PhoneSheetSwitchRow } from './ui/PhoneSheetRows';
+import { shortcutSuffix } from './ui/ShortcutHint';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
+import { useStableCallback } from '../hooks/utils/useStableCallback';
+import { useVoiceInput } from '../hooks/utils/useVoiceInput';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { logger } from '../utils/logger';
 import { useDraftPersistence } from '../hooks/input/useDraftPersistence';
@@ -146,6 +147,8 @@ interface GroupChatInputProps {
 	showFlashNotification?: (message: string) => void;
 	// Shortcuts for displaying keyboard hints
 	shortcuts?: Record<string, Shortcut>;
+	/** Upload local files to the host (web-desktop); mentions land in the draft. */
+	onUploadFiles?: (files: File[]) => void;
 }
 
 // PERF: Wrap in React.memo to prevent unnecessary re-renders when parent state changes
@@ -177,6 +180,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	setEnterToSendAI: setEnterToSendAIProp,
 	showFlashNotification,
 	shortcuts,
+	onUploadFiles,
 }: GroupChatInputProps): JSX.Element {
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const [message, setMessage] = useState(draftMessage || '');
@@ -202,7 +206,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const localInputRef = useRef<HTMLTextAreaElement>(null);
 	const inputRef = inputRefProp ?? localInputRef;
 	const prevGroupChatIdRef = useRef(groupChatId);
-	const imageInputRef = useRef<HTMLInputElement>(null);
 	const lastPersistedDraftRef = useRef<{ groupChatId: string; draft: string } | null>(null);
 	// Shared with AI Chat's own draft write-back (useInputSync) - see
 	// useDraftPersistence's doc comment for why a key (here, groupChatId)
@@ -342,10 +345,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId, closeAtMention]
 	);
 
-	// AtMentionPopover's own click-to-accept path calls this instead of
-	// acceptAtMention directly - it needs a draft-persisting setInputValue, not
-	// just a state setter.
-	const setAtMentionInputValue = useCallback(
+	// Set the draft and persist it, as typing does. AtMentionPopover's own
+	// click-to-accept path and voice dictation both write through this.
+	const setDraftValue = useCallback(
 		(value: string) => {
 			setMessage(value);
 			persistDraft(value, groupChatId);
@@ -453,6 +455,28 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		onOpenPromptComposer?.();
 	}, [flushDraft, onOpenPromptComposer]);
 
+	// An upload appends its @mentions to the STORED draft, so publish the local
+	// text first, as a drop does.
+	const handleUploadFiles = useCallback(
+		(files: File[]) => {
+			flushDraft();
+			onUploadFiles?.(files);
+		},
+		[flushDraft, onUploadFiles]
+	);
+
+	// Voice dictation: interim results live-update the draft and persist it like
+	// typing. The hook is a no-op where the Web Speech API is unavailable.
+	const voice = useVoiceInput({
+		currentValue: message,
+		onTranscriptionChange: setDraftValue,
+		focusRef: inputRef,
+	});
+	// Both close over the live draft; stable identities keep the memoized
+	// toolbar from re-rendering on every keystroke.
+	const handleToggleVoiceInput = useStableCallback(voice.toggleVoiceInput);
+	const handleSendStable = useStableCallback(handleSend);
+
 	// Reordering the strip reorders what the agent receives (every send path
 	// walks stagedImages in order - see stagedImageOrder.ts). Group Chat has no
 	// "Screenshot N" text-reference convention the way AI Chat's InputArea does
@@ -472,6 +496,46 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	});
 
 	const isBusy = state !== 'idle';
+	const phone = usePhoneLayout();
+
+	// The room's Read-Only toggle (one flag for every room, sent per message to
+	// main). The toolbar draws it in its toggle group on desktop and as a sheet
+	// row on a phone, so the room keeps it in every layout.
+	const readOnlyKeys = useSettingsStore((s) => s.tabShortcuts.toggleReadOnlyMode?.keys);
+	const readOnlyToggle = useMemo(
+		() => (
+			<button
+				onClick={() => setReadOnlyMode(!readOnlyMode)}
+				className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
+					readOnlyMode ? '' : 'opacity-40 hover:opacity-70'
+				}`}
+				style={{
+					backgroundColor: readOnlyMode ? `${theme.colors.warning}25` : 'transparent',
+					color: readOnlyMode ? theme.colors.warning : theme.colors.textDim,
+					border: readOnlyMode ? `1px solid ${theme.colors.warning}50` : '1px solid transparent',
+				}}
+				title={`Toggle Read-Only mode (agents won't modify files)${shortcutSuffix(readOnlyKeys)}`}
+			>
+				<Eye className="w-3 h-3" />
+				<span>Read-Only</span>
+			</button>
+		),
+		[readOnlyMode, setReadOnlyMode, theme, readOnlyKeys]
+	);
+	const readOnlySheetRow = useMemo(
+		() => (
+			<PhoneSheetSwitchRow
+				icon={Eye}
+				label="Read-Only"
+				checked={readOnlyMode}
+				onToggle={() => setReadOnlyMode(!readOnlyMode)}
+				accent={theme.colors.warning}
+				theme={theme}
+				testId="composer-options-read-only"
+			/>
+		),
+		[readOnlyMode, setReadOnlyMode, theme]
+	);
 
 	// The queue arrives from MAIN in its own shape. `QueuedItemsList` is the
 	// existing renderer widget and speaks `QueuedItem`, so the adaptation happens
@@ -582,7 +646,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				inputValue={message}
 				itemRefs={atMentionItemRefs}
 				theme={theme}
-				setInputValue={setAtMentionInputValue}
+				setInputValue={setDraftValue}
 				setOpen={setAtMentionOpen}
 				setFilter={setAtMentionFilter}
 				setStartIndex={setAtMentionStartIndex}
@@ -654,80 +718,45 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						/>
 					</div>
 
-					{/* Bottom toolbar row */}
-					<div className="flex justify-between items-center px-2 pb-2 pt-1">
-						{/* Left side - action buttons */}
-						<div className="flex gap-1 items-center">
-							{onOpenPromptComposer && (
-								<button
-									onClick={handleOpenPromptComposer}
-									className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
-									title={`Open Prompt Composer${shortcuts?.openPromptComposer ? ` (${formatShortcutKeys(shortcuts.openPromptComposer.keys)})` : ''}`}
-								>
-									<PenLine className="w-4 h-4" />
-								</button>
-							)}
-							<button
-								onClick={() => imageInputRef.current?.click()}
-								className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
-								title="Attach Image"
-							>
-								<ImageIcon className="w-4 h-4" />
-							</button>
-							<ImageAttachInput
-								ref={imageInputRef}
-								id="group-chat-image-input"
-								setStagedImages={setStagedImages}
-								showFlashNotification={showFlashNotification}
-								reportComponent="GroupChatInput"
-								checkFile={checkGroupChatImageFile}
-							/>
-						</div>
-
-						{/* Right side - toggles */}
-						<div className="flex items-center gap-2">
-							{/* Read-only mode toggle */}
-							<button
-								onClick={() => setReadOnlyMode(!readOnlyMode)}
-								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
-									readOnlyMode ? '' : 'opacity-40 hover:opacity-70'
-								}`}
-								style={{
-									backgroundColor: readOnlyMode ? `${theme.colors.warning}25` : 'transparent',
-									color: readOnlyMode ? theme.colors.warning : theme.colors.textDim,
-									border: readOnlyMode
-										? `1px solid ${theme.colors.warning}50`
-										: '1px solid transparent',
-								}}
-								title="Toggle Read-Only mode (agents won't modify files)"
-							>
-								<Eye className="w-3 h-3" />
-								<span>Read-Only</span>
-							</button>
-
-							{/* Enter to send toggle */}
-							<button
-								onClick={() => setEnterToSend(!enterToSend)}
-								className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
-								title={formatEnterToSendTooltip(enterToSend)}
-							>
-								<Keyboard className="w-3 h-3" />
-								{formatEnterToSend(enterToSend)}
-							</button>
-						</div>
-					</div>
+					<ToolbarControls
+						theme={theme}
+						capabilities={GROUP_CHAT_COMPOSER_CAPABILITIES}
+						isTerminalMode={false}
+						enterToSend={enterToSend}
+						setEnterToSend={setEnterToSend}
+						setStagedImages={setStagedImages}
+						imageInputId="group-chat-image-input"
+						imageReportComponent="GroupChatInput"
+						checkImageFile={checkGroupChatImageFile}
+						onUploadFiles={onUploadFiles ? handleUploadFiles : undefined}
+						voiceSupported={voice.voiceSupported}
+						isVoiceListening={voice.isListening}
+						onToggleVoiceInput={handleToggleVoiceInput}
+						onOpenPromptComposer={onOpenPromptComposer ? handleOpenPromptComposer : undefined}
+						shortcuts={shortcuts}
+						showFlashNotification={showFlashNotification}
+						toolbarExtras={readOnlyToggle}
+						sheetExtras={readOnlySheetRow}
+						processInput={handleSendStable}
+						sendTitle={isBusy ? 'Queue message' : 'Send message'}
+						sendDisabled={!message.trim()}
+						sendTone={isBusy ? 'warning' : 'accent'}
+					/>
 				</div>
 
 				{/* Notifications & Send Button - Right Side. No Send menu: a busy
-				    room queues through main. */}
-				<ComposerSendColumn
-					theme={theme}
-					className="self-end"
-					onSend={handleSend}
-					sendTitle={isBusy ? 'Queue message' : 'Send message'}
-					sendDisabled={!message.trim()}
-					sendTone={isBusy ? 'warning' : 'accent'}
-				/>
+				    room queues through main. On a phone the column is gone and Send
+				    sits in the toolbar row, as in AI chat. */}
+				{!phone && (
+					<ComposerSendColumn
+						theme={theme}
+						className="self-end"
+						onSend={handleSend}
+						sendTitle={isBusy ? 'Queue message' : 'Send message'}
+						sendDisabled={!message.trim()}
+						sendTone={isBusy ? 'warning' : 'accent'}
+					/>
+				)}
 			</div>
 		</div>
 	);
