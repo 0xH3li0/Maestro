@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { acquireProviderSessionWriter } from '../../../../main/utils/provider-session-writer';
 /**
  * Tests for the process IPC handlers
  *
@@ -476,6 +478,61 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it('waits for Relay, resumes its first provider id and retains the lease through close', async () => {
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			const tab = {
+				id: 'relay-tab',
+				agentSessionId: null as string | null,
+				relayConversation: { conversationId: 'thread' },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [{ id: 'relay-agent', aiTabs: [tab] }] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'relay-agent-ai-relay-tab';
+			const releaseRelay = await acquireProviderSessionWriter('claude-code', processId);
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: processId,
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					prompt: 'desktop followup',
+				}
+			);
+			await Promise.resolve();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			tab.agentSessionId = 'relay-first-provider';
+			releaseRelay();
+			await pending;
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ agentSessionId: 'relay-first-provider' })
+			);
+			let nextStarted = false;
+			const next = acquireProviderSessionWriter('claude-code', processId, tab.agentSessionId).then(
+				(release) => {
+					nextStarted = true;
+					release();
+				}
+			);
+			await Promise.resolve();
+			expect(nextStarted).toBe(false);
+			events.emit('exit', processId, 0);
+			await next;
+			expect(nextStarted).toBe(true);
+		});
+
 		it('should spawn PTY process with correct args', async () => {
 			const mockAgent = {
 				id: 'claude-code',

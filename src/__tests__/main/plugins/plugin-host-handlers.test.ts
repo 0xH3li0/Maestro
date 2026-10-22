@@ -1,3 +1,5 @@
+import { RelayConversations } from '../../../main/plugins/relay-conversations';
+import { createMockSession } from '../../helpers/mockSession';
 /**
  * @file plugin-host-handlers.test.ts
  * @description Host handlers for the new verbs: settings.set namespace + secret
@@ -2986,5 +2988,96 @@ describe('host media configuration', () => {
 		} finally {
 			discovery.mockRestore();
 		}
+	});
+});
+
+describe('Relay desktop transport authorization', () => {
+	it('keeps exact-agent ownership and identity gates on restore, send, replay and completion', async () => {
+		let agent: any = createMockSession({ id: 'a', aiTabs: [], unifiedTabOrder: [] });
+		let consent = true;
+		let signer = RELAY_PUBLISHER_KEY;
+		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'owned'));
+		const sendAgent = vi.fn(async () => ({
+			success: true,
+			response: 'answer',
+			sessionId: 'provider',
+		}));
+		const recordRelayTurn = vi.fn(async () => {});
+		const relayConversations = new RelayConversations({
+			baseDir: path.join(kvBase, 'conversations'),
+			getAgent: () => agent,
+			updateAgent: (_id, update) => {
+				agent = update(agent);
+			},
+			run: sendAgent,
+			loadTranscript: async () => [
+				{ id: 'past', timestamp: 1, source: 'user', text: 'past prompt' },
+			],
+		});
+		const handlers = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [{ capability: 'agents:dispatch', scope: 'a', grantedAt: 1 }]),
+				providerSessions,
+				sendAgent,
+				relayConversations,
+				recordRelayTurn,
+				dispatchUnattendedAllowed: () => consent,
+				getPluginSignature: () => ({ status: 'trusted', signerKey: signer }),
+			})
+		);
+		const restore = () =>
+			handlers['agents.restoreConversation']!('sh.maestro.relay', {
+				agentId: 'a',
+				conversationId: 'thread',
+				sessionId: 'provider',
+			});
+		await expect(restore()).rejects.toThrow(/not owned/);
+		providerSessions.remember('sh.maestro.relay', 'a', 'provider');
+		await expect(restore()).resolves.toMatchObject({ success: true, conversationId: 'thread' });
+		expect(sendAgent).not.toHaveBeenCalled();
+		expect(agent.aiTabs[0].logs[0].text).toBe('past prompt');
+		const params = {
+			agentId: 'a',
+			prompt: 'hello',
+			opts: { conversationId: 'thread', messageId: 'message', sessionId: 'provider' },
+		};
+		await handlers['agents.send']!('sh.maestro.relay', params);
+		await expect(handlers['agents.send']!('sh.maestro.relay', params)).resolves.toMatchObject({
+			replayed: true,
+		});
+		expect(sendAgent).toHaveBeenCalledTimes(1);
+		expect(recordRelayTurn).toHaveBeenCalledTimes(1);
+		await expect(handlers['agents.send']!('other.plugin', params)).rejects.toThrow(/unavailable/);
+		await expect(
+			handlers['agents.send']!('sh.maestro.relay', {
+				...params,
+				opts: { conversationId: 'thread' },
+			})
+		).rejects.toThrow(/together/);
+		const complete = () =>
+			handlers['agents.completeConversation']!('sh.maestro.relay', {
+				agentId: 'a',
+				conversationId: 'thread',
+				messageId: 'message',
+			});
+		consent = false;
+		await expect(restore()).rejects.toThrow(/authorization/);
+		await expect(complete()).rejects.toThrow(/authorization/);
+		await expect(handlers['agents.send']!('sh.maestro.relay', params)).rejects.toThrow(
+			/unattended/
+		);
+		consent = true;
+		signer = 'different-publisher';
+		await expect(restore()).rejects.toThrow(/authorization/);
+		await expect(complete()).rejects.toThrow(/authorization/);
+		signer = RELAY_PUBLISHER_KEY;
+		await expect(complete()).resolves.toEqual({ success: true });
+		await expect(
+			handlers['agents.restoreConversation']!('sh.maestro.relay', {
+				agentId: 'other',
+				conversationId: 'thread',
+				sessionId: 'provider',
+			})
+		).rejects.toThrow();
 	});
 });

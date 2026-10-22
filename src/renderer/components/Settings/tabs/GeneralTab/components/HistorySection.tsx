@@ -1,4 +1,5 @@
-import { Clock, History, Layers } from 'lucide-react';
+import { SectionCard } from '../../DisplayTab/components/SectionCard';
+import { Archive, Clock, History, Layers } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
@@ -24,6 +25,8 @@ export function HistorySection({
 	groupCueEntries,
 	setGroupCueEntries,
 }: HistorySectionProps) {
+	const relayArchiveHours = useSettingsStore((s) => s.relayArchiveHours);
+	const setRelayArchiveHours = useSettingsStore((s) => s.setRelayArchiveHours);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	return (
 		<div data-setting-id="general-history">
@@ -60,6 +63,33 @@ export function HistorySection({
 					</p>
 				</div>
 			)}
+
+			<div className="mt-3" data-setting-id="general-relay-archive">
+				<SettingsSectionHeading
+					icon={Archive}
+					description="Hide completed Relay conversations after inactivity. Unread, starred, selected, queued or running conversations and drafts stay open. History and provider context are kept."
+				>
+					Relay conversation archive
+				</SettingsSectionHeading>
+				<SectionCard theme={theme}>
+					<label className="flex items-center gap-3 text-sm">
+						Hours after explicit task completion (0 disables)
+						<input
+							type="number"
+							min={0}
+							max={8760}
+							value={relayArchiveHours}
+							onChange={(event) => setRelayArchiveHours(Number(event.target.value))}
+							className="w-24 rounded border px-2 py-1 outline-none"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textMain,
+								borderColor: theme.colors.border,
+							}}
+						/>
+					</label>
+				</SectionCard>
+			</div>
 
 			{/* Group Cue entries in the History panel. A Cue option, so it exists only
 			    while Maestro Cue is on. */}

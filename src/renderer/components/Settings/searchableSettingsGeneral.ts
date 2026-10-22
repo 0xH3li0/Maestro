@@ -291,6 +291,15 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['synopsis', 'debounce', 'coalesce', 'history', 'delay', 'throttle', 'idle'],
 	},
 	{
+		id: 'general-relay-archive',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Relay conversation archive',
+		description:
+			'Hours of inactivity after explicit task completion before hiding Relay tabs (24 by default, 0 disables)',
+		keywords: ['relay', 'discord', 'archive', 'conversation', 'inactivity', '24 hours'],
+	},
+	{
 		id: 'general-thinking-mode',
 		tab: 'general',
 		tabLabel: 'General',

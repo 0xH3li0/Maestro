@@ -1,3 +1,4 @@
+import { cancelRelayConversationTurn } from '../../plugins/relay-conversations';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -238,6 +239,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'process:interrupt',
 		withIpcErrorLogging(handlerOpts('interrupt'), async (sessionId: string) => {
+			if (cancelRelayConversationTurn(sessionId)) return true;
 			const processManager = requireProcessManager(getProcessManager);
 			logger.info(`Interrupting process: ${sessionId}`, LOG_CONTEXT, { sessionId });
 			return processManager.interrupt(sessionId);
@@ -248,6 +250,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'process:kill',
 		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
+			if (cancelRelayConversationTurn(sessionId)) return true;
 			const processManager = requireProcessManager(getProcessManager);
 			logger.info(`Killing process: ${sessionId}`, LOG_CONTEXT, { sessionId });
 			// Detach any interactive replay listener. A user-initiated kill

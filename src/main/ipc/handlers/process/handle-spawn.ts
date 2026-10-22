@@ -1,3 +1,4 @@
+import { acquireProviderSessionWriter } from '../../../utils/provider-session-writer';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -104,9 +105,50 @@ export async function handleProcessSpawn(
 	deps: SpawnHandlerDependencies
 ) {
 	const proofCleanup: { release?: () => void } = {};
+	const manager = requireProcessManager(deps.getProcessManager);
+	const records = () =>
+		(deps.sessionsStore?.get('sessions', []) ?? []) as Array<{
+			id: string;
+			aiTabs?: Array<{ id: string; agentSessionId?: string; relayConversation?: unknown }>;
+		}>;
+	const relayTab =
+		config.toolType !== 'terminal'
+			? records()
+					.flatMap((agent) => (agent.aiTabs ?? []).map((tab) => ({ agentId: agent.id, tab })))
+					.find(
+						({ agentId, tab }) =>
+							tab.relayConversation &&
+							(config.sessionId === `${agentId}-ai-${tab.id}` ||
+								(!!config.agentSessionId && tab.agentSessionId === config.agentSessionId))
+					)
+			: undefined;
+	// Keep ordinary desktop/automation policy with the existing renderer queue.
+	// Relay-managed conversations additionally share this host reservation.
+	const release = relayTab
+		? await acquireProviderSessionWriter(
+				config.toolType,
+				`${relayTab.agentId}-ai-${relayTab.tab.id}`,
+				config.agentSessionId
+			)
+		: () => {};
+	if (relayTab) {
+		const current = records()
+			.find((agent) => agent.id === relayTab.agentId)
+			?.aiTabs?.find((tab) => tab.id === relayTab.tab.id);
+		if (current?.agentSessionId) config = { ...config, agentSessionId: current.agentSessionId };
+	}
+	const onExit = (id: string) => {
+		if (id !== config.sessionId) return;
+		if (relayTab) manager.off('exit', onExit);
+		release();
+	};
+	if (relayTab) manager.on('exit', onExit);
 	try {
-		return await handleProcessSpawnImpl(config, deps, proofCleanup);
+		const result = await handleProcessSpawnImpl(config, deps, proofCleanup);
+		if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
+		return result;
 	} catch (error) {
+		onExit(config.sessionId);
 		try {
 			proofCleanup.release?.();
 		} catch (cleanupError) {
