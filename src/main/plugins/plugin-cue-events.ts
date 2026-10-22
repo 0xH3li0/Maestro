@@ -45,6 +45,8 @@ export interface PluginCueEventsDeps {
 	identity: PluginToolRunIdentity;
 	identityFor(pluginId: string, queued?: boolean): AuthIdentity;
 	capture(pluginId: string): PluginPrimitiveLifetime;
+	/** Exact live-child generation lookup; full invocation/consumer authority is checked separately. */
+	generation(pluginId: string): string;
 	assertAllowed(pluginId: string, topic: string, queued?: boolean): void;
 	assertReceiptCapacity(pluginId: string): void;
 	readReceipt(pluginId: string, id: string): PluginEventReceiptRow | null;
@@ -163,7 +165,7 @@ export class PluginCueEvents implements PluginCueHost {
 		if (
 			this.leases.get(lease.invocationId) !== lease ||
 			lease.pluginId !== pluginId ||
-			this.deps.capture(pluginId).generation !== lease.generation
+			this.deps.generation(pluginId) !== lease.generation
 		)
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 		this.deps.identity.resolveInvocation(pluginId, lease.invocationId).assertActive();

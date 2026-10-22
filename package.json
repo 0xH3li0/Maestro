@@ -318,6 +318,7 @@
 			]
 		},
 		"deb": {
+			"afterInstall": "build/after-install.tpl",
 			"depends": [
 				"libgtk-3-0",
 				"libnotify4",

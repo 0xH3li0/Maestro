@@ -2774,6 +2774,7 @@ app
 			identity: pluginToolRunIdentity,
 			identityFor: primitiveIdentityFor,
 			capture: capturePrimitive,
+			generation: (id) => pluginSandboxHost!.getToolGeneration(id),
 			assertAllowed: (id, topic, queued) =>
 				assertPrimitiveAllowed(id, 'events:publish', topic, queued),
 			assertReceiptCapacity: (id) => {

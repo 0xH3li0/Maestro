@@ -1120,6 +1120,8 @@ describe('authenticated durable Cue plugin source', () => {
 			let running = true;
 			let atCapacity = false;
 			let legacyHistory = false;
+			let captures = 0;
+			let generation = 'generation';
 			let currentIdentity = ident;
 			const events = new PluginCueEvents({
 				store,
@@ -1128,7 +1130,12 @@ describe('authenticated durable Cue plugin source', () => {
 					if (!running && !queued) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 					return currentIdentity;
 				},
+				generation: () => {
+					if (!running) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+					return generation;
+				},
 				capture: () => {
+					captures++;
 					if (!running) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 					return { generation: 'generation', signal: lifetime.signal, assertActive() {} };
 				},
@@ -1174,12 +1181,19 @@ describe('authenticated durable Cue plugin source', () => {
 			expect(events.list(foreign, { topic: 'fixture.received' })).toEqual([]);
 			expect(() => events.begin(foreign, { consumerId: consumer.consumerId })).toThrow();
 			const lease = events.begin(plugin, { consumerId: consumer.consumerId });
+			const capturesBeforePublish = captures;
 			const args = {
 				invocationId: lease.invocationId,
 				eventId: 'stable:1',
 				metadata: { reference: 'opaque' },
 			};
 			expect(events.publish(plugin, args).status).toBe('accepted');
+			expect(captures).toBe(capturesBeforePublish);
+			generation = 'replacement-child';
+			expect(() => events.publish(plugin, args)).toThrow(
+				expect.objectContaining({ code: 'PLUGIN_DENIED' })
+			);
+			generation = 'generation'; // A generation lookup must not construct another freshly hashed lifetime.
 			atCapacity = true;
 			expect(events.publish(plugin, args).status).toBe('duplicate');
 			expect(() => events.publish(plugin, { ...args, eventId: 'stable:2' })).toThrow(
