@@ -105,12 +105,29 @@ describe('durable Relay conversations', () => {
 		await vi.waitFor(() => expect(agent.aiTabs[0].relayConversation.status).toBe('queued'));
 		expect(finished).toBe(false);
 		agent.aiTabs[0].agentSessionId = 'desktop-resumed-provider';
+		const releaseOther = await acquireProviderSessionWriter(
+			'claude-code',
+			'independent-other-tab',
+			'desktop-resumed-provider'
+		);
 		release();
+		await new Promise(setImmediate);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+		agent.aiTabs[0].agentSessionId = 'desktop-latest-provider';
+		const releaseLatest = await acquireProviderSessionWriter(
+			'claude-code',
+			'third-tab',
+			'desktop-latest-provider'
+		);
+		releaseOther();
+		await new Promise(setImmediate);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+		releaseLatest();
 		await pending;
 		expect(deps.run).toHaveBeenLastCalledWith(
 			'agent',
 			'relay followup',
-			'desktop-resumed-provider',
+			'desktop-latest-provider',
 			expect.any(AbortSignal),
 			'relay',
 			undefined,
@@ -118,6 +135,43 @@ describe('durable Relay conversations', () => {
 			false,
 			true
 		);
+	});
+	it('cancels while reacquiring a changed provider without executing or leaking a reservation', async () => {
+		const first = await send();
+		const processId = `agent-ai-${first.tabId}`;
+		const releaseTab = await acquireProviderSessionWriter(
+			'claude-code',
+			processId,
+			first.sessionId
+		);
+		const controller = new AbortController();
+		const pending = host.send(
+			'agent',
+			'cancelled',
+			{ ...opts, messageId: 'cancel-message' },
+			controller.signal,
+			undefined,
+			() => {}
+		);
+		await vi.waitFor(() => expect(agent.aiTabs[0].relayConversation.status).toBe('queued'));
+		agent.aiTabs[0].agentSessionId = 'changed-before-abort';
+		const releaseOther = await acquireProviderSessionWriter(
+			'claude-code',
+			'other-tab',
+			'changed-before-abort'
+		);
+		releaseTab();
+		await new Promise(setImmediate);
+		controller.abort();
+		await expect(pending).rejects.toThrow(/cancel/i);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+		releaseOther();
+		const releaseAgain = await acquireProviderSessionWriter(
+			'claude-code',
+			processId,
+			'changed-before-abort'
+		);
+		releaseAgain();
 	});
 	it('serializes two messages for one conversation', async () => {
 		let resolveRun!: (value: { success: boolean; response: string; sessionId: string }) => void;

@@ -23,12 +23,15 @@ export function hasProviderSessionWriter(
 /** Reserve both identities before starting a provider turn. Hold until process close,
  * including final output reconciliation, rather than releasing on spawn or OS exit.
  * The tab key also protects a first turn that has no provider session id yet.
+ * A current-id resolver retries the entire acquisition if a preceding writer
+ * changed that identity while we waited; it must read authoritative state synchronously.
  */
 export async function acquireProviderSessionWriter(
 	provider: string,
 	processId: string,
 	providerSessionId?: string | null,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	resolveCurrentSessionId?: () => string | null | undefined
 ): Promise<() => void> {
 	const keys = [`tab:${processId}`];
 	if (providerSessionId) keys.push(`provider:${provider}:${providerSessionId}`);
@@ -72,6 +75,21 @@ export async function acquireProviderSessionWriter(
 						})
 				);
 			});
+		}
+		if (resolveCurrentSessionId) {
+			const currentId = resolveCurrentSessionId();
+			if ((currentId ?? undefined) !== (providerSessionId ?? undefined)) {
+				// Release every stale key before retrying the same global lock order.
+				// Binding alone would enqueue behind an existing writer without waiting.
+				releaseAll();
+				return acquireProviderSessionWriter(
+					provider,
+					processId,
+					currentId,
+					signal,
+					resolveCurrentSessionId
+				);
+			}
 		}
 	} catch (error) {
 		releaseAll();

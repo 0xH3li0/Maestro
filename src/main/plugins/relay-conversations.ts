@@ -290,7 +290,16 @@ export class RelayConversations {
 						agent.toolType,
 						processId,
 						mapping.providerSessionId,
-						controller.signal
+						controller.signal,
+						() => {
+							const latest = this.deps.getAgent(agentId);
+							if (!latest || latest.toolType !== agent.toolType)
+								throw new Error('Relay provider changed while waiting');
+							return (
+								(latest.aiTabs as RelayTab[] | undefined)?.find((tab) => tab.id === mapping.tabId)
+									?.agentSessionId ?? mapping.providerSessionId
+							);
+						}
 					);
 					authorize();
 					if (controller.signal.aborted) throw new Error('Relay send cancelled');

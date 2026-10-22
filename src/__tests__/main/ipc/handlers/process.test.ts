@@ -659,12 +659,14 @@ describe('process IPC handlers', () => {
 				expect.objectContaining({ agentSessionId: 'relay-first-provider' })
 			);
 			let nextStarted = false;
-			const next = acquireProviderSessionWriter('claude-code', processId, tab.agentSessionId).then(
-				(release) => {
-					nextStarted = true;
-					release();
-				}
-			);
+			const next = acquireProviderSessionWriter(
+				'claude-code',
+				'independent-other-tab',
+				tab.agentSessionId
+			).then((release) => {
+				nextStarted = true;
+				release();
+			});
 			await new Promise(setImmediate);
 			expect(nextStarted).toBe(false);
 			events.emit('exit', processId, 0);

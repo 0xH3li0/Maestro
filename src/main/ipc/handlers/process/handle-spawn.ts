@@ -112,6 +112,7 @@ export async function handleProcessSpawn(
 	const records = () =>
 		(deps.sessionsStore?.get('sessions', []) ?? []) as Array<{
 			id: string;
+			toolType?: string;
 			aiTabs?: Array<{ id: string; agentSessionId?: string; relayConversation?: unknown }>;
 		}>;
 	const relayTab =
@@ -133,7 +134,19 @@ export async function handleProcessSpawn(
 			: await acquireProviderSessionWriter(
 					config.toolType,
 					config.sessionId,
-					config.agentSessionId
+					config.agentSessionId,
+					undefined,
+					relayTab
+						? () => {
+								const owner = records().find((agent) => agent.id === relayTab.agentId);
+								if (!owner || (owner.toolType && owner.toolType !== config.toolType))
+									throw new Error('Relay provider changed while waiting');
+								return (
+									owner.aiTabs?.find((tab) => tab.id === relayTab.tab.id)?.agentSessionId ??
+									config.agentSessionId
+								);
+							}
+						: undefined
 				);
 	if (relayTab) {
 		const current = records()
