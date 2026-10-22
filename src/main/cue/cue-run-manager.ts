@@ -141,6 +141,11 @@ export interface CueRunManagerDeps {
 	getSessionSettings: (sessionId: string) => CueSettings | undefined;
 	/** Live owner and loaded runtime readiness; distinct from current plugin authority. */
 	canDrainSession?: (sessionId: string) => boolean;
+	/** Queued durable rows retained on disk after live teardown; never retries synchronously. */
+	onDurableRowsDetached?: (
+		sessionId: string,
+		entries: readonly Pick<QueuedEvent, 'persistId' | 'subscriptionName'>[]
+	) => void;
 	onCueRun: (request: {
 		runId: string;
 		sessionId: string;
@@ -910,6 +915,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					} else {
 						if (!retainAuthority()) return;
 						const sendResult = await runMaestroCliSend(resolvedTarget, result.stdout);
+						if (!retainAuthority()) return;
 						if (!sendResult.ok) {
 							throw new Error(`CLI exited with code ${sendResult.exitCode}: ${sendResult.stderr}`);
 						}
@@ -919,6 +925,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						);
 					}
 				} catch (cliError) {
+					if (!retainAuthority()) return;
 					captureException(cliError, {
 						operation: 'cue:cliOutputDelivery',
 						subscriptionName,
@@ -963,6 +970,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				if (myRootKey) activeRootKeys.delete(myRootKey);
 				drainQueue(sessionId);
 
+				// Cleanup/drain callbacks can revoke too. Fence the FIRST terminal
+				// write and status notification, not only the later chain callback.
+				retainAuthority();
 				try {
 					updateCueEventStatus(
 						runId,
@@ -1309,8 +1319,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// function returns there are zero active runs AND zero queued
 			// events - the contract callers (engine shutdown / Cue toggle
 			// off) actually need.
+			const detachedQueues = [...eventQueue];
 			eventQueue.clear();
 			deps.queuePersistence?.clearAll();
+			for (const [sessionId, queue] of detachedQueues) {
+				const durable = queue.filter((entry) => entry.persistId && isDurableCueEvent(entry.event));
+				if (durable.length) deps.onDurableRowsDetached?.(sessionId, durable);
+			}
 			for (const runId of [...activeRuns.keys()]) {
 				this.stopRun(runId);
 			}
@@ -1395,34 +1410,24 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		},
 
 		clearQueue(sessionId: string, preserveStartup = false): void {
-			if (!preserveStartup) {
-				// Mirror the in-memory clear on disk so persisted rows don't
-				// outlive the live queue they represent.
-				const queue = eventQueue.get(sessionId);
-				if (queue) {
-					for (const entry of queue) {
-						if (entry.persistId && !isDurableCueEvent(entry.event))
-							deps.queuePersistence?.remove(entry.persistId);
-					}
-				}
-				eventQueue.delete(sessionId);
-				return;
-			}
 			const queue = eventQueue.get(sessionId);
 			if (!queue) return;
-			const keep = (e: QueuedEvent) => e.event.type === 'app.startup';
+			const keep = (e: QueuedEvent) => preserveStartup && e.event.type === 'app.startup';
 			const kept = queue.filter(keep);
-			// Remove persisted rows for entries we are dropping.
+			const detached: QueuedEvent[] = [];
+			// Ordinary drops are terminal. Acknowledged durable rows remain on
+			// disk and must re-enter the engine's deferred-owner restore set.
 			for (const entry of queue) {
-				if (!keep(entry) && entry.persistId && !isDurableCueEvent(entry.event)) {
-					deps.queuePersistence?.remove(entry.persistId);
-				}
+				if (keep(entry) || !entry.persistId) continue;
+				if (isDurableCueEvent(entry.event)) detached.push(entry);
+				else deps.queuePersistence?.remove(entry.persistId);
 			}
 			if (kept.length === 0) {
 				eventQueue.delete(sessionId);
 			} else {
 				eventQueue.set(sessionId, kept);
 			}
+			if (detached.length) deps.onDurableRowsDetached?.(sessionId, detached);
 		},
 
 		retainQueue(

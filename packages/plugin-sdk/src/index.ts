@@ -2266,7 +2266,7 @@ export interface PluginReceipt {
 	status: 'accepted' | 'duplicate';
 }
 
-/** Exact canonical endpoint; no IPs, URLs, wildcards, trailing dots or localhost. */
+/** Exact DNS endpoint; no numeric/hex final label, IPs, URLs, wildcards or localhost. */
 export function pluginEndpointScope(host: unknown, port: unknown): string | undefined {
 	if (
 		typeof host !== 'string' ||
@@ -2274,6 +2274,7 @@ export function pluginEndpointScope(host: unknown, port: unknown): string | unde
 		!host.includes('.') ||
 		!host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ||
 		/^[0-9.]+$/.test(host) ||
+		/^(?:[0-9]+|0x[0-9a-f]*)$/.test(host.slice(host.lastIndexOf('.') + 1)) ||
 		host.endsWith('.localhost') ||
 		!Number.isInteger(port) ||
 		(port as number) < 1 ||

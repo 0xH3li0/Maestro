@@ -200,6 +200,10 @@ describe('generic broker and verified authority', () => {
 	it.each([
 		'localhost',
 		'127.0.0.1',
+		'0x7f.1',
+		'127.0x1',
+		'example.123',
+		'example.0xff',
 		'::1',
 		'*.example.com',
 		'EXAMPLE.com',
@@ -209,6 +213,10 @@ describe('generic broker and verified authority', () => {
 	])('rejects noncanonical endpoint %s', (host) => {
 		expect(pluginEndpointScope(host, 993)).toBeUndefined();
 	});
+	it.each(['imap2.example', '0x7f.example', '123.example'])(
+		'keeps numeric nonfinal labels in DNS endpoint %s',
+		(host) => expect(pluginEndpointScope(host, 993)).toBe(`${host}:993`)
+	);
 	it('cannot use forged contexts, foreign handles or settled runs', () => {
 		const t = transport();
 		expect(() =>

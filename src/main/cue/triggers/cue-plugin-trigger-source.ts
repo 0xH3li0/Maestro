@@ -45,7 +45,11 @@ export function createCuePluginTriggerSource(
 	let unregister: (() => void) | undefined;
 	return {
 		start() {
-			if (unregister || !host) return;
+			if (unregister) return;
+			if (!host) {
+				ctx.onLog('warn', '[CUE] Plugin source was not registered: PLUGIN_UNAVAILABLE');
+				return;
+			}
 			try {
 				unregister = host.register(ctx, source);
 			} catch (error) {

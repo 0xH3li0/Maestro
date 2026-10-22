@@ -377,6 +377,17 @@ export class CueEngine {
 				this.enabled &&
 				this.registry.has(sessionId) &&
 				deps.getSessions().some((session) => session.id === sessionId),
+			onDurableRowsDetached: (sessionId, entries) => {
+				for (const entry of entries) {
+					if (!entry.persistId) continue;
+					this.pendingPluginRestoreIds?.add(entry.persistId);
+					this.deferredPluginRestoreOwners.set(entry.persistId, {
+						sessionId,
+						subscriptionName: entry.subscriptionName,
+					});
+				}
+				// No retry here: teardown/Stop All must first finish clearing live state.
+			},
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
@@ -873,6 +884,10 @@ export class CueEngine {
 			if (this.pendingPluginRestoreIds === null) {
 				this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
 				if (this.pendingPluginRestoreIds === null) return;
+				// A failed startup snapshot excludes current-start writes. Detached
+				// queued rows explicitly rejoin; still-active accepted writes do not.
+				for (const id of this.deferredPluginRestoreOwners.keys())
+					this.pendingPluginRestoreIds.add(id);
 			}
 			const eligible = new Set(
 				[...this.pendingPluginRestoreIds].filter((id) => {

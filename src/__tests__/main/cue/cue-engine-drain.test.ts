@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { CueConfig, CueRunResult } from '../../../main/cue/cue-types';
+import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 import {
@@ -211,6 +211,104 @@ describe('CueEngine.drain', () => {
 		engine.start();
 		return { engine, exec, onLog, deps };
 	}
+
+	it.each([
+		{ action: 'remove', snapshotFailure: false },
+		{ action: 'clear', snapshotFailure: false },
+		{ action: 'clear-startup', snapshotFailure: false },
+		{ action: 'stop-all', snapshotFailure: false },
+		{ action: 'remove', snapshotFailure: true },
+		{ action: 'clear', snapshotFailure: true },
+		{ action: 'clear-startup', snapshotFailure: true },
+		{ action: 'stop-all', snapshotFailure: true },
+		{ action: 'remove-owner', snapshotFailure: true },
+		{ action: 'revoke', snapshotFailure: true },
+	])(
+		'retries only detached durable rows after $action (snapshot=$snapshotFailure)',
+		async ({ action, snapshotFailure }) => {
+			let emit: ((event: CueEvent) => number | void) | undefined;
+			let allowed = true;
+			configurePluginCueHost({
+				register(ctx) {
+					emit = ctx.emit;
+					return () => {};
+				},
+				authorize: () => allowed,
+			});
+			configsByProject.set('/p/a', {
+				subscriptions: [
+					{
+						name: 'plugin-sub',
+						event: 'plugin.event',
+						enabled: true,
+						prompt: 'work',
+						plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+					},
+				],
+				settings: { ...settings, queue_size: 4 },
+			});
+			const db = getSharedDb();
+			const read = db.getQueuedEvents.bind(db);
+			let blocked = snapshotFailure;
+			vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+				if (blocked && id === undefined) throw Error('synthetic snapshot failure');
+				return read(id);
+			});
+			let stored = true;
+			const getSessions = vi.fn(() => [alpha]);
+			const { engine, exec } = boot({ getSessions, hasStoredSession: () => stored });
+			try {
+				for (const id of ['first-live', 'second-live'])
+					expect(
+						emit!({
+							id,
+							type: 'plugin.event',
+							timestamp: new Date().toISOString(),
+							triggerName: 'plugin-sub',
+							payload: { id },
+						})
+					).toBe(1);
+				expect(exec.calls).toHaveLength(1);
+				expect(read()).toHaveLength(2);
+				if (action === 'stop-all') {
+					engine.stopAll();
+					expect(engine.getActiveRuns()).toEqual([]);
+					expect([...engine.getQueueStatus().values()]).toEqual([]);
+					await flush();
+					expect(exec.calls).toHaveLength(1); // No synchronous/microtask undo of Stop All.
+				} else if (action === 'remove' || action === 'remove-owner') {
+					if (action === 'remove-owner') {
+						stored = false;
+						getSessions.mockReturnValue([]);
+					}
+					engine.removeSession(alpha.id);
+				} else engine.clearQueue(alpha.id, action === 'clear-startup');
+				if (action === 'revoke') allowed = false;
+				blocked = false;
+				if (action === 'remove') engine.refreshSession(alpha.id, '/p/a');
+				else engine.retryPendingPluginEvents();
+				exec.finish('plugin-sub');
+				await flush();
+				await vi.advanceTimersByTimeAsync(30_000);
+				if (action === 'remove-owner' || action === 'revoke') {
+					expect(exec.calls).toHaveLength(1);
+					return;
+				}
+				expect(exec.calls).toHaveLength(2);
+				expect(exec.onCueRun.mock.calls.map(([r]) => r.event.id)).toEqual([
+					'first-live',
+					'second-live',
+				]);
+				exec.finish('plugin-sub');
+				await flush();
+				engine.retryPendingPluginEvents();
+				expect(exec.calls).toHaveLength(2);
+				expect(read()).toEqual([]);
+			} finally {
+				engine.stop();
+			}
+		}
+	);
 
 	it.each([
 		{ queueSize: 0, failure: 'none' },

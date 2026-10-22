@@ -2408,6 +2408,60 @@ describe('durable plugin admission and revocation', () => {
 			h.manager.discardInMemory();
 		}
 	);
+	it.each(['cli-await', 'cli-reject', 'release-callback', 'drain-callback'] as const)(
+		'rechecks authority before the first terminal write after %s',
+		async (phase) => {
+			vi.mocked(updateCueEventStatus).mockClear();
+			const h = harness();
+			if (phase.startsWith('cli'))
+				mockRunMaestroCliSend.mockImplementationOnce(async () => {
+					h.revoke();
+					if (phase === 'cli-reject') throw Error('private CLI diagnostic');
+					return { ok: true, exitCode: 0, stdout: '{}', stderr: '', resolvedTarget: 'target' };
+				});
+			if (phase === 'release-callback') h.deps.onAllowSleep = () => h.revoke();
+			if (phase === 'drain-callback')
+				vi.mocked(h.deps.onCueRun)
+					.mockImplementationOnce(() => h.completion.promise)
+					.mockImplementationOnce(async () => {
+						h.revoke();
+						return makeResult();
+					});
+			h.manager.execute(
+				'session-1',
+				'mail',
+				h.mail,
+				'mail-sub',
+				undefined,
+				0,
+				phase.startsWith('cli') ? { target: 'target' } : undefined
+			);
+			const runId = h.manager.getActiveRuns()[0].runId;
+			if (phase === 'drain-callback')
+				h.manager.execute('session-1', 'ordinary', createEvent(), 'ordinary-sub');
+			h.completion.resolve(makeResult({ stdout: 'private terminal payload' }));
+			await vi.waitFor(() => expect(h.deps.onRunStopped).toHaveBeenCalledTimes(1));
+			const terminal = vi.mocked(updateCueEventStatus).mock.calls.filter(([id]) => id === runId);
+			expect(terminal[0]).toEqual([
+				runId,
+				'stopped',
+				undefined,
+				expect.objectContaining({ fullOutput: null, outputExcerpt: null, errorMessage: null }),
+			]);
+			expect(JSON.stringify(terminal)).not.toContain('private terminal payload');
+			const finished = vi
+				.mocked(h.deps.onLog)
+				.mock.calls.find(
+					([, , data]) =>
+						(data as { type?: string; runId?: string })?.type === 'runFinished' &&
+						(data as { runId?: string }).runId === runId
+				);
+			expect(finished?.[2]).toMatchObject({ status: 'stopped' });
+			expect(JSON.stringify(vi.mocked(h.deps.onLog).mock.calls)).not.toContain(
+				'private CLI diagnostic'
+			);
+		}
+	);
 
 	it('discards private late results after the active run was forgotten and authority revoked', async () => {
 		const h = harness();

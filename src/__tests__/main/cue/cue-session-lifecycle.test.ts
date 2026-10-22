@@ -1181,4 +1181,48 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 			configurePluginCueHost(undefined);
 		}
 	});
+	it('warns about a missing plugin host and registers on an explicit later refresh', () => {
+		const session = createMockSession();
+		mockLoadCueConfig.mockReturnValue(
+			createMockConfig({
+				subscriptions: [
+					{
+						name: 'plugin-input',
+						event: 'plugin.event',
+						enabled: true,
+						prompt: 'work',
+						plugin: { pluginId: 'com.example.fixture', topic: 'fixture.received', config: {} },
+					},
+				],
+			})
+		);
+		configurePluginCueHost(undefined);
+		const onLog = vi.fn(),
+			register = vi.fn(() => vi.fn());
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => [session],
+			onRefreshRequested: vi.fn(),
+			onLog,
+			registry: createCueSessionRegistry(),
+			dispatchSubscription: vi.fn(),
+			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
+			clearFanInState: vi.fn(),
+		});
+		try {
+			service.initSession(session, { reason: 'system-boot' });
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				'[CUE] Plugin source was not registered: PLUGIN_UNAVAILABLE'
+			);
+			configurePluginCueHost({ register, authorize: () => true });
+			expect(register).not.toHaveBeenCalled(); // Configuration does not restart unrelated sources.
+			service.refreshSession(session.id, session.projectRoot);
+			expect(register).toHaveBeenCalledTimes(1);
+		} finally {
+			service.teardownSession(session.id);
+			configurePluginCueHost(undefined);
+		}
+	});
 });

@@ -20,7 +20,9 @@ No socket, TLS option, host object, Node import or cleartext transport is expose
 
 `net:tls` grants exact endpoint sets: comma-separated lowercase ASCII DNS-name:port entries, at
 most 16, or `none` (zero endpoints). Wildcards, IP literals, localhost, URLs and trailing dots are
-invalid. WSS and historical mail grants authorize no TLS bytes. The egress guard independently
+invalid. The final DNS label must not be decimal or hexadecimal notation (`123`, `0xff`);
+numeric nonfinal labels such as `123.example` remain valid. WSS and historical mail grants
+authorize no TLS bytes. The egress guard independently
 rejects private/loopback/link-local/metadata addresses and the host server port, pins lookup and
 uses normal certificate/SNI verification. Four streams including pending opens; 30 seconds;
 64 KiB per call; 16 write parts; 256 KiB inbound buffered; 25 MiB cumulative received and 1 MiB
@@ -103,6 +105,14 @@ The first version denies fan-out, gates and asynchronous injection-screen admiss
 check queue is not durable. It never acknowledges unsupported combinations. Generic template
 variables are `CUE_PLUGIN_ID`, `CUE_PLUGIN_TOPIC`, `CUE_PLUGIN_EVENT_ID` and JSON
 `CUE_PLUGIN_METADATA`; the latter is untrusted template input.
+
+Temporary owner teardown and queue clearing retain acknowledged queued rows on disk and report
+their IDs for deferred retry. Stop All returns with no active or queued in-memory work; while Cue
+remains enabled, a subsequent refresh/heartbeat may re-admit those retained queued rows after fresh
+source/owner/consent checks. This does not retry stopped active runs. Disabling Cue stops retries.
+Missing plugin-host configuration emits a sanitized source warning; configure the host before
+starting sources, or explicitly refresh the affected session afterwards. Configuration alone does
+not restart unrelated sources or their schedules.
 
 All failures use sanitized `PLUGIN_DENIED`, `PLUGIN_INVALID`, `PLUGIN_LIMIT`, `PLUGIN_TIMEOUT`,
 `PLUGIN_CANCELED`, `PLUGIN_UNAVAILABLE`, `PLUGIN_CONFLICT` or `PLUGIN_INTEGRITY` codes on rejected
