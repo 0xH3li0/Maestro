@@ -30,6 +30,7 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
+import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import {
 	updateAiTab,
 	updateSessionWith,
@@ -628,6 +629,47 @@ describe('restoreSession - Corruption recovery', () => {
 		const log = restored!.aiTabs[0].logs[0];
 		expect(log.text).toContain('corrupted');
 		expect(log.source).toBe('system');
+	});
+
+	// MAESTRO-16B: a tabGroups persisted as an object (not an array) slipped past
+	// every `?? []` / `|| []` default, threw inside restoreSession, and the error
+	// fallback put the raw session in the store, where the tab strip's
+	// `(session.tabGroups || []).map` threw on every render.
+	it('coerces a non-array tabGroups to an empty array instead of failing the restore', async () => {
+		const session = createMockSession({ tabGroups: { 0: 'not-a-group' } as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.state).not.toBe('error');
+		expect(restored!.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+		expect(() => buildUnifiedTabs(restored!)).not.toThrow();
+		expect(buildUnifiedTabs(restored!).map((t) => t.id)).toEqual(['tab-1']);
+	});
+
+	it('coerces non-array tab collections on the error fallback too', async () => {
+		const session = createMockSession({
+			tabGroups: {} as any,
+			unifiedTabOrder: { ai: 'tab-1' } as any,
+			// A null tab with no createdAt makes the createdAt backfill throw, which
+			// sends restoreSession down its error fallback.
+			createdAt: undefined,
+			aiTabs: [null] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.unifiedTabOrder).toEqual([]);
 	});
 
 	it('creates default tab when aiTabs is undefined', async () => {
