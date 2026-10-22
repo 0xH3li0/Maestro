@@ -1,5 +1,5 @@
 import { resetStores } from '../../helpers';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -49,6 +49,7 @@ beforeEach(() => {
 	useHeadlessActivityStore.setState({ counts: {} });
 });
 afterEach(() => {
+	vi.useRealTimers();
 	cleanup?.();
 	cleanup = undefined;
 });
@@ -156,6 +157,52 @@ describe('Relay archive and restoration', () => {
 		expect(
 			useSessionStore.getState().sessions[0].aiTabs[0].relayConversation?.completedAt
 		).toBeUndefined();
+	});
+	it('preserves completion when reading older user messages', () => {
+		tab.logs = [{ id: 'answer', source: 'stdout', timestamp: 1000, text: 'done' }];
+		cleanup = subscribeRelayConversations();
+		useSessionStore.getState().updateSession(session.id, {
+			aiTabs: [
+				{
+					...tab,
+					logs: [
+						{ id: 'historical-user', source: 'user', timestamp: 500, text: 'earlier' },
+						...tab.logs,
+					],
+				},
+			],
+		});
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].relayConversation?.completedAt).toBe(
+			1000
+		);
+		const current = useSessionStore.getState().sessions[0].aiTabs[0];
+		useSessionStore.getState().updateSession(session.id, {
+			aiTabs: [
+				{
+					...current,
+					logs: [
+						...current.logs,
+						{ id: 'new-user', source: 'user', timestamp: 2000, text: 'continue' },
+					],
+				},
+			],
+		});
+		expect(
+			useSessionStore.getState().sessions[0].aiTabs[0].relayConversation?.completedAt
+		).toBeUndefined();
+	});
+	it('restarts the archive period after deliberate reveal without losing completion', () => {
+		vi.useFakeTimers();
+		const now = 1000 + 30 * hour;
+		vi.setSystemTime(now);
+		sweepRelayConversations(now);
+		const revealed = revealAiTab(useSessionStore.getState().sessions[0], tab.id);
+		useSessionStore.setState({ sessions: [revealed] });
+		expect(revealed.aiTabs[0].relayConversation?.completedAt).toBe(1000);
+		sweepRelayConversations(now + 24 * hour - 1);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].hidden).toBe(false);
+		sweepRelayConversations(now + 24 * hour);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].hidden).toBe(true);
 	});
 	it('adopts origin without clearing an already active desktop writer', () => {
 		tab.state = 'busy';

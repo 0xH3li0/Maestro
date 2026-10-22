@@ -800,6 +800,7 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 					response: null,
 					sessionId: null,
 					error: 'Agent run timed out or was cancelled',
+					executionStarted: false,
 				});
 				expect(spawn).not.toHaveBeenCalled();
 			} else {

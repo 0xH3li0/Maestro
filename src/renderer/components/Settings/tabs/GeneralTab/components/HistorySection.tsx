@@ -27,6 +27,7 @@ export function HistorySection({
 }: HistorySectionProps) {
 	const relayArchiveHours = useSettingsStore((s) => s.relayArchiveHours);
 	const setRelayArchiveHours = useSettingsStore((s) => s.setRelayArchiveHours);
+	const pluginsEnabled = useSettingsStore((s) => s.encoreFeatures.plugins);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	return (
 		<>
@@ -82,32 +83,34 @@ export function HistorySection({
 					</div>
 				)}
 			</div>
-			<div data-setting-id="general-relay-archive">
-				<SettingsSectionHeading
-					icon={Archive}
-					description="Hide completed Relay conversations after inactivity. Unread, starred, selected, queued or running conversations and drafts stay open. History and provider context are kept."
-				>
-					Relay conversation archive
-				</SettingsSectionHeading>
-				<SectionCard theme={theme}>
-					<label className="block text-sm">
-						Hours after explicit task completion (0 disables)
-						<input
-							type="number"
-							min={0}
-							max={8760}
-							value={relayArchiveHours}
-							onChange={(event) => setRelayArchiveHours(Number(event.target.value))}
-							className="mt-2 w-full rounded border px-2 py-1 outline-none"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textMain,
-								borderColor: theme.colors.border,
-							}}
-						/>
-					</label>
-				</SectionCard>
-			</div>
+			{pluginsEnabled && (
+				<div data-setting-id="general-relay-archive">
+					<SettingsSectionHeading
+						icon={Archive}
+						description="Hide completed Relay conversations after inactivity. Unread, starred, selected, queued or running conversations and drafts stay open. History and provider context are kept."
+					>
+						Relay conversation archive
+					</SettingsSectionHeading>
+					<SectionCard theme={theme}>
+						<label className="block text-sm">
+							Hours after explicit task completion (0 disables)
+							<input
+								type="number"
+								min={0}
+								max={8760}
+								value={relayArchiveHours}
+								onChange={(event) => setRelayArchiveHours(Number(event.target.value))}
+								className="mt-2 w-full rounded border px-2 py-1 outline-none"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+									borderColor: theme.colors.border,
+								}}
+							/>
+						</label>
+					</SectionCard>
+				</div>
+			)}
 		</>
 	);
 }

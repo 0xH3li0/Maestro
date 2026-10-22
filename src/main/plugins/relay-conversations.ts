@@ -43,6 +43,8 @@ interface Mapping {
 	tabId: string;
 	providerSessionId?: string;
 	interrupted?: boolean;
+	/** False until the first tab materialization succeeds; absent on legacy completed restores. */
+	materialized?: boolean;
 }
 interface Receipt {
 	promptHash: string;
@@ -165,6 +167,7 @@ export class RelayConversations {
 			conversationId: opts.conversationId,
 			tabId: matches[0]?.id ?? generateUUID(),
 			providerSessionId: opts.sessionId,
+			materialized: false,
 		};
 		this.write(key, mapping);
 		return mapping;
@@ -217,6 +220,10 @@ export class RelayConversations {
 					: [...(agent.unifiedTabOrder ?? []), { type: 'ai', id: tab.id }],
 			};
 		});
+		if (mapping.materialized === false) {
+			mapping.materialized = true;
+			this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
+		}
 	}
 	async send(
 		agentId: string,
@@ -323,7 +330,8 @@ export class RelayConversations {
 					);
 					this.assertGeneration(generation);
 					if (result.sessionId) mapping.providerSessionId = result.sessionId;
-					if (mapping.providerSessionId) mapping.interrupted = false;
+					if (mapping.providerSessionId || result.executionStarted === false)
+						mapping.interrupted = false;
 					this.write(conversationKey, mapping);
 					const returned: SendResult = {
 						...result,
@@ -397,11 +405,11 @@ export class RelayConversations {
 			const tab = (this.deps.getAgent(agentId)?.aiTabs as RelayTab[] | undefined)?.find(
 				(t) => t.id === mapping.tabId
 			);
-			if (!known && !tab) {
+			if ((!known || mapping.materialized === false) && !tab) {
 				const logs = (await this.deps.loadTranscript?.(agentId, providerSessionId)) ?? [];
 				this.assertGeneration(generation);
 				this.patch(mapping, { logs }, {});
-			} else if (!known && tab) this.patch(mapping, {}, {});
+			} else if ((!known || mapping.materialized === false) && tab) this.patch(mapping, {}, {});
 			await this.deps.flush?.();
 			return {
 				success: true,

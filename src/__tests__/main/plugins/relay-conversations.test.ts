@@ -73,6 +73,53 @@ describe('durable Relay conversations', () => {
 		expect(agent.activeTabId).toBe('desktop');
 		expect(agent.activeFileTabId).toBe('file');
 	});
+	it('retries a failed first transcript restore and preserves later manual closes', async () => {
+		deps.loadTranscript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('SSH unavailable'))
+			.mockResolvedValue([]);
+		await expect(host.restore('agent', opts.conversationId, 'provider')).rejects.toThrow(
+			'SSH unavailable'
+		);
+		expect(agent.aiTabs).toHaveLength(0);
+		host = new RelayConversations(deps);
+		const restored = await host.restore('agent', opts.conversationId, 'provider');
+		expect(agent.aiTabs).toHaveLength(1);
+		expect(agent.aiTabs[0].id).toBe(restored.tabId);
+		agent.aiTabs = [];
+		await host.restore('agent', opts.conversationId, 'provider');
+		expect(agent.aiTabs).toHaveLength(0);
+		expect(deps.loadTranscript).toHaveBeenCalledTimes(2);
+	});
+	it('allows a new message after proven no-start failure but never reexecutes its receipt', async () => {
+		vi.mocked(deps.run).mockResolvedValueOnce({
+			success: false,
+			response: null,
+			sessionId: null,
+			error: 'CLI unavailable',
+			executionStarted: false,
+		});
+		await expect(send()).resolves.toMatchObject({ success: false });
+		host = new RelayConversations(deps);
+		await expect(send()).resolves.toMatchObject({ replayed: true, success: false });
+		await expect(send('retry after fixing CLI', { messageId: 'message-2' })).resolves.toMatchObject(
+			{ success: true }
+		);
+		expect(deps.run).toHaveBeenCalledTimes(2);
+	});
+	it('retains the uncertainty fence when provider work may have started without a session id', async () => {
+		vi.mocked(deps.run).mockResolvedValueOnce({
+			success: false,
+			response: null,
+			sessionId: null,
+			error: 'lost provider connection',
+		});
+		await send();
+		await expect(send('next', { messageId: 'message-2' })).rejects.toThrow(
+			'Previous Relay execution is uncertain'
+		);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
 	it('keeps two Relay threads and their provider contexts separate', async () => {
 		const [one, two] = await Promise.all([
 			send(),

@@ -1484,6 +1484,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			success: true,
 			response: `answer:${prompt}`,
 			sessionId: sessionId ?? 'provider-relay',
+			executionStarted: false,
+			usageStats: { internal: true },
+			toolReceipts: [{ internal: 'receipt' }],
 		}));
 		const h = buildHostCallHandlers(
 			makeDeps({
@@ -1516,7 +1519,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			sessionId: 'provider-relay',
 			error: undefined,
 		});
-		await h['agents.send']!('other.plugin', { agentId: 'a', prompt: 'ordinary plugin' });
+		expect(
+			await h['agents.send']!('other.plugin', { agentId: 'a', prompt: 'ordinary plugin' })
+		).toEqual({ success: true, response: 'answer:ordinary plugin', sessionId: 'provider-relay' });
 		expect(sendAgent).toHaveBeenLastCalledWith(
 			'a',
 			'ordinary plugin',
@@ -3041,7 +3046,11 @@ describe('Relay desktop transport authorization', () => {
 			prompt: 'hello',
 			opts: { conversationId: 'thread', messageId: 'message', sessionId: 'provider' },
 		};
-		await handlers['agents.send']!('sh.maestro.relay', params);
+		expect(await handlers['agents.send']!('sh.maestro.relay', params)).toMatchObject({
+			success: true,
+			conversationId: 'thread',
+			tabId: agent.aiTabs[0].id,
+		});
 		await expect(handlers['agents.send']!('sh.maestro.relay', params)).resolves.toMatchObject({
 			replayed: true,
 		});

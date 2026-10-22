@@ -1708,7 +1708,17 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
 							}
 						}
-						return { ...result, success, response, sessionId, ...(error ? { error } : {}) };
+						return {
+							success,
+							response,
+							sessionId,
+							...(error ? { error } : {}),
+							...(relayConversation && {
+								conversationId: 'conversationId' in result ? result.conversationId : undefined,
+								tabId: 'tabId' in result ? result.tabId : undefined,
+								...('replayed' in result && result.replayed ? { replayed: true } : {}),
+							}),
+						};
 					} finally {
 						runs.delete(controller);
 						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {

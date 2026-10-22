@@ -70,6 +70,7 @@ export function createPluginHeadlessAgentRunner(
 		) {
 			return {
 				success: false,
+				executionStarted: false,
 				response: null,
 				sessionId: null,
 				error: receiptToolId
@@ -87,6 +88,7 @@ export function createPluginHeadlessAgentRunner(
 		if (local && !detection?.available) {
 			return {
 				success: false,
+				executionStarted: false,
 				response: null,
 				sessionId: null,
 				error: `Agent CLI unavailable: ${agent.toolType}`,
@@ -108,6 +110,7 @@ export function createPluginHeadlessAgentRunner(
 			if (signal?.aborted) {
 				return {
 					success: false,
+					executionStarted: false,
 					response: null,
 					sessionId: null,
 					error: 'Agent run timed out or was cancelled',

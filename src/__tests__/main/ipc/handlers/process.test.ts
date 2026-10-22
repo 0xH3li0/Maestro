@@ -608,6 +608,11 @@ describe('process IPC handlers', () => {
 				);
 				await vi.waitFor(() => expect(owner.aiTabs[0].relayConversation?.status).toBe('queued'));
 				expect(run).not.toHaveBeenCalled();
+				mockProcessManager.get.mockReturnValue({ id: processId });
+				mockProcessManager.interrupt.mockReturnValue(true);
+				expect(await handlers.get('process:interrupt')!({}, processId)).toBe(true);
+				expect(mockProcessManager.interrupt).toHaveBeenCalledWith(processId);
+				expect(owner.aiTabs[0].relayConversation?.status).toBe('queued');
 				events.emit('exit', processId, 0);
 				await pending;
 				expect(run).toHaveBeenCalledTimes(1);
@@ -615,6 +620,68 @@ describe('process IPC handlers', () => {
 				events.emit('exit', processId, 0);
 				fs.rmSync(baseDir, { recursive: true, force: true });
 			}
+		});
+		it.each(['process:interrupt', 'process:kill'])(
+			'cancels a desktop writer wait on %s before any provider spawn',
+			async (verb) => {
+				writerGate.enabled = true;
+				const processId = `cancel-wait-${verb}`;
+				const release = await acquireProviderSessionWriter(
+					'codex',
+					'independent-cli',
+					'held-provider'
+				);
+				const pending = handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: processId,
+						agentSessionId: 'held-provider',
+						toolType: 'codex',
+						cwd: '/test',
+						command: 'codex',
+						args: [],
+					}
+				);
+				const outcome = pending.then(
+					() => null,
+					(error: Error) => error
+				);
+				await new Promise(setImmediate);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(await handlers.get(verb)!({}, processId)).toBe(true);
+				release();
+				await outcome;
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				(await acquireProviderSessionWriter('codex', processId, 'held-provider'))();
+			}
+		);
+		it('cancels a desktop turn stopped during asynchronous preflight', async () => {
+			let resolveAgent!: (agent: unknown) => void;
+			mockAgentDetector.getAgent.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveAgent = resolve;
+					})
+			);
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'cancel-preflight',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: [],
+				}
+			);
+			const outcome = pending.then(
+				() => null,
+				(error: Error) => error
+			);
+			await vi.waitFor(() => expect(resolveAgent).toBeDefined());
+			expect(await handlers.get('process:interrupt')!({}, 'cancel-preflight')).toBe(true);
+			resolveAgent({ id: 'codex', path: '/usr/bin/codex', requiresPty: false });
+			await outcome;
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 		it('waits for Relay, resumes its first provider id and retains the lease through close', async () => {
 			writerGate.enabled = true;

@@ -104,9 +104,19 @@ export function subscribeRelayConversations(
 					old.logs === tab.logs
 				)
 					continue;
-				const newUserInput = tab.logs.some(
-					(log) => log.source === 'user' && !old.logs.some((entry) => entry.id === log.id)
-				);
+				const previousIds = new Set(old.logs.map((entry) => entry.id));
+				const tail = old.logs.at(-1);
+				const tailIndex = tail ? tab.logs.findIndex((entry) => entry.id === tail.id) : -1;
+				// Backfill prepends history; a replaced history window is not a submitted turn.
+				if (tail && tailIndex < 0) continue;
+				const newUserInput = tab.logs
+					.slice(tailIndex + 1)
+					.some(
+						(log) =>
+							log.source === 'user' &&
+							!previousIds.has(log.id) &&
+							log.timestamp >= Math.max(tail?.timestamp ?? 0, relay.lastActivityAt)
+					);
 				if (!newUserInput) continue;
 				updateSessionWith(session.id, (current) => ({
 					...current,

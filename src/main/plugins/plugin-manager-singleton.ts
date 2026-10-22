@@ -21,6 +21,8 @@ export interface HeadlessAgentReply {
 	response: string | null;
 	sessionId: string | null;
 	error?: string;
+	/** Host-only: false proves a returned preflight failure started no provider work. */
+	executionStarted?: boolean;
 	usageStats?: import('../../shared/types').UsageStats;
 	/** Present only for an authenticated CLI run that requested one tool ID. */
 	toolReceipts?: PluginToolReceipt[];

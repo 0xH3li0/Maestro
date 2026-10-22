@@ -102,7 +102,11 @@ export function revealAiTab(session: Session, tabId: string): Session {
 						...t,
 						hidden: false,
 						...(t.relayConversation && {
-							relayConversation: { ...t.relayConversation, archivedAt: undefined },
+							relayConversation: {
+								...t.relayConversation,
+								archivedAt: undefined,
+								lastActivityAt: Date.now(),
+							},
 						}),
 					}
 				: t
