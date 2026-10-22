@@ -180,6 +180,31 @@ import { resolveEffortLevel } from '../../../shared/modelTiers';
 const hostPlatform = process.platform;
 
 describe('agent-spawner', () => {
+	it.each(['claude-code', 'codex'] as const)(
+		'rejects invalid idle supervision before %s can start a child',
+		async (provider) => {
+			const onProcessStarted = vi.fn();
+			for (const timeoutMs of [undefined, 0, -1, NaN, Infinity]) {
+				await expect(
+					spawnAgent(provider, '/project', 'prompt', undefined, {
+						timeoutMs,
+						idle: { warnMs: 1, idleMs: 2, toolMs: 3 },
+						onProcessStarted,
+					})
+				).rejects.toThrow('Invalid headless idle profile');
+			}
+			await expect(
+				spawnAgent(provider, '/project', 'prompt', undefined, {
+					timeoutMs: 100,
+					idle: { warnMs: 3, idleMs: 2, toolMs: 3 },
+					onProcessStarted,
+				})
+			).rejects.toThrow('Invalid headless idle profile');
+			expect(onProcessStarted).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		}
+	);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Reset mock child emitter for each test

@@ -56,7 +56,7 @@ import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
 } from '../../shared/maestro-lib/launch/agent-args';
-import { superviseAgentProcess } from './agent-process-supervisor';
+import { superviseAgentProcess, assertHeadlessIdleProfile } from './agent-process-supervisor';
 import {
 	CODEX_STARTUP_TIMEOUT_MS,
 	type HeadlessIdleProfile,
@@ -1753,6 +1753,7 @@ export async function spawnAgent(
 	agentSessionId?: string,
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
+	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
 	// Effort fallback and asynchronous launch planning share one absolute ceiling.
 	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
 	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options, deadlineAt);

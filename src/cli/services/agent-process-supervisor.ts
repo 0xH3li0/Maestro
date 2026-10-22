@@ -15,6 +15,26 @@ import {
 } from '../../shared/maestro-lib/control/termination';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 
+/** Validate before process creation; the supervisor repeats this defensive boundary. */
+export function assertHeadlessIdleProfile(
+	profile: HeadlessIdleProfile | undefined,
+	timeoutMs?: number
+): void {
+	if (
+		profile &&
+		(!timeoutMs ||
+			timeoutMs <= 0 ||
+			!Number.isFinite(timeoutMs) ||
+			![profile.warnMs, profile.idleMs, profile.toolMs].every(
+				(value) => Number.isFinite(value) && value > 0
+			) ||
+			profile.warnMs >= profile.idleMs ||
+			profile.toolMs < profile.idleMs)
+	) {
+		throw new Error('Invalid headless idle profile');
+	}
+}
+
 export function superviseAgentProcess(
 	child: ChildProcess,
 	options: {
@@ -48,18 +68,7 @@ export function superviseAgentProcess(
 	const seenText = new Set<string>();
 	const usage = new Map<string, number[]>();
 	const profile = options.idle ? { ...options.idle } : undefined;
-	if (
-		profile &&
-		(!options.timeoutMs ||
-			!Number.isFinite(options.timeoutMs) ||
-			![profile.warnMs, profile.idleMs, profile.toolMs].every(
-				(value) => Number.isFinite(value) && value > 0
-			) ||
-			profile.warnMs >= profile.idleMs ||
-			profile.toolMs < profile.idleMs)
-	) {
-		throw new Error('Invalid headless idle profile');
-	}
+	assertHeadlessIdleProfile(profile, options.timeoutMs);
 	let closeDeadline: ReturnType<typeof setTimeout> | undefined;
 
 	const forceStop = (): void => {
