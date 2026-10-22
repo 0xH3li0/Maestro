@@ -946,6 +946,11 @@ Organize agents into groups for better project management:
 - Right-click an agent → **Move to Group** → Select target group
 - Or drag-and-drop agents between groups
 
+**Adding agents to a group:** right-click the group header.
+
+- **New Agent in Group...** creates an agent in that group.
+- **Import Agent...**, right below it, imports an agent bundle (from **Export Agent...**) into that group.
+
 **Collapsing/Expanding:**
 
 - Click the group header to collapse or expand
@@ -969,6 +974,8 @@ Right-click any agent for quick actions. The menu is headed by the name of the a
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
+- **Duplicate...** - Create a new agent with the same settings
+- **Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window
