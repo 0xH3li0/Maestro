@@ -12,6 +12,7 @@ export interface RelayLedgerLimits {
 	responseBytes: number;
 	responseCount: number;
 	valueBytes: number;
+	pages: number;
 }
 export const RELAY_LEDGER_LIMITS: Readonly<RelayLedgerLimits> = Object.freeze({
 	messages: 1_000_000,
@@ -19,6 +20,7 @@ export const RELAY_LEDGER_LIMITS: Readonly<RelayLedgerLimits> = Object.freeze({
 	responseBytes: 32 * 1024 * 1024,
 	responseCount: 256,
 	valueBytes: 256 * 1024,
+	pages: 65536,
 });
 interface Row {
 	key: string;
@@ -31,6 +33,7 @@ interface Row {
 interface Checkpoint {
 	key: string;
 	root: string;
+	pending?: { root: string; epoch: number };
 }
 
 /** Owns one connection per synchronous operation: no open handle survives app shutdown.
@@ -42,6 +45,7 @@ export class RelayLedger {
 	private readonly limits: RelayLedgerLimits;
 	private failed = false;
 	private readonly empty: string[] = [];
+	private readonly turnReserveBytes = 2 * 1024 * 1024;
 	constructor(
 		private readonly baseDir: string,
 		private readonly anchor: AnchorStore,
@@ -180,7 +184,10 @@ export class RelayLedger {
 				!/^[0-9a-f]{64}$/.test(checkpoint.key) ||
 				!/^[0-9a-f]{64}$/.test(checkpoint.root) ||
 				!Number.isSafeInteger(current.epoch) ||
-				current.epoch < 0
+				current.epoch < 0 ||
+				(checkpoint.pending !== undefined &&
+					(!/^[0-9a-f]{64}$/.test(checkpoint.pending.root) ||
+						checkpoint.pending.epoch !== current.epoch + 1))
 			)
 				throw Error('Relay receipt checkpoint invalid');
 			db = new Database(this.file);
@@ -188,7 +195,7 @@ export class RelayLedger {
 				throw Error('Relay receipt database page size unsupported');
 			db.pragma('journal_mode = WAL');
 			db.pragma('synchronous = FULL');
-			db.pragma('max_page_count = 65536');
+			db.pragma(`max_page_count = ${this.limits.pages}`);
 			db.exec(`CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,root TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY,kind TEXT NOT NULL,value TEXT NOT NULL,proof TEXT NOT NULL,agent_id TEXT,provider_id TEXT,bucket INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS relay_bucket ON entries(bucket);
@@ -202,8 +209,29 @@ export class RelayLedger {
 				| undefined;
 			if (!meta && current.epoch === 0 && checkpoint.root === this.empty[0])
 				db.prepare('INSERT INTO meta VALUES (1,0,?)').run(checkpoint.root);
-			else if (!meta || meta.epoch !== current.epoch || meta.root !== checkpoint.root)
+			else if (
+				!meta ||
+				!(
+					(meta.epoch === current.epoch && meta.root === checkpoint.root) ||
+					(checkpoint.pending &&
+						meta.epoch === checkpoint.pending.epoch &&
+						meta.root === checkpoint.pending.root)
+				)
+			)
 				throw Error('Relay receipt rollback detected');
+			if (checkpoint.pending) {
+				// A prepared transition was never acknowledged. Recover exactly its base or target;
+				// stable checkpoints never accept their predecessor. No provider can start before ACK.
+				const recovered = meta ?? { epoch: current.epoch, root: checkpoint.root };
+				const stable = {
+					installSecret: JSON.stringify({ key: checkpoint.key, root: recovered.root }),
+					epoch: recovered.epoch,
+				};
+				this.anchor.write(stable);
+				if (canonicalJson(this.anchor.read()) !== canonicalJson(stable))
+					throw Error('Relay receipt checkpoint recovery failed');
+				return action(db, { key: checkpoint.key, root: recovered.root }, recovered.epoch);
+			}
 			return action(db, checkpoint, current.epoch);
 		} finally {
 			db?.close();
@@ -254,28 +282,68 @@ export class RelayLedger {
 		if (prior && JSON.parse(prior).conversationId !== conversationId)
 			throw Error('Provider session already maps to another Relay conversation');
 	}
-	private mutate(key: string, value: string | null): void {
+	private availableBytes(db: Database.Database): number {
+		return (
+			(this.limits.pages -
+				Number(db.pragma('page_count', { simple: true })) +
+				Number(db.pragma('freelist_count', { simple: true }))) *
+			4096
+		);
+	}
+	private ensureCapacity(db: Database.Database, inflight: number): void {
+		const required = inflight * this.turnReserveBytes;
+		for (
+			let dropped = 0;
+			this.availableBytes(db) < required && dropped < this.limits.responseCount;
+			dropped++
+		) {
+			const oldest = db.prepare('SELECT key FROM responses ORDER BY seq LIMIT 1').get() as
+				| { key: string }
+				| undefined;
+			if (!oldest) break;
+			db.prepare('DELETE FROM responses WHERE key=?').run(oldest.key);
+		}
+		if (this.availableBytes(db) < required)
+			throw Error('Relay physical outcome capacity reached; new admission refused');
+	}
+	/** Essential rows commit together. Two MiB per in-flight turn stays unavailable to
+	 * other admissions/cache writes until its bounded outcome, mapping and binding commit.
+	 * This exceeds their three 64KiB metadata rows plus bounded Merkle/index splits.
+	 * Message count is an upper bound; the physical page budget can refuse earlier.
+	 * This reserves SQLite pages, not OS disk space or keyring availability. */
+	private mutate(changes: { key: string; value: string | null }[]): void {
+		const bodies: { key: string; body: string }[] = [];
 		this.use((db, checkpoint, epoch) => {
 			if (epoch >= Number.MAX_SAFE_INTEGER) throw Error('Relay receipt checkpoint exhausted');
-			const old = this.verify(db, checkpoint, key);
-			let kind = '',
-				stored = value,
-				body: string | undefined,
-				agentId: string | null = null,
-				providerId: string | null = null;
-			if (value !== null) {
-				const parsed = JSON.parse(value);
-				kind =
-					typeof parsed.tabId === 'string' && typeof parsed.agentId === 'string'
-						? 'mapping'
-						: parsed.providerBinding === true
-							? 'binding'
-							: 'receipt';
-				if (kind === 'mapping') {
-					agentId = parsed.agentId;
-					providerId = parsed.providerSessionId ?? null;
-				} else if (parsed.result) {
-					body = typeof parsed.result.response === 'string' ? parsed.result.response : undefined;
+			const countsRow = this.verify(db, checkpoint, 'system:counts');
+			const counts: Record<string, number> = countsRow ? JSON.parse(countsRow.value) : {};
+			const rows = changes.map(({ key, value }) => {
+				const old = this.verify(db, checkpoint, key);
+				const prior = old ? JSON.parse(old.value) : {};
+				const parsed = value === null ? {} : JSON.parse(value);
+				const kind =
+					value === null
+						? (old?.kind ?? '')
+						: typeof parsed.tabId === 'string' && typeof parsed.agentId === 'string'
+							? 'mapping'
+							: parsed.providerBinding === true
+								? 'binding'
+								: 'receipt';
+				if (old && value !== null && old.kind !== kind)
+					throw Error('Relay ledger entry kind conflict');
+				if (old) counts[old.kind] = (counts[old.kind] ?? 0) - 1;
+				if (value !== null) counts[kind] = (counts[kind] ?? 0) + 1;
+				if (old?.kind === 'receipt' && prior.providerReservation === true) {
+					counts.reservations = (counts.reservations ?? 0) - 1;
+					if (!prior.result) counts.inflight = (counts.inflight ?? 0) - 1;
+				}
+				if (kind === 'receipt' && value !== null && parsed.providerReservation === true) {
+					counts.reservations = (counts.reservations ?? 0) + 1;
+					if (!parsed.result) counts.inflight = (counts.inflight ?? 0) + 1;
+				}
+				if (kind === 'receipt' && parsed.result) {
+					const body =
+						typeof parsed.result.response === 'string' ? parsed.result.response : undefined;
 					parsed.result = {
 						success: parsed.result.success === true,
 						response: null,
@@ -286,68 +354,132 @@ export class RelayLedger {
 							? { conversationId: parsed.result.conversationId }
 							: {}),
 					};
-					if (body && Buffer.byteLength(body) <= this.limits.valueBytes)
+					if (body !== undefined && Buffer.byteLength(body) <= this.limits.valueBytes) {
 						parsed.responseProof = this.digest(checkpoint, key, 'response', body);
-					else body = undefined;
-				}
-				stored = JSON.stringify(parsed);
-				if (Buffer.byteLength(stored) > 64 * 1024) throw Error('Relay ledger metadata too large');
-			}
-			const countsRow = this.verify(db, checkpoint, 'system:counts');
-			const counts: Record<string, number> = countsRow ? JSON.parse(countsRow.value) : {};
-			if (old && old.kind !== kind && value !== null)
-				throw Error('Relay ledger entry kind conflict');
-			if (!old && value !== null) {
-				if (
-					(counts[kind] ?? 0) >= (kind === 'receipt' ? this.limits.messages : this.limits.mappings)
-				)
-					throw Error('Relay receipt capacity reached; new admission refused');
-				counts[kind] = (counts[kind] ?? 0) + 1;
-			} else if (old && value === null) counts[old.kind] = (counts[old.kind] ?? 0) - 1;
-			db.transaction(() => {
-				let root = checkpoint.root;
-				if (stored === null) {
-					db.prepare('DELETE FROM entries WHERE key=?').run(key);
-					db.prepare('DELETE FROM responses WHERE key=?').run(key);
-				} else {
-					const proof = this.digest(checkpoint, key, kind, stored);
-					db.prepare(
-						'INSERT INTO entries VALUES (?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET kind=excluded.kind,value=excluded.value,proof=excluded.proof,agent_id=excluded.agent_id,provider_id=excluded.provider_id,bucket=excluded.bucket'
-					).run(key, kind, stored, proof, agentId, providerId, parseInt(this.route(key), 2));
-					if (body !== undefined)
-						db.prepare(
-							'INSERT INTO responses VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,bytes=excluded.bytes,seq=excluded.seq'
-						).run(key, body, Buffer.byteLength(body), epoch + 1);
-					else db.prepare('DELETE FROM responses WHERE key=?').run(key);
-					let total = db
-						.prepare('SELECT COUNT(*) AS n,COALESCE(SUM(bytes),0) AS bytes FROM responses')
-						.get() as { n: number; bytes: number };
-					while (total.n > this.limits.responseCount || total.bytes > this.limits.responseBytes) {
-						const oldest = db
-							.prepare('SELECT key,bytes FROM responses ORDER BY seq LIMIT 1')
-							.get() as { key: string; bytes: number };
-						db.prepare('DELETE FROM responses WHERE key=?').run(oldest.key);
-						total = { n: total.n - 1, bytes: total.bytes - oldest.bytes };
+						bodies.push({ key, body });
 					}
 				}
-				root = this.updateTree(db, key);
+				const stored = value === null ? null : JSON.stringify(parsed);
+				if (stored !== null && Buffer.byteLength(stored) > 64 * 1024)
+					throw Error('Relay ledger metadata too large');
+				return {
+					key,
+					kind,
+					stored,
+					agentId: kind === 'mapping' ? parsed.agentId : null,
+					providerId: kind === 'mapping' ? (parsed.providerSessionId ?? null) : null,
+				};
+			});
+			if (
+				(counts.receipt ?? 0) > this.limits.messages ||
+				(counts.mapping ?? 0) > this.limits.mappings ||
+				(counts.binding ?? 0) + (counts.reservations ?? 0) > this.limits.mappings
+			)
+				throw Error('Relay receipt capacity reached; new admission refused');
+			let root = checkpoint.root;
+			db.transaction(() => {
+				const current = this.anchor.read();
+				const meta = db.prepare('SELECT epoch,root FROM meta WHERE id=1').get() as {
+					epoch: number;
+					root: string;
+				};
+				if (
+					!current ||
+					current.epoch !== epoch ||
+					canonicalJson(JSON.parse(current.installSecret)) !== canonicalJson(checkpoint) ||
+					meta.epoch !== epoch ||
+					meta.root !== checkpoint.root
+				)
+					throw Error('Relay receipt writer changed before commit; admission refused');
+				this.ensureCapacity(db, counts.inflight ?? 0);
+				for (const { key, kind, stored, agentId, providerId } of rows) {
+					if (stored === null) {
+						db.prepare('DELETE FROM entries WHERE key=?').run(key);
+						db.prepare('DELETE FROM responses WHERE key=?').run(key);
+					} else {
+						const proof = this.digest(checkpoint, key, kind, stored);
+						db.prepare(
+							'INSERT INTO entries VALUES (?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET kind=excluded.kind,value=excluded.value,proof=excluded.proof,agent_id=excluded.agent_id,provider_id=excluded.provider_id,bucket=excluded.bucket'
+						).run(key, kind, stored, proof, agentId, providerId, parseInt(this.route(key), 2));
+					}
+					root = this.updateTree(db, key);
+				}
 				const countValue = JSON.stringify(counts),
 					countKey = 'system:counts';
-				const countProof = this.digest(checkpoint, countKey, 'system', countValue);
 				db.prepare(
 					'INSERT INTO entries VALUES (?,?,?,?,NULL,NULL,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,proof=excluded.proof'
-				).run(countKey, 'system', countValue, countProof, parseInt(this.route(countKey), 2));
+				).run(
+					countKey,
+					'system',
+					countValue,
+					this.digest(checkpoint, countKey, 'system', countValue),
+					parseInt(this.route(countKey), 2)
+				);
 				root = this.updateTree(db, countKey);
+				this.ensureCapacity(db, counts.inflight ?? 0);
 				db.prepare('UPDATE meta SET epoch=?,root=? WHERE id=1').run(epoch + 1, root);
-				const next = { installSecret: JSON.stringify({ ...checkpoint, root }), epoch: epoch + 1 };
-				this.anchor.write(next);
-				if (canonicalJson(this.anchor.read()) !== canonicalJson(next))
+				const prepared = {
+					installSecret: JSON.stringify({
+						key: checkpoint.key,
+						root: checkpoint.root,
+						pending: { root, epoch: epoch + 1 },
+					}),
+					epoch,
+				};
+				this.anchor.write(prepared);
+				if (canonicalJson(this.anchor.read()) !== canonicalJson(prepared))
 					throw Error('Relay receipt checkpoint write failed');
 			})();
+			const next = {
+				installSecret: JSON.stringify({ key: checkpoint.key, root }),
+				epoch: epoch + 1,
+			};
+			this.anchor.write(next);
+			if (canonicalJson(this.anchor.read()) !== canonicalJson(next))
+				throw Error('Relay receipt checkpoint finalize failed');
 		});
+		// The response cache is not authority. It cannot prevent essential outcome ACK.
+		for (const { key, body } of bodies) {
+			try {
+				this.use((db, checkpoint, epoch) =>
+					db.transaction(() => {
+						const countsRow = this.verify(db, checkpoint, 'system:counts');
+						const counts = countsRow ? JSON.parse(countsRow.value) : {};
+						db.prepare('DELETE FROM responses WHERE key=?').run(key);
+						let total = db
+							.prepare('SELECT COUNT(*) AS n,COALESCE(SUM(bytes),0) AS bytes FROM responses')
+							.get() as { n: number; bytes: number };
+						while (
+							total.n &&
+							(total.n >= this.limits.responseCount ||
+								total.bytes + Buffer.byteLength(body) > this.limits.responseBytes)
+						) {
+							const oldest = db
+								.prepare('SELECT key,bytes FROM responses ORDER BY seq LIMIT 1')
+								.get() as { key: string; bytes: number };
+							db.prepare('DELETE FROM responses WHERE key=?').run(oldest.key);
+							total = { n: total.n - 1, bytes: total.bytes - oldest.bytes };
+						}
+						if (Buffer.byteLength(body) > this.limits.responseBytes) return;
+						db.prepare('INSERT INTO responses VALUES (?,?,?,?)').run(
+							key,
+							body,
+							Buffer.byteLength(body),
+							epoch
+						);
+						const available = this.availableBytes(db);
+						if (available < (counts.inflight ?? 0) * this.turnReserveBytes)
+							throw Error('Relay response cache capacity reached');
+					})()
+				);
+			} catch {
+				/* Preserve stable outcome/tombstone; an absent body is a silent replay. */
+			}
+		}
 	}
 	set(key: string, value: string): void {
 		const mapping = JSON.parse(value);
+		const changes = [{ key, value }];
 		if (
 			typeof mapping.agentId === 'string' &&
 			typeof mapping.tabId === 'string' &&
@@ -360,22 +492,110 @@ export class RelayLedger {
 			);
 			const binding = this.providerKey(mapping.agentId, mapping.providerSessionId);
 			if (!this.get(binding))
-				this.mutate(
-					binding,
-					JSON.stringify({ providerBinding: true, conversationId: mapping.conversationId })
-				);
+				changes.unshift({
+					key: binding,
+					value: JSON.stringify({ providerBinding: true, conversationId: mapping.conversationId }),
+				});
 		}
-		this.mutate(key, value);
+		this.mutate(changes);
+	}
+	reserveTurn(key: string, value: string, mappingKey?: string, mapping?: string): void {
+		if (this.get(key) !== null) throw Error('Relay admission already exists');
+		this.mutate([
+			{ key, value: JSON.stringify({ ...JSON.parse(value), providerReservation: true }) },
+			...(mappingKey && mapping ? [{ key: mappingKey, value: mapping }] : []),
+		]);
+	}
+	finishTurn(receiptKey: string, receipt: string, mappingKey: string, mapping: string): void {
+		const outcome = JSON.parse(receipt),
+			owner = JSON.parse(mapping);
+		delete owner.pendingReceiptKey;
+		const pending = this.get(receiptKey);
+		if (!pending || JSON.parse(pending).providerReservation !== true)
+			throw Error('Relay outcome has no admission reservation');
+		try {
+			const changes = [
+				{
+					key: receiptKey,
+					value: JSON.stringify({
+						...outcome,
+						providerReservation:
+							!owner.providerSessionId &&
+							owner.interrupted !== false &&
+							outcome.result?.executionStarted !== false,
+					}),
+				},
+				{ key: mappingKey, value: JSON.stringify(owner) },
+			];
+			if (owner.providerSessionId) {
+				this.assertProviderAvailable(owner.agentId, owner.providerSessionId, owner.conversationId);
+				const binding = this.providerKey(owner.agentId, owner.providerSessionId);
+				if (!this.get(binding))
+					changes.unshift({
+						key: binding,
+						value: JSON.stringify({ providerBinding: true, conversationId: owner.conversationId }),
+					});
+			}
+			this.mutate(changes);
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				!/already maps to another Relay|index bucket capacity/.test(error.message)
+			)
+				throw error;
+			// Unknown provider keys can hit a full Merkle bucket or conflict. Retain the
+			// outcome under already reserved keys, fence continuation, and preserve the answer.
+			this.mutate([
+				{
+					key: receiptKey,
+					value: JSON.stringify({
+						...outcome,
+						providerReservation: true,
+						result: {
+							...outcome.result,
+							success: false,
+							error:
+								'Provider ownership could not be committed; inspect the retained conversation answer',
+						},
+					}),
+				},
+				{
+					key: mappingKey,
+					value: JSON.stringify({ ...owner, interrupted: true, pendingReceiptKey: receiptKey }),
+				},
+			]);
+			throw error;
+		}
+	}
+	settleTurn(key: string, providerId?: string): void {
+		const value = this.get(key);
+		if (!value) return;
+		const receipt = JSON.parse(value);
+		if (receipt.result) return;
+		this.mutate([
+			{
+				key,
+				value: JSON.stringify({
+					...receipt,
+					result: {
+						success: false,
+						response: null,
+						sessionId: providerId ?? null,
+						error: 'Previous Relay execution interrupted; inspect conversation before retrying',
+					},
+				}),
+			},
+		]);
 	}
 	deletePending(key: string): void {
 		const value = this.get(key);
 		if (!value) return;
 		if (value && JSON.parse(value).result) throw Error('Cannot delete an executed Relay receipt');
-		this.mutate(key, null);
+		this.mutate([{ key, value: null }]);
 	}
 	/** Uninstall removes mappings and payloads, preserving permanent execution tombstones. */
 	purgeMappings(): void {
-		for (const key of this.mappingKeys()) this.mutate(key, null);
+		for (const key of this.mappingKeys()) this.mutate([{ key, value: null }]);
 		this.use((db) => {
 			db.prepare('DELETE FROM responses').run();
 		});

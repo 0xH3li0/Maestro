@@ -112,7 +112,8 @@ describe('indexed durable Relay receipts', () => {
 		};
 		expect(() => f.store.set('second', receipt('two'))).toThrow(/crash/);
 		f.anchor.write = original;
-		expect(() => f.reopen().get('second')).toThrow(/rollback/);
+		expect(f.reopen().get('second')).toBeNull();
+		expect(f.reopen().get('pending')).not.toBeNull();
 	});
 	it('rejects dangling receipt symlinks before creating a checkpoint or following the target', () => {
 		const f = fixture();
@@ -132,5 +133,133 @@ describe('indexed durable Relay receipts', () => {
 			success: true,
 			response: null,
 		});
+	});
+	it('recovers a committed prepared transition but never accepts its predecessor after stable ACK', () => {
+		const f = fixture();
+		f.store.set('pending', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		const previous = fs.readFileSync(path.join(f.base, 'receipts.sqlite'));
+		const original = f.anchor.write;
+		f.anchor.write = (value) => {
+			if (!JSON.parse(value.installSecret).pending) throw Error('crash before stable ACK');
+			original(value);
+		};
+		expect(() => f.store.set('second', receipt('two'))).toThrow(/stable ACK/);
+		f.anchor.write = original;
+		expect(JSON.parse(f.reopen().get('second')!).result.success).toBe(true);
+		expect(JSON.parse(f.anchor.read()!.installSecret).pending).toBeUndefined();
+		fs.writeFileSync(path.join(f.base, 'receipts.sqlite'), previous);
+		expect(() => f.reopen().get('second')).toThrow(/rollback/);
+	});
+	it('reserves binding capacity and physical result space before a turn and retains consumed bindings through purge', () => {
+		const f = fixture({ mappings: 1 });
+		const mapping = JSON.stringify({
+			agentId: 'a',
+			tabId: 't',
+			conversationId: 'c',
+			providerSessionId: 'p',
+		});
+		f.store.reserveTurn('first', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		expect(() =>
+			f.store.reserveTurn('concurrent', JSON.stringify({ promptHash: 'h2', messageId: 'm2' }))
+		).toThrow(/capacity/);
+		f.store.finishTurn('first', receipt('answer'), 'map', mapping);
+		f.store.purgeMappings();
+		expect(() =>
+			f
+				.reopen()
+				.reserveTurn('after-uninstall', JSON.stringify({ promptHash: 'h3', messageId: 'm3' }))
+		).toThrow(/capacity/);
+		expect(JSON.parse(f.reopen().get('first')!).result).toMatchObject({
+			success: true,
+			response: null,
+		});
+		const g = fixture({ pages: 128 });
+		expect(() =>
+			g.store.reserveTurn('no-space', JSON.stringify({ promptHash: 'h', messageId: 'm' }))
+		).toThrow(/physical.*capacity/);
+		expect(g.reopen().get('no-space')).toBeNull();
+	});
+	it('commits essential outcomes when optional cached response pages cannot fit', () => {
+		const f = fixture({ pages: 64 });
+		f.store.set('answer', receipt('x'.repeat(250000)));
+		expect(JSON.parse(f.reopen().get('answer')!).result).toMatchObject({
+			success: true,
+			response: null,
+		});
+	});
+	it('retains an outcome under admitted keys when a returned provider binding conflicts', () => {
+		const f = fixture();
+		f.store.set(
+			'existing-map',
+			JSON.stringify({
+				agentId: 'a',
+				tabId: 'old',
+				conversationId: 'other',
+				providerSessionId: 'p',
+			})
+		);
+		f.store.reserveTurn('new-receipt', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		const mapping = JSON.stringify({
+			agentId: 'a',
+			tabId: 't',
+			conversationId: 'new',
+			providerSessionId: 'p',
+			interrupted: false,
+		});
+		expect(() =>
+			f.store.finishTurn('new-receipt', receipt('completed answer'), 'new-map', mapping)
+		).toThrow(/another Relay/);
+		expect(JSON.parse(f.reopen().get('new-receipt')!).result).toMatchObject({
+			success: false,
+			response: 'completed answer',
+		});
+		expect(JSON.parse(f.reopen().get('new-map')!).interrupted).toBe(true);
+	});
+	it('releases only physical space after settled uncertainty and preserves its permanent execution fence', () => {
+		const f = fixture({ pages: 768 });
+		f.store.reserveTurn('first', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		expect(() =>
+			f.store.reserveTurn('second', JSON.stringify({ promptHash: 'h2', messageId: 'm2' }))
+		).toThrow(/physical.*capacity/);
+		f.store.settleTurn('first');
+		f.store.reserveTurn('second', JSON.stringify({ promptHash: 'h2', messageId: 'm2' }));
+		expect(JSON.parse(f.reopen().get('first')!).result.success).toBe(false);
+		expect(() => f.store.deletePending('first')).toThrow(/executed/);
+	});
+	it('preserves two reserved maximum-metadata outcomes under cache pressure near the page ceiling', () => {
+		const f = fixture({ pages: 2048, responseBytes: 6 * 1024 * 1024 });
+		for (let i = 0; i < 16; i++) f.store.set('cache' + i, receipt('x'.repeat(250000)));
+		f.store.reserveTurn('first', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		f.store.reserveTurn('second', JSON.stringify({ promptHash: 'h2', messageId: 'm2' }));
+		for (const [key, suffix] of [
+			['first', '1'],
+			['second', '2'],
+		]) {
+			const provider = 'p'.repeat(31000) + suffix,
+				conversation = 'c'.repeat(31000) + suffix;
+			const result = JSON.stringify({
+				promptHash: 'h',
+				messageId: 'm',
+				result: {
+					success: true,
+					response: 'y'.repeat(250000),
+					sessionId: provider,
+					conversationId: conversation,
+				},
+			});
+			f.store.finishTurn(
+				key,
+				result,
+				'map' + suffix,
+				JSON.stringify({
+					agentId: 'agent',
+					tabId: 'tab' + suffix,
+					conversationId: conversation,
+					providerSessionId: provider,
+					interrupted: false,
+				})
+			);
+			expect(JSON.parse(f.reopen().get(key)!).result.success).toBe(true);
+		}
 	});
 });

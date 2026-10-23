@@ -572,4 +572,87 @@ describe('durable Relay conversations', () => {
 		expect(await send()).toMatchObject({ replayed: true });
 		expect(deps.run).toHaveBeenCalledTimes(2);
 	});
+	it('refuses a fresh provider before execution when permanent bindings fill after uninstall', async () => {
+		deps.receiptLimits = { mappings: 1 };
+		host = new RelayConversations(deps);
+		await send();
+		await host.purge();
+		await expect(send('another', { conversationId: 'other', messageId: 'other' })).rejects.toThrow(
+			/capacity/
+		);
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
+	it('refuses physical outcome exhaustion before invoking the provider', async () => {
+		deps.receiptLimits = { pages: 128 };
+		host = new RelayConversations(deps);
+		await expect(send()).rejects.toThrow(/physical.*capacity/);
+		expect(deps.run).not.toHaveBeenCalled();
+	});
+	it('flushes the provider answer before a failing post-run ledger commit and never executes its receipt again', async () => {
+		const store = (
+			host as unknown as { store: import('../../../main/plugins/relay-ledger').RelayLedger }
+		).store;
+		const flush = vi.fn(async () => {});
+		deps.flush = flush;
+		const finish = store.finishTurn.bind(store);
+		vi.spyOn(store, 'finishTurn').mockImplementationOnce((...args) => {
+			expect(flush).toHaveBeenCalled();
+			expect(agent.aiTabs[0].logs.some((log) => log.text === 'answer:hello')).toBe(true);
+			throw Error('post-provider filesystem unavailable');
+		});
+		await expect(send()).rejects.toThrow(/post-provider/);
+		expect(agent.aiTabs[0].logs.some((log) => log.text === 'answer:hello')).toBe(true);
+		vi.spyOn(store, 'finishTurn').mockImplementation(finish);
+		expect(await send()).toMatchObject({ replayed: true, success: false });
+		expect(deps.run).toHaveBeenCalledTimes(1);
+	});
+	it('releases binding reservations for proven preflight refusals before a later valid first turn', async () => {
+		deps.receiptLimits = { mappings: 1 };
+		host = new RelayConversations(deps);
+		vi.mocked(deps.run).mockResolvedValueOnce({
+			success: false,
+			response: null,
+			sessionId: null,
+			error: 'CLI missing',
+			executionStarted: false,
+		});
+		expect(await send()).toMatchObject({ success: false });
+		expect(await send('valid', { messageId: 'next' })).toMatchObject({ success: true });
+		expect(deps.run).toHaveBeenCalledTimes(2);
+	});
+	it('releases abandoned physical reservations at restart without making their receipts executable', async () => {
+		deps.receiptLimits = { pages: 768 };
+		host = new RelayConversations(deps);
+		const target = host as unknown as {
+			store: import('../../../main/plugins/relay-ledger').RelayLedger;
+		};
+		target.store.reserveTurn(
+			'abandoned',
+			JSON.stringify({ promptHash: 'h', messageId: 'old' }),
+			'old-map',
+			JSON.stringify({
+				agentId: 'agent',
+				tabId: 'old-tab',
+				conversationId: 'old-thread',
+				pendingReceiptKey: 'abandoned',
+				interrupted: true,
+			})
+		);
+		await host.reconcileInterrupted();
+		expect(JSON.parse(target.store.get('abandoned')!).result.success).toBe(false);
+		expect(await send()).toMatchObject({ success: true });
+	});
+	it('does not reconcile an active live Relay writer into a restart error', async () => {
+		const result = Promise.withResolvers<Awaited<ReturnType<typeof deps.run>>>();
+		vi.mocked(deps.run).mockReturnValueOnce(result.promise);
+		const running = send();
+		try {
+			await vi.waitFor(() => expect(deps.run).toHaveBeenCalled());
+			await host.reconcileInterrupted();
+			expect(agent.aiTabs[0].relayConversation?.status).toBe('running');
+		} finally {
+			result.resolve({ success: true, response: 'finished', sessionId: 'provider' });
+			await running;
+		}
+	});
 });

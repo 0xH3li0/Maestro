@@ -5,14 +5,16 @@ import { build } from 'esbuild';
 import { RelayLedgerClient } from '../../../main/plugins/relay-ledger-client';
 let dir: string;
 let script: string;
+let killFile: string;
 beforeAll(async () => {
 	fs.mkdirSync('.maestro/scratch', { recursive: true });
 	dir = fs.mkdtempSync(path.resolve('.maestro/scratch/relay-worker-'));
 	script = path.join(dir, 'worker.cjs');
 	const anchor = path.join(dir, 'fixture-anchor.cjs');
+	killFile = path.join(dir, 'kill-mode');
 	fs.writeFileSync(
 		anchor,
-		`const fs=require('fs'); const file=${JSON.stringify(path.join(dir, 'fixture-checkpoint.json'))}; exports.createKeyringAnchor=()=>({available:()=>true,read:()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null,write:(v)=>fs.writeFileSync(file,JSON.stringify(v))});`
+		`const fs=require('fs'),path=require('path'); const root=${JSON.stringify(dir)}; exports.createKeyringAnchor=(_service,account)=>{const file=path.join(root,account+'.json');return {available:()=>true,read:()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null,write:(v)=>{const mode=fs.existsSync(path.join(root,'kill-mode'))?fs.readFileSync(path.join(root,'kill-mode'),'utf8'):''; const pending=!!JSON.parse(v.installSecret).pending;if(mode==='stable-before'&&!pending)process.exit(71);fs.writeFileSync(file,JSON.stringify(v));if((mode==='prepared-after'&&pending)||(mode==='stable-after'&&!pending))process.exit(72);}};};`
 	);
 	await build({
 		entryPoints: ['src/main/plugins/relay-ledger-worker.ts'],
@@ -89,4 +91,47 @@ describe('real Relay worker transport', () => {
 			await client.dispose();
 		}
 	});
+	it.each(['prepared-after', 'stable-before', 'stable-after'])(
+		'recovers real worker termination at %s without acknowledging an unsafe admission',
+		async (stage) => {
+			const base = path.join(dir, stage);
+			const client = new RelayLedgerClient(base, undefined, script);
+			await client.set(
+				'baseline',
+				JSON.stringify({
+					promptHash: 'h',
+					messageId: 'old',
+					result: { success: true, response: 'old' },
+				})
+			);
+			fs.writeFileSync(killFile, stage);
+			let providerStarts = 0;
+			try {
+				await expect(
+					client
+						.reserveTurn('pending', JSON.stringify({ promptHash: 'h', messageId: 'new' }))
+						.then(() => {
+							providerStarts++;
+						})
+				).rejects.toThrow(/worker unavailable/);
+			} finally {
+				fs.rmSync(killFile, { force: true });
+				await client.dispose();
+			}
+			expect(providerStarts).toBe(0);
+			const restarted = new RelayLedgerClient(base, undefined, script);
+			try {
+				const receipt = await restarted.get('pending');
+				if (stage === 'prepared-after') expect(receipt).toBeNull();
+				else
+					expect(JSON.parse(receipt!)).toMatchObject({
+						providerReservation: true,
+						messageId: 'new',
+					});
+				expect(await restarted.get('baseline')).not.toBeNull();
+			} finally {
+				await restarted.dispose();
+			}
+		}
+	);
 });

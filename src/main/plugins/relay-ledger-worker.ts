@@ -17,6 +17,9 @@ const ledger = new RelayLedger(
 const methods = [
 	'get',
 	'set',
+	'reserveTurn',
+	'finishTurn',
+	'settleTurn',
 	'mappingKeys',
 	'assertProviderAvailable',
 	'deletePending',
