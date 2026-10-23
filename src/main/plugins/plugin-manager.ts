@@ -1,3 +1,4 @@
+import { canonicalJson } from '../../shared/canonicalJson';
 /**
  * Plugin manager (main process).
  *
@@ -14,7 +15,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import semver from 'semver';
 import { HOST_API_VERSION } from '../../shared/plugins/host-api';
 import {
@@ -48,7 +48,8 @@ import {
 import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { verifyPluginSignature } from './plugin-signature';
+import { scanPluginFiles } from './plugin-scan';
+import type { AuthIdentity } from './authorization-ledger';
 import type { AuthorizationStore } from './authorization-ledger';
 import {
 	RETIRED_AGENT_FLOW_ID,
@@ -114,6 +115,7 @@ export interface PluginManagerDeps {
 	/** Required for verified tools: live sealed consent/on-disk identity and generation.
 	 * Refresh-time verifyRecord and plain-JSON grants are not substitutes. */
 	assertToolRecordActive?: (record: PluginRecord) => void;
+	prepareToolRecordActive?: (record: PluginRecord) => Promise<void>;
 	/** Optional: purge a plugin's host-owned data (KV store, plugins.<id>.*
 	 * settings, live event subscriptions) on uninstall. The integrator wires this
 	 * to plugin-host-handlers' purgePluginData so uninstall leaves nothing behind
@@ -135,7 +137,7 @@ export interface PluginManagerDeps {
 	 * `verify()` + `pluginIdentity()`; absent => no extra gate (the enable toggle and
 	 * consent govern). It only ever force-disables - never force-enables.
 	 */
-	verifyRecord?: (record: PluginRecord) => { disable: boolean };
+	verifyRecord?: (record: PluginRecord, identity: AuthIdentity | null) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
 	onWatchError?: (error: unknown) => void;
 }
@@ -202,13 +204,26 @@ export class PluginManager {
 				getRecord(this.registry, record.id) !== record ||
 				!this.isRunnable(record) ||
 				!expected ||
-				this.fingerprintPluginDir(record.source) !== expected ||
 				getRecord(this.registry, record.id) !== record
 			)
 				throw new PluginAuthorityError('PLUGIN_DENIED');
 		} catch {
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 		}
+	}
+
+	async prepareToolRecordCurrent(record: PluginRecord): Promise<AuthIdentity> {
+		this.assertToolRecordCurrent(record);
+		const keys = this.deps.trustedKeys?.() ?? [];
+		const scan = await scanPluginFiles(record.source, keys);
+		this.assertToolRecordCurrent(record);
+		if (
+			!scan.identity ||
+			scan.fingerprint !== this.pluginFingerprints.get(record.id) ||
+			canonicalJson(keys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
+		)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		return scan.identity;
 	}
 
 	/** Records the host should activate (enabled AND loadable). Empty when the
@@ -269,12 +284,13 @@ export class PluginManager {
 	 * enabled), and host-compatibility-check. Returns the new registry. When the
 	 * Encore flag is off this returns an empty registry without touching disk.
 	 */
-	refresh(): PluginRegistry {
+	async refresh(): Promise<PluginRegistry> {
 		return this.refreshRegistry();
 	}
 
 	/** A completed hot reload must not restart unrelated crashed sandboxes. */
-	private refreshRegistry(onlyPluginId?: string): PluginRegistry {
+	private async refreshRegistry(onlyPluginId?: string): Promise<PluginRegistry> {
+		const before = this.registry;
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
 			this.pluginFingerprints.clear();
@@ -343,8 +359,13 @@ export class PluginManager {
 			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
 			// Attach signature trust (the pure builder cannot read files).
 			let signed = record;
+			let scannedIdentity: AuthIdentity | null = null;
+			let fingerprint: string | undefined;
 			try {
-				const check = verifyPluginSignature(source, trustedKeys);
+				const fileScan = await scanPluginFiles(source, trustedKeys);
+				const check = fileScan.signature;
+				scannedIdentity = fileScan.identity;
+				fingerprint = fileScan.fingerprint;
 				signed = {
 					...record,
 					signature: {
@@ -371,14 +392,20 @@ export class PluginManager {
 					!!signed.manifest &&
 					signed.manifest.tier >= 1 &&
 					!!signed.manifest.entry;
-				if (eligibleCode && this.deps.verifyRecord(signed).disable) {
+				if (eligibleCode && this.deps.verifyRecord(signed, scannedIdentity).disable) {
 					gated = { ...signed, enabled: false };
 				}
 			}
 			next = upsertRecord(next, gated);
-			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
+			if (fingerprint) nextFingerprints.set(gated.id, fingerprint);
 		}
 
+		if (
+			this.registry !== before ||
+			!this.deps.isEnabled() ||
+			canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
+		)
+			return this.registry;
 		this.registry = next;
 		this.reconcileSandboxes(previousFingerprints, nextFingerprints, onlyPluginId);
 		this.pluginFingerprints = nextFingerprints;
@@ -391,17 +418,26 @@ export class PluginManager {
 	 * sandbox. Code-tier activation must verify the current on-disk identity
 	 * against its consented authorization before persisting or starting code;
 	 * refresh() applies the same gate to previously enabled plugins. */
-	setEnabled(id: string, enabled: boolean): PluginRegistry {
+	async setEnabled(id: string, enabled: boolean): Promise<PluginRegistry> {
 		if (!this.deps.isEnabled()) return this.registry;
 		const record = this.registry.records.find((item) => item.id === id);
+		const trustedKeys = this.deps.trustedKeys?.() ?? [];
 		if (
 			enabled &&
 			record?.manifest &&
 			record.manifest.tier >= 1 &&
-			this.deps.verifyRecord?.(record).disable
+			this.deps.verifyRecord?.(record, (await scanPluginFiles(record.source, trustedKeys)).identity)
+				.disable
 		) {
 			throw new Error('PluginNotAuthorized');
 		}
+		if (
+			enabled &&
+			(!this.deps.isEnabled() ||
+				this.registry.records.find((r) => r.id === id) !== record ||
+				canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? []))
+		)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
 		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
@@ -520,7 +556,7 @@ export class PluginManager {
 						this.pendingReloads.delete(record.id);
 						// Re-read identity, enable state and entry after the wait: disable,
 						// uninstall, edits or permission changes may have happened meanwhile.
-						this.refreshRegistry(record.id);
+						await this.refreshRegistry(record.id);
 					} catch (error) {
 						if (this.pendingReloads.get(record.id) === reload)
 							this.pendingReloads.delete(record.id);
@@ -587,10 +623,10 @@ export class PluginManager {
 
 	private scheduleWatchedRefresh(): void {
 		clearTimeout(this.watchRefreshTimer);
-		this.watchRefreshTimer = setTimeout(() => {
+		this.watchRefreshTimer = setTimeout(async () => {
 			this.watchRefreshTimer = undefined;
 			try {
-				this.refresh();
+				await this.refresh();
 			} catch (error) {
 				this.deps.onWatchError?.(error);
 			}
@@ -640,50 +676,11 @@ export class PluginManager {
 		return dirs;
 	}
 
-	private fingerprintPluginDir(source: string): string {
-		const hash = crypto.createHash('sha256');
-		const visit = (dir: string, relDir: string): void => {
-			let entries: fs.Dirent[];
-			try {
-				entries = fs
-					.readdirSync(dir, { withFileTypes: true })
-					.sort((a, b) => a.name.localeCompare(b.name));
-			} catch {
-				return;
-			}
-			for (const entry of entries) {
-				const abs = path.join(dir, entry.name);
-				const rel = relDir ? path.join(relDir, entry.name) : entry.name;
-				hash.update(rel.split(path.sep).join('/'));
-				hash.update('\0');
-				try {
-					const stat = fs.lstatSync(abs);
-					hash.update(`${stat.mode}:${stat.size}:`);
-					if (entry.isDirectory() && !entry.isSymbolicLink()) {
-						hash.update('dir\n');
-						visit(abs, rel);
-					} else if (entry.isFile()) {
-						hash.update('file\n');
-						hash.update(fs.readFileSync(abs));
-					} else if (entry.isSymbolicLink()) {
-						hash.update(`link:${fs.readlinkSync(abs)}\n`);
-					} else {
-						hash.update('other\n');
-					}
-				} catch {
-					hash.update('unreadable\n');
-				}
-			}
-		};
-		visit(source, '');
-		return hash.digest('hex');
-	}
-
 	/**
 	 * Copy a validated plugin source directory into the plugins dir under the
 	 * manifest id. Refuses an invalid manifest, id collision, or symlinked tree.
 	 */
-	private installDirectory(sourceDir: string): InstallResult {
+	private async installDirectory(sourceDir: string): Promise<InstallResult> {
 		const rawManifest = this.readManifest(sourceDir);
 		const { manifest, errors } = validatePluginManifest(rawManifest);
 		if (!manifest) {
@@ -704,7 +701,7 @@ export class PluginManager {
 		fs.mkdirSync(pluginsDir(), { recursive: true });
 		// dereference:false keeps the copy faithful; we already rejected symlinks.
 		fs.cpSync(sourceDir, dest, { recursive: true });
-		this.refresh();
+		await this.refresh();
 		const record = this.registry.records.find((r) => r.id === manifest.id);
 		return { success: true, ...(record ? { record } : {}) };
 	}
@@ -715,7 +712,7 @@ export class PluginManager {
 	 * reject traversal/link entries before writing, then use the same directory
 	 * install path so manifest validation and symlink checks stay centralized.
 	 */
-	install(sourcePath: string): InstallResult {
+	async install(sourcePath: string): Promise<InstallResult> {
 		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
 		const resolvedSource = path.resolve(sourcePath);
 		if (!isPackedPluginArchivePath(resolvedSource)) {
@@ -724,7 +721,7 @@ export class PluginManager {
 		let extracted: ExtractedPluginArchive | null = null;
 		try {
 			extracted = extractPluginArchive(resolvedSource);
-			return this.installDirectory(extracted.root);
+			return await this.installDirectory(extracted.root);
 		} catch (error) {
 			return { success: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
@@ -821,7 +818,7 @@ export class PluginManager {
 			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
 			// signature trust from scratch. The enable toggle survives because we never
 			// touched the persisted state, so an enabled plugin stays enabled.
-			return this.refresh();
+			return await this.refresh();
 		});
 	}
 
@@ -1144,9 +1141,13 @@ export class PluginManager {
 				context.assertActive();
 				assertRuntime();
 			};
+			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+			await this.deps.prepareToolRecordActive(record!);
 			assertActive();
 			// The sandbox owns bounded args snapshotting and exact-child handle cleanup.
 			const result = await sandbox.invokeTool(pluginId, localId, args, { runContext: context });
+			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+			await this.deps.prepareToolRecordActive(record!);
 			assertActive();
 			// Host callback only, never plugin/serialized input. Its send must be
 			// synchronous and follow its own transport check + this live assertion.

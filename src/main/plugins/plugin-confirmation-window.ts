@@ -19,15 +19,16 @@ export interface PluginConfirmation {
 		offer: PluginConfirmationOffer,
 		signal: AbortSignal,
 		check: () => void,
-		commit: (password?: string) => T
+		commit: (password?: string) => T,
+		prepare: () => Promise<void>
 	): Promise<T>;
 }
 interface Surface {
 	window: BrowserWindow;
 	sender?: ConsentSender;
 	lastActivation: number;
-	confirm(event: IpcMainInvokeEvent, request: unknown): unknown;
-	offer(event: IpcMainInvokeEvent): unknown;
+	confirm(event: IpcMainInvokeEvent, request: unknown): Promise<unknown>;
+	offer(event: IpcMainInvokeEvent): Promise<unknown>;
 	cancel(): void;
 }
 
@@ -35,31 +36,33 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 	private readonly nonces = new ConsentNonceRegistry({ ttlMs: 120000 });
 	private readonly surfaces = new Set<Surface>();
 	constructor(private readonly dir: string) {
-		ipcMain.handle('plugin-confirmation:offer', (event) => {
+		ipcMain.handle('plugin-confirmation:offer', async (event) => {
 			try {
 				const surface = [...this.surfaces].find((s) => s.window.webContents === event.sender);
-				return surface?.offer(event) ?? null;
+				return (await surface?.offer(event)) ?? null;
 			} catch {
 				return null;
 			}
 		});
-		ipcMain.handle('plugin-confirmation:call', (event, request: unknown) => {
+		ipcMain.handle('plugin-confirmation:call', async (event, request: unknown) => {
 			try {
 				const s = [...this.surfaces].find((s) => s.window.webContents === event.sender);
 				if (!s) throw new PluginAuthorityError('PLUGIN_DENIED');
-				return s.confirm(event, request);
+				return await s.confirm(event, request);
 			} catch {
 				return { ok: false, error: 'PLUGIN_DENIED' };
 			}
 		});
 	}
 
-	confirm<T>(
+	async confirm<T>(
 		offer: PluginConfirmationOffer,
 		signal: AbortSignal,
 		check: () => void,
-		commit: (password?: string) => T
+		commit: (password?: string) => T,
+		prepare: () => Promise<void>
 	): Promise<T> {
+		await prepare();
 		assertPluginAuthority(check);
 		if (signal.aborted) return Promise.reject(new PluginAuthorityError('PLUGIN_CANCELED'));
 		if (this.surfaces.size >= 8) return Promise.reject(new PluginAuthorityError('PLUGIN_LIMIT'));
@@ -102,7 +105,7 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 				window,
 				lastActivation: -Infinity,
 				cancel,
-				offer: (event) => {
+				offer: async (event) => {
 					if (
 						settled ||
 						signal.aborted ||
@@ -112,11 +115,20 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 						event.senderFrame.url !== expectedUrl
 					)
 						throw new PluginAuthorityError('PLUGIN_DENIED');
+					await prepare();
+					if (
+						settled ||
+						signal.aborted ||
+						window.isDestroyed() ||
+						event.senderFrame !== window.webContents.mainFrame ||
+						event.senderFrame.url !== expectedUrl
+					)
+						throw new PluginAuthorityError('PLUGIN_DENIED');
 					assertPluginAuthority(check);
 					if (settled || signal.aborted) throw new PluginAuthorityError('PLUGIN_CANCELED');
 					return { ...offer, nonce };
 				},
-				confirm: (event, request) => {
+				confirm: async (event, request) => {
 					const p = pluginRequest(
 						request,
 						['nonce', 'approved'],
@@ -137,6 +149,7 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 						p.nonce !== nonce
 					)
 						throw new PluginAuthorityError('PLUGIN_DENIED');
+					const activation = surface.lastActivation;
 					surface.lastActivation = -Infinity;
 					if (!this.nonces.consume(p.nonce, offer.pluginId, []))
 						throw new PluginAuthorityError('PLUGIN_DENIED');
@@ -145,6 +158,17 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 						return { ok: true };
 					}
 					try {
+						await prepare();
+						if (!window.isFocused() || performance.now() - activation > 1000)
+							throw new PluginAuthorityError('PLUGIN_DENIED');
+						if (
+							settled ||
+							signal.aborted ||
+							window.isDestroyed() ||
+							event.senderFrame !== window.webContents.mainFrame ||
+							event.senderFrame.url !== expectedUrl
+						)
+							throw new PluginAuthorityError('PLUGIN_DENIED');
 						assertPluginAuthority(check);
 						if (signal.aborted) throw new PluginAuthorityError('PLUGIN_CANCELED');
 						const result = commit(
@@ -171,7 +195,15 @@ export class PluginConfirmationWindows implements PluginConfirmation {
 			signal.addEventListener('abort', cancel, { once: true });
 			void window
 				.loadFile(path.join(this.dir, 'plugin-confirmation.html'))
-				.then(() => {
+				.then(async () => {
+					await prepare();
+					if (
+						settled ||
+						signal.aborted ||
+						window.isDestroyed() ||
+						window.webContents.mainFrame.url !== expectedUrl
+					)
+						throw new PluginAuthorityError('PLUGIN_DENIED');
 					assertPluginAuthority(check);
 					if (signal.aborted || settled) {
 						cancel();

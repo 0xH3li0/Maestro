@@ -1,3 +1,7 @@
+vi.mock(
+	'../../../../main/plugins/plugin-scan',
+	async () => await import('../../../helpers/pluginScan')
+);
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -5340,6 +5344,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	const sandboxInvokeTool = vi.fn();
 	function verifiedManager(declared = tool): PluginManager {
 		const manager = new PluginManager({
+			prepareToolRecordActive: async () => {},
 			isEnabled: isPluginsFeatureEnabled,
 			getGrants: () => [],
 			toolIdentity: pluginToolRunIdentity,

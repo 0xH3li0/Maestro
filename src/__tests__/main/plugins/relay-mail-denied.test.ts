@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * Replay the shipped host's tool-authority construction through the real MCP
  * bridge, WebSocket handler, and manager. Only filesystem facts and the child
@@ -238,6 +239,7 @@ describe('Relay authenticated MCP actual host path', () => {
 			);
 			await realm.activate();
 			const sandbox = new PluginSandboxHost({
+				prepareToolPluginActive: async () => {},
 				broker: new PermissionBroker({ getGrants: () => [] }),
 				handlers: {},
 				toolIdentity: authority.toolIdentity,
@@ -245,6 +247,7 @@ describe('Relay authenticated MCP actual host path', () => {
 			});
 			sandbox.start('sh.maestro.relay', fixture, 'entry.js');
 			const manager = new PluginManager({
+				prepareToolRecordActive: async () => {},
 				isEnabled: () => true,
 				getGrants: () => [],
 				sandbox,
@@ -386,7 +389,15 @@ it('keeps ordinary verified tool admission independent of unavailable sealed plu
 		{ assertToolRecordCurrent: () => {} },
 		() => ({ contentHash: 'fixture', signatureStatus: 'trusted', signerKey: 'fixture' }),
 		() => [],
-		{ verify: () => ({ authorized: true }), assertPluginPersistent: unavailable },
+		{
+			verify: () => ({ authorized: true }),
+			entryIdentity: () => ({
+				contentHash: 'fixture',
+				signatureStatus: 'trusted',
+				signerKey: 'fixture',
+			}),
+			assertPluginPersistent: unavailable,
+		},
 		PluginAuthorityError
 	);
 	expect(() =>

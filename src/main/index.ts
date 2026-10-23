@@ -1,3 +1,4 @@
+import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
 import { PluginAuthorityError } from './plugins/plugin-authority';
 import { PluginPrivateState } from './plugins/plugin-private-state';
@@ -8,6 +9,8 @@ import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window'
 import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
 import {
 	readPluginEventReceipt,
+	checkpointPluginEventReceipts,
+	readHistoricalPluginEventReceipt,
 	purgePluginEventReceipts,
 	writePluginEventReceipt,
 	pluginEventReceiptCapacityAvailable,
@@ -129,7 +132,7 @@ import {
 	setFirstPartyBridges,
 } from './plugins/first-party-bridge';
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
-import { pluginIdentity } from './plugins/plugin-identity';
+import { scanPluginFiles } from './plugins/plugin-scan';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
 import {
@@ -555,6 +558,7 @@ let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
+let pluginStartupToken: object = {};
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
 let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
@@ -1748,7 +1752,7 @@ app
 			try {
 				assertToolOwnerActive();
 				toolOwner!.assertToolRecordCurrent(record);
-				const identity = pluginIdentity(record.source, trustedKeysFor());
+				const identity = authStore.entryIdentity(record.id);
 				if (
 					!identity ||
 					identity.signatureStatus !== 'trusted' ||
@@ -1841,6 +1845,8 @@ app
 			// trigger scheduler, and every running sandbox. Lifecycle-only.
 			plugins: {
 				reconcile: () => {
+					const startupToken = {};
+					pluginStartupToken = startupToken;
 					if (!pluginManager) return;
 					const manager = pluginManager;
 					void manager
@@ -1862,22 +1868,30 @@ app
 							logger.error(`Agent Flow retirement incomplete: ${error}`, 'Plugins');
 							void captureException(error, { operation: 'plugins:retire-agent-flow' });
 						})
-						.then(() => {
+						.then(async () => {
 							// A feature toggle may have switched off while the sandbox drained.
 							const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 							if (ef.plugins !== true) return;
-							seedBundledPlugins({
+							const startupCurrent = () =>
+								pluginStartupToken === startupToken &&
+								pluginManager === manager &&
+								(store.get('encoreFeatures', {}) as Record<string, boolean>).plugins === true;
+							await seedBundledPlugins({
+								isActive: startupCurrent,
 								trustedKeys: trustedKeysFor,
 								onLog: (message) => logger.info(message, 'Plugins'),
 								onError: (error) => void captureException(error),
 							});
-							manager.refresh();
+							if (!startupCurrent()) return;
+							await manager.refresh();
+							if (!startupCurrent()) return;
 							manager.startWatching();
 							pluginScheduler?.start();
 						})
 						.catch((error) => void captureException(error, { operation: 'plugins:startup' }));
 				},
 				stopAll: () => {
+					pluginStartupToken = {};
 					pluginManager?.stopWatching();
 					pluginScheduler?.stop();
 					pluginManager?.stopAllSandboxes();
@@ -2707,7 +2721,7 @@ app
 				?.getActiveRecords()
 				.find((r) => r.id === id && r.signature?.status === 'trusted');
 			if (!record) throw new PluginAuthorityError('PLUGIN_DENIED');
-			const identity = pluginIdentity(record.source, trustedKeysFor());
+			const identity = authStore.entryIdentity(record.id);
 			if (
 				!identity ||
 				!authStore.verify(
@@ -2719,11 +2733,32 @@ app
 				throw new PluginAuthorityError('PLUGIN_DENIED');
 			return identity;
 		};
+		const preparePrimitive = async (id: string, allowStopped = false) => {
+			const prior = primitiveIdentityFor(id, allowStopped);
+			const record = pluginManager?.getActiveRecords().find((r) => r.id === id);
+			if (!record) throw new PluginAuthorityError('PLUGIN_DENIED');
+			const identity = await pluginManager!.prepareToolRecordCurrent(record);
+			const current = primitiveIdentityFor(id, allowStopped);
+			if (
+				!identity ||
+				canonicalJson(identity) !== canonicalJson(current) ||
+				canonicalJson(prior) !== canonicalJson(current)
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			return identity;
+		};
 		const capturePrimitive = (id: string) => {
 			const identity = primitiveIdentityFor(id);
 			const lifetime = pluginSandboxHost!.capturePrimitiveLifetime(id);
 			return {
 				...lifetime,
+				prepare: async () => {
+					lifetime.assertActive();
+					const fresh = await preparePrimitive(id);
+					if (canonicalJson(fresh) !== canonicalJson(identity))
+						throw new PluginAuthorityError('PLUGIN_DENIED');
+					lifetime.assertActive();
+				},
 				assertActive: () => {
 					lifetime.assertActive();
 					const current = primitiveIdentityFor(id);
@@ -2773,6 +2808,7 @@ app
 			store: authStore,
 			identity: pluginToolRunIdentity,
 			identityFor: primitiveIdentityFor,
+			prepareIdentityFor: preparePrimitive,
 			capture: capturePrimitive,
 			generation: (id) => pluginSandboxHost!.getToolGeneration(id),
 			assertAllowed: (id, topic, queued) =>
@@ -2782,10 +2818,21 @@ app
 					throw new PluginAuthorityError('PLUGIN_LIMIT');
 			},
 			readReceipt: readPluginEventReceipt,
+			readHistoricalReceipt: (id, identity, consumer, event, hash) => {
+				checkpointPluginEventReceipts(id, authStore);
+				return readHistoricalPluginEventReceipt(id, identity, consumer, event, hash, authStore);
+			},
 			writeReceipt: writePluginEventReceipt,
 		});
 		configurePluginCueHost(primitiveEvents);
 		authStore.onPluginAuthorizationChange((id) => {
+			// Preserve authenticated history before revoke/reconsent removes its identity.
+			// Failure can never prevent authority reduction; unknown rows stay fail-closed.
+			try {
+				checkpointPluginEventReceipts(id, authStore);
+			} catch {
+				logger.warn('Plugin receipt checkpoint unavailable; history retained', 'Plugins');
+			}
 			pluginToolRunIdentity.revokePlugin(id);
 			primitiveEvents.stopPlugin(id);
 			void primitiveTls.stopPlugin(id).catch(() => {});
@@ -2800,6 +2847,9 @@ app
 
 		const sandboxHost = new PluginSandboxHost({
 			toolIdentity,
+			prepareToolPluginActive: async (id) => {
+				await preparePrimitive(id);
+			},
 			assertToolPluginActive: (pluginId) => {
 				assertToolOwnerActive();
 				const record = getRecord(toolOwner!.getRegistry(), pluginId);
@@ -3114,6 +3164,14 @@ app
 			toolProofFiles,
 			assertToolProofStorageActive,
 			assertToolRecordActive,
+			prepareToolRecordActive: async (record) => {
+				assertToolRecordActive(record);
+				const identity = await toolOwner.prepareToolRecordCurrent(record);
+				assertToolRecordActive(record);
+				const expected = authStore.entryIdentity(record.id);
+				if (!expected || canonicalJson(identity) !== canonicalJson(expected))
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+			},
 			serviceAvailable: (id, requirement) => serviceAvailable?.(id, requirement) === true,
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
@@ -3127,8 +3185,7 @@ app
 			// Refresh-time verifier: force-disable an enabled code-tier plugin whose
 			// consented identity no longer matches the bytes on disk (tamper), or that
 			// was removed, by checking it against the sealed ledger.
-			verifyRecord: (record) => {
-				const identity = pluginIdentity(record.source, trustedKeysFor());
+			verifyRecord: (record, identity) => {
 				if (!identity) return { disable: true };
 				const requested = (record.manifest?.permissions ?? []).map((p) => p.capability);
 				const result = authStore.verify(record.id, identity, requested);
@@ -3189,9 +3246,28 @@ app
 			registry: new ConsentNonceRegistry(),
 			store: authStore,
 			requested: (pluginId) => pluginManager?.getRequestedPermissions(pluginId) ?? [],
-			identityOf: (pluginId) => {
+			senderStillCurrent: (sender) => {
+				const contents = consentWindowRef?.window.webContents;
+				return (
+					!!contents &&
+					!contents.isDestroyed() &&
+					contents.id === sender.webContentsId &&
+					contents.mainFrame.routingId === sender.frameId &&
+					contents.mainFrame.url === sender.url
+				);
+			},
+			identityOf: async (pluginId) => {
+				checkpointPluginEventReceipts(pluginId, authStore);
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
-				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
+				if (!record) return null;
+				const keys = trustedKeysFor();
+				const identity = (await scanPluginFiles(record.source, keys)).identity;
+				if (
+					pluginManager?.getRegistry().records.find((r) => r.id === pluginId) !== record ||
+					canonicalJson(keys) !== canonicalJson(trustedKeysFor())
+				)
+					return null;
+				return identity;
 			},
 			openPrompt: async ({ pluginId, offered, requested, nonce }) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
@@ -3259,7 +3335,7 @@ app
 		});
 		// Confirm from the consent window: the minter validates the sender frame +
 		// one-time nonce before minting. The window is closed either way.
-		ipcMain.handle('plugins:confirm-consent', (event, payload: unknown) => {
+		ipcMain.handle('plugins:confirm-consent', async (event, payload: unknown) => {
 			const p = (payload ?? {}) as {
 				pluginId?: unknown;
 				nonce?: unknown;
@@ -3277,7 +3353,7 @@ app
 				? p.approvedHighRisk.filter(isPluginCapability)
 				: [];
 			const unattended = Array.isArray(p.unattended) ? p.unattended.filter(isPluginCapability) : [];
-			const outcome = consentMinter.confirm(senderTokenOf(event), {
+			const outcome = await consentMinter.confirm(senderTokenOf(event), {
 				pluginId,
 				nonce,
 				approved,
@@ -3294,7 +3370,7 @@ app
 					// Minting IS consent: flip the enable toggle + reconcile the sandbox now
 					// that the plugin holds sealed ledger grants. setEnabled fires onChange
 					// -> plugins:changed for the renderer.
-					pluginManager?.setEnabled(pluginId, true);
+					await pluginManager?.setEnabled(pluginId, true);
 				} catch {
 					// Best-effort; the grant is already minted.
 				}

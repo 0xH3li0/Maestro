@@ -541,6 +541,7 @@ describe('generic verified SDK / VM / broker loopback', () => {
 			capture: (id) => host.capturePrimitiveLifetime(id),
 		});
 		host = new PluginSandboxHost({
+			prepareToolPluginActive: async () => {},
 			broker,
 			toolIdentity: identity,
 			assertToolPluginActive: () => {},

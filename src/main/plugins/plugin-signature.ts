@@ -189,3 +189,42 @@ export function verifyPluginSignature(
 		signerKey: manifest.publicKey,
 	};
 }
+
+export function fingerprintPluginDir(source: string): string {
+	const hash = createHash('sha256');
+	const visit = (dir: string, relDir: string): void => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs
+				.readdirSync(dir, { withFileTypes: true })
+				.sort((a, b) => a.name.localeCompare(b.name));
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const abs = path.join(dir, entry.name);
+			const rel = relDir ? path.join(relDir, entry.name) : entry.name;
+			hash.update(rel.split(path.sep).join('/'));
+			hash.update('\0');
+			try {
+				const stat = fs.lstatSync(abs);
+				hash.update(`${stat.mode}:${stat.size}:`);
+				if (entry.isDirectory() && !entry.isSymbolicLink()) {
+					hash.update('dir\n');
+					visit(abs, rel);
+				} else if (entry.isFile()) {
+					hash.update('file\n');
+					hash.update(fs.readFileSync(abs));
+				} else if (entry.isSymbolicLink()) {
+					hash.update(`link:${fs.readlinkSync(abs)}\n`);
+				} else {
+					hash.update('other\n');
+				}
+			} catch {
+				hash.update('unreadable\n');
+			}
+		}
+	};
+	visit(source, '');
+	return hash.digest('hex');
+}

@@ -68,6 +68,7 @@ export interface PluginSandboxHostDeps {
 	toolIdentity?: PluginToolRunIdentity;
 	/** Recheck exact plugin identity/consent/feature generation; never supplied by a child. */
 	assertToolPluginActive?: (pluginId: string) => void;
+	prepareToolPluginActive?: (pluginId: string) => Promise<void>;
 	/** Forward plugin console/log lines somewhere visible. */
 	onLog?: (pluginId: string, level: string, message: string) => void;
 	/** Notified on an unexpected exit (including code zero), or a non-zero crash. */
@@ -182,6 +183,7 @@ function toActivitySnapshot(a: Activity): ActivitySnapshot {
 export class PluginSandboxHost {
 	private readonly toolIdentity?: PluginToolRunIdentity;
 	private readonly assertToolPluginActive?: (pluginId: string) => void;
+	prepareToolPluginActive?: (pluginId: string) => Promise<void>;
 	/** Retain failed drains: a cleanup failure must never authorize a fresh process. */
 	private readonly drains = new Map<string, Promise<void>>();
 	private readonly failedDrains = new Map<string, () => void | Promise<void>>();
@@ -223,7 +225,17 @@ export class PluginSandboxHost {
 			this.captureToolLifetime(pluginId)();
 		};
 		assertActive();
-		return { generation: record.generation, signal: record.lifetime.signal, assertActive };
+		return {
+			generation: record.generation,
+			signal: record.lifetime.signal,
+			assertActive,
+			prepare: async () => {
+				assertActive();
+				if (!this.deps.prepareToolPluginActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+				await this.deps.prepareToolPluginActive(pluginId);
+				assertActive();
+			},
+		};
 	}
 
 	/** False as soon as shutdown starts, before child exit, so stopping plugins cannot acquire new service work. */
@@ -900,6 +912,17 @@ export class PluginSandboxHost {
 				) {
 					throw new PluginAuthorityError('PLUGIN_DENIED');
 				}
+				responseGuard?.();
+			}
+			if (PLUGIN_PRIMITIVE_METHODS.includes(method) && method !== 'net.tlsClose') {
+				if (!this.deps.prepareToolPluginActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+				await this.deps.prepareToolPluginActive(pluginId);
+				if (
+					record.stopping ||
+					this.running.get(pluginId) !== record ||
+					!this.deps.broker.authorize(pluginId, method, request.params, { audit: false }).allowed
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
 				responseGuard?.();
 			}
 			respond({ ok: true, result });

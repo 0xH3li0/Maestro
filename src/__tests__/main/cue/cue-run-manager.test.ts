@@ -2200,6 +2200,7 @@ describe('durable plugin admission and revocation', () => {
 		configurePluginCueHost({
 			register: () => () => {},
 			authorize: () => allowed,
+			prepare: async () => allowed,
 		});
 		const queue = {
 			persist: vi.fn(() => persisted),
@@ -2225,6 +2226,31 @@ describe('durable plugin admission and revocation', () => {
 			},
 		};
 	}
+	it('settles stopped-run bookkeeping when stopped during final fresh verification', async () => {
+		const h = harness();
+		let calls = 0;
+		const finalScan = Promise.withResolvers<boolean>();
+		configurePluginCueHost({
+			register: () => () => {},
+			authorize: () => true,
+			prepare: async () => (++calls === 4 ? finalScan.promise : true),
+		});
+		h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+		await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
+		h.completion.resolve(makeResult());
+		await vi.waitFor(() => expect(calls).toBe(4));
+		let idle = false;
+		void h.manager.whenIdle().then(() => {
+			idle = true;
+		});
+		await Promise.resolve();
+		expect(idle).toBe(false);
+		h.manager.stopRun(h.manager.getActiveRuns()[0].runId);
+		expect(h.manager.getUnsettledStoppedRunCount()).toBe(1);
+		finalScan.resolve(true);
+		await vi.waitFor(() => expect(h.manager.getUnsettledStoppedRunCount()).toBe(0));
+		expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+	});
 	it('keeps a mixed startup and durable queue paused until the refreshed owner is ready', async () => {
 		const h = harness();
 		let ready = false;
@@ -2241,8 +2267,7 @@ describe('durable plugin admission and revocation', () => {
 			expect(h.queue.remove).not.toHaveBeenCalled();
 			ready = true;
 			h.manager.retainQueue('session-1', () => null);
-			await Promise.resolve();
-			expect(h.deps.onCueRun).toHaveBeenCalledTimes(1);
+			await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
 			h.completion.resolve(makeResult());
 			await vi.waitFor(() => expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0));
 			expect(h.deps.onCueRun).toHaveBeenCalledTimes(2);
@@ -2255,7 +2280,7 @@ describe('durable plugin admission and revocation', () => {
 		const h = harness();
 		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(true);
 		expect(h.queue.persist).toHaveBeenCalledTimes(1);
-		expect(h.deps.onCueRun).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
 		expect(h.queue.remove).not.toHaveBeenCalled();
 		h.completion.resolve(makeResult());
 		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
@@ -2499,6 +2524,7 @@ describe('plugin output-prompt boundary', () => {
 			configurePluginCueHost({
 				register: () => () => {},
 				authorize: () => allowed,
+				prepare: async () => allowed,
 			});
 			const event = createEvent({
 				type: 'plugin.event',
@@ -2530,6 +2556,7 @@ describe('plugin output-prompt boundary', () => {
 			expect(manager.execute('session-1', 'metadata', event, 'mail-sub', 'Summarize output')).toBe(
 				true
 			);
+			await vi.waitFor(() => expect(onCueRun).toHaveBeenCalledTimes(1));
 			allowed = !revoke;
 			done.resolve(makeResult({ stdout: 'synthetic private agent output' }));
 			await vi.waitFor(() => expect(queue.remove).toHaveBeenCalledTimes(1));

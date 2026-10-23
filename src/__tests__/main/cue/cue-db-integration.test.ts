@@ -840,3 +840,153 @@ describe.skipIf(!canLoadBetterSqlite3())('real SQLite: plugin receipt uninstall 
 		}
 	}, 60_000);
 });
+
+describe.skipIf(!canLoadBetterSqlite3())(
+	'authenticated historical plugin receipt migration',
+	() => {
+		it('checkpoints exact HMAC evidence across reconsent/restart; rejects tamper and unknown history', async () => {
+			const { AuthorizationStore } = await import('../../../main/plugins/authorization-ledger');
+			const { canonicalJson } = await import('../../../shared/canonicalJson');
+			const { createHash } = await import('node:crypto');
+			const cue = await import('../../../main/cue/cue-db');
+			const Database = (await import('better-sqlite3')).default;
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-migration-'));
+			let anchor: import('../../../main/utils/keyring-anchor').Anchor | null = null;
+			const deps = {
+				ledgerPath: path.join(dir, 'auth.sealed'),
+				seal: {
+					available: () => true,
+					seal: (text: string) => Buffer.from(text),
+					unseal: (data: Buffer) => data.toString(),
+				},
+				anchor: {
+					available: () => true,
+					read: () => anchor,
+					write: (value: typeof anchor) => {
+						anchor = value;
+					},
+					clear: () => {
+						anchor = null;
+					},
+				},
+			};
+			const store = new AuthorizationStore(deps);
+			const plugin = 'com.example.owner';
+			const identity = {
+				contentHash: 'a'.repeat(64),
+				signatureStatus: 'trusted' as const,
+				signerKey: 'old-signer',
+			};
+			const current = { ...identity, contentHash: 'b'.repeat(64) };
+			const consumer = 'consumer',
+				event = 'event',
+				payloadHash = 'c'.repeat(64),
+				receiptId = 'd'.repeat(64);
+			const id = createHash('sha256')
+				.update(canonicalJson([plugin, identity, consumer, event]))
+				.digest('hex');
+			store.mint(plugin, [], identity);
+			const row = {
+				receiptId,
+				payloadHash,
+				proof: store.pluginEventProof(plugin, identity, { id, receiptId }, { payloadHash }),
+			};
+			try {
+				cue.initCueDb(undefined, path.join(dir, 'cue.db'));
+				cue.writePluginEventReceipt(plugin, id, row);
+				const before = anchor;
+				expect(cue.checkpointPluginEventReceipts(plugin, store)).toBe(1);
+				expect(cue.readPluginEventReceipt(plugin, id)).toEqual(row); // preceding code still sees the blocking v1 original
+				expect(anchor).toEqual(before);
+				expect(cue.checkpointPluginEventReceipts(plugin, store)).toBe(0);
+				expect(cue.pluginEventReceiptCapacityAvailable(plugin, { stableFormatOnly: true })).toBe(
+					true
+				);
+				store.onPluginAuthorizationChange((id) => {
+					try {
+						cue.checkpointPluginEventReceipts(id, store);
+					} catch {
+						/* revoke remains mandatory */
+					}
+				});
+				store.revoke(plugin);
+				expect(store.readGrants(plugin)).toEqual([]);
+				store.mint(plugin, [], current);
+				cue.closeCueDb();
+				cue.initCueDb(undefined, path.join(dir, 'cue.db'));
+				const reopened = new AuthorizationStore(deps);
+				expect(
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toBe(receiptId);
+				expect(
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						'different',
+						payloadHash,
+						reopened
+					)
+				).toBeNull();
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						'e'.repeat(64),
+						reopened
+					)
+				).toThrow();
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						identity,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toThrow();
+				const raw = new Database(path.join(dir, 'cue.db'));
+				raw
+					.prepare('UPDATE cue_plugin_legacy_receipts SET receipt_id=? WHERE plugin_id=?')
+					.run('f'.repeat(64), plugin);
+				expect(() =>
+					cue.readHistoricalPluginEventReceipt(
+						plugin,
+						current,
+						consumer,
+						event,
+						payloadHash,
+						reopened
+					)
+				).toThrow();
+				raw.close();
+				const unknown = 'e'.repeat(64);
+				cue.writePluginEventReceipt(plugin, unknown, { ...row, proof: 'f'.repeat(64) });
+				expect(cue.checkpointPluginEventReceipts(plugin, reopened)).toBe(0);
+				expect(() =>
+					cue.pluginEventReceiptCapacityAvailable(plugin, { stableFormatOnly: true })
+				).toThrow();
+				expect(cue.readPluginEventReceipt(plugin, unknown)).toEqual({
+					...row,
+					proof: 'f'.repeat(64),
+				});
+				expect(
+					cue.pluginEventReceiptCapacityAvailable('com.example.other', { stableFormatOnly: true })
+				).toBe(true);
+			} finally {
+				cue.closeCueDb();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
+);

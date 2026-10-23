@@ -11,6 +11,7 @@ import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-so
 export interface PluginCueHost {
 	register(ctx: CueTriggerSourceContext, source: CuePluginSource): () => void;
 	authorize(event: CueEvent, agentId: string, subscriptionName: string, queued: boolean): boolean;
+	prepare(event: CueEvent, agentId: string, name: string, queued: boolean): Promise<boolean>;
 }
 let host: PluginCueHost | undefined;
 export function configurePluginCueHost(value: PluginCueHost | undefined): void {
@@ -26,6 +27,28 @@ export function authorizePluginCueEvent(
 	if (event.type !== 'plugin.event') return event.pluginSource === undefined;
 	try {
 		return host?.authorize(event, agentId, name, queued) === true;
+	} catch {
+		return false;
+	}
+}
+/** Fresh disk preparation before awaited run/result/effect segments. Sync checks still
+ * revalidate current grants/source/consumer immediately at their commit boundary. */
+export async function preparePluginCueEvent(
+	event: CueEvent,
+	agentId: string,
+	name: string,
+	queued = true
+): Promise<boolean> {
+	if (event.type !== 'plugin.event') return authorizePluginCueEvent(event, agentId, name, queued);
+	const owner = host;
+	try {
+		if (
+			!owner ||
+			typeof owner.prepare !== 'function' ||
+			!(await owner.prepare(event, agentId, name, queued))
+		)
+			return false;
+		return host === owner && authorizePluginCueEvent(event, agentId, name, queued);
 	} catch {
 		return false;
 	}

@@ -44,11 +44,19 @@ export interface PluginCueEventsDeps {
 	store: AuthorizationStore;
 	identity: PluginToolRunIdentity;
 	identityFor(pluginId: string, queued?: boolean): AuthIdentity;
+	prepareIdentityFor?: (pluginId: string, queued?: boolean) => Promise<AuthIdentity>;
 	capture(pluginId: string): PluginPrimitiveLifetime;
 	/** Exact live-child generation lookup; full invocation/consumer authority is checked separately. */
 	generation(pluginId: string): string;
 	assertAllowed(pluginId: string, topic: string, queued?: boolean): void;
 	assertReceiptCapacity(pluginId: string): void;
+	readHistoricalReceipt?(
+		pluginId: string,
+		identity: AuthIdentity,
+		consumerId: string,
+		eventId: string,
+		payloadHash: string
+	): string | null;
 	readReceipt(pluginId: string, id: string): PluginEventReceiptRow | null;
 	writeReceipt(pluginId: string, id: string, row: PluginEventReceiptRow): void;
 }
@@ -220,6 +228,15 @@ export class PluginCueEvents implements PluginCueHost {
 				throw new PluginAuthorityError('PLUGIN_CONFLICT');
 			return { receiptId: old.receiptId, status: 'duplicate' };
 		}
+		const historical = this.deps.readHistoricalReceipt?.(
+			pluginId,
+			identity,
+			c.id,
+			p.eventId,
+			payloadHash
+		);
+		this.checkLease(pluginId, lease);
+		if (historical) return { receiptId: historical, status: 'duplicate' };
 		this.deps.assertReceiptCapacity(pluginId);
 		this.checkLease(pluginId, lease);
 		const source = {
@@ -264,6 +281,15 @@ export class PluginCueEvents implements PluginCueHost {
 		if (canonicalJson(this.deps.readReceipt(pluginId, receiptKey)) !== canonicalJson(row))
 			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 		return { receiptId, status: 'accepted' };
+	}
+	async prepare(event: CueEvent, agentId: string, name: string, queued: boolean): Promise<boolean> {
+		try {
+			if (!event.pluginSource || !this.deps.prepareIdentityFor) return false;
+			await this.deps.prepareIdentityFor(event.pluginSource.pluginId, queued);
+			return this.authorize(event, agentId, name, queued);
+		} catch {
+			return false;
+		}
 	}
 	authorize(event: CueEvent, agentId: string, name: string, queued: boolean): boolean {
 		try {

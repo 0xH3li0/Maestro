@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugin-manager-invoke-tool.test.ts
  * @description PluginManager.invokeTool splits the namespaced contribution id

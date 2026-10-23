@@ -9,11 +9,14 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { captureException } from '../utils/sentry';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { buildCuePersistedOutput } from './cue-text-utils';
 import { PLUGIN_RECEIPT_KEY_PREFIX } from '../../shared/plugins/primitives';
 import { PluginAuthorityError } from '../plugins/plugin-authority';
+import type { AuthIdentity, AuthorizationStore } from '../plugins/authorization-ledger';
 
 const LOG_CONTEXT = '[CueDB]';
 
@@ -2123,13 +2126,126 @@ export function pruneSusFactorBlocks(olderThanMs: number): void {
 }
 
 /** Durable deduplication receipts for generic authenticated plugin sources. No automatic eviction. */
-function pluginReceiptTable(): Database.Database {
-	const db = getDb();
+function pluginReceiptTable(db: Database.Database = getDb()): Database.Database {
 	db.exec(`CREATE TABLE IF NOT EXISTS cue_plugin_receipts (
   plugin_id TEXT NOT NULL, event_key TEXT NOT NULL, receipt_id TEXT NOT NULL,
   payload_hash TEXT NOT NULL, proof TEXT NOT NULL, PRIMARY KEY(plugin_id, event_key))`);
+	db.exec(`CREATE TABLE IF NOT EXISTS cue_plugin_legacy_receipts (
+ plugin_id TEXT NOT NULL, event_key TEXT NOT NULL, receipt_id TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, proof TEXT NOT NULL, identity_json TEXT NOT NULL,
+ PRIMARY KEY(plugin_id,event_key))`);
 	return db;
 }
+
+/** Checkpoint only HMAC-authenticated old receipts, before their sealed identity is replaced.
+ * Unknown/malformed history remains untouched and continues to block that owner.
+ * Keeping the old key and proof avoids inventing digest preimages or changing grants.
+ */
+export function checkpointPluginEventReceipts(pluginId: string, store: AuthorizationStore): number {
+	const receiptPath = path.join(resolveUserDataDir(), 'cue.db');
+	if (!db && !fs.existsSync(receiptPath)) return 0;
+	const connection = db ?? new Database(receiptPath, { fileMustExist: true });
+	try {
+		const receiptDb = pluginReceiptTable(connection);
+		const identity = store.entryIdentity(pluginId);
+		if (!identity) return 0;
+		return receiptDb.transaction(() => {
+			const rows = receiptDb
+				.prepare(
+					`SELECT event_key AS id, receipt_id AS receiptId,
+   payload_hash AS payloadHash, proof FROM cue_plugin_receipts
+   WHERE plugin_id=? AND length(event_key)=64 AND event_key NOT GLOB '*[^0-9a-f]*' LIMIT 4097`
+				)
+				.all(pluginId) as { id: string; receiptId: string; payloadHash: string; proof: string }[];
+			if (rows.length > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+			let migrated = 0;
+			for (const row of rows) {
+				if (!store.authenticateHistoricalPluginReceipt(pluginId, identity, row.id, row)) continue;
+				const previous = receiptDb
+					.prepare(
+						'SELECT receipt_id AS receiptId,payload_hash AS payloadHash,proof,identity_json AS identity FROM cue_plugin_legacy_receipts WHERE plugin_id=? AND event_key=?'
+					)
+					.get(pluginId, row.id);
+				if (previous) {
+					const old = previous as {
+						receiptId: string;
+						payloadHash: string;
+						proof: string;
+						identity: string;
+					};
+					if (
+						old.receiptId !== row.receiptId ||
+						old.payloadHash !== row.payloadHash ||
+						old.proof !== row.proof ||
+						canonicalJson(JSON.parse(old.identity)) !== canonicalJson(identity)
+					)
+						throw new PluginAuthorityError('PLUGIN_CONFLICT');
+					continue;
+				}
+				receiptDb
+					.prepare('INSERT INTO cue_plugin_legacy_receipts VALUES (?,?,?,?,?,?)')
+					.run(
+						pluginId,
+						row.id,
+						row.receiptId,
+						row.payloadHash,
+						row.proof,
+						JSON.stringify(identity)
+					);
+				// Keep v1 originals: older hosts must still refuse admission on code rollback.
+				migrated++;
+			}
+			return migrated;
+		})();
+	} finally {
+		if (connection !== db) connection.close();
+	}
+}
+
+/** Recover exact old tuple lookups; historical identity grants no execution rights. */
+export function readHistoricalPluginEventReceipt(
+	pluginId: string,
+	current: AuthIdentity,
+	consumerId: string,
+	eventId: string,
+	payloadHash: string,
+	store: AuthorizationStore
+): string | null {
+	store.assertPluginPersistent(pluginId, current);
+	const db = pluginReceiptTable();
+	const rows = db
+		.prepare(
+			`SELECT event_key AS id, receipt_id AS receiptId,
+  payload_hash AS payloadHash, proof, identity_json FROM cue_plugin_legacy_receipts WHERE plugin_id=? LIMIT 4097`
+		)
+		.all(pluginId) as {
+		id: string;
+		receiptId: string;
+		payloadHash: string;
+		proof: string;
+		identity_json: string;
+	}[];
+	if (rows.length > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+	let receiptId: string | null = null;
+	for (const row of rows) {
+		const identity = JSON.parse(row.identity_json) as AuthIdentity;
+		// Validate every checkpoint before admission, including nonmatching tuples:
+		// changing stored identity must never turn an existing receipt into a miss.
+		if (!store.authenticateHistoricalPluginReceipt(pluginId, identity, row.id, row))
+			throw new PluginAuthorityError('PLUGIN_INTEGRITY');
+		if (identity.signerKey !== current.signerKey) continue;
+		const id = createHash('sha256')
+			.update(canonicalJson([pluginId, identity, consumerId, eventId]))
+			.digest('hex');
+		if (id !== row.id) continue;
+		if (row.payloadHash !== payloadHash) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		if (receiptId && receiptId !== row.receiptId) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		receiptId = row.receiptId;
+	}
+	store.assertPluginPersistent(pluginId, current);
+	return receiptId;
+}
+
 export function readPluginEventReceipt(
 	pluginId: string,
 	id: string
@@ -2170,8 +2286,9 @@ export function pluginEventReceiptCapacityAvailable(
 		options.stableFormatOnly &&
 		db
 			.prepare(
-				`SELECT 1 FROM cue_plugin_receipts WHERE plugin_id=? AND
-		(event_key NOT GLOB ? OR length(event_key) != ? OR substr(event_key, ?) GLOB '*[^0-9a-f]*') LIMIT 1`
+				`SELECT 1 FROM cue_plugin_receipts AS r WHERE plugin_id=? AND
+		(event_key NOT GLOB ? OR length(event_key) != ? OR substr(event_key, ?) GLOB '*[^0-9a-f]*')
+ AND NOT EXISTS(SELECT 1 FROM cue_plugin_legacy_receipts AS c WHERE c.plugin_id=r.plugin_id AND c.event_key=r.event_key AND c.receipt_id=r.receipt_id AND c.payload_hash=r.payload_hash AND c.proof=r.proof) LIMIT 1`
 			)
 			.get(
 				pluginId,
@@ -2181,10 +2298,16 @@ export function pluginEventReceiptCapacityAvailable(
 			)
 	)
 		throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-	const count = db.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts').get() as { n: number };
+	const count = db
+		.prepare(
+			'SELECT COUNT(*) AS n FROM (SELECT plugin_id,event_key FROM cue_plugin_receipts UNION SELECT plugin_id,event_key FROM cue_plugin_legacy_receipts)'
+		)
+		.get() as { n: number };
 	const own = db
-		.prepare('SELECT COUNT(*) AS n FROM cue_plugin_receipts WHERE plugin_id=?')
-		.get(pluginId) as { n: number };
+		.prepare(
+			'SELECT COUNT(*) AS n FROM (SELECT event_key FROM cue_plugin_receipts WHERE plugin_id=? UNION SELECT event_key FROM cue_plugin_legacy_receipts WHERE plugin_id=?)'
+		)
+		.get(pluginId, pluginId) as { n: number };
 	return count.n < 100000 && own.n < 4096;
 }
 
@@ -2198,6 +2321,13 @@ export function purgePluginEventReceipts(pluginId: string, dbPathOverride?: stri
 			.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cue_plugin_receipts'")
 			.get();
 		if (table) receiptDb.prepare('DELETE FROM cue_plugin_receipts WHERE plugin_id=?').run(pluginId);
+		const legacy = receiptDb
+			.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='cue_plugin_legacy_receipts'"
+			)
+			.get();
+		if (legacy)
+			receiptDb.prepare('DELETE FROM cue_plugin_legacy_receipts WHERE plugin_id=?').run(pluginId);
 	} finally {
 		if (receiptDb !== db) receiptDb.close();
 	}

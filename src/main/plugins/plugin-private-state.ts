@@ -44,12 +44,13 @@ export class PluginPrivateState {
 		this.deps.store.assertPluginPersistent(pluginId, identity);
 		assertPluginAuthority(lifetime.assertActive);
 	}
-	read(pluginId: string, params: unknown) {
+	async read(pluginId: string, params: unknown) {
 		const p = pluginRequest(params, ['key']);
 		if (typeof p.key !== 'string' || !PLUGIN_RECORD_KEY_PATTERN.test(p.key))
 			throw new PluginAuthorityError('PLUGIN_INVALID');
 		const identity = this.deps.identityFor(pluginId),
 			lifetime = this.deps.capture(pluginId);
+		await lifetime.prepare();
 		this.check(pluginId, identity, lifetime, 'records:read', p.key);
 		const result = this.deps.store.readPluginRecord(pluginId, identity, p.key);
 		this.check(pluginId, identity, lifetime, 'records:read', p.key);
@@ -75,6 +76,7 @@ export class PluginPrivateState {
 		const identity = this.deps.identityFor(pluginId),
 			lifetime = this.deps.capture(pluginId);
 		const check = () => this.check(pluginId, identity, lifetime, 'records:confirm', key);
+		await lifetime.prepare();
 		check();
 		if ((this.deps.store.readPluginRecord(pluginId, identity, key)?.revision ?? 0) !== revision)
 			throw new PluginAuthorityError('PLUGIN_CONFLICT');
@@ -102,8 +104,10 @@ export class PluginPrivateState {
 				this.deps.identity.revokePlugin(pluginId);
 				check();
 				return { revision: committed };
-			}
+			},
+			() => lifetime.prepare()
 		);
+		await lifetime.prepare();
 		check();
 		return result;
 	}
@@ -126,6 +130,7 @@ export class PluginPrivateState {
 			identity = this.deps.identityFor(pluginId),
 			lifetime = this.deps.capture(pluginId);
 		const check = () => this.check(pluginId, identity, lifetime, 'secrets:use', scope);
+		await lifetime.prepare();
 		check();
 		let entry: KeyringEntry | null = null;
 		try {
@@ -164,7 +169,8 @@ export class PluginPrivateState {
 					} finally {
 						password = undefined;
 					}
-				}
+				},
+				() => lifetime.prepare()
 			);
 			check();
 			// Confirmation itself can await/reject after its native commit callback.
@@ -204,6 +210,7 @@ export class PluginPrivateState {
 					throw new PluginAuthorityError('PLUGIN_DENIED');
 			}
 		};
+		await lifetime.prepare();
 		check();
 		const result = await this.deps.confirmation.confirm(
 			{
@@ -227,8 +234,10 @@ export class PluginPrivateState {
 				this.deps.identity.revokePlugin(pluginId);
 				check();
 				return { granted: true as const };
-			}
+			},
+			() => lifetime.prepare()
 		);
+		await lifetime.prepare();
 		check();
 		return result;
 	}
@@ -245,11 +254,13 @@ export class PluginPrivateState {
 			lifetime = this.deps.capture(pluginId);
 		const prior = this.deps.store.pluginSecretRemoval(pluginId, identity, ref);
 		const check = () => this.check(pluginId, identity, lifetime, 'secrets:use', prior.endpoint);
+		await lifetime.prepare();
 		check();
 		if (prior.removal === 'removed') return { removed: true };
 		this.deps.store.setPluginSecretState(pluginId, identity, ref, 'pending', check);
 		this.deps.identity.revokePlugin(pluginId);
 		await this.deps.stopTls(pluginId);
+		await lifetime.prepare();
 		check();
 		try {
 			const slot = this.deps.store.pluginSecretSlot(pluginId, identity, ref);

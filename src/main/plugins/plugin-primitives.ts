@@ -69,6 +69,7 @@ export class PluginPrimitives {
 				);
 			if (begunInvocation) this.deps.events.assertInvocation(pluginId, begunInvocation);
 		};
+		await lifetime.prepare();
 		check();
 		guard?.(check);
 		switch (method) {
@@ -87,6 +88,7 @@ export class PluginPrimitives {
 			case 'net.tlsOpen': {
 				const result = await this.deps.tls.open(pluginId, params);
 				openedStream = result.streamId;
+				await lifetime.prepare();
 				check();
 				return result;
 			}
@@ -105,6 +107,7 @@ export class PluginPrimitives {
 			case 'events.begin': {
 				const result = this.deps.events.begin(pluginId, params);
 				begunInvocation = result.invocationId;
+				await lifetime.prepare();
 				check();
 				return result;
 			}

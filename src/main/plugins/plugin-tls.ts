@@ -24,6 +24,7 @@ export interface PluginPrimitiveLifetime {
 	generation: string;
 	signal: AbortSignal;
 	assertActive(): void;
+	prepare(): Promise<void>;
 }
 export interface PluginTlsDeps {
 	identity: PluginToolRunIdentity;
@@ -167,8 +168,10 @@ export class PluginTlsHost {
 			lifetime.signal.removeEventListener('abort', abort);
 		};
 		try {
+			await s.lifetime.prepare();
 			this.check(s);
 			await this.deps.egress.assertUrlAllowed(`https://${s.scope}/`);
+			await s.lifetime.prepare();
 			this.check(s);
 			s.connecting = true;
 			const socket = (this.deps.connect ?? tls.connect)({
@@ -243,6 +246,7 @@ export class PluginTlsHost {
 				socket.once('secureConnect', ready);
 				socket.once('close', failed);
 			});
+			await s.lifetime.prepare();
 			this.check(s);
 			return { streamId: s.id };
 		} catch (error) {
@@ -265,6 +269,7 @@ export class PluginTlsHost {
 		)
 			throw new PluginAuthorityError('PLUGIN_INVALID');
 		const s = this.owned(pluginId, p.streamId, p.invocationId);
+		await s.lifetime.prepare();
 		this.check(s);
 		if (s.reading) throw new PluginAuthorityError('PLUGIN_LIMIT');
 		s.reading = true;
@@ -273,6 +278,7 @@ export class PluginTlsHost {
 				await new Promise<void>((resolve) => {
 					s.wake = resolve;
 				});
+			await s.lifetime.prepare();
 			this.check(s);
 			const result = Buffer.alloc(Math.min(s.buffered, p.maxBytes as number));
 			let offset = 0;
@@ -289,6 +295,7 @@ export class PluginTlsHost {
 			if (!s.eof && s.buffered < PLUGIN_TLS_LIMITS.bufferedBytes - PLUGIN_TLS_LIMITS.callBytes)
 				s.socket!.resume();
 			try {
+				await s.lifetime.prepare();
 				this.check(s);
 				return { base64: result.toString('base64'), eof: s.eof && !s.buffered };
 			} finally {
@@ -310,6 +317,7 @@ export class PluginTlsHost {
 		)
 			throw new PluginAuthorityError('PLUGIN_INVALID');
 		const s = this.owned(pluginId, p.streamId, p.invocationId);
+		await s.lifetime.prepare();
 		this.check(s);
 		if (s.writing) throw new PluginAuthorityError('PLUGIN_LIMIT');
 		s.writing = true;
@@ -344,6 +352,7 @@ export class PluginTlsHost {
 					throw new PluginAuthorityError('PLUGIN_LIMIT');
 			}
 			bytes = Buffer.concat(chunks, length);
+			await s.lifetime.prepare();
 			this.check(s);
 			s.sent += length;
 			await new Promise<void>((resolve, reject) => {
@@ -357,6 +366,7 @@ export class PluginTlsHost {
 					else resolve();
 				});
 			});
+			await s.lifetime.prepare();
 			this.check(s);
 			return { writtenBytes: length };
 		} catch (error) {

@@ -136,7 +136,12 @@ function transport() {
 		generation: () => generation,
 		identity,
 		egress,
-		capture: () => ({ generation, signal: pluginLifetime.signal, assertActive: check }),
+		capture: () => ({
+			prepare: async () => {},
+			generation,
+			signal: pluginLifetime.signal,
+			assertActive: check,
+		}),
 		assertEndpoint: check,
 		encodeSecret,
 		connect: connectSocket,
@@ -678,11 +683,13 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 		]);
 		expect(store.entryIdentity(plugin)).toEqual(ident);
 		expect(
-			minter.confirm(sender, {
-				pluginId: plugin,
-				nonce: 'fixture-nonce',
-				approved: ['net:tls', 'secrets:use'],
-			}).ok
+			await (
+				await minter.confirm(sender, {
+					pluginId: plugin,
+					nonce: 'fixture-nonce',
+					approved: ['net:tls', 'secrets:use'],
+				})
+			).ok
 		).toBe(true);
 		expect(isPermitted(store.readGrants(plugin), 'net:tls', 'unrelated.example:993')).toBe(false);
 	});
@@ -702,7 +709,12 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			identity,
 			confirmation,
 			identityFor: () => ident,
-			capture: () => ({ generation: 'one', signal: controller.signal, assertActive() {} }),
+			capture: () => ({
+				prepare: async () => {},
+				generation: 'one',
+				signal: controller.signal,
+				assertActive() {},
+			}),
 			assertAllowed() {},
 		});
 		const before = fs.readFileSync(deps.ledgerPath);
@@ -712,7 +724,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			value: { disabled: true },
 			summary: 'Confirm opaque policy',
 		});
-		expect(state.read(plugin, { key: 'policy' })).toBeNull();
+		expect(await state.read(plugin, { key: 'policy' })).toBeNull();
 		confirm!();
 		expect(await pending).toEqual({ revision: 1 });
 		const restarted = new AuthorizationStore(deps);
@@ -777,7 +789,12 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			identity,
 			confirmation,
 			identityFor: () => ident,
-			capture: () => ({ generation: 'one', signal: controller.signal, assertActive() {} }),
+			capture: () => ({
+				prepare: async () => {},
+				generation: 'one',
+				signal: controller.signal,
+				assertActive() {},
+			}),
 			assertAllowed() {},
 			entry,
 		});
@@ -835,6 +852,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 				confirmation: { confirm: async (_o, _s, _c, commit) => commit('dummy') },
 				identityFor: () => ident,
 				capture: () => ({
+					prepare: async () => {},
 					generation: 'one',
 					signal: new AbortController().signal,
 					assertActive() {},
@@ -933,7 +951,12 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 					},
 				} as PluginConfirmation,
 				identityFor: () => ident,
-				capture: () => ({ generation: 'one', signal: controller.signal, assertActive() {} }),
+				capture: () => ({
+					prepare: async () => {},
+					generation: 'one',
+					signal: controller.signal,
+					assertActive() {},
+				}),
 				assertAllowed() {},
 			};
 			const state = new PluginPrivateState(setupDeps);
@@ -993,6 +1016,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			},
 			identityFor: () => ident,
 			capture: () => ({
+				prepare: async () => {},
 				generation: 'one',
 				signal: new AbortController().signal,
 				assertActive() {},
@@ -1014,6 +1038,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			label: 'Synthetic setup',
 			endpoint: { host: 'fixture.example', port: 993 },
 		});
+		await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
 		ref = Object.keys(
 			JSON.parse(deps.seal.unseal(fs.readFileSync(deps.ledgerPath))).opaque[plugin].secrets
 		)[0];
@@ -1056,6 +1081,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			confirmation,
 			identityFor: () => ident,
 			capture: () => ({
+				prepare: async () => {},
 				generation: 'one',
 				signal: new AbortController().signal,
 				assertActive() {},
@@ -1069,6 +1095,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			secret: true,
 		});
 		expect(isPermitted(store.readGrants(plugin), 'net:tls', 'fixture.example:993')).toBe(false);
+		await vi.waitFor(() => expect(approve).toBeTypeOf('function'));
 		approve!();
 		expect(await pending).toEqual({ granted: true });
 		expect(isPermitted(store.readGrants(plugin), 'net:tls', 'fixture.example:993')).toBe(true);
@@ -1107,6 +1134,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 				confirmation: { confirm: async (_o, _s, _c, commit) => commit() },
 				identityFor: () => ident,
 				capture: () => ({
+					prepare: async () => {},
 					generation: 'one',
 					signal: new AbortController().signal,
 					assertActive() {},
@@ -1121,6 +1149,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			const pending = state.removeSecret(plugin, { secretRef: ref });
 			expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
 			expect(store.pluginSecretRemoval(plugin, ident, ref).removal).toBe('pending');
+			await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
 			finish!();
 			if (failure === 'absent') {
 				expect(await pending).toEqual({ removed: true });
@@ -1131,7 +1160,10 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 			}
 			fail = false;
 			const retry = state.removeSecret(plugin, { secretRef: ref });
-			if (failure !== 'absent') finish!();
+			if (failure !== 'absent') {
+				await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+				finish!();
+			}
 			expect(await retry).toEqual({ removed: true });
 			expect(await state.removeSecret(plugin, { secretRef: ref })).toEqual({ removed: true });
 			expect(() => store.assertPluginSecret(plugin, ident, ref, 'fixture.example:993')).toThrow();
@@ -1170,7 +1202,12 @@ describe('authenticated durable Cue plugin source', () => {
 				capture: () => {
 					captures++;
 					if (!running) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-					return { generation: 'generation', signal: lifetime.signal, assertActive() {} };
+					return {
+						prepare: async () => {},
+						generation: 'generation',
+						signal: lifetime.signal,
+						assertActive() {},
+					};
 				},
 				assertAllowed() {},
 				assertReceiptCapacity() {
@@ -1377,5 +1414,44 @@ describe('primitive release after consent revocation', () => {
 			primitives.call(plugin, 'net.tlsClose', { streamId: opened.streamId })
 		).rejects.toMatchObject({ code: 'PLUGIN_DENIED' });
 		await h.host.stopPlugin(plugin);
+	});
+});
+
+describe('authenticated historical receipt evidence', () => {
+	it('authenticates only exact historical receipts without changing authorization', () => {
+		const { store, deps } = privateStore();
+		const id = 'b'.repeat(64),
+			receiptId = 'c'.repeat(64),
+			payloadHash = 'd'.repeat(64);
+		const proof = store.pluginEventProof(plugin, ident, { id, receiptId }, { payloadHash });
+		const row = { receiptId, payloadHash, proof };
+		const before = deps.anchor.read();
+		expect(store.authenticateHistoricalPluginReceipt(plugin, ident, id, row)).toBe(true);
+		expect(
+			store.authenticateHistoricalPluginReceipt(plugin, ident, id, {
+				...row,
+				payloadHash: 'e'.repeat(64),
+			})
+		).toBe(false);
+		expect(
+			store.authenticateHistoricalPluginReceipt(
+				plugin,
+				{ ...ident, contentHash: 'f'.repeat(64) },
+				id,
+				row
+			)
+		).toBe(false);
+		expect(store.authenticateHistoricalPluginReceipt(plugin, ident, 'e'.repeat(64), row)).toBe(
+			false
+		);
+		expect(deps.anchor.read()).toEqual(before);
+		const next = { ...ident, contentHash: 'f'.repeat(64) };
+		store.mint(plugin, [], next);
+		const current = deps.anchor.read();
+		const reopened = new AuthorizationStore(deps);
+		expect(reopened.authenticateHistoricalPluginReceipt(plugin, ident, id, row)).toBe(true);
+		expect(reopened.verify(plugin, ident, []).authorized).toBe(false);
+		expect(reopened.verify(plugin, next, []).authorized).toBe(true);
+		expect(deps.anchor.read()).toEqual(current);
 	});
 });

@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -70,6 +71,7 @@ describe.skipIf(!['linux', 'darwin'].includes(process.platform))(
 				captureToolLifetime: () => () => {},
 			};
 			deps = {
+				prepareToolRecordActive: async () => {},
 				isEnabled: () => true,
 				sandbox,
 				toolIdentity: runs,

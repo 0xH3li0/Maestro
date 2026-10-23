@@ -40,7 +40,7 @@ import {
 } from '../../shared/plugins/primitives';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomBytes, createHmac, createHash } from 'crypto';
+import { randomBytes, createHmac, createHash, timingSafeEqual } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
 import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
@@ -688,6 +688,39 @@ export class AuthorizationStore {
 				)
 			)
 			.digest('hex');
+	}
+
+	/** Verify old receipt evidence, never historical authority. No grant/epoch mutation.
+	 * The caller still needs current authorized identity and exact historical tuple/key
+	 * matching before returning a duplicate. An unknown identity is never guessed.
+	 */
+	authenticateHistoricalPluginReceipt(
+		_pluginId: string,
+		identity: AuthIdentity,
+		id: string,
+		row: { receiptId: string; payloadHash: string; proof: string }
+	): boolean {
+		this.assertPersistentInstallation();
+		if (
+			identity.signatureStatus !== 'trusted' ||
+			!identity.signerKey ||
+			!/^[0-9a-f]{64}$/.test(identity.contentHash) ||
+			![id, row.receiptId, row.payloadHash, row.proof].every((value) =>
+				/^[0-9a-f]{64}$/.test(value)
+			)
+		)
+			return false;
+		const expected = createHmac('sha256', this.ledger.installSecret)
+			.update(
+				canonicalJson([
+					'plugin-event-v1',
+					identity,
+					{ id, receiptId: row.receiptId },
+					{ payloadHash: row.payloadHash },
+				])
+			)
+			.digest('hex');
+		return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(row.proof, 'hex'));
 	}
 
 	/** Host-owned generic scope editor: no new capability, no wildcard, sealed CAS. */
