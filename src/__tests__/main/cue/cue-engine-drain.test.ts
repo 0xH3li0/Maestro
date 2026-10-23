@@ -234,6 +234,7 @@ describe('CueEngine.drain', () => {
 					return () => {};
 				},
 				authorize: () => allowed,
+				prepare: async () => allowed,
 			});
 			configsByProject.set('/p/a', {
 				subscriptions: [
@@ -268,6 +269,7 @@ describe('CueEngine.drain', () => {
 							payload: { id },
 						})
 					).toBe(1);
+				await flush();
 				expect(exec.calls).toHaveLength(1);
 				expect(read()).toHaveLength(2);
 				if (action === 'stop-all') {
@@ -332,7 +334,11 @@ describe('CueEngine.drain', () => {
 		'retries acknowledged plugin rows after activation without duplicates ($queueSize/$failure)',
 		async ({ queueSize, failure }) => {
 			let available = false;
-			configurePluginCueHost({ register: () => () => {}, authorize: () => available });
+			configurePluginCueHost({
+				register: () => () => {},
+				authorize: () => available,
+				prepare: async () => available,
+			});
 			configsByProject.set('/p/a', {
 				subscriptions: [
 					{
