@@ -1,3 +1,4 @@
+import { fakeAnchor } from '../../../helpers/mockAnchor';
 import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';
 import fs from 'node:fs';
@@ -599,6 +600,7 @@ describe('process IPC handlers', () => {
 			}));
 			const service = new RelayConversations({
 				baseDir,
+				receiptAnchor: fakeAnchor({ value: null }),
 				getAgent: () => owner,
 				updateAgent: (_id, update) => {
 					owner = update(owner);

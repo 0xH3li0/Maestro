@@ -10,12 +10,13 @@ import {
 } from '../../shared/maestro-lib/agents/rules';
 import type { StoredSession } from '../stores/types';
 import type { HeadlessAgentRunner } from './plugin-manager-singleton';
-import { PluginKvStore } from './plugin-kv-store';
+import { RelayLedger, type RelayLedgerLimits } from './relay-ledger';
+import type { AnchorStore } from '../utils/keyring-anchor';
+import { RelayLedgerClient } from './relay-ledger-client';
 import {
 	acquireProviderSessionWriter,
 	hasProviderSessionWriter,
 } from '../utils/provider-session-writer';
-import { RELAY_PLUGIN_ID } from '../../shared/plugins/relay-identity';
 
 const liveRelayTurns = new Map<string, AbortController>();
 
@@ -60,6 +61,8 @@ interface RelayTab {
 }
 export interface RelayConversationDeps {
 	baseDir: string;
+	receiptAnchor?: AnchorStore;
+	receiptLimits?: Partial<RelayLedgerLimits>;
 	getAgent(agentId: string): StoredSession | undefined;
 	/** Synchronous read-modify-write, shared with the host's sessions store and lifecycle broadcast. */
 	updateAgent(agentId: string, update: (agent: StoredSession) => StoredSession): void;
@@ -74,24 +77,45 @@ export interface RelayConversationDeps {
  * An interrupted receipt fails closed on retry: tool work might already have happened.
  */
 export class RelayConversations {
-	private readonly store: PluginKvStore;
+	private readonly store: RelayLedger | RelayLedgerClient;
 	private readonly queue = createKeyedWriteQueue();
 	private readonly pending = new Map<string, number>();
 	private generation = 0;
+	private purging?: Promise<void>;
+	private purgeFailed = false;
 	private readonly controllers = new Set<AbortController>();
 	private readonly now: () => number;
 	constructor(private readonly deps: RelayConversationDeps) {
-		this.store = new PluginKvStore({
-			baseDir: deps.baseDir,
-			limits: { maxKeys: 100_000, maxValueBytes: 8 * 1024 * 1024 },
-		});
+		this.store = deps.receiptAnchor
+			? new RelayLedger(deps.baseDir, deps.receiptAnchor, deps.receiptLimits)
+			: new RelayLedgerClient(deps.baseDir, deps.receiptLimits);
 		this.now = deps.now ?? Date.now;
 	}
 	/** Uninstall removes only plugin-private identity/receipts, preserving user transcripts. */
-	purge(): void {
+	purge(): Promise<void> {
+		if (this.purging) return this.purging;
+		this.purging = this.performPurge().then(
+			() => {
+				this.purging = undefined;
+				this.purgeFailed = false;
+			},
+			(error) => {
+				this.purging = undefined;
+				this.purgeFailed = true;
+				throw error;
+			}
+		);
+		return this.purging;
+	}
+	private assertAdmission(): void {
+		if (this.purging || this.purgeFailed)
+			throw Error('Relay cleanup pending or failed; admission denied');
+	}
+	private async performPurge(): Promise<void> {
 		this.generation++;
-		for (const key of this.store.keys(RELAY_PLUGIN_ID)) {
-			const mapping = this.read<Mapping>(key);
+		for (const controller of this.controllers) controller.abort();
+		for (const key of await this.store.mappingKeys()) {
+			const mapping = await this.read<Mapping>(key);
 			if (!mapping?.tabId || !mapping.agentId) continue;
 			const tab = (this.deps.getAgent(mapping.agentId)?.aiTabs as RelayTab[] | undefined)?.find(
 				(tab) => tab.id === mapping.tabId
@@ -100,7 +124,7 @@ export class RelayConversations {
 				tab?.relayConversation?.status === 'queued' ||
 				tab?.relayConversation?.status === 'running'
 			)
-				this.patch(
+				await this.patch(
 					mapping,
 					{},
 					{
@@ -111,7 +135,7 @@ export class RelayConversations {
 				);
 		}
 		for (const controller of this.controllers) controller.abort();
-		this.store.purge(RELAY_PLUGIN_ID);
+		await this.store.purgeMappings();
 	}
 	private assertGeneration(generation: number): void {
 		if (generation !== this.generation) throw new Error('Relay conversation ledger was purged');
@@ -119,16 +143,20 @@ export class RelayConversations {
 	private key(...parts: string[]): string {
 		return createHash('sha256').update(canonicalJson(parts)).digest('hex');
 	}
-	private read<T>(key: string): T | undefined {
-		const value = this.store.get(RELAY_PLUGIN_ID, key);
+	private async read<T>(key: string): Promise<T | undefined> {
+		const generation = this.generation;
+		const value = await this.store.get(key);
+		this.assertGeneration(generation);
 		return value ? (JSON.parse(value) as T) : undefined;
 	}
-	private write(key: string, value: unknown): void {
-		this.store.set(RELAY_PLUGIN_ID, key, JSON.stringify(value));
+	private async write(key: string, value: unknown): Promise<void> {
+		const generation = this.generation;
+		await this.store.set(key, JSON.stringify(value));
+		this.assertGeneration(generation);
 	}
-	private mapping(agentId: string, opts: RelaySendOptions): Mapping {
+	private async mapping(agentId: string, opts: RelaySendOptions): Promise<Mapping> {
 		const key = this.key('conversation', agentId, opts.conversationId);
-		const existing = this.read<Mapping>(key);
+		const existing = await this.read<Mapping>(key);
 		if (existing?.interrupted)
 			throw new Error(
 				'Previous Relay execution is uncertain; inspect the provider session before continuing'
@@ -151,17 +179,9 @@ export class RelayConversations {
 			matches[0].relayConversation.conversationId !== opts.conversationId
 		)
 			throw new Error('Provider session already maps to another Relay conversation');
-		// Also reject a closed/archived conversation claimed under a second transport id.
-		for (const storedKey of this.store.keys(RELAY_PLUGIN_ID)) {
-			const stored = this.read<Mapping>(storedKey);
-			if (
-				opts.sessionId &&
-				stored?.agentId === agentId &&
-				stored.providerSessionId === opts.sessionId &&
-				stored.conversationId !== opts.conversationId
-			)
-				throw new Error('Provider session already maps to another Relay conversation');
-		}
+		// A deterministic authenticated binding survives closure and payload eviction.
+		if (opts.sessionId)
+			await this.store.assertProviderAvailable(agentId, opts.sessionId, opts.conversationId);
 		const mapping: Mapping = {
 			agentId,
 			conversationId: opts.conversationId,
@@ -169,15 +189,16 @@ export class RelayConversations {
 			providerSessionId: opts.sessionId,
 			materialized: false,
 		};
-		this.write(key, mapping);
+		await this.write(key, mapping);
 		return mapping;
 	}
-	private patch(
+	private async patch(
 		mapping: Mapping,
 		patch: Partial<RelayTab>,
 		relay: Partial<RelayConversationState>,
 		log?: RelayTab['logs'][number]
-	): void {
+	): Promise<void> {
+		let moved = false;
 		this.deps.updateAgent(mapping.agentId, (agent) => {
 			const tabs = (agent.aiTabs ?? []) as RelayTab[];
 			// History's resume path may have reopened the same provider after the tab was closed.
@@ -188,7 +209,7 @@ export class RelayConversations {
 					: undefined);
 			if (current && current.id !== mapping.tabId) {
 				mapping.tabId = current.id;
-				this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
+				moved = true;
 			}
 			const fresh = buildTabRecord(
 				{ ...DEFAULT_RULE_CONTEXT, newId: () => mapping.tabId, now: this.now },
@@ -220,13 +241,15 @@ export class RelayConversations {
 					: [...(agent.unifiedTabOrder ?? []), { type: 'ai', id: tab.id }],
 			};
 		});
+		if (moved)
+			await this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
 	}
 	private async flushMapping(mapping: Mapping, generation: number): Promise<void> {
 		await this.deps.flush?.();
 		this.assertGeneration(generation);
 		if (mapping.materialized === false) {
 			mapping.materialized = true;
-			this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
+			await this.write(this.key('conversation', mapping.agentId, mapping.conversationId), mapping);
 		}
 	}
 	async send(
@@ -237,6 +260,7 @@ export class RelayConversations {
 		onProgress: Parameters<HeadlessAgentRunner>[5],
 		authorize: () => void
 	): Promise<SendResult> {
+		this.assertAdmission();
 		const generation = this.generation;
 		const conversationKey = this.key('conversation', agentId, opts.conversationId);
 		this.pending.set(conversationKey, (this.pending.get(conversationKey) ?? 0) + 1);
@@ -247,7 +271,9 @@ export class RelayConversations {
 				if (signal.aborted) throw new Error('Relay send cancelled');
 				const receiptKey = this.key('message', agentId, opts.conversationId, opts.messageId);
 				const hash = this.key(prompt);
-				const previous = this.read<Receipt>(receiptKey);
+				const previous = await this.read<Receipt>(receiptKey);
+				authorize();
+				if (signal.aborted) throw Error('Relay send cancelled');
 				if (previous) {
 					if (previous.promptHash !== hash)
 						throw new Error('Relay messageId reused with different content');
@@ -261,14 +287,16 @@ export class RelayConversations {
 						replayed: true,
 					};
 				}
-				const mapping = this.mapping(agentId, opts);
+				const mapping = await this.mapping(agentId, opts);
+				authorize();
+				if (signal.aborted) throw Error('Relay send cancelled');
 				const tab = (this.deps.getAgent(agentId)?.aiTabs as RelayTab[] | undefined)?.find(
 					(t) => t.id === mapping.tabId
 				);
 				if (!tab && mapping.providerSessionId && this.deps.loadTranscript) {
 					const logs = await this.deps.loadTranscript(agentId, mapping.providerSessionId);
 					this.assertGeneration(generation);
-					this.patch(mapping, { logs }, {});
+					await this.patch(mapping, { logs }, {});
 				}
 				// Desktop continuation may have updated the provider id; the live tab is authoritative.
 				mapping.providerSessionId = tab?.agentSessionId ?? mapping.providerSessionId;
@@ -283,8 +311,11 @@ export class RelayConversations {
 				let release = () => {};
 				let runnerInvoked = false;
 				try {
-					this.write(receiptKey, { promptHash: hash, messageId: opts.messageId } satisfies Receipt);
-					this.patch(
+					await this.write(receiptKey, {
+						promptHash: hash,
+						messageId: opts.messageId,
+					} satisfies Receipt);
+					await this.patch(
 						mapping,
 						{ hidden: false, hasUnread: true },
 						{
@@ -320,8 +351,11 @@ export class RelayConversations {
 					);
 					mapping.providerSessionId = current?.agentSessionId ?? mapping.providerSessionId;
 					mapping.interrupted = true;
-					this.write(conversationKey, mapping);
-					this.patch(mapping, {}, { status: 'running' });
+					await this.write(conversationKey, mapping);
+					await this.patch(mapping, {}, { status: 'running' });
+					authorize();
+					this.assertGeneration(generation);
+					if (controller.signal.aborted) throw new Error('Relay send cancelled');
 					runnerInvoked = true;
 					const result = await this.deps.run(
 						agentId,
@@ -338,13 +372,13 @@ export class RelayConversations {
 					if (result.sessionId) mapping.providerSessionId = result.sessionId;
 					if (mapping.providerSessionId || result.executionStarted === false)
 						mapping.interrupted = false;
-					this.write(conversationKey, mapping);
+					await this.write(conversationKey, mapping);
 					const returned: SendResult = {
 						...result,
 						conversationId: opts.conversationId,
 						tabId: mapping.tabId,
 					};
-					this.patch(
+					await this.patch(
 						mapping,
 						{ hasUnread: true },
 						{
@@ -362,7 +396,7 @@ export class RelayConversations {
 					await this.flushMapping(mapping, generation);
 					this.assertGeneration(generation);
 					// Persist outcome before releasing it. A replay never runs the provider again.
-					this.write(receiptKey, {
+					await this.write(receiptKey, {
 						promptHash: hash,
 						messageId: opts.messageId,
 						result: returned,
@@ -372,12 +406,12 @@ export class RelayConversations {
 				} catch (error) {
 					if (generation === this.generation && !runnerInvoked) {
 						// No provider call occurred. Keep retries possible; uncertain runs retain receipts.
-						this.store.delete(RELAY_PLUGIN_ID, receiptKey);
+						await this.store.deletePending(receiptKey);
 						mapping.interrupted = false;
-						this.write(conversationKey, mapping);
+						await this.write(conversationKey, mapping);
 					}
 					if (generation === this.generation)
-						this.patch(
+						await this.patch(
 							mapping,
 							{},
 							{ status: 'error', error: String(error), lastActivityAt: this.now() }
@@ -402,14 +436,17 @@ export class RelayConversations {
 	async restore(
 		agentId: string,
 		conversationId: string,
-		providerSessionId: string
+		providerSessionId: string,
+		authorize: () => void = () => {}
 	): Promise<SendResult> {
+		this.assertAdmission();
 		const generation = this.generation;
 		const key = this.key('conversation', agentId, conversationId);
 		return this.queue.enqueue(key, async () => {
 			this.assertGeneration(generation);
-			const known = this.read<Mapping>(key);
-			const mapping = this.mapping(agentId, {
+			authorize();
+			const known = await this.read<Mapping>(key);
+			const mapping = await this.mapping(agentId, {
 				conversationId,
 				messageId: '',
 				sessionId: providerSessionId,
@@ -420,9 +457,13 @@ export class RelayConversations {
 			if ((!known || mapping.materialized === false) && !tab) {
 				const logs = (await this.deps.loadTranscript?.(agentId, providerSessionId)) ?? [];
 				this.assertGeneration(generation);
-				this.patch(mapping, { logs }, {});
-			} else if ((!known || mapping.materialized === false) && tab) this.patch(mapping, {}, {});
+				authorize();
+				await this.patch(mapping, { logs }, {});
+			} else if ((!known || mapping.materialized === false) && tab)
+				await this.patch(mapping, {}, {});
+			authorize();
 			await this.flushMapping(mapping, generation);
+			authorize();
 			return {
 				success: true,
 				response: null,
@@ -432,14 +473,25 @@ export class RelayConversations {
 			};
 		});
 	}
-	complete(agentId: string, conversationId: string, messageId: string): Promise<void> | void {
+	async complete(
+		agentId: string,
+		conversationId: string,
+		messageId: string,
+		authorize: () => void = () => {}
+	): Promise<void> {
+		this.assertAdmission();
+		const generation = this.generation;
 		const key = this.key('conversation', agentId, conversationId);
 		if (this.pending.has(key)) throw new Error('Relay conversation has pending messages');
-		const mapping = this.read<Mapping>(key);
-		const receipt = this.read<Receipt>(this.key('message', agentId, conversationId, messageId));
+		const mapping = await this.read<Mapping>(key);
+		const receipt = await this.read<Receipt>(
+			this.key('message', agentId, conversationId, messageId)
+		);
+		this.assertGeneration(generation);
 		const agent = this.deps.getAgent(agentId);
 		const tab = (agent?.aiTabs as RelayTab[] | undefined)?.find((t) => t.id === mapping?.tabId);
 		if (
+			this.pending.has(key) ||
 			!mapping ||
 			!tab ||
 			!receipt?.result?.success ||
@@ -457,13 +509,17 @@ export class RelayConversations {
 			)
 		)
 			throw new Error('Relay completion is stale or the conversation has unfinished work');
-		if (!tab.relayConversation.completedAt) this.patch(mapping, {}, { completedAt: this.now() });
-		return this.deps.flush?.();
+		authorize();
+		if (!tab.relayConversation.completedAt)
+			await this.patch(mapping, {}, { completedAt: this.now() });
+		await this.deps.flush?.();
+		authorize();
 	}
 	/** Host restart cannot turn an unfinished provider run into a completed task. */
-	reconcileInterrupted(): void {
-		for (const key of this.store.keys(RELAY_PLUGIN_ID)) {
-			const mapping = this.read<Mapping>(key);
+	async reconcileInterrupted(): Promise<void> {
+		this.assertAdmission();
+		for (const key of await this.store.mappingKeys()) {
+			const mapping = await this.read<Mapping>(key);
 			if (!mapping?.tabId || !mapping.agentId || !mapping.conversationId) continue;
 			const tab = (this.deps.getAgent(mapping.agentId)?.aiTabs as RelayTab[] | undefined)?.find(
 				(t) => t.id === mapping.tabId
@@ -472,7 +528,7 @@ export class RelayConversations {
 				tab?.relayConversation?.status === 'running' ||
 				tab?.relayConversation?.status === 'queued'
 			)
-				this.patch(
+				await this.patch(
 					mapping,
 					{},
 					{

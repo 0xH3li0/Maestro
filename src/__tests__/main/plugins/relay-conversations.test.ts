@@ -1,3 +1,4 @@
+import { fakeAnchor } from '../../helpers/mockAnchor';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +39,7 @@ describe('durable Relay conversations', () => {
 		});
 		deps = {
 			baseDir,
+			receiptAnchor: fakeAnchor({ value: null }),
 			getAgent: () => agent,
 			updateAgent: (_id, update) => {
 				agent = update(agent);
@@ -52,6 +54,67 @@ describe('durable Relay conversations', () => {
 		host = new RelayConversations(deps);
 	});
 	afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }));
+	it('rechecks authorization after the final worker persistence before starting a provider', async () => {
+		let allowed = true;
+		const update = deps.updateAgent;
+		deps.updateAgent = (id, apply) => {
+			update(id, apply);
+			if (agent.aiTabs.some((tab) => tab.relayConversation?.status === 'running')) allowed = false;
+		};
+		await expect(
+			host.send('agent', 'hello', opts, new AbortController().signal, undefined, () => {
+				if (!allowed) throw Error('revoked during persistence');
+			})
+		).rejects.toThrow(/revoked/);
+		expect(deps.run).not.toHaveBeenCalled();
+	});
+	it('rejects completion if uninstall occurs between its two durable reads', async () => {
+		await send();
+		const target = host as unknown as { read: (key: string) => Promise<unknown> };
+		const original = target.read.bind(host);
+		vi.spyOn(target, 'read').mockImplementationOnce(async (key) => {
+			const value = await original(key);
+			queueMicrotask(() => {
+				void host.purge();
+			});
+			return value;
+		});
+		await expect(host.complete('agent', opts.conversationId, opts.messageId)).rejects.toThrow(
+			/purged/
+		);
+		expect(agent.aiTabs[0].relayConversation?.completedAt).toBeUndefined();
+	});
+	it('denies new admission while uninstall cleanup is awaiting indexed persistence', async () => {
+		await send();
+		const target = host as unknown as { store: { mappingKeys: () => Promise<string[]> } };
+		const gate = Promise.withResolvers<string[]>();
+		vi.spyOn(target.store, 'mappingKeys').mockImplementationOnce(() => gate.promise);
+		const purge = host.purge();
+		await expect(send('new', { messageId: 'new' })).rejects.toThrow(/cleanup/);
+		await expect(host.restore('agent', opts.conversationId, 'provider')).rejects.toThrow(/cleanup/);
+		await expect(host.complete('agent', opts.conversationId, opts.messageId)).rejects.toThrow(
+			/cleanup/
+		);
+		gate.resolve([]);
+		await purge;
+	});
+	it('checks current Done authority after durable reads before marking completion', async () => {
+		await send();
+		let allowed = true;
+		const target = host as unknown as { read: (key: string) => Promise<unknown> };
+		const original = target.read.bind(host);
+		vi.spyOn(target, 'read').mockImplementationOnce(async (key) => {
+			const value = await original(key);
+			allowed = false;
+			return value;
+		});
+		await expect(
+			host.complete('agent', opts.conversationId, opts.messageId, () => {
+				if (!allowed) throw Error('Done authorization revoked');
+			})
+		).rejects.toThrow(/revoked/);
+		expect(agent.aiTabs[0].relayConversation?.completedAt).toBeUndefined();
+	});
 	it('creates one real background tab and resumes it across messages and host recreation', async () => {
 		const first = await send();
 		host = new RelayConversations(deps);
@@ -291,7 +354,9 @@ describe('durable Relay conversations', () => {
 		await vi.waitFor(() => expect(resolveRun).toBeTypeOf('function'));
 		const next = send('next', { messageId: 'message-2' });
 		expect(deps.run).toHaveBeenCalledTimes(1);
-		expect(() => host.complete('agent', opts.conversationId, opts.messageId)).toThrow(/pending/);
+		await expect(host.complete('agent', opts.conversationId, opts.messageId)).rejects.toThrow(
+			/pending/
+		);
 		resolveRun({ success: true, response: 'first answer', sessionId: 'shared-provider' });
 		await Promise.all([first, next]);
 		expect(deps.run).toHaveBeenLastCalledWith(
@@ -310,7 +375,7 @@ describe('durable Relay conversations', () => {
 		vi.mocked(deps.run).mockRejectedValueOnce(new Error('connection lost'));
 		await expect(send()).rejects.toThrow(/connection lost/);
 		host = new RelayConversations(deps);
-		host.reconcileInterrupted();
+		await host.reconcileInterrupted();
 		expect(await send()).toMatchObject({
 			success: false,
 			replayed: true,
@@ -322,7 +387,7 @@ describe('durable Relay conversations', () => {
 	it('requires explicit current completion and reopens an archived conversation with the same tab', async () => {
 		const first = await send();
 		expect(agent.aiTabs[0].relayConversation.completedAt).toBeUndefined();
-		host.complete('agent', opts.conversationId, opts.messageId);
+		await host.complete('agent', opts.conversationId, opts.messageId);
 		expect(agent.aiTabs[0].relayConversation.completedAt).toBe(1000);
 		agent.aiTabs[0].hidden = true;
 		agent.aiTabs[0].relayConversation.archivedAt = 2000;
@@ -330,7 +395,9 @@ describe('durable Relay conversations', () => {
 		expect(agent.aiTabs[0]).toMatchObject({ id: first.tabId, hidden: false });
 		expect(agent.aiTabs[0].relayConversation.completedAt).toBeUndefined();
 		expect(agent.aiTabs[0].relayConversation.archivedAt).toBeUndefined();
-		expect(() => host.complete('agent', opts.conversationId, opts.messageId)).toThrow(/stale/);
+		await expect(host.complete('agent', opts.conversationId, opts.messageId)).rejects.toThrow(
+			/stale/
+		);
 	});
 	it('rejects a late completion after desktop conversation input', async () => {
 		await send();
@@ -340,7 +407,9 @@ describe('durable Relay conversations', () => {
 			text: 'still working',
 			timestamp: 2000,
 		});
-		expect(() => host.complete('agent', opts.conversationId, opts.messageId)).toThrow(/stale/);
+		await expect(host.complete('agent', opts.conversationId, opts.messageId)).rejects.toThrow(
+			/stale/
+		);
 	});
 	it('rejects binding the same provider to two conversation ids', async () => {
 		const first = await send();
@@ -422,7 +491,7 @@ describe('durable Relay conversations', () => {
 		await vi.waitFor(() => expect(agent.aiTabs[0].relayConversation.status).toBe('running'));
 		const next = send('queued', { messageId: 'message-2' });
 		const queuedError = expect(next).rejects.toThrow(/purged/);
-		host.purge();
+		await host.purge();
 		finish({ success: true, response: 'late', sessionId: 'late-provider' });
 		await Promise.all([firstError, queuedError]);
 		expect(agent.aiTabs).toHaveLength(1);
@@ -442,10 +511,43 @@ describe('durable Relay conversations', () => {
 		const pending = host.restore('agent', 'old', 'old-provider');
 		const rejection = expect(pending).rejects.toThrow(/purged/);
 		await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
-		host.purge();
+		await host.purge();
 		finish([{ id: 'old', source: 'user', timestamp: 1, text: 'old' }]);
 		await rejection;
 		expect(agent.aiTabs).toHaveLength(0);
 		expect(fs.existsSync(path.join(baseDir, 'sh.maestro.relay'))).toBe(false);
+	});
+	it('retains silent late replay, Done and history after bounded response eviction and uninstall', async () => {
+		deps.receiptLimits = { responseCount: 1 };
+		host = new RelayConversations(deps);
+		const first = await send();
+		await send('next', { messageId: 'message-2' });
+		const replay = await send();
+		expect(replay).toMatchObject({
+			replayed: true,
+			success: true,
+			response: null,
+			sessionId: first.sessionId,
+		});
+		expect(deps.run).toHaveBeenCalledTimes(2);
+		expect(agent.aiTabs[0].logs).toHaveLength(4);
+		await send('other', { messageId: 'message-3', conversationId: 'other-thread' });
+		await host.complete('agent', opts.conversationId, 'message-2');
+		expect(agent.aiTabs[0].relayConversation.completedAt).toBe(1000);
+		await host.purge();
+		agent.aiTabs = [];
+		host = new RelayConversations(deps);
+		expect(await send()).toMatchObject({ replayed: true, response: null });
+		expect(deps.run).toHaveBeenCalledTimes(3);
+		expect(agent.aiTabs).toHaveLength(0);
+	});
+	it('refuses new work at durable fence capacity while replay and existing continuation stay safe', async () => {
+		deps.receiptLimits = { messages: 2 };
+		host = new RelayConversations(deps);
+		await send();
+		await send('next', { messageId: 'message-2' });
+		await expect(send('overflow', { messageId: 'message-3' })).rejects.toThrow(/capacity/);
+		expect(await send()).toMatchObject({ replayed: true });
+		expect(deps.run).toHaveBeenCalledTimes(2);
 	});
 });

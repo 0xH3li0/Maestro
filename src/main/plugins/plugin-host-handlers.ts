@@ -1761,7 +1761,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					const restored = await deps.relayConversations!.restore(
 						p.agentId as string,
 						p.conversationId as string,
-						p.sessionId as string
+						p.sessionId as string,
+						authorize
 					);
 					authorize();
 					return restored;
@@ -1777,13 +1778,16 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			});
 			if (!isOpaqueId(p.agentId) || !isOpaqueId(p.conversationId) || !isOpaqueId(p.messageId))
 				throw new Error('Invalid Relay conversation completion identity');
-			assertBrokerAllowed(deps, pluginId, 'agents.completeConversation', p);
-			assertTrustedActVerb(deps, pluginId);
-			if (
-				!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
-				!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
-			)
-				throw new Error('Relay conversation authorization required');
+			const authorize = () => {
+				assertBrokerAllowed(deps, pluginId, 'agents.completeConversation', p);
+				assertTrustedActVerb(deps, pluginId);
+				if (
+					!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
+					!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
+				)
+					throw new Error('Relay conversation authorization required');
+			};
+			authorize();
 			return underGuard(
 				deps.actionGuard,
 				pluginId,
@@ -1793,8 +1797,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					await deps.relayConversations!.complete(
 						p.agentId as string,
 						p.conversationId as string,
-						p.messageId as string
+						p.messageId as string,
+						authorize
 					);
+					authorize();
 					return { success: true };
 				}
 			);

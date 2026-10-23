@@ -2588,7 +2588,9 @@ app
 				return transcriptMessagesToLogEntries(stripSynopsisTurns(transcript.messages));
 			},
 		});
-		relayConversations.reconcileInterrupted();
+		await relayConversations
+			.reconcileInterrupted()
+			.catch(() => logger.warn('Relay receipts unavailable; continuity remains closed', 'Plugins'));
 		onHeadlessAgentActivityChange(() => {
 			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
@@ -2917,17 +2919,21 @@ app
 			},
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
-			purgePluginData: (id) => {
-				if (id === RELAY_PLUGIN_ID) relayConversations.purge();
-				pluginProviderSessions.purge(id);
-				purgePluginData(id, {
-					kvStore: pluginKvStore,
-					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
-					eventBus,
-					hostViews: pluginHostViews,
-				});
-				groupingRegistry.removePlugin(id);
-				backgroundSupervisor.teardown(id);
+			purgePluginData: async (id) => {
+				authStore.uninstall(id);
+				try {
+					if (id === RELAY_PLUGIN_ID) await relayConversations.purge();
+				} finally {
+					pluginProviderSessions.purge(id);
+					purgePluginData(id, {
+						kvStore: pluginKvStore,
+						settingsDeleteNamespace: pluginSettingsDeleteNamespace,
+						eventBus,
+						hostViews: pluginHostViews,
+					});
+					groupingRegistry.removePlugin(id);
+					backgroundSupervisor.teardown(id);
+				}
 			},
 			onChange: (registry) => {
 				serviceReconcile?.();

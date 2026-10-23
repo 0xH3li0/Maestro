@@ -1,3 +1,4 @@
+import { fakeAnchor } from '../../helpers/mockAnchor';
 import { RelayConversations } from '../../../main/plugins/relay-conversations';
 import { createMockSession } from '../../helpers/mockSession';
 /**
@@ -3010,6 +3011,7 @@ describe('Relay desktop transport authorization', () => {
 		const recordRelayTurn = vi.fn(async () => {});
 		const relayConversations = new RelayConversations({
 			baseDir: path.join(kvBase, 'conversations'),
+			receiptAnchor: fakeAnchor({ value: null }),
 			getAgent: () => agent,
 			updateAgent: (_id, update) => {
 				agent = update(agent);
