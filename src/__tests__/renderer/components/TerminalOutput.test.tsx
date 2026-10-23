@@ -17,6 +17,7 @@ import {
 	TerminalOutput,
 	collapseAiResponseLogs,
 } from '../../../renderer/components/TerminalOutput';
+import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -605,6 +606,69 @@ describe('TerminalOutput', () => {
 			expect(screen.getAllByText('10m')).toHaveLength(1);
 			expect(screen.queryByText('1m')).not.toBeInTheDocument();
 		});
+
+		it.each([
+			{
+				name: 'before the answer',
+				entries: [
+					['warning', 'stderr', 1],
+					['answer', 'stdout', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+			{
+				name: 'the only output',
+				entries: [['warning', 'stderr', 1]],
+				replyId: null,
+				elapsedMinutes: 1,
+			},
+			{
+				name: 'between answer fragments',
+				entries: [
+					['opening', 'stdout', 1],
+					['warning', 'stderr', 5],
+					['answer', 'stdout', 10],
+					['answer-part', 'stdout', 12],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 12,
+			},
+			{
+				name: 'after the answer',
+				entries: [
+					['answer', 'stdout', 5],
+					['answer-part', 'stdout', 7],
+					['warning', 'stderr', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+		] as const)(
+			'keeps the duration badge off stderr when a warning is $name',
+			({ entries, replyId, elapsedMinutes }) => {
+				const sentAt = Date.now() - 30 * MINUTE;
+				const logs = [
+					createLogEntry({ id: 'user', text: 'Go', source: 'user', timestamp: sentAt }),
+					...entries.map(([id, source, minutes]) =>
+						createLogEntry({ id, source, text: id, timestamp: sentAt + minutes * MINUTE })
+					),
+				];
+				const durations = computeTurnDurations(logs);
+				const renderedAnswerIds = collapseAiResponseLogs(logs)
+					.filter((log) => log.source === 'stdout')
+					.map((log) => log.id);
+				expect([...durations]).toEqual(replyId ? [[replyId, elapsedMinutes * MINUTE]] : []);
+				expect([...durations.keys()]).toEqual(renderedAnswerIds.slice(-1));
+
+				const { container } = renderTurn(logs);
+				const badges = Array.from(container.querySelectorAll('[title^="Agent took "]'));
+				expect(
+					badges.map((badge) => badge.closest('[data-log-id]')?.getAttribute('data-log-id'))
+				).toEqual(replyId ? [replyId] : []);
+				if (replyId) expect(badges[0]).toHaveTextContent(`${elapsedMinutes}m`);
+			}
+		);
 
 		it('reads as instant when the agent answered inside a minute', () => {
 			const sentAt = Date.now() - 5 * MINUTE;
