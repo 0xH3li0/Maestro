@@ -1,3 +1,5 @@
+import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
+vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 import { fakeAnchor } from '../../../helpers/mockAnchor';
 import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';

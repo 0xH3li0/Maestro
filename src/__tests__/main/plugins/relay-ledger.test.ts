@@ -1,4 +1,6 @@
-import { afterEach, describe, it, expect } from 'vitest';
+import { nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
+vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';

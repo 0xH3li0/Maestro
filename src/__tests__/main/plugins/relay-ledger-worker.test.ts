@@ -20,11 +20,18 @@ beforeAll(async () => {
 		bundle: true,
 		platform: 'node',
 		format: 'cjs',
-		external: ['better-sqlite3'],
 		plugins: [
 			{
 				name: 'test-checkpoint',
 				setup(b) {
+					b.onResolve({ filter: /^better-sqlite3$/ }, () => ({
+						path: 'node-sqlite-adapter',
+						namespace: 'test-sqlite',
+					}));
+					b.onLoad({ filter: /.*/, namespace: 'test-sqlite' }, () => ({
+						contents: `import { nodeSqliteBetterSqlite3Mock } from ${JSON.stringify(path.resolve('src/__tests__/helpers/nodeSqlite.ts'))}; export default nodeSqliteBetterSqlite3Mock().default;`,
+						resolveDir: process.cwd(),
+					}));
 					b.onResolve({ filter: /keyring-anchor$/ }, () => ({ path: anchor }));
 				},
 			},
