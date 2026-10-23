@@ -1175,7 +1175,7 @@ describe('confirmed opaque records and endpoint-bound secrets', () => {
 describe('authenticated durable Cue plugin source', () => {
 	it.each(['unchanged', 'same-signer', 'new-signer', 'unsigned', 'untrusted'] as const)(
 		'binds consumer authority and durable receipts across %s updates',
-		(update) => {
+		async (update) => {
 			const { store } = privateStore();
 			const identity = new PluginToolRunIdentity(),
 				lifetime = new AbortController();
@@ -1191,6 +1191,7 @@ describe('authenticated durable Cue plugin source', () => {
 			const events = new PluginCueEvents({
 				store,
 				identity,
+				prepareIdentityFor: async () => currentIdentity,
 				identityFor: (_id, queued = false) => {
 					if (!running && !queued) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
 					return currentIdentity;
@@ -1210,13 +1211,32 @@ describe('authenticated durable Cue plugin source', () => {
 					};
 				},
 				assertAllowed() {},
-				assertReceiptCapacity() {
-					if (legacyHistory) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-					if (atCapacity) throw new PluginAuthorityError('PLUGIN_LIMIT');
-				},
-				readReceipt: (_p, id) => receipts.get(id) ?? null,
-				writeReceipt: (_p, id, row) => {
-					receipts.set(id, row);
+				receipts: {
+					read: async (_p, id) => receipts.get(id) ?? null,
+					historical: async () => null,
+					reserve: async (_p, id, row, attempt) => {
+						if (legacyHistory) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+						if (atCapacity) throw new PluginAuthorityError('PLUGIN_LIMIT');
+						if (receipts.has(id)) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+						receipts.set(id, {
+							receipt: row,
+							phase: 'reserved',
+							attempt,
+							outcomeReservation: true,
+							receiptOwner: plugin,
+						});
+					},
+					dispatch: async (_p, id) => {
+						receipts.get(id).phase = 'dispatching';
+					},
+					accepted: async (_p, id) => {
+						receipts.get(id).phase = 'accepted';
+					},
+					cancelPublish: async (_p, id) => {
+						receipts.delete(id);
+					},
+					claim: async () => true,
+					settle: async () => {},
 				},
 			});
 			const ctx = {
@@ -1257,33 +1277,35 @@ describe('authenticated durable Cue plugin source', () => {
 				eventId: 'stable:1',
 				metadata: { reference: 'opaque' },
 			};
-			expect(events.publish(plugin, args).status).toBe('accepted');
+			expect((await events.publish(plugin, args)).status).toBe('accepted');
 			expect(captures).toBe(capturesBeforePublish);
 			generation = 'replacement-child';
-			expect(() => events.publish(plugin, args)).toThrow(
+			await expect(events.publish(plugin, args)).rejects.toThrow(
 				expect.objectContaining({ code: 'PLUGIN_DENIED' })
 			);
 			generation = 'generation'; // A generation lookup must not construct another freshly hashed lifetime.
 			atCapacity = true;
-			expect(events.publish(plugin, args).status).toBe('duplicate');
-			expect(() => events.publish(plugin, { ...args, eventId: 'stable:2' })).toThrow(
+			expect((await events.publish(plugin, args)).status).toBe('duplicate');
+			await expect(events.publish(plugin, { ...args, eventId: 'stable:2' })).rejects.toThrow(
 				expect.objectContaining({ code: 'PLUGIN_LIMIT' })
 			);
 			expect(receipts.size).toBe(1);
 			expect(emitted).toHaveLength(1);
 			legacyHistory = true;
-			expect(events.publish(plugin, args).status).toBe('duplicate');
+			expect((await events.publish(plugin, args)).status).toBe('duplicate');
 			for (const filter of [undefined, { 'metadata.reference': 'does-not-match' }]) {
 				ctx.subscription.filter = filter;
-				expect(() => events.publish(plugin, { ...args, eventId: 'unresolved-history' })).toThrow(
-					expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' })
-				);
+				await expect(
+					events.publish(plugin, { ...args, eventId: 'unresolved-history' })
+				).rejects.toThrow(expect.objectContaining({ code: 'PLUGIN_UNAVAILABLE' }));
 				expect(emitted).toHaveLength(1);
 				expect(receipts.size).toBe(1);
 			}
 			ctx.subscription.filter = undefined;
 			legacyHistory = false;
-			expect(() => events.publish(plugin, { ...args, metadata: { changed: true } })).toThrow();
+			await expect(
+				events.publish(plugin, { ...args, metadata: { changed: true } })
+			).rejects.toThrow();
 			expect(events.authorize(emitted[0], 'agent-owner', 'fixture', true)).toBe(true);
 			expect(events.authorize(emitted[0], 'foreign-agent', 'fixture', true)).toBe(false);
 			expect(
@@ -1307,14 +1329,14 @@ describe('authenticated durable Cue plugin source', () => {
 				};
 				// Synthetic consent for the new version; never reuse the old live/queued authority.
 				store.mint(plugin, store.readGrants(plugin), currentIdentity);
-				expect(() => events.publish(plugin, args)).toThrow(
+				await expect(events.publish(plugin, args)).rejects.toThrow(
 					expect.objectContaining({ code: 'PLUGIN_DENIED' })
 				);
 				expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
 				const updatedLease = events.begin(plugin, { consumerId: consumer.consumerId });
 				const updatedArgs = { ...args, invocationId: updatedLease.invocationId };
 				if (update === 'unsigned' || update === 'untrusted') {
-					expect(() => events.publish(plugin, updatedArgs)).toThrow(
+					await expect(events.publish(plugin, updatedArgs)).rejects.toThrow(
 						expect.objectContaining({ code: 'PLUGIN_DENIED' })
 					);
 					stop();
@@ -1322,8 +1344,8 @@ describe('authenticated durable Cue plugin source', () => {
 					return;
 				}
 				if (update === 'same-signer') {
-					const originalReceipt = [...receipts.values()][0].receiptId;
-					expect(events.publish(plugin, updatedArgs)).toEqual({
+					const originalReceipt = [...receipts.values()][0].receipt.receiptId;
+					expect(await events.publish(plugin, updatedArgs)).toEqual({
 						receiptId: originalReceipt,
 						status: 'duplicate',
 					});
@@ -1331,10 +1353,12 @@ describe('authenticated durable Cue plugin source', () => {
 				}
 				atCapacity = false;
 				expect(
-					events.publish(plugin, {
-						...updatedArgs,
-						eventId: update === 'new-signer' ? 'stable:1' : 'stable:2',
-					}).status
+					(
+						await events.publish(plugin, {
+							...updatedArgs,
+							eventId: update === 'new-signer' ? 'stable:1' : 'stable:2',
+						})
+					).status
 				).toBe('accepted');
 				activeEvent = emitted.at(-1)!;
 				expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(true);
@@ -1350,8 +1374,8 @@ describe('authenticated durable Cue plugin source', () => {
 					.list(plugin, { topic: 'fixture.received' })
 					.find((item) => (item.config as { opaque: string }).opaque === 'changed-config')!;
 				const changedLease = events.begin(plugin, { consumerId: changed.consumerId });
-				const priorReceipt = [...receipts.values()][0].receiptId;
-				const changedReceipt = events.publish(plugin, {
+				const priorReceipt = [...receipts.values()][0].receipt.receiptId;
+				const changedReceipt = await events.publish(plugin, {
 					...args,
 					invocationId: changedLease.invocationId,
 				});
@@ -1369,7 +1393,7 @@ describe('authenticated durable Cue plugin source', () => {
 			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
 			stop();
 			expect(events.authorize(activeEvent, 'agent-owner', 'fixture', true)).toBe(false);
-			expect(() => events.publish(plugin, args)).toThrow();
+			await expect(events.publish(plugin, args)).rejects.toThrow();
 			identity.stop();
 		}
 	);

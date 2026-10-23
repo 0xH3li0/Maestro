@@ -11,7 +11,14 @@ import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-so
 export interface PluginCueHost {
 	register(ctx: CueTriggerSourceContext, source: CuePluginSource): () => void;
 	authorize(event: CueEvent, agentId: string, subscriptionName: string, queued: boolean): boolean;
-	prepare(event: CueEvent, agentId: string, name: string, queued: boolean): Promise<boolean>;
+	prepare(
+		event: CueEvent,
+		agentId: string,
+		name: string,
+		queued: boolean,
+		runId?: string
+	): Promise<boolean>;
+	finish?(event: CueEvent, runId: string, started: boolean): Promise<void>;
 }
 let host: PluginCueHost | undefined;
 export function configurePluginCueHost(value: PluginCueHost | undefined): void {
@@ -37,7 +44,8 @@ export async function preparePluginCueEvent(
 	event: CueEvent,
 	agentId: string,
 	name: string,
-	queued = true
+	queued = true,
+	runId?: string
 ): Promise<boolean> {
 	if (event.type !== 'plugin.event') return authorizePluginCueEvent(event, agentId, name, queued);
 	const owner = host;
@@ -45,7 +53,7 @@ export async function preparePluginCueEvent(
 		if (
 			!owner ||
 			typeof owner.prepare !== 'function' ||
-			!(await owner.prepare(event, agentId, name, queued))
+			!(await owner.prepare(event, agentId, name, queued, runId))
 		)
 			return false;
 		return host === owner && authorizePluginCueEvent(event, agentId, name, queued);
@@ -86,4 +94,14 @@ export function createCuePluginTriggerSource(
 		},
 		nextTriggerAt: () => null,
 	};
+}
+
+/** Only the run manager calls this with its own proven execution boundary. */
+export async function finishPluginCueEvent(
+	event: CueEvent,
+	runId: string,
+	started: boolean
+): Promise<void> {
+	if (event.type !== 'plugin.event') return;
+	await host?.finish?.(event, runId, started);
 }

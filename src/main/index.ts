@@ -4,16 +4,14 @@ import { PluginAuthorityError } from './plugins/plugin-authority';
 import { PluginPrivateState } from './plugins/plugin-private-state';
 import { PluginTlsHost } from './plugins/plugin-tls';
 import { PluginCueEvents } from './plugins/plugin-cue-events';
+import { CueReceiptStore } from './cue/cue-receipt-store';
 import { PluginPrimitives } from './plugins/plugin-primitives';
 import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window';
 import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
 import {
-	readPluginEventReceipt,
+	authenticatedPluginReceiptBaseline,
 	checkpointPluginEventReceipts,
-	readHistoricalPluginEventReceipt,
 	purgePluginEventReceipts,
-	writePluginEventReceipt,
-	pluginEventReceiptCapacityAvailable,
 } from './cue/cue-db';
 import {
 	getPluginRunProofProtectedPaths,
@@ -2813,16 +2811,12 @@ app
 			generation: (id) => pluginSandboxHost!.getToolGeneration(id),
 			assertAllowed: (id, topic, queued) =>
 				assertPrimitiveAllowed(id, 'events:publish', topic, queued),
-			assertReceiptCapacity: (id) => {
-				if (!pluginEventReceiptCapacityAvailable(id, { stableFormatOnly: true }))
-					throw new PluginAuthorityError('PLUGIN_LIMIT');
-			},
-			readReceipt: readPluginEventReceipt,
-			readHistoricalReceipt: (id, identity, consumer, event, hash) => {
-				checkpointPluginEventReceipts(id, authStore);
-				return readHistoricalPluginEventReceipt(id, identity, consumer, event, hash, authStore);
-			},
-			writeReceipt: writePluginEventReceipt,
+			receipts: new CueReceiptStore(
+				path.join(app.getPath('userData'), 'cue-plugin-receipts'),
+				path.join(app.getPath('userData'), 'cue.db'),
+				authStore,
+				(id) => authenticatedPluginReceiptBaseline(id, authStore)
+			),
 		});
 		configurePluginCueHost(primitiveEvents);
 		authStore.onPluginAuthorizationChange((id) => {

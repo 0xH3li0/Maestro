@@ -1,6 +1,7 @@
 /** Authenticated opaque plugin event sources. No mail producer, cursor or account logic. */
 import { createHash, timingSafeEqual, randomBytes } from 'node:crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
+import type { PluginCueReceiptStore } from '../cue/cue-receipt-store';
 import type { CueEvent, CuePluginSource } from '../../shared/cue/contracts';
 import {
 	PLUGIN_TOPIC_PATTERN,
@@ -49,18 +50,10 @@ export interface PluginCueEventsDeps {
 	/** Exact live-child generation lookup; full invocation/consumer authority is checked separately. */
 	generation(pluginId: string): string;
 	assertAllowed(pluginId: string, topic: string, queued?: boolean): void;
-	assertReceiptCapacity(pluginId: string): void;
-	readHistoricalReceipt?(
-		pluginId: string,
-		identity: AuthIdentity,
-		consumerId: string,
-		eventId: string,
-		payloadHash: string
-	): string | null;
-	readReceipt(pluginId: string, id: string): PluginEventReceiptRow | null;
-	writeReceipt(pluginId: string, id: string, row: PluginEventReceiptRow): void;
+	receipts: PluginCueReceiptStore;
 }
 export class PluginCueEvents implements PluginCueHost {
+	private readonly executionOwner = randomBytes(32).toString('hex');
 	private readonly consumers = new Map<string, Consumer>();
 	private readonly leases = new Map<string, Lease>();
 	constructor(private readonly deps: PluginCueEventsDeps) {}
@@ -184,12 +177,18 @@ export class PluginCueEvents implements PluginCueHost {
 		)
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 	}
+	private async prepareLease(pluginId: string, lease: Lease): Promise<void> {
+		if (!this.deps.prepareIdentityFor) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		await this.deps.prepareIdentityFor(pluginId);
+		this.checkLease(pluginId, lease);
+	}
+
 	assertInvocation(pluginId: string, invocationId: unknown): void {
 		const lease = typeof invocationId === 'string' ? this.leases.get(invocationId) : undefined;
 		if (!lease) throw new PluginAuthorityError('PLUGIN_DENIED');
 		this.checkLease(pluginId, lease);
 	}
-	publish(pluginId: string, params: unknown): PluginReceipt {
+	async publish(pluginId: string, params: unknown): Promise<PluginReceipt> {
 		const p = pluginRequest(params, ['invocationId', 'eventId', 'metadata']);
 		if (
 			typeof p.invocationId !== 'string' ||
@@ -197,38 +196,36 @@ export class PluginCueEvents implements PluginCueHost {
 			!/^[a-zA-Z0-9._:-]{1,128}$/.test(p.eventId)
 		)
 			throw new PluginAuthorityError('PLUGIN_INVALID');
-		const metadata = pluginJson(p.metadata);
-		const lease = this.leases.get(p.invocationId);
+		const metadata = pluginJson(p.metadata),
+			lease = this.leases.get(p.invocationId);
 		if (!lease) throw new PluginAuthorityError('PLUGIN_DENIED');
 		this.checkLease(pluginId, lease);
 		const c = lease.consumer,
 			identity = this.deps.identityFor(pluginId);
 		if (identity.signatureStatus !== 'trusted' || !identity.signerKey)
 			throw new PluginAuthorityError('PLUGIN_DENIED');
-		const receiptKey =
-			PLUGIN_RECEIPT_KEY_PREFIX +
-			createHash('sha256')
-				.update(canonicalJson(['plugin-receipt-v2', pluginId, identity.signerKey, c.id, p.eventId]))
-				.digest('hex');
+		const receiptKey = this.receiptKey(pluginId, identity, c.id, p.eventId);
 		const id = createHash('sha256')
 			.update(canonicalJson([pluginId, identity, c.id, p.eventId]))
 			.digest('hex');
 		const payloadHash = createHash('sha256').update(canonicalJson(metadata)).digest('hex');
-		const old = this.deps.readReceipt(pluginId, receiptKey);
+		const old = await this.deps.receipts.read(pluginId, receiptKey);
 		this.checkLease(pluginId, lease);
 		if (old) {
 			const expected = this.deps.store.pluginEventProof(
 				pluginId,
 				identity,
-				{ id: receiptKey, receiptId: old.receiptId },
+				{ id: receiptKey, receiptId: old.receipt.receiptId },
 				{ payloadHash },
 				'receipt'
 			);
-			if (old.payloadHash !== payloadHash || old.proof !== expected)
+			if (old.receipt.payloadHash !== payloadHash || old.receipt.proof !== expected)
 				throw new PluginAuthorityError('PLUGIN_CONFLICT');
-			return { receiptId: old.receiptId, status: 'duplicate' };
+			if (old.phase !== 'accepted') throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			await this.prepareLease(pluginId, lease);
+			return { receiptId: old.receipt.receiptId, status: 'duplicate' };
 		}
-		const historical = this.deps.readHistoricalReceipt?.(
+		const historical = await this.deps.receipts.historical(
 			pluginId,
 			identity,
 			c.id,
@@ -236,35 +233,12 @@ export class PluginCueEvents implements PluginCueHost {
 			payloadHash
 		);
 		this.checkLease(pluginId, lease);
-		if (historical) return { receiptId: historical, status: 'duplicate' };
-		this.deps.assertReceiptCapacity(pluginId);
-		this.checkLease(pluginId, lease);
-		const source = {
-			pluginId,
-			topic: c.source.topic,
-			consumerId: c.id,
-			ownerAgentId: c.ctx.session.id,
-			sourceGeneration: lease.generation,
-			recordRevision: lease.recordRevision,
-			eventId: p.eventId,
-		};
-		const proof = this.deps.store.pluginEventProof(pluginId, identity, source, metadata);
-		const event: CueEvent = {
-			id,
-			type: 'plugin.event',
-			triggerName: c.ctx.subscription.name,
-			timestamp: new Date().toISOString(),
-			payload: { metadata },
-			pluginSource: { ...source, proof },
-		};
-		this.checkLease(pluginId, lease);
-		if (passesFilter(c.ctx.subscription, event, c.ctx.onLog)) {
-			const accepted = c.ctx.emit(event);
-			if (typeof accepted !== 'number' || accepted !== 1)
-				throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+		if (historical) {
+			await this.prepareLease(pluginId, lease);
+			return { receiptId: historical, status: 'duplicate' };
 		}
-		this.checkLease(pluginId, lease);
-		const receiptId = randomBytes(32).toString('hex');
+		const receiptId = randomBytes(32).toString('hex'),
+			attempt = randomBytes(32).toString('hex');
 		const row = {
 			receiptId,
 			payloadHash,
@@ -276,21 +250,110 @@ export class PluginCueEvents implements PluginCueHost {
 				'receipt'
 			),
 		};
-		this.deps.writeReceipt(pluginId, receiptKey, row);
-		this.checkLease(pluginId, lease);
-		if (canonicalJson(this.deps.readReceipt(pluginId, receiptKey)) !== canonicalJson(row))
-			throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
-		return { receiptId, status: 'accepted' };
+		let reserved = false,
+			emitted = false;
+		try {
+			await this.deps.receipts.reserve(pluginId, receiptKey, row, attempt);
+			reserved = true;
+			this.checkLease(pluginId, lease);
+			const source = {
+				pluginId,
+				topic: c.source.topic,
+				consumerId: c.id,
+				ownerAgentId: c.ctx.session.id,
+				sourceGeneration: lease.generation,
+				recordRevision: lease.recordRevision,
+				eventId: p.eventId,
+				receiptId,
+				receiptKey,
+			};
+			const event: CueEvent = {
+				id,
+				type: 'plugin.event',
+				triggerName: c.ctx.subscription.name,
+				timestamp: new Date().toISOString(),
+				payload: { metadata },
+				pluginSource: {
+					...source,
+					proof: this.deps.store.pluginEventProof(pluginId, identity, source, metadata),
+				},
+			};
+			const filtered = !passesFilter(c.ctx.subscription, event, c.ctx.onLog);
+			await this.deps.receipts.dispatch(pluginId, receiptKey, attempt);
+			await this.prepareLease(pluginId, lease);
+			if (!filtered) {
+				// Unknown/throwing dispatches retain uncertainty. Only the real numeric zero
+				// contract proves no work was admitted; no await opens the final effect boundary.
+				emitted = true;
+				const accepted = c.ctx.emit(event);
+				if (accepted === 0) emitted = false;
+				if (accepted !== 1) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			}
+			await this.deps.receipts.accepted(pluginId, receiptKey, attempt, filtered);
+			this.checkLease(pluginId, lease);
+			return { receiptId, status: 'accepted' };
+		} catch (error) {
+			if (reserved && !emitted)
+				await this.deps.receipts.cancelPublish(pluginId, receiptKey, attempt).catch(() => {});
+			throw error;
+		}
 	}
-	async prepare(event: CueEvent, agentId: string, name: string, queued: boolean): Promise<boolean> {
+	private receiptKey(
+		pluginId: string,
+		identity: AuthIdentity,
+		consumerId: string,
+		eventId: string
+	): string {
+		return (
+			PLUGIN_RECEIPT_KEY_PREFIX +
+			createHash('sha256')
+				.update(
+					canonicalJson(['plugin-receipt-v2', pluginId, identity.signerKey, consumerId, eventId])
+				)
+				.digest('hex')
+		);
+	}
+	async prepare(
+		event: CueEvent,
+		agentId: string,
+		name: string,
+		queued: boolean,
+		runId?: string
+	): Promise<boolean> {
 		try {
 			if (!event.pluginSource || !this.deps.prepareIdentityFor) return false;
 			await this.deps.prepareIdentityFor(event.pluginSource.pluginId, queued);
+			if (!this.authorize(event, agentId, name, queued)) return false;
+			if (!runId) return true;
+			const e = event.pluginSource;
+			if (!e.receiptId || !e.receiptKey) return false;
+			const claimed = await this.deps.receipts.claim(
+				e.pluginId,
+				e.receiptKey,
+				e.receiptId,
+				this.executionOwner,
+				runId
+			);
+			if (!claimed) return false;
+			await this.deps.prepareIdentityFor(e.pluginId, queued);
 			return this.authorize(event, agentId, name, queued);
 		} catch {
 			return false;
 		}
 	}
+	async finish(event: CueEvent, runId: string, started: boolean): Promise<void> {
+		const e = event.pluginSource;
+		if (!e?.receiptId || !e.receiptKey) return;
+		await this.deps.receipts.settle(
+			e.pluginId,
+			e.receiptKey,
+			e.receiptId,
+			this.executionOwner,
+			runId,
+			started
+		);
+	}
+
 	authorize(event: CueEvent, agentId: string, name: string, queued: boolean): boolean {
 		try {
 			const e = event.pluginSource;
@@ -309,6 +372,12 @@ export class PluginCueEvents implements PluginCueHost {
 			const { proof, ...source } = e;
 			if (!/^[0-9a-f]{64}$/.test(proof)) return false;
 			const identity = this.deps.identityFor(e.pluginId, queued);
+			if (
+				!e.receiptId ||
+				!/^[0-9a-f]{64}$/.test(e.receiptId) ||
+				e.receiptKey !== this.receiptKey(e.pluginId, identity, c.id, e.eventId)
+			)
+				return false;
 			if (e.recordRevision !== this.deps.store.pluginRecordRevision(e.pluginId, identity))
 				return false;
 			const expectedId = createHash('sha256')

@@ -265,6 +265,7 @@ describe('cue-process-lifecycle', () => {
 
 			expect(result.status).toBe('failed');
 			expect(onRawStdout).not.toHaveBeenCalled();
+			expect(result.executionStarted).toBe(false);
 		});
 	});
 
@@ -279,7 +280,13 @@ describe('cue-process-lifecycle', () => {
 			);
 			expect(mockSpawn).not.toHaveBeenCalled();
 			expect(getActiveProcessMap().has('stopped-run')).toBe(false);
-			expect(result).toMatchObject({ status: 'stopped', exitCode: null, stdout: '', stderr: '' });
+			expect(result).toMatchObject({
+				status: 'stopped',
+				executionStarted: false,
+				exitCode: null,
+				stdout: '',
+				stderr: '',
+			});
 		});
 
 		it('spawns process with correct command, args, and cwd', async () => {
@@ -1390,6 +1397,7 @@ describe('cue-process-lifecycle', () => {
 
 			expect(result.status).toBe('failed');
 			expect(result.stderr).toContain('Spawn error: spawn EPERM');
+			expect(result.executionStarted).toBe(false);
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({ message: 'spawn EPERM' }),
 				expect.objectContaining({ operation: 'cue:spawn', runId: 'run-1' })

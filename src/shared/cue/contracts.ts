@@ -260,6 +260,9 @@ export interface CuePluginSource {
 	config: PluginJson;
 }
 export interface CuePluginEnvelope {
+	/** Host-owned durable admission identity, bound by the event proof. */
+	receiptId?: string;
+	receiptKey?: string;
 	recordRevision: string;
 	pluginId: string;
 	topic: string;
@@ -531,6 +534,8 @@ export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'sto
 
 /** Result of a completed (or failed/timed-out) Cue run */
 export interface CueRunResult {
+	/** False only when the real executor proves no child was launched. */
+	executionStarted?: boolean;
 	runId: string;
 	sessionId: string;
 	sessionName: string;

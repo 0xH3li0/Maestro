@@ -42,6 +42,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes, createHmac, createHash, timingSafeEqual } from 'crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { yieldToEventLoop } from '../utils/concurrency';
+import type { PluginEventReceiptRow } from './plugin-cue-events';
 import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
 import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
@@ -671,6 +673,15 @@ export class AuthorizationStore {
 		purpose: 'event' | 'receipt' = 'event'
 	): string {
 		this.assertPluginPersistent(pluginId, identity);
+		return this.computePluginEventProof(pluginId, identity, source, metadata, purpose);
+	}
+	private computePluginEventProof(
+		pluginId: string,
+		identity: AuthIdentity,
+		source: unknown,
+		metadata: unknown,
+		purpose: 'event' | 'receipt'
+	): string {
 		if (purpose === 'receipt' && (identity.signatureStatus !== 'trusted' || !identity.signerKey))
 			throw new PluginAuthorityError('PLUGIN_DENIED');
 		return createHmac('sha256', this.ledger.installSecret)
@@ -701,6 +712,13 @@ export class AuthorizationStore {
 		row: { receiptId: string; payloadHash: string; proof: string }
 	): boolean {
 		this.assertPersistentInstallation();
+		return this.authenticateHistoricalReceipt(identity, id, row);
+	}
+	private authenticateHistoricalReceipt(
+		identity: AuthIdentity,
+		id: string,
+		row: PluginEventReceiptRow
+	): boolean {
 		if (
 			identity.signatureStatus !== 'trusted' ||
 			!identity.signerKey ||
@@ -721,6 +739,52 @@ export class AuthorizationStore {
 			)
 			.digest('hex');
 		return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(row.proof, 'hex'));
+	}
+
+	/** Bounded evidence verification. No authority snapshot escapes this operation.
+	 * Yield between small batches; read the native anchor once per batch, not per row.
+	 * An epoch change at any yield invalidates the whole retained-history result. */
+	async authenticatePluginReceiptRows(
+		pluginId: string,
+		current: AuthIdentity,
+		rows: {
+			id: string;
+			row: PluginEventReceiptRow;
+			identity?: AuthIdentity;
+			purpose: 'event' | 'receipt';
+		}[]
+	): Promise<boolean[]> {
+		if (rows.length > 4096) throw new PluginAuthorityError('PLUGIN_LIMIT');
+		this.assertPluginPersistent(pluginId, current);
+		const epoch = this.ledger.epoch;
+		const verified: boolean[] = [];
+		for (let offset = 0; offset < rows.length; offset += 16) {
+			await yieldToEventLoop();
+			this.assertPluginPersistent(pluginId, current);
+			if (this.ledger.epoch !== epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+			for (const item of rows.slice(offset, offset + 16)) {
+				if (item.purpose === 'event') {
+					verified.push(
+						this.authenticateHistoricalReceipt(item.identity ?? current, item.id, item.row)
+					);
+				} else {
+					const expected = this.computePluginEventProof(
+						pluginId,
+						current,
+						{ id: item.id, receiptId: item.row.receiptId },
+						{ payloadHash: item.row.payloadHash },
+						'receipt'
+					);
+					verified.push(
+						/^[0-9a-f]{64}$/.test(item.row.proof) &&
+							timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(item.row.proof, 'hex'))
+					);
+				}
+			}
+		}
+		this.assertPluginPersistent(pluginId, current);
+		if (this.ledger.epoch !== epoch) throw new PluginAuthorityError('PLUGIN_CONFLICT');
+		return verified;
 	}
 
 	/** Host-owned generic scope editor: no new capability, no wildcard, sealed CAS. */

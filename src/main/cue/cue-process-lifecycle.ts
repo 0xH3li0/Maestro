@@ -83,6 +83,7 @@ export interface CueProcessInfo {
 
 /** Result of a process execution */
 export interface ProcessRunResult {
+	executionStarted?: boolean;
 	stdout: string;
 	stderr: string;
 	exitCode: number | null;
@@ -456,6 +457,7 @@ export async function runProcess(
 			stderr: '',
 			exitCode: null,
 			status: 'stopped',
+			executionStarted: false,
 			providerSessionId: null,
 			usage: null,
 		};
@@ -524,6 +526,7 @@ export async function runProcess(
 			stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
 			exitCode: null,
 			status: 'failed',
+			executionStarted: false,
 			providerSessionId: null,
 			usage: null,
 		};
@@ -584,6 +587,7 @@ export async function runProcess(
 			stderr: extractCleanStderr(stderr, toolType),
 			exitCode,
 			status,
+			executionStarted: typeof turn.child.pid === 'number' || !exit.spawnError,
 			providerSessionId: capture.providerSessionId,
 			usage: capture.usage,
 		};

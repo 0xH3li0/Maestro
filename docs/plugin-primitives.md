@@ -90,16 +90,40 @@ plugin ID, trusted signer, consumer and event ID survive a same-signer content u
 version still needs fresh current authorization; execution envelopes remain bound to the current
 full content identity. A different signer has a separate receipt namespace.
 
-Legacy receipts contain only version-bound hashes and cannot be automatically mapped back to their
-original signer/consumer/event IDs. Any unresolved legacy or unknown-format receipt blocks new
-IDs for its owning plugin with `PLUGIN_UNAVAILABLE`, before dispatch and again at receipt write;
-rows are retained. Other plugins and authentic existing v2 duplicates are unaffected. This is an
-explicit migration/release gate for preview installations, not a completed migration or a grant
-upgrade. There is no time-based replay window: receipts remain until that plugin is removed.
-Long-running publishers must treat `PLUGIN_LIMIT` as backpressure and leave their checkpoint
-unchanged. Silently evicting old receipts would allow acknowledged IDs to dispatch again; safe
-online retirement requires a separate explicit replay/retirement contract. A receipt records durable admission or a durable filtered decision; filtered events do not queue a run. Crash windows can still cause repeated
-downstream actions. Advance a plugin checkpoint only after receipt.
+Future admissions use a separate indexed receipt database with a native credential-store
+checkpoint. Receipt I/O, Merkle verification and checkpoint writes run in a bounded worker.
+Restoring `cue.db`, deleting both legacy receipt tables, or restoring an old durable queue does
+not erase these execution fences. A durable event claim binds the original receipt ID and host
+execution owner before the executor can start. A different run or restarted host cannot reclaim
+uncertain execution. Only a host-proven nonstart releases admission; an exception or missing ACK
+preserves the fence. Cue stores no postclaim response body, so the claim releases its physical
+outcome allowance without reopening execution. Receipts survive plugin removal; capacity can
+refuse earlier because of the physical page budget. Publishers must treat `PLUGIN_LIMIT` as
+backpressure and leave their checkpoint unchanged.
+
+Retained legacy receipts are imported only when their original HMAC and exact retained identity
+can be verified. They become replay-only records and never authorize execution. First transition
+verifies at most 4096 distinct rows cooperatively, checking the current native authorization
+anchor once per small batch. It commits an independently authenticated prepared manifest, the
+reader floor in `cue.db`, then a stable manifest. An interrupted transition must resume the same
+authenticated baseline. No grant, authorization epoch, signer identity or producer checkpoint is
+changed by migration. Missing historical identity preimages still block that owner's transition;
+raw JSON or an empty snapshot is not evidence of complete historical migration. Coverage is
+explicitly retained-authenticated-only, not complete pretransition history.
+
+The Cue data-reader floor guards both receipt lookup and queue restoration. Exact old readers
+without the required function refuse the transitioned database before dispatch. A receipt-aware
+recovery host can restore an older Cue snapshot while retaining the independent receipt database
+and its native checkpoint, then reinstall the floor. Restoring the independent store behind its
+native checkpoint fails closed; prepared/stable native checkpoint recovery preserves uncertainty.
+An unpatched old binary combined with a raw pretransition Cue snapshot is outside this protection:
+that binary ignores the new checkpoint. Such a downgrade is prohibited by the supported recovery
+contract and still requires an explicit qualified recovery-binary pin. Installed binary and real
+OS-keyring recovery acceptance are separate gates. Never clear a checkpoint to make old data load.
+
+A receipt records durable admission or a durable filtered decision; filtered events do not queue
+a run. Advance a plugin checkpoint only after receipt. These host fences prevent a second host
+execution claim; they do not establish exactly-once behavior inside an external provider.
 
 The first version denies fan-out, gates and asynchronous injection-screen admission because that
 check queue is not durable. It never acknowledges unsupported combinations. Generic template

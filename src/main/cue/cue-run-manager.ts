@@ -2,6 +2,7 @@ import {
 	isDurableCueEvent,
 	authorizePluginCueEvent,
 	preparePluginCueEvent,
+	finishPluginCueEvent,
 } from './triggers/cue-plugin-trigger-source';
 
 /**
@@ -622,14 +623,15 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			return false;
 		};
 
+		let executorMayHaveStarted = false;
 		const prepareAndRetainAuthority = async () => {
-			if (!(await preparePluginCueEvent(event, sessionId, subscriptionName))) {
+			if (!(await preparePluginCueEvent(event, sessionId, subscriptionName, true, runId))) {
 				result.status = 'stopped';
 				result.stdout = '';
 				result.stderr = '';
 				return false;
 			}
-			return retainAuthority();
+			return !abortController.signal.aborted && retainAuthority();
 		};
 
 		// Claim the self-overlap guard for root triggers, synchronously before
@@ -676,6 +678,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		try {
 			if (!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority()))
 				return;
+			executorMayHaveStarted = true;
 			const runResult = await deps.onCueRun({
 				runId,
 				sessionId,
@@ -690,6 +693,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				turnSettings,
 				signal: abortController.signal,
 			});
+			if (runResult.executionStarted === false) executorMayHaveStarted = false;
 			if (
 				!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
 			) {
@@ -813,6 +817,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						outputStatus = 'stopped';
 						return;
 					}
+					const startedBeforeOutput = executorMayHaveStarted;
+					executorMayHaveStarted = true;
 					outputResult = await deps.onCueRun({
 						runId: outputRunId,
 						sessionId,
@@ -826,6 +832,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						// The same signal: a stop during this phase cancels its launch too.
 						signal: abortController.signal,
 					});
+					if (outputResult.executionStarted === false) executorMayHaveStarted = startedBeforeOutput;
 					if (
 						!(event.type === 'plugin.event' ? await prepareAndRetainAuthority() : retainAuthority())
 					) {
@@ -985,6 +992,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stderr = error instanceof Error ? error.message : String(error);
 		} finally {
 			try {
+				await finishPluginCueEvent(event, runId, executorMayHaveStarted);
+			} catch {
+				// A missing ACK never reopens a claimed event. Preserve uncertainty.
+			}
+			try {
 				// A stopped run's launch has returned: nothing of it is left to spawn.
 				unsettledStoppedRuns.delete(runId);
 				drainStoppedRuns.delete(runId);
@@ -995,8 +1007,15 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					result.endedAt = new Date().toISOString();
 					result.durationMs = Date.now() - new Date(result.startedAt).getTime();
 
-					if (event.type === 'plugin.event') await prepareAndRetainAuthority();
-					else retainAuthority();
+					if (
+						event.type === 'plugin.event' &&
+						!(await preparePluginCueEvent(event, sessionId, subscriptionName))
+					) {
+						result.status = 'stopped';
+						result.stdout = '';
+						result.stderr = '';
+					}
+					retainAuthority();
 					if (activeRuns.has(runId)) {
 						transitionRun(runId, 'finished');
 						activeRuns.delete(runId);
