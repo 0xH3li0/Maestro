@@ -822,12 +822,17 @@ export class PluginManager {
 	private async purgeUninstalledPlugin(id: string): Promise<void> {
 		forgetPlugin(id);
 		forgetGrants(id);
-		await this.deps.purgePluginData?.(id);
+		// Retire cached admission before cleanup yields or rejects. Failed cleanup
+		// must never let mutatePlugin's finally restart an enabled cached record.
 		this.pluginFingerprints.delete(id);
 		this.waitingForServiceDependencies.delete(id);
 		this.registry = removeRecord(this.registry, id);
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
+		try {
+			await this.deps.purgePluginData?.(id);
+		} finally {
+			this.syncPluginWatchers();
+			this.deps.onChange?.(this.registry);
+		}
 	}
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */

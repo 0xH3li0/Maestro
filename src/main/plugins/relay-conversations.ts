@@ -154,7 +154,12 @@ export class RelayConversations {
 		await this.store.set(key, JSON.stringify(value));
 		this.assertGeneration(generation);
 	}
-	private async mapping(agentId: string, opts: RelaySendOptions): Promise<Mapping> {
+	private async mapping(
+		agentId: string,
+		opts: RelaySendOptions,
+		authorize: () => void = () => {}
+	): Promise<Mapping> {
+		const generation = this.generation;
 		const key = this.key('conversation', agentId, opts.conversationId);
 		const existing = await this.read<Mapping>(key);
 		if (existing?.interrupted)
@@ -189,6 +194,8 @@ export class RelayConversations {
 			providerSessionId: opts.sessionId,
 			materialized: false,
 		};
+		this.assertGeneration(generation);
+		authorize();
 		await this.write(key, mapping);
 		return mapping;
 	}
@@ -287,7 +294,8 @@ export class RelayConversations {
 						replayed: true,
 					};
 				}
-				const mapping = await this.mapping(agentId, opts);
+				this.assertGeneration(generation);
+				const mapping = await this.mapping(agentId, opts, authorize);
 				authorize();
 				if (signal.aborted) throw Error('Relay send cancelled');
 				const tab = (this.deps.getAgent(agentId)?.aiTabs as RelayTab[] | undefined)?.find(
@@ -446,11 +454,18 @@ export class RelayConversations {
 			this.assertGeneration(generation);
 			authorize();
 			const known = await this.read<Mapping>(key);
-			const mapping = await this.mapping(agentId, {
-				conversationId,
-				messageId: '',
-				sessionId: providerSessionId,
-			});
+			this.assertGeneration(generation);
+			const mapping = await this.mapping(
+				agentId,
+				{
+					conversationId,
+					messageId: '',
+					sessionId: providerSessionId,
+				},
+				authorize
+			);
+			this.assertGeneration(generation);
+			authorize();
 			const tab = (this.deps.getAgent(agentId)?.aiTabs as RelayTab[] | undefined)?.find(
 				(t) => t.id === mapping.tabId
 			);

@@ -115,6 +115,26 @@ describe('durable Relay conversations', () => {
 		).rejects.toThrow(/revoked/);
 		expect(agent.aiTabs[0].relayConversation?.completedAt).toBeUndefined();
 	});
+	it('does not patch an existing desktop tab when restore authority changes during mapping', async () => {
+		await send();
+		agent.aiTabs[0].origin = 'user';
+		delete agent.aiTabs[0].relayConversation;
+		const target = host as unknown as { mapping: (...args: unknown[]) => Promise<unknown> };
+		const original = target.mapping.bind(host);
+		let allowed = true;
+		vi.spyOn(target, 'mapping').mockImplementationOnce(async (...args) => {
+			const value = await original(...args);
+			allowed = false;
+			return value;
+		});
+		await expect(
+			host.restore('agent', opts.conversationId, 'provider:hello', () => {
+				if (!allowed) throw Error('restore revoked');
+			})
+		).rejects.toThrow(/revoked/);
+		expect(agent.aiTabs[0].origin).toBe('user');
+		expect(agent.aiTabs[0].relayConversation).toBeUndefined();
+	});
 	it('creates one real background tab and resumes it across messages and host recreation', async () => {
 		const first = await send();
 		host = new RelayConversations(deps);
