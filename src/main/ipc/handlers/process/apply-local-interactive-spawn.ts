@@ -40,6 +40,7 @@ export function applyLocalInteractiveSpawnDecision(
 		resolvedConfigDirKey,
 		claudeDecisionRealBinPath,
 		claudeResolvedRemote,
+		acceptWorkspaceTrust,
 	} = claudeContext;
 
 	if (
@@ -79,6 +80,7 @@ export function applyLocalInteractiveSpawnDecision(
 		args: argsToSpawn,
 		customEnvVars: customEnvVarsToPass,
 		maxWaitSeconds: config.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust,
 	});
 
 	logger.debug('Spawning Claude Code in interactive mode (maestro-p)', LOG_CONTEXT, {

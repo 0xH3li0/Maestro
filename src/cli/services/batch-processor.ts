@@ -678,6 +678,8 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								// The task runs in the agent's own cwd (#1872).
+								acceptWorkspaceTrust: true,
 								// A TUI task gets Auto Run's idle budget, not maestro-p's 300s.
 								maestroPMaxWaitSeconds: autoRunMaestroPMaxWaitSeconds({
 									autoRunInactivityTimeoutMin: readSettings().autoRunInactivityTimeoutMin,
@@ -774,6 +776,7 @@ export async function* runPlaybook(
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
 										maestroPPath: session.maestroPPath,
+										acceptWorkspaceTrust: true,
 									}
 								),
 							(r) => (r.success ? 0 : 1)
