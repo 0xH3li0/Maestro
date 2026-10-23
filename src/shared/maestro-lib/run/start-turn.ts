@@ -241,6 +241,7 @@ function appendBoundedTail(current: string, chunk: string, limit: number | undef
 /** Only the native spawn call can establish this synchronous nonstart proof.
  * Exceptions after spawn remain uncertain even if no handle reaches the caller. */
 export class TurnNotStartedError extends Error {
+	readonly cause: unknown;
 	constructor(error: unknown) {
 		super(error instanceof Error ? error.message : String(error));
 		this.name = 'TurnNotStartedError';

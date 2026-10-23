@@ -408,10 +408,7 @@ export function initCueDb(
 	migrateCueGitHubSeenAdditiveColumns(db);
 	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
 	db.prepare(
-		CREATE_CUE_EVENT_QUEUE_SQL.replaceAll(
-			'cue_event_queue',
-			cuePhysicalTable(db, 'cue_event_queue')
-		)
+		CREATE_CUE_EVENT_QUEUE_SQL.replace(/cue_event_queue/g, cuePhysicalTable(db, 'cue_event_queue'))
 	).run();
 	migrateCueEventQueueAdditiveColumns(db);
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
