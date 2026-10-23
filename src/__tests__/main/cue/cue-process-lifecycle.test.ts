@@ -270,6 +270,18 @@ describe('cue-process-lifecycle', () => {
 	});
 
 	describe('runProcess', () => {
+		it('retains execution uncertainty if setup throws after spawn returned', async () => {
+			mockSpawn.mockImplementationOnce(() => {
+				mockChild = new MockChildProcess();
+				mockChild.stdin.end.mockImplementationOnce(() => {
+					throw Error('post-spawn setup failed');
+				});
+				return mockChild as unknown as ChildProcess;
+			});
+			const result = await runProcess('uncertain-run', createSpec(), createOptions());
+			expect(result.executionStarted).toBe(true);
+			expect(result.stderr).toContain('post-spawn setup failed');
+		});
 		it('neither spawns nor registers a process for a run already stopped', async () => {
 			const controller = new AbortController();
 			controller.abort();

@@ -31,7 +31,11 @@ import {
 	BACKGROUND_STOP_GRACE_MS,
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
-import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
+import {
+	startTurn,
+	TurnNotStartedError,
+	type TurnHandle,
+} from '../../shared/maestro-lib/run/start-turn';
 import { isLaunchCancelled } from './cue-launch-cancel';
 import {
 	newRemotePidFilePath,
@@ -526,7 +530,7 @@ export async function runProcess(
 			stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
 			exitCode: null,
 			status: 'failed',
-			executionStarted: false,
+			executionStarted: !(err instanceof TurnNotStartedError),
 			providerSessionId: null,
 			usage: null,
 		};
