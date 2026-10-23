@@ -115,14 +115,23 @@ describe('indexed durable Relay receipts', () => {
 		expect(f.reopen().get('second')).toBeNull();
 		expect(f.reopen().get('pending')).not.toBeNull();
 	});
-	it('rejects dangling receipt symlinks before creating a checkpoint or following the target', () => {
-		const f = fixture();
-		const outside = path.join(f.base, 'outside.sqlite');
-		fs.symlinkSync(outside, path.join(f.base, 'receipts.sqlite'));
-		expect(() => f.store.get('new')).toThrow(/private directory or regular file/);
-		expect(f.anchor.read()).toBeNull();
-		expect(fs.existsSync(outside)).toBe(false);
-	});
+	it.each([
+		'receipts.sqlite',
+		'receipts.sqlite-journal',
+		'receipt-checkpoint-lock.sqlite',
+		'receipt-checkpoint-lock.sqlite-wal',
+		'receipt-checkpoint-lock.sqlite-shm',
+	])(
+		'rejects dangling %s symlinks before creating a checkpoint or following the target',
+		(file) => {
+			const f = fixture();
+			const outside = path.join(f.base, 'outside.sqlite');
+			fs.symlinkSync(outside, path.join(f.base, file));
+			expect(() => f.store.get('new')).toThrow(/private directory or regular file/);
+			expect(f.anchor.read()).toBeNull();
+			expect(fs.existsSync(outside)).toBe(false);
+		}
+	);
 	it('discards a tampered response without erasing its execution fence', () => {
 		const f = fixture();
 		f.store.set('m1', receipt('one'));
@@ -261,5 +270,20 @@ describe('indexed durable Relay receipts', () => {
 			);
 			expect(JSON.parse(f.reopen().get(key)!).result.success).toBe(true);
 		}
+	});
+	it('refuses deletion if a pending receipt completes between its preliminary read and mutation lock', () => {
+		const f = fixture();
+		f.store.reserveTurn('pending', JSON.stringify({ promptHash: 'h', messageId: 'm' }));
+		const read = f.store.get.bind(f.store);
+		vi.spyOn(f.store, 'get').mockImplementationOnce((key) => {
+			const before = read(key);
+			f.store.set(key, receipt('completed while waiting'));
+			return before;
+		});
+		expect(() => f.store.deletePending('pending')).toThrow(/executed/);
+		expect(JSON.parse(f.reopen().get('pending')!).result).toMatchObject({
+			success: true,
+			response: 'completed while waiting',
+		});
 	});
 });

@@ -14,7 +14,7 @@ beforeAll(async () => {
 	killFile = path.join(dir, 'kill-mode');
 	fs.writeFileSync(
 		anchor,
-		`const fs=require('fs'),path=require('path'); const root=${JSON.stringify(dir)}; exports.createKeyringAnchor=(_service,account)=>{const file=path.join(root,account+'.json');return {available:()=>true,read:()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null,write:(v)=>{const mode=fs.existsSync(path.join(root,'kill-mode'))?fs.readFileSync(path.join(root,'kill-mode'),'utf8'):''; const pending=!!JSON.parse(v.installSecret).pending;if(mode==='stable-before'&&!pending)process.exit(71);fs.writeFileSync(file,JSON.stringify(v));if((mode==='prepared-after'&&pending)||(mode==='stable-after'&&!pending))process.exit(72);}};};`
+		`const fs=require('fs'),path=require('path'); const root=${JSON.stringify(dir)}; exports.createKeyringAnchor=(_service,account)=>{const file=path.join(root,account+'.json');return {available:()=>true,read:()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null,write:(v)=>{const mode=fs.existsSync(path.join(root,'kill-mode'))?fs.readFileSync(path.join(root,'kill-mode'),'utf8'):''; const pending=!!JSON.parse(v.installSecret).pending;if(mode==='stable-before'&&!pending)process.exit(71);fs.writeFileSync(file,JSON.stringify(v));if(pending&&fs.existsSync(path.join(root,'pause-prepared'))){fs.writeFileSync(path.join(root,'prepared-marker'),'1');let n=0;while(fs.existsSync(path.join(root,'pause-prepared'))){if(n++>500)throw Error('fixture pause timeout');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}}if((mode==='prepared-after'&&pending)||(mode==='stable-after'&&!pending))process.exit(72);}};};`
 	);
 	await build({
 		entryPoints: ['src/main/plugins/relay-ledger-worker.ts'],
@@ -134,4 +134,42 @@ describe('real Relay worker transport', () => {
 			}
 		}
 	);
+	it('serializes independent workers through checkpoint finalization and admits one copy of a message', async () => {
+		const base = path.join(dir, 'parallel');
+		const first = new RelayLedgerClient(base, undefined, script),
+			second = new RelayLedgerClient(base, undefined, script);
+		try {
+			await first.set('baseline', JSON.stringify({ promptHash: 'h', messageId: 'base' }));
+			expect(await second.get('baseline')).not.toBeNull();
+			fs.writeFileSync(path.join(dir, 'pause-prepared'), '1');
+			const admission = first.reserveTurn(
+				'one',
+				JSON.stringify({ promptHash: 'h', messageId: 'one' })
+			);
+			for (let n = 0; !fs.existsSync(path.join(dir, 'prepared-marker')); n++) {
+				if (n > 100) throw Error('prepared marker timeout');
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			let completed = false;
+			const concurrent = second.get('one').then((value) => {
+				completed = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(completed).toBe(false);
+			fs.rmSync(path.join(dir, 'pause-prepared'), { force: true });
+			await admission;
+			expect(JSON.parse((await concurrent)!)).toMatchObject({ messageId: 'one' });
+			const outcomes = await Promise.allSettled([
+				first.reserveTurn('same', JSON.stringify({ promptHash: 'h', messageId: 'same' })),
+				second.reserveTurn('same', JSON.stringify({ promptHash: 'h', messageId: 'same' })),
+			]);
+			expect(outcomes.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+			expect(outcomes.filter((result) => result.status === 'rejected')).toHaveLength(1);
+		} finally {
+			fs.rmSync(path.join(dir, 'pause-prepared'), { force: true });
+			await first.dispose();
+			await second.dispose();
+		}
+	});
 });

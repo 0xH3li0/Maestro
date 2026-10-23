@@ -42,6 +42,7 @@ interface Checkpoint {
  */
 export class RelayLedger {
 	private readonly file: string;
+	private readonly lockFile: string;
 	private readonly limits: RelayLedgerLimits;
 	private failed = false;
 	private readonly empty: string[] = [];
@@ -55,6 +56,7 @@ export class RelayLedger {
 		for (let depth = 15; depth >= 0; depth--)
 			this.empty[depth] = this.node(this.empty[depth + 1], this.empty[depth + 1]);
 		this.file = path.join(baseDir, 'receipts.sqlite');
+		this.lockFile = path.join(baseDir, 'receipt-checkpoint-lock.sqlite');
 		this.limits = { ...RELAY_LEDGER_LIMITS, ...limits };
 		for (const value of Object.values(this.limits))
 			if (!Number.isSafeInteger(value) || value < 1) throw Error('Invalid Relay ledger limit');
@@ -143,8 +145,19 @@ export class RelayLedger {
 		if (this.failed || !this.anchor.available())
 			throw Error('Relay receipt checkpoint unavailable');
 		let db: Database.Database | undefined;
+		let lock: Database.Database | undefined;
 		try {
-			for (const candidate of [this.baseDir, this.file, this.file + '-wal', this.file + '-shm']) {
+			for (const candidate of [
+				this.baseDir,
+				this.file,
+				this.file + '-wal',
+				this.file + '-shm',
+				this.file + '-journal',
+				this.lockFile,
+				this.lockFile + '-journal',
+				this.lockFile + '-wal',
+				this.lockFile + '-shm',
+			]) {
 				try {
 					const stat = fs.lstatSync(candidate);
 					if (
@@ -156,6 +169,12 @@ export class RelayLedger {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
 			}
+			// Hold a separate SQLite write lock across receipt commit AND native checkpoint
+			// finalization/recovery. Another worker must never stabilize an obsolete base.
+			// SQLite releases this kernel lock when a worker dies; it carries no authority.
+			fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
+			lock = new Database(this.lockFile, { timeout: 5000 });
+			lock.exec('BEGIN EXCLUSIVE');
 			const anchor = this.anchor.read();
 			if (!anchor) {
 				// Never bless an existing unauthenticated database or legacy JSON as empty.
@@ -234,7 +253,11 @@ export class RelayLedger {
 			}
 			return action(db, checkpoint, current.epoch);
 		} finally {
-			db?.close();
+			try {
+				db?.close();
+			} finally {
+				lock?.close();
+			}
 		}
 	}
 	get(key: string): string | null {
@@ -311,7 +334,7 @@ export class RelayLedger {
 	 * This exceeds their three 64KiB metadata rows plus bounded Merkle/index splits.
 	 * Message count is an upper bound; the physical page budget can refuse earlier.
 	 * This reserves SQLite pages, not OS disk space or keyring availability. */
-	private mutate(changes: { key: string; value: string | null }[]): void {
+	private mutate(changes: { key: string; value: string | null }[], admissionKey?: string): void {
 		const bodies: { key: string; body: string }[] = [];
 		this.use((db, checkpoint, epoch) => {
 			if (epoch >= Number.MAX_SAFE_INTEGER) throw Error('Relay receipt checkpoint exhausted');
@@ -319,6 +342,7 @@ export class RelayLedger {
 			const counts: Record<string, number> = countsRow ? JSON.parse(countsRow.value) : {};
 			const rows = changes.map(({ key, value }) => {
 				const old = this.verify(db, checkpoint, key);
+				if (key === admissionKey && old) throw Error('Relay admission already exists');
 				const prior = old ? JSON.parse(old.value) : {};
 				const parsed = value === null ? {} : JSON.parse(value);
 				const kind =
@@ -329,6 +353,12 @@ export class RelayLedger {
 							: parsed.providerBinding === true
 								? 'binding'
 								: 'receipt';
+				if (
+					old?.kind === 'binding' &&
+					value !== null &&
+					parsed.conversationId !== prior.conversationId
+				)
+					throw Error('Provider session already maps to another Relay conversation');
 				if (old && value !== null && old.kind !== kind)
 					throw Error('Relay ledger entry kind conflict');
 				if (old) counts[old.kind] = (counts[old.kind] ?? 0) - 1;
@@ -360,6 +390,12 @@ export class RelayLedger {
 					}
 				}
 				const stored = value === null ? null : JSON.stringify(parsed);
+				if (
+					old?.kind === 'receipt' &&
+					prior.result &&
+					(stored === null || canonicalJson(JSON.parse(stored)) !== canonicalJson(prior))
+				)
+					throw Error('Cannot replace an executed Relay receipt');
 				if (stored !== null && Buffer.byteLength(stored) > 64 * 1024)
 					throw Error('Relay ledger metadata too large');
 				return {
@@ -501,10 +537,13 @@ export class RelayLedger {
 	}
 	reserveTurn(key: string, value: string, mappingKey?: string, mapping?: string): void {
 		if (this.get(key) !== null) throw Error('Relay admission already exists');
-		this.mutate([
-			{ key, value: JSON.stringify({ ...JSON.parse(value), providerReservation: true }) },
-			...(mappingKey && mapping ? [{ key: mappingKey, value: mapping }] : []),
-		]);
+		this.mutate(
+			[
+				{ key, value: JSON.stringify({ ...JSON.parse(value), providerReservation: true }) },
+				...(mappingKey && mapping ? [{ key: mappingKey, value: mapping }] : []),
+			],
+			key
+		);
 	}
 	finishTurn(receiptKey: string, receipt: string, mappingKey: string, mapping: string): void {
 		const outcome = JSON.parse(receipt),
