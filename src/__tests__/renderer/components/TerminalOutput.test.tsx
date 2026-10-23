@@ -4770,6 +4770,49 @@ describe('collapseAiResponseLogs', () => {
 		expect(out[1].text).toBe('part 1 part 2');
 	});
 
+	it.each([true, false])(
+		'keeps a stderr diagnostic separate with warningFirst=%s',
+		(warningFirst) => {
+			const warning = mk({
+				id: 'warning',
+				source: 'stderr',
+				text: 'Codex warning: ignored setting\n',
+			});
+			const answer = mk({ id: 'answer', source: 'stdout', text: 'The answer.' });
+			const logs = warningFirst ? [warning, answer] : [answer, warning];
+
+			expect(collapseAiResponseLogs(logs)).toEqual(logs);
+		}
+	);
+
+	it('keeps diagnostic boundaries while collapsing assistant chunks on either side', () => {
+		const warning = mk({
+			id: 'warning',
+			source: 'stderr',
+			text: 'Codex warning: ignored setting\n',
+		});
+		const nextWarning = mk({
+			id: 'warning-2',
+			source: 'stderr',
+			text: 'Codex warning: another setting\n',
+		});
+		const out = collapseAiResponseLogs([
+			mk({ id: 'before', text: 'Before ' }),
+			mk({ id: 'before-2', text: 'warning.' }),
+			warning,
+			nextWarning,
+			mk({ id: 'answer', text: 'The ' }),
+			mk({ id: 'answer-2', text: 'answer.' }),
+		]);
+
+		expect(out.map(({ id, source, text }) => ({ id, source, text }))).toEqual([
+			{ id: 'before', source: 'stdout', text: 'Before warning.' },
+			{ id: 'warning', source: 'stderr', text: warning.text },
+			{ id: 'warning-2', source: 'stderr', text: nextWarning.text },
+			{ id: 'answer', source: 'stdout', text: 'The answer.' },
+		]);
+	});
+
 	it('keeps each cross-agent reply as its own standalone bubble', () => {
 		const out = collapseAiResponseLogs([
 			mk({ id: 'u', source: 'user', text: 'what are we working on? @LH and @MM' }),

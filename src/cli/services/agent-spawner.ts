@@ -1112,6 +1112,10 @@ async function spawnJsonLineAgent(
 				errorText = event.text;
 			}
 
+			if (event.type === 'warning' && event.text) {
+				console.error(event.text);
+			}
+
 			const usage = parser.extractUsage(event);
 			if (usage) {
 				usageStats = mergeUsageStats(usageStats, {
