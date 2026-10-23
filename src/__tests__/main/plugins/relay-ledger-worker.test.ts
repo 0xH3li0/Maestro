@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { build } from 'esbuild';
+import { receiptWorkerFixture } from '../../helpers/receiptWorkerFixture';
 import { RelayLedgerClient } from '../../../main/plugins/relay-ledger-client';
 let dir: string;
 let script: string;
@@ -9,36 +9,8 @@ let killFile: string;
 beforeAll(async () => {
 	fs.mkdirSync('.maestro/scratch', { recursive: true });
 	dir = fs.mkdtempSync(path.resolve('.maestro/scratch/relay-worker-'));
-	script = path.join(dir, 'worker.cjs');
-	const anchor = path.join(dir, 'fixture-anchor.cjs');
 	killFile = path.join(dir, 'kill-mode');
-	fs.writeFileSync(
-		anchor,
-		`const fs=require('fs'),path=require('path'); const root=${JSON.stringify(dir)}; exports.createKeyringAnchor=(_service,account)=>{const file=path.join(root,account+'.json');return {available:()=>true,read:()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null,write:(v)=>{const mode=fs.existsSync(path.join(root,'kill-mode'))?fs.readFileSync(path.join(root,'kill-mode'),'utf8'):''; const pending=!!JSON.parse(v.installSecret).pending;if(mode==='stable-before'&&!pending)process.exit(71);fs.writeFileSync(file,JSON.stringify(v));if(pending&&fs.existsSync(path.join(root,'pause-prepared'))){fs.writeFileSync(path.join(root,'prepared-marker'),'1');let n=0;while(fs.existsSync(path.join(root,'pause-prepared'))){if(n++>500)throw Error('fixture pause timeout');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}}if((mode==='prepared-after'&&pending)||(mode==='stable-after'&&!pending))process.exit(72);}};};`
-	);
-	await build({
-		entryPoints: ['src/main/plugins/relay-ledger-worker.ts'],
-		outfile: script,
-		bundle: true,
-		platform: 'node',
-		format: 'cjs',
-		plugins: [
-			{
-				name: 'test-checkpoint',
-				setup(b) {
-					b.onResolve({ filter: /^better-sqlite3$/ }, () => ({
-						path: 'node-sqlite-adapter',
-						namespace: 'test-sqlite',
-					}));
-					b.onLoad({ filter: /.*/, namespace: 'test-sqlite' }, () => ({
-						contents: `import { nodeSqliteBetterSqlite3Mock } from ${JSON.stringify(path.resolve('src/__tests__/helpers/nodeSqlite.ts'))}; export default nodeSqliteBetterSqlite3Mock().default;`,
-						resolveDir: process.cwd(),
-					}));
-					b.onResolve({ filter: /keyring-anchor$/ }, () => ({ path: anchor }));
-				},
-			},
-		],
-	});
+	script = await receiptWorkerFixture(dir, 'src/main/plugins/relay-ledger-worker.ts');
 });
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 describe('real Relay worker transport', () => {
