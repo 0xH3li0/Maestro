@@ -301,6 +301,17 @@ describe('Goal-Driven Auto Run (integration via useBatchProcessor)', () => {
 			resolvers[1]({ success: true, agentSessionId: 'a2', response: progressResponse(100) });
 		});
 		await waitFor(() => expect(finished).toBe(true));
+
+		// The iteration that took the note replied to it, so the Thought Stream
+		// shows the reply under the note. Iteration 1 took nothing.
+		expect(mockOnSpawnAgent.mock.calls[0][1]).not.toContain(STEERING_BLOCK_START);
+		const delivered = useAutoRunSteeringStore.getState().delivered[SESSION_ID];
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].text).toBe(noteText);
+		expect(delivered[0].response).toMatchObject({
+			summary: 'Synopsis: did work toward 100%.',
+			success: true,
+		});
 	});
 
 	it('stops a flat run with goalExitReason "stalled" and fires onComplete once', async () => {
