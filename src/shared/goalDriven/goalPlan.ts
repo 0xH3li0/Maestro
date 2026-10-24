@@ -1,5 +1,6 @@
 /**
- * The Plan Doc of a Goal-Driven Auto Run: parse, render, create.
+ * The Plan Doc of a Goal-Driven Auto Run: parse, render, create, and read the
+ * agent's proposed Plan out of its `<!-- maestro:plan -->` marker block.
  *
  * A goal run keeps its plan in one Markdown file (see
  * `.maestro/scratch/goal-live-plan.md`). The human edits it in the Auto Run
@@ -23,6 +24,7 @@
  */
 
 import { forEachMarkdownLine } from '../markdownTaskScan';
+import { lastPlanBlockBody } from './goalMarkers';
 import type {
 	GoalPlanDoc,
 	GoalPlanExtraSection,
@@ -72,11 +74,12 @@ const PLAN_ITEM_RE = /^([ \t]*)[-*+][ \t]+\[([ xX])\](?:[ \t]+(.*))?$/;
 const ITEM_META_RE = /[ \t]*<!--[ \t]*(id:[^\s>]*(?:[ \t]+[A-Za-z]+:[^\s>]*)*)[ \t]*-->[ \t]*$/;
 
 /** A human-assigned id, `h<n>`. */
-const HUMAN_ID_RE = /^h(\d+)$/;
+const HUMAN_ID_RE = /^h\d+$/;
 
 /** One parsed Plan line, before ids are resolved against the whole list. */
 interface PlanLine {
-	depth: number;
+	/** Indentation width in columns; depth is derived by the caller. */
+	indent: number;
 	checked: boolean;
 	text: string;
 	/** Explicit id from the meta comment, `null` when absent or `id:new`. */
@@ -114,7 +117,7 @@ function parsePlanLine(line: string): PlanLine | null {
 	if (!text && id === null) return null;
 
 	return {
-		depth: indentDepth(match[1]),
+		indent: indentWidth(match[1]),
 		checked: match[2] !== ' ',
 		text,
 		id,
@@ -123,11 +126,32 @@ function parsePlanLine(line: string): PlanLine | null {
 	};
 }
 
-/** Two columns per depth level; a tab counts as one level. */
-function indentDepth(indent: string): number {
+/** Indentation width in columns; a tab counts as one depth level (two). */
+function indentWidth(indent: string): number {
 	let width = 0;
 	for (const char of indent) width += char === '\t' ? 2 : 1;
-	return Math.floor(width / 2);
+	return width;
+}
+
+/** Two columns per depth level. */
+function depthOf(indent: number): number {
+	return Math.floor(indent / 2);
+}
+
+/**
+ * A source of fresh `<prefix><n>` ids that never collide with `taken`: each
+ * call returns one past the highest number already used under that prefix.
+ * Numbers are never reused, so an id a merge dropped cannot come back as a
+ * different item.
+ */
+function freshIdAllocator(prefix: 'a' | 'h', taken: Iterable<string>): () => string {
+	const own = new RegExp(`^${prefix}(\\d+)$`);
+	let next = 0;
+	for (const id of taken) {
+		const match = own.exec(id);
+		if (match) next = Math.max(next, Number(match[1]));
+	}
+	return () => `${prefix}${++next}`;
 }
 
 /** Render one Plan item in canonical form. */
@@ -248,11 +272,10 @@ function parsePlanBody(body: string): { items: GoalPlanItem[]; planText: GoalPla
 	const unfenced = unfencedLineIndices(body);
 	const parsed = lines.map((line, i) => (unfenced.has(i) ? parsePlanLine(line) : null));
 
-	let nextHuman = 0;
-	for (const entry of parsed) {
-		const human = entry?.id ? HUMAN_ID_RE.exec(entry.id) : null;
-		if (human) nextHuman = Math.max(nextHuman, Number(human[1]));
-	}
+	const nextHumanId = freshIdAllocator(
+		'h',
+		parsed.flatMap((entry) => (entry?.id ? [entry.id] : []))
+	);
 
 	const items: GoalPlanItem[] = [];
 	const planText: GoalPlanFreeText[] = [];
@@ -274,16 +297,16 @@ function parsePlanBody(body: string): { items: GoalPlanItem[]; planText: GoalPla
 				id: entry.id,
 				text: entry.text,
 				checked: entry.checked,
-				depth: entry.depth,
+				depth: depthOf(entry.indent),
 				author: entry.author ?? (HUMAN_ID_RE.test(entry.id) ? 'human' : 'agent'),
 				iteration: entry.iteration,
 			};
 		} else {
 			item = {
-				id: `h${++nextHuman}`,
+				id: nextHumanId(),
 				text: entry.text,
 				checked: entry.checked,
-				depth: entry.depth,
+				depth: depthOf(entry.indent),
 				author: 'human',
 				iteration: null,
 			};
@@ -466,4 +489,63 @@ export function createGoalPlanDoc(config: GoalRunConfig, runId: string, now: Dat
 		iterationLog: [],
 		preserved: { frontMatterLines: [], preamble: '', sections: [], planText: [] },
 	};
+}
+
+/**
+ * Read the agent's proposed Plan from the LAST `<!-- maestro:plan -->` ...
+ * `<!-- /maestro:plan -->` block in one iteration's output (the block grammar
+ * lives in `goalMarkers.ts`, next to the other markers). Returns `null` when
+ * there is no closed block or no line in it parses as an item, which the
+ * engine treats as "the agent proposed nothing": the Plan stays as it was.
+ *
+ * Only checkbox lines count; prose the agent wrote inside the block is not
+ * plan content and is dropped. Depth is measured from the shallowest item in
+ * the block, because agents indent the whole list when it sits under a
+ * numbered step or a quote.
+ *
+ * An item with `id:new` or no id is one the agent is adding: it gets the next
+ * fresh `a<n>` and `by:agent`. Pass the ids already in the Plan Doc as
+ * `reservedIds` so a fresh id never lands on an existing (or deleted-then-
+ * remembered) item, which the merge would read as a reword of that item. A
+ * repeated id keeps its first holder and the copy becomes a new agent item.
+ *
+ * An explicit `by:` on an existing id is the agent's claim, not the truth:
+ * the merge takes authorship from the doc, never from this list.
+ */
+export function parsePlanMarker(
+	agentText: string,
+	reservedIds: Iterable<string> = []
+): GoalPlanItem[] | null {
+	const body = lastPlanBlockBody(agentText);
+	if (body === null) return null;
+
+	const entries = body
+		.replace(/\r\n?/g, '\n')
+		.split('\n')
+		.flatMap((line) => {
+			const entry = parsePlanLine(line);
+			return entry ? [entry] : [];
+		});
+	if (entries.length === 0) return null;
+
+	const nextAgentId = freshIdAllocator('a', [
+		...reservedIds,
+		...entries.flatMap((entry) => (entry.id ? [entry.id] : [])),
+	]);
+	const baseIndent = Math.min(...entries.map((entry) => entry.indent));
+	const seen = new Set<string>();
+
+	return entries.map((entry): GoalPlanItem => {
+		const id = entry.id !== null && !seen.has(entry.id) ? entry.id : nextAgentId();
+		seen.add(id);
+		const fresh = id !== entry.id;
+		return {
+			id,
+			text: entry.text,
+			checked: entry.checked,
+			depth: depthOf(entry.indent - baseIndent),
+			author: fresh ? 'agent' : (entry.author ?? (HUMAN_ID_RE.test(id) ? 'human' : 'agent')),
+			iteration: fresh ? null : entry.iteration,
+		};
+	});
 }

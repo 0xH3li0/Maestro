@@ -2,13 +2,14 @@
  * @file goalPlan.test.ts
  * @description Tests for the Goal-Driven Auto Run Plan Doc module
  * (src/shared/goalDriven/goalPlan.ts): parse, canonical render, round trip,
- * preservation of human text, and the fresh-run doc.
+ * preservation of human text, the fresh-run doc, and the agent's plan marker.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
 	createGoalPlanDoc,
 	parseGoalPlanDoc,
+	parsePlanMarker,
 	renderGoalPlanDoc,
 } from '../../../shared/goalDriven/goalPlan';
 
@@ -275,5 +276,97 @@ describe('createGoalPlanDoc', () => {
 		const rendered = renderGoalPlanDoc(doc);
 		expect(renderGoalPlanDoc(parseGoalPlanDoc(rendered))).toBe(rendered);
 		expect(parseGoalPlanDoc(rendered).goal).toBe('Ship it\n### Sub\nmore');
+	});
+});
+
+describe('parsePlanMarker', () => {
+	const block = (...lines: string[]) =>
+		['<!-- maestro:plan -->', ...lines, '<!-- /maestro:plan -->'].join('\n');
+
+	it('returns null when there is no closed plan block', () => {
+		expect(parsePlanMarker('Did work.\n<!-- maestro:progress 40 -->')).toBeNull();
+		expect(parsePlanMarker('<!-- maestro:plan -->\n- [ ] never closed')).toBeNull();
+	});
+
+	it('returns null when nothing in the block parses as an item', () => {
+		expect(parsePlanMarker(block('No list here, just prose.', '- [ ] <!-- id:new -->'))).toBeNull();
+	});
+
+	it('keeps explicit ids and gives new or id-less items fresh agent ids', () => {
+		const items = parsePlanMarker(
+			block(
+				'- [x] Map the flow <!-- id:a1 by:agent it:1 -->',
+				'- [ ] Keep billing out <!-- id:h1 -->',
+				'- [ ] Write the test <!-- id:new -->',
+				'- [ ] Run the suite'
+			)
+		);
+		expect(items).toEqual([
+			{ id: 'a1', text: 'Map the flow', checked: true, depth: 0, author: 'agent', iteration: 1 },
+			{
+				id: 'h1',
+				text: 'Keep billing out',
+				checked: false,
+				depth: 0,
+				author: 'human',
+				iteration: null,
+			},
+			{
+				id: 'a2',
+				text: 'Write the test',
+				checked: false,
+				depth: 0,
+				author: 'agent',
+				iteration: null,
+			},
+			{
+				id: 'a3',
+				text: 'Run the suite',
+				checked: false,
+				depth: 0,
+				author: 'agent',
+				iteration: null,
+			},
+		]);
+	});
+
+	it('takes the last block when the agent wrote several', () => {
+		const text = [
+			block('- [ ] Old draft'),
+			'Revised:',
+			block('- [x] Final step <!-- id:a4 -->'),
+		].join('\n');
+		expect(parsePlanMarker(text)).toEqual([
+			{ id: 'a4', text: 'Final step', checked: true, depth: 0, author: 'agent', iteration: null },
+		]);
+	});
+
+	it('never hands out a reserved id', () => {
+		const items = parsePlanMarker(block('- [ ] New step <!-- id:new -->'), ['a1', 'a7', 'h3']);
+		expect(items?.[0].id).toBe('a8');
+	});
+
+	it('gives a repeated id to its first holder and a fresh id to the copy', () => {
+		const items = parsePlanMarker(block('- [ ] One <!-- id:a1 -->', '- [ ] Copy <!-- id:a1 -->'));
+		expect(items?.map((item) => [item.id, item.author])).toEqual([
+			['a1', 'agent'],
+			['a2', 'agent'],
+		]);
+	});
+
+	it('measures depth from the shallowest item and ignores prose in the block', () => {
+		const items = parsePlanMarker(
+			block(
+				'   Here is the plan:',
+				'   - [ ] Parent <!-- id:a1 -->',
+				'     - [ ] Child <!-- id:a2 -->',
+				'       - [x] Grandchild <!-- id:new -->'
+			)
+		);
+		expect(items?.map((item) => [item.id, item.depth])).toEqual([
+			['a1', 0],
+			['a2', 1],
+			['a3', 2],
+		]);
 	});
 });
