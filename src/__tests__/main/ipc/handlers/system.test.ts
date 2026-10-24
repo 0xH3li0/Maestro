@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
 	},
 	BrowserWindow: {
 		getFocusedWindow: vi.fn(),
+		getAllWindows: vi.fn(() => []),
 	},
 	app: {
 		getVersion: vi.fn(),
@@ -207,13 +208,24 @@ describe('system IPC handlers', () => {
 			delete: vi.fn(),
 		};
 
+		vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+
 		// Setup mock web server
 		mockWebServer = {
 			getSecureUrl: vi.fn().mockReturnValue('http://localhost:3000/token-path'),
+			// Live Mode on: the LAN server is up. The tunnel refuses anything else.
+			isActive: vi.fn().mockReturnValue(true),
+			isLanAccessible: vi.fn().mockReturnValue(true),
 		};
 
-		// Setup mock tunnel manager (use the imported mock)
+		// Setup mock tunnel manager (use the imported mock). Starting and
+		// stopping read the status back for the live:stateChanged push.
 		mockTunnelManager = tunnelManager;
+		vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+			isRunning: false,
+			url: null,
+			error: null,
+		});
 
 		// Create dependencies
 		deps = {
@@ -1042,19 +1054,52 @@ describe('system IPC handlers', () => {
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
 			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
 		});
 
-		it('should return error when web server URL not available', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue(null);
+		it('should refuse to tunnel the loopback CLI server while Live mode is off', async () => {
+			// Only the CLI server is running: tunneling it would publish the CLI's
+			// control channel to the internet.
+			mockWebServer.isLanAccessible.mockReturnValue(false);
 
 			const handler = handlers.get('tunnel:start');
 			const result = await handler!({} as any);
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
+			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
+		});
+
+		it('should push the new state to every window after starting', async () => {
+			const send = vi.fn();
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send } },
+			] as any);
+			vi.mocked(mockTunnelManager.start).mockResolvedValue({
+				success: true,
+				url: 'https://abc.trycloudflare.com',
+			});
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com',
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:start');
+			await handler!({} as any);
+
+			expect(send).toHaveBeenCalledWith('live:stateChanged', {
+				live: true,
+				url: 'http://localhost:3000/token-path',
+				tunnel: {
+					isRunning: true,
+					url: 'https://abc.trycloudflare.com/token-path',
+					error: null,
+				},
 			});
 		});
 
