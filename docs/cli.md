@@ -267,7 +267,7 @@ The response echoes the armed callback:
 | Flag                              | Description                                                                               |
 | --------------------------------- | ----------------------------------------------------------------------------------------- |
 | `--notify-on-complete <agent-id>` | Agent to wake when this dispatch finishes. Requires `--new-tab` or `--tab`                |
-| `--callback-tab <id>`             | Specific caller tab to wake. Default: the caller's active AI tab                          |
+| `--callback-tab <id>`             | Specific caller tab to wake. Default: the tab that ran `dispatch`, else the active AI tab |
 | `--callback-prompt <text>`        | Replace the default wake-up prompt body. `{{DISPATCH_*}}` variables below are substituted |
 | `--callback-timeout <seconds>`    | Give up and fire a `timeout` callback after this long. Default 3600, hard cap 86400       |
 
