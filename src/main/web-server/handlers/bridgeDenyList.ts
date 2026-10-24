@@ -54,6 +54,7 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
 	permission: 'respond',
@@ -102,7 +103,7 @@ const EVENTS: Record<string, string> = {
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
 	marketplace: 'manifestChanged',
-	notification: 'commandCompleted',
+	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
