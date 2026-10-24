@@ -450,6 +450,19 @@ describe('mergeGoalPlan', () => {
 		expect(result.conflicts).toEqual([]);
 	});
 
+	it('lets the agent uncheck and re-nest its own items', () => {
+		const theirs = [
+			{ ...base.items[0], checked: false },
+			base.items[1],
+			{ ...base.items[2], depth: 0 },
+			base.items[3],
+		];
+		const result = mergeGoalPlan(base, base, theirs);
+		expect(byId(result, 'a1')?.checked).toBe(false);
+		expect(byId(result, 'a3')?.depth).toBe(0);
+		expect(result.conflicts).toEqual([]);
+	});
+
 	it('treats an agent line with empty text as keeping the text', () => {
 		const theirs = [{ ...base.items[0], text: '', checked: false }, ...base.items.slice(1)];
 		const result = mergeGoalPlan(base, base, theirs);
