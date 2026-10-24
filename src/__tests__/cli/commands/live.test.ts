@@ -1,6 +1,6 @@
 /**
  * @file live.test.ts
- * @description Tests for `maestro-cli live status|on|off`, the CLI half of the Left Bar LIVE pill.
+ * @description Tests for `maestro-cli live status|on|off|tunnel`, the CLI half of the Left Bar LIVE pill.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -18,15 +18,36 @@ import {
 	liveOff,
 	liveOn,
 	liveStatus,
+	liveTunnel,
 	LIVE_POLL_INTERVAL_MS,
 	LIVE_SWITCH_TIMEOUT_MS,
+	REMOTE_CONTROL_TIMEOUT_MS,
 } from '../../../cli/commands/live';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { LiveCommandResult, LiveModeStatus } from '../../../shared/liveMode';
 
 const URL = 'http://192.168.1.5:9000/token';
-const OFF: LiveModeStatus = { live: false, url: null, remoteControl: false, revision: 2 };
-const ON: LiveModeStatus = { live: true, url: URL, remoteControl: false, revision: 3 };
+const REMOTE_URL = 'https://abc.trycloudflare.com/token';
+const OFF: LiveModeStatus = {
+	live: false,
+	url: null,
+	remoteControl: false,
+	remoteControlUrl: null,
+	revision: 2,
+};
+const ON: LiveModeStatus = {
+	live: true,
+	url: URL,
+	remoteControl: false,
+	remoteControlUrl: null,
+	revision: 3,
+};
+const REMOTE: LiveModeStatus = {
+	...ON,
+	remoteControl: true,
+	remoteControlUrl: REMOTE_URL,
+	revision: 4,
+};
 
 type Answer = LiveCommandResult | Error;
 
@@ -35,18 +56,24 @@ type Answer = LiveCommandResult | Error;
  * one repeats). An Error answer is a failed connect: the old server is gone.
  */
 function mockDesktop(answers: Answer[]) {
-	const sent: Array<{ payload: Record<string, unknown>; responseType: string }> = [];
+	const sent: Array<{
+		payload: Record<string, unknown>;
+		responseType: string;
+		timeoutMs?: number;
+	}> = [];
 	let index = 0;
 	vi.mocked(withMaestroClient).mockImplementation(async (action) =>
 		action({
-			sendCommand: vi.fn((payload: Record<string, unknown>, responseType: string) => {
-				sent.push({ payload, responseType });
-				const answer = answers[Math.min(index, answers.length - 1)];
-				index += 1;
-				return answer instanceof Error
-					? Promise.reject(answer)
-					: Promise.resolve({ type: 'live_command_result', ...answer });
-			}),
+			sendCommand: vi.fn(
+				(payload: Record<string, unknown>, responseType: string, timeoutMs?: number) => {
+					sent.push({ payload, responseType, ...(timeoutMs ? { timeoutMs } : {}) });
+					const answer = answers[Math.min(index, answers.length - 1)];
+					index += 1;
+					return answer instanceof Error
+						? Promise.reject(answer)
+						: Promise.resolve({ type: 'live_command_result', ...answer });
+				}
+			),
 		} as never)
 	);
 	return sent;
@@ -102,11 +129,11 @@ describe('live command', () => {
 		});
 
 		it('prints the status as JSON', async () => {
-			mockDesktop([{ success: true, status: { ...OFF, remoteControl: true } }]);
+			mockDesktop([{ success: true, status: REMOTE }]);
 
 			await liveStatus({ json: true });
 
-			expect(lastJson()).toEqual({ success: true, ...OFF, remoteControl: true });
+			expect(lastJson()).toEqual({ success: true, ...REMOTE });
 		});
 
 		it('shows the last switch failure', async () => {
@@ -222,6 +249,66 @@ describe('live command', () => {
 			await liveOff({ json: true });
 
 			expect(lastJson()).toEqual({ success: true, changed: false, ...OFF });
+		});
+	});
+
+	describe('Remote Control', () => {
+		it('live on --tunnel starts Remote Control once Live is on, with a long timeout', async () => {
+			const sent = mockDesktop([
+				{ success: true, changed: false, status: ON },
+				{ success: true, changed: true, status: REMOTE },
+			]);
+
+			await liveOn({ tunnel: true, json: true });
+
+			expect(sent.map((s) => s.payload.action)).toEqual(['on', 'remote-on']);
+			// cloudflared can take 30s to report a URL.
+			expect(sent[1].timeoutMs ?? 0).toBeGreaterThan(30_000);
+			expect(sent[1].timeoutMs).toBe(REMOTE_CONTROL_TIMEOUT_MS);
+			expect(lastJson()).toMatchObject({ remoteControl: true, remoteControlUrl: REMOTE_URL });
+		});
+
+		it('live tunnel on prints the public URL', async () => {
+			mockDesktop([{ success: true, changed: true, status: REMOTE }]);
+
+			await liveTunnel('on', {});
+
+			expect(printed()).toContain('Remote Control is on');
+			expect(printed()).toContain(`Remote Control: ${REMOTE_URL}`);
+		});
+
+		it('points at `live on --tunnel` when Live is off', async () => {
+			mockDesktop([
+				{
+					success: false,
+					error: 'Live mode is off. Turn it on before starting Remote Control.',
+					status: OFF,
+				},
+			]);
+
+			await expect(liveTunnel('on', { json: true })).rejects.toThrow('__exit__1');
+			expect(lastJson().error).toContain('maestro-cli live on --tunnel');
+		});
+
+		it('names the install step when cloudflared is missing', async () => {
+			mockDesktop([{ success: false, error: 'cloudflared is not installed', status: ON }]);
+
+			await expect(liveTunnel('on', { json: true })).rejects.toThrow('__exit__1');
+			expect(lastJson().error).toContain('brew install cloudflared');
+		});
+
+		it('live tunnel off stops Remote Control', async () => {
+			const sent = mockDesktop([{ success: true, changed: true, status: ON }]);
+
+			await liveTunnel('off', { json: true });
+
+			expect(sent.map((s) => s.payload.action)).toEqual(['remote-off']);
+			expect(lastJson()).toMatchObject({ success: true, remoteControl: false });
+		});
+
+		it('rejects a state other than on or off before connecting', async () => {
+			await expect(liveTunnel('maybe', { json: true })).rejects.toThrow('__exit__1');
+			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});
 });

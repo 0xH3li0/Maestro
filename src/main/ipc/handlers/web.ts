@@ -59,8 +59,8 @@ export interface WebHandlerDependencies {
 	setWebServer: (server: WebServer | null) => void;
 	createWebServer: (options?: WebServerOptions) => WebServer;
 	settingsStore: SettingsStoreInterface;
-	/** Live off stops Remote Control (the tunnel) first, as the pill always did. */
-	tunnelManager?: Pick<typeof tunnelManager, 'stop' | 'getStatus'>;
+	/** Remote Control (the tunnel). Live off stops it first, as the pill always did. */
+	tunnelManager?: Pick<typeof tunnelManager, 'start' | 'stop' | 'getStatus'>;
 }
 
 /**
@@ -490,8 +490,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		ensureCliServer: () => ensureCliServer(deps),
 		publishCliDiscovery: refreshCliDiscoveryFile,
 		tunnel: {
+			start: (port) =>
+				deps.tunnelManager?.start(port) ??
+				Promise.resolve({ success: false, error: 'Remote Control is not available' }),
 			stop: () => deps.tunnelManager?.stop() ?? Promise.resolve(),
-			isRunning: () => deps.tunnelManager?.getStatus().isRunning ?? false,
+			getStatus: () =>
+				deps.tunnelManager?.getStatus() ?? { isRunning: false, url: null, error: null },
 		},
 		onStateChanged: (state) => {
 			// Each window draws its own Left Bar with its own LIVE pill.

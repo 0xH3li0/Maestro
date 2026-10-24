@@ -293,8 +293,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
 		settingsStore: deps.settingsStore,
-		tunnelManager: deps.tunnelManager,
-		getWebServer: deps.getWebServer,
 	});
 	registerClaudeHandlers({
 		claudeSessionOriginsStore: deps.claudeSessionOriginsStore,
@@ -413,13 +411,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
-	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers({
-		sessionsStore: deps.sessionsStore,
-		settingsStore: deps.settingsStore,
-		agentConfigsStore: deps.agentConfigsStore,
-		getAgentDetector: deps.getAgentDetector,
-	});
+	// Register agent Memory handlers (Claude Code per project, Codex per account)
+	registerMemoryHandlers();
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
 	// Register Context Timeline capture handlers (per-agent turn history backfill)

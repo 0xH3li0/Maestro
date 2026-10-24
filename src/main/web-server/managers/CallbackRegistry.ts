@@ -131,6 +131,7 @@ import type {
 	StartGroupChatResult,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
@@ -290,6 +291,7 @@ export interface WebServerCallbacks {
 	startGroupChat: StartGroupChatCallback | null;
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
+	archiveGroupChat: ArchiveGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
 	tabContextOp: TabContextOpCallback | null;
@@ -404,6 +406,7 @@ export class CallbackRegistry {
 		startGroupChat: null,
 		getGroupChatState: null,
 		stopGroupChat: null,
+		archiveGroupChat: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
 		tabContextOp: null,
@@ -1071,6 +1074,11 @@ export class CallbackRegistry {
 		return this.callbacks.stopGroupChat(chatId);
 	}
 
+	async archiveGroupChat(chatId: string, archived: boolean): Promise<boolean> {
+		if (!this.callbacks.archiveGroupChat) return false;
+		return this.callbacks.archiveGroupChat(chatId, archived);
+	}
+
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
 		if (!this.callbacks.sendGroupChatMessage) return false;
 		return this.callbacks.sendGroupChatMessage(chatId, message);
@@ -1593,6 +1601,10 @@ export class CallbackRegistry {
 
 	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
 		this.callbacks.stopGroupChat = callback;
+	}
+
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbacks.archiveGroupChat = callback;
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {

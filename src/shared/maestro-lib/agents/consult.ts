@@ -37,6 +37,7 @@ import { createIdleWatchdog, type IdleWatchdog } from '../control/idle-watchdog'
 import type { GroupChatSpawn } from '../groupchat/types';
 import { captureException, logger } from '../host';
 import { applyAgentConfigOverrides, buildAgentArgs } from '../launch/agent-args';
+import { MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE } from '../launch/interactive-mode';
 import type { SshRemoteSettingsStore } from '../launch/ssh-remote-resolver';
 import type { AgentConfig } from '../providers/definitions';
 import { buildCrossAgentPrompt } from './consult-prompt';
@@ -60,6 +61,20 @@ export const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
  * alone cannot bound the run.
  */
 export const CROSS_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * The error a failed consult reports. maestro-p's exit 7 gets its own message:
+ * it names the folder claude has not trusted and how to fix it, where the
+ * generic "no visible output" left the caller guessing (#1872).
+ */
+function consultExitError(target: CrossAgentTargetSession, code: number, text: string): string {
+	if (target.toolType === 'claude-code' && code === MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE) {
+		return `${target.name} could not start: Claude Code has not trusted the folder ${target.cwd} (exit code ${code}). Open claude in that folder once and choose "Yes, I trust this folder".`;
+	}
+	return text
+		? `${target.name} exited with code ${code}.`
+		: `${target.name} produced no visible output (exit code ${code}).`;
+}
 
 /**
  * The subset of a target agent's stored session config a consult needs to spawn. Resolved by
@@ -397,9 +412,7 @@ export function createConsultService() {
 							baseChunk({
 								chunk: text,
 								done: true,
-								error: text
-									? `${target.name} exited with code ${code}.`
-									: `${target.name} produced no visible output (exit code ${code}).`,
+								error: consultExitError(target, code, text),
 							})
 						);
 					} else if (text) {
@@ -510,6 +523,9 @@ export function createConsultService() {
 					// Background/orchestrated caller: maestro-p otherwise applies its own 300s idle
 					// default and kills a still-working consult long before our budget.
 					maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
+					// The consult runs in the target agent's own cwd, so a TUI target may
+					// accept claude's folder-trust prompt there (#1872).
+					acceptWorkspaceTrust: true,
 					debugLabel: `cross-agent:${target.name}`,
 					// The consulted agent is a real Maestro agent: it answers with the same
 					// system prompt its own tabs carry. A resumed consult skips re-embedding

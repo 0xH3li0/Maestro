@@ -1,6 +1,8 @@
 // Live mode commands - the CLI half of the Left Bar LIVE pill (the web
-// interface switch). `live on|off` reach the same main-process switch the pill
-// does, over the CLI-only `live_command` message; `live status` reads it back.
+// interface switch) and its Remote Control row (the Cloudflare tunnel).
+// `live on|off` and `live tunnel on|off` reach the same main-process switch the
+// pill does, over the CLI-only `live_command` message; `live status` reads it
+// back.
 //
 // A switch replaces the server this CLI is connected to, so the app answers
 // first and switches after. The CLI then reconnects (the discovery file names
@@ -28,18 +30,40 @@ export interface LiveOptions {
 	background?: boolean;
 }
 
+export interface LiveOnOptions extends LiveOptions {
+	/** Also start Remote Control once Live is on. */
+	tunnel?: boolean;
+}
+
 /** How long a switch may take: a Windows tunnel kill plus a failed start's retries. */
 export const LIVE_SWITCH_TIMEOUT_MS = 20_000;
 /** Pause between status reads while a switch finishes. */
 export const LIVE_POLL_INTERVAL_MS = 250;
+/** cloudflared takes up to 30s to report a URL (tunnel-manager's own cap). */
+export const REMOTE_CONTROL_TIMEOUT_MS = 45_000;
 
-async function sendLiveCommand(action: LiveCommandAction): Promise<LiveCommandResult> {
+async function sendLiveCommand(
+	action: LiveCommandAction,
+	timeoutMs?: number
+): Promise<LiveCommandResult> {
 	return withMaestroClient((client) =>
 		client.sendCommand<LiveCommandResult & { type: string }>(
 			{ type: LIVE_COMMAND, action },
-			LIVE_COMMAND_RESULT
+			LIVE_COMMAND_RESULT,
+			timeoutMs
 		)
 	);
+}
+
+/** Add the next step to the Remote Control failures an agent can act on. */
+function remoteControlErrorWithHint(error: string): string {
+	if (/not installed/i.test(error)) {
+		return `${error}. Install cloudflared (macOS: \`brew install cloudflared\`), then retry.`;
+	}
+	if (/live mode is off/i.test(error)) {
+		return `${error} Run \`maestro-cli live on --tunnel\` to start both.`;
+	}
+	return error;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,7 +94,13 @@ async function awaitSwitch(revision: number): Promise<LiveModeStatus> {
 function printStatus(status: LiveModeStatus): void {
 	console.log(`Live: ${status.live ? 'on' : 'off'}`);
 	if (status.url) console.log(`  URL: ${status.url}`);
-	console.log(`  Remote Control: ${status.remoteControl ? 'on' : 'off'}`);
+	if (status.remoteControl && status.remoteControlUrl) {
+		console.log(`  Remote Control: ${status.remoteControlUrl}`);
+	} else {
+		console.log(
+			`  Remote Control: ${status.remoteControlError ? `error - ${status.remoteControlError}` : 'off'}`
+		);
+	}
 	if (status.lastError) console.log(`  Last error: ${status.lastError}`);
 }
 
@@ -95,7 +125,7 @@ export async function liveStatus(options: LiveOptions): Promise<void> {
 	printStatus(reply.status);
 }
 
-async function liveSet(live: boolean, options: LiveOptions): Promise<void> {
+async function liveSet(live: boolean, options: LiveOnOptions): Promise<void> {
 	const json = options.json;
 	const word = live ? 'on' : 'off';
 
@@ -124,6 +154,10 @@ async function liveSet(live: boolean, options: LiveOptions): Promise<void> {
 		}
 	}
 
+	if (live && options.tunnel) {
+		status = await startRemoteControlOrFail(json);
+	}
+
 	if (json) {
 		console.log(statusJson(status, { changed }));
 		return;
@@ -132,10 +166,56 @@ async function liveSet(live: boolean, options: LiveOptions): Promise<void> {
 	printStatus(status);
 }
 
-export async function liveOn(options: LiveOptions): Promise<void> {
+/** Start Remote Control against a Live server that is already up. */
+async function startRemoteControlOrFail(json: boolean | undefined): Promise<LiveModeStatus> {
+	let reply: LiveCommandResult;
+	try {
+		reply = await sendLiveCommand('remote-on', REMOTE_CONTROL_TIMEOUT_MS);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success || !reply.status) {
+		failCommand(remoteControlErrorWithHint(reply.error || 'Remote Control failed to start'), json);
+	}
+	return reply.status;
+}
+
+export async function liveOn(options: LiveOnOptions): Promise<void> {
 	await liveSet(true, options);
 }
 
 export async function liveOff(options: LiveOptions): Promise<void> {
 	await liveSet(false, options);
+}
+
+/** `maestro-cli live tunnel on|off` - Remote Control, the Cloudflare tunnel. */
+export async function liveTunnel(state: string, options: LiveOptions): Promise<void> {
+	const json = options.json;
+	const word = state.trim().toLowerCase();
+	if (word !== 'on' && word !== 'off') {
+		failCommand(`Expected "on" or "off", got "${state}".`, json);
+	}
+
+	let status: LiveModeStatus;
+	if (word === 'on') {
+		status = await startRemoteControlOrFail(json);
+	} else {
+		let reply: LiveCommandResult;
+		try {
+			reply = await sendLiveCommand('remote-off');
+		} catch (error) {
+			failFromError(error, json);
+		}
+		if (!reply.success || !reply.status) {
+			failCommand(reply.error || 'Remote Control failed to stop', json);
+		}
+		status = reply.status;
+	}
+
+	if (json) {
+		console.log(statusJson(status));
+		return;
+	}
+	console.log(formatSuccess(`Remote Control is ${word}`));
+	printStatus(status);
 }

@@ -37,7 +37,13 @@ describe('useLiveMode', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 
-		mainState = { live: false, url: null, remoteControl: false, revision: 0 };
+		mainState = {
+			live: false,
+			url: null,
+			remoteControl: false,
+			remoteControlUrl: null,
+			revision: 0,
+		};
 		nextUrl = 'http://localhost:3000';
 
 		mockLive.getState.mockImplementation(async () => status());
@@ -112,6 +118,7 @@ describe('useLiveMode', () => {
 			live: true,
 			url: 'http://192.168.1.5:8080/tok',
 			remoteControl: false,
+			remoteControlUrl: null,
 			revision: 3,
 		};
 
@@ -127,13 +134,18 @@ describe('useLiveMode', () => {
 		await waitFor(() => expect(mockLive.getState).toHaveBeenCalledOnce());
 
 		act(() => {
-			emitStateChanged?.({ live: true, url: 'http://192.168.1.5:8080/tok' });
+			emitStateChanged?.({
+				live: true,
+				url: 'http://192.168.1.5:8080/tok',
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
 		});
 		expect(result.current.isLiveMode).toBe(true);
 		expect(result.current.webInterfaceUrl).toBe('http://192.168.1.5:8080/tok');
 
 		act(() => {
-			emitStateChanged?.({ live: false, url: null });
+			emitStateChanged?.({ live: false, url: null, remoteControl: false, remoteControlUrl: null });
 		});
 		expect(result.current.isLiveMode).toBe(false);
 		expect(result.current.webInterfaceUrl).toBeNull();
@@ -167,6 +179,7 @@ describe('useLiveMode', () => {
 			live: true,
 			url: 'http://localhost:31999/secure',
 			remoteControl: false,
+			remoteControlUrl: null,
 			revision: 1,
 		};
 
@@ -208,7 +221,13 @@ describe('useLiveMode', () => {
 			resolveStart?.({
 				success: true,
 				changed: true,
-				status: { live: true, url: 'http://localhost:3000', remoteControl: false, revision: 1 },
+				status: {
+					live: true,
+					url: 'http://localhost:3000',
+					remoteControl: false,
+					remoteControlUrl: null,
+					revision: 1,
+				},
 			});
 		});
 
@@ -237,7 +256,13 @@ describe('useLiveMode', () => {
 			resolveStart?.({
 				success: true,
 				changed: false,
-				status: { live: true, url: 'http://localhost:3000', remoteControl: false, revision: 1 },
+				status: {
+					live: true,
+					url: 'http://localhost:3000',
+					remoteControl: false,
+					remoteControlUrl: null,
+					revision: 1,
+				},
 			});
 		});
 
@@ -289,6 +314,7 @@ describe('useLiveMode', () => {
 				live: false,
 				url: null,
 				remoteControl: false,
+				remoteControlUrl: null,
 				revision: 1,
 				lastError: 'Port in use',
 			},
@@ -369,6 +395,34 @@ describe('useLiveMode', () => {
 		expect(mockLive.stopServer).toHaveBeenCalledOnce();
 		expect(mockLive.startServer).toHaveBeenCalledOnce();
 		expect(returnValue).toBe('http://localhost:4000');
+	});
+
+	it('restartWebServer does not follow its own stop push and flash Live off', async () => {
+		const { result } = renderHook(() => useLiveMode());
+		await act(async () => {
+			await result.current.toggleGlobalLive();
+		});
+		expect(result.current.isLiveMode).toBe(true);
+
+		// The stop half of the restart pushes live: false before the start lands.
+		// Following it would leave Live off (a successful restart only sets the
+		// URL) and reset the Remote Control row mid-restart.
+		mockLive.stopServer.mockImplementation(async () => {
+			emitStateChanged?.({
+				live: false,
+				url: null,
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
+		});
+		mockLive.startServer.mockResolvedValue({ success: true, url: 'http://localhost:4000' });
+
+		await act(async () => {
+			await result.current.restartWebServer();
+		});
+
+		expect(result.current.isLiveMode).toBe(true);
+		expect(result.current.webInterfaceUrl).toBe('http://localhost:4000');
 	});
 
 	it('restartWebServer updates webInterfaceUrl on success', async () => {

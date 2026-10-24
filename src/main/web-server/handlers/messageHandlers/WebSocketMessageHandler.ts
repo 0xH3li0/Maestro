@@ -27,7 +27,7 @@
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
- * - live_command: Read or switch Live mode, CLI clients only (CLI: `live status|on|off`)
+ * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -163,6 +163,7 @@ import {
 	handleSendGroupChatMessage,
 	handleSteerGroupChat,
 	handleStopGroupChat,
+	handleArchiveGroupChat,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -200,6 +201,7 @@ import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
+	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -638,6 +640,10 @@ export class WebSocketMessageHandler {
 				handleStopGroupChat(this.ctx, client, message);
 				break;
 
+			case 'archive_group_chat':
+				handleArchiveGroupChat(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -708,6 +714,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_token_usage':
 				handleGetTokenUsage(this.ctx, client, message);
+				break;
+
+			case 'get_stats_indexing':
+				handleGetStatsIndexing(this.ctx, client, message);
 				break;
 
 			case 'stats_query':

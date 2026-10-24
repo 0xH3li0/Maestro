@@ -7,6 +7,7 @@ import {
 	FolderInput,
 	FolderPlus,
 	FolderUp,
+	PackagePlus,
 	Plus,
 	Trash2,
 } from 'lucide-react';
@@ -25,6 +26,8 @@ interface GroupContextMenuProps {
 	memberCount: number;
 	onRename: () => void;
 	onNewAgent: () => void;
+	/** Import a bundled agent into this group. */
+	onImportAgent?: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
 	deleteLabel?: string;
@@ -54,6 +57,7 @@ export function GroupContextMenu({
 	memberCount,
 	onRename,
 	onNewAgent,
+	onImportAgent,
 	onDelete,
 	deleteLabel,
 	eligibleParentGroups = [],
@@ -123,19 +127,7 @@ export function GroupContextMenu({
 			</div>
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
-			<button
-				type="button"
-				onClick={() => {
-					onRename();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Edit3 className="w-3.5 h-3.5" />
-				Rename Group...
-			</button>
-
+			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
 			<button
 				type="button"
 				onClick={() => {
@@ -147,6 +139,35 @@ export function GroupContextMenu({
 			>
 				<Plus className="w-3.5 h-3.5" />
 				New Agent in Group...
+			</button>
+
+			{/* Right under New Agent: the other way an agent arrives in a group. */}
+			{onImportAgent && (
+				<button
+					type="button"
+					onClick={() => {
+						onImportAgent();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<PackagePlus className="w-3.5 h-3.5" />
+					Import Agent...
+				</button>
+			)}
+
+			<button
+				type="button"
+				onClick={() => {
+					onRename();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Edit3 className="w-3.5 h-3.5" />
+				Rename Group...
 			</button>
 
 			{showMoveToWindow && (

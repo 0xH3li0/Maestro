@@ -1,6 +1,7 @@
 /**
  * Live mode WebSocket handler: `live_command`, the CLI half of the Left Bar
- * LIVE pill (`maestro-cli live status|on|off`).
+ * LIVE pill and its Remote Control row (`maestro-cli live status|on|off` and
+ * `maestro-cli live tunnel on|off`).
  *
  * Routes to the ONE LiveModeController the pill's `live:set` IPC calls, so the
  * CLI reaches the same switch. Explicit `on` / `off` only, both idempotent.
@@ -13,7 +14,8 @@
  * A switch replaces the server this socket is on, so the reply goes FIRST and
  * the switch starts once it is on the wire. The reply names the revision the
  * switch will finish at; the CLI reconnects through `cli-server.json` and
- * polls `status` until it gets there.
+ * polls `status` until it gets there. Remote Control does not touch the
+ * server, so `remote-on` / `remote-off` answer after the switch has finished.
  */
 
 import { logger } from '../../../utils/logger';
@@ -60,6 +62,23 @@ export function handleLiveCommand(
 	const status = controller.getStatus();
 	if (action === 'status') {
 		reply({ success: true, status });
+		return;
+	}
+
+	if (action === 'remote-on' || action === 'remote-off') {
+		const switching =
+			action === 'remote-on' ? controller.startRemoteControl() : controller.stopRemoteControl();
+		switching.then(
+			(result) =>
+				reply({
+					success: result.success,
+					changed: true,
+					status: result.status,
+					...(result.error ? { error: result.error } : {}),
+				}),
+			(error: unknown) =>
+				reply({ success: false, error: error instanceof Error ? error.message : String(error) })
+		);
 		return;
 	}
 

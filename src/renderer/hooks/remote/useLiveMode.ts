@@ -10,7 +10,7 @@
  * Calls IPC: window.maestro.tunnel, window.maestro.live
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { logger } from '../../utils/logger';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import type { LiveModeStateEvent } from '../../../shared/liveMode';
@@ -37,6 +37,10 @@ export interface UseLiveModeReturn {
 export function useLiveMode(autoStart = false): UseLiveModeReturn {
 	const [isLiveMode, setIsLiveMode] = useState(false);
 	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
+	// True while restartWebServer runs. Its stop + start each push a state
+	// change, and following the stop would flash Live off mid-restart, which
+	// resets the Remote Control row before restartTunnel can act on it.
+	const restartingRef = useRef(false);
 
 	const applyState = useCallback((state: LiveModeStateEvent) => {
 		setIsLiveMode(state.live);
@@ -59,7 +63,9 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 			.catch((error) => {
 				logger.error('[useLiveMode] Failed to read Live state:', undefined, error);
 			});
-		const unsubscribe = window.maestro.live.onStateChanged?.(applyState);
+		const unsubscribe = window.maestro.live.onStateChanged?.((state) => {
+			if (!restartingRef.current) applyState(state);
+		});
 		return () => {
 			cancelled = true;
 			unsubscribe?.();
@@ -136,6 +142,7 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 
 	const restartWebServer = useCallback(async (): Promise<string | null> => {
 		if (!isLiveMode) return null;
+		restartingRef.current = true;
 		try {
 			// Stop and restart the server to pick up new port settings
 			await (window as any).maestro.live.stopServer();
@@ -156,6 +163,8 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 			setWebInterfaceUrl(null);
 			logger.error('[restartWebServer] Error:', undefined, error);
 			return null;
+		} finally {
+			restartingRef.current = false;
 		}
 	}, [isLiveMode]);
 

@@ -90,7 +90,20 @@ function harness(initial: FakeServer | null = null, settings: Record<string, unk
 		} as unknown as LiveModeControllerDeps['settingsStore'],
 		ensureCliServer: vi.fn(async () => true),
 		publishCliDiscovery: vi.fn(),
-		tunnel: { stop: vi.fn(async () => {}), isRunning: vi.fn(() => false) },
+		tunnel: {
+			start: vi.fn(
+				async (_port: number): Promise<{ success: boolean; url?: string; error?: string }> => ({
+					success: true,
+					url: 'https://abc.trycloudflare.com',
+				})
+			),
+			stop: vi.fn(async () => {}),
+			getStatus: vi.fn((): { isRunning: boolean; url: string | null; error: string | null } => ({
+				isRunning: false,
+				url: null,
+				error: null,
+			})),
+		},
 		onStateChanged: vi.fn(),
 	};
 	const controller = createLiveModeController(deps);
@@ -109,6 +122,7 @@ describe('createLiveModeController', () => {
 				live: false,
 				url: null,
 				remoteControl: false,
+				remoteControlUrl: null,
 				revision: 0,
 			});
 		});
@@ -125,13 +139,34 @@ describe('createLiveModeController', () => {
 		});
 
 		it('reads Remote Control from the tunnel, and treats a throwing tunnel as off', () => {
-			const { controller, deps } = harness();
-			deps.tunnel.isRunning.mockReturnValue(true);
-			expect(controller.getStatus().remoteControl).toBe(true);
-			deps.tunnel.isRunning.mockImplementation(() => {
+			const server = fakeServer(true, true);
+			const { controller, deps } = harness(server);
+			deps.tunnel.getStatus.mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com',
+				error: null,
+			});
+			// The public URL carries the server's token path, as the LAN URL does.
+			expect(controller.getStatus()).toMatchObject({
+				remoteControl: true,
+				remoteControlUrl: `https://abc.trycloudflare.com/${server.token}`,
+			});
+			deps.tunnel.getStatus.mockImplementation(() => {
 				throw new Error('no tunnel manager');
 			});
-			expect(controller.getStatus().remoteControl).toBe(false);
+			expect(controller.getStatus()).toMatchObject({
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
+		});
+
+		it('reports why Remote Control is down', () => {
+			const { controller, deps } = harness();
+			deps.tunnel.getStatus.mockReturnValue({ isRunning: false, url: null, error: 'exited' });
+			expect(controller.getStatus()).toMatchObject({
+				remoteControl: false,
+				remoteControlError: 'exited',
+			});
 		});
 	});
 
@@ -153,6 +188,8 @@ describe('createLiveModeController', () => {
 			expect(deps.onStateChanged).toHaveBeenCalledWith({
 				live: true,
 				url: created[0].getSecureUrl(),
+				remoteControl: false,
+				remoteControlUrl: null,
 			});
 		});
 
@@ -183,6 +220,7 @@ describe('createLiveModeController', () => {
 		it('never starts the tunnel', async () => {
 			const { controller, deps } = harness();
 			await controller.set(true);
+			expect(deps.tunnel.start).not.toHaveBeenCalled();
 			expect(deps.tunnel.stop).not.toHaveBeenCalled();
 		});
 
@@ -213,7 +251,12 @@ describe('createLiveModeController', () => {
 				error: 'EADDRINUSE',
 				status: { live: false, revision: 1, lastError: 'EADDRINUSE' },
 			});
-			expect(deps.onStateChanged).toHaveBeenCalledWith({ live: false, url: null });
+			expect(deps.onStateChanged).toHaveBeenCalledWith({
+				live: false,
+				url: null,
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
 
 			// The next success clears the error.
 			const retry = await controller.set(true);
@@ -253,7 +296,12 @@ describe('createLiveModeController', () => {
 				changed: true,
 				status: { live: false, url: null, revision: 1 },
 			});
-			expect(deps.onStateChanged).toHaveBeenCalledWith({ live: false, url: null });
+			expect(deps.onStateChanged).toHaveBeenCalledWith({
+				live: false,
+				url: null,
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
 		});
 
 		it('still stops the server when the tunnel fails to stop', async () => {
@@ -335,6 +383,69 @@ describe('createLiveModeController', () => {
 			expect(controller.getStatus().revision).toBe(2);
 			expect(deps.onStateChanged).toHaveBeenCalledTimes(2);
 		});
+	});
+});
+
+describe('Remote Control', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('refuses to start while Live is off, without touching the tunnel', async () => {
+		// Only the loopback CLI server runs: tunneling it would publish the CLI's
+		// control channel to the internet.
+		const { controller, deps } = harness(fakeServer(false, true));
+		const result = await controller.startRemoteControl();
+
+		expect(result).toMatchObject({ success: false, status: { live: false } });
+		expect(result.error).toMatch(/Live mode is off/);
+		expect(deps.tunnel.start).not.toHaveBeenCalled();
+	});
+
+	it('tunnels the LAN server port and answers with the tokenized URL', async () => {
+		const server = fakeServer(true, true);
+		const { controller, deps } = harness(server);
+		const result = await controller.startRemoteControl();
+
+		expect(deps.tunnel.start).toHaveBeenCalledWith(server.port);
+		expect(result).toMatchObject({
+			success: true,
+			url: `https://abc.trycloudflare.com/${server.token}`,
+		});
+		expect(deps.onStateChanged).toHaveBeenCalledTimes(1);
+		expect(controller.getStatus().revision).toBe(1);
+	});
+
+	it('reports a tunnel failure as the switch error', async () => {
+		const { controller, deps } = harness(fakeServer(true, true));
+		deps.tunnel.start.mockResolvedValue({ success: false, error: 'cloudflared is not installed' });
+
+		const result = await controller.startRemoteControl();
+		expect(result).toMatchObject({ success: false, error: 'cloudflared is not installed' });
+		expect(controller.getStatus().lastError).toBe('cloudflared is not installed');
+	});
+
+	it('stops the tunnel and leaves Live on', async () => {
+		const server = fakeServer(true, true);
+		const { controller, deps } = harness(server);
+		const result = await controller.stopRemoteControl();
+
+		expect(deps.tunnel.stop).toHaveBeenCalledTimes(1);
+		expect(server.stop).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ success: true, status: { live: true } });
+	});
+
+	it('waits for a Live switch already in flight before starting', async () => {
+		const { controller, deps } = harness();
+		const order: string[] = [];
+		deps.tunnel.start.mockImplementation(async () => {
+			order.push(`tunnel:${controller.getStatus().live}`);
+			return { success: true, url: 'https://abc.trycloudflare.com' };
+		});
+
+		await Promise.all([controller.set(true), controller.startRemoteControl()]);
+		// Queued behind the Live start, so it sees the LAN server and goes ahead.
+		expect(order).toEqual(['tunnel:true']);
 	});
 });
 

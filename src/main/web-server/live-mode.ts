@@ -14,6 +14,10 @@
  *   a repeated `live on` never rotates the token and kicks every phone.
  * - After every switch every window is told (`onStateChanged`), so each LIVE
  *   pill follows main instead of its own React state.
+ * - Remote Control (the Cloudflare tunnel) rides the same queue. It forwards to
+ *   the LAN server, so it starts only while Live is on: the only server running
+ *   otherwise is the loopback CLI server, and tunneling that would publish the
+ *   CLI's control channel to the internet.
  */
 
 import { logger } from '../utils/logger';
@@ -23,7 +27,13 @@ import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import type { WebServer } from './WebServer';
 import type { WebServerOptions } from './WebServer';
 import type { SettingsStoreInterface } from '../stores/types';
-import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../../shared/liveMode';
+import type {
+	LiveModeSetResult,
+	LiveModeStateEvent,
+	LiveModeStatus,
+	RemoteControlSetResult,
+} from '../../shared/liveMode';
+import type { TunnelResult, TunnelStatus } from '../tunnel-manager';
 
 const LOG_CONTEXT = 'LiveMode';
 
@@ -40,7 +50,11 @@ export interface LiveModeControllerDeps {
 	/** Publish `cli-server.json` for the server now running. */
 	publishCliDiscovery: (port: number, token: string) => void;
 	/** The Cloudflare tunnel (Remote Control). Live off stops it; Live on never starts it. */
-	tunnel: { stop: () => Promise<void>; isRunning: () => boolean };
+	tunnel: {
+		start: (port: number) => Promise<TunnelResult>;
+		stop: () => Promise<void>;
+		getStatus: () => TunnelStatus;
+	};
 	/** Tell every window the new state. */
 	onStateChanged: (state: LiveModeStateEvent) => void;
 }
@@ -56,6 +70,10 @@ export interface LiveModeController {
 	stopServer(): Promise<{ success: boolean; error?: string }>;
 	/** Mark every live session offline, stop the server, bring the CLI server back. */
 	disableAll(): Promise<{ success: boolean; count: number; error?: string }>;
+	/** Start Remote Control (the Cloudflare tunnel). Refused while Live is off. */
+	startRemoteControl(): Promise<RemoteControlSetResult>;
+	/** Stop Remote Control. Live stays as it is. */
+	stopRemoteControl(): Promise<RemoteControlSetResult>;
 }
 
 function errorMessage(error: unknown): string {
@@ -73,18 +91,50 @@ export function createLiveModeController(deps: LiveModeControllerDeps): LiveMode
 		return !!server && server.isActive() && server.isLanAccessible();
 	}
 
-	function getStatus(): LiveModeStatus {
-		const live = isLive();
-		let remoteControl = false;
+	/** The tunnel manager's view, with the server's token path on the public URL. */
+	function readTunnel(): Pick<
+		LiveModeStatus,
+		'remoteControl' | 'remoteControlUrl' | 'remoteControlError'
+	> {
+		let tunnel: TunnelStatus;
 		try {
-			remoteControl = deps.tunnel.isRunning();
+			tunnel = deps.tunnel.getStatus();
 		} catch {
 			// A tunnel manager that cannot answer is not running a tunnel.
+			return { remoteControl: false, remoteControlUrl: null };
 		}
+		const running = tunnel.isRunning && !!tunnel.url;
+		return {
+			remoteControl: running,
+			remoteControlUrl: running ? withTokenPath(tunnel.url as string) : null,
+			...(tunnel.error ? { remoteControlError: tunnel.error } : {}),
+		};
+	}
+
+	/**
+	 * The tunnel manager is token-agnostic: it forwards a bare hostname. The URL
+	 * a phone can open needs the server's token path appended.
+	 */
+	function withTokenPath(tunnelUrl: string): string {
+		const serverUrl = getWebServer()?.getSecureUrl();
+		if (!serverUrl) return tunnelUrl;
+		try {
+			const tokenPath = new URL(serverUrl).pathname;
+			if (tokenPath && tokenPath !== '/' && !tunnelUrl.endsWith(tokenPath)) {
+				return tunnelUrl + tokenPath;
+			}
+		} catch {
+			// Malformed server URL - fall back to the bare tunnel URL.
+		}
+		return tunnelUrl;
+	}
+
+	function getStatus(): LiveModeStatus {
+		const live = isLive();
 		return {
 			live,
 			url: live ? (getWebServer()?.getSecureUrl() ?? null) : null,
-			remoteControl,
+			...readTunnel(),
 			revision,
 			...(lastError ? { lastError } : {}),
 		};
@@ -106,7 +156,13 @@ export function createLiveModeController(deps: LiveModeControllerDeps): LiveMode
 		lastError = result.success ? undefined : (result.error ?? 'Live mode switch failed');
 		const status = getStatus();
 		try {
-			deps.onStateChanged({ live: status.live, url: status.url });
+			deps.onStateChanged({
+				live: status.live,
+				url: status.url,
+				remoteControl: status.remoteControl,
+				remoteControlUrl: status.remoteControlUrl,
+				...(status.remoteControlError ? { remoteControlError: status.remoteControlError } : {}),
+			});
 		} catch (error) {
 			logger.warn(`Failed to broadcast Live state: ${errorMessage(error)}`, LOG_CONTEXT);
 		}
@@ -270,12 +326,47 @@ export function createLiveModeController(deps: LiveModeControllerDeps): LiveMode
 		});
 	}
 
+	async function startRemoteControlBody(): Promise<{
+		success: boolean;
+		url?: string;
+		error?: string;
+	}> {
+		const server = getWebServer();
+		if (!server || !isLive()) {
+			return {
+				success: false,
+				error: 'Live mode is off. Turn it on before starting Remote Control.',
+			};
+		}
+		const port = parseInt(new URL(server.getSecureUrl()).port, 10);
+		const result = await deps.tunnel.start(port);
+		if (!result.success || !result.url) {
+			return { success: false, error: result.error || 'Remote Control failed to start' };
+		}
+		return { success: true, url: withTokenPath(result.url) };
+	}
+
+	async function stopRemoteControlBody(): Promise<{ success: boolean; error?: string }> {
+		await deps.tunnel.stop();
+		return { success: true };
+	}
+
+	/** Run a Remote Control switch and answer with the status after it. */
+	async function remoteControlSwitch(
+		body: () => Promise<{ success: boolean; url?: string; error?: string }>
+	): Promise<RemoteControlSetResult> {
+		const result = await runSwitch(body);
+		return { ...result, status: getStatus() };
+	}
+
 	return {
 		getStatus,
 		set,
 		startServer: () => runSwitch(startServerBody),
 		stopServer: () => runSwitch(stopServerBody),
 		disableAll: () => runSwitch(disableAllBody),
+		startRemoteControl: () => remoteControlSwitch(startRemoteControlBody),
+		stopRemoteControl: () => remoteControlSwitch(stopRemoteControlBody),
 	};
 }
 

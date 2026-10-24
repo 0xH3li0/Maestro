@@ -176,6 +176,11 @@ import {
 	resolveCodexFollowup,
 	type CodexFollowupRequest,
 } from './services/codexFollowup';
+import {
+	CODE_FENCE_COMMAND_EVENT,
+	type CodeFenceCommandRequest,
+} from './services/codeFenceCommand';
+import { dispatchShellCommand } from './services/shellCommand';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -1097,6 +1102,7 @@ function MaestroConsoleInner() {
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		handleCloseTabGroup,
 		handleCloseCurrentTab,
 		handleRequestTabRename,
 		handleUpdateTabByClaudeSessionId,
@@ -2300,6 +2306,8 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
+		groupChatInputRef,
+		groupChatMessagesRef,
 		starredSectionCollapsed: starredSessionsCollapsed,
 		setStarredSectionCollapsed: setStarredSessionsCollapsed,
 		groupChats,
@@ -2529,6 +2537,53 @@ function MaestroConsoleInner() {
 			notifyCenterFlash({
 				message: 'Conversation moved',
 				detail: 'The follow-up is in the composer, not sent.',
+				color: 'yellow',
+			});
+		}
+	});
+
+	/*
+	 * --- CODE FENCE RUN BUTTONS ---
+	 *
+	 * A shell fence's Run button in an agent's reply. Same targeting rule as the
+	 * follow-up chips above, through the same resolver: the command is
+	 * agent-authored, so it runs only in the conversation it was drawn in, and a
+	 * click that arrives after the user moved away degrades to a command-mode
+	 * prefill in the composer on screen. A run goes through
+	 * `dispatchShellCommand`, the exact path a typed `!command` takes, so it
+	 * lands as the same card and in the same recall history.
+	 */
+	useEventListener(CODE_FENCE_COMMAND_EVENT, (event) => {
+		const request = (event as CustomEvent<CodeFenceCommandRequest>).detail;
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		const resolution = resolveCodexFollowup(
+			request && {
+				prompt: request.command,
+				sessionId: request.sessionId,
+				tabId: request.tabId,
+				mode: request.mode === 'run' ? 'send' : 'prefill',
+			},
+			{
+				activeSessionId: session?.id ?? null,
+				activeTabId: session ? (getActiveTab(session)?.id ?? null) : null,
+			}
+		);
+
+		if (resolution.action === 'ignore') return;
+
+		if (resolution.action === 'send' && session) {
+			void dispatchShellCommand({ session, tabId: resolution.tabId, command: resolution.prompt });
+			return;
+		}
+
+		if (resolution.action !== 'prefill') return;
+		useComposerInputStore.getState().loadAiDraft(resolution.tabId, resolution.prompt, 'shell');
+		inputRef.current?.focus();
+
+		if (resolution.movedAway) {
+			notifyCenterFlash({
+				message: 'Conversation moved',
+				detail: 'The command is in the composer, not run.',
 				color: 'yellow',
 			});
 		}
@@ -2811,6 +2866,7 @@ function MaestroConsoleInner() {
 		// Group chat context
 		activeGroupChatId,
 		groupChatInputRef,
+		groupChatMessagesRef,
 		flushGroupChatDraft,
 		groupChatStagedImages,
 		setGroupChatRightTab,
@@ -3049,6 +3105,7 @@ function MaestroConsoleInner() {
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		handleCloseTabGroup,
 
 		// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 		handleFileTabSelect: handleSelectFileTab,
@@ -3588,6 +3645,7 @@ function MaestroConsoleInner() {
 						onCloseOtherTabs={handleCloseOtherTabs}
 						onCloseTabsLeft={handleCloseTabsLeft}
 						onCloseTabsRight={handleCloseTabsRight}
+						onCloseTabGroup={handleCloseTabGroup}
 						setPlaygroundOpen={setPlaygroundOpen}
 						onQuickActionsRefreshGitFileState={handleQuickActionsRefreshGitFileState}
 						onQuickActionsDebugReleaseQueuedItem={handleQuickActionsDebugReleaseQueuedItem}

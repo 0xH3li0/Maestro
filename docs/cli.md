@@ -572,6 +572,9 @@ maestro-cli update-agent <agent-id> --clear-env
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
+# Switch provider without converting (tabs keep transcripts, start fresh on Codex)
+maestro-cli update-agent <agent-id> --provider codex
+
 # Review native provider translation before applying it (desktop required)
 maestro-cli update-agent <agent-id> --provider codex --dry-run --json
 
@@ -594,7 +597,9 @@ The group update reuses the same write path as drag-and-drop in the Left Bar. Th
 
 For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running chat turn be steered, on this machine or an SSH remote (which needs a `codex` there that has `app-server`). Image, Auto Run, and Cue turns keep using `codex exec` either way.
 
-`--provider` uses the desktop's native conversation translation flow. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
+`--provider` on its own is a plain switch, the same as Edit Agent with **Convert memory and session history** unchecked: tabs keep their transcripts, each starts a fresh conversation on the new provider, and switching back resumes the old one. Provider-specific settings are parked per provider and restored on the way back. JSON output reports `converted: false` and any `notices` (queued messages whose model or effort could not carry across).
+
+`--convert` opts into the desktop's native conversation translation flow; every translation option below implies it. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
 
 | Flag                               | Description                                                                                                           | Default |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -615,7 +620,8 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `--token-source <mode>`            | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                        | -       |
 | `--maestro-p-path <path>`          | Override the maestro-p binary path. Empty string clears                                                               | -       |
 | `--codex-transport <transport>`    | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only | -       |
-| `--provider <type>`                | Translate native conversations to another provider (desktop required)                                                 | -       |
+| `--provider <type>`                | Switch the agent to another provider without converting (desktop required)                                            | -       |
+| `--convert`                        | With `--provider`: convert native conversations and project memory too (opt-in)                                       | -       |
 | `--dry-run`                        | Plan translation without native writes; requires `--provider`                                                         | -       |
 | `--accept-translation-limitations` | Accept the reported conversion limits; blocked plans remain blocked                                                   | -       |
 | `--migration <action>`             | Plan, apply, inspect status, recover, or roll back a migration                                                        | -       |
@@ -914,7 +920,7 @@ An agent cannot interrupt itself from inside its own turn: the verb refuses the 
 
 ### Live Mode (`live`)
 
-Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network. It requires the desktop app to be running.
+Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network, and Remote Control, the Cloudflare tunnel that opens it to the internet. It requires the desktop app to be running.
 
 ```bash
 # On or off, the web interface URL, and Remote Control
@@ -924,11 +930,20 @@ maestro-cli live status --json
 # Turn it on or off (each answers with the resulting status)
 maestro-cli live on
 maestro-cli live off --json
+
+# Live mode and Remote Control in one step
+maestro-cli live on --tunnel
+
+# Remote Control alone (Live mode must already be on)
+maestro-cli live tunnel on
+maestro-cli live tunnel off
 ```
 
-`live on` and `live off` run the same main-process switch as the pill, so every open window's pill follows. They are explicit set verbs, safe to re-run: when Live is already in the requested state nothing restarts, the access token stays the same, and the command prints `Live mode was already on` (`changed: false` in JSON). `live off` also stops Remote Control (the tunnel), as the pill does; `live on` never starts it.
+`live on` and `live off` run the same main-process switch as the pill, so every open window's pill follows. They are explicit set verbs, safe to re-run: when Live is already in the requested state nothing restarts, the access token stays the same, and the command prints `Live mode was already on` (`changed: false` in JSON). `live off` also stops Remote Control (the tunnel), as the pill does; `live on` starts it only with `--tunnel`.
 
-Switching Live replaces the server the CLI talks to, so the desktop answers first and then switches. The CLI reconnects and polls `live status` until the switch finishes (up to 20 seconds), then prints the result. A failed switch exits 1 with the desktop's error, which `live status` also shows as `Last error` until the next success. The JSON payload is `{ success, changed, live, url, remoteControl, revision, lastError? }`; `live status --json` has the same fields without `changed`.
+Remote Control needs `cloudflared` on your PATH (macOS: `brew install cloudflared`), and refuses while Live is off, because the only server running then is the local one `maestro-cli` itself talks to. It does not restart the server, so `live tunnel on` simply waits for the tunnel (up to 45 seconds) and prints its public URL. The LIVE panel's Remote Control row follows whatever the CLI does.
+
+Switching Live replaces the server the CLI talks to, so the desktop answers first and then switches. The CLI reconnects and polls `live status` until the switch finishes (up to 20 seconds), then prints the result. A failed switch exits 1 with the desktop's error, which `live status` also shows as `Last error` until the next success. The JSON payload is `{ success, changed, live, url, remoteControl, remoteControlUrl, remoteControlError?, revision, lastError? }`; `live status --json` has the same fields without `changed`.
 
 > [!WARNING]
 > `live on` opens the web interface to every device that can reach this machine on the network, with no confirmation, the same as clicking the pill. Anyone holding the URL (it carries the access token) can drive your agents.
