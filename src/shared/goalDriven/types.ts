@@ -197,6 +197,53 @@ export interface GoalPlanDoc {
 	 * The engine appends one per iteration; the human reads it.
 	 */
 	iterationLog: string[];
+	/**
+	 * Human content the doc has no field for, kept verbatim so a render
+	 * never loses it. Human-owned: the engine carries it from the on-disk
+	 * copy and the agent never sees or changes it.
+	 */
+	preserved: GoalPlanPreserved;
+}
+
+/** A Plan Doc section key the parser owns, in canonical render order. */
+export type GoalPlanSectionKey =
+	| 'goal'
+	| 'exitCriteria'
+	| 'plan'
+	| 'conductorNotes'
+	| 'iterationLog';
+
+/** A `## ` section the Plan Doc does not own (`## Links`, `## Scratch`). */
+export interface GoalPlanExtraSection {
+	/** The heading line exactly as typed, including the `## `. */
+	heading: string;
+	/** Body lines verbatim, without leading or trailing blank lines. */
+	body: string;
+	/**
+	 * The owned section this one followed in the file, `null` when it came
+	 * before all of them. Render puts it back in the same place.
+	 */
+	after: GoalPlanSectionKey | null;
+}
+
+/** Non-item lines inside `## Plan` (a paragraph, a fenced block, a plain bullet). */
+export interface GoalPlanFreeText {
+	/** Id of the item the lines followed, `null` when they came before every item. */
+	afterId: string | null;
+	/** The lines verbatim, joined with `\n`. */
+	text: string;
+}
+
+/** Everything in a Plan Doc that `parseGoalPlanDoc` does not model. */
+export interface GoalPlanPreserved {
+	/** Front-matter lines that are not one of the six engine keys (`tags: [x]`). */
+	frontMatterLines: string[];
+	/** Text between the front matter and the first `## ` heading (`# My title`). */
+	preamble: string;
+	/** Unknown `## ` sections, in file order. */
+	sections: GoalPlanExtraSection[];
+	/** Free text inside `## Plan`, anchored to the item it followed. */
+	planText: GoalPlanFreeText[];
 }
 
 /** Outcome of merging the agent's proposed Plan into the file on disk. */
