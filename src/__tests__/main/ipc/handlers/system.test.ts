@@ -146,6 +146,15 @@ vi.mock('fs', () => ({
 	copyFileSync: vi.fn(),
 }));
 
+// shell.openPath never settles on Linux (MAESTRO-QH), so the handlers branch on
+// the platform. Default to "not Linux" so the rest of the suite is platform-neutral
+// on every CI leg; the Linux cases flip it explicitly.
+const { mockIsLinux } = vi.hoisted(() => ({ mockIsLinux: vi.fn(() => false) }));
+vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
+	isLinux: mockIsLinux,
+}));
+
 // Import mocked modules for test control
 import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
@@ -170,6 +179,7 @@ describe('system IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsLinux.mockReturnValue(false);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -1003,6 +1013,28 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openPath');
 			// Should not throw - logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
+		});
+
+		// MAESTRO-QH: Electron's Linux openPath never runs its completion callback,
+		// so awaiting it left the invoke unanswered ("reply was never sent").
+		it('replies on Linux even though shell.openPath never settles there', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openPath');
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
+		});
+
+		it('openExternal with a file:// URL also replies on Linux', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'file:///tmp/report.pdf')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith('/tmp/report.pdf');
 		});
 	});
 
