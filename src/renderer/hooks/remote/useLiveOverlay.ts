@@ -223,18 +223,18 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 	const tunnelStatusRef = useRef(tunnelStatus);
 	tunnelStatusRef.current = tunnelStatus;
 	useEffect(() => {
-		const unsubscribe = window.maestro?.live?.onStateChanged?.(({ live, tunnel }) => {
+		const unsubscribe = window.maestro?.live?.onStateChanged?.((state) => {
 			// Live going off is handled by the isLiveMode reset above.
-			if (!live) return;
-			if (tunnel.isRunning && tunnel.url) {
+			if (!state.live) return;
+			if (state.remoteControl && state.remoteControlUrl) {
 				setTunnelStatus('connected');
-				setTunnelUrl(tunnel.url);
+				setTunnelUrl(state.remoteControlUrl);
 				setTunnelError(null);
 				return;
 			}
 			if (tunnelStatusRef.current === 'starting') return;
-			setTunnelStatus(tunnel.error ? 'error' : 'off');
-			setTunnelError(tunnel.error);
+			setTunnelStatus(state.remoteControlError ? 'error' : 'off');
+			setTunnelError(state.remoteControlError ?? null);
 			setTunnelUrl(null);
 			setActiveUrlTab('local');
 		});

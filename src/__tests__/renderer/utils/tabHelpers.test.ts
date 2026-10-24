@@ -3526,6 +3526,38 @@ describe('tabHelpers', () => {
 			expect(reopenUnifiedClosedTab(session)).toBeNull();
 		});
 
+		it('reopens a deeper entry by index and keeps the others in order (tab reopen --index)', () => {
+			const entry = (id: string) => ({
+				type: 'file' as const,
+				tab: createMockFileTab({ id, path: `/test/${id}.ts` }),
+				unifiedIndex: 1,
+				closedAt: 1,
+			});
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [],
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [entry('a'), entry('b'), entry('c')],
+			});
+
+			const result = reopenUnifiedClosedTab(session, 1)!;
+
+			expect(result.session.filePreviewTabs[0].path).toBe('/test/b.ts');
+			expect(result.session.unifiedClosedTabHistory.map((e) => e.tab.id)).toEqual(['a', 'c']);
+			expect(reopenUnifiedClosedTab(session, 3)).toBeNull();
+			expect(reopenUnifiedClosedTab(session, -1)).toBeNull();
+		});
+
+		it('does not fall back to the legacy stack for a non-zero index', () => {
+			const session = createMockSession({
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [{ tab: createMockTab({ id: 'legacy' }), index: 0, closedAt: 1 }],
+			});
+			expect(reopenUnifiedClosedTab(session, 1)).toBeNull();
+			expect(reopenUnifiedClosedTab(session)).not.toBeNull();
+		});
+
 		it('reopens file tab from unified history', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
 			const closedFileTab = createMockFileTab({ id: 'closed-file', path: '/test/closed.ts' });
@@ -3553,6 +3585,50 @@ describe('tabHelpers', () => {
 			expect(result!.session.filePreviewTabs[0].path).toBe('/test/closed.ts');
 			expect(result!.session.activeFileTabId).toBe(result!.tabId);
 			expect(result!.session.unifiedClosedTabHistory).toHaveLength(0);
+		});
+
+		it('rehydrates a durable browser tab and keeps an incognito one in memory', () => {
+			const browserEntry = (tab: Record<string, unknown>) => ({
+				type: 'browser' as const,
+				tab: {
+					id: 'closed-browser',
+					url: 'https://example.com/',
+					title: 'Example',
+					createdAt: 0,
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 9,
+					...tab,
+				},
+				unifiedIndex: Number.MAX_SAFE_INTEGER,
+				closedAt: 1,
+			});
+			const sessionWith = (entry: ReturnType<typeof browserEntry>) =>
+				createMockSession({
+					id: 'agent-1',
+					aiTabs: [createMockTab({ id: 'ai-1' })],
+					activeTabId: 'ai-1',
+					unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+					unifiedClosedTabHistory: [entry as any],
+				});
+
+			// An entry stored by an earlier run, with a partition this build no longer mints.
+			const durable = reopenUnifiedClosedTab(sessionWith(browserEntry({ partition: 'bogus' })))!;
+			const restored = durable.session.browserTabs.find((tab) => tab.id === durable.tabId)!;
+			expect(restored.partition).toBe('persist:maestro-browser-session-agent-1');
+			expect(restored).toMatchObject({ canGoBack: false, isLoading: false });
+			expect(restored.webContentsId).toBeUndefined();
+			expect(durable.session.unifiedTabOrder[durable.session.unifiedTabOrder.length - 1]).toEqual({
+				type: 'browser',
+				id: durable.tabId,
+			});
+
+			const partition = 'maestro-ephemeral-agent-1-abcd1234';
+			const incognito = reopenUnifiedClosedTab(
+				sessionWith(browserEntry({ ephemeral: true, partition }))
+			)!;
+			expect(incognito.session.browserTabs[0].partition).toBe(partition);
 		});
 
 		it('resets navigation history when restoring file tab', () => {

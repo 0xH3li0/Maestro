@@ -154,6 +154,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
 		noteAgentDelegation: vi.fn(),
 		switchMode: vi.fn().mockResolvedValue(true),
+		interruptSession: vi.fn().mockResolvedValue({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-1'],
+			exited: true,
+		}),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
@@ -253,9 +262,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			verdict: 'delivered',
 			targets: ['Moderator'],
 		}),
-		mergeContext: vi.fn().mockResolvedValue(true),
-		transferContext: vi.fn().mockResolvedValue(true),
-		summarizeContext: vi.fn().mockResolvedValue(true),
+		tabContextOp: vi.fn().mockResolvedValue({ success: true }),
 		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
@@ -574,13 +581,52 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('forwards a dispatch --routing to executeCommand', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'check with @Backend first',
+				inputMode: 'ai',
+				mentionRouting: 'consult-first',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'check with @Backend first',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false,
+					'consult-first'
+				);
+			});
+		});
+
+		it('refuses an unknown routing instead of sending on the wording', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hi @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'sideways',
+			});
+
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Unknown mention routing');
 		});
 
 		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
@@ -659,7 +705,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -725,7 +772,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-explicit',
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -756,7 +804,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -795,7 +844,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -819,7 +869,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -845,7 +896,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -869,7 +921,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -976,6 +1029,96 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
+		});
+	});
+
+	describe('Interrupt Turn (maestro-cli interrupt)', () => {
+		const lastReply = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('stops the whole agent when no tab is named and echoes the requestId', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', undefined);
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				requestId: 'req-1',
+				success: true,
+				tabId: null,
+				wasBusy: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
+		});
+
+		it('narrows the stop to the named tab', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', 'tab-2');
+		});
+
+		it('passes nothing-to-stop through as a success', async () => {
+			(callbacks.interruptSession as any).mockResolvedValueOnce({
+				success: true,
+				sessionId: 'session-1',
+				tabId: null,
+				wasBusy: false,
+				interrupted: false,
+				stoppedTabIds: [],
+				exited: false,
+			});
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({ success: true, wasBusy: false });
+		});
+
+		it('rejects a missing sessionId without calling the desktop', () => {
+			handler.handleMessage(client, { type: 'interrupt_turn', requestId: 'req-3' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				error: 'Missing sessionId',
+				requestId: 'req-3',
+			});
+			expect(callbacks.interruptSession).not.toHaveBeenCalled();
+		});
+
+		it('answers RENDERER_UNAVAILABLE when no desktop callback is wired', () => {
+			const bare = new WebSocketMessageHandler();
+			bare.setCallbacks({ ...createMockCallbacks(), interruptSession: undefined } as any);
+			bare.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+			});
+		});
+
+		it('reports a thrown callback as an error frame', async () => {
+			(callbacks.interruptSession as any).mockRejectedValueOnce(new Error('bridge down'));
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('bridge down'),
+			});
 		});
 	});
 
@@ -2521,6 +2664,40 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('forwards a dispatch --new-tab --routing to newAITabWithPrompt', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'only',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'@Backend look',
+					false,
+					false,
+					'only'
+				);
+			});
+		});
+
+		it('refuses an unknown routing before creating the tab', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'all',
+			});
+
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
+		});
+
 		it('should forward sessionId and prompt to callback', async () => {
 			handler.handleMessage(client, {
 				type: 'new_ai_tab_with_prompt',
@@ -2535,7 +2712,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2561,7 +2739,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2580,7 +2759,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -2599,7 +2779,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2910,7 +3091,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-1',
 					undefined,
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2923,6 +3105,45 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.itemId).toBe('item-1');
 				expect(response.tabId).toBe('tab-mock-123');
 			});
+		});
+
+		it('forwards a dispatch --queue --routing to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'handoff',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'then tell @Backend',
+					'ai',
+					undefined,
+					undefined,
+					false,
+					false,
+					'handoff'
+				);
+			});
+		});
+
+		it('refuses an unknown routing without queuing anything', () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 42,
+			});
+
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
 		});
 
 		it('rejects an enqueue with neither command nor images without calling the callback', () => {
@@ -3106,7 +3327,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					undefined,
 					false,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -5323,6 +5545,30 @@ describe('WebSocketMessageHandler', () => {
 			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: 'true' });
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+		});
+
+		it('forwards a collapse request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: true });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: true });
+			});
+		});
+
+		it('forwards an expand request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: false });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: false });
+			});
+		});
+
+		it('rejects an update_group whose collapsed is not a boolean', () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: 1 });
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.message).toContain('Invalid collapsed');
 		});
 	});
 });

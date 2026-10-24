@@ -1,72 +1,109 @@
 /**
  * @file live.test.ts
- * @description Tests for the `live status|on|off|tunnel` CLI commands.
+ * @description Tests for `maestro-cli live status|on|off|tunnel`, the CLI half of the Left Bar LIVE pill.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
-vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
+vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/maestro-client')>()),
+	withMaestroClient: vi.fn(),
+}));
+vi.mock('../../../cli/output/formatter', () => ({
+	formatError: vi.fn((msg) => `Error: ${msg}`),
+	formatSuccess: vi.fn((msg) => `Success: ${msg}`),
+}));
 
-import { liveStatus, liveOn, liveOff, liveTunnel } from '../../../cli/commands/live';
+import {
+	liveOff,
+	liveOn,
+	liveStatus,
+	liveTunnel,
+	LIVE_POLL_INTERVAL_MS,
+	LIVE_SWITCH_TIMEOUT_MS,
+	REMOTE_CONTROL_TIMEOUT_MS,
+} from '../../../cli/commands/live';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import type { LiveCommandResult, LiveModeStatus } from '../../../shared/liveMode';
 
-type Reply = Record<string, unknown> | Error;
-
-const OFF = {
-	success: true,
+const URL = 'http://192.168.1.5:9000/token';
+const REMOTE_URL = 'https://abc.trycloudflare.com/token';
+const OFF: LiveModeStatus = {
 	live: false,
 	url: null,
-	tunnel: { isRunning: false, url: null, error: null },
+	remoteControl: false,
+	remoteControlUrl: null,
+	revision: 2,
 };
-const ON = {
-	success: true,
+const ON: LiveModeStatus = {
 	live: true,
-	url: 'http://192.168.1.5:8080/tok',
-	tunnel: { isRunning: false, url: null, error: null },
+	url: URL,
+	remoteControl: false,
+	remoteControlUrl: null,
+	revision: 3,
 };
-const ON_TUNNEL = {
+const REMOTE: LiveModeStatus = {
 	...ON,
-	tunnel: { isRunning: true, url: 'https://abc.trycloudflare.com/tok', error: null },
+	remoteControl: true,
+	remoteControlUrl: REMOTE_URL,
+	revision: 4,
 };
 
+type Answer = LiveCommandResult | Error;
+
 /**
- * Answer each message type from its own queue; the last reply repeats. An
- * Error reply rejects, the way a dropped connection mid-swap does.
+ * A desktop that answers each `live_command` from `answers` in order (the last
+ * one repeats). An Error answer is a failed connect: the old server is gone.
  */
-function route(replies: Record<string, Reply[]>) {
-	const sent: Array<{ type: string; timeout?: number }> = [];
+function mockDesktop(answers: Answer[]) {
+	const sent: Array<{
+		payload: Record<string, unknown>;
+		responseType: string;
+		timeoutMs?: number;
+	}> = [];
+	let index = 0;
 	vi.mocked(withMaestroClient).mockImplementation(async (action) =>
 		action({
-			sendCommand: vi
-				.fn()
-				.mockImplementation((payload: { type: string }, _rt: string, timeout?: number) => {
-					sent.push({ type: payload.type, timeout });
-					const queue = replies[payload.type];
-					if (!queue) return Promise.reject(new Error(`unexpected ${payload.type}`));
-					const reply = queue.length > 1 ? queue.shift()! : queue[0];
-					return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
-				}),
+			sendCommand: vi.fn(
+				(payload: Record<string, unknown>, responseType: string, timeoutMs?: number) => {
+					sent.push({ payload, responseType, ...(timeoutMs ? { timeoutMs } : {}) });
+					const answer = answers[Math.min(index, answers.length - 1)];
+					index += 1;
+					return answer instanceof Error
+						? Promise.reject(answer)
+						: Promise.resolve({ type: 'live_command_result', ...answer });
+				}
+			),
 		} as never)
 	);
 	return sent;
 }
 
-function lastJson(logSpy: MockInstance): Record<string, unknown> {
-	const calls = logSpy.mock.calls;
-	return JSON.parse(String(calls[calls.length - 1][0]));
-}
-
-describe('live commands', () => {
-	let processExitSpy: MockInstance;
+describe('live command', () => {
 	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	let exitSpy: MockInstance;
+
+	const lastJson = () => JSON.parse(logSpy.mock.calls.at(-1)![0] as string);
+	const printed = () => logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+
+	/** Run a verb while the fake clock walks through its polling. */
+	async function run(verb: Promise<void>, ms = LIVE_POLL_INTERVAL_MS * 10): Promise<unknown> {
+		const settled = verb.then(
+			() => undefined,
+			(error: unknown) => error
+		);
+		await vi.advanceTimersByTimeAsync(ms);
+		return settled;
+	}
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-			throw new Error('__exit__');
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`__exit__${code}`);
 		});
 	});
 
@@ -74,130 +111,204 @@ describe('live commands', () => {
 		vi.useRealTimers();
 	});
 
-	describe('status', () => {
-		it('reports the state as JSON', async () => {
-			route({ live_status: [{ ...ON_TUNNEL, cloudflaredInstalled: true }] });
+	describe('live status', () => {
+		it('sends a status live_command and prints the state', async () => {
+			const sent = mockDesktop([{ success: true, status: ON }]);
+
+			await liveStatus({});
+
+			expect(sent).toEqual([
+				{
+					payload: { type: 'live_command', action: 'status' },
+					responseType: 'live_command_result',
+				},
+			]);
+			expect(printed()).toContain('Live: on');
+			expect(printed()).toContain(`URL: ${URL}`);
+			expect(printed()).toContain('Remote Control: off');
+		});
+
+		it('prints the status as JSON', async () => {
+			mockDesktop([{ success: true, status: REMOTE }]);
+
 			await liveStatus({ json: true });
-			expect(lastJson(logSpy)).toEqual({
-				success: true,
-				live: true,
-				url: 'http://192.168.1.5:8080/tok',
-				tunnel: { running: true, url: 'https://abc.trycloudflare.com/tok', error: null },
-				cloudflaredInstalled: true,
+
+			expect(lastJson()).toEqual({ success: true, ...REMOTE });
+		});
+
+		it('shows the last switch failure', async () => {
+			mockDesktop([{ success: true, status: { ...OFF, lastError: 'EADDRINUSE' } }]);
+
+			await liveStatus({});
+
+			expect(printed()).toContain('Last error: EADDRINUSE');
+		});
+
+		it('fails with the app error when the app refuses', async () => {
+			mockDesktop([{ success: false, error: 'Live mode is not available yet.' }]);
+
+			await expect(liveStatus({})).rejects.toThrow('__exit__1');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Live mode is not available yet.');
+		});
+	});
+
+	describe('live on', () => {
+		it('reports "already on" without polling when Live is on', async () => {
+			const sent = mockDesktop([{ success: true, changed: false, status: ON }]);
+
+			await liveOn({});
+
+			expect(sent).toHaveLength(1);
+			expect(sent[0].payload).toEqual({ type: 'live_command', action: 'on' });
+			expect(printed()).toContain('Success: Live mode was already on');
+		});
+
+		it('waits through the reconnect until the switch reaches its revision', async () => {
+			const sent = mockDesktop([
+				{ success: true, changed: true, awaitRevision: 3, status: OFF },
+				new Error('connect ECONNREFUSED'),
+				{ success: true, status: OFF },
+				{ success: true, status: ON },
+			]);
+
+			expect(await run(liveOn({}))).toBeUndefined();
+
+			expect(sent.map((s) => s.payload.action)).toEqual(['on', 'status', 'status', 'status']);
+			expect(printed()).toContain('Success: Live mode is on');
+			expect(printed()).toContain(`URL: ${URL}`);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('answers --json with the resulting status and changed', async () => {
+			mockDesktop([
+				{ success: true, changed: true, awaitRevision: 3, status: OFF },
+				{ success: true, status: ON },
+			]);
+
+			await run(liveOn({ json: true }));
+
+			expect(lastJson()).toEqual({ success: true, changed: true, ...ON });
+		});
+
+		it('fails with the switch error when Live did not turn on', async () => {
+			mockDesktop([
+				{ success: true, changed: true, awaitRevision: 3, status: OFF },
+				{ success: true, status: { ...OFF, revision: 3, lastError: 'EADDRINUSE' } },
+			]);
+
+			const error = await run(liveOn({ json: true }));
+
+			expect(String(error)).toContain('__exit__1');
+			expect(lastJson()).toEqual({ success: false, error: 'EADDRINUSE' });
+		});
+
+		it('gives up when the switch never finishes', async () => {
+			mockDesktop([
+				{ success: true, changed: true, awaitRevision: 3, status: OFF },
+				{ success: true, status: OFF },
+			]);
+
+			const error = await run(liveOn({}), LIVE_SWITCH_TIMEOUT_MS + LIVE_POLL_INTERVAL_MS * 2);
+
+			expect(String(error)).toContain('__exit__');
+			expect(errorSpy.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
+				'did not finish switching'
+			);
+		});
+
+		it('fails with the app error when the app refuses the switch', async () => {
+			mockDesktop([
+				{ success: false, error: 'Live mode cannot be switched over the web interface' },
+			]);
+
+			await expect(liveOn({ json: true })).rejects.toThrow('__exit__1');
+			expect(lastJson()).toEqual({
+				success: false,
+				error: 'Live mode cannot be switched over the web interface',
 			});
 		});
 	});
 
-	describe('on', () => {
-		it('reconnects after the server swap and waits until Live is on', async () => {
-			// The first poll lands on the dying loopback server, the second fails to
-			// connect mid-swap, the third reaches the LAN server.
-			const sent = route({
-				live_start: [{ success: true, restarting: true }],
-				live_status: [OFF, new Error('ECONNREFUSED'), ON],
-			});
-			const run = liveOn({ json: true });
-			await vi.runAllTimersAsync();
-			await run;
-
-			expect(sent.map((s) => s.type)).toEqual([
-				'live_start',
-				'live_status',
-				'live_status',
-				'live_status',
-				'live_status',
+	describe('live off', () => {
+		it('sends off and waits until Live is off', async () => {
+			const sent = mockDesktop([
+				{ success: true, changed: true, awaitRevision: 4, status: ON },
+				{ success: true, status: { ...OFF, revision: 4 } },
 			]);
-			expect(lastJson(logSpy)).toMatchObject({ success: true, live: true, url: ON.url });
+
+			await run(liveOff({}));
+
+			expect(sent[0].payload).toEqual({ type: 'live_command', action: 'off' });
+			expect(printed()).toContain('Success: Live mode is off');
+			expect(printed()).toContain('Live: off');
 		});
 
-		it('does not wait when Live was already on', async () => {
-			const sent = route({
-				live_start: [{ ...ON, restarting: false }],
-				live_status: [ON],
-			});
-			await liveOn({ json: true });
-			expect(sent.map((s) => s.type)).toEqual(['live_start', 'live_status']);
-		});
+		it('reports "already off" as a success', async () => {
+			mockDesktop([{ success: true, changed: false, status: OFF }]);
 
-		it('starts the tunnel with a timeout longer than cloudflared startup when --tunnel is set', async () => {
-			const sent = route({
-				live_start: [{ ...ON, restarting: false }],
-				live_tunnel_start: [{ success: true, url: 'https://abc.trycloudflare.com/tok' }],
-				live_status: [ON_TUNNEL],
-			});
+			await liveOff({ json: true });
+
+			expect(lastJson()).toEqual({ success: true, changed: false, ...OFF });
+		});
+	});
+
+	describe('Remote Control', () => {
+		it('live on --tunnel starts Remote Control once Live is on, with a long timeout', async () => {
+			const sent = mockDesktop([
+				{ success: true, changed: false, status: ON },
+				{ success: true, changed: true, status: REMOTE },
+			]);
+
 			await liveOn({ tunnel: true, json: true });
 
-			const tunnel = sent.find((s) => s.type === 'live_tunnel_start');
-			expect(tunnel?.timeout ?? 0).toBeGreaterThan(30_000);
-			expect(lastJson(logSpy)).toMatchObject({
-				tunnel: { running: true, url: 'https://abc.trycloudflare.com/tok' },
-			});
+			expect(sent.map((s) => s.payload.action)).toEqual(['on', 'remote-on']);
+			// cloudflared can take 30s to report a URL.
+			expect(sent[1].timeoutMs ?? 0).toBeGreaterThan(30_000);
+			expect(sent[1].timeoutMs).toBe(REMOTE_CONTROL_TIMEOUT_MS);
+			expect(lastJson()).toMatchObject({ remoteControl: true, remoteControlUrl: REMOTE_URL });
 		});
 
-		it('fails with an install hint when cloudflared is missing', async () => {
-			route({
-				live_start: [{ ...ON, restarting: false }],
-				live_tunnel_start: [{ success: false, error: 'cloudflared is not installed' }],
-			});
-			await expect(liveOn({ tunnel: true, json: true })).rejects.toThrow('__exit__');
-			expect(processExitSpy).toHaveBeenCalledWith(1);
-			expect(String(lastJson(logSpy).error)).toContain('brew install cloudflared');
-		});
+		it('live tunnel on prints the public URL', async () => {
+			mockDesktop([{ success: true, changed: true, status: REMOTE }]);
 
-		it('gives up when the server never comes back', async () => {
-			route({
-				live_start: [{ success: true, restarting: true }],
-				live_status: [new Error('Maestro desktop app is not running')],
-			});
-			const run = liveOn({ json: true });
-			const settled = expect(run).rejects.toThrow('__exit__');
-			await vi.runAllTimersAsync();
-			await settled;
-			expect(String(lastJson(logSpy).error)).toContain('did not start');
-		});
-	});
+			await liveTunnel('on', {});
 
-	describe('off', () => {
-		it('waits until Live is off after the swap', async () => {
-			const sent = route({
-				live_stop: [{ success: true, restarting: true }],
-				live_status: [OFF],
-			});
-			const run = liveOff({ json: true });
-			await vi.runAllTimersAsync();
-			await run;
-			expect(sent.map((s) => s.type)).toEqual(['live_stop', 'live_status']);
-			expect(lastJson(logSpy)).toMatchObject({ success: true, live: false });
-		});
-	});
-
-	describe('tunnel', () => {
-		it('rejects a state other than on or off before connecting', async () => {
-			await expect(liveTunnel('maybe', { json: true })).rejects.toThrow('__exit__');
-			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(printed()).toContain('Remote Control is on');
+			expect(printed()).toContain(`Remote Control: ${REMOTE_URL}`);
 		});
 
 		it('points at `live on --tunnel` when Live is off', async () => {
-			route({
-				live_tunnel_start: [
-					{
-						success: false,
-						error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
-					},
-				],
-			});
-			await expect(liveTunnel('on', { json: true })).rejects.toThrow('__exit__');
-			expect(String(lastJson(logSpy).error)).toContain('maestro-cli live on --tunnel');
+			mockDesktop([
+				{
+					success: false,
+					error: 'Live mode is off. Turn it on before starting Remote Control.',
+					status: OFF,
+				},
+			]);
+
+			await expect(liveTunnel('on', { json: true })).rejects.toThrow('__exit__1');
+			expect(lastJson().error).toContain('maestro-cli live on --tunnel');
 		});
 
-		it('stops the tunnel and reports the state', async () => {
-			const sent = route({
-				live_tunnel_stop: [{ success: true }],
-				live_status: [ON],
-			});
+		it('names the install step when cloudflared is missing', async () => {
+			mockDesktop([{ success: false, error: 'cloudflared is not installed', status: ON }]);
+
+			await expect(liveTunnel('on', { json: true })).rejects.toThrow('__exit__1');
+			expect(lastJson().error).toContain('brew install cloudflared');
+		});
+
+		it('live tunnel off stops Remote Control', async () => {
+			const sent = mockDesktop([{ success: true, changed: true, status: ON }]);
+
 			await liveTunnel('off', { json: true });
-			expect(sent.map((s) => s.type)).toEqual(['live_tunnel_stop', 'live_status']);
-			expect(lastJson(logSpy)).toMatchObject({ tunnel: { running: false } });
+
+			expect(sent.map((s) => s.payload.action)).toEqual(['remote-off']);
+			expect(lastJson()).toMatchObject({ success: true, remoteControl: false });
+		});
+
+		it('rejects a state other than on or off before connecting', async () => {
+			await expect(liveTunnel('maybe', { json: true })).rejects.toThrow('__exit__1');
+			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});
 });

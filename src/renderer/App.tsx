@@ -143,6 +143,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
+import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
@@ -168,6 +169,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
 import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
@@ -1028,6 +1030,10 @@ function MaestroConsoleInner() {
 	// Let the Feedback chat read this window's live state (read-only).
 	useEffect(() => installFeedbackLiveStateHook(), []);
 
+	// Hand this window's Auto Run state to a package main builds on its own
+	// (`maestro-cli support-package`, Feedback's support package).
+	useEffect(() => installAutoRunSnapshotResponder(), []);
+
 	// Expose notifyToast to window for debugging/testing
 	useEffect(() => {
 		(window as any).__maestroDebug = {
@@ -1565,6 +1571,8 @@ function MaestroConsoleInner() {
 		handleSendToAgent,
 		handleMergeWith,
 		handleOpenSendToAgentModal,
+		mergeTabContext,
+		transferTabContext,
 	} = useMergeTransferHandlers({
 		sessionsRef,
 		activeSessionIdRef,
@@ -1584,6 +1592,7 @@ function MaestroConsoleInner() {
 		cancelTab,
 		canSummarize,
 		handleSummarizeAndContinue,
+		summarizeTab,
 	} = useSummarizeAndContinue();
 
 	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
@@ -2049,6 +2058,9 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
+	const activeAiTabAutoSend = activeSession
+		? getActiveTab(activeSession)?.autoSendOnActivate === true
+		: false;
 	useEffect(() => {
 		if (!activeSession) return;
 
@@ -2077,7 +2089,9 @@ function MaestroConsoleInner() {
 		}, 100);
 
 		return () => clearTimeout(timeoutId);
-	}, [activeSession?.id, activeSession?.activeTabId]);
+		// The flag itself is a dependency too: a merge into the tab already on
+		// screen sets it without changing the selection, and must still send.
+	}, [activeSession?.id, activeSession?.activeTabId, activeAiTabAutoSend]);
 
 	// Initialize activity tracker for per-session time tracking
 	useActivityTracker(activeSessionId, setSessions);
@@ -2206,6 +2220,10 @@ function MaestroConsoleInner() {
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
 	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(initialLoadComplete);
+	useEffect(() => {
+		registerSessionPersistenceFlush(flushSessionPersistence);
+		return () => registerSessionPersistenceFlush(null);
+	}, [flushSessionPersistence]);
 
 	// Session lifecycle operations (rename, delete, star, unread, groups persistence, nav tracking)
 	// - provided by useSessionLifecycle hook (Phase 2H)
@@ -2416,7 +2434,6 @@ function MaestroConsoleInner() {
 
 	// handleInterrupt - provided by useInterruptHandler hook
 	const { handleInterrupt } = useInterruptHandler({
-		sessionsRef,
 		cancelPendingSynopsis,
 		processQueuedItem,
 	});
@@ -2469,6 +2486,7 @@ function MaestroConsoleInner() {
 		resumeAfterError: resumeAutoRunAfterError,
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
+		tabContextOps: { summarizeTab, mergeTabContext, transferTabContext },
 	});
 
 	/*

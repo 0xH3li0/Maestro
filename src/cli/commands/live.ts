@@ -1,89 +1,62 @@
-// Live commands - turn the web interface and its Cloudflare tunnel on and off
-// in the running desktop app. Mirrors the LIVE panel in the Left Bar header and
-// calls the same main-process Live Mode service it does.
+// Live mode commands - the CLI half of the Left Bar LIVE pill (the web
+// interface switch) and its Remote Control row (the Cloudflare tunnel).
+// `live on|off` and `live tunnel on|off` reach the same main-process switch the
+// pill does, over the CLI-only `live_command` message; `live status` reads it
+// back.
 //
-// `live on` and `live off` replace the server this CLI is connected through
-// (the loopback CLI server and the LAN server share one slot). The app answers
-// first with `restarting: true` and then swaps the server, so these commands
-// reconnect through the refreshed discovery file and poll `live_status` until
-// the swap has landed.
+// A switch replaces the server this CLI is connected to, so the app answers
+// first and switches after. The CLI then reconnects (the discovery file names
+// the new server) and polls `status` until the switch has finished. Any other
+// maestro-cli call in flight at that moment drops, as it does for the pill.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { sendSimpleCommand, failCommand } from '../services/session-command';
+import { failCommand, failFromError } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
-import { isQuiet } from '../output/verbosity';
-import type { LiveModeState } from '../../shared/liveMode';
+import {
+	LIVE_COMMAND,
+	LIVE_COMMAND_RESULT,
+	type LiveCommandAction,
+	type LiveCommandResult,
+	type LiveModeStatus,
+} from '../../shared/liveMode';
 
-/** How long to wait for the server swap before giving up. */
-const SWAP_TIMEOUT_MS = 20_000;
-/** Pause between status polls while the server swaps. */
-const SWAP_POLL_MS = 250;
-/** Head start for the old server to go down before the first poll. */
-const SWAP_SETTLE_MS = 300;
-/** cloudflared can take up to 30s to report a URL (tunnel-manager's own cap). */
-const TUNNEL_TIMEOUT_MS = 45_000;
-
-interface LiveOptions {
+export interface LiveOptions {
 	json?: boolean;
+	/**
+	 * Accepted and intentionally ignored on `on` / `off`: a Live switch moves no
+	 * view, so there is nothing for the flag to suppress. See
+	 * `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts`.
+	 */
+	background?: boolean;
 }
 
-interface LiveOnOptions extends LiveOptions {
+export interface LiveOnOptions extends LiveOptions {
+	/** Also start Remote Control once Live is on. */
 	tunnel?: boolean;
 }
 
-interface LiveStatusResult extends Partial<LiveModeState> {
-	success: boolean;
-	error?: string;
-	cloudflaredInstalled?: boolean;
-}
+/** How long a switch may take: a Windows tunnel kill plus a failed start's retries. */
+export const LIVE_SWITCH_TIMEOUT_MS = 20_000;
+/** Pause between status reads while a switch finishes. */
+export const LIVE_POLL_INTERVAL_MS = 250;
+/** cloudflared takes up to 30s to report a URL (tunnel-manager's own cap). */
+export const REMOTE_CONTROL_TIMEOUT_MS = 45_000;
 
-interface LiveToggleResult extends LiveStatusResult {
-	restarting?: boolean;
-}
-
-interface TunnelStartResult {
-	success: boolean;
-	url?: string;
-	error?: string;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-async function readLiveStatus(): Promise<LiveStatusResult> {
-	return sendSimpleCommand<LiveStatusResult>({ type: 'live_status' }, 'live_status_result');
-}
-
-/**
- * Poll until the app reports `live === expected`. A failed connect is normal
- * here: the discovery file is rewritten mid-swap and the old port goes away.
- */
-async function waitForLive(expected: boolean): Promise<LiveStatusResult> {
-	const deadline = Date.now() + SWAP_TIMEOUT_MS;
-	let lastError: string | null = null;
-	await sleep(SWAP_SETTLE_MS);
-	while (Date.now() < deadline) {
-		try {
-			const status = await readLiveStatus();
-			if (status.success && status.live === expected) return status;
-			lastError = status.error ?? null;
-		} catch (error) {
-			lastError = errorMessage(error);
-		}
-		await sleep(SWAP_POLL_MS);
-	}
-	throw new Error(
-		`The web interface did not ${expected ? 'start' : 'stop'} within ${SWAP_TIMEOUT_MS / 1000}s` +
-			(lastError ? ` (${lastError})` : '') +
-			'. Check `maestro-cli live status` and the System Log.'
+async function sendLiveCommand(
+	action: LiveCommandAction,
+	timeoutMs?: number
+): Promise<LiveCommandResult> {
+	return withMaestroClient((client) =>
+		client.sendCommand<LiveCommandResult & { type: string }>(
+			{ type: LIVE_COMMAND, action },
+			LIVE_COMMAND_RESULT,
+			timeoutMs
+		)
 	);
 }
 
-/** Add the next step to the tunnel errors an agent can act on. */
-function tunnelErrorWithHint(error: string): string {
+/** Add the next step to the Remote Control failures an agent can act on. */
+function remoteControlErrorWithHint(error: string): string {
 	if (/not installed/i.test(error)) {
 		return `${error}. Install cloudflared (macOS: \`brew install cloudflared\`), then retry.`;
 	}
@@ -93,122 +66,156 @@ function tunnelErrorWithHint(error: string): string {
 	return error;
 }
 
-function toJson(status: LiveStatusResult): Record<string, unknown> {
-	return {
-		success: true,
-		live: status.live ?? false,
-		url: status.url ?? null,
-		tunnel: {
-			running: status.tunnel?.isRunning ?? false,
-			url: status.tunnel?.url ?? null,
-			error: status.tunnel?.error ?? null,
-		},
-		...(status.cloudflaredInstalled === undefined
-			? {}
-			: { cloudflaredInstalled: status.cloudflaredInstalled }),
-	};
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Read status until the switch the app promised has finished. While it runs
+ * the old server goes away and the discovery file is briefly missing, so a
+ * failed connect means "not yet", not "the app quit".
+ */
+async function awaitSwitch(revision: number): Promise<LiveModeStatus> {
+	const deadline = Date.now() + LIVE_SWITCH_TIMEOUT_MS;
+	let lastError: unknown;
+	while (Date.now() < deadline) {
+		await sleep(LIVE_POLL_INTERVAL_MS);
+		try {
+			const reply = await sendLiveCommand('status');
+			if (reply.success && reply.status && reply.status.revision >= revision) return reply.status;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	const detail = lastError instanceof Error ? ` (last error: ${lastError.message})` : '';
+	throw new Error(
+		`Live mode did not finish switching within ${LIVE_SWITCH_TIMEOUT_MS / 1000}s${detail}. Check it with \`maestro-cli live status\`.`
+	);
 }
 
-function printStatus(status: LiveStatusResult, options: LiveOptions, headline?: string): void {
+function printStatus(status: LiveModeStatus): void {
+	console.log(`Live: ${status.live ? 'on' : 'off'}`);
+	if (status.url) console.log(`  URL: ${status.url}`);
+	if (status.remoteControl && status.remoteControlUrl) {
+		console.log(`  Remote Control: ${status.remoteControlUrl}`);
+	} else {
+		console.log(
+			`  Remote Control: ${status.remoteControlError ? `error - ${status.remoteControlError}` : 'off'}`
+		);
+	}
+	if (status.lastError) console.log(`  Last error: ${status.lastError}`);
+}
+
+function statusJson(status: LiveModeStatus, extra: Record<string, unknown> = {}) {
+	return JSON.stringify({ success: true, ...extra, ...status });
+}
+
+export async function liveStatus(options: LiveOptions): Promise<void> {
+	let reply: LiveCommandResult;
+	try {
+		reply = await sendLiveCommand('status');
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.status) {
+		failCommand(reply.error || 'Could not read Live mode', options.json);
+	}
 	if (options.json) {
-		console.log(JSON.stringify(toJson(status)));
+		console.log(statusJson(reply.status));
 		return;
 	}
-	if (headline && !isQuiet()) console.log(formatSuccess(headline));
-	console.log(`Web interface: ${status.live ? 'on' : 'off'}`);
-	if (status.live && status.url) console.log(`  Local:  ${status.url}`);
-	const tunnel = status.tunnel;
-	if (tunnel?.isRunning && tunnel.url) {
-		console.log(`  Tunnel: ${tunnel.url}`);
-	} else if (tunnel?.error) {
-		console.log(`  Tunnel: error - ${tunnel.error}`);
-	} else {
-		console.log('  Tunnel: off');
-	}
-	if (status.cloudflaredInstalled === false) {
-		console.log('  cloudflared is not installed, so the tunnel is unavailable.');
-	}
+	printStatus(reply.status);
 }
 
-/** `maestro-cli live status` */
-export async function liveStatus(options: LiveOptions): Promise<void> {
+async function liveSet(live: boolean, options: LiveOnOptions): Promise<void> {
+	const json = options.json;
+	const word = live ? 'on' : 'off';
+
+	// Only the bridge calls sit inside the try blocks, so a failCommand exit
+	// below is never caught and reported a second time.
+	let reply: LiveCommandResult;
 	try {
-		const status = await readLiveStatus();
-		if (!status.success) throw new Error(status.error || 'Failed to read Live mode');
-		printStatus(status, options);
+		reply = await sendLiveCommand(word);
 	} catch (error) {
-		failCommand(errorMessage(error), options.json);
+		failFromError(error, json);
 	}
-}
-
-/** Start the tunnel against a Live server that is already up. */
-async function startTunnelOrThrow(): Promise<void> {
-	const result = await withMaestroClient((client) =>
-		client.sendCommand<TunnelStartResult>(
-			{ type: 'live_tunnel_start' },
-			'live_tunnel_start_result',
-			TUNNEL_TIMEOUT_MS
-		)
-	);
-	if (!result.success) {
-		throw new Error(tunnelErrorWithHint(result.error || 'Failed to start the tunnel'));
+	if (!reply.success || !reply.status) {
+		failCommand(reply.error || `Could not turn Live mode ${word}`, json);
 	}
-}
 
-/** `maestro-cli live on [--tunnel]` */
-export async function liveOn(options: LiveOnOptions): Promise<void> {
-	try {
-		const start = await sendSimpleCommand<LiveToggleResult>(
-			{ type: 'live_start' },
-			'live_start_result'
-		);
-		if (!start.success) throw new Error(start.error || 'Failed to start Live mode');
-		if (start.restarting) await waitForLive(true);
-
-		if (options.tunnel) await startTunnelOrThrow();
-
-		const status = await readLiveStatus();
-		printStatus(
-			status,
-			options,
-			options.tunnel ? 'Web interface and tunnel are on' : 'Web interface is on'
-		);
-	} catch (error) {
-		failCommand(errorMessage(error), options.json);
-	}
-}
-
-/** `maestro-cli live off` - stops the tunnel too, as the LIVE panel does. */
-export async function liveOff(options: LiveOptions): Promise<void> {
-	try {
-		const stop = await sendSimpleCommand<LiveToggleResult>(
-			{ type: 'live_stop' },
-			'live_stop_result'
-		);
-		if (!stop.success) throw new Error(stop.error || 'Failed to stop Live mode');
-		const status = stop.restarting ? await waitForLive(false) : await readLiveStatus();
-		printStatus(status, options, 'Web interface is off');
-	} catch (error) {
-		failCommand(errorMessage(error), options.json);
-	}
-}
-
-/** `maestro-cli live tunnel <on|off>` */
-export async function liveTunnel(state: string, options: LiveOptions): Promise<void> {
-	const normalized = state.trim().toLowerCase();
-	if (normalized !== 'on' && normalized !== 'off') {
-		failCommand(`Expected "on" or "off", got "${state}".`, options.json);
-	}
-	try {
-		if (normalized === 'on') {
-			await startTunnelOrThrow();
-		} else {
-			const stop = await sendSimpleCommand({ type: 'live_tunnel_stop' }, 'live_tunnel_stop_result');
-			if (!stop.success) throw new Error(stop.error || 'Failed to stop the tunnel');
+	let status = reply.status;
+	const changed = reply.changed === true;
+	if (changed) {
+		try {
+			status = await awaitSwitch(reply.awaitRevision ?? status.revision + 1);
+		} catch (error) {
+			failFromError(error, json);
 		}
-		const status = await readLiveStatus();
-		printStatus(status, options, normalized === 'on' ? 'Tunnel is on' : 'Tunnel is off');
-	} catch (error) {
-		failCommand(errorMessage(error), options.json);
+		if (status.live !== live) {
+			failCommand(status.lastError || `Live mode did not turn ${word}`, json);
+		}
 	}
+
+	if (live && options.tunnel) {
+		status = await startRemoteControlOrFail(json);
+	}
+
+	if (json) {
+		console.log(statusJson(status, { changed }));
+		return;
+	}
+	console.log(formatSuccess(changed ? `Live mode is ${word}` : `Live mode was already ${word}`));
+	printStatus(status);
+}
+
+/** Start Remote Control against a Live server that is already up. */
+async function startRemoteControlOrFail(json: boolean | undefined): Promise<LiveModeStatus> {
+	let reply: LiveCommandResult;
+	try {
+		reply = await sendLiveCommand('remote-on', REMOTE_CONTROL_TIMEOUT_MS);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success || !reply.status) {
+		failCommand(remoteControlErrorWithHint(reply.error || 'Remote Control failed to start'), json);
+	}
+	return reply.status;
+}
+
+export async function liveOn(options: LiveOnOptions): Promise<void> {
+	await liveSet(true, options);
+}
+
+export async function liveOff(options: LiveOptions): Promise<void> {
+	await liveSet(false, options);
+}
+
+/** `maestro-cli live tunnel on|off` - Remote Control, the Cloudflare tunnel. */
+export async function liveTunnel(state: string, options: LiveOptions): Promise<void> {
+	const json = options.json;
+	const word = state.trim().toLowerCase();
+	if (word !== 'on' && word !== 'off') {
+		failCommand(`Expected "on" or "off", got "${state}".`, json);
+	}
+
+	let status: LiveModeStatus;
+	if (word === 'on') {
+		status = await startRemoteControlOrFail(json);
+	} else {
+		let reply: LiveCommandResult;
+		try {
+			reply = await sendLiveCommand('remote-off');
+		} catch (error) {
+			failFromError(error, json);
+		}
+		if (!reply.success || !reply.status) {
+			failCommand(reply.error || 'Remote Control failed to stop', json);
+		}
+		status = reply.status;
+	}
+
+	if (json) {
+		console.log(statusJson(status));
+		return;
+	}
+	console.log(formatSuccess(`Remote Control is ${word}`));
+	printStatus(status);
 }

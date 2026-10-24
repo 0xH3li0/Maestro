@@ -500,7 +500,8 @@ describe('web handlers', () => {
 			expect(win.webContents.send).toHaveBeenCalledWith('live:stateChanged', {
 				live: true,
 				url: 'http://localhost:8080',
-				tunnel: { isRunning: false, url: null, error: null },
+				remoteControl: false,
+				remoteControlUrl: null,
 			});
 		});
 
@@ -863,7 +864,8 @@ describe('web handlers', () => {
 			expect(win.webContents.send).toHaveBeenCalledWith('live:stateChanged', {
 				live: false,
 				url: null,
-				tunnel: { isRunning: false, url: null, error: null },
+				remoteControl: false,
+				remoteControlUrl: null,
 			});
 		});
 

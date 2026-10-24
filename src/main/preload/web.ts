@@ -10,8 +10,8 @@
 import { ipcRenderer } from 'electron';
 import type { AutoRunOwner, OrphanedAutoRun } from '../../shared/autoRunBroadcast';
 import type { BatchRunConfig } from '../../shared/types';
+import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../../shared/liveMode';
 import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../shared/autoRunRemote';
-import type { LiveModeState } from '../../shared/liveMode';
 
 /**
  * Auto Run state for broadcasting
@@ -168,6 +168,10 @@ export function createLiveApi() {
 		broadcastActiveSession: (sessionId: string) =>
 			ipcRenderer.invoke('live:broadcastActiveSession', sessionId),
 		disableAll: () => ipcRenderer.invoke('live:disableAll'),
+		/** Live mode as main sees it (the LIVE pill reads this on mount). */
+		getState: () => ipcRenderer.invoke('live:getState') as Promise<LiveModeStatus>,
+		/** Turn Live mode on or off. Idempotent; the same switch `maestro-cli live` runs. */
+		set: (live: boolean) => ipcRenderer.invoke('live:set', live) as Promise<LiveModeSetResult>,
 		startServer: () => ipcRenderer.invoke('live:startServer'),
 		stopServer: () => ipcRenderer.invoke('live:stopServer'),
 		persistCurrentToken: () => ipcRenderer.invoke('live:persistCurrentToken'),
@@ -181,17 +185,15 @@ export function createLiveApi() {
 			ipcRenderer.on('live:urlChanged', wrappedHandler);
 			return () => ipcRenderer.removeListener('live:urlChanged', wrappedHandler);
 		},
-		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
-
-		// Fires whenever main starts or stops the web interface or the tunnel,
-		// whoever asked (the LIVE panel or `maestro-cli live`), so every window's
-		// panel follows the real state.
-		onStateChanged: (handler: (state: LiveModeState) => void) => {
-			const wrappedHandler = (_event: Electron.IpcRendererEvent, state: LiveModeState) =>
+		// Fires after every Live switch, from any window or from the CLI, so
+		// each window's LIVE pill follows main.
+		onStateChanged: (handler: (state: LiveModeStateEvent) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, state: LiveModeStateEvent) =>
 				handler(state);
 			ipcRenderer.on('live:stateChanged', wrappedHandler);
 			return () => ipcRenderer.removeListener('live:stateChanged', wrappedHandler);
 		},
+		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
 	};
 }
 

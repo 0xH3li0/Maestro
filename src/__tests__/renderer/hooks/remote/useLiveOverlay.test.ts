@@ -62,7 +62,8 @@ describe('useLiveOverlay', () => {
 				emit?.({
 					live: true,
 					url: 'http://192.168.1.5:8080/tok',
-					tunnel: { isRunning: true, url: 'https://abc.trycloudflare.com/tok', error: null },
+					remoteControl: true,
+					remoteControlUrl: 'https://abc.trycloudflare.com/tok',
 				});
 			});
 
@@ -76,14 +77,16 @@ describe('useLiveOverlay', () => {
 				emit?.({
 					live: true,
 					url: 'http://192.168.1.5:8080/tok',
-					tunnel: { isRunning: true, url: 'https://abc.trycloudflare.com/tok', error: null },
+					remoteControl: true,
+					remoteControlUrl: 'https://abc.trycloudflare.com/tok',
 				});
 			});
 			act(() => {
 				emit?.({
 					live: true,
 					url: 'http://192.168.1.5:8080/tok',
-					tunnel: { isRunning: false, url: null, error: null },
+					remoteControl: false,
+					remoteControlUrl: null,
 				});
 			});
 

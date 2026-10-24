@@ -24,12 +24,10 @@ import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fo
 import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
-import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { checkForUpdates } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
-import { WebServer } from '../../web-server';
-import { startTunnel, stopTunnel, getTunnelState } from '../../web-server/live-mode';
+import { getLiveModeController } from '../../web-server/live-mode';
 import { powerManager } from '../../power-manager';
 import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
@@ -37,8 +35,8 @@ import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
 
-// Type for tunnel manager instance
-type TunnelManagerType = typeof tunnelManagerInstance;
+/** Answered while startup has not registered the Live mode controller yet. */
+const LIVE_MODE_NOT_READY = 'Live mode is not available yet. Try again in a moment.';
 
 /**
  * Dependencies required for system handlers
@@ -47,8 +45,6 @@ export interface SystemHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	app: App;
 	settingsStore: Store<MaestroSettings>;
-	tunnelManager: TunnelManagerType;
-	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
 }
 
@@ -82,7 +78,7 @@ function decodeClipboardImage(dataUrl: string): Electron.NativeImage {
  * Register all system-related IPC handlers.
  */
 export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
-	const { getMainWindow, app, settingsStore, tunnelManager, getWebServer } = deps;
+	const { getMainWindow, app, settingsStore } = deps;
 
 	// ============ Dialog Handlers ============
 
@@ -424,13 +420,31 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return await isCloudflaredInstalled();
 	});
 
-	// Start/stop/status share one implementation with `maestro-cli live tunnel`
-	// through the Live Mode service.
-	ipcMain.handle('tunnel:start', async () => startTunnel(getWebServer(), tunnelManager));
+	// Remote Control start/stop/status go through the Live mode controller, the
+	// same object `maestro-cli live tunnel` reaches, so the panel and the CLI
+	// share one implementation and one switch queue.
+	ipcMain.handle('tunnel:start', async () => {
+		const liveMode = getLiveModeController();
+		if (!liveMode) return { success: false, error: LIVE_MODE_NOT_READY };
+		const { success, url, error } = await liveMode.startRemoteControl();
+		return { success, ...(url ? { url } : {}), ...(error ? { error } : {}) };
+	});
 
-	ipcMain.handle('tunnel:stop', async () => stopTunnel(getWebServer(), tunnelManager));
+	ipcMain.handle('tunnel:stop', async () => {
+		const liveMode = getLiveModeController();
+		if (!liveMode) return { success: false, error: LIVE_MODE_NOT_READY };
+		const { success, error } = await liveMode.stopRemoteControl();
+		return { success, ...(error ? { error } : {}) };
+	});
 
-	ipcMain.handle('tunnel:getStatus', async () => getTunnelState(getWebServer(), tunnelManager));
+	ipcMain.handle('tunnel:getStatus', async () => {
+		const status = getLiveModeController()?.getStatus();
+		return {
+			isRunning: status?.remoteControl ?? false,
+			url: status?.remoteControlUrl ?? null,
+			error: status?.remoteControlError ?? null,
+		};
+	});
 
 	// ============ DevTools Handlers ============
 
