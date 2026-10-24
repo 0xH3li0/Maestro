@@ -2,16 +2,23 @@
  * @file goalPlan.test.ts
  * @description Tests for the Goal-Driven Auto Run Plan Doc module
  * (src/shared/goalDriven/goalPlan.ts): parse, canonical render, round trip,
- * preservation of human text, the fresh-run doc, and the agent's plan marker.
+ * preservation of human text, the fresh-run doc, the agent's plan marker, and
+ * the three-way Plan merge.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
 	createGoalPlanDoc,
+	mergeGoalPlan,
 	parseGoalPlanDoc,
 	parsePlanMarker,
 	renderGoalPlanDoc,
 } from '../../../shared/goalDriven/goalPlan';
+import type {
+	GoalPlanDoc,
+	GoalPlanItem,
+	GoalPlanMergeResult,
+} from '../../../shared/goalDriven/types';
 
 const CANONICAL = [
 	'---',
@@ -368,5 +375,206 @@ describe('parsePlanMarker', () => {
 			['a2', 1],
 			['a3', 2],
 		]);
+	});
+});
+
+describe('mergeGoalPlan', () => {
+	const item = (id: string, text: string, extra: Partial<GoalPlanItem> = {}): GoalPlanItem => ({
+		id,
+		text,
+		checked: false,
+		depth: 0,
+		author: id.startsWith('h') ? 'human' : 'agent',
+		iteration: null,
+		...extra,
+	});
+
+	// base: a1 (done), a2, a3 (child of a2), h1
+	const base = parseGoalPlanDoc(CANONICAL);
+	const withItems = (items: GoalPlanItem[]): GoalPlanDoc => ({ ...base, items });
+	const ids = (result: GoalPlanMergeResult) => result.doc.items.map((entry) => entry.id);
+	const byId = (result: GoalPlanMergeResult, id: string) =>
+		result.doc.items.find((entry) => entry.id === id);
+
+	it('leaves the Plan as on disk and warns when the agent proposed nothing', () => {
+		const ours = withItems([...base.items, item('h2', 'Typed during the run')]);
+		const result = mergeGoalPlan(base, ours, null);
+		expect(result.doc.items).toEqual(ours.items);
+		expect(result.conflicts).toEqual([]);
+		expect(result.warnings).toHaveLength(1);
+	});
+
+	it('lets the agent add, check and reword its own items', () => {
+		const theirs = [
+			base.items[0],
+			{ ...base.items[1], checked: true, text: 'Migrate the data layer (done)' },
+			base.items[2],
+			item('a4', 'Wire the new client'),
+			base.items[3],
+		];
+		const result = mergeGoalPlan(base, base, theirs, { iteration: 5 });
+		expect(ids(result)).toEqual(['a1', 'a2', 'a3', 'a4', 'h1']);
+		expect(byId(result, 'a2')).toMatchObject({
+			checked: true,
+			text: 'Migrate the data layer (done)',
+			iteration: 2,
+		});
+		expect(byId(result, 'a4')).toMatchObject({ author: 'agent', iteration: 5 });
+		expect(result.conflicts).toEqual([]);
+	});
+
+	it('treats an agent line with empty text as keeping the text', () => {
+		const theirs = [{ ...base.items[0], text: '', checked: false }, ...base.items.slice(1)];
+		const result = mergeGoalPlan(base, base, theirs);
+		expect(byId(result, 'a1')).toMatchObject({ text: 'Map the current auth flow', checked: false });
+	});
+
+	it('refuses an agent rewording of a human item but lets it check one', () => {
+		const theirs = [
+			...base.items.slice(0, 3),
+			{ ...base.items[3], text: 'Touch billing if needed', checked: true },
+		];
+		const result = mergeGoalPlan(base, base, theirs);
+		expect(byId(result, 'h1')).toMatchObject({
+			text: 'Do not touch the billing module',
+			checked: true,
+			author: 'human',
+		});
+		expect(result.conflicts.map((conflict) => conflict.id)).toEqual(['h1']);
+	});
+
+	it('refuses an agent deletion of a human item and keeps it in place', () => {
+		const doc = withItems([base.items[0], base.items[3], base.items[1], base.items[2]]);
+		const result = mergeGoalPlan(doc, doc, [base.items[0], base.items[1], base.items[2]]);
+		expect(ids(result)).toEqual(['a1', 'h1', 'a2', 'a3']);
+		expect(result.conflicts.map((conflict) => conflict.id)).toEqual(['h1']);
+	});
+
+	it('lets the agent delete its own item the human did not touch', () => {
+		const result = mergeGoalPlan(base, base, [base.items[0], base.items[1], base.items[3]]);
+		expect(ids(result)).toEqual(['a1', 'a2', 'h1']);
+		expect(result.conflicts).toEqual([]);
+	});
+
+	it('keeps an agent item the agent deleted when the human edited it', () => {
+		const ours = withItems([
+			base.items[0],
+			base.items[1],
+			{ ...base.items[2], text: 'Write the migration test first, with fixtures' },
+			base.items[3],
+		]);
+		const result = mergeGoalPlan(base, ours, [base.items[0], base.items[1], base.items[3]]);
+		expect(ids(result)).toEqual(['a1', 'a2', 'a3', 'h1']);
+		expect(byId(result, 'a3')?.text).toBe('Write the migration test first, with fixtures');
+		expect(result.conflicts.map((conflict) => conflict.id)).toEqual(['a3']);
+	});
+
+	it('keeps an item the human deleted deleted, even if the agent kept or edited it', () => {
+		const ours = withItems([base.items[0], base.items[1], base.items[3]]);
+		const kept = mergeGoalPlan(base, ours, base.items);
+		expect(ids(kept)).toEqual(['a1', 'a2', 'h1']);
+		expect(kept.conflicts).toEqual([]);
+
+		const edited = mergeGoalPlan(base, ours, [
+			base.items[0],
+			base.items[1],
+			{ ...base.items[2], checked: true },
+			base.items[3],
+		]);
+		expect(ids(edited)).toEqual(['a1', 'a2', 'h1']);
+		expect(edited.conflicts.map((conflict) => conflict.id)).toEqual(['a3']);
+	});
+
+	it('gives the human the field both sides changed', () => {
+		const ours = withItems([
+			base.items[0],
+			{ ...base.items[1], text: 'Migrate the data layer to Postgres' },
+			base.items[2],
+			base.items[3],
+		]);
+		const theirs = [
+			{ ...base.items[0], checked: false },
+			{ ...base.items[1], text: 'Migrate the data layer to SQLite' },
+			base.items[2],
+			base.items[3],
+		];
+		const result = mergeGoalPlan(base, ours, theirs);
+		expect(byId(result, 'a2')?.text).toBe('Migrate the data layer to Postgres');
+		expect(byId(result, 'a1')?.checked).toBe(false);
+		expect(result.conflicts.map((conflict) => conflict.id)).toEqual(['a2']);
+	});
+
+	it('follows the agent order when the human did not reorder', () => {
+		const ours = withItems([
+			...base.items.slice(0, 2),
+			item('h2', 'Human step'),
+			...base.items.slice(2),
+		]);
+		const theirs = [base.items[3], base.items[1], base.items[2], base.items[0]];
+		const result = mergeGoalPlan(base, ours, theirs);
+		expect(ids(result)).toEqual(['h1', 'a2', 'h2', 'a3', 'a1']);
+	});
+
+	it('follows the human order when the human reordered', () => {
+		const ours = withItems([base.items[3], base.items[0], base.items[1], base.items[2]]);
+		const theirs = [
+			base.items[1],
+			base.items[0],
+			item('a4', 'New step'),
+			base.items[2],
+			base.items[3],
+		];
+		const result = mergeGoalPlan(base, ours, theirs);
+		expect(ids(result)).toEqual(['h1', 'a1', 'a4', 'a2', 'a3']);
+	});
+
+	it('keeps a human edit and an agent edit to different items', () => {
+		const ours = withItems([
+			base.items[0],
+			base.items[1],
+			base.items[2],
+			{ ...base.items[3], text: 'Do not touch billing or invoices' },
+		]);
+		const theirs = [
+			base.items[0],
+			base.items[1],
+			{ ...base.items[2], checked: true },
+			base.items[3],
+		];
+		const result = mergeGoalPlan(base, ours, theirs);
+		expect(byId(result, 'h1')?.text).toBe('Do not touch billing or invoices');
+		expect(byId(result, 'a3')?.checked).toBe(true);
+		expect(result.conflicts).toEqual([]);
+	});
+
+	it('takes authorship from the doc and renames an added human-looking id', () => {
+		const theirs = [
+			{ ...base.items[0], author: 'human' as const },
+			...base.items.slice(1),
+			item('h9', 'Agent posing as human'),
+		];
+		const result = mergeGoalPlan(base, base, theirs);
+		expect(byId(result, 'a1')?.author).toBe('agent');
+		expect(byId(result, 'h9')).toBeUndefined();
+		expect(result.doc.items[4]).toMatchObject({ id: 'a4', author: 'agent' });
+		expect(result.warnings).toHaveLength(1);
+	});
+
+	it('warns on a repeated id and keeps the first', () => {
+		const theirs = [...base.items, { ...base.items[0], checked: false }];
+		const result = mergeGoalPlan(base, base, theirs);
+		expect(byId(result, 'a1')?.checked).toBe(true);
+		expect(result.warnings).toHaveLength(1);
+	});
+
+	it('takes every section other than the Plan from the on-disk copy', () => {
+		const ours: GoalPlanDoc = {
+			...base,
+			goal: 'A new goal',
+			conductorNotes: 'Be careful.',
+			frontMatter: { ...base.frontMatter, maxIterations: 30 },
+		};
+		const result = mergeGoalPlan(base, ours, base.items);
+		expect(result.doc).toEqual(ours);
 	});
 });

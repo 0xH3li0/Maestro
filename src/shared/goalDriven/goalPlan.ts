@@ -1,6 +1,7 @@
 /**
- * The Plan Doc of a Goal-Driven Auto Run: parse, render, create, and read the
- * agent's proposed Plan out of its `<!-- maestro:plan -->` marker block.
+ * The Plan Doc of a Goal-Driven Auto Run: parse, render, create, read the
+ * agent's proposed Plan out of its `<!-- maestro:plan -->` marker block, and
+ * merge that proposal into the file the human may have edited meanwhile.
  *
  * A goal run keeps its plan in one Markdown file (see
  * `.maestro/scratch/goal-live-plan.md`). The human edits it in the Auto Run
@@ -31,6 +32,7 @@ import type {
 	GoalPlanFreeText,
 	GoalPlanFrontMatter,
 	GoalPlanItem,
+	GoalPlanMergeResult,
 	GoalPlanSectionKey,
 	GoalPlanStatus,
 	GoalRunConfig,
@@ -548,4 +550,272 @@ export function parsePlanMarker(
 			iteration: fresh ? null : entry.iteration,
 		};
 	});
+}
+
+/** Options for `mergeGoalPlan`. */
+export interface GoalPlanMergeOptions {
+	/**
+	 * The iteration that produced `theirs`. Stamped as `it:` on items the agent
+	 * added without one, so the Plan records when each step appeared.
+	 */
+	iteration?: number;
+}
+
+/** Index items by id; a repeated id keeps its first holder. */
+function indexById(items: readonly GoalPlanItem[]): Map<string, GoalPlanItem> {
+	const byId = new Map<string, GoalPlanItem>();
+	for (const item of items) if (!byId.has(item.id)) byId.set(item.id, item);
+	return byId;
+}
+
+/** Whether the human changed anything the merge tracks on an item since `base`. */
+function humanTouched(base: GoalPlanItem, ours: GoalPlanItem): boolean {
+	return base.text !== ours.text || base.checked !== ours.checked || base.depth !== ours.depth;
+}
+
+/** Whether the agent changed an item since `base`; empty text means "same text". */
+function agentTouched(base: GoalPlanItem, agent: GoalPlanItem): boolean {
+	return (
+		(agent.text !== '' && agent.text !== base.text) ||
+		agent.checked !== base.checked ||
+		agent.depth !== base.depth
+	);
+}
+
+/**
+ * Whether the human moved items since `base`: the ids both copies hold are
+ * not in the same relative order. Additions and deletions alone are not a
+ * reorder, so typing a new step does not freeze the agent's ordering.
+ */
+function humanReordered(base: readonly GoalPlanItem[], ours: readonly GoalPlanItem[]): boolean {
+	const baseIds = new Set(base.map((item) => item.id));
+	const oursIds = new Set(ours.map((item) => item.id));
+	const before = base.filter((item) => oursIds.has(item.id)).map((item) => item.id);
+	const after = ours.filter((item) => baseIds.has(item.id)).map((item) => item.id);
+	return before.some((id, i) => id !== after[i]);
+}
+
+/**
+ * Lay `secondary` ids into the `primary` order: each one not already placed
+ * goes right after the nearest id that preceded it in `secondary` and is
+ * already placed, or at the top when none did. Keeps both orders where they
+ * agree and lets `primary` decide where they disagree.
+ */
+function interleaveOrder(
+	primary: readonly string[],
+	secondary: readonly string[],
+	keep: ReadonlySet<string>
+): string[] {
+	const order = primary.filter((id) => keep.has(id));
+	const placed = new Set(order);
+	let cursor = -1;
+	for (const id of secondary) {
+		if (placed.has(id)) {
+			cursor = order.indexOf(id);
+		} else if (keep.has(id)) {
+			order.splice(++cursor, 0, id);
+			placed.add(id);
+		}
+	}
+	return order;
+}
+
+/**
+ * Merge the agent's proposed Plan (`theirs`, from `parsePlanMarker`) into the
+ * Plan Doc on disk (`ours`), against the doc injected at iteration start
+ * (`base`). Keyed by item id. Only the Plan merges: every other section, the
+ * front matter and `preserved` come from `ours`, because the agent owns none
+ * of them.
+ *
+ * The rules (`.maestro/scratch/goal-live-plan.md`, "Ownership rules"):
+ * - The human wins every conflict. A field the human changed since `base`
+ *   keeps the human's value; a different agent change to it is a conflict.
+ * - The agent can never delete or reword a `by:human` item. Either attempt
+ *   is a conflict and the item stays as the human has it. Checking and
+ *   unchecking a human item is allowed.
+ * - The agent may add, check, uncheck, reorder, re-nest and reword its own
+ *   items, and delete them unless the human edited them since `base`.
+ * - An item the human deleted since `base` stays deleted even if the agent
+ *   kept it.
+ * - Order follows `theirs` unless the human reordered since `base`, then
+ *   `ours`. Items only one side has are slotted in after their neighbor.
+ *
+ * Authorship always comes from the doc, never from the agent's `by:` claim:
+ * every item the agent adds is `by:agent`. An added id that looks human
+ * (`h<n>`) is renamed to a fresh `a<n>` with a warning.
+ *
+ * `theirs === null` means the iteration had no usable plan block: the Plan
+ * stays exactly as `ours` has it and a warning says so, never a failure.
+ *
+ * The id keying assumes `base` and `ours` agree on the ids of items that
+ * were already there. A Plan line typed without an id gets its `h<n>` at
+ * parse time, so the engine must write `base` back to disk (render writes the
+ * ids) before the human can edit it again, or a second id-less line typed
+ * above it could renumber it.
+ */
+export function mergeGoalPlan(
+	base: GoalPlanDoc,
+	ours: GoalPlanDoc,
+	theirs: readonly GoalPlanItem[] | null,
+	options: GoalPlanMergeOptions = {}
+): GoalPlanMergeResult {
+	const conflicts: GoalPlanMergeResult['conflicts'] = [];
+	const warnings: string[] = [];
+
+	if (theirs === null) {
+		warnings.push(
+			'The agent proposed no plan: no readable maestro:plan block. The Plan is unchanged.'
+		);
+		return {
+			doc: { ...ours, items: ours.items.map((item) => ({ ...item })) },
+			conflicts,
+			warnings,
+		};
+	}
+
+	const baseById = indexById(base.items);
+	const oursById = indexById(ours.items);
+
+	const theirsItems: GoalPlanItem[] = [];
+	const theirsIds = new Set<string>();
+	for (const item of theirs) {
+		if (theirsIds.has(item.id)) {
+			warnings.push(`The agent listed id ${item.id} more than once; the first one counts.`);
+			continue;
+		}
+		theirsIds.add(item.id);
+		theirsItems.push(item);
+	}
+
+	const nextAgentId = freshIdAllocator('a', [...baseById.keys(), ...oursById.keys(), ...theirsIds]);
+	const merged = new Map<string, GoalPlanItem>();
+	/** `theirs` ids in order, with renamed additions under their new id. */
+	const theirsOrder: string[] = [];
+
+	for (const agent of theirsItems) {
+		const before = baseById.get(agent.id);
+		const human = oursById.get(agent.id);
+
+		if (!before && !human) {
+			let id = agent.id;
+			if (HUMAN_ID_RE.test(id)) {
+				id = nextAgentId();
+				warnings.push(`The agent added an item with human id ${agent.id}; it was renamed ${id}.`);
+			}
+			merged.set(id, {
+				...agent,
+				id,
+				author: 'agent',
+				iteration: agent.iteration ?? options.iteration ?? null,
+			});
+			theirsOrder.push(id);
+			continue;
+		}
+
+		theirsOrder.push(agent.id);
+
+		if (!human) {
+			// Only `base` has it: the human deleted it since base, so it stays deleted.
+			if (before && agentTouched(before, agent)) {
+				conflicts.push({
+					id: agent.id,
+					reason: 'The human deleted this item; the agent edit was dropped.',
+				});
+			}
+			continue;
+		}
+
+		if (!before) {
+			warnings.push(
+				`The agent used id ${agent.id}, which only the on-disk Plan has; the human's version was kept.`
+			);
+			merged.set(agent.id, { ...human });
+			continue;
+		}
+
+		merged.set(agent.id, mergeItem(before, human, agent, conflicts));
+	}
+
+	// Items on disk the agent left out of its list.
+	for (const human of ours.items) {
+		if (merged.has(human.id) || theirsIds.has(human.id)) continue;
+		const before = baseById.get(human.id);
+		if (!before) {
+			merged.set(human.id, { ...human }); // Added by the human during the iteration.
+		} else if (human.author === 'human') {
+			conflicts.push({
+				id: human.id,
+				reason: 'The agent cannot delete a human item; it was kept.',
+			});
+			merged.set(human.id, { ...human });
+		} else if (humanTouched(before, human)) {
+			conflicts.push({
+				id: human.id,
+				reason: 'The human edited this item; the agent deletion was refused.',
+			});
+			merged.set(human.id, { ...human });
+		}
+		// Otherwise an agent item the agent deleted: gone.
+	}
+
+	const keep = new Set(merged.keys());
+	const oursOrder = ours.items.map((item) => item.id);
+	const order = humanReordered(base.items, ours.items)
+		? interleaveOrder(oursOrder, theirsOrder, keep)
+		: interleaveOrder(theirsOrder, oursOrder, keep);
+
+	return {
+		doc: { ...ours, items: order.map((id) => merged.get(id) as GoalPlanItem) },
+		conflicts,
+		warnings,
+	};
+}
+
+/**
+ * Three-way merge of one item both sides kept. Each field takes the human's
+ * value when the human changed it since `base`, otherwise the agent's. Text
+ * on a human item is the human's alone. An agent line with empty text
+ * (`- [x] <!-- id:a2 -->`) means "same text", not "erase it".
+ */
+function mergeItem(
+	base: GoalPlanItem,
+	human: GoalPlanItem,
+	agent: GoalPlanItem,
+	conflicts: GoalPlanMergeResult['conflicts']
+): GoalPlanItem {
+	const field = <K extends 'text' | 'checked' | 'depth'>(
+		key: K,
+		agentValue: GoalPlanItem[K],
+		label: string
+	) => {
+		if (human[key] === base[key]) return agentValue;
+		if (agentValue !== base[key] && agentValue !== human[key]) {
+			conflicts.push({
+				id: base.id,
+				reason: `The human changed the ${label}; the agent change was dropped.`,
+			});
+		}
+		return human[key];
+	};
+
+	const agentText = agent.text === '' ? base.text : agent.text;
+	let text: string;
+	if (human.author === 'human') {
+		if (agentText !== base.text && agentText !== human.text) {
+			conflicts.push({
+				id: base.id,
+				reason: 'The agent cannot reword a human item; the rewording was dropped.',
+			});
+		}
+		text = human.text;
+	} else {
+		text = field('text', agentText, 'text');
+	}
+
+	return {
+		...human,
+		text,
+		checked: field('checked', agent.checked, 'done state'),
+		depth: field('depth', agent.depth, 'nesting'),
+	};
 }
