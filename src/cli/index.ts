@@ -214,6 +214,7 @@ import {
 	computerHistoryRulesRemove,
 	computerHistoryStatus,
 } from './commands/computer-history';
+import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
 import { setVerbosity } from './output/verbosity';
 import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
 import { pianolaLearn } from './commands/pianola-learn';
@@ -2426,6 +2427,38 @@ theme
 	.option('-a, --activate', 'Switch to the Custom theme after applying')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((assignments, options) => themeSet(assignments, options));
+
+// Live commands - the web interface and its Cloudflare tunnel (the LIVE panel)
+const live = program
+	.command('live')
+	.description('Turn the web interface and its Cloudflare tunnel on or off');
+
+live
+	.command('status')
+	.description('Show whether the web interface is on, its URL, and the tunnel state')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveStatus(options));
+
+live
+	.command('on')
+	.description(
+		'Start the web interface on the local network. Rotates the URL token unless Persistent Web Link is on.'
+	)
+	.option('--tunnel', 'Also start a Cloudflare tunnel for remote access (needs cloudflared)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveOn(options));
+
+live
+	.command('off')
+	.description('Stop the tunnel and the web interface (maestro-cli keeps working)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => liveOff(options));
+
+live
+	.command('tunnel <state>')
+	.description('Start (on) or stop (off) the Cloudflare tunnel. "on" needs the web interface on.')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state, options) => liveTunnel(state, options));
 
 // Encore commands - list and toggle the optional features on Settings > Plugins
 // (applies live). Always visible: it is how a hidden feature is turned on.

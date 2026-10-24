@@ -78,6 +78,13 @@ import {
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleQuickChat } from './quickChat';
 import {
+	handleLiveStatus,
+	handleLiveStart,
+	handleLiveStop,
+	handleLiveTunnelStart,
+	handleLiveTunnelStop,
+} from './liveMode';
+import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
 	handleFeedbackGhLoginCommand,
@@ -748,6 +755,26 @@ export class WebSocketMessageHandler {
 
 			case 'quick_chat':
 				handleQuickChat(this.ctx, client, message);
+				break;
+
+			case 'live_status':
+				void handleLiveStatus(this.ctx, client, message);
+				break;
+
+			case 'live_start':
+				handleLiveStart(this.ctx, client, message);
+				break;
+
+			case 'live_stop':
+				handleLiveStop(this.ctx, client, message);
+				break;
+
+			case 'live_tunnel_start':
+				void handleLiveTunnelStart(this.ctx, client, message);
+				break;
+
+			case 'live_tunnel_stop':
+				void handleLiveTunnelStop(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

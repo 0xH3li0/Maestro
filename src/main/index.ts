@@ -233,6 +233,7 @@ import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capabil
 import { createWebServerFactory } from './web-server/web-server-factory';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
+import { configureLiveMode } from './web-server/live-mode';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -1243,6 +1244,9 @@ app
 			createWebServer,
 			settingsStore: store,
 		};
+		// `maestro-cli live` reaches the server slot through the WS handlers,
+		// which run inside a WebServer and have no other route to it.
+		configureLiveMode(cliServerDeps);
 		await ensureCliServer(cliServerDeps);
 
 		// dispatch --notify-on-complete. Wired here because it needs the same

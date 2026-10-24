@@ -327,6 +327,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: Submit now (early exit)                                                                                                                                                                                                                                                                                                                                                                               | `feedback submit` (the caller supplies whatever fields it has)                                                                                                                                                                                                                                                                                                                                           |
 | Create Debug Package (support package)                                                                                                                                                                                                                                                                                                                                                                          | `support-package -o <dir> [--no-logs ...]`                                                                                                                                                                                                                                                                                                                                                               |
 | Start / End Performance Profiling                                                                                                                                                                                                                                                                                                                                                                               | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                                                                                                                                                                                                                                                                                                         |
+| LIVE panel: web interface on/off, Cloudflare tunnel on/off, URLs                                                                                                                                                                                                                                                                                                                                                | `live on [--tunnel]`, `live off`, `live tunnel on\|off`; read: `live status`                                                                                                                                                                                                                                                                                                                             |
 | Cue dashboard: subscription on/off switch                                                                                                                                                                                                                                                                                                                                                                       | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                                                                                                                                                                                                                                                                                                                 |
 | Cue dashboard: activity log                                                                                                                                                                                                                                                                                                                                                                                     | `cue activity [-a <agent>] [-n <limit>]`                                                                                                                                                                                                                                                                                                                                                                 |
 | Check a data dir is ready to run Cue unattended (CLI first; no UI surface yet)                                                                                                                                                                                                                                                                                                                                  | `cue engine check [--data-dir <path>] [--json]`; `cue engine start --require-ready` refuses on the same report                                                                                                                                                                                                                                                                                           |
@@ -451,72 +452,71 @@ deliberate design constraints, including protected host consent, are noted below
 3. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
    options (what to copy). `create-agent` can approximate it, but there is no
    one-shot duplicate.
-4. **Toggle Live mode** (`isLive`) for the web interface.
-5. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+4. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation, which is why they are last.
-6. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
+5. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
    Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
    agent already has `git` and `gh` in its shell, which is strictly more capable.
    Only the modal-opening is unavailable, not the capability.
-7. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+6. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
    Tab Switcher, Search: Messages). These are interactive by definition; the
    underlying data is reachable through `list`, `session show`, and
    `director-notes history`.
-8. **Auto Run state in a CLI-built support package.** The desktop's Create
+7. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-9. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+8. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-10. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
-    `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
-    legacy `${sessionId}-ai` process id, which misses per-tab processes
-    (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
-    then add `interrupt <agent> [--tab]`.
-11. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+9. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
+   `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
+   legacy `${sessionId}-ai` process id, which misses per-tab processes
+   (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
+   then add `interrupt <agent> [--tab]`.
+10. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
     an element already rendered in a transcript or document
     (`openZoomViewer(element)`), and a transcript element has no address the
     CLI can name. The capability is still reachable: `open-file <image>` opens
     the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
     an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
     viewing; there is no result for an agent to read back.
-12. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+11. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
     document dropdown's height via `useResizableDropdownHeight`, the Document
     Graph preview width via `usePersistedPanelWidth`). Pure view preferences
     with nothing for an agent to act on; the values never reach main, so a
     verb needs a renderer round trip. Double-click on the grip resets them.
-13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
+12. **Log in to a provider account** (Usage Dashboard quota row "Log in",
     palette "Reauthenticate Provider"). The login is an interactive OAuth or
     device-code flow in a PTY, so there is nothing a non-interactive verb could
     complete. The capability is reachable from an agent's shell as
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
-14. **Host LAN and Tailscale access controls** (enable, disable, select a LAN
+13. **Host LAN and Tailscale access controls** (enable, disable, select a LAN
     interface, and inspect access state in Connect another device / Manage access).
     These remain in the protected native host window as a deliberate human-consent
     design choice. Enabling a private listener requires the host owner's review;
     no CLI verbs expose these controls.
-15. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+14. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
     routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
     `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
     reachable over the WS bridge. Every mode IS reachable from the CLI through
     the prompt's wording, which `inferMentionTiming()` reads on every path, so
     this is a convenience gap, not a capability gap. Closing it means threading
     the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
-16. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+15. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
     is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
     Cue modal panel could render its gaps directly; it is CLI first because it
     exists for unattended servers, where nobody opens the desktop.
-17. **Run a DataviewJS block again, or Run once** (Run again on a block whose
+16. **Run a DataviewJS block again, or Run once** (Run again on a block whose
     script timed out, crashed its sandbox, or failed to load; Run once on the
     trust prompt of a block in a vault that is not trusted, and Run on an
     inline `$=` span there). The CLI can trust
@@ -526,7 +526,7 @@ deliberate design constraints, including protected host consent, are noted below
     `dataview query` on a `dataviewjs` block exits 2. The block's source is
     readable with `dataview query <file> --json`; there is no rendered output
     for an agent to read back.
-18. **Pipeline Graph view selection** (the selector's pipeline / agent / All
+17. **Pipeline Graph view selection** (the selector's pipeline / agent / All
     Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
 pipeline` reaches the graph but cannot name what it shows. Pure view state
     on a read-only canvas, with nothing for an agent to read back; the data it
@@ -560,7 +560,7 @@ still missing. Grouped, highest value first:
   logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
-- **Web access:** dashboard URL, QR pairing, persistent token, tunnel.
+- **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
 - **Updates:** check/download/install.
 - **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
 - **Media player:** play/pause/next/prev/seek/volume, queue management.

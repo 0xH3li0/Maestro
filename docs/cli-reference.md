@@ -2010,6 +2010,43 @@ Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 | `-a, --activate`  | Switch to the Custom theme after applying                  | -       |
 | `--json`          | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli live`
+
+Turn the web interface and its Cloudflare tunnel on or off
+
+## `maestro-cli live status`
+
+Show whether the web interface is on, its URL, and the tunnel state
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live on`
+
+Start the web interface on the local network. Rotates the URL token unless Persistent Web Link is on.
+
+| Option     | Description                                                          | Default |
+| ---------- | -------------------------------------------------------------------- | ------- |
+| `--tunnel` | Also start a Cloudflare tunnel for remote access (needs cloudflared) | -       |
+| `--json`   | Output as JSON (for scripting)                                       | -       |
+
+## `maestro-cli live off`
+
+Stop the tunnel and the web interface (maestro-cli keeps working)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live tunnel <state>`
+
+Start (on) or stop (off) the Cloudflare tunnel. "on" needs the web interface on.
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli encore`
 
 List and toggle the optional features on Settings > Plugins
