@@ -494,6 +494,20 @@ export function createGoalPlanDoc(config: GoalRunConfig, runId: string, now: Dat
 }
 
 /**
+ * How much of the Plan is done: checked items over all items, at every depth.
+ * A sub-step counts the same as a top-level step because the human and the
+ * agent both nest steps freely; weighting by depth would make re-nesting an
+ * item change the score. This is the Plan's own measure, separate from the
+ * agent's self-reported `progress` in the front matter.
+ */
+export function planProgress(doc: GoalPlanDoc): { checked: number; total: number } {
+	return {
+		checked: doc.items.filter((item) => item.checked).length,
+		total: doc.items.length,
+	};
+}
+
+/**
  * Read the agent's proposed Plan from the LAST `<!-- maestro:plan -->` ...
  * `<!-- /maestro:plan -->` block in one iteration's output (the block grammar
  * lives in `goalMarkers.ts`, next to the other markers). Returns `null` when

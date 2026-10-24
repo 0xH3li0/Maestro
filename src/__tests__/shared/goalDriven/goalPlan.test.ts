@@ -12,6 +12,7 @@ import {
 	mergeGoalPlan,
 	parseGoalPlanDoc,
 	parsePlanMarker,
+	planProgress,
 	renderGoalPlanDoc,
 } from '../../../shared/goalDriven/goalPlan';
 import type {
@@ -283,6 +284,32 @@ describe('createGoalPlanDoc', () => {
 		const rendered = renderGoalPlanDoc(doc);
 		expect(renderGoalPlanDoc(parseGoalPlanDoc(rendered))).toBe(rendered);
 		expect(parseGoalPlanDoc(rendered).goal).toBe('Ship it\n### Sub\nmore');
+	});
+});
+
+describe('planProgress', () => {
+	it('counts checked items over all items at every depth', () => {
+		const doc = parseGoalPlanDoc(
+			[
+				'## Plan',
+				'',
+				'- [x] Top done <!-- id:a1 by:agent it:1 -->',
+				'  - [ ] Child open <!-- id:a2 by:agent it:1 -->',
+				'    - [x] Grandchild done <!-- id:a3 by:agent it:2 -->',
+				'- [ ] Human step',
+				'',
+			].join('\n')
+		);
+		expect(planProgress(doc)).toEqual({ checked: 2, total: 4 });
+	});
+
+	it('reports zero of zero for an empty plan', () => {
+		const doc = createGoalPlanDoc(
+			{ goal: 'Ship it', exitCriteria: 'Tests pass', maxIterations: null },
+			'run-1',
+			new Date('2026-10-16T12:00:00.000Z')
+		);
+		expect(planProgress(doc)).toEqual({ checked: 0, total: 0 });
 	});
 });
 
