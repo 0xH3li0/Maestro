@@ -29,6 +29,7 @@ import { checkForUpdates } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
+import { startTunnel, stopTunnel, getTunnelState } from '../../web-server/live-mode';
 import { powerManager } from '../../power-manager';
 import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
@@ -423,57 +424,13 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return await isCloudflaredInstalled();
 	});
 
-	ipcMain.handle('tunnel:start', async () => {
-		const webServer = getWebServer();
-		// Get web server URL (includes the security token)
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) {
-			return { success: false, error: 'Web server not running' };
-		}
+	// Start/stop/status share one implementation with `maestro-cli live tunnel`
+	// through the Live Mode service.
+	ipcMain.handle('tunnel:start', async () => startTunnel(getWebServer(), tunnelManager));
 
-		// Parse the URL to get port and token path
-		const parsedUrl = new URL(serverUrl);
-		const port = parseInt(parsedUrl.port, 10);
-		const tokenPath = parsedUrl.pathname; // e.g., "/7d7f7162-614c-43e2-bb8a-8a8123c2f56a"
+	ipcMain.handle('tunnel:stop', async () => stopTunnel(getWebServer(), tunnelManager));
 
-		const result = await tunnelManager.start(port);
-
-		if (result.success && result.url) {
-			// Append the token path to the tunnel URL for security
-			// e.g., "https://xyz.trycloudflare.com" + "/TOKEN" = "https://xyz.trycloudflare.com/TOKEN"
-			const fullTunnelUrl = result.url + tokenPath;
-			return { success: true, url: fullTunnelUrl };
-		}
-
-		return result;
-	});
-
-	ipcMain.handle('tunnel:stop', async () => {
-		await tunnelManager.stop();
-		return { success: true };
-	});
-
-	ipcMain.handle('tunnel:getStatus', async () => {
-		const status = tunnelManager.getStatus();
-		if (!status.isRunning || !status.url) return status;
-
-		// Append the web server's token path so the URL stays usable.
-		// tunnelManager itself is token-agnostic - composition happens here,
-		// matching tunnel:start above.
-		const webServer = getWebServer();
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) return status;
-
-		try {
-			const tokenPath = new URL(serverUrl).pathname;
-			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
-				return { ...status, url: status.url + tokenPath };
-			}
-		} catch {
-			// Malformed server URL - fall back to bare tunnel URL
-		}
-		return status;
-	});
+	ipcMain.handle('tunnel:getStatus', async () => getTunnelState(getWebServer(), tunnelManager));
 
 	// ============ DevTools Handlers ============
 

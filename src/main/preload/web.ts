@@ -11,6 +11,7 @@ import { ipcRenderer } from 'electron';
 import type { AutoRunOwner, OrphanedAutoRun } from '../../shared/autoRunBroadcast';
 import type { BatchRunConfig } from '../../shared/types';
 import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../shared/autoRunRemote';
+import type { LiveModeState } from '../../shared/liveMode';
 
 /**
  * Auto Run state for broadcasting
@@ -181,6 +182,16 @@ export function createLiveApi() {
 			return () => ipcRenderer.removeListener('live:urlChanged', wrappedHandler);
 		},
 		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
+
+		// Fires whenever main starts or stops the web interface or the tunnel,
+		// whoever asked (the LIVE panel or `maestro-cli live`), so every window's
+		// panel follows the real state.
+		onStateChanged: (handler: (state: LiveModeState) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, state: LiveModeState) =>
+				handler(state);
+			ipcRenderer.on('live:stateChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('live:stateChanged', wrappedHandler);
+		},
 	};
 }
 

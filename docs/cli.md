@@ -1265,6 +1265,30 @@ maestro-cli quick-chat recall 2              # bring one back: its agent, tab, a
 maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
 ```
 
+### Web Interface and Remote Access
+
+`maestro-cli live` does what the LIVE panel in the Left Bar header does: it starts the web interface on your local network and, optionally, a Cloudflare tunnel so you can reach it from anywhere.
+
+```bash
+# Start the web interface (prints the local URL)
+maestro-cli live on
+
+# Start the web interface and a Cloudflare tunnel in one step
+maestro-cli live on --tunnel
+
+# Start or stop only the tunnel (the web interface must be on)
+maestro-cli live tunnel on
+maestro-cli live tunnel off
+
+# Show the current state, URLs, and whether cloudflared is installed
+maestro-cli live status --json
+
+# Stop the tunnel and the web interface
+maestro-cli live off
+```
+
+The tunnel needs `cloudflared` on your PATH (macOS: `brew install cloudflared`). `live on` gives the web interface a new URL token each time unless Persistent Web Link is on in Settings. `live on` and `live off` restart the server that `maestro-cli` talks to, so each waits a moment for the app to come back before it reports.
+
 ### Custom Theme Palette
 
 `set-theme` only switches between built-in themes. The `theme` command group manages the user-configurable **Custom** theme palette (the same two settings the in-app Custom Theme Builder edits: `customThemeColors` and `customThemeBaseId`). Activate the result with `set-theme custom`.

@@ -137,6 +137,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
+- **Turning the web interface or its tunnel on or off:** `startLiveServer()`, `stopLiveServer()`, `disableAllLive()`, `turnLiveModeOff()`, `startTunnel()`, `stopTunnel()`, `getLiveModeState()`, `ensureCliServer()` in `src/main/web-server/live-mode.ts`
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
 
