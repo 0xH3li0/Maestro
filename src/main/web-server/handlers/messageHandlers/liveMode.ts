@@ -3,7 +3,7 @@
  *
  * Handles: live_status, live_start, live_stop, live_tunnel_start,
  * live_tunnel_stop. Every one calls the Live Mode service the LIVE panel's IPC
- * handlers call, so the CLI and the panel cannot drift.
+ * handlers call, so the CLI and the panel cannot drift. CLI sockets only.
  *
  * Turning Live on or off REPLACES the server this socket is connected to (the
  * loopback CLI server and the LAN server share one slot). So those two answer
@@ -26,13 +26,27 @@ import {
 } from '../../live-mode';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
-/** Resolve the registered deps, or answer the request with an error. */
+/**
+ * Admit the CLI only, then resolve the registered deps; answer with an error
+ * otherwise. The same server answers LAN and tunnel browsers, and none of them
+ * may start or stop the host's web interface or open it to the internet.
+ */
 function requireDeps(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage,
 	responseType: string
 ): LiveModeDependencies | null {
+	if (!client.cli) {
+		logger.warn(`Refused ${message.type} from non-CLI client ${client.id}`, 'Live');
+		ctx.send(client, {
+			type: responseType,
+			success: false,
+			error: 'Live mode cannot be switched over the web interface',
+			requestId: message.requestId,
+		});
+		return null;
+	}
 	const deps = getLiveModeDependencies();
 	if (!deps) {
 		ctx.send(client, {

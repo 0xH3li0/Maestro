@@ -59,13 +59,16 @@ function makeClient() {
 		}),
 	};
 	return {
-		client: { socket, id: 'c1', connectedAt: 0 } as never,
+		client: { socket, id: 'c1', connectedAt: 0, cli: true } as never,
 		socket,
 		flush: () => flush?.(),
 	};
 }
 
 const deps = { getWebServer: vi.fn(() => ({})) };
+
+/** A socket that presented this boot's CLI secret. */
+const CLI = { id: 'cli', cli: true } as never;
 
 describe('live_* WebSocket handlers', () => {
 	beforeEach(() => {
@@ -76,9 +79,9 @@ describe('live_* WebSocket handlers', () => {
 
 	it('live_status reports the state and whether cloudflared is installed', async () => {
 		const ctx = makeCtx();
-		await handleLiveStatus(ctx, {} as never, { type: 'live_status', requestId: 'r1' });
+		await handleLiveStatus(ctx, CLI, { type: 'live_status', requestId: 'r1' });
 		expect(ctx.send).toHaveBeenCalledWith(
-			{},
+			CLI,
 			expect.objectContaining({
 				type: 'live_status_result',
 				success: true,
@@ -89,12 +92,38 @@ describe('live_* WebSocket handlers', () => {
 		);
 	});
 
+	it.each([
+		['live_status', handleLiveStatus],
+		['live_start', handleLiveStart],
+		['live_stop', handleLiveStop],
+		['live_tunnel_start', handleLiveTunnelStart],
+		['live_tunnel_stop', handleLiveTunnelStop],
+	] as const)('%s refuses a browser client (LAN or tunnel)', async (type, handle) => {
+		const ctx = makeCtx();
+		const browser = { id: 'phone' } as never;
+		await handle(ctx, browser, { type, requestId: 'r1' });
+
+		expect(ctx.send).toHaveBeenCalledWith(
+			browser,
+			expect.objectContaining({
+				type: `${type}_result`,
+				success: false,
+				error: 'Live mode cannot be switched over the web interface',
+			})
+		);
+		expect(getLiveModeDependencies).not.toHaveBeenCalled();
+		expect(startLiveServer).not.toHaveBeenCalled();
+		expect(turnLiveModeOff).not.toHaveBeenCalled();
+		expect(startTunnel).not.toHaveBeenCalled();
+		expect(stopTunnel).not.toHaveBeenCalled();
+	});
+
 	it('answers with an error before startup has registered the deps', async () => {
 		vi.mocked(getLiveModeDependencies).mockReturnValue(null);
 		const ctx = makeCtx();
-		await handleLiveStatus(ctx, {} as never, { type: 'live_status', requestId: 'r1' });
+		await handleLiveStatus(ctx, CLI, { type: 'live_status', requestId: 'r1' });
 		expect(ctx.send).toHaveBeenCalledWith(
-			{},
+			CLI,
 			expect.objectContaining({ type: 'live_status_result', success: false })
 		);
 	});
@@ -151,10 +180,10 @@ describe('live_* WebSocket handlers', () => {
 			vi.mocked(isLiveModeOn).mockReturnValue(false);
 			vi.mocked(stopTunnel).mockResolvedValue({ success: true });
 			const ctx = makeCtx();
-			handleLiveStop(ctx, {} as never, { type: 'live_stop', requestId: 'r1' });
+			handleLiveStop(ctx, CLI, { type: 'live_stop', requestId: 'r1' });
 			await vi.waitFor(() =>
 				expect(ctx.send).toHaveBeenCalledWith(
-					{},
+					CLI,
 					expect.objectContaining({ type: 'live_stop_result', restarting: false })
 				)
 			);
@@ -166,9 +195,9 @@ describe('live_* WebSocket handlers', () => {
 	it('live_tunnel_start relays the service result', async () => {
 		vi.mocked(startTunnel).mockResolvedValue({ success: false, error: 'Live mode is off.' });
 		const ctx = makeCtx();
-		await handleLiveTunnelStart(ctx, {} as never, { type: 'live_tunnel_start', requestId: 'r1' });
+		await handleLiveTunnelStart(ctx, CLI, { type: 'live_tunnel_start', requestId: 'r1' });
 		expect(ctx.send).toHaveBeenCalledWith(
-			{},
+			CLI,
 			expect.objectContaining({
 				type: 'live_tunnel_start_result',
 				success: false,
@@ -181,10 +210,10 @@ describe('live_* WebSocket handlers', () => {
 	it('live_tunnel_stop stops the tunnel and reports the state', async () => {
 		vi.mocked(stopTunnel).mockResolvedValue({ success: true });
 		const ctx = makeCtx();
-		await handleLiveTunnelStop(ctx, {} as never, { type: 'live_tunnel_stop', requestId: 'r1' });
+		await handleLiveTunnelStop(ctx, CLI, { type: 'live_tunnel_stop', requestId: 'r1' });
 		expect(stopTunnel).toHaveBeenCalled();
 		expect(ctx.send).toHaveBeenCalledWith(
-			{},
+			CLI,
 			expect.objectContaining({ type: 'live_tunnel_stop_result', success: true, ...STATE })
 		);
 	});
