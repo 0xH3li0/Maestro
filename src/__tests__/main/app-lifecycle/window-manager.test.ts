@@ -2174,6 +2174,34 @@ describe('app-lifecycle/window-manager', () => {
 					vi.advanceTimersByTime(1000);
 					expect(mockWebContents.reload).not.toHaveBeenCalled();
 				});
+
+				// MAESTRO-164/165: a renderer that cannot launch dies on every reload.
+				// The uncapped reload looped forever, one fatal Sentry event per pass.
+				it('stops reloading a renderer that keeps failing to launch', async () => {
+					const { MAX_RENDERER_RELOADS } =
+						await import('../../../main/app-lifecycle/window-crash-handlers');
+					await fireRenderProcessGone('launch-failed', 1002, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone')!;
+					for (let i = 0; i < 10; i++) {
+						vi.advanceTimersByTime(1000);
+						handler({}, { reason: 'launch-failed', exitCode: 1002 });
+					}
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(MAX_RENDERER_RELOADS);
+				});
+
+				it('keeps reloading crashes that are spread out in time', async () => {
+					const { MAX_RENDERER_RELOADS, RENDERER_RELOAD_WINDOW_MS } =
+						await import('../../../main/app-lifecycle/window-crash-handlers');
+					await fireRenderProcessGone('crashed', 139, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone')!;
+					for (let i = 0; i < MAX_RENDERER_RELOADS + 2; i++) {
+						vi.advanceTimersByTime(RENDERER_RELOAD_WINDOW_MS);
+						handler({}, { reason: 'crashed', exitCode: 139 });
+					}
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(MAX_RENDERER_RELOADS + 3);
+				});
 			});
 
 			it('reports Sentry for a genuine renderer crash', async () => {
@@ -2183,6 +2211,28 @@ describe('app-lifecycle/window-manager', () => {
 						'Renderer process gone: crashed',
 						expect.objectContaining({ level: 'fatal' })
 					)
+				);
+			});
+
+			// MAESTRO-164/165: report a crash loop once, not once per failed launch.
+			it('reports a crash loop once instead of every failed launch', async () => {
+				const { MAX_RENDERER_RELOADS } =
+					await import('../../../main/app-lifecycle/window-crash-handlers');
+				await fireRenderProcessGone('launch-failed', 1002, () => false);
+				// Let the lazily imported Sentry module load before the burst.
+				await vi.waitFor(() => expect(sentryCaptureMessageMock).toHaveBeenCalled());
+				const handler = webContentsEventHandlers.get('render-process-gone')!;
+				for (let i = 0; i < 10; i++) handler({}, { reason: 'launch-failed', exitCode: 1002 });
+
+				const messagesFor = (text: string) =>
+					(sentryCaptureMessageMock.mock.calls as unknown[][]).filter(([m]) => m === text);
+				await vi.waitFor(() =>
+					expect(messagesFor('Renderer crash loop, stopped reloading: launch-failed')).toHaveLength(
+						1
+					)
+				);
+				expect(messagesFor('Renderer process gone: launch-failed')).toHaveLength(
+					MAX_RENDERER_RELOADS
 				);
 			});
 		});
