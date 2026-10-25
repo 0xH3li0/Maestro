@@ -42,6 +42,7 @@ import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
+import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
@@ -422,13 +423,17 @@ export function registerPersistenceHandlers(
 		// no matter who writes: a renderer that has not finished hydrating (its
 		// copy is still zeroed), a second window with a staler copy, or the web
 		// client. See src/shared/usagePeaks.ts for the incidents this prevents.
+		// `autoRunStats` (Conductor time, runs, badges) is the same shape of
+		// invariant and was lost the same way - see src/shared/autoRunStatsMerge.ts.
 		const toPersist =
 			key === 'usageStats'
 				? mergeUsagePeaks(
 						settingsStore.get('usageStats') as Partial<UsagePeaks> | undefined,
 						value as Partial<UsagePeaks>
 					)
-				: value;
+				: key === 'autoRunStats'
+					? mergeAutoRunStats(settingsStore.get('autoRunStats'), value)
+					: value;
 		try {
 			settingsStore.set(key, toPersist);
 		} catch (err) {

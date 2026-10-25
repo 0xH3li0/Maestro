@@ -73,6 +73,40 @@ function restoreClosedTabHistory(session: Session): Session['unifiedClosedTabHis
 	);
 }
 
+/** The session fields every tab helper iterates with `.map` / `for...of`. */
+const TAB_COLLECTION_FIELDS = [
+	'aiTabs',
+	'filePreviewTabs',
+	'browserTabs',
+	'terminalTabs',
+	'unifiedTabOrder',
+	'tabGroups',
+] as const;
+
+/**
+ * Replace any tab collection that was persisted as something other than an
+ * array with an empty one. `undefined` / `null` are left alone: every reader
+ * already defaults those with `?? []`. A truthy non-array (an object) is the
+ * case that defeats that default, so `(session.tabGroups || []).map` throws.
+ *
+ * It has to run before anything else in restoreSession and again on its error
+ * fallback: when restoration threw on such a field, the fallback used to hand
+ * the raw session to the store, and the tab strip then threw on every render,
+ * so the app crashed on each launch (MAESTRO-16B).
+ */
+function withArrayTabCollections(session: Session): Session {
+	let repaired: Session | null = null;
+	for (const field of TAB_COLLECTION_FIELDS) {
+		const value: unknown = session[field];
+		if (value == null || Array.isArray(value)) continue;
+		logger.warn(
+			`[restoreSession] Session ${session.id} has a non-array ${field}; resetting it to []`
+		);
+		repaired = { ...(repaired ?? session), [field]: [] };
+	}
+	return repaired ?? session;
+}
+
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
 	const ids = new Set<string>();
@@ -450,7 +484,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// A tab collection persisted as a non-array would throw in every helper
+			// below and then in the tab strip, so coerce it before anything reads it.
+			session = withArrayTabCollections(session);
 			session = restoreClientSessionView(session);
+
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -869,7 +907,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
-				...session,
+				...withArrayTabCollections(session),
 				aiPid: -1,
 				terminalPid: 0,
 				state: 'error' as SessionState,
