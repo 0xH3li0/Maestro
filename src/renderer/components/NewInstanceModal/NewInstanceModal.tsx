@@ -72,6 +72,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 
 /**
  * NewInstanceModal - the New Agent form.
@@ -302,6 +303,18 @@ export function NewInstanceModal({
 		// (a group default that names no provider) fills the fields the form does
 		// not keep per provider, and its env vars, resilience flags and SSH remote
 		// for every provider, so they hold whichever one the user picks.
+		if (source && !sparse && source.toolType && source.name && source.cwd) {
+			source = {
+				...source,
+				...buildDuplicateAgentInput({
+					...source,
+					toolType: source.toolType,
+					name: source.name,
+					cwd: source.cwd,
+				}),
+				toolType: source.toolType,
+			};
+		}
 		const seedProvider = source?.toolType;
 		try {
 			const detectedAgents = await window.maestro.agents.detect(sshRemoteId);
@@ -437,7 +450,7 @@ export function NewInstanceModal({
 				setGroupPeerAccess(source.groupPeerAccess && { ...source.groupPeerAccess });
 				setWorktreePeerAccess(source.worktreePeerAccess && { ...source.worktreePeerAccess });
 				if (source.name !== undefined) {
-					setInstanceName(`${source.name} (Copy)`);
+					setInstanceName(sparse ? `${source.name} (Copy)` : source.name);
 				}
 				setNudgeMessage(source.nudgeMessage || '');
 				setNewSessionMessage(source.newSessionMessage || '');

@@ -23,6 +23,7 @@ import {
 	getTabDisplayName as libGetTabDisplayName,
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
@@ -39,7 +40,12 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
-import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
+import {
+	DEFAULT_BROWSER_TAB_URL,
+	getBrowserTabTitle,
+	isEphemeralBrowserTab,
+	rehydrateBrowserTab,
+} from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
 import { codifyQueuedTurnSettings, resolveTabProvider } from '../providerTabSessions';
 import {
@@ -520,9 +526,6 @@ export function extractQuickTabName(message: string): string | null {
 
 	return null;
 }
-
-// Maximum number of closed tabs to keep in history
-const MAX_CLOSED_TAB_HISTORY = 25;
 
 /**
  * Check if a tab has draft content (unsent input or staged images).
@@ -2225,13 +2228,20 @@ export function reopenClosedAiTabById(
 /**
  * Reopen the most recently closed tab into the standalone tab strip.
  *
+ * `index` picks a deeper entry of the stack (`maestro-cli tab reopen --index`);
+ * the default 0 is the Cmd+Shift+T head. An index past the end returns null.
+ *
  * Tiling-aware callers should use `reopenClosedTabWithTiling` in panelLayout.ts,
  * which layers the tile restore on top of this (the dependency only works that
  * way round - panelLayout imports from this module, never the reverse).
  */
-export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTabResult | null {
+export function reopenUnifiedClosedTab(
+	session: Session,
+	index = 0
+): ReopenUnifiedClosedTabResult | null {
 	// Check if there's anything in the unified history
 	if (!session.unifiedClosedTabHistory || session.unifiedClosedTabHistory.length === 0) {
+		if (index !== 0) return null;
 		// Fall back to legacy closedTabHistory for backwards compatibility
 		const legacyResult = reopenClosedTab(session);
 		if (legacyResult) {
@@ -2245,8 +2255,11 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 		return null;
 	}
 
-	// Pop the most recently closed tab from unified history
-	const [closedEntry, ...remainingHistory] = session.unifiedClosedTabHistory;
+	// Take the chosen entry (the most recently closed one by default) off the stack
+	const history = session.unifiedClosedTabHistory;
+	if (!Number.isInteger(index) || index < 0 || index >= history.length) return null;
+	const closedEntry = history[index];
+	const remainingHistory = [...history.slice(0, index), ...history.slice(index + 1)];
 
 	if (closedEntry.type === 'ai') {
 		// Restoring an AI tab. The shared helper handles orphan re-attach and
@@ -2321,16 +2334,22 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 		};
 	} else if (closedEntry.type === 'browser') {
 		const closedBrowserTab = closedEntry.tab as BrowserTab;
-		const restoredTab: BrowserTab = {
-			...closedBrowserTab,
-			id: generateId(),
-			url: closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
-			title: getBrowserTabTitle(
-				closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
-				closedBrowserTab.title
-			),
-			webContentsId: undefined,
-		};
+		// A durable tab comes back through the same rehydration a restart uses, so
+		// an entry stored by an earlier run gets a valid partition and clean page
+		// state. An incognito tab (closed in this run; it is never stored) keeps
+		// its in-memory partition rather than being moved to the durable one.
+		const restoredTab: BrowserTab = isEphemeralBrowserTab(closedBrowserTab)
+			? {
+					...closedBrowserTab,
+					id: generateId(),
+					url: closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
+					title: getBrowserTabTitle(
+						closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
+						closedBrowserTab.title
+					),
+					webContentsId: undefined,
+				}
+			: { ...rehydrateBrowserTab(closedBrowserTab, session.id), id: generateId() };
 
 		const updatedBrowserTabs = [...(session.browserTabs || []), restoredTab];
 		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);

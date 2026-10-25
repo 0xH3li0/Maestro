@@ -273,6 +273,10 @@ export interface TemplateContext {
 	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
+		pluginId?: string;
+		pluginTopic?: string;
+		pluginEventId?: string;
+		pluginMetadata?: string;
 		eventType?: string;
 		eventTimestamp?: string;
 		triggerName?: string;
@@ -402,6 +406,14 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_ID}}', description: 'Authenticated plugin ID', cueOnly: true },
+	{
+		variable: '{{CUE_PLUGIN_TOPIC}}',
+		description: 'Authenticated plugin event topic',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_PLUGIN_EVENT_ID}}', description: 'Stable plugin event ID', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_METADATA}}', description: 'Opaque plugin event JSON', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
 		variable: '{{CUE_GH_ASSIGNEES}}',
@@ -618,7 +630,7 @@ const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'
  *
  * In: GitHub titles, bodies, comments and the head branch of a pull request
  * (the author of a fork names it), the content of a watched task file, and
- * everything a webhook sender controls.
+ * everything a webhook sender controls, and plugin-provided event metadata.
  *
  * Out, on purpose: labels and the base branch (set by people with write access
  * to the repository), authors and URLs (a fixed character set), file paths (a
@@ -628,6 +640,12 @@ const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'
  * would be flagged constantly).
  */
 export const CUE_UNTRUSTED_TEMPLATE_VARIABLES: readonly CueUntrustedTemplateVariable[] = [
+	{
+		variable: 'CUE_PLUGIN_METADATA',
+		contextKey: 'pluginMetadata',
+		events: ['plugin.event'],
+		description: 'plugin event metadata',
+	},
 	{
 		variable: 'CUE_GH_TITLE',
 		contextKey: 'ghTitle',
@@ -859,6 +877,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		SYSTEM_ONE_BUDGET: context.systemOne?.budget || '',
 
 		// Cue variables
+		CUE_PLUGIN_ID: context.cue?.pluginId ?? '',
+		CUE_PLUGIN_TOPIC: context.cue?.pluginTopic ?? '',
+		CUE_PLUGIN_EVENT_ID: context.cue?.pluginEventId ?? '',
+		CUE_PLUGIN_METADATA: context.cue?.pluginMetadata ?? '',
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
 		CUE_EVENT_TIMESTAMP: context.cue?.eventTimestamp || '',
 		CUE_TRIGGER_NAME: context.cue?.triggerName || '',

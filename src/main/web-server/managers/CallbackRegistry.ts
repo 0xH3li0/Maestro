@@ -14,7 +14,9 @@ import type {
 import { logger } from '../../utils/logger';
 import type { CreateGistResult } from '../../../shared/gitUtils';
 import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -31,6 +33,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	ClosedTabCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -136,9 +139,7 @@ import type {
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
 	GroupChatState,
-	MergeContextCallback,
-	TransferContextCallback,
-	SummarizeContextCallback,
+	TabContextOpCallback,
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
@@ -182,6 +183,11 @@ import type {
 	CueInjectionScreenSetting,
 	CueInjectionScreenWriteResult,
 } from '../../../shared/cue/injection-screen';
+import type {
+	ClosedTabCommandRequest,
+	ClosedTabCommandResult,
+} from '../../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -230,6 +236,7 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	closedTabCommand: ClosedTabCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
@@ -303,9 +310,7 @@ export interface WebServerCallbacks {
 	archiveGroupChat: ArchiveGroupChatCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
-	mergeContext: MergeContextCallback | null;
-	transferContext: TransferContextCallback | null;
-	summarizeContext: SummarizeContextCallback | null;
+	tabContextOp: TabContextOpCallback | null;
 	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
@@ -351,6 +356,7 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		closedTabCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
@@ -422,9 +428,7 @@ export class CallbackRegistry {
 		archiveGroupChat: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
-		mergeContext: null,
-		transferContext: null,
-		summarizeContext: null,
+		tabContextOp: null,
 		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
@@ -485,7 +489,8 @@ export class CallbackRegistry {
 		force?: boolean,
 		images?: string[],
 		background?: boolean,
-		consultChain?: ConsultChain
+		consultChain?: ConsultChain,
+		mentionRouting?: MentionRouting
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -496,12 +501,21 @@ export class CallbackRegistry {
 			force,
 			images,
 			background,
-			consultChain
+			consultChain,
+			mentionRouting
 		);
 	}
 
-	async interruptSession(sessionId: string): Promise<boolean> {
-		return this.callbacks.interruptSession?.(sessionId) ?? false;
+	async interruptSession(sessionId: string, tabId?: string): Promise<InterruptTurnResult> {
+		if (!this.callbacks.interruptSession) {
+			return interruptTurnFailure(
+				sessionId,
+				tabId ?? null,
+				'RENDERER_UNAVAILABLE',
+				'Session interrupt service not configured'
+			);
+		}
+		return this.callbacks.interruptSession(sessionId, tabId);
 	}
 
 	async switchMode(
@@ -557,6 +571,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Snooze is not configured' };
 		}
 		return this.callbacks.snoozeCommand(request);
+	}
+
+	async closedTabCommand(request: ClosedTabCommandRequest): Promise<ClosedTabCommandResult> {
+		if (!this.callbacks.closedTabCommand) {
+			return { success: false, error: 'Reopening closed tabs is not configured' };
+		}
+		return this.callbacks.closedTabCommand(request);
 	}
 
 	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
@@ -684,10 +705,18 @@ export class CallbackRegistry {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		consultChain?: ConsultChain
+		consultChain?: ConsultChain,
+		mentionRouting?: MentionRouting
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, consultChain);
+		return this.callbacks.newAITabWithPrompt(
+			sessionId,
+			prompt,
+			background,
+			hidden,
+			consultChain,
+			mentionRouting
+		);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -710,7 +739,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		consultChain?: ConsultChain
+		consultChain?: ConsultChain,
+		mentionRouting?: MentionRouting
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -721,7 +751,8 @@ export class CallbackRegistry {
 			images,
 			background,
 			held,
-			consultChain
+			consultChain,
+			mentionRouting
 		);
 	}
 
@@ -1106,19 +1137,11 @@ export class CallbackRegistry {
 		return this.callbacks.steerGroupChat(chatId, request);
 	}
 
-	async mergeContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
-		if (!this.callbacks.mergeContext) return false;
-		return this.callbacks.mergeContext(sourceSessionId, targetSessionId);
-	}
-
-	async transferContext(sourceSessionId: string, targetSessionId: string): Promise<boolean> {
-		if (!this.callbacks.transferContext) return false;
-		return this.callbacks.transferContext(sourceSessionId, targetSessionId);
-	}
-
-	async summarizeContext(sessionId: string): Promise<boolean> {
-		if (!this.callbacks.summarizeContext) return false;
-		return this.callbacks.summarizeContext(sessionId);
+	async tabContextOp(request: TabContextOpRequest): Promise<TabContextOpResult> {
+		if (!this.callbacks.tabContextOp) {
+			return { success: false, error: 'Context operations not configured' };
+		}
+		return this.callbacks.tabContextOp(request);
 	}
 
 	async createGist(
@@ -1380,6 +1403,10 @@ export class CallbackRegistry {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbacks.snoozeCommand = callback;
+	}
+
+	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
+		this.callbacks.closedTabCommand = callback;
 	}
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
@@ -1662,16 +1689,8 @@ export class CallbackRegistry {
 		this.callbacks.steerGroupChat = callback;
 	}
 
-	setMergeContextCallback(callback: MergeContextCallback): void {
-		this.callbacks.mergeContext = callback;
-	}
-
-	setTransferContextCallback(callback: TransferContextCallback): void {
-		this.callbacks.transferContext = callback;
-	}
-
-	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
-		this.callbacks.summarizeContext = callback;
+	setTabContextOpCallback(callback: TabContextOpCallback): void {
+		this.callbacks.tabContextOp = callback;
 	}
 
 	setCreateGistCallback(callback: CreateGistCallback): void {

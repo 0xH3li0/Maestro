@@ -734,7 +734,7 @@ export function AgentConfigPanel({
 								type="text"
 								value={maestroPPath}
 								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
-								onBlur={onMaestroPPathBlur}
+								onBlur={() => onMaestroPPathBlur?.()}
 								onClick={(e) => e.stopPropagation()}
 								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
 								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -802,7 +802,7 @@ export function AgentConfigPanel({
 						type="text"
 						value={readOpenCodeAgentArg(customArgs)}
 						onChange={(e) => onCustomArgsChange(writeOpenCodeAgentArg(customArgs, e.target.value))}
-						onBlur={onCustomArgsBlur}
+						onBlur={() => onCustomArgsBlur()}
 						onClick={(e) => e.stopPropagation()}
 						placeholder="build"
 						className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -832,7 +832,10 @@ export function AgentConfigPanel({
 						type="text"
 						value={customArgs}
 						onChange={(e) => onCustomArgsChange(e.target.value)}
-						onBlur={onCustomArgsBlur}
+						// Called with no arguments, never handed the FocusEvent: a parent that
+						// shares one persist function across these blur props (Director's Notes)
+						// would store the event and fail the settings IPC write (MAESTRO-11C).
+						onBlur={() => onCustomArgsBlur()}
 						onClick={(e) => e.stopPropagation()}
 						placeholder="--flag value --another-flag"
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"

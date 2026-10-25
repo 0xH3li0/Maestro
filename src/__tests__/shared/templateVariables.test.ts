@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+	findCueUntrustedTemplateVariables,
+	cueEventCarriesUntrustedText,
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
 	substituteTemplateVariables,
@@ -35,6 +37,23 @@ function createTestContext(overrides: Partial<TemplateContext> = {}): TemplateCo
 		...overrides,
 	};
 }
+
+describe('plugin Cue metadata trust boundary', () => {
+	it('classifies substituted metadata as outside text even in lower-case command templates', () => {
+		const command = 'process --payload "{{cue_plugin_metadata}}"';
+		expect(findCueUntrustedTemplateVariables([command])).toEqual([
+			expect.objectContaining({
+				variable: 'CUE_PLUGIN_METADATA',
+				contextKey: 'pluginMetadata',
+				events: ['plugin.event'],
+			}),
+		]);
+		expect(cueEventCarriesUntrustedText('plugin.event')).toBe(true);
+		expect(
+			findCueUntrustedTemplateVariables(['{{CUE_PLUGIN_ID}} {{CUE_PLUGIN_EVENT_ID}}'])
+		).toEqual([]);
+	});
+});
 
 describe('TEMPLATE_VARIABLES constant', () => {
 	it('should export an array', () => {

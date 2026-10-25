@@ -50,12 +50,62 @@ import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { interruptConsultHolds } from '../../services/crossAgentConsultHold';
+import { startReopenedTabContentLoader } from '../../services/reopenedTabContent';
+import { closedTabHistoryContext, projectClosedTabHistory } from '../../../shared/closedTabHistory';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	mergeDeferredItems,
 } from '../../../shared/deferredSessionContent';
 
 const CONNECTION_RECONCILE_RETRY_MS = 1000;
+
+/**
+ * The closed-tab stack a restored agent starts with: the stored entries in their
+ * stored form, so the first flush writes back exactly what main holds. Missing or
+ * malformed data from an older store yields an empty stack.
+ */
+function restoreClosedTabHistory(session: Session): Session['unifiedClosedTabHistory'] {
+	return (
+		projectClosedTabHistory<Session['unifiedClosedTabHistory'][number]>(
+			session.unifiedClosedTabHistory,
+			closedTabHistoryContext(session)
+		) ?? []
+	);
+}
+
+/** The session fields every tab helper iterates with `.map` / `for...of`. */
+const TAB_COLLECTION_FIELDS = [
+	'aiTabs',
+	'filePreviewTabs',
+	'browserTabs',
+	'terminalTabs',
+	'unifiedTabOrder',
+	'tabGroups',
+] as const;
+
+/**
+ * Replace any tab collection that was persisted as something other than an
+ * array with an empty one. `undefined` / `null` are left alone: every reader
+ * already defaults those with `?? []`. A truthy non-array (an object) is the
+ * case that defeats that default, so `(session.tabGroups || []).map` throws.
+ *
+ * It has to run before anything else in restoreSession and again on its error
+ * fallback: when restoration threw on such a field, the fallback used to hand
+ * the raw session to the store, and the tab strip then threw on every render,
+ * so the app crashed on each launch (MAESTRO-16B).
+ */
+function withArrayTabCollections(session: Session): Session {
+	let repaired: Session | null = null;
+	for (const field of TAB_COLLECTION_FIELDS) {
+		const value: unknown = session[field];
+		if (value == null || Array.isArray(value)) continue;
+		logger.warn(
+			`[restoreSession] Session ${session.id} has a non-array ${field}; resetting it to []`
+		);
+		repaired = { ...(repaired ?? session), [field]: [] };
+	}
+	return repaired ?? session;
+}
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -374,6 +424,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		return unsubscribe;
 	}, [loadActiveDeferredContent]);
 
+	// A closed tab restored from a stored entry comes back without its transcript
+	// or file content (the entry is a pointer); read it back once it is visible.
+	// The web-desktop equivalent is the deferred-content loader above.
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return startReopenedTabContentLoader();
+	}, []);
+
 	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
 		deferredLoadsFailed.current.clear();
 		if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
@@ -429,7 +487,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// A tab collection persisted as a non-array would throw in every helper
+			// below and then in the tab strip, so coerce it before anything reads it.
+			session = withArrayTabCollections(session);
 			session = restoreClientSessionView(session);
+
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -534,7 +596,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					browserTabs: [],
 					activeBrowserTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
-					unifiedClosedTabHistory: [],
+					// Keep the stored closed tabs so Cmd+Shift+T can bring back what the
+					// corrupted record lost.
+					unifiedClosedTabHistory: restoreClosedTabHistory(session),
 				};
 			}
 
@@ -839,13 +903,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					agentError: isLimitPause ? correctedSession.agentError : undefined,
 					agentErrorPaused: isLimitPause ? true : false,
 					closedTabHistory: [],
+					unifiedClosedTabHistory: restoreClosedTabHistory(correctedSession),
 					unifiedTabOrder: repairedUnifiedTabOrder,
 				})
 			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
-				...session,
+				...withArrayTabCollections(session),
 				aiPid: -1,
 				terminalPid: 0,
 				state: 'error' as SessionState,
