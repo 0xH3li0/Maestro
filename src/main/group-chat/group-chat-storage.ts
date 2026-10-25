@@ -256,7 +256,16 @@ export async function loadGroupChat(id: string): Promise<GroupChat | null> {
 			// Empty file treated as non-existent
 			return null;
 		}
-		return JSON.parse(content) as GroupChat;
+		const chat = JSON.parse(content) as GroupChat;
+		// Both paths are a function of the id. Metadata that lacks them used to
+		// hand `undefined` to every reader, so the chat could never open again
+		// (MAESTRO-170/171). Fill them in; the next metadata write keeps them.
+		return {
+			...chat,
+			logPath: typeof chat.logPath === 'string' && chat.logPath ? chat.logPath : getLogPath(id),
+			imagesDir:
+				typeof chat.imagesDir === 'string' && chat.imagesDir ? chat.imagesDir : getImagesDir(id),
+		};
 	} catch (error: unknown) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 			return null;

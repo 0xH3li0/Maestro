@@ -241,6 +241,21 @@ describe('group-chat-storage', () => {
 			// Clean up
 			await deleteGroupChat(created.id);
 		});
+
+		// MAESTRO-170/171: metadata without the paths crashed every reader.
+		it('derives the paths when metadata lacks them', async () => {
+			const created = await createGroupChat('No Paths', 'claude-code');
+			const { logPath: _logPath, imagesDir: _imagesDir, ...rest } = created;
+			const metadataPath = path.join(path.dirname(created.logPath), 'metadata.json');
+			await fs.writeFile(metadataPath, JSON.stringify(rest), 'utf-8');
+
+			const loaded = await loadGroupChat(created.id);
+
+			expect(loaded!.logPath).toBe(created.logPath);
+			expect(loaded!.imagesDir).toBe(created.imagesDir);
+
+			await deleteGroupChat(created.id);
+		});
 	});
 
 	// ===========================================================================
