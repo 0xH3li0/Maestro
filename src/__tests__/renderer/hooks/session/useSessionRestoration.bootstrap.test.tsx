@@ -16,11 +16,15 @@ import { createMockAITab } from '../../../helpers/mockTab';
 import type { SessionTranscriptPatch } from '../../../../shared/sessionTranscript';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../../shared/webClientConfig';
 
-vi.mock('electron', () => ({
-	ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
-	app: { getPath: vi.fn(() => '/mock/user/data'), on: vi.fn() },
-	BrowserWindow: { getAllWindows: vi.fn(() => []) },
-}));
+vi.mock('electron', async () => {
+	const { join } = await import('node:path');
+	const { tmpdir } = await import('node:os');
+	return {
+		ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
+		app: { getPath: vi.fn(() => join(tmpdir(), 'maestro-bootstrap-test')), on: vi.fn() },
+		BrowserWindow: { getAllWindows: vi.fn(() => []) },
+	};
+});
 vi.mock('../../../../main/plugins/plugin-media-tools', () => ({
 	getMediaToolStatus: vi.fn(),
 	resolveMediaRuntime: vi.fn(),
