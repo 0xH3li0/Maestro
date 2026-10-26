@@ -2045,6 +2045,28 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 		}
 	);
 
+	it.each(['proof', 'policy', 'rights'])(
+		'stops before fetching content when %s is revoked during EXAMINE',
+		async (mode) => {
+			const f = mailFixture();
+			try {
+				f.onCommand((command) => {
+					if (!command.includes(' EXAMINE ')) return;
+					if (mode === 'proof') f.identity.revoke(f.run);
+					if (mode === 'policy') f.save();
+					if (mode === 'rights') f.setCaps(f.caps().filter((c) => c.capability !== 'net:tls'));
+				});
+				const result = await f.call('mail-read-body', { reference });
+				expect(result.ok === false || result.result?.ok === false).toBe(true);
+				expect(f.commands.join('\n')).not.toContain(' UID FETCH ');
+				expect(JSON.stringify(result)).not.toContain('synthetic body');
+				expect(f.sockets.every((s) => s.destroyed)).toBe(true);
+			} finally {
+				await f.cleanup();
+			}
+		}
+	);
+
 	it('keeps another destructive tool behind its existing risk check', async () => {
 		const f = mailFixture();
 		try {

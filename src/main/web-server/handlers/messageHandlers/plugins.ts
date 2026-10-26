@@ -199,9 +199,11 @@ export async function handlePluginsSendAgent(
 /**
  * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
  * then invoke it via the broker. The toolId MUST be a declared `tools`
- * contribution (never an arbitrary command handler), and risk is rated on the
- * model's ARGUMENTS via the shared Pianola gate. Only the trusted, authenticated
- * Relay reply transport is exempt from the topic ceiling. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
+ * contribution (never an arbitrary command handler). Ordinary calls use the
+ * shared Pianola gate; only the authenticated pinned Relay reply transport has
+ * the conversational topic exception. Known Relay reads instead execute fixed
+ * Host code under native identity and domain permissions. Tool failures return
+ * `{ ok:false, error }`; topic blocks return `{ blocked:true }`.
  */
 export async function handlePluginsCallTool(
 	ctx: MessageHandlerContext,

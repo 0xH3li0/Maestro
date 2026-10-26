@@ -1179,7 +1179,8 @@ export class PluginManager {
 			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
 			await this.deps.prepareToolRecordActive(record!);
 			assertActive();
-			// The sandbox owns bounded args snapshotting and exact-child handle cleanup.
+			// Ordinary tools retain sandbox snapshotting and child-owned cleanup.
+			// The six known reads use the Host's bounded executor and invocation lease.
 			let result: unknown;
 			if (mailOperation) {
 				invocationId = identity.issueInvocation(context, pluginId, {
