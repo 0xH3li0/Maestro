@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { VaultIndex } from '../../../main/dataview/vault-index';
+import { decodeSandboxSnapshot } from '../../../shared/dataview';
 import { createLocalVaultFs } from '../../../main/dataview/vault-fs';
 import {
 	DATAVIEW_JS_LIST_ITEM_BYTES,
@@ -54,5 +55,25 @@ describe('VaultIndex.jsSnapshot size bound', () => {
 		expect(second).not.toBe(first);
 		expect(listsOf(second, 'Small.md')).toHaveLength(4);
 		expect(second.omittedListPages).toBe(1);
+	});
+
+	it('encodes the snapshot once per index state, and again after a change', async () => {
+		const first = index.jsSnapshotPayload();
+		expect(index.jsSnapshotPayload()).toBe(first);
+		const payload = await first;
+		expect(payload.revision).toBe(index.revision);
+		expect(payload.omittedListPages).toBe(1);
+		expect(
+			decodeSandboxSnapshot(payload)
+				.pages.map((p) => p.path)
+				.sort()
+		).toEqual(['Huge.md', 'Small.md']);
+
+		fs.writeFileSync(path.join(tempDir, 'Small.md'), bullets(5));
+		await index.applyChangedPaths(['Small.md']);
+		const next = await index.jsSnapshotPayload();
+		expect(next).not.toBe(payload);
+		const small = decodeSandboxSnapshot(next).pages.find((p) => p.path === 'Small.md')!;
+		expect(small.data.lists as unknown[]).toHaveLength(5);
 	});
 });

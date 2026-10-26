@@ -14,6 +14,7 @@ import {
 	groupChatEmitters,
 	isExpectedGroomingFailure,
 	resolveParticipantSshRemoteConfig,
+	resolveParticipantWorkspaceTrust,
 } from '../../../../main/ipc/handlers/groupChat';
 import {
 	resetGroupChatQueueForTests,
@@ -1476,6 +1477,7 @@ describe('groupChat IPC handlers', () => {
 				.mock.calls.filter(([channel]) => channel === 'remote:notifyToast');
 
 		beforeEach(() => {
+			mockStoredSessions.length = 0;
 			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(chat);
 			vi.mocked(groupChatStorage.updateParticipant).mockResolvedValue(chat as never);
 			vi.mocked(groupChatLog.readLog).mockResolvedValue([
@@ -1501,6 +1503,27 @@ describe('groupChat IPC handlers', () => {
 				contextUsage: 0,
 			});
 		});
+
+		it.each([
+			{ utilityAgentId: null, cwd: '/proj', agentType: 'claude-code', trusted: true },
+			{ utilityAgentId: null, cwd: '/elsewhere', agentType: 'claude-code', trusted: false },
+			{ utilityAgentId: 'codex', cwd: '/proj', agentType: 'codex', trusted: true },
+			{ utilityAgentId: 'codex', cwd: '/elsewhere', agentType: 'codex', trusted: false },
+		])(
+			'bounds folder trust to the participant directory with $utilityAgentId at $cwd',
+			async ({ utilityAgentId, cwd, agentType, trusted }) => {
+				mockStoredSessions.push({ id: 'backend', name: 'Backend', cwd: '/proj' });
+				mockUtilitySettings.set('utilityAgentId', utilityAgentId);
+
+				await handlers.get('groupChat:resetParticipantContext')!({} as any, 'gc-1', 'Backend', cwd);
+
+				expect(groomContext).toHaveBeenCalledWith(
+					expect.objectContaining({ agentType, acceptWorkspaceTrust: trusted }),
+					mockProcessManager,
+					mockAgentDetector
+				);
+			}
+		);
 
 		it('summarizes on the utility provider with chat history and no participant native session', async () => {
 			mockUtilitySettings.set('utilityAgentId', 'codex');
@@ -1809,5 +1832,29 @@ describe('resolveParticipantSshRemoteConfig', () => {
 		});
 
 		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
+	});
+});
+
+describe('resolveParticipantWorkspaceTrust', () => {
+	// The reset summary can be the first TUI spawn in the participant's folder,
+	// where claude's trust prompt defaults to "No, exit" (#1872).
+	beforeEach(() => {
+		mockStoredSessions.length = 0;
+	});
+
+	it("accepts trust in the source agent's own directory", () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend', cwd: '/projects/api' });
+
+		expect(resolveParticipantWorkspaceTrust('Backend', '/projects/api')).toBe(true);
+	});
+
+	it('refuses trust in any other directory', () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend', cwd: '/projects/api' });
+
+		expect(resolveParticipantWorkspaceTrust('Backend', '/Users/me')).toBe(false);
+	});
+
+	it('refuses trust when the source agent is gone', () => {
+		expect(resolveParticipantWorkspaceTrust('Backend', '/projects/api')).toBe(false);
 	});
 });

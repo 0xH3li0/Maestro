@@ -101,6 +101,7 @@ import {
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
+import { isAgentOwnWorkingDirectory } from '../../agents/claudeSpawnCore';
 import { groomContext, GroomingAgentError } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { getSessionsStore, getSettingsStore, getAgentConfigsStore } from '../../stores';
@@ -194,6 +195,16 @@ export function resolveParticipantClaudeTokenSource(
 	const match = findParticipantSourceSession(participantName);
 	// StoredSession keeps these fields behind its index signature.
 	return match ? getClaudeTokenSourceFields(match as ClaudeTokenSourceFields) : undefined;
+}
+
+/**
+ * Whether a participant's context summary may accept claude's folder-trust
+ * prompt: only when it runs in the source agent's own directory (#1872), the
+ * same rule the router applies to the participant's turns. The summary can be
+ * the first TUI spawn there, and the prompt defaults to "No, exit".
+ */
+export function resolveParticipantWorkspaceTrust(participantName: string, cwd: string): boolean {
+	return isAgentOwnWorkingDirectory(cwd, findParticipantSourceSession(participantName));
 }
 
 function findParticipantSourceSession(participantName: string) {
@@ -1113,6 +1124,10 @@ Respond with ONLY the summary text, no additional commentary.`;
 								claudeTokenSource: utility.usesUtilityProvider
 									? undefined
 									: resolveParticipantClaudeTokenSource(participantName),
+								acceptWorkspaceTrust: resolveParticipantWorkspaceTrust(
+									participantName,
+									effectiveCwd
+								),
 								sshStore: participantSshRemoteConfig?.enabled
 									? createSshRemoteStoreAdapter(getSettingsStore())
 									: undefined,
