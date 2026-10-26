@@ -1,6 +1,8 @@
 import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	SKETCH_CHAT_HISTORY_LIMIT,
+	openReadySketchSession,
 	pickPersistedAppState,
 	useSketchSessionStore,
 } from '../../../renderer/stores/sketchSessionStore';
@@ -307,6 +309,88 @@ describe('saveSketchSession', () => {
 		await store.saveSketchSession(SKETCH_ID);
 		expect(session().dirty).toBe(false);
 		expect(session().saveError).toBeNull();
+	});
+});
+
+describe('applyAgentChange', () => {
+	const agent = { id: 'a1', name: 'Claude' };
+
+	it('stamps the change as the agent, records it in the author map, saves, and tells the views', async () => {
+		await openWith(scene([el('a', 1)]));
+		const stamped = useSketchSessionStore
+			.getState()
+			.applyAgentChange(SKETCH_ID, [el('a', 1), el('b', 1)], agent);
+
+		expect(stamped.map((element) => element.id)).toEqual(['b']);
+		expect(stamped[0].customData).toMatchObject({
+			createdBy: { id: 'agent:a1', name: 'Claude', kind: 'bot' },
+			lastEditedBy: { id: 'agent:a1', name: 'Claude', kind: 'bot' },
+		});
+		expect(session().externalRevision).toBe(1);
+		await vi.waitFor(() => expect(session().authors.b?.actor).toEqual(bot));
+		await vi.waitFor(() => expect(sketchApi.writeScene).toHaveBeenCalledTimes(1));
+		expect(sketchApi.writeScene.mock.calls[0][1].elements.map((e) => e.id)).toEqual(['a', 'b']);
+	});
+
+	it('makes nothing of a change that changes nothing', async () => {
+		await openWith(scene([el('a', 1)]));
+		expect(
+			useSketchSessionStore.getState().applyAgentChange(SKETCH_ID, [el('a', 1)], agent)
+		).toEqual([]);
+		expect(session().externalRevision).toBe(0);
+		expect(sketchApi.writeScene).not.toHaveBeenCalled();
+	});
+});
+
+describe('focus requests and chat', () => {
+	it('keeps the newest focus request until a view clears that one', async () => {
+		await openWith(scene([el('a', 1)]));
+		const store = useSketchSessionStore.getState();
+		const first = store.requestSketchFocus(SKETCH_ID, ['a']);
+		const second = store.requestSketchFocus(SKETCH_ID, ['a', 'b']);
+		expect(session().focusRequest).toEqual(second);
+
+		store.clearSketchFocus(SKETCH_ID, first!.nonce);
+		expect(session().focusRequest).toEqual(second);
+		store.clearSketchFocus(SKETCH_ID, second!.nonce);
+		expect(session().focusRequest).toBeNull();
+	});
+
+	it('appends chat posts and keeps only the newest ones', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		for (let index = 0; index < SKETCH_CHAT_HISTORY_LIMIT + 2; index += 1) {
+			store.postSketchChat(SKETCH_ID, { actor: bot, text: `m${index}` });
+		}
+		const chat = session().chat;
+		expect(chat).toHaveLength(SKETCH_CHAT_HISTORY_LIMIT);
+		expect(chat[0].text).toBe('m2');
+		expect(chat[chat.length - 1]).toMatchObject({
+			actor: bot,
+			text: `m${SKETCH_CHAT_HISTORY_LIMIT + 1}`,
+		});
+	});
+
+	it('does nothing for a sketch with no session', () => {
+		const store = useSketchSessionStore.getState();
+		expect(store.requestSketchFocus('missing', ['a'])).toBeNull();
+		expect(store.postSketchChat('missing', { actor: bot, text: 'hi' })).toBeNull();
+	});
+});
+
+describe('openReadySketchSession', () => {
+	it('reads the scene the first time and reuses the session after', async () => {
+		sketchApi.readScene.mockResolvedValueOnce(scene([el('a', 1)]));
+		const first = await openReadySketchSession(SKETCH_ID);
+		const second = await openReadySketchSession(SKETCH_ID);
+		expect(first.scene.elements).toEqual([el('a', 1)]);
+		expect(second).toBe(first);
+		expect(sketchApi.readScene).toHaveBeenCalledTimes(1);
+	});
+
+	it('throws the load error', async () => {
+		sketchApi.readScene.mockRejectedValueOnce(new Error('unreadable'));
+		await expect(openReadySketchSession(SKETCH_ID)).rejects.toThrow('unreadable');
 	});
 });
 

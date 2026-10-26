@@ -104,6 +104,39 @@ describe('normalizeSketchRendererResult', () => {
 		).toEqual({ success: true });
 	});
 
+	it('keeps a well-formed write report and drops a malformed one', () => {
+		const write = {
+			sceneVersion: 7,
+			elements: [{ id: 'r1', type: 'rectangle', extra: 'dropped' }],
+			missing: ['gone'],
+			conflicts: { elements: [{ id: 'r2', version: 4 }], authors: {}, fileCount: 0 },
+		};
+		expect(normalizeSketchRendererResult({ success: true, write })).toEqual({
+			success: true,
+			write: {
+				sceneVersion: 7,
+				elements: [{ id: 'r1', type: 'rectangle' }],
+				missing: ['gone'],
+				conflicts: { elements: [{ id: 'r2', version: 4 }], authors: {}, fileCount: 0 },
+			},
+		});
+		expect(
+			normalizeSketchRendererResult({ success: true, write: { ...write, sceneVersion: 'x' } })
+		).toEqual({ success: true });
+		expect(
+			normalizeSketchRendererResult({ success: true, write: { ...write, conflicts: null } })
+		).toEqual({ success: true });
+	});
+
+	it('keeps Mermaid skeletons only when every one is an object', () => {
+		expect(
+			normalizeSketchRendererResult({ success: true, skeletons: [{ type: 'rectangle' }] })
+		).toEqual({ success: true, skeletons: [{ type: 'rectangle' }] });
+		expect(
+			normalizeSketchRendererResult({ success: true, skeletons: [{ type: 'rectangle' }, 'x'] })
+		).toEqual({ success: true });
+	});
+
 	it('turns anything else into a failure with a readable error', () => {
 		expect(normalizeSketchRendererResult(null)).toEqual({
 			success: false,

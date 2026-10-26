@@ -17,10 +17,17 @@
  *   starts with an empty map on purpose.
  * - `dirty` is true while a change has not reached disk. Saves go through
  *   `window.maestro.sketch.writeScene`, one at a time per sketch.
+ * - `externalRevision` is bumped by a change no view made (an agent write,
+ *   `applyAgentChange()`), so a mounted view knows to pull the scene into
+ *   Excalidraw. A view's own `onChange` never bumps it, so nothing echoes.
+ * - `focusRequest` is an agent's `sketch_focus`, waiting for a view to scroll
+ *   to it; `chat` is the local chat pane (T12; the room joins it in phase 06).
  */
 
 import { create } from 'zustand';
 import {
+	botActor,
+	botEditor,
 	conductorEditor,
 	localConductorActor,
 	nextElementAuthorship,
@@ -60,6 +67,31 @@ export function pickPersistedAppState(appState: Record<string, unknown>): Record
 
 export type SketchSessionStatus = 'loading' | 'ready' | 'error';
 
+/** Most chat messages a session keeps; older ones drop off the top. */
+export const SKETCH_CHAT_HISTORY_LIMIT = 200;
+
+/** One message in the Sketch tab's chat pane. */
+export interface SketchChatMessage {
+	id: string;
+	/** Who posted it, as the pane names them. */
+	actor: SketchActor;
+	text: string;
+	ts: number;
+}
+
+/** An agent's `sketch_focus`, until a view scrolls to it. */
+export interface SketchFocusRequest {
+	elementIds: string[];
+	/** Unique per request, so a view clears only the one it handled. */
+	nonce: number;
+}
+
+/** The agent behind an agent write. */
+export interface SketchAgentIdentity {
+	id: string;
+	name: string;
+}
+
 export interface SketchSession {
 	sketchId: string;
 	status: SketchSessionStatus;
@@ -75,6 +107,12 @@ export interface SketchSession {
 	revision: number;
 	/** Why the last save failed, until a save succeeds. */
 	saveError: string | null;
+	/** Bumped by every change a view did not make, so mounted views pull it in. */
+	externalRevision: number;
+	/** The newest `sketch_focus` no view has handled yet. */
+	focusRequest: SketchFocusRequest | null;
+	/** The chat pane, oldest first. */
+	chat: SketchChatMessage[];
 }
 
 /** One Excalidraw `onChange`, as the session takes it. */
@@ -111,6 +149,26 @@ interface SketchSessionState {
 		editor?: SketchEditor,
 		actor?: SketchActor
 	) => SketchLocalChangeResult;
+	/**
+	 * Fold an agent's change into the session: `elements` is the whole next
+	 * scene. Stamped `kind: 'bot'`, `id: 'agent:<agentId>'` (spec section 7),
+	 * recorded in the author map as the agent, saved, and pushed to mounted
+	 * views through `externalRevision`. Returns the stamped copies.
+	 */
+	applyAgentChange: (
+		sketchId: string,
+		elements: readonly SketchWireElement[],
+		agent: SketchAgentIdentity
+	) => SketchWireElement[];
+	/** Ask the views to scroll to these elements. Returns the request. */
+	requestSketchFocus: (sketchId: string, elementIds: string[]) => SketchFocusRequest | null;
+	/** A view handled this focus request. A newer one is left alone. */
+	clearSketchFocus: (sketchId: string, nonce: number) => void;
+	/** Append a chat message. Returns it, or null when the sketch has no session. */
+	postSketchChat: (
+		sketchId: string,
+		message: { actor: SketchActor; text: string }
+	) => SketchChatMessage | null;
 	/** Record a delivered version in the author map. A stale version is ignored. */
 	recordAuthorship: (sketchId: string, elementId: string, update: AuthorshipUpdate) => void;
 	/** Write the scene to disk now. Saves of one sketch never overlap. */
@@ -134,8 +192,14 @@ function newSession(sketchId: string): SketchSession {
 		dirty: false,
 		revision: 0,
 		saveError: null,
+		externalRevision: 0,
+		focusRequest: null,
+		chat: [],
 	};
 }
+
+let nextFocusNonce = 1;
+let nextChatId = 1;
 
 function sameKeys(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
 	const aKeys = Object.keys(a);
@@ -241,6 +305,54 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 			return { changed: true, stamped };
 		},
 
+		applyAgentChange: (sketchId, elements, agent) => {
+			const session = get().sessions[sketchId];
+			if (!session?.scene) return [];
+			const { scene } = session;
+			const result = get().applyLocalChange(
+				sketchId,
+				{ elements, appState: scene.appState, files: scene.files },
+				botEditor(agent.id, agent.name),
+				botActor(agent.id, agent.name)
+			);
+			if (!result.changed) return [];
+			patchSession(sketchId, (current) => ({
+				...current,
+				externalRevision: current.externalRevision + 1,
+			}));
+			// No view may be mounted to autosave it, so the write saves itself.
+			void get().saveSketchSession(sketchId);
+			return result.stamped;
+		},
+
+		requestSketchFocus: (sketchId, elementIds) => {
+			if (!get().sessions[sketchId]) return null;
+			const request: SketchFocusRequest = { elementIds: [...elementIds], nonce: nextFocusNonce++ };
+			patchSession(sketchId, (session) => ({ ...session, focusRequest: request }));
+			return request;
+		},
+
+		clearSketchFocus: (sketchId, nonce) => {
+			patchSession(sketchId, (session) =>
+				session.focusRequest?.nonce === nonce ? { ...session, focusRequest: null } : session
+			);
+		},
+
+		postSketchChat: (sketchId, { actor, text }) => {
+			if (!get().sessions[sketchId]) return null;
+			const message: SketchChatMessage = {
+				id: `chat-${nextChatId++}`,
+				actor,
+				text,
+				ts: Date.now(),
+			};
+			patchSession(sketchId, (session) => ({
+				...session,
+				chat: [...session.chat, message].slice(-SKETCH_CHAT_HISTORY_LIMIT),
+			}));
+			return message;
+		},
+
 		recordAuthorship: (sketchId, elementId, update) => {
 			patchSession(sketchId, (session) => {
 				const previous = session.authors[elementId];
@@ -285,3 +397,22 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 		},
 	};
 });
+
+/**
+ * The sketch's session, read into the store first when no view has opened it
+ * (and kept, so the author map it gathers from here on is kept too). Throws
+ * the load error when the scene cannot be read.
+ */
+export async function openReadySketchSession(
+	sketchId: string
+): Promise<SketchSession & { scene: SketchScene }> {
+	const existing = useSketchSessionStore.getState().sessions[sketchId];
+	if (!existing || existing.status !== 'ready' || !existing.scene) {
+		await useSketchSessionStore.getState().openSketchSession(sketchId);
+	}
+	const session = useSketchSessionStore.getState().sessions[sketchId];
+	if (!session?.scene || session.status !== 'ready') {
+		throw new Error(session?.loadError ?? 'The sketch could not be read.');
+	}
+	return session as SketchSession & { scene: SketchScene };
+}

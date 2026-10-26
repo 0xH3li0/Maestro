@@ -1,8 +1,11 @@
 /**
  * Sketch Book tool service: the main-process implementations of the
  * `maestro-sketch` MCP tools (spec section 4) that the bridge routes to.
- * This phase serves the read tools: T1 `sketch_list`, T3 `sketch_read_scene`
- * and T4 `sketch_changes`.
+ * This phase serves the read tools (T1 `sketch_list`, T3 `sketch_read_scene`,
+ * T4 `sketch_changes`) and the write tools (T2 `sketch_create`, T5
+ * `sketch_add_elements`, T6 `sketch_update_elements`, T7
+ * `sketch_delete_elements`, T8 `sketch_from_mermaid`, T11 `sketch_focus`,
+ * T12 `sketch_chat_post`).
  *
  * The bridge has already bound the caller to its agent at the handshake and
  * checked that the sketch a call names belongs to that agent, so every
@@ -21,6 +24,16 @@
  * The gate. Every third-party element a view needs goes through
  * `screenForAgent()` (sketch-guardrail.ts) in one batched call before the view
  * is built; a subject the gate does not clear is withheld (fail closed).
+ *
+ * Writes. Main checks the arguments and the caps, runs the per-sketch write
+ * rate guard, and passes every outbound text through `screenOutbound()`
+ * (sketch-outbound.ts, spec section 8.5) in one batch per write; a refusal
+ * refuses the whole write. The change itself is made by the window
+ * (`SketchSessionWriter`, the `agentWrite` hop): Excalidraw converts skeletons
+ * and Mermaid in a DOM, and the session there stamps the change as the agent
+ * (`kind: 'bot'`, `id: 'agent:<agentId>'`). A sketch an agent creates opens
+ * in a background tab and is never shared (Q5). A chat post is allowed only
+ * on an unshared sketch until bot turns exist (phase 06).
  *
  * Caps: a response is cut to 1 MB (`truncated: true` plus `omittedCount`), and
  * every response carries `sceneVersion`.
@@ -42,19 +55,47 @@ import {
 	type SketchReadScope,
 	type SketchWithheldMap,
 } from '../../shared/sketch/agent-view';
+import {
+	collectSketchOutboundTexts,
+	forbiddenSketchPatchKeys,
+	replaceSketchOutboundTexts,
+} from '../../shared/sketch/agent-writes';
 import { sketchTextFields, type ElementAuthorship } from '../../shared/sketch/attribution';
-import { isSketchReadFormat, type SketchSessionSnapshot } from '../../shared/sketch/commands';
+import {
+	isSketchReadFormat,
+	type OpenedSketch,
+	type SketchAgentWrite,
+	type SketchAgentWriteResult,
+	type SketchElementPatch,
+	type SketchElementSkeleton,
+	type SketchSessionSnapshot,
+} from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { SketchRecord, SketchScene, WithheldReason } from '../../shared/sketch/types';
 import { logger } from '../utils/logger';
+import {
+	createSlidingWindowGuard,
+	type SlidingWindowGuard,
+	type SlidingWindowLimits,
+} from '../utils/sliding-window-guard';
 import {
 	screenForAgent,
 	type AgentScreenRequest,
 	type AgentScreenVerdict,
 } from './sketch-guardrail';
 import type { SketchToolCall, SketchToolService } from './sketch-mcp-bridge';
+import {
+	SKETCH_MAX_CHAT_POST_BYTES,
+	SKETCH_MAX_ELEMENTS_PER_CALL,
+} from './sketch-mcp-server-script';
+import {
+	screenOutbound,
+	type OutboundPurpose,
+	type OutboundScreenRequest,
+	type OutboundScreenResult,
+} from './sketch-outbound';
 import { requestSketchRenderer } from './sketch-renderer-bridge';
-import { getSketchService } from './sketch-service';
+import { getSketchService, type SketchOwnerAgent } from './sketch-service';
 
 const LOG_CTX = '[SketchBook][Tools]';
 
@@ -63,6 +104,23 @@ export const SKETCH_MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /** Scene versions per sketch that `sketch_changes` can diff against. Older reads are forgotten. */
 export const SKETCH_CHANGE_BASELINES_PER_SKETCH = 16;
+
+/** Largest `sketch_from_mermaid` source, in UTF-8 bytes. */
+export const SKETCH_MAX_MERMAID_BYTES = 64 * 1024;
+
+/** The per-sketch write rate guard (spec section 4 caps): T5-T8, T11, T12. */
+export const SKETCH_WRITE_LIMITS: SlidingWindowLimits = {
+	windowMs: 10_000,
+	maxPerWindow: 30,
+	maxConcurrent: 2,
+};
+
+/** New sketches per agent (T2). */
+export const SKETCH_CREATE_LIMITS: SlidingWindowLimits = {
+	windowMs: 60_000,
+	maxPerWindow: 5,
+	maxConcurrent: 1,
+};
 
 /**
  * Reads a sketch's live session from the window that owns the agent. With
@@ -84,8 +142,51 @@ export const readLiveSketchSession: SketchSessionReader = async (agentId, sketch
 	return result.session;
 };
 
+/** Makes one agent write on a sketch's live session, in the window that owns the agent. */
+export type SketchSessionWriter = (
+	agent: SketchOwnerAgent,
+	sketchId: string,
+	write: SketchAgentWrite
+) => Promise<SketchAgentWriteResult>;
+
+/** The default writer: the Sketch Book renderer bridge. */
+export const writeLiveSketchSession: SketchSessionWriter = async (agent, sketchId, write) => {
+	const result = await requestSketchRenderer(agent.id, {
+		action: 'agentWrite',
+		sketchId,
+		agent: { id: agent.id, name: agent.name },
+		write,
+	});
+	if (!result.success) throw new Error(`Sketch Book: ${result.error}`);
+	if (!result.write) throw new Error('Sketch Book: the Maestro window did not report the write.');
+	return result.write;
+};
+
+/** Mermaid source to element skeletons, in the window that owns the agent (T8). */
+export type SketchMermaidConverter = (
+	agentId: string,
+	mermaid: string
+) => Promise<SketchElementSkeleton[]>;
+
+/** The default converter: the Sketch Book renderer bridge. */
+export const convertMermaidInWindow: SketchMermaidConverter = async (agentId, mermaid) => {
+	const result = await requestSketchRenderer(agentId, { action: 'convertMermaid', mermaid });
+	if (!result.success) throw new Error(`Sketch Book: ${result.error}`);
+	if (!result.skeletons) {
+		throw new Error('Sketch Book: the Maestro window did not convert the diagram.');
+	}
+	return result.skeletons;
+};
+
 export interface SketchToolDeps {
 	readSession?: SketchSessionReader;
+	writeSession?: SketchSessionWriter;
+	convertMermaid?: SketchMermaidConverter;
+	/** Create a sketch owned by the agent and open it in a background tab (T2). */
+	createSketch?: (ownerAgentId: string, name: string | undefined) => Promise<OpenedSketch>;
+	outbound?: (request: OutboundScreenRequest) => Promise<OutboundScreenResult>;
+	/** The write rate guard; one per service by default. */
+	writeGuard?: SlidingWindowGuard;
 	/** The sketches an agent owns. */
 	listSketches?: (ownerAgentId: string) => Promise<SketchRecord[]>;
 	/** The saved scene, for a sketch no window has open (T1 only). */
@@ -137,6 +238,89 @@ function requireSketch(call: SketchToolCall): SketchRecord {
 	return call.sketch;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A non-empty array of at most `SKETCH_MAX_ELEMENTS_PER_CALL` items, or an error naming the field. */
+function boundedArray(value: unknown, field: string): unknown[] {
+	if (!Array.isArray(value) || value.length === 0) {
+		throw new Error(`Sketch Book: \`${field}\` must be a non-empty array.`);
+	}
+	if (value.length > SKETCH_MAX_ELEMENTS_PER_CALL) {
+		throw new Error(
+			`Sketch Book: \`${field}\` has ${value.length} items; at most ${SKETCH_MAX_ELEMENTS_PER_CALL} per call.`
+		);
+	}
+	return value;
+}
+
+/** A non-empty, bounded list of element ids. */
+function elementIdList(value: unknown, field: string): string[] {
+	const ids = boundedArray(value, field);
+	if (!ids.every((id): id is string => typeof id === 'string' && id.length > 0)) {
+		throw new Error(`Sketch Book: \`${field}\` must be an array of element ids.`);
+	}
+	return [...new Set(ids)];
+}
+
+/** `sketch_add_elements` skeletons, checked for shape. Excalidraw checks the rest. */
+function elementSkeletons(value: unknown): SketchElementSkeleton[] {
+	return boundedArray(value, 'elements').map((item, index) => {
+		if (!isPlainObject(item) || typeof item.type !== 'string' || !item.type) {
+			throw new Error(`Sketch Book: \`elements[${index}]\` must be an object with a \`type\`.`);
+		}
+		if (item.id !== undefined && (typeof item.id !== 'string' || !item.id)) {
+			throw new Error(`Sketch Book: \`elements[${index}].id\` must be a non-empty string.`);
+		}
+		// The stamp is the session's to write (spec section 7), never the agent's.
+		const { customData: _stamp, ...skeleton } = item;
+		return skeleton;
+	});
+}
+
+/** `sketch_update_elements` patches, checked. */
+function elementPatches(value: unknown): SketchElementPatch[] {
+	return boundedArray(value, 'patches').map((item, index) => {
+		if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id) {
+			throw new Error(`Sketch Book: \`patches[${index}]\` must be an object with an \`id\`.`);
+		}
+		const { id, baseVersion, ...props } = item;
+		if (
+			baseVersion !== undefined &&
+			(typeof baseVersion !== 'number' || !Number.isSafeInteger(baseVersion) || baseVersion < 0)
+		) {
+			throw new Error(
+				`Sketch Book: \`patches[${index}].baseVersion\` must be a non-negative integer.`
+			);
+		}
+		const forbidden = forbiddenSketchPatchKeys(props);
+		if (forbidden.length > 0) {
+			throw new Error(
+				`Sketch Book: a patch may not set ${forbidden.map((key) => `\`${key}\``).join(', ')} (element "${id}"). Use sketch_delete_elements to delete.`
+			);
+		}
+		if (Object.keys(props).length === 0) {
+			throw new Error(`Sketch Book: the patch for element "${id}" sets nothing.`);
+		}
+		return { id, ...(baseVersion !== undefined ? { baseVersion } : {}), props };
+	});
+}
+
+/** A required string no longer than `maxBytes` in UTF-8. */
+function boundedText(value: unknown, field: string, maxBytes: number): string {
+	if (typeof value !== 'string' || !value.trim()) {
+		throw new Error(`Sketch Book: \`${field}\` must be a non-empty string.`);
+	}
+	const bytes = Buffer.byteLength(value, 'utf8');
+	if (bytes > maxBytes) {
+		throw new Error(
+			`Sketch Book: \`${field}\` is ${bytes} bytes; at most ${maxBytes} bytes are allowed.`
+		);
+	}
+	return value;
+}
+
 /** `sketch_read_scene` scope arguments, checked. */
 function readScope(params: Record<string, unknown>): SketchReadScope {
 	const scope: SketchReadScope = {};
@@ -181,6 +365,14 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		deps.readSavedScene ?? ((sketchId) => getSketchService().readScene(sketchId));
 	const screen = deps.screen ?? screenForAgent;
 	const maxBytes = deps.maxResponseBytes ?? SKETCH_MAX_RESPONSE_BYTES;
+	const writeSession = deps.writeSession ?? writeLiveSketchSession;
+	const convertMermaid = deps.convertMermaid ?? convertMermaidInWindow;
+	const createSketch =
+		deps.createSketch ??
+		((ownerAgentId, name) =>
+			getSketchService().newSketch({ ownerAgentId, name, background: true }));
+	const outbound = deps.outbound ?? screenOutbound;
+	const writeGuard = deps.writeGuard ?? createSlidingWindowGuard();
 
 	/** sketchId -> sceneVersion -> element versions, the reads `sketch_changes` can diff against. */
 	const baselines = new Map<string, Map<number, Record<string, number>>>();
@@ -233,6 +425,79 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 			withheld.set(element.id, verdict?.status === 'withheld' ? verdict.reason : 'unscreened');
 		}
 		return withheld;
+	}
+
+	/** Run `fn` inside the rate guard for `key`; a refused call does nothing. */
+	async function guarded<T>(
+		key: string,
+		limits: SlidingWindowLimits,
+		what: string,
+		fn: () => Promise<T>
+	): Promise<T> {
+		const admitted = writeGuard.begin(key, limits);
+		if (!admitted.ok) {
+			throw new Error(
+				admitted.limit === 'rate'
+					? `Sketch Book: too many ${what} (at most ${limits.maxPerWindow} per ${limits.windowMs / 1000} s). Wait a moment and try again.`
+					: `Sketch Book: ${admitted.count} ${what} are still running. Wait for them to finish.`
+			);
+		}
+		try {
+			return await fn();
+		} finally {
+			admitted.release();
+		}
+	}
+
+	/** One sketch write: the per-sketch guard around it. */
+	function sketchWrite<T>(record: SketchRecord, fn: () => Promise<T>): Promise<T> {
+		return guarded(`sketch:${record.sketchId}`, SKETCH_WRITE_LIMITS, 'writes to this sketch', fn);
+	}
+
+	/**
+	 * `value` with its outbound texts screened (spec section 8.5), in one batch.
+	 * A refusal refuses the whole write.
+	 */
+	async function screenTexts<T>(
+		call: SketchToolCall,
+		record: SketchRecord,
+		purpose: OutboundPurpose,
+		value: T
+	): Promise<{ value: T; redactedCount: number }> {
+		const texts = collectSketchOutboundTexts(value);
+		if (texts.length === 0) return { value, redactedCount: 0 };
+		const screened = await outbound({
+			sketchId: record.sketchId,
+			agentId: call.agent.id,
+			purpose,
+			texts,
+		});
+		if (!screened.ok) throw new Error(`Sketch Book: ${screened.reason}`);
+		return {
+			value: replaceSketchOutboundTexts(value, screened.texts),
+			redactedCount: screened.redactedCount,
+		};
+	}
+
+	/** T5 and T8: screened skeletons onto the board. */
+	async function addSkeletons(
+		call: SketchToolCall,
+		record: SketchRecord,
+		skeletons: SketchElementSkeleton[],
+		options: { regenerateIds: boolean; placeBelowScene: boolean }
+	) {
+		const screened = await screenTexts(call, record, 'element', skeletons);
+		const result = await writeSession(call.agent, record.sketchId, {
+			op: 'add',
+			skeletons: screened.value,
+			...options,
+		});
+		return {
+			sketchId: record.sketchId,
+			sceneVersion: result.sceneVersion,
+			added: result.elements,
+			redactedCount: screened.redactedCount,
+		};
 	}
 
 	return {
@@ -352,6 +617,147 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 				([added, updated, deleted]) => ({ ...head, added, updated, deleted }),
 				maxBytes
 			);
+		},
+
+		// T2: a new sketch in a background tab, never shared (Q5).
+		sketch_create: async (call) => {
+			const name = call.params.name;
+			if (name !== undefined && typeof name !== 'string') {
+				throw new Error('Sketch Book: `name` must be a string.');
+			}
+			const opened = await guarded(
+				`create:${call.agent.id}`,
+				SKETCH_CREATE_LIMITS,
+				'new sketches',
+				() => createSketch(call.agent.id, name?.trim() || undefined)
+			);
+			return {
+				sketchId: opened.record.sketchId,
+				name: opened.record.name,
+				tabId: opened.tabId,
+				shared: false,
+				sceneVersion: 0,
+			};
+		},
+
+		// T5: elements from Excalidraw skeletons.
+		sketch_add_elements: async (call) => {
+			const record = requireSketch(call);
+			const skeletons = elementSkeletons(call.params.elements);
+			return sketchWrite(record, () =>
+				addSkeletons(call, record, skeletons, { regenerateIds: false, placeBelowScene: false })
+			);
+		},
+
+		// T6: patches; a stale `baseVersion` returns the element as it is now (gated).
+		sketch_update_elements: async (call) => {
+			const record = requireSketch(call);
+			const patches = elementPatches(call.params.patches);
+			return sketchWrite(record, async () => {
+				const screened = await screenTexts(call, record, 'element', patches);
+				const result = await writeSession(call.agent, record.sketchId, {
+					op: 'update',
+					patches: screened.value,
+				});
+				const { elements, authors } = result.conflicts;
+				const withheld = await gate(
+					call.agent.id,
+					record.sketchId,
+					sketchElementsToScreen(elements, elements, authors),
+					authors
+				);
+				return capSketchResponse(
+					[buildSketchAgentElements(elements, authors, withheld)],
+					([conflicts]) => ({
+						sketchId: record.sketchId,
+						sceneVersion: result.sceneVersion,
+						updated: result.elements,
+						missing: result.missing,
+						conflicts,
+						redactedCount: screened.redactedCount,
+					}),
+					maxBytes
+				);
+			});
+		},
+
+		// T7: `isDeleted` tombstones, with the text bound to each element.
+		sketch_delete_elements: async (call) => {
+			const record = requireSketch(call);
+			const ids = elementIdList(call.params.ids, 'ids');
+			return sketchWrite(record, async () => {
+				const result = await writeSession(call.agent, record.sketchId, { op: 'delete', ids });
+				return {
+					sketchId: record.sketchId,
+					sceneVersion: result.sceneVersion,
+					deleted: result.elements,
+					missing: result.missing,
+				};
+			});
+		},
+
+		// T8: a Mermaid diagram, converted in the window, screened, then added like T5.
+		sketch_from_mermaid: async (call) => {
+			const record = requireSketch(call);
+			const mermaid = boundedText(call.params.mermaid, 'mermaid', SKETCH_MAX_MERMAID_BYTES);
+			return sketchWrite(record, async () => {
+				const skeletons = await convertMermaid(call.agent.id, mermaid);
+				if (skeletons.length === 0) {
+					throw new Error('Sketch Book: the Mermaid diagram has nothing to draw.');
+				}
+				if (skeletons.length > SKETCH_MAX_ELEMENTS_PER_CALL) {
+					throw new Error(
+						`Sketch Book: the diagram makes ${skeletons.length} elements; at most ${SKETCH_MAX_ELEMENTS_PER_CALL} per call.`
+					);
+				}
+				return addSkeletons(call, record, skeletons, {
+					regenerateIds: true,
+					placeBelowScene: true,
+				});
+			});
+		},
+
+		// T11: scroll and zoom the people's view to these elements.
+		sketch_focus: async (call) => {
+			const record = requireSketch(call);
+			const elementIds = elementIdList(call.params.elementIds, 'elementIds');
+			return sketchWrite(record, async () => {
+				const result = await writeSession(call.agent, record.sketchId, {
+					op: 'focus',
+					elementIds,
+				});
+				return {
+					sketchId: record.sketchId,
+					sceneVersion: result.sceneVersion,
+					focused: result.elements.map((element) => element.id),
+					missing: result.missing,
+				};
+			});
+		},
+
+		// T12: a chat post as the agent, in the local chat pane.
+		sketch_chat_post: async (call) => {
+			const record = requireSketch(call);
+			const text = boundedText(call.params.text, 'text', SKETCH_MAX_CHAT_POST_BYTES);
+			// Bot turns (phase 06) are the only other time a post is allowed.
+			if (record.share !== null) {
+				throw new Error(
+					'Sketch Book: this sketch is shared, so the agent may post in its chat only during a turn the sketch started.'
+				);
+			}
+			return sketchWrite(record, async () => {
+				const screened = await screenTexts(call, record, 'chat', { text });
+				const result = await writeSession(call.agent, record.sketchId, {
+					op: 'chat',
+					text: screened.value.text,
+				});
+				return {
+					sketchId: record.sketchId,
+					sceneVersion: result.sceneVersion,
+					posted: true,
+					redactedCount: screened.redactedCount,
+				};
+			});
 		},
 	};
 }

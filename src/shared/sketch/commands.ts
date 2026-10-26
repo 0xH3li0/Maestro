@@ -10,6 +10,9 @@
  * agent and waits for a `SketchRendererResult`. The agent read tools (T1, T3,
  * T4) use the same hop to read the live `SketchSession` (`readSession`): the
  * scene with unsaved edits and the author map, which only the window holds.
+ * The agent write tools (T5-T8, T11, T12) use it to change that session
+ * (`agentWrite`, after main's outbound screen) and to turn Mermaid into
+ * element skeletons (`convertMermaid`), since both need Excalidraw's DOM.
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -103,7 +106,59 @@ export type SketchRendererRequest =
 			 * `session: null` instead, so a listing never loads every board.
 			 */
 			open: boolean;
-	  };
+	  }
+	| {
+			action: 'agentWrite';
+			sketchId: string;
+			/** The agent making the change: stamped `kind: 'bot'`, `id: 'agent:<id>'` (spec section 7). */
+			agent: { id: string; name: string };
+			/** Already through main's outbound screen. */
+			write: SketchAgentWrite;
+	  }
+	| { action: 'convertMermaid'; mermaid: string };
+
+/** Element skeletons in Excalidraw's `convertToExcalidrawElements` shape (spec T5). */
+export type SketchElementSkeleton = Record<string, unknown>;
+
+/** One `sketch_update_elements` patch: the element, the version read, and the props to set. */
+export interface SketchElementPatch {
+	id: string;
+	baseVersion?: number;
+	props: Record<string, unknown>;
+}
+
+/** An agent's change to a live session (T5-T8, T11, T12). */
+export type SketchAgentWrite =
+	| {
+			op: 'add';
+			skeletons: SketchElementSkeleton[];
+			/**
+			 * Give every element a fresh id (Mermaid). Off for T5, where an agent
+			 * names ids so later elements can bind to them.
+			 */
+			regenerateIds: boolean;
+			/** Place the new elements below the drawing instead of where they say (Mermaid). */
+			placeBelowScene: boolean;
+	  }
+	| { op: 'update'; patches: SketchElementPatch[] }
+	| { op: 'delete'; ids: string[] }
+	| { op: 'focus'; elementIds: string[] }
+	| { op: 'chat'; text: string };
+
+/** What an agent write did. */
+export interface SketchAgentWriteResult {
+	/** The session's scene version after the write. */
+	sceneVersion: number;
+	/** Elements the write created, changed, deleted or focused, in order. */
+	elements: { id: string; type: string }[];
+	/** Named ids the scene does not hold (or holds only as deleted). */
+	missing: string[];
+	/**
+	 * `update` patches refused on a stale `baseVersion`: the elements as they
+	 * are now, with their author map entries, for main to gate and return.
+	 */
+	conflicts: SketchSessionSnapshot;
+}
 
 /**
  * A live `SketchSession` as the agent read tools see it: the elements (deleted
@@ -123,6 +178,10 @@ export type SketchRendererResult =
 			file?: SketchExportFile;
 			/** `readSession`: null when no session is open and `open` was false. */
 			session?: SketchSessionSnapshot | null;
+			/** `agentWrite`. */
+			write?: SketchAgentWriteResult;
+			/** `convertMermaid`. */
+			skeletons?: SketchElementSkeleton[];
 	  }
 	| { success: false; error: string };
 
@@ -180,6 +239,27 @@ function normalizeSessionSnapshot(value: unknown): SketchSessionSnapshot | undef
 	return { elements, authors, fileCount };
 }
 
+function isIdAndType(value: unknown): value is { id: string; type: string } {
+	return isObjectRecord(value) && typeof value.id === 'string' && typeof value.type === 'string';
+}
+
+/** A write result as main may trust it, or undefined when it is malformed. */
+function normalizeAgentWriteResult(value: unknown): SketchAgentWriteResult | undefined {
+	if (!isObjectRecord(value)) return undefined;
+	const { sceneVersion, elements, missing } = value;
+	if (typeof sceneVersion !== 'number' || !Number.isFinite(sceneVersion)) return undefined;
+	if (!Array.isArray(elements) || !elements.every(isIdAndType)) return undefined;
+	if (!Array.isArray(missing) || !missing.every((id) => typeof id === 'string')) return undefined;
+	const conflicts = normalizeSessionSnapshot(value.conflicts);
+	if (!conflicts) return undefined;
+	return {
+		sceneVersion,
+		elements: elements.map(({ id, type }) => ({ id, type })),
+		missing: [...missing],
+		conflicts,
+	};
+}
+
 /** A renderer reply as main may trust it. Anything malformed is a failure. */
 export function normalizeSketchRendererResult(raw: unknown): SketchRendererResult {
 	if (!raw || typeof raw !== 'object') {
@@ -196,11 +276,18 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		};
 	}
 	const session = reply.session === null ? null : normalizeSessionSnapshot(reply.session);
+	const write = normalizeAgentWriteResult(reply.write);
+	const skeletons =
+		Array.isArray(reply.skeletons) && reply.skeletons.every(isObjectRecord)
+			? reply.skeletons
+			: undefined;
 	return {
 		success: true,
 		...(typeof reply.tabId === 'string' ? { tabId: reply.tabId } : {}),
 		...(isExportFile(reply.file) ? { file: reply.file } : {}),
 		...(session !== undefined ? { session } : {}),
+		...(write ? { write } : {}),
+		...(skeletons ? { skeletons } : {}),
 	};
 }
 

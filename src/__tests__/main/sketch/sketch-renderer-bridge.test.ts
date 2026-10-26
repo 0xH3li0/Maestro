@@ -94,4 +94,21 @@ describe('requestSketchRenderer', () => {
 		expect(resolver).toHaveBeenCalledWith(null);
 		expect(h.requestFromRenderer.mock.calls[0][2].timeoutMs).toBeGreaterThan(10_000);
 	});
+
+	it("answers an agent write before the maestro-sketch script's 30 s call timeout", async () => {
+		setSketchWindowResolver(() => win);
+
+		await requestSketchRenderer('agent-1', {
+			action: 'agentWrite',
+			sketchId: 'sketch-1',
+			agent: { id: 'agent-1', name: 'Planner' },
+			write: { op: 'delete', ids: ['r1'] },
+		});
+		await requestSketchRenderer('agent-1', { action: 'convertMermaid', mermaid: 'flowchart LR' });
+
+		for (const call of h.requestFromRenderer.mock.calls) {
+			expect(call[2].timeoutMs).toBeGreaterThan(10_000);
+			expect(call[2].timeoutMs).toBeLessThan(30_000);
+		}
+	});
 });

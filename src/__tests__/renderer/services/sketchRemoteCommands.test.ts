@@ -1,8 +1,9 @@
 /**
  * Tests for the renderer half of `maestro-cli sketch`: `open` shows the sketch
  * through the same tab helper the UI uses (background leaves the view alone),
- * `export` draws SVG as text and PNG as base64 with Excalidraw's exporters, and
- * every failure comes back as a reply instead of a throw.
+ * `export` draws SVG as text and PNG as base64 with Excalidraw's exporters,
+ * `agentWrite` and `convertMermaid` reach the agent write service, and every
+ * failure comes back as a reply instead of a throw.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,12 @@ const excalidraw = vi.hoisted(() => ({
 vi.mock('../../../renderer/components/SketchBook/excalidrawAssets', () => ({
 	loadExcalidraw: vi.fn(async () => excalidraw),
 }));
+
+const agentWrites = vi.hoisted(() => ({
+	applySketchAgentWrite: vi.fn(),
+	convertMermaidToSkeletons: vi.fn(),
+}));
+vi.mock('../../../renderer/services/sketchAgentWrites', () => agentWrites);
 
 import {
 	exportSketchImage,
@@ -174,6 +181,9 @@ describe('runRemoteSketchCommand readSession', () => {
 					dirty: true,
 					revision: 4,
 					saveError: null,
+					externalRevision: 0,
+					focusRequest: null,
+					chat: [],
 				},
 			},
 		});
@@ -198,6 +208,54 @@ describe('runRemoteSketchCommand readSession', () => {
 		});
 		expect(result.success).toBe(false);
 		expect(result.success === false && result.error).toContain('scene-unreadable');
+	});
+});
+
+describe('runRemoteSketchCommand agent writes', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('hands an agent write to the write service and returns its report', async () => {
+		const report = {
+			sceneVersion: 3,
+			elements: [{ id: 'r1', type: 'rectangle' }],
+			missing: [],
+			conflicts: { elements: [], authors: {}, fileCount: 0 },
+		};
+		agentWrites.applySketchAgentWrite.mockResolvedValue(report);
+		const write = { op: 'delete' as const, ids: ['r1'] };
+		const result = await runRemoteSketchCommand({
+			action: 'agentWrite',
+			sketchId: 'sketch-1',
+			agent: { id: 'agent-1', name: 'Planner' },
+			write,
+		});
+		expect(result).toEqual({ success: true, write: report });
+		expect(agentWrites.applySketchAgentWrite).toHaveBeenCalledWith(
+			'sketch-1',
+			{ id: 'agent-1', name: 'Planner' },
+			write
+		);
+	});
+
+	it('converts Mermaid to skeletons', async () => {
+		agentWrites.convertMermaidToSkeletons.mockResolvedValue([{ type: 'rectangle', id: 'A' }]);
+		await expect(
+			runRemoteSketchCommand({ action: 'convertMermaid', mermaid: 'flowchart LR; A-->B' })
+		).resolves.toEqual({ success: true, skeletons: [{ type: 'rectangle', id: 'A' }] });
+	});
+
+	it('answers a failed write instead of throwing', async () => {
+		agentWrites.applySketchAgentWrite.mockRejectedValue(new Error('id taken'));
+		await expect(
+			runRemoteSketchCommand({
+				action: 'agentWrite',
+				sketchId: 'sketch-1',
+				agent: { id: 'agent-1', name: 'Planner' },
+				write: { op: 'chat', text: 'hi' },
+			})
+		).resolves.toEqual({ success: false, error: 'id taken' });
 	});
 });
 

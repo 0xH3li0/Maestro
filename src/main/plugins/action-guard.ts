@@ -13,17 +13,16 @@
  */
 
 import { capabilityRisk, type PluginCapability } from '../../shared/plugins/permissions';
+import {
+	createSlidingWindowGuard,
+	type SlidingWindowGuard,
+	type SlidingWindowLimits,
+} from '../utils/sliding-window-guard';
 
 type Risk = 'low' | 'medium' | 'high';
 
-export interface ActionGuardLimits {
-	/** Sliding-window length in ms. */
-	windowMs: number;
-	/** Max permitted actions per window per (plugin, capability). */
-	maxPerWindow: number;
-	/** Max concurrent in-flight actions per (plugin, capability). */
-	maxConcurrent: number;
-}
+/** Per (plugin, capability): the window, the actions it admits, and the in-flight cap. */
+export type ActionGuardLimits = SlidingWindowLimits;
 
 /** Default limits by capability risk. High-risk is deliberately tight. */
 export const DEFAULT_LIMITS: Record<Risk, ActionGuardLimits> = {
@@ -52,8 +51,7 @@ export class ActionGuard {
 	private readonly now: () => number;
 	private readonly audit: (entry: AuditEntry) => void;
 	private readonly limits: Record<Risk, ActionGuardLimits>;
-	private readonly hits = new Map<string, number[]>();
-	private readonly inflight = new Map<string, number>();
+	private readonly guard: SlidingWindowGuard;
 
 	constructor(deps: ActionGuardDeps = {}) {
 		this.now = deps.now ?? Date.now;
@@ -63,6 +61,7 @@ export class ActionGuard {
 			medium: deps.limits?.medium ?? DEFAULT_LIMITS.medium,
 			high: deps.limits?.high ?? DEFAULT_LIMITS.high,
 		};
+		this.guard = createSlidingWindowGuard(this.now);
 	}
 
 	/**
@@ -74,41 +73,23 @@ export class ActionGuard {
 		const risk = capabilityRisk(capability);
 		const lim = this.limits[risk];
 		const key = `${pluginId}\u0000${capability}`;
-		const t = this.now();
-
-		const recent = (this.hits.get(key) ?? []).filter((ts) => t - ts < lim.windowMs);
-		if (recent.length >= lim.maxPerWindow) {
+		const outcome = this.guard.begin(key, lim);
+		if (!outcome.ok) {
 			return {
 				ok: false,
-				reason: `rate limit: ${capability} exceeded ${lim.maxPerWindow} per ${lim.windowMs}ms`,
+				reason:
+					outcome.limit === 'rate'
+						? `rate limit: ${capability} exceeded ${lim.maxPerWindow} per ${lim.windowMs}ms`
+						: `concurrency limit: ${capability} has ${outcome.count} in flight (max ${lim.maxConcurrent})`,
 			};
 		}
-		const cur = this.inflight.get(key) ?? 0;
-		if (cur >= lim.maxConcurrent) {
-			return {
-				ok: false,
-				reason: `concurrency limit: ${capability} has ${cur} in flight (max ${lim.maxConcurrent})`,
-			};
-		}
-
-		recent.push(t);
-		this.hits.set(key, recent);
-		this.inflight.set(key, cur + 1);
 
 		// Audit before the action runs - high-risk only (low/medium are too chatty
 		// to log per-call and are not individually security-relevant).
 		if (risk === 'high') {
-			this.audit({ pluginId, capability, at: t, ...(target ? { target } : {}) });
+			this.audit({ pluginId, capability, at: this.now(), ...(target ? { target } : {}) });
 		}
 
-		let released = false;
-		return {
-			ok: true,
-			release: (): void => {
-				if (released) return;
-				released = true;
-				this.inflight.set(key, Math.max(0, (this.inflight.get(key) ?? 1) - 1));
-			},
-		};
+		return { ok: true, release: outcome.release };
 	}
 }

@@ -13,6 +13,8 @@
  * - `readSession`: hand the agent read tools (T1, T3, T4) the live session:
  *   the scene with unsaved edits and the author map, which only this window
  *   holds. `open` reads the scene into a session first when none is open.
+ * - `agentWrite` and `convertMermaid`: the agent write tools (T5-T8, T11,
+ *   T12), in `sketchAgentWrites.ts`.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -27,8 +29,9 @@ import {
 	type SketchSessionSnapshot,
 } from '../../shared/sketch/commands';
 import type { SketchScene } from '../../shared/sketch/types';
-import { useSketchSessionStore } from '../stores/sketchSessionStore';
+import { openReadySketchSession, useSketchSessionStore } from '../stores/sketchSessionStore';
 import { readBlobAsDataUrl } from '../utils/imageData';
+import { applySketchAgentWrite, convertMermaidToSkeletons } from './sketchAgentWrites';
 import { openSketchInSession } from './sketchTabs';
 
 /** Space around the drawing in an export, in scene pixels. */
@@ -79,16 +82,8 @@ export async function readSketchSessionSnapshot(
 	sketchId: string,
 	open: boolean
 ): Promise<SketchSessionSnapshot | null> {
-	const store = useSketchSessionStore.getState();
-	const existing = store.sessions[sketchId];
-	if (!existing && !open) return null;
-	if (!existing || existing.status !== 'ready' || !existing.scene) {
-		await store.openSketchSession(sketchId);
-	}
-	const session = useSketchSessionStore.getState().sessions[sketchId];
-	if (!session?.scene || session.status !== 'ready') {
-		throw new Error(session?.loadError ?? 'The sketch could not be read.');
-	}
+	if (!useSketchSessionStore.getState().sessions[sketchId] && !open) return null;
+	const session = await openReadySketchSession(sketchId);
 	return {
 		elements: session.scene.elements,
 		authors: session.authors,
@@ -113,6 +108,15 @@ export async function runRemoteSketchCommand(
 		}
 		if (request.action === 'export') {
 			return { success: true, file: await exportSketchImage(request.scene, request.format) };
+		}
+		if (request.action === 'agentWrite') {
+			return {
+				success: true,
+				write: await applySketchAgentWrite(request.sketchId, request.agent, request.write),
+			};
+		}
+		if (request.action === 'convertMermaid') {
+			return { success: true, skeletons: await convertMermaidToSkeletons(request.mermaid) };
 		}
 		if (request.action === 'readSession') {
 			return {

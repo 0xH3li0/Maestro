@@ -10,11 +10,23 @@
  * Excalidraw itself loads lazily (`React.lazy` over `loadExcalidraw()`), so
  * no Excalidraw code ships until a sketch opens, and always with the bundled
  * fonts in place.
+ *
+ * Changes the view did not make (an agent's writes, T5-T8) arrive through the
+ * session's `externalRevision` and are merged into Excalidraw by version, as
+ * a remote update (not undoable here). An agent's `sketch_focus` (T11) waits
+ * in the session until a mounted view scrolls to it; its chat posts (T12)
+ * show in the chat pane.
  */
 
 import React from 'react';
-import type { AppState, BinaryFiles, ExcalidrawProps } from '@excalidraw/excalidraw/types';
+import type {
+	AppState,
+	BinaryFiles,
+	ExcalidrawImperativeAPI,
+	ExcalidrawProps,
+} from '@excalidraw/excalidraw/types';
 import type { Theme } from '../../types';
+import { mergeNewerSketchElements } from '../../../shared/sketch/agent-writes';
 import type { SketchWireElement } from '../../../shared/sketch/payloads';
 import { Spinner } from '../ui/Spinner';
 import { useDebouncedCallback } from '../../hooks/utils/useThrottle';
@@ -23,6 +35,7 @@ import {
 	useSketchSessionStore,
 } from '../../stores/sketchSessionStore';
 import { loadExcalidraw } from './excalidrawAssets';
+import { SketchChatPane } from './SketchChatPane';
 
 const Excalidraw = React.lazy(() =>
 	loadExcalidraw().then((module) => ({ default: module.Excalidraw }))
@@ -55,6 +68,12 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const status = useSketchSessionStore((s) => s.sessions[sketchId]?.status);
 	const loadError = useSketchSessionStore((s) => s.sessions[sketchId]?.loadError ?? null);
 	const saveError = useSketchSessionStore((s) => s.sessions[sketchId]?.saveError ?? null);
+	const externalRevision = useSketchSessionStore(
+		(s) => s.sessions[sketchId]?.externalRevision ?? 0
+	);
+	const focusRequest = useSketchSessionStore((s) => s.sessions[sketchId]?.focusRequest ?? null);
+	const chat = useSketchSessionStore((s) => s.sessions[sketchId]?.chat);
+	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 
 	React.useEffect(() => {
 		void useSketchSessionStore.getState().openSketchSession(sketchId);
@@ -91,6 +110,44 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 		},
 		[sketchId, scheduleSave]
 	);
+
+	// Pull in what the session changed without this view (agent writes). Also
+	// runs once the API is ready, for a write that landed while Excalidraw
+	// loaded. Same versions merge to nothing, so the view's own edits never
+	// come back as an update.
+	React.useEffect(() => {
+		if (!api) return;
+		let cancelled = false;
+		void loadExcalidraw().then(({ CaptureUpdateAction }) => {
+			if (cancelled) return;
+			const scene = useSketchSessionStore.getState().sessions[sketchId]?.scene;
+			if (!scene) return;
+			const viewElements = api.getSceneElementsIncludingDeleted() as unknown as SketchWireElement[];
+			const merged = mergeNewerSketchElements(viewElements, scene.elements);
+			const changed =
+				merged.length !== viewElements.length ||
+				merged.some((element, index) => element !== viewElements[index]);
+			if (!changed) return;
+			api.updateScene({
+				elements: merged as unknown as Parameters<
+					ExcalidrawImperativeAPI['updateScene']
+				>[0]['elements'],
+				captureUpdate: CaptureUpdateAction.NEVER,
+			});
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [api, sketchId, externalRevision]);
+
+	// An agent's `sketch_focus`: scroll and zoom to the elements, then clear it.
+	React.useEffect(() => {
+		if (!api || !focusRequest) return;
+		const wanted = new Set(focusRequest.elementIds);
+		const targets = api.getSceneElements().filter((element) => wanted.has(element.id));
+		if (targets.length > 0) api.scrollToContent(targets, { fitToContent: true, animate: true });
+		useSketchSessionStore.getState().clearSketchFocus(sketchId, focusRequest.nonce);
+	}, [api, sketchId, focusRequest]);
 
 	// Read once per mount: Excalidraw owns the canvas after that, and the
 	// session catches every change through `onChange`.
@@ -153,18 +210,22 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 					Not saved: {saveError}
 				</div>
 			)}
-			<div className="flex-1 min-h-0 relative">
-				<div className="absolute inset-0">
-					<React.Suspense fallback={spinner}>
-						<Excalidraw
-							key={sketchId}
-							initialData={initialData}
-							onChange={handleChange}
-							theme={excalidrawThemeFor(theme)}
-							UIOptions={{ canvasActions: { saveToActiveFile: false } }}
-						/>
-					</React.Suspense>
+			<div className="flex-1 min-h-0 flex">
+				<div className="flex-1 min-w-0 relative">
+					<div className="absolute inset-0">
+						<React.Suspense fallback={spinner}>
+							<Excalidraw
+								key={sketchId}
+								initialData={initialData}
+								onChange={handleChange}
+								excalidrawAPI={setApi}
+								theme={excalidrawThemeFor(theme)}
+								UIOptions={{ canvasActions: { saveToActiveFile: false } }}
+							/>
+						</React.Suspense>
+					</div>
 				</div>
+				{chat && chat.length > 0 && <SketchChatPane messages={chat} theme={theme} />}
 			</div>
 		</div>
 	);

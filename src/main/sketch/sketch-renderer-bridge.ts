@@ -1,8 +1,10 @@
 /**
  * The Sketch Book hop from main to a window, for the work only a renderer can
  * do: opening a sketch tab (the tab is part of the agent model the window
- * owns), drawing PNG or SVG (Excalidraw measures text in a DOM), and reading
- * a live `SketchSession` for the agent read tools (the author map lives there).
+ * owns), drawing PNG or SVG (Excalidraw measures text in a DOM), reading a
+ * live `SketchSession` for the agent read tools (the author map lives there),
+ * and changing it for the agent write tools (element conversion needs the DOM
+ * too).
  *
  * The request goes to the window that owns the sketch's agent, so a sketch tab
  * opens where that agent lives. With no owner (an export of a sketch whose
@@ -29,6 +31,24 @@ export const SKETCH_REMOTE_COMMAND_CHANNEL = 'remote:sketchCommand';
 const OPEN_REPLY_MS = 10_000;
 /** The first export loads Excalidraw and its fonts before it can draw. */
 const EXPORT_REPLY_MS = 45_000;
+/**
+ * An agent write may load Excalidraw (or the Mermaid converter) first. Under
+ * the `maestro-sketch` script's 30 s call timeout, so the agent hears this
+ * reply rather than its own client giving up.
+ */
+const AGENT_WRITE_REPLY_MS = 25_000;
+
+function replyTimeoutMs(request: SketchRendererRequest): number {
+	switch (request.action) {
+		case 'export':
+			return EXPORT_REPLY_MS;
+		case 'agentWrite':
+		case 'convertMermaid':
+			return AGENT_WRITE_REPLY_MS;
+		default:
+			return OPEN_REPLY_MS;
+	}
+}
 
 /** The window that owns an agent, or the primary window for `null`. */
 export type SketchWindowResolver = (agentId: string | null) => BrowserWindow | null;
@@ -55,6 +75,6 @@ export const requestSketchRenderer: SketchRendererBridge = async (agentId, reque
 		args: [request],
 		fallback: { success: false, error: 'The Maestro window did not answer in time.' },
 		parse: normalizeSketchRendererResult,
-		timeoutMs: request.action === 'export' ? EXPORT_REPLY_MS : OPEN_REPLY_MS,
+		timeoutMs: replyTimeoutMs(request),
 	});
 };

@@ -71,6 +71,15 @@ export function botEditor(
 	return editor;
 }
 
+/**
+ * An agent as an envelope actor, for the author map of its writes. It writes
+ * through the conductor's desktop (`delta.asBot`, wire contract X2), so it
+ * holds the conductor's role.
+ */
+export function botActor(agentId: string, agentName: string): SketchActor {
+	return { id: `agent:${agentId}`, kind: 'bot', name: agentName, role: 'conductor' };
+}
+
 /** The local conductor as an envelope actor, for the author map of local edits. */
 export function localConductorActor(name = 'Conductor', id = LOCAL_CONDUCTOR_ID): SketchActor {
 	return { id, kind: 'conductor', name, role: 'conductor' };
