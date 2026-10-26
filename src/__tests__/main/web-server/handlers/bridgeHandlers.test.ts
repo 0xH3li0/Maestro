@@ -624,9 +624,25 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 });
 
 describe('notification history over the bridge', () => {
-	it('acknowledges the startup migration through the shared history handler', async () => {
-		const change = { action: 'migrate', records: [] };
-		const snapshot = { success: true, records: [], revision: 1 };
+	it.each([
+		{ action: 'migrate', records: [] },
+		{ action: 'read', ids: ['host-notification'] },
+	])('returns the host history snapshot for a $action change', async (change) => {
+		const snapshot = {
+			success: true,
+			records: [
+				{
+					id: 'host-notification',
+					title: 'Completed',
+					message: 'Done',
+					timestamp: 1,
+					read: change.action === 'read',
+					color: 'green',
+					type: 'success',
+				},
+			],
+			revision: 1,
+		};
 		const handler = vi.fn(async () => snapshot);
 		invokeHandlers.set('notification:changeHistory', handler);
 		const send = vi.fn();
@@ -646,7 +662,7 @@ describe('notification history over the bridge', () => {
 		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: snapshot });
 	});
 
-	it('fans committed history snapshots out without exposing native notification actions', () => {
+	it('fans committed history snapshots out to browsers', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
 			broadcastToAll,
@@ -659,12 +675,16 @@ describe('notification history over the bridge', () => {
 				channel: 'notification:historyChanged',
 				args: [snapshot],
 			});
-			expect(isRemoteMethodAllowed('notification:speak')).toBe(false);
-			expect(isRemoteMethodAllowed('notification:navigateToSource')).toBe(false);
-			expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
 		} finally {
 			uninstallWebContentsBridgeHook();
 		}
+	});
+
+	it('keeps host notification delivery and trusted renderer activation private', () => {
+		for (const operation of ['show', 'speak', 'stopSpeak', 'ready', 'navigateToSource']) {
+			expect(isRemoteMethodAllowed(`notification:${operation}`)).toBe(false);
+		}
+		expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
 	});
 });
 
