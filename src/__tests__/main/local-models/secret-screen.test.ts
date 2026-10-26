@@ -307,6 +307,71 @@ describe('screenForSecrets', () => {
 		});
 	});
 
+	// A caller (Sketch Book) can refuse the source the model pass would send the
+	// text to. The refusal is a note: the pattern pass still runs and decides.
+	describe('allowSource on the model pass', () => {
+		const JEV = 'Jev (TypeSafe cloud)';
+
+		it('runs no classifier on a refused source, and keeps the pattern findings', async () => {
+			stores.settings = { localModelAssignments: { 'secret-screen': SOURCE } };
+			const allowSource = vi.fn(() => false);
+
+			const result = await screenForSecrets([{ text: `token ${GITHUB_TOKEN}` }], { allowSource });
+
+			expect(allowSource).toHaveBeenCalledWith(
+				expect.objectContaining({ kind: 'local-classifier', locality: 'local' })
+			);
+			expect(runClassifierTask).not.toHaveBeenCalled();
+			expect(result.findings.map((finding) => finding.kind)).toEqual(['github-token']);
+			expect(result.note).toBe(
+				'Secret screen model did not run: Screening on Llama Prompt Guard 2 22M is not allowed for this content. Pattern detection still ran.'
+			);
+		});
+
+		it('hands System One a check that refuses a cloud engine the caller refuses', async () => {
+			const allowSource = vi.fn((source: { locality: string }) => source.locality === 'local');
+			// What the router answers when the check refuses: no answer, nothing sent.
+			vi.mocked(runSystemOneTask).mockImplementation(async (_taskId, _input, options) => {
+				const refused = options?.allowEngine?.(
+					{
+						id: 'jev-cloud',
+						engine: { baseUrl: 'https://api.typesafe.ai' },
+						timeoutMs: 1500,
+						key: {},
+						refusal: null,
+					} as never,
+					JEV
+				);
+				expect(refused).toBe('Screening on Jev (TypeSafe cloud) is not allowed for this content.');
+				return {
+					status: 'unavailable',
+					engine: 'jev-cloud',
+					engineLabel: JEV,
+					code: 'unavailable',
+					reason: refused as string,
+				};
+			});
+
+			const result = await screenForSecrets([{ text: `token ${GITHUB_TOKEN}` }], { allowSource });
+
+			expect(allowSource).toHaveBeenCalledWith(
+				expect.objectContaining({ kind: 'jev', locality: 'cloud', host: 'api.typesafe.ai' })
+			);
+			expect(runClassifierTask).not.toHaveBeenCalled();
+			expect(result.findings.map((finding) => finding.kind)).toEqual(['github-token']);
+			expect(result.note).toContain('is not allowed for this content');
+		});
+
+		it('runs the classifier on an allowed source', async () => {
+			stores.settings = { localModelAssignments: { 'secret-screen': SOURCE } };
+			modelOff();
+
+			await screenForSecrets([{ text: 'plain words' }], { allowSource: () => true });
+
+			expect(runClassifierTask).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('configured environment values', () => {
 		const value = 'correct-horse-battery-staple';
 
