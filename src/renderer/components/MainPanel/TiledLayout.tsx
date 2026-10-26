@@ -63,6 +63,7 @@ import type {
 	UnifiedTabRef,
 } from '../../types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { SketchTabView } from '../SketchBook/SketchTab';
 
 /**
  * Action handlers a tiled pane's dropdown can invoke, bundled into one prop so a
@@ -562,6 +563,14 @@ function PaneContent({
 
 	if (tab.type === 'file') {
 		return <TiledFilePane fileTabId={tab.id} session={session} theme={theme} actions={file} />;
+	}
+
+	if (tab.type === 'sketch') {
+		// The live drawing sits in sketchSessionStore, not in the view, so a
+		// tiled sketch renders inline like a file pane: remounting loses nothing.
+		const sketchTab = session.sketchTabs?.find((t) => t.id === tab.id);
+		if (!sketchTab) return <PaneMissingTab theme={theme} />;
+		return <SketchTabView key={sketchTab.sketchId} sketchId={sketchTab.sketchId} theme={theme} />;
 	}
 
 	// Terminal and browser tabs are kept-alive overlays mounted at the panel level

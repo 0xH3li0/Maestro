@@ -1,0 +1,318 @@
+import { webcrypto } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	pickPersistedAppState,
+	useSketchSessionStore,
+} from '../../../renderer/stores/sketchSessionStore';
+import { localConductorActor, sketchTextHash } from '../../../shared/sketch/attribution';
+import type { SketchWireElement } from '../../../shared/sketch/payloads';
+import type { SketchActor, SketchScene } from '../../../shared/sketch/types';
+
+const SKETCH_ID = 'sketch-1';
+
+const guest: SketchActor = { id: 'g1', kind: 'guest', name: 'Sam', role: 'rw' };
+const bot: SketchActor = { id: 'agent:a1', kind: 'bot', name: 'Claude', role: 'conductor' };
+
+function scene(elements: SketchWireElement[] = []): SketchScene {
+	return {
+		type: 'excalidraw',
+		version: 2,
+		source: 'maestro',
+		elements,
+		appState: { viewBackgroundColor: '#ffffff', gridSize: null },
+		files: {},
+	};
+}
+
+function el(id: string, version: number, extra: Record<string, unknown> = {}): SketchWireElement {
+	return { id, version, type: 'rectangle', ...extra };
+}
+
+const sketchApi = {
+	readScene: vi.fn<(id: string) => Promise<SketchScene>>(),
+	writeScene: vi.fn<(id: string, scene: SketchScene) => Promise<void>>(),
+};
+
+function session() {
+	return useSketchSessionStore.getState().sessions[SKETCH_ID];
+}
+
+async function openWith(initial: SketchScene) {
+	sketchApi.readScene.mockResolvedValueOnce(initial);
+	await useSketchSessionStore.getState().openSketchSession(SKETCH_ID);
+}
+
+beforeEach(() => {
+	useSketchSessionStore.setState({ sessions: {} });
+	sketchApi.readScene.mockReset();
+	sketchApi.writeScene.mockReset().mockResolvedValue(undefined);
+	(window.maestro as unknown as { sketch: typeof sketchApi }).sketch = sketchApi;
+	// The text hash is WebCrypto sha256; jsdom does not always expose `subtle`.
+	if (!globalThis.crypto?.subtle) vi.stubGlobal('crypto', webcrypto);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
+describe('openSketchSession', () => {
+	it('reads the scene once and keeps the session ready', async () => {
+		await openWith(scene([el('a', 1)]));
+		await useSketchSessionStore.getState().openSketchSession(SKETCH_ID);
+		expect(sketchApi.readScene).toHaveBeenCalledTimes(1);
+		expect(session().status).toBe('ready');
+		expect(session().scene?.elements).toEqual([el('a', 1)]);
+		expect(session().dirty).toBe(false);
+	});
+
+	it('starts with an empty author map: a scene from disk has unknown authors', async () => {
+		await openWith(scene([el('a', 1, { text: 'hello' })]));
+		expect(session().authors).toEqual({});
+	});
+
+	it('records a read failure and reads again on the next open', async () => {
+		sketchApi.readScene.mockRejectedValueOnce(new Error('scene-unreadable'));
+		await useSketchSessionStore.getState().openSketchSession(SKETCH_ID);
+		expect(session().status).toBe('error');
+		expect(session().loadError).toContain('scene-unreadable');
+
+		await openWith(scene());
+		expect(session().status).toBe('ready');
+		expect(session().loadError).toBeNull();
+	});
+});
+
+describe('applyLocalChange', () => {
+	it('stamps a new element and marks the session dirty without bumping its version', async () => {
+		await openWith(scene());
+		const result = useSketchSessionStore.getState().applyLocalChange(SKETCH_ID, {
+			elements: [el('a', 3)],
+			appState: { viewBackgroundColor: '#ffffff', gridSize: null },
+			files: {},
+		});
+		expect(result.changed).toBe(true);
+		expect(result.stamped).toHaveLength(1);
+		const stamped = session().scene!.elements[0];
+		expect(stamped.version).toBe(3);
+		expect(stamped.customData).toMatchObject({
+			createdBy: { kind: 'conductor' },
+			lastEditedBy: { kind: 'conductor' },
+		});
+		expect(session().dirty).toBe(true);
+		expect(session().revision).toBe(1);
+	});
+
+	it('ignores a change that keeps every version, the persisted appState and the files', async () => {
+		await openWith(scene([el('a', 1)]));
+		const result = useSketchSessionStore.getState().applyLocalChange(SKETCH_ID, {
+			elements: [el('a', 1)],
+			appState: {
+				viewBackgroundColor: '#ffffff',
+				gridSize: null,
+				scrollX: 400,
+				selectedElementIds: { a: true },
+			},
+			files: {},
+		});
+		expect(result).toEqual({ changed: false, stamped: [] });
+		expect(session().dirty).toBe(false);
+	});
+
+	it('keeps a background color change without stamping any element', async () => {
+		await openWith(scene([el('a', 1)]));
+		const result = useSketchSessionStore.getState().applyLocalChange(SKETCH_ID, {
+			elements: [el('a', 1)],
+			appState: { viewBackgroundColor: '#000000', gridSize: null },
+			files: {},
+		});
+		expect(result).toEqual({ changed: true, stamped: [] });
+		expect(session().scene?.appState.viewBackgroundColor).toBe('#000000');
+		expect(session().dirty).toBe(true);
+	});
+
+	it('records the local conductor in the author map with the text hash', async () => {
+		await openWith(scene());
+		useSketchSessionStore.getState().applyLocalChange(SKETCH_ID, {
+			elements: [el('t', 2, { type: 'text', text: 'hi', originalText: 'hi' })],
+			appState: {},
+			files: {},
+		});
+		const expectedHash = await sketchTextHash(el('t', 2, { text: 'hi', originalText: 'hi' }));
+		await vi.waitFor(() => expect(session().authors.t).toBeDefined());
+		expect(session().authors.t).toEqual({
+			version: 2,
+			actor: localConductorActor(),
+			textHash: expectedHash,
+			guestTouched: false,
+		});
+	});
+
+	it('does nothing before the scene is loaded', () => {
+		const result = useSketchSessionStore.getState().applyLocalChange(SKETCH_ID, {
+			elements: [el('a', 1)],
+			appState: {},
+			files: {},
+		});
+		expect(result).toEqual({ changed: false, stamped: [] });
+	});
+});
+
+describe('recordAuthorship', () => {
+	it('keeps guestTouched when the conductor or the bot later moves a guest element', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.recordAuthorship(SKETCH_ID, 'x', {
+			version: 2,
+			actor: guest,
+			textHash: 'h1',
+			opSeq: 10,
+			ts: 1000,
+		});
+		store.recordAuthorship(SKETCH_ID, 'x', {
+			version: 3,
+			actor: localConductorActor(),
+			textHash: 'h1',
+		});
+		store.recordAuthorship(SKETCH_ID, 'x', {
+			version: 4,
+			actor: bot,
+			textHash: 'h1',
+			opSeq: 12,
+			ts: 3000,
+		});
+		expect(session().authors.x).toEqual({
+			version: 4,
+			actor: bot,
+			opSeq: 12,
+			textHash: 'h1',
+			guestTextAt: 1000,
+			guestTouched: true,
+		});
+	});
+
+	it('moves guestTextAt to the server ts of the latest guest text change', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.recordAuthorship(SKETCH_ID, 'x', { version: 2, actor: guest, textHash: 'h1', ts: 1000 });
+		store.recordAuthorship(SKETCH_ID, 'x', { version: 3, actor: guest, textHash: 'h1', ts: 2000 });
+		expect(session().authors.x.guestTextAt).toBe(1000);
+		store.recordAuthorship(SKETCH_ID, 'x', { version: 4, actor: guest, textHash: 'h2', ts: 4000 });
+		expect(session().authors.x.guestTextAt).toBe(4000);
+	});
+
+	it('ignores a version older than the one already recorded', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.recordAuthorship(SKETCH_ID, 'x', { version: 5, actor: guest, textHash: 'h5', ts: 5 });
+		store.recordAuthorship(SKETCH_ID, 'x', {
+			version: 4,
+			actor: localConductorActor(),
+			textHash: 'h4',
+		});
+		expect(session().authors.x.version).toBe(5);
+		expect(session().authors.x.textHash).toBe('h5');
+	});
+});
+
+describe('saveSketchSession', () => {
+	it('writes the stamped scene and clears dirty', async () => {
+		await openWith(scene());
+		useSketchSessionStore
+			.getState()
+			.applyLocalChange(SKETCH_ID, { elements: [el('a', 1)], appState: {}, files: {} });
+		await useSketchSessionStore.getState().saveSketchSession(SKETCH_ID);
+		expect(sketchApi.writeScene).toHaveBeenCalledTimes(1);
+		const [id, written] = sketchApi.writeScene.mock.calls[0];
+		expect(id).toBe(SKETCH_ID);
+		expect(written.elements[0].customData).toBeDefined();
+		expect(session().dirty).toBe(false);
+	});
+
+	it('skips the write when nothing changed', async () => {
+		await openWith(scene());
+		await useSketchSessionStore.getState().saveSketchSession(SKETCH_ID);
+		expect(sketchApi.writeScene).not.toHaveBeenCalled();
+	});
+
+	it('stays dirty when a change lands while the write is in flight', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.applyLocalChange(SKETCH_ID, { elements: [el('a', 1)], appState: {}, files: {} });
+		let release!: () => void;
+		sketchApi.writeScene.mockImplementationOnce(
+			() => new Promise<void>((resolve) => (release = resolve))
+		);
+		const saving = store.saveSketchSession(SKETCH_ID);
+		await vi.waitFor(() => expect(sketchApi.writeScene).toHaveBeenCalledTimes(1));
+		store.applyLocalChange(SKETCH_ID, { elements: [el('a', 2)], appState: {}, files: {} });
+		release();
+		await saving;
+		expect(session().dirty).toBe(true);
+
+		await store.saveSketchSession(SKETCH_ID);
+		expect(sketchApi.writeScene).toHaveBeenCalledTimes(2);
+		expect(sketchApi.writeScene.mock.calls[1][1].elements[0].version).toBe(2);
+		expect(session().dirty).toBe(false);
+	});
+
+	it('never runs two writes of one sketch at once', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		let inFlight = 0;
+		let maxInFlight = 0;
+		sketchApi.writeScene.mockImplementation(async () => {
+			inFlight += 1;
+			maxInFlight = Math.max(maxInFlight, inFlight);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			inFlight -= 1;
+		});
+		const saves: Promise<void>[] = [];
+		for (let version = 1; version <= 4; version += 1) {
+			store.applyLocalChange(SKETCH_ID, { elements: [el('a', version)], appState: {}, files: {} });
+			saves.push(store.saveSketchSession(SKETCH_ID));
+		}
+		await Promise.all(saves);
+		expect(maxInFlight).toBe(1);
+		expect(session().dirty).toBe(false);
+	});
+
+	it('keeps the change and reports why when the write fails', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.applyLocalChange(SKETCH_ID, { elements: [el('a', 1)], appState: {}, files: {} });
+		sketchApi.writeScene.mockRejectedValueOnce(new Error('disk full'));
+		await store.saveSketchSession(SKETCH_ID);
+		expect(session().dirty).toBe(true);
+		expect(session().saveError).toContain('disk full');
+
+		await store.saveSketchSession(SKETCH_ID);
+		expect(session().dirty).toBe(false);
+		expect(session().saveError).toBeNull();
+	});
+});
+
+describe('session lifetime', () => {
+	it('outlives any view and is dropped only on request', async () => {
+		await openWith(scene([el('a', 1)]));
+		expect(session()).toBeDefined();
+		useSketchSessionStore.getState().dropSketchSession(SKETCH_ID);
+		expect(session()).toBeUndefined();
+	});
+});
+
+describe('pickPersistedAppState', () => {
+	it('keeps the canvas settings and drops the per-user view', () => {
+		expect(
+			pickPersistedAppState({
+				viewBackgroundColor: '#fff',
+				gridSize: 20,
+				gridStep: 5,
+				gridModeEnabled: true,
+				scrollX: 10,
+				zoom: { value: 2 },
+				selectedElementIds: {},
+				theme: 'dark',
+			})
+		).toEqual({ viewBackgroundColor: '#fff', gridSize: 20, gridStep: 5, gridModeEnabled: true });
+	});
+});

@@ -12,6 +12,7 @@ import { InputArea } from '../InputArea';
 import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
+import { SketchTabView } from '../SketchBook/SketchTab';
 import {
 	TiledLayout,
 	type PaneChatActions,
@@ -548,6 +549,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.filePreviewTabs,
 		activeSession.terminalTabs,
 		activeSession.browserTabs,
+		activeSession.sketchTabs,
 	]);
 
 	// Tab tiling (split panes): when a tab group is active, it takes over the
@@ -557,6 +559,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.activeGroupId != null
 			? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
 			: undefined;
+	// The Sketch Book tab the single view shows. A browser tab outranks it (the
+	// render precedence is terminal > file > browser > sketch > ai).
+	const activeSketchTab = activeSession.activeSketchTabId
+		? activeSession.sketchTabs?.find((t) => t.id === activeSession.activeSketchTabId)
+		: undefined;
 	// Current single-view tab ref (used only when no group is active): a tab drop
 	// onto the panel then pairs this tab with the dragged one into a new group. The
 	// precedence mirrors the single-view routing below (terminal mode -> terminal;
@@ -568,6 +575,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		}
 		if (activeFileTabId) return { type: 'file', id: activeFileTabId };
 		if (activeBrowserTabId) return { type: 'browser', id: activeBrowserTabId };
+		if (activeSketchTab) return { type: 'sketch', id: activeSketchTab.id };
 		if (activeTab) return { type: 'ai', id: activeTab.id };
 		return null;
 	}, [
@@ -575,6 +583,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.activeTerminalTabId,
 		activeFileTabId,
 		activeBrowserTabId,
+		activeSketchTab,
 		activeTab,
 	]);
 	// Title of the single-view tab (the first tab placed into a new group), resolved
@@ -724,14 +733,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// group's focused AI pane, so inside a group it drives that pane's conversation.
 	// Hidden: mobile landscape, wizard doc generation, terminal mode (xterm owns
 	// input), and when a group's focused pane is a non-AI tab. In single view it also
-	// hides while a browser or file tab owns the panel (those have no AI input); a
+	// hides while a browser, file or sketch tab owns the panel (those have no AI input); a
 	// group ignores those stale single-view ids.
 	const shouldShowInputArea =
 		!isMobileLandscape &&
 		!activeTab?.wizardState?.isGeneratingDocs &&
 		!groupFocusedIsNonAi &&
 		activeSession.inputMode !== 'terminal' &&
-		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
+		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId && !activeSketchTab));
 
 	// The same chat handlers the single-view TerminalOutput below gets, bundled for
 	// the tiled AI panes so a tiled AI tab is a FULL chat, not a read-only mirror:
@@ -946,6 +955,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						/>
 					</React.Suspense>
 				</div>
+			) : activeSession.inputMode === 'ai' && !activeBrowserTabId && activeSketchTab ? (
+				<SketchTabView
+					key={activeSketchTab.sketchId}
+					sketchId={activeSketchTab.sketchId}
+					theme={theme}
+				/>
 			) : (
 				<>
 					{/* Logs Area - Show DocumentGenerationView while generating OR when docs exist (waiting for user to click Exit Wizard), WizardConversationView when wizard is active, otherwise show TerminalOutput */}
