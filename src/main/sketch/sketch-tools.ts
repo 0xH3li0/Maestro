@@ -542,14 +542,25 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 					version: element.version,
 					type: String(element.type ?? 'unknown'),
 					author: authorship?.actor ?? null,
-					...(authorship ? { textHash: authorship.textHash } : {}),
+					...(authorship
+						? {
+								textHash: authorship.textHash,
+								guestTouched: authorship.guestTouched,
+								...(authorship.guestTextAt !== undefined
+									? { guestTextAt: authorship.guestTextAt }
+									: {}),
+								...(authorship.opSeq !== undefined ? { opSeq: authorship.opSeq } : {}),
+							}
+						: {}),
 					fields: sketchTextFields(element),
 				};
 			}),
 		});
 		for (const element of subjects) {
 			const verdict = verdicts.get(element.id);
-			if (verdict?.status === 'clear') continue;
+			// No posture is passed, so D2's labelled `unscreened` clear cannot occur
+			// here; were it to, these views cannot label it, so it stays withheld.
+			if (verdict?.status === 'clear' && !verdict.unscreened) continue;
 			withheld.set(element.id, verdict?.status === 'withheld' ? verdict.reason : 'unscreened');
 		}
 		return withheld;

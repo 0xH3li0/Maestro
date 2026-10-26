@@ -14,7 +14,7 @@ import {
 	createSketchBridgeDispatcher,
 	type SketchBridgeConnection,
 } from '../../../main/sketch/sketch-mcp-bridge';
-import { screenForAgent } from '../../../main/sketch/sketch-guardrail';
+import type { AgentScreenRequest, AgentScreenVerdict } from '../../../main/sketch/sketch-guardrail';
 import type { SketchOwnerAgent } from '../../../main/sketch/sketch-service';
 import {
 	createSketchToolService,
@@ -91,6 +91,23 @@ export function scene(
 	return { elements, authors, fileCount: 0 };
 }
 
+/**
+ * The default gate in these tests: fail closed, every subject withheld
+ * `unscreened`, as the gate decides with no screen to run. The real gate has
+ * its own tests (sketch-guardrail.test.ts); a test that needs a verdict passes
+ * its own `screen`.
+ */
+export async function withholdAll(
+	request: AgentScreenRequest
+): Promise<Map<string, AgentScreenVerdict>> {
+	return new Map(
+		request.subjects.map((subject) => [
+			subject.elementId,
+			{ status: 'withheld', reason: 'unscreened' } as const,
+		])
+	);
+}
+
 export interface ToolHarnessOptions {
 	/** Agent alpha's working directory (T10). */
 	alphaCwd?: string;
@@ -110,7 +127,7 @@ export function setupSketchTools(
 	const listSketches = vi.fn(async (ownerAgentId: string) =>
 		Object.values(sketches).filter((sketch) => sketch.ownerAgentId === ownerAgentId)
 	);
-	const screen = vi.fn(screenForAgent);
+	const screen = vi.fn(withholdAll);
 	const tools = createSketchToolService({
 		readSession,
 		listSketches,

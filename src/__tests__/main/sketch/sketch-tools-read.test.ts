@@ -12,8 +12,9 @@
  *     `A -> B`, frames list their members, groups list theirs.
  *   - **Authorship** comes from the session author map, never from
  *     `customData`, which is stripped from every element.
- *   - **Fail closed**: the phase 03 `screenForAgent()` stub withholds every
- *     third-party element, and its text leaks through no label, edge or name.
+ *   - **Fail closed**: a gate that screens nothing (`withholdAll` in the
+ *     harness) withholds every third-party element, and its text leaks
+ *     through no label, edge or name.
  *   - **1 MB cap**: an oversized response keeps a prefix and says `truncated`.
  */
 

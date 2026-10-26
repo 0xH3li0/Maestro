@@ -62,6 +62,7 @@ import {
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
 	taskAcceptsLocalKind,
+	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 	type SystemOneTaskId,
@@ -189,6 +190,12 @@ export interface ClassifierTaskInput extends LocalTaskAttribution {
 	/** The untrusted text to score. Read in full, however long (see `classifyText`). */
 	text: string;
 	signal?: AbortSignal;
+	/**
+	 * In-process callers only: run on this installed catalog classifier instead
+	 * of the task's assignment. Sketch Book screens text written before a switch
+	 * to a cloud engine this way, so it never reaches that engine (spec H1).
+	 */
+	localModelId?: string;
 }
 
 /**
@@ -328,7 +335,12 @@ export async function runClassifierTask(
 	const verdict = await runThroughAssignment(
 		taskId,
 		(source) => classifyText(source, input.text, input.signal ? { signal: input.signal } : {}),
-		{ agentId: input.agentId }
+		{
+			agentId: input.agentId,
+			...(input.localModelId
+				? { assignment: { type: 'local' as const, modelId: input.localModelId } }
+				: {}),
+		}
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every classifier task.
@@ -631,6 +643,8 @@ interface AssignedRunOptions<T> extends LocalTaskAttribution {
 	metrics?: (value: T) => RunMetrics;
 	/** Keeps the call out of the interactive count. */
 	background?: boolean;
+	/** Run on this source instead of the task's assignment (a pinned local model). */
+	assignment?: LocalModelAssignment;
 }
 
 type AssignedVerdict<T> =
@@ -680,7 +694,8 @@ async function runThroughAssignment<T>(
 	options: AssignedRunOptions<T> = {}
 ): Promise<AssignedVerdict<T>> {
 	const { metrics, background = false, agentId } = options;
-	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
+	const assignment =
+		options.assignment ?? resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
 	if (assignment.type === 'system-one') {
 		// A caller bug, or a prompt sent by hand (`maestro-cli models run`): an
 		// engine answers the task's typed questions, and no model stands in for it.
