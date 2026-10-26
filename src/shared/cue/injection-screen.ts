@@ -55,11 +55,11 @@
  */
 
 import {
-	noul,
-	type SystemOneAnswers,
-	type SystemOneFailPolicy,
-	type SystemOneTaskRequest,
-} from '../local-models/system-one';
+	DEFAULT_INJECTION_THRESHOLD,
+	type InjectionScore,
+	type InjectionUnavailable,
+} from '../local-models/injection-screen';
+import { noul, type SystemOneAnswers, type SystemOneTaskRequest } from '../local-models/system-one';
 import {
 	CUE_UNTRUSTED_TEMPLATE_VARIABLES,
 	findCueUntrustedTemplateVariables,
@@ -68,8 +68,11 @@ import {
 } from '../templateVariables';
 import type { CueEvent, CueSubscription } from './contracts';
 
-/** A score at or above this blocks the run, unless the subscription sets its own. */
-export const DEFAULT_CUE_INJECTION_THRESHOLD = 0.8;
+/**
+ * A score at or above this blocks the run, unless the subscription sets its
+ * own. The screen's neutral default, under the name Cue has always used.
+ */
+export const DEFAULT_CUE_INJECTION_THRESHOLD = DEFAULT_INJECTION_THRESHOLD;
 
 /** How a person sets the screen. `auto` is the absent key. */
 export const CUE_INJECTION_SCREEN_MODES = ['auto', 'on', 'off'] as const;
@@ -240,27 +243,11 @@ export function collectCueInjectionTargets(
 	return targets;
 }
 
-/**
- * What scoring one value found. `off` is kept apart from `unavailable`
- * because the policy differs: `off` means nobody assigned the task a model,
- * `unavailable` means someone did and it could not run.
- */
-export type CueInjectionScore =
-	| { status: 'scored'; score: number }
-	| { status: 'off'; reason: string }
-	| CueInjectionUnavailable;
+/** What scoring one value found. The neutral {@link InjectionScore}, under its Cue name. */
+export type CueInjectionScore = InjectionScore;
 
-/** The screen was asked for and could not score. */
-export interface CueInjectionUnavailable {
-	status: 'unavailable';
-	reason: string;
-	/**
-	 * What the task's own fail policy says, when the scorer applied one (a
-	 * System One engine gave no answer). `closed` blocks every action; see
-	 * {@link resolveCueInjectionDecision}.
-	 */
-	failPolicy?: SystemOneFailPolicy;
-}
+/** The screen was asked for and could not score. See {@link InjectionUnavailable}. */
+export type CueInjectionUnavailable = InjectionUnavailable;
 
 /** What a dispatch service asks its scorer. */
 export interface CueInjectionScoreRequest {

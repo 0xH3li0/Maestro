@@ -86,7 +86,11 @@ import { getEmbeddingRouter, type EmbeddingRouteDecision } from './model-router'
 import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { transcribeSpeech } from './speech-to-text';
 import { keepSystemOneDecision, type SystemOneDecision } from './system-one/decisions';
-import { askResolvedSystemOne, resolveSystemOneForTask } from './system-one/service';
+import {
+	askResolvedSystemOne,
+	resolveSystemOneForTask,
+	type ResolvedSystemOneEngine,
+} from './system-one/service';
 import { generateText } from './text-gen';
 
 /** Token budget when a caller names none. Housekeeping output is short. */
@@ -457,6 +461,25 @@ export interface SystemOneTaskOptions {
 	agentId?: string;
 	/** The AI tab of that agent whose turn this run is for, when there is one. */
 	tabId?: string;
+	/**
+	 * Called with the engine in force once it is resolved and BEFORE anything is
+	 * sent, so the check and the send see the same engine. A reason refuses the
+	 * run: nothing is asked, and the task's no-answer path applies with code
+	 * `unavailable` and that reason. Sketch Book uses it to keep guest text off a
+	 * cloud engine the conductor has not consented to.
+	 */
+	allowEngine?: (
+		engine: Exclude<ResolvedSystemOneEngine, { id: 'off' }>,
+		engineLabel: string
+	) => string | null;
+}
+
+/**
+ * Why a task assigned to System One gets no answer while no engine is chosen.
+ * One sentence for the run and for a caller that resolves the engine ahead of it.
+ */
+export function systemOneOffReason(taskId: LocalModelTaskId): string {
+	return `${LOCAL_MODEL_TASKS[taskId].label} is assigned to System One, and System One is off. Choose an engine in ${modelsSettingsLocation('system-one')}.`;
 }
 
 /** A run the engine did not answer. It names the engine that was asked, never another. */
@@ -549,12 +572,9 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 		return { status, engine: resolved.id, engineLabel, code, reason };
 	};
 
-	if (resolved.id === 'off') {
-		return noAnswer(
-			'off',
-			`${LOCAL_MODEL_TASKS[taskId].label} is assigned to System One, and System One is off. Choose an engine in ${modelsSettingsLocation('system-one')}.`
-		);
-	}
+	if (resolved.id === 'off') return noAnswer('off', systemOneOffReason(taskId));
+	const refused = options.allowEngine?.(resolved, engineLabel) ?? null;
+	if (refused !== null) return noAnswer('unavailable', refused);
 	try {
 		const result = await askResolvedSystemOne(resolved, request.state, request.questions, {
 			...(options.signal ? { signal: options.signal } : {}),

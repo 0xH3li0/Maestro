@@ -30,12 +30,16 @@ import {
 	type SecretFinding,
 	type SecretScanEnv,
 } from '../../shared/secretScan';
+import type { InjectionSourceInfo } from '../../shared/local-models/injection-screen';
 import {
 	LOCAL_MODEL_TASKS,
 	localModelAssignmentSourceLabel,
+	resolveLocalModelAssignment,
 } from '../../shared/local-models/tasks';
 import { getAgentConfigsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import { logger } from '../utils/logger';
+import { classifierScreenSource, injectionSourceFromSystemOne } from './injection-screen';
+import { readLocalModelAssignments } from './sources';
 import { runClassifierTask, runSystemOneTask } from './task-router';
 
 const LOG_CONTEXT = '[SecretScreen]';
@@ -64,6 +68,12 @@ export interface SecretScreenResult {
 export interface SecretScreenOptions {
 	/** Configured variables to match values of. Defaults to {@link knownSecretEnv}. */
 	env?: SecretScanEnv;
+	/**
+	 * Called with the model pass's resolved source BEFORE any text is sent.
+	 * Returning false skips the model pass with a note; the pattern pass still
+	 * decides. Sketch Book uses it to enforce cloud consent.
+	 */
+	allowSource?: (source: InjectionSourceInfo) => boolean;
 }
 
 /**
@@ -84,7 +94,7 @@ export async function screenForSecrets(
 		findings.push(...scanForSecrets(part.text, { env, source: part.source }));
 	}
 
-	const model = await modelPass(present);
+	const model = await modelPass(present, options.allowSource);
 	if (model.finding) findings.push(model.finding);
 
 	if (findings.length > 0) {
@@ -100,7 +110,8 @@ export async function screenForSecrets(
 
 /** The optional model pass. Reports a finding, a note, or neither. */
 async function modelPass(
-	parts: readonly SecretScreenPart[]
+	parts: readonly SecretScreenPart[],
+	allowSource?: (source: InjectionSourceInfo) => boolean
 ): Promise<{ finding?: SecretFinding; note?: string }> {
 	if (parts.length === 0) return {};
 	const task = LOCAL_MODEL_TASKS[TASK_ID];
@@ -116,7 +127,17 @@ async function modelPass(
 		const judged = await runSystemOneTask(
 			TASK_ID,
 			{ text },
-			{ signal: AbortSignal.timeout(SECRET_SCREEN_MODEL_TIMEOUT_MS) }
+			{
+				signal: AbortSignal.timeout(SECRET_SCREEN_MODEL_TIMEOUT_MS),
+				...(allowSource
+					? {
+							allowEngine: (engine, engineLabel) => {
+								const source = injectionSourceFromSystemOne(engine, engineLabel);
+								return allowSource(source) ? null : refusedReason(source);
+							},
+						}
+					: {}),
+			}
 		);
 		switch (judged.status) {
 			case 'not-assigned':
@@ -140,6 +161,12 @@ async function modelPass(
 					reason: judged.reason,
 				});
 				return unavailable(judged.reason);
+		}
+
+		if (allowSource) {
+			const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), TASK_ID);
+			const source = classifierScreenSource(assignment);
+			if (source && !allowSource(source)) return unavailable(refusedReason(source));
 		}
 
 		const verdict = await runClassifierTask(TASK_ID, {
@@ -176,6 +203,11 @@ async function modelPass(
 		logger.warn('Secret screen model failed', LOG_CONTEXT, { error: String(error) });
 		return unavailable('it failed to run.');
 	}
+}
+
+/** Why a source the caller refused did not run. */
+function refusedReason(source: InjectionSourceInfo): string {
+	return `Screening on ${source.label} is not allowed for this content.`;
 }
 
 /**
