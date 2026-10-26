@@ -18,6 +18,7 @@ import {
 	isRelayConversationIdentity,
 } from '../../../../shared/plugins/relay-identity';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
+import { relayMailReadOperation } from '../../../plugins/relay-mail/contract';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -238,9 +239,14 @@ export async function handlePluginsCallTool(
 			return;
 		}
 		const args = 'args' in message ? message.args : undefined;
+		const hostMailRead = relayMailReadOperation(declaredTool) !== undefined;
+		if (hostMailRead && !verified) {
+			respond({ ok: false, error: 'PLUGIN_DENIED' });
+			return;
+		}
 		let argText = '';
 		try {
-			argText = JSON.stringify(args ?? {});
+			if (!hostMailRead) argText = JSON.stringify(args ?? {});
 		} catch {
 			argText = '';
 		}
@@ -272,7 +278,9 @@ export async function handlePluginsCallTool(
 			}
 		}
 		const verdict = evaluatePluginDispatch(riskText);
-		if (!relayReply && !verdict.eligible) {
+		// Known reads execute fixed Host code with live native/domain authority.
+		// Their prose/search strings are data, not authority or effect declarations.
+		if (!relayReply && !hostMailRead && !verdict.eligible) {
 			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
 			return;
 		}

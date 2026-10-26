@@ -414,7 +414,12 @@ export async function buildSpawnSpec(
 		isPluginsFeatureEnabled() &&
 		(getActivePluginManager()?.getContributions().tools.length ?? 0) > 0
 	) {
-		pluginRunToken = pluginToolRunIdentity.issue(session.id, config.timeoutMs + 60_000);
+		pluginRunToken = pluginToolRunIdentity.issue(
+			session.id,
+			config.timeoutMs + 60_000,
+			undefined,
+			true
+		);
 		try {
 			pluginRunProofFile = createPluginRunProofFile(pluginRunToken, config.timeoutMs + 60_000);
 		} catch (error) {

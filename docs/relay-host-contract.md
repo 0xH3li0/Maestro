@@ -226,3 +226,59 @@ node scripts/verify-relay-reply-path.mjs /path/to/backstage-checkout
 ```
 
 Replace the example path with your checkout. This supported developer fixture bundles both sources only in memory. It connects the real source MCP bridge to host handlers over an ephemeral authenticated loopback WebSocket and uses Backstage's real outbound and queue logic with synthetic bindings and a fake Discord sink. It verifies unchanged reply text, disabled mentions, host-observed receipts, proof/publisher/destination denials and the legacy error mapping. Backstage is read-only. It makes no external network calls, provider turns or live Discord sends and supplies no current installer/package acceptance.
+
+## Host-executed Relay mail reads (1.29.1)
+
+The six exact declared Relay tools `mail-list-accounts`, `mail-search-headers`,
+`mail-read-headers`, `mail-read-body`, `mail-list-attachments` and
+`mail-read-attachment` execute the Host's fixed reader in main. They do not run
+plugin code or infer effects from a description or a `readOnly` hint. Tool prose
+and quoted search text are data, so the Pianola free-text ceiling does not decide
+these reads. Other tools retain their existing policy.
+
+Admission still requires a live host-issued run proof, exact declared operation,
+active plugin generation, and the verified pinned Relay publisher. Inputs are
+closed and bounded before asynchronous work. The Host reads only the existing
+confirmed `mail.policy` record under `records:read`; no legacy metadata, ordinary
+KV, inferred agent name, or model-supplied caller grants authority. The record's
+existing exact account/agent membership, enabled state, account revision, folder,
+and independent `read`, `detail`, or `attachments` right decide access. A read
+never creates or broadens a grant.
+
+The Host emits only fixed LOGIN, EXAMINE, UID SEARCH, BODY.PEEK FETCH and LOGOUT
+commands over the existing consented TLS broker. Server/port, username and opaque
+secret reference come exclusively from confirmed policy. Search text is encoded
+as bounded quoted data, never raw IMAP. EXAMINE and BODY.PEEK preserve Seen flags;
+no SELECT, STORE, MOVE, COPY, APPEND, DELETE or EXPUNGE operation exists in this
+contract. MIME parsing and independent result projection happen inside main:
+header rights never return bodies; body rights never return attachment bytes;
+attachment rights never return the body. Unsupported MIME/protocol extensions
+fail closed. Results are untrusted data and cannot change policy or approve actions.
+
+Every byte boundary rechecks native invocation and plugin/endpoint authority;
+record revisions and rights are rechecked through completion. A policy edit
+invalidates current invocation leases. Main retains the lease through its
+synchronous publication callback, then releases it and closes transport resources.
+The 30-second native invocation deadline, TLS/secret endpoint scopes, DNS pinning,
+certificate checks and byte/resource bounds remain in force. Results are bounded
+to the existing one-megabyte tool transport budget.
+
+Run provenance is stamped by the Host at desktop, Cue and headless admission;
+model arguments cannot change it. Automatic or unspecified run provenance also
+requires Relay's existing exact-agent `agents:dispatch` grant carrying the separate
+`unattended` consent. Interactive account rights alone do not grant that authority.
+No new unattended ledger or automatic consent is introduced.
+
+The reader uses the already confirmed Relay policy schema and six tool input/result
+shapes. Account setup remains in Relay's protected settings/native confirmation
+flow. No Backstage update is required for the six-tool contract. Host API 1.29.1
+is a behavior patch, not a new SDK capability. A combined Relay package that
+separately requires Host API 1.31 still needs its independent platform prerequisites;
+this patch does not import unrelated local continuity changes or downgrade a plugin.
+
+The reader's protocol/MIME implementation and focused parser regressions are
+adapted from merged Backstage PR24 (`841c9b676df119a58f9ab99258d621e82ad685ed`),
+whose bounded parsers originated in the earlier Host mail implementation. Only
+read execution is retained: no account setup, credential writer, poller, migration,
+new persistence or public raw-command API is added. Live-provider acceptance,
+installation and restart remain separate from synthetic qualification.

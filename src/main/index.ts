@@ -6,6 +6,7 @@ import { PluginTlsHost } from './plugins/plugin-tls';
 import { PluginCueEvents } from './plugins/plugin-cue-events';
 import { CueReceiptStore } from './cue/cue-receipt-store';
 import { PluginPrimitives } from './plugins/plugin-primitives';
+import { createRelayMailReader } from './plugins/relay-mail/reader';
 import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window';
 import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
 import {
@@ -2699,8 +2700,8 @@ app
 			spawn: spawnAgent,
 			recordRelayOrigin: markRelaySession,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
-			issueRunToken: (agentId, ttlMs, receiptToolId) =>
-				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
+			issueRunToken: (agentId, ttlMs, receiptToolId, unattended) =>
+				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
@@ -3160,6 +3161,7 @@ app
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
+			relayMailReader: createRelayMailReader(pluginPrimitives, pluginBroker),
 			toolIdentity,
 			toolProofFiles,
 			assertToolProofStorageActive,
