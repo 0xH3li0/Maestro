@@ -53,7 +53,7 @@ export interface ClosedTabCommandRequest {
 }
 
 /** Kinds of tab the stack holds. */
-export type ClosedTabType = 'ai' | 'file' | 'terminal' | 'browser';
+export type ClosedTabType = 'ai' | 'file' | 'terminal' | 'browser' | 'sketch';
 
 /**
  * One closed tab, flattened for the wire.
@@ -113,7 +113,7 @@ const CONTENT_STATES: readonly ReopenedContentState[] = [
 	'pending',
 ];
 
-const TAB_TYPES: readonly ClosedTabType[] = ['ai', 'file', 'terminal', 'browser'];
+const TAB_TYPES: readonly ClosedTabType[] = ['ai', 'file', 'terminal', 'browser', 'sketch'];
 
 /**
  * Narrow whatever the renderer sent back to a result.

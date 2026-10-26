@@ -8,6 +8,7 @@ import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
+	closeSketchTab,
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
@@ -214,6 +215,14 @@ export function useUnifiedTabHandlers({
 					);
 					return { type: 'browser', tabId: focusedRef.id };
 				}
+				if (focusedRef.type === 'sketch') {
+					setSessions((prev: Session[]) =>
+						prev.map((s) =>
+							s.id === session.id ? (closeSketchTab(s, focusedRef.id)?.session ?? s) : s
+						)
+					);
+					return { type: 'sketch', tabId: focusedRef.id };
+				}
 				// Terminal tile: the keyboard handler completes the close via
 				// handleCloseTerminalTab (killing the PTY). The group always has >=2 panes
 				// here, so the standalone "prevented when it's the last tab" guard never applies.
@@ -227,6 +236,7 @@ export function useUnifiedTabHandlers({
 				(session.aiTabs?.length || 0) +
 				(session.filePreviewTabs?.length || 0) +
 				(session.browserTabs?.length || 0) +
+				(session.sketchTabs?.length || 0) +
 				(session.terminalTabs?.length || 0);
 			if (totalTabs <= 1) {
 				return { type: 'prevented' };
@@ -250,6 +260,14 @@ export function useUnifiedTabHandlers({
 				})
 			);
 			return { type: 'browser', tabId };
+		}
+
+		if (session.activeSketchTabId) {
+			const tabId = session.activeSketchTabId;
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === session.id ? (closeSketchTab(s, tabId)?.session ?? s) : s))
+			);
+			return { type: 'sketch', tabId };
 		}
 
 		if (session.activeTabId) {

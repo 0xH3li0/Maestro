@@ -13,6 +13,7 @@
  *     open tab does, because nothing else holds them.
  *   - File tab: content is dropped and re-read from disk on reopen.
  *   - Browser tab: page runtime is reset; an incognito tab is never stored.
+ *   - Sketch tab: stored as is; it only points at a sketch in the sketch store.
  *   - Terminal tab: PTY runtime is reset; reopening starts a fresh shell.
  *
  * The legacy AI-only `closedTabHistory` is never stored.
@@ -47,7 +48,7 @@ export interface ClosedTabHistoryContext {
 
 type RecordData = Record<string, unknown>;
 
-const CLOSED_TAB_TYPES = new Set(['ai', 'file', 'browser', 'terminal']);
+const CLOSED_TAB_TYPES = new Set(['ai', 'file', 'browser', 'sketch', 'terminal']);
 
 const AI_RUNTIME_KEYS = [
 	'thinkingStartTime',
@@ -172,6 +173,10 @@ function projectEntry(entry: unknown, context: ClosedTabHistoryContext): RecordD
 		case 'browser':
 			if (isEphemeralBrowserTab(tab)) return null;
 			storedTab = projectBrowserTab(tab);
+			break;
+		case 'sketch':
+			// A pointer already: the drawing lives in the sketch store, never here.
+			storedTab = tab;
 			break;
 		default:
 			storedTab = projectTerminalTab(tab);

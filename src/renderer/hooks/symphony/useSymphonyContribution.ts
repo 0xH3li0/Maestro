@@ -178,6 +178,7 @@ export function useSymphonyContribution(
 				activeFileTabId: null,
 				browserTabs: [],
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				terminalTabs: [],
 				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],

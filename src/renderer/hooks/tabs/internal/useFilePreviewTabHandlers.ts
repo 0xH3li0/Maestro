@@ -132,6 +132,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							activeGroupId: groupPane.groupId,
 							activeFileTabId: existingTab.id,
 							activeBrowserTabId: null,
+							activeSketchTabId: null,
 							activeTerminalTabId: null,
 							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
@@ -359,6 +360,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			...s,
 			activeFileTabId: tabId,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			activeTerminalTabId: null,
 			inputMode: 'ai',
 			// Selecting a standalone file tab leaves any active tiled group.
@@ -407,6 +409,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				unifiedTabOrder: updatedUnifiedTabOrder,
 				activeFileTabId: newTabId,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				inputMode: 'ai' as const,
 				// A newly-created untitled file tab takes over the panel, so it must

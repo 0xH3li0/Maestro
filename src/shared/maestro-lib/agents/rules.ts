@@ -303,6 +303,7 @@ function activeOrderIndex(agent: AgentRecord, order: readonly TabRefRecord[]): n
 	if (agent.activeTerminalTabId) return find('terminal', agent.activeTerminalTabId);
 	if (agent.activeFileTabId) return find('file', agent.activeFileTabId);
 	if (agent.activeBrowserTabId) return find('browser', agent.activeBrowserTabId);
+	if (agent.activeSketchTabId) return find('sketch', agent.activeSketchTabId);
 	return find('ai', agent.activeTabId);
 }
 
@@ -472,8 +473,8 @@ export interface CloseTabOutcome {
  * - When the closed tab was the active one, `activeTabId` moves to the AI tab to
  *   its left in strip order, or the one that was to its right when it led the strip.
  * - A fresh tab is created only when no tab of ANY kind survives. When only
- *   file, terminal, or browser tabs survive, `activeTabId` becomes `''`.
- * - The file, terminal, and browser active ids and `inputMode` are never touched
+ *   file, terminal, browser, or sketch tabs survive, `activeTabId` becomes `''`.
+ * - The file, terminal, browser, and sketch active ids and `inputMode` are never touched
  *   (CO-4): the desktop helper may switch the view to a neighbouring terminal
  *   tab, and a script closing a tab must not do that.
  */
@@ -491,7 +492,10 @@ export function closeTabRecord(
 	let aiTabs = tabs.filter((tab) => tab.id !== tabId);
 	const visible = aiTabs.filter((tab) => tab.hidden !== true);
 	const otherTabs =
-		countOf(agent.filePreviewTabs) + countOf(agent.terminalTabs) + countOf(agent.browserTabs);
+		countOf(agent.filePreviewTabs) +
+		countOf(agent.terminalTabs) +
+		countOf(agent.browserTabs) +
+		countOf(agent.sketchTabs);
 
 	let order = (Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : []).filter(
 		(ref) => !(ref.type === 'ai' && ref.id === tabId)

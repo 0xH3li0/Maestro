@@ -504,7 +504,7 @@ export function clampSnoozeLabel(text: string): string {
  * and the main process can pass a record straight out of the sessions store.
  */
 export interface SnoozedEntryLabelSource {
-	type: 'ai' | 'file' | 'terminal' | 'browser' | 'group';
+	type: 'ai' | 'file' | 'terminal' | 'browser' | 'sketch' | 'group';
 	tab?: {
 		name?: string | null;
 		agentSessionId?: string | null;
@@ -542,6 +542,8 @@ export function snoozedEntryLabel(entry: SnoozedEntryLabelSource): string {
 			return clampSnoozeLabel(`${tab.name ?? ''}${tab.extension ?? ''}`) || 'Untitled file';
 		case 'browser':
 			return clampSnoozeLabel(tab.customTitle || tab.title || tab.url || '') || 'Browser tab';
+		case 'sketch':
+			return clampSnoozeLabel(tab.name ?? '') || 'Sketch Book';
 		case 'terminal':
 			return tab.name || clampSnoozeLabel(tab.cwd ?? '') || 'Terminal';
 		case 'group':

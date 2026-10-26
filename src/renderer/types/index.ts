@@ -5,6 +5,7 @@ import type {
 } from '../../shared/maestro-lib/translation/types';
 // Type definitions for Maestro renderer
 import type { BrowserTab } from '../../shared/browserPage';
+import type { SketchTab } from '../../shared/sketch/types';
 
 // Re-export context merge types
 export * from './contextMerge';
@@ -1143,7 +1144,10 @@ export interface TerminalTab {
  * `Session.tabGroups`; the group's own layout still references the underlying
  * tabs by leaf. See PanelLayoutNode below.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
+export type UnifiedTabRef = {
+	type: 'ai' | 'file' | 'terminal' | 'browser' | 'sketch' | 'group';
+	id: string;
+};
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -1155,6 +1159,7 @@ export type UnifiedTab =
 	| { type: 'file'; id: string; data: FilePreviewTab }
 	| { type: 'terminal'; id: string; data: TerminalTab }
 	| { type: 'browser'; id: string; data: BrowserTab }
+	| { type: 'sketch'; id: string; data: SketchTab }
 	| { type: 'group'; id: string; data: TabGroup };
 
 /**
@@ -1260,7 +1265,8 @@ export type ClosedTabEntry =
 	| ({ type: 'ai'; tab: AITab } & ClosedTabEntryBase)
 	| ({ type: 'file'; tab: FilePreviewTab } & ClosedTabEntryBase)
 	| ({ type: 'terminal'; tab: TerminalTab } & ClosedTabEntryBase)
-	| ({ type: 'browser'; tab: BrowserTab } & ClosedTabEntryBase);
+	| ({ type: 'browser'; tab: BrowserTab } & ClosedTabEntryBase)
+	| ({ type: 'sketch'; tab: SketchTab } & ClosedTabEntryBase);
 
 /**
  * A snoozed AI tab, held out of the tab bar until `wakeAt`.
@@ -1359,6 +1365,7 @@ export type SnoozedTabEntry =
 	| ({ type: 'file'; tab: FilePreviewTab } & SnoozedTabEntryBase)
 	| ({ type: 'terminal'; tab: TerminalTab } & SnoozedTabEntryBase)
 	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase)
+	| ({ type: 'sketch'; tab: SketchTab } & SnoozedTabEntryBase)
 	| (SnoozedGroupPayload & SnoozedTabEntryBase);
 
 /**
@@ -1370,7 +1377,8 @@ export type SnoozedGroupMember =
 	| { type: 'ai'; tab: AITab }
 	| { type: 'file'; tab: FilePreviewTab }
 	| { type: 'terminal'; tab: TerminalTab }
-	| { type: 'browser'; tab: BrowserTab };
+	| { type: 'browser'; tab: BrowserTab }
+	| { type: 'sketch'; tab: SketchTab };
 
 /**
  * A parked tiled group.
@@ -1594,6 +1602,13 @@ export interface Session {
 	browserTabs: BrowserTab[];
 	// Currently active browser tab ID (null if an AI, file, or terminal tab is active)
 	activeBrowserTabId: string | null;
+
+	// Sketch Book tabs (Encore `sketchBook`). Each points at a sketch in the main
+	// store; the drawing itself is never held here. Absent on agents that never
+	// opened one, so a switched-off feature leaves no trace on the record.
+	sketchTabs?: SketchTab[];
+	// Currently active sketch tab ID (null or absent when another tab type is active)
+	activeSketchTabId?: string | null;
 
 	// Terminal tab management - each tab has its own PTY session with xterm.js rendering
 	terminalTabs: TerminalTab[];

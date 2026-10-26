@@ -147,3 +147,17 @@ export interface SketchScene {
 	/** Excalidraw's `BinaryFiles`, keyed by file id. */
 	files: Record<string, unknown>;
 }
+
+/**
+ * A Sketch Book tab on an agent (spec section 3). It only points at a sketch:
+ * the scene lives in the store and the live session in the renderer's
+ * `sketchSessionStore`, so tiling, snoozing, closing or moving the tab to
+ * another window never copies or drops the drawing. `name` is the tab label,
+ * renamed like any tab; the record's own name stays in `index.json`.
+ */
+export interface SketchTab {
+	id: string;
+	sketchId: string;
+	name: string;
+	createdAt: number;
+}

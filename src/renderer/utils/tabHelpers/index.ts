@@ -2,6 +2,7 @@
 // These helpers manage AITab state within Maestro sessions
 
 import type { BrowserTab } from '../../../shared/browserPage';
+import type { SketchTab } from '../../../shared/sketch/types';
 import {
 	Session,
 	AITab,
@@ -52,12 +53,14 @@ import {
 	aiTabFocusFields,
 	fileTabFocusFields,
 	browserTabFocusFields,
+	sketchTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
 	cycleShowThinkingFields,
 	setShowThinkingFields,
+	standaloneFocusPatch,
 } from './focusFields';
 import {
 	groupFocusFields,
@@ -82,14 +85,23 @@ export {
 	aiTabFocusFields,
 	fileTabFocusFields,
 	browserTabFocusFields,
+	sketchTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
 	cycleShowThinkingFields,
 	setShowThinkingFields,
+	standaloneFocusPatch,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
+export {
+	createSketchTab,
+	getSketchTabLabel,
+	openSketchTab,
+	renameSketchTab,
+	type OpenSketchTabResult,
+} from './sketchTabs';
 
 /**
  * Reveal a hidden AI tab, permanently. Called when the user deliberately opens a
@@ -126,6 +138,7 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	);
 	const fileTabMap = new Map((filePreviewTabs || []).map((tab) => [tab.id, tab]));
 	const browserTabMap = new Map((browserTabs || []).map((tab) => [tab.id, tab]));
+	const sketchTabMap = new Map((session.sketchTabs || []).map((tab) => [tab.id, tab]));
 	const terminalTabMap = new Map((terminalTabs || []).map((tab) => [tab.id, tab]));
 	// Groups are the 5th unified tab type: a tiled group appears as a single chip
 	// referenced by a `group` ref in the order. Resolve those refs to their TabGroup.
@@ -153,6 +166,12 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 				result.push({ type: 'browser', id: ref.id, data: tab });
 				browserTabMap.delete(ref.id);
 			}
+		} else if (ref.type === 'sketch') {
+			const tab = sketchTabMap.get(ref.id);
+			if (tab) {
+				result.push({ type: 'sketch', id: ref.id, data: tab });
+				sketchTabMap.delete(ref.id);
+			}
 		} else if (ref.type === 'group') {
 			const group = groupMap.get(ref.id);
 			if (group) {
@@ -177,6 +196,9 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	}
 	for (const [id, tab] of browserTabMap) {
 		result.push({ type: 'browser', id, data: tab });
+	}
+	for (const [id, tab] of sketchTabMap) {
+		result.push({ type: 'sketch', id, data: tab });
 	}
 	for (const [id, tab] of terminalTabMap) {
 		result.push({ type: 'terminal', id, data: tab });
@@ -225,7 +247,7 @@ function collectGroupMemberTabKeys(session: Session): Set<string> {
  */
 export function ensureInUnifiedTabOrder(
 	unifiedTabOrder: UnifiedTabRef[],
-	type: 'ai' | 'file' | 'browser' | 'terminal',
+	type: 'ai' | 'file' | 'browser' | 'sketch' | 'terminal',
 	id: string
 ): UnifiedTabRef[] {
 	const exists = unifiedTabOrder.some((ref) => ref.type === type && ref.id === id);
@@ -246,12 +268,14 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 	const aiTabs = session.aiTabs || [];
 	const fileTabs = session.filePreviewTabs || [];
 	const browserTabs = session.browserTabs || [];
+	const sketchTabs = session.sketchTabs || [];
 	const terminalTabs = session.terminalTabs || [];
 
 	// Build sets of IDs that actually exist (for pruning stale entries)
 	const liveAiIds = new Set(aiTabs.map((t) => t.id));
 	const liveFileIds = new Set(fileTabs.map((t) => t.id));
 	const liveBrowserIds = new Set(browserTabs.map((t) => t.id));
+	const liveSketchIds = new Set(sketchTabs.map((t) => t.id));
 	const liveTerminalIds = new Set(terminalTabs.map((t) => t.id));
 	// Groups are the 5th unified type: a `group` ref is live while its TabGroup
 	// exists. Tabs tiled INTO a group are represented by the group ref, so they must
@@ -278,6 +302,7 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 		if (ref.type === 'ai') return liveAiIds.has(ref.id);
 		if (ref.type === 'file') return liveFileIds.has(ref.id);
 		if (ref.type === 'browser') return liveBrowserIds.has(ref.id);
+		if (ref.type === 'sketch') return liveSketchIds.has(ref.id);
 		if (ref.type === 'group') return liveGroupIds.has(ref.id);
 		return liveTerminalIds.has(ref.id);
 	});
@@ -286,11 +311,13 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 	const aiIdsInOrder = new Set<string>();
 	const fileIdsInOrder = new Set<string>();
 	const browserIdsInOrder = new Set<string>();
+	const sketchIdsInOrder = new Set<string>();
 	const terminalIdsInOrder = new Set<string>();
 	for (const ref of prunedOrder) {
 		if (ref.type === 'ai') aiIdsInOrder.add(ref.id);
 		else if (ref.type === 'file') fileIdsInOrder.add(ref.id);
 		else if (ref.type === 'browser') browserIdsInOrder.add(ref.id);
+		else if (ref.type === 'sketch') sketchIdsInOrder.add(ref.id);
 		else terminalIdsInOrder.add(ref.id);
 	}
 
@@ -311,6 +338,11 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 	for (const tab of browserTabs) {
 		if (!browserIdsInOrder.has(tab.id) && !groupMemberKeys.has(`browser:${tab.id}`)) {
 			orphanedRefs.push({ type: 'browser', id: tab.id });
+		}
+	}
+	for (const tab of sketchTabs) {
+		if (!sketchIdsInOrder.has(tab.id) && !groupMemberKeys.has(`sketch:${tab.id}`)) {
+			orphanedRefs.push({ type: 'sketch', id: tab.id });
 		}
 	}
 	for (const tab of terminalTabs) {
@@ -689,6 +721,9 @@ export function filterUnifiedTabOrderForUnread(
 			return group ? groupHasUnreadTabs(session, group) : false;
 		}
 		if (ref.type === 'browser') return showBrowserTabs || ref.id === activeBrowserTabId;
+		// A sketch has no unread state and no opt-in setting yet, so only the
+		// active one stays in the filtered strip.
+		if (ref.type === 'sketch') return ref.id === (session.activeSketchTabId ?? null);
 		return showTerminalTabs || ref.id === activeTerminalTabId;
 	});
 }
@@ -1362,7 +1397,8 @@ export function closeTab(
 	const otherTabCount =
 		(session.filePreviewTabs?.length ?? 0) +
 		(session.terminalTabs?.length ?? 0) +
-		(session.browserTabs?.length ?? 0);
+		(session.browserTabs?.length ?? 0) +
+		(session.sketchTabs?.length ?? 0);
 
 	let newActiveTabId = session.activeTabId;
 	// Fallback unified tab ref when the closed tab was active - may be terminal or file
@@ -1475,6 +1511,7 @@ export function closeTab(
 						activeTabId: survivingActiveTabId,
 						activeFileTabId: fallbackRef.id,
 						activeBrowserTabId: null,
+						activeSketchTabId: null,
 						activeTerminalTabId: null,
 						inputMode: 'ai',
 						closedTabHistory: updatedHistory,
@@ -1492,25 +1529,35 @@ export function closeTab(
 							closedTabHistory: updatedHistory,
 							unifiedTabOrder: finalUnifiedTabOrder,
 						}
-					: fallbackRef?.type === 'ai'
+					: fallbackRef?.type === 'sketch'
 						? {
 								...session,
 								aiTabs: updatedTabs,
-								activeTabId: fallbackRef.id,
-								activeFileTabId: null,
-								activeBrowserTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai',
+								activeTabId: survivingActiveTabId,
+								...sketchTabFocusFields(fallbackRef.id),
 								closedTabHistory: updatedHistory,
 								unifiedTabOrder: finalUnifiedTabOrder,
 							}
-						: {
-								...session,
-								aiTabs: updatedTabs,
-								activeTabId: newActiveTabId,
-								closedTabHistory: updatedHistory,
-								unifiedTabOrder: finalUnifiedTabOrder,
-							};
+						: fallbackRef?.type === 'ai'
+							? {
+									...session,
+									aiTabs: updatedTabs,
+									activeTabId: fallbackRef.id,
+									activeFileTabId: null,
+									activeBrowserTabId: null,
+									activeSketchTabId: null,
+									activeTerminalTabId: null,
+									inputMode: 'ai',
+									closedTabHistory: updatedHistory,
+									unifiedTabOrder: finalUnifiedTabOrder,
+								}
+							: {
+									...session,
+									aiTabs: updatedTabs,
+									activeTabId: newActiveTabId,
+									closedTabHistory: updatedHistory,
+									unifiedTabOrder: finalUnifiedTabOrder,
+								};
 
 	// Keep tracking the closed tab in orphanedThinkingTabs when it still has work
 	// in flight, so the thinking pill stays visible and the tab survives as a
@@ -1602,6 +1649,7 @@ export function restoreOrphanedTab(
 			activeTabId: orphan.id,
 			activeFileTabId: null,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			activeTerminalTabId: null,
 			inputMode: 'ai',
 			unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder || [], 'ai', orphan.id),
@@ -1800,6 +1848,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 	// Determine new active tab if we closed the active file tab
 	let newActiveFileTabId = session.activeFileTabId;
 	let newActiveBrowserTabId = session.activeBrowserTabId;
+	let newActiveSketchTabId = session.activeSketchTabId ?? null;
 	let newActiveTerminalTabId = session.activeTerminalTabId;
 	let newActiveTabId = session.activeTabId;
 	let newInputMode = session.inputMode;
@@ -1823,6 +1872,12 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newActiveBrowserTabId = nextTabRef.id;
 				newActiveTerminalTabId = null;
 				newInputMode = 'ai';
+			} else if (nextTabRef.type === 'sketch') {
+				newActiveFileTabId = null;
+				newActiveBrowserTabId = null;
+				newActiveSketchTabId = nextTabRef.id;
+				newActiveTerminalTabId = null;
+				newInputMode = 'ai';
 			} else if (nextTabRef.type === 'terminal') {
 				newActiveFileTabId = null;
 				newActiveBrowserTabId = null;
@@ -1833,6 +1888,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newActiveTabId = nextTabRef.id;
 				newActiveFileTabId = null;
 				newActiveBrowserTabId = null;
+				newActiveSketchTabId = null;
 				newActiveTerminalTabId = null;
 				newInputMode = 'ai';
 			}
@@ -1849,6 +1905,12 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newActiveBrowserTabId = firstTabRef.id;
 				newActiveTerminalTabId = null;
 				newInputMode = 'ai';
+			} else if (firstTabRef.type === 'sketch') {
+				newActiveFileTabId = null;
+				newActiveBrowserTabId = null;
+				newActiveSketchTabId = firstTabRef.id;
+				newActiveTerminalTabId = null;
+				newInputMode = 'ai';
 			} else if (firstTabRef.type === 'terminal') {
 				newActiveFileTabId = null;
 				newActiveBrowserTabId = null;
@@ -1858,6 +1920,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newActiveTabId = firstTabRef.id;
 				newActiveFileTabId = null;
 				newActiveBrowserTabId = null;
+				newActiveSketchTabId = null;
 				newActiveTerminalTabId = null;
 				newInputMode = 'ai';
 			}
@@ -1866,6 +1929,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			// blank AI chat and focuses it.
 			newActiveFileTabId = null;
 			newActiveBrowserTabId = null;
+			newActiveSketchTabId = null;
 			newActiveTerminalTabId = null;
 			newInputMode = 'ai';
 		}
@@ -1885,6 +1949,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			unifiedTabOrder: updatedUnifiedTabOrder,
 			activeFileTabId: newActiveFileTabId,
 			activeBrowserTabId: newActiveBrowserTabId,
+			activeSketchTabId: newActiveSketchTabId,
 			activeTerminalTabId: newActiveTerminalTabId,
 			activeTabId: newActiveTabId,
 			inputMode: newInputMode,
@@ -1925,6 +1990,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 	let nextActiveTabId = session.activeTabId;
 	let nextActiveFileTabId = session.activeFileTabId;
 	let nextActiveBrowserTabId = session.activeBrowserTabId;
+	let nextActiveSketchTabId = session.activeSketchTabId ?? null;
 	let nextActiveTerminalTabId = session.activeTerminalTabId;
 	let nextInputMode = session.inputMode;
 
@@ -1945,6 +2011,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 		if (fallbackRef?.type === 'ai') {
 			nextActiveTabId = fallbackRef.id;
 			nextActiveFileTabId = null;
+			nextActiveSketchTabId = null;
 			nextActiveTerminalTabId = null;
 			nextInputMode = 'ai';
 		} else if (fallbackRef?.type === 'file') {
@@ -1953,6 +2020,11 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			nextInputMode = 'ai';
 		} else if (fallbackRef?.type === 'browser') {
 			nextActiveBrowserTabId = fallbackRef.id;
+			nextActiveFileTabId = null;
+			nextActiveTerminalTabId = null;
+			nextInputMode = 'ai';
+		} else if (fallbackRef?.type === 'sketch') {
+			nextActiveSketchTabId = fallbackRef.id;
 			nextActiveFileTabId = null;
 			nextActiveTerminalTabId = null;
 			nextInputMode = 'ai';
@@ -1977,9 +2049,70 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			activeTabId: nextActiveTabId,
 			activeFileTabId: nextActiveFileTabId,
 			activeBrowserTabId: nextActiveBrowserTabId,
+			activeSketchTabId: nextActiveSketchTabId,
 			activeTerminalTabId: nextActiveTerminalTabId,
 			inputMode: nextInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
+		}),
+	};
+}
+
+export interface CloseSketchTabResult {
+	closedTabEntry: ClosedTabEntry;
+	session: Session;
+}
+
+/**
+ * Close a Sketch Book tab. Only the tab goes: the sketch file and the live
+ * `SketchSession` (room socket, bot) stay, so Cmd+Shift+T or reopening the
+ * sketch brings the same drawing back. When the closed tab was the visible one,
+ * the left neighbor in the navigable order takes over, like every other close.
+ */
+export function closeSketchTab(session: Session, tabId: string): CloseSketchTabResult | null {
+	const tabToClose = session?.sketchTabs?.find((tab) => tab.id === tabId);
+	if (!tabToClose) return null;
+
+	const repairedOrder = getRepairedUnifiedTabOrder(session);
+	const isClosed = (ref: UnifiedTabRef) => ref.type === 'sketch' && ref.id === tabId;
+	const unifiedIndex = repairedOrder.findIndex(isClosed);
+	const closedTabEntry: ClosedTabEntry = {
+		type: 'sketch',
+		tab: { ...tabToClose },
+		unifiedIndex: unifiedIndex !== -1 ? unifiedIndex : repairedOrder.length,
+		closedAt: Date.now(),
+	};
+	const updatedUnifiedTabOrder = repairedOrder.filter((ref) => !isClosed(ref));
+
+	let focusPatch: Partial<Session> = {};
+	if (session.activeSketchTabId === tabId) {
+		// Same two coordinate spaces as closeBrowserTab: the neighbor comes from the
+		// NAVIGABLE order, the reopen slot above from the persisted one.
+		const navigableRemaining = getNavigableUnifiedTabOrder(session, updatedUnifiedTabOrder);
+		const navigableIndex = getNavigableUnifiedTabOrder(session, repairedOrder).findIndex(isClosed);
+		const fallbackRef =
+			navigableRemaining.length > 0 && navigableIndex !== -1
+				? navigableRemaining[Math.max(0, navigableIndex - 1)]
+				: (navigableRemaining[0] ?? null);
+		const group =
+			fallbackRef?.type === 'group'
+				? session.tabGroups?.find((candidate) => candidate.id === fallbackRef.id)
+				: undefined;
+		focusPatch = group
+			? groupFocusFields(group)
+			: { activeSketchTabId: null, ...(fallbackRef ? standaloneFocusPatch(fallbackRef) : {}) };
+	}
+
+	return {
+		closedTabEntry,
+		session: ensureAgentHasVisibleTab({
+			...session,
+			sketchTabs: session.sketchTabs!.filter((tab) => tab.id !== tabId),
+			unifiedTabOrder: updatedUnifiedTabOrder,
+			...focusPatch,
+			unifiedClosedTabHistory: [closedTabEntry, ...(session.unifiedClosedTabHistory || [])].slice(
+				0,
+				MAX_CLOSED_TAB_HISTORY
+			),
 		}),
 	};
 }
@@ -2022,7 +2155,7 @@ export function addAiTabToUnifiedHistory(
  * Result of reopening a tab from unified closed tab history.
  */
 export interface ReopenUnifiedClosedTabResult {
-	tabType: 'ai' | 'file' | 'browser' | 'terminal'; // Type of tab that was reopened
+	tabType: 'ai' | 'file' | 'browser' | 'sketch' | 'terminal'; // Type of tab that was reopened
 	tabId: string; // ID of the restored or existing tab
 	session: Session; // Updated session with tab restored/selected
 	wasDuplicate: boolean; // True if we switched to an existing tab instead of restoring
@@ -2285,6 +2418,7 @@ export function reopenUnifiedClosedTab(
 					...session,
 					activeFileTabId: existingTab.id,
 					activeBrowserTabId: null,
+					activeSketchTabId: null,
 					unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder, 'file', existingTab.id),
 					unifiedClosedTabHistory: remainingHistory,
 				},
@@ -2327,6 +2461,7 @@ export function reopenUnifiedClosedTab(
 				filePreviewTabs: updatedFilePreviewTabs,
 				activeFileTabId: restoredTab.id,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				unifiedTabOrder: updatedUnifiedTabOrder,
 				unifiedClosedTabHistory: remainingHistory,
 			},
@@ -2372,6 +2507,47 @@ export function reopenUnifiedClosedTab(
 				activeTerminalTabId: null,
 				inputMode: 'ai',
 				unifiedTabOrder: updatedUnifiedTabOrder,
+				unifiedClosedTabHistory: remainingHistory,
+			},
+			wasDuplicate: false,
+		};
+	} else if (closedEntry.type === 'sketch') {
+		// A sketch tab only points at a sketch, so reopening never touches the
+		// drawing. A sketch already open in another tab is focused, not doubled.
+		const existingTab = (session.sketchTabs || []).find(
+			(tab) => tab.sketchId === closedEntry.tab.sketchId
+		);
+		if (existingTab) {
+			return {
+				tabType: 'sketch',
+				tabId: existingTab.id,
+				session: {
+					...session,
+					...sketchTabFocusFields(existingTab.id),
+					unifiedTabOrder: ensureInUnifiedTabOrder(
+						session.unifiedTabOrder,
+						'sketch',
+						existingTab.id
+					),
+					unifiedClosedTabHistory: remainingHistory,
+				},
+				wasDuplicate: true,
+			};
+		}
+		const restoredTab: SketchTab = { ...closedEntry.tab, id: generateId() };
+		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);
+		return {
+			tabType: 'sketch',
+			tabId: restoredTab.id,
+			session: {
+				...session,
+				sketchTabs: [...(session.sketchTabs || []), restoredTab],
+				...sketchTabFocusFields(restoredTab.id),
+				unifiedTabOrder: [
+					...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
+					{ type: 'sketch', id: restoredTab.id },
+					...session.unifiedTabOrder.slice(targetUnifiedIndex),
+				],
 				unifiedClosedTabHistory: remainingHistory,
 			},
 			wasDuplicate: false,
@@ -2529,6 +2705,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 				activeTabId: tabId,
 				activeFileTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				inputMode: 'ai',
 			},
@@ -2543,6 +2720,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		session.activeTabId === tabId &&
 		session.activeFileTabId === null &&
 		session.activeBrowserTabId === null &&
+		!session.activeSketchTabId &&
 		session.activeTerminalTabId === null &&
 		session.activeGroupId == null &&
 		session.inputMode === 'ai'
@@ -2838,7 +3016,7 @@ export function navigateToLastTab(
  * Result of navigating to a unified tab (can be AI or file tab).
  */
 export interface NavigateToUnifiedTabResult {
-	type: 'ai' | 'file' | 'browser' | 'terminal' | 'group';
+	type: 'ai' | 'file' | 'browser' | 'sketch' | 'terminal' | 'group';
 	id: string;
 	session: Session;
 }
@@ -2910,6 +3088,7 @@ export function navigateToUnifiedTabByIndex(
 			session.activeTabId === targetTabRef.id &&
 			session.activeFileTabId === null &&
 			session.activeBrowserTabId === null &&
+			!session.activeSketchTabId &&
 			session.activeTerminalTabId === null &&
 			session.activeGroupId == null &&
 			session.inputMode === 'ai'
@@ -2934,6 +3113,7 @@ export function navigateToUnifiedTabByIndex(
 				activeTabId: targetTabRef.id,
 				activeFileTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				activeGroupId: null,
 				inputMode: 'ai',
@@ -2973,6 +3153,7 @@ export function navigateToUnifiedTabByIndex(
 				...repairedSession,
 				activeFileTabId: targetTabRef.id,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				activeGroupId: null,
 				inputMode: 'ai',
@@ -3007,9 +3188,39 @@ export function navigateToUnifiedTabByIndex(
 				...repairedSession,
 				activeFileTabId: null,
 				activeBrowserTabId: targetTabRef.id,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				activeGroupId: null,
 				inputMode: 'ai',
+			},
+		};
+	} else if (targetTabRef.type === 'sketch') {
+		const sketchTab = (session.sketchTabs || []).find((tab) => tab.id === targetTabRef.id);
+		if (!sketchTab) return null;
+
+		// Same stale-selection guard as the browser branch: every id that outranks
+		// a sketch must be clear before this counts as a no-op.
+		if (
+			session.activeSketchTabId === targetTabRef.id &&
+			session.activeFileTabId === null &&
+			session.activeBrowserTabId === null &&
+			session.activeTerminalTabId === null &&
+			session.activeGroupId == null &&
+			session.inputMode === 'ai'
+		) {
+			return {
+				type: 'sketch',
+				id: targetTabRef.id,
+				session: repairedSession,
+			};
+		}
+
+		return {
+			type: 'sketch',
+			id: targetTabRef.id,
+			session: {
+				...repairedSession,
+				...sketchTabFocusFields(targetTabRef.id),
 			},
 		};
 	} else if (targetTabRef.type === 'group') {
@@ -3065,6 +3276,7 @@ export function navigateToUnifiedTabByIndex(
 				activeTerminalTabId: targetTabRef.id,
 				activeFileTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeGroupId: null,
 				inputMode: 'terminal',
 			},

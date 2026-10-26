@@ -67,4 +67,20 @@ describe('getActiveTabInfo', () => {
 		});
 		expect(getActiveTabInfo(fileSession)).toMatchObject({ activeTabType: 'file' });
 	});
+
+	it('resolves an active sketch tab', () => {
+		const sketchSession = createMockSession({
+			activeTabId: 'ai-1',
+			activeSketchTabId: 'sketch-1',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'sketch', id: 'sketch-1' },
+			],
+		});
+		expect(getActiveTabInfo(sketchSession)).toMatchObject({
+			hasActiveTab: true,
+			activeTabType: 'sketch',
+			activeUnifiedIndex: 1,
+		});
+	});
 });

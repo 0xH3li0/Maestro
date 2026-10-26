@@ -92,6 +92,7 @@ const VIEW_FIELDS = [
 	'activeTabId',
 	'activeFileTabId',
 	'activeBrowserTabId',
+	'activeSketchTabId',
 	'activeTerminalTabId',
 	'activeGroupId',
 	'inputMode',

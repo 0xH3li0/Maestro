@@ -32,7 +32,7 @@ import {
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { getActiveTab, renameSketchTab } from '../../utils/tabHelpers';
 import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
@@ -174,6 +174,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 	const activeFileTabId = useSessionStore((s) => selectActiveSession(s)?.activeFileTabId);
 	const activeBrowserTabId = useSessionStore((s) => selectActiveSession(s)?.activeBrowserTabId);
+	const activeSketchTabId = useSessionStore((s) => selectActiveSession(s)?.activeSketchTabId);
 	const activeTerminalTabId = useSessionStore((s) => selectActiveSession(s)?.activeTerminalTabId);
 	const activeInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
 	const activeAiTabCount = useSessionStore((s) => selectActiveSession(s)?.aiTabs?.length);
@@ -424,6 +425,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
+			if (activeSession.sketchTabs?.some((t) => t.id === renameTabId)) {
+				updateSessionWith(activeSession.id, (s) => renameSketchTab(s, renameTabId, newName));
+				return;
+			}
+
 			updateSessionWith(activeSession.id, (s) => {
 				// Find the tab to get its agentSessionId for persistence
 				const selectedTab = s.aiTabs.find((t) => t.id === renameTabId);
@@ -626,8 +632,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		// Star toggle only applies when an AI tab is the visible view - not when a
-		// terminal, file preview, or browser tab is focused.
-		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
+		// terminal, file preview, browser, or sketch tab is focused.
+		if (
+			session.inputMode !== 'ai' ||
+			session.activeFileTabId ||
+			session.activeBrowserTabId ||
+			session.activeSketchTabId
+		) {
 			return;
 		}
 		const tab = getActiveTab(session);
@@ -687,7 +698,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			// Resolve the active tab across all kinds using the same priority as
-			// findActiveUnifiedTabIndex (terminal > file > browser > ai) so the
+			// findActiveUnifiedTabIndex (terminal > file > browser > sketch > ai) so the
 			// breadcrumb tracks whichever tab the user actually sees.
 			const { tabId, tabKind } = resolveActiveNavTab(activeSession);
 			pushNavigation({ sessionId: activeSession.id, tabId, tabKind });
@@ -697,6 +708,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		activeTabId,
 		activeFileTabId,
 		activeBrowserTabId,
+		activeSketchTabId,
 		activeTerminalTabId,
 		activeInputMode,
 		activeAiTabCount,

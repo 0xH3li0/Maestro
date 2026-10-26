@@ -246,6 +246,7 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		a.activeTabId !== b.activeTabId ||
 		a.activeFileTabId !== b.activeFileTabId ||
 		a.activeBrowserTabId !== b.activeBrowserTabId ||
+		a.activeSketchTabId !== b.activeSketchTabId ||
 		a.activeTerminalTabId !== b.activeTerminalTabId ||
 		a.activeGroupId !== b.activeGroupId ||
 		a.autoRunFolderPath !== b.autoRunFolderPath ||
@@ -305,6 +306,17 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 				) {
 					return false;
 				}
+			}
+		}
+	}
+
+	if (a.sketchTabs !== b.sketchTabs) {
+		const sa = a.sketchTabs;
+		const sb = b.sketchTabs;
+		if ((sa?.length ?? 0) !== (sb?.length ?? 0)) return false;
+		if (sa && sb) {
+			for (let i = 0; i < sa.length; i++) {
+				if (sa[i].id !== sb[i].id || sa[i].name !== sb[i].name) return false;
 			}
 		}
 	}

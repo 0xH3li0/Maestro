@@ -84,14 +84,15 @@ export function agentHasVisibleTab(session: Session): boolean {
 		visibleAiTabs(session.aiTabs).length > 0 ||
 		(session.filePreviewTabs?.length ?? 0) > 0 ||
 		(session.terminalTabs?.length ?? 0) > 0 ||
-		(session.browserTabs?.length ?? 0) > 0
+		(session.browserTabs?.length ?? 0) > 0 ||
+		(session.sketchTabs?.length ?? 0) > 0
 	);
 }
 
 /**
  * Guarantee an agent is never left with an empty tab strip. When the last
  * visible tab of ANY kind has just closed, append a blank AI chat and land on
- * it. Without this, closing a lone file, terminal, or browser tab left the
+ * it. Without this, closing a lone file, terminal, browser, or sketch tab left the
  * panel pointed at whatever stale id survived (often a hidden consult tab),
  * rendering a conversation with no chip and no tab controls.
  *
@@ -138,7 +139,7 @@ export function getNavigableUnifiedTabOrder(
  * Find the index of the currently active tab within a unifiedTabOrder array.
  *
  * Priority mirrors the visual selection logic used elsewhere
- * (terminal > file > browser > ai) so insertions land next to whatever the
+ * (terminal > file > browser > sketch > ai) so insertions land next to whatever the
  * user actually sees as "current".
  *
  * Returns -1 when no active tab is present in the order.
@@ -167,6 +168,9 @@ export function findActiveUnifiedTabIndex(session: Session, order: UnifiedTabRef
 			(ref) => ref.type === 'browser' && ref.id === session.activeBrowserTabId
 		);
 	}
+	if (session.activeSketchTabId) {
+		return order.findIndex((ref) => ref.type === 'sketch' && ref.id === session.activeSketchTabId);
+	}
 	return order.findIndex((ref) => ref.type === 'ai' && ref.id === session.activeTabId);
 }
 
@@ -176,6 +180,7 @@ export function findActiveUnifiedTabIndex(session: Session, order: UnifiedTabRef
  *   - Browser tabs use `newBrowserTabPlacement`
  *   - Terminal tabs use `newTerminalPlacement`
  *   - File preview tabs use `openedFilePlacement`
+ *   - Sketch tabs, like AI tabs, use `newTabPlacement`
  */
 function resolvePlacementForType(type: UnifiedTabRef['type']): 'end' | 'after-current' {
 	const settings = useSettingsStore.getState();

@@ -1,4 +1,4 @@
-import type { Session, AITab, LogEntry, ThinkingMode } from '../../types';
+import type { Session, AITab, LogEntry, ThinkingMode, UnifiedTabRef } from '../../types';
 import { nextThinkingMode } from '../../../shared/types';
 
 /**
@@ -6,10 +6,11 @@ import { nextThinkingMode } from '../../../shared/types';
  *
  * The main window renders exactly one tab type using this precedence:
  *   terminal (inputMode==='terminal') > file (activeFileTabId) > browser
- *   (activeBrowserTabId, while inputMode==='ai') > ai (activeTabId).
- * See findActiveUnifiedTabIndex in unifiedTabOrderUtils.ts. Because browser, file,
- * and terminal all outrank the AI tab, ANY code that wants to land the user on an
- * AI tab must clear all three active-tab ids as well as set inputMode:'ai'. Leaving
+ *   (activeBrowserTabId, while inputMode==='ai') > sketch (activeSketchTabId,
+ *   while inputMode==='ai') > ai (activeTabId).
+ * See findActiveUnifiedTabIndex in unifiedTabOrderUtils.ts. Because sketch, browser,
+ * file, and terminal all outrank the AI tab, ANY code that wants to land the user on
+ * an AI tab must clear all four active-tab ids as well as set inputMode:'ai'. Leaving
  * even one dangling keeps the previous view on screen (e.g. clicking a toast while a
  * browser tab is active silently leaves the user on the browser tab).
  *
@@ -26,6 +27,7 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 		activeFileTabId: null,
 		activeTerminalTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 		inputMode: 'ai',
 		// Landing on a standalone AI tab always leaves any active tiled group so the
 		// group's layout stops taking over the panel. A no-op when no group is active.
@@ -155,6 +157,7 @@ export function fileTabFocusFields(tabId: string): Partial<Session> {
 		activeFileTabId: tabId,
 		activeTerminalTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 		inputMode: 'ai',
 		// A standalone file tab takes over the panel, so it must leave any active
 		// tiled group - otherwise the group keeps winning render precedence and the
@@ -176,9 +179,31 @@ export function fileTabFocusFields(tabId: string): Partial<Session> {
 export function browserTabFocusFields(tabId: string): Partial<Session> {
 	return {
 		activeBrowserTabId: tabId,
+		activeSketchTabId: null,
 		activeFileTabId: null,
 		activeTerminalTabId: null,
 		inputMode: 'ai',
+	};
+}
+
+/**
+ * Session patch that lands on a specific Sketch Book tab.
+ *
+ * Same contract as {@link browserTabFocusFields}: a sketch tab renders in AI
+ * mode below file and browser in the render precedence, so every selection
+ * that outranks it is cleared or the previous view stays on screen. Like the
+ * other standalone tabs it leaves any active tiled group.
+ *
+ * @param tabId - The sketch tab to activate.
+ */
+export function sketchTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeSketchTabId: tabId,
+		activeBrowserTabId: null,
+		activeFileTabId: null,
+		activeTerminalTabId: null,
+		inputMode: 'ai',
+		activeGroupId: null,
 	};
 }
 
@@ -197,6 +222,7 @@ export function terminalTabFocusFields(tabId: string): Partial<Session> {
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 		inputMode: 'terminal',
 		// A standalone terminal takes over the panel, so it must leave any active
 		// tiled group (mirrors selectTerminalTab). Without this the group stays
@@ -204,4 +230,60 @@ export function terminalTabFocusFields(tabId: string): Partial<Session> {
 		// overlay bleeds over the terminal view (its webview sits above at z-index 2).
 		activeGroupId: null,
 	};
+}
+
+/**
+ * Field patch that makes `ref` the active standalone tab: sets that kind's active
+ * pointer, clears the competing pointers, and picks the matching inputMode. Mirrors
+ * the per-kind activation in navigateToUnifiedTabByIndex so an auto-dissolved
+ * group's lone survivor lands full-screen instead of stranding the panel on a stale
+ * pointer. Does NOT touch activeGroupId (callers clear it as part of the dissolve).
+ * A `group` ref (never a leaf) yields an empty patch.
+ */
+export function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
+	switch (ref.type) {
+		case 'ai':
+			return {
+				activeTabId: ref.id,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				activeSketchTabId: null,
+				inputMode: 'ai',
+			};
+		case 'file':
+			return {
+				activeFileTabId: ref.id,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				activeSketchTabId: null,
+				inputMode: 'ai',
+			};
+		case 'browser':
+			return {
+				activeBrowserTabId: ref.id,
+				activeSketchTabId: null,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			};
+		case 'sketch':
+			return {
+				activeSketchTabId: ref.id,
+				activeBrowserTabId: null,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			};
+		case 'terminal':
+			return {
+				activeTerminalTabId: ref.id,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeSketchTabId: null,
+				inputMode: 'terminal',
+			};
+		default:
+			return {};
+	}
 }

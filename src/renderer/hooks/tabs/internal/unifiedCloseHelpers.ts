@@ -3,6 +3,7 @@ import {
 	addAiTabToUnifiedHistory,
 	agentHasVisibleTab,
 	closeBrowserTab,
+	closeSketchTab,
 	closeTab,
 	ensureAgentHasVisibleTab,
 	getNavigableUnifiedTabOrder,
@@ -11,14 +12,10 @@ import {
 	hasActiveWizard,
 	hasDraft,
 	isAiTabHidden,
+	standaloneFocusPatch,
 } from '../../../utils/tabHelpers';
 import { closeTerminalTab as closeTerminalTabHelper } from '../../../utils/terminalTabHelpers';
-import {
-	collectLeafTabRefs,
-	dissolveGroup,
-	standaloneFocusPatch,
-	tabRefKey,
-} from '../../../utils/panelLayout';
+import { collectLeafTabRefs, dissolveGroup, tabRefKey } from '../../../utils/panelLayout';
 
 export function getActiveUnifiedRef(
 	session: Session
@@ -31,6 +28,9 @@ export function getActiveUnifiedRef(
 	}
 	if (session.activeBrowserTabId) {
 		return { type: 'browser', id: session.activeBrowserTabId };
+	}
+	if (session.activeSketchTabId) {
+		return { type: 'sketch', id: session.activeSketchTabId };
 	}
 	if (session.activeTabId) {
 		return { type: 'ai', id: session.activeTabId };
@@ -182,6 +182,8 @@ export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTa
 			if (result) {
 				updatedSession = result.session;
 			}
+		} else if (tabRef.type === 'sketch') {
+			updatedSession = closeSketchTab(updatedSession, tabRef.id)?.session ?? updatedSession;
 		} else {
 			updatedSession = {
 				...updatedSession,

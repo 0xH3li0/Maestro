@@ -85,7 +85,7 @@ export interface SnoozedTabSummary {
 	snoozeId: string;
 	agentId: string;
 	agentName: string;
-	type: 'ai' | 'file' | 'terminal' | 'browser' | 'group';
+	type: 'ai' | 'file' | 'terminal' | 'browser' | 'sketch' | 'group';
 	/** Display label, resolved the same way the Snoozed Tabs list resolves it. */
 	label: string;
 	/** The parked tab's own id, or the group's id for a parked group. */

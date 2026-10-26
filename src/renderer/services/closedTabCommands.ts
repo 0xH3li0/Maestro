@@ -107,6 +107,7 @@ function focusFields(
 	| 'activeTabId'
 	| 'activeFileTabId'
 	| 'activeBrowserTabId'
+	| 'activeSketchTabId'
 	| 'activeTerminalTabId'
 	| 'activeGroupId'
 	| 'inputMode'
@@ -115,6 +116,7 @@ function focusFields(
 		activeTabId: session.activeTabId,
 		activeFileTabId: session.activeFileTabId,
 		activeBrowserTabId: session.activeBrowserTabId,
+		activeSketchTabId: session.activeSketchTabId ?? null,
 		activeTerminalTabId: session.activeTerminalTabId,
 		activeGroupId: session.activeGroupId,
 		inputMode: session.inputMode,

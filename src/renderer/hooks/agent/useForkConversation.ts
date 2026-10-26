@@ -174,6 +174,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					activeTabId: newTabId,
 					activeFileTabId: null,
 					activeBrowserTabId: null,
+					activeSketchTabId: null,
 					activeTerminalTabId: null,
 					inputMode: 'ai' as const,
 					unifiedTabOrder: updatedOrder,

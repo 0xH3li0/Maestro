@@ -266,7 +266,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Tabs
 
-- **Making a tab the visible one:** `aiTabFocusFields()`, `fileTabFocusFields()`, `browserTabFocusFields()`, `terminalTabFocusFields()` in `src/renderer/utils/tabHelpers/focusFields.ts` (never hand-roll the literal)
+- **Making a tab the visible one:** `aiTabFocusFields()`, `fileTabFocusFields()`, `browserTabFocusFields()`, `sketchTabFocusFields()`, `terminalTabFocusFields()`, `standaloneFocusPatch(ref)` in `src/renderer/utils/tabHelpers/focusFields.ts` (never hand-roll the literal)
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
 - **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)

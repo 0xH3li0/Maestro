@@ -10,13 +10,14 @@ export function getActiveTabInfo(
 		isAiMode ||
 		isTerminalMode ||
 		activeSession?.activeFileTabId ||
-		activeSession?.activeBrowserTabId
+		activeSession?.activeBrowserTabId ||
+		activeSession?.activeSketchTabId
 	);
 
-	let activeTabType: 'ai' | 'file' | 'terminal' | 'browser' | null = null;
+	let activeTabType: ActiveTabInfo['activeTabType'] = null;
 	let activeUnifiedIndex = -1;
 	if (activeSession) {
-		let type: 'ai' | 'file' | 'terminal' | 'browser';
+		let type: NonNullable<ActiveTabInfo['activeTabType']>;
 		let id: string | undefined | null;
 		if (activeSession.activeBrowserTabId) {
 			type = 'browser';
@@ -27,6 +28,9 @@ export function getActiveTabInfo(
 		} else if (activeSession.activeFileTabId) {
 			type = 'file';
 			id = activeSession.activeFileTabId;
+		} else if (activeSession.activeSketchTabId) {
+			type = 'sketch';
+			id = activeSession.activeSketchTabId;
 		} else {
 			type = 'ai';
 			id = activeSession.activeTabId;

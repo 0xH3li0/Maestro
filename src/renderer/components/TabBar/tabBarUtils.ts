@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { MessageSquare, FileText, Globe, TerminalSquare, LayoutGrid } from 'lucide-react';
+import { MessageSquare, FileText, Globe, TerminalSquare, LayoutGrid, PenTool } from 'lucide-react';
 import type { Theme, UnifiedTab } from '../../types';
 
 /** The kind of content a tab holds - matches the UnifiedTab discriminant. */
@@ -25,6 +25,8 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
 			return FileText;
 		case 'browser':
 			return Globe;
+		case 'sketch':
+			return PenTool;
 		case 'terminal':
 			return TerminalSquare;
 		case 'group':
@@ -51,11 +53,14 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
  * distinct from accent/warning/success on every theme.
  * - ai      → accent  (brand hue)
  * - browser → sky blue (fixed; universal "browser" color)
+ * - sketch  → pink (fixed, for the same reason as browser: no semantic token
+ *             stays distinct from accent, warning and success on every theme)
  * - file    → warning (yellow/orange)
  * - terminal→ success (green) - terminal tabs additionally override with
  *             their run-state, so this is the idle base.
  */
 const BROWSER_TAB_COLOR = '#3b82f6';
+const SKETCH_TAB_COLOR = '#ec4899';
 
 export function getTabKindColor(kind: TabKind, theme: Theme): string {
 	switch (kind) {
@@ -63,6 +68,8 @@ export function getTabKindColor(kind: TabKind, theme: Theme): string {
 			return theme.colors.accent;
 		case 'browser':
 			return BROWSER_TAB_COLOR;
+		case 'sketch':
+			return SKETCH_TAB_COLOR;
 		case 'file':
 			return theme.colors.warning;
 		case 'terminal':
@@ -77,6 +84,7 @@ export function getTabKindColor(kind: TabKind, theme: Theme): string {
  * - AI tabs: active when matching activeTabId AND no file/terminal tab is active
  * - File tabs: active when matching activeFileTabId
  * - Terminal tabs: active when matching activeTerminalTabId AND in terminal mode
+ * - Sketch tabs: active when matching activeSketchTabId, below file and browser
  */
 export function isUnifiedTabActive(
 	tab: UnifiedTab,
@@ -85,7 +93,8 @@ export function isUnifiedTabActive(
 	activeBrowserTabId: string | null | undefined,
 	activeTerminalTabId: string | null | undefined,
 	inputMode: 'ai' | 'terminal' | undefined,
-	activeGroupId?: string | null
+	activeGroupId?: string | null,
+	activeSketchTabId?: string | null
 ): boolean {
 	// A tiled group is the active tab when it takes over the panel; it outranks the
 	// standalone selections (which navigation clears when a group activates).
@@ -96,7 +105,11 @@ export function isUnifiedTabActive(
 	if (activeGroupId) return false;
 	if (tab.type === 'ai') {
 		return (
-			tab.id === activeTabId && !activeFileTabId && !activeBrowserTabId && inputMode !== 'terminal'
+			tab.id === activeTabId &&
+			!activeFileTabId &&
+			!activeBrowserTabId &&
+			!activeSketchTabId &&
+			inputMode !== 'terminal'
 		);
 	}
 	if (tab.type === 'file') {
@@ -104,6 +117,14 @@ export function isUnifiedTabActive(
 	}
 	if (tab.type === 'browser') {
 		return tab.id === activeBrowserTabId && inputMode !== 'terminal';
+	}
+	if (tab.type === 'sketch') {
+		return (
+			tab.id === activeSketchTabId &&
+			!activeFileTabId &&
+			!activeBrowserTabId &&
+			inputMode !== 'terminal'
+		);
 	}
 	return tab.id === activeTerminalTabId && inputMode === 'terminal';
 }

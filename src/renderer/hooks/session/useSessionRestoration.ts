@@ -595,6 +595,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					activeFileTabId: null,
 					browserTabs: [],
 					activeBrowserTabId: null,
+					activeSketchTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					// Keep the stored closed tabs so Cmd+Shift+T can bring back what the
 					// corrupted record lost.
@@ -832,6 +833,16 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			} else if (restoredActiveFileTabId) {
 				restoredActiveBrowserTabId = null;
 			}
+			// A sketch tab only renders in AI mode below file and browser, and only
+			// while its tab still exists.
+			const restoredActiveSketchTabId =
+				restoredInputMode === 'ai' &&
+				!restoredActiveFileTabId &&
+				!restoredActiveBrowserTabId &&
+				correctedSession.activeSketchTabId &&
+				correctedSession.sketchTabs?.some((tab) => tab.id === correctedSession.activeSketchTabId)
+					? correctedSession.activeSketchTabId
+					: null;
 
 			const restoredSession = {
 				...correctedSession,
@@ -841,6 +852,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				activeFileTabId: restoredActiveFileTabId,
 				browserTabs: resetBrowserTabs,
 				activeBrowserTabId: restoredActiveBrowserTabId,
+				...(correctedSession.activeSketchTabId !== undefined
+					? { activeSketchTabId: restoredActiveSketchTabId }
+					: {}),
 				terminalTabs: resetTerminalTabs,
 				activeTerminalTabId: restoredActiveTerminalTabId,
 				inputMode: restoredInputMode,

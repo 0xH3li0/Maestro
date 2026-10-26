@@ -60,6 +60,7 @@ export function groupFocusFields(group: TabGroup): Partial<Session> {
 		...(targetAiId ? { activeTabId: targetAiId } : {}),
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 		activeTerminalTabId: null,
 		inputMode: 'ai',
 	};

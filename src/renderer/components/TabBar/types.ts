@@ -84,6 +84,11 @@ export interface TabBarProps {
 	onBrowserTabRename?: (tabId: string) => void;
 	/** Handler to clear a browser tab's user-assigned name */
 	onBrowserTabResetName?: (tabId: string) => void;
+	/**
+	 * Currently active Sketch Book tab ID. Sketch chips act through
+	 * `services/sketchTabs` with `sessionId`, so no per-action handlers are needed.
+	 */
+	activeSketchTabId?: string | null;
 
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */

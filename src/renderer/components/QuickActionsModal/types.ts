@@ -99,7 +99,7 @@ export interface ActiveTabInfo {
 	 * noun the Command K palette uses: Context (ai) / Buffer (terminal) /
 	 * Content (browser) / none (file).
 	 */
-	activeTabType: 'ai' | 'file' | 'terminal' | 'browser' | null;
+	activeTabType: 'ai' | 'file' | 'terminal' | 'browser' | 'sketch' | null;
 }
 
 export interface QuickActionsModalProps {

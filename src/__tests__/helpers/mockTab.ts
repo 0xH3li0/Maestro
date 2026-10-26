@@ -11,6 +11,7 @@
  */
 
 import type { AITab, FilePreviewTab } from '../../renderer/types';
+import type { SketchTab } from '../../shared/sketch/types';
 
 /**
  * Create a mock `AITab` with sensible defaults for all required fields.
@@ -53,4 +54,18 @@ export function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): File
 		lastModified: Date.now(),
 		...overrides,
 	} as FilePreviewTab;
+}
+
+/**
+ * Create a mock Sketch Book `SketchTab`. Pass a distinct `id` and `sketchId`
+ * when a test holds more than one.
+ */
+export function createMockSketchTab(overrides: Partial<SketchTab> = {}): SketchTab {
+	return {
+		id: 'sketch-tab-1',
+		sketchId: 'sketch-1',
+		name: 'Whiteboard',
+		createdAt: Date.now(),
+		...overrides,
+	};
 }

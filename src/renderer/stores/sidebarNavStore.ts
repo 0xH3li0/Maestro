@@ -93,6 +93,7 @@ export const useSidebarNavStore = create<SidebarNavStore>()((set, get) => ({
 				activeFileTabId: null,
 				activeTerminalTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				inputMode: 'ai',
 			}));
 			return;

@@ -315,6 +315,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			activeTerminalTabId: fallbackRef.id,
 			activeFileTabId: null,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			inputMode: 'terminal',
 		};
 	} else if (fallbackRef?.type === 'file') {
@@ -323,6 +324,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			activeTerminalTabId: null,
 			activeFileTabId: fallbackRef.id,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			inputMode: 'ai',
 		};
 	} else if (fallbackRef?.type === 'browser') {
@@ -333,6 +335,15 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			activeBrowserTabId: fallbackRef.id,
 			inputMode: 'ai',
 		};
+	} else if (fallbackRef?.type === 'sketch') {
+		return {
+			...baseSession,
+			activeTerminalTabId: null,
+			activeFileTabId: null,
+			activeBrowserTabId: null,
+			activeSketchTabId: fallbackRef.id,
+			inputMode: 'ai',
+		};
 	} else if (fallbackRef?.type === 'ai') {
 		return {
 			...baseSession,
@@ -340,6 +351,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			activeTerminalTabId: null,
 			activeFileTabId: null,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			inputMode: 'ai',
 		};
 	} else {
@@ -373,6 +385,7 @@ export function selectTerminalTab(session: Session, tabId: string): Session {
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 		// Selecting a standalone terminal tab leaves any active tiled group.
 		activeGroupId: null,
 	};
@@ -501,6 +514,7 @@ export function restartTerminalTab(session: Session, tabId: string): Session {
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		activeSketchTabId: null,
 	};
 }
 

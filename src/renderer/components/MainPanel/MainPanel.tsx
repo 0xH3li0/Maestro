@@ -60,6 +60,7 @@ import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
 import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
+import { closeSketchTabInSession } from '../../services/sketchTabs';
 
 /**
  * Empty placeholder shown when this window has no agent to display - either no
@@ -891,6 +892,10 @@ export const MainPanel = React.memo(
 					else if (ref.type === 'file') onFileTabClose?.(ref.id);
 					else if (ref.type === 'terminal') onTerminalTabClose?.(ref.id);
 					else if (ref.type === 'browser') onBrowserTabClose?.(ref.id);
+					else if (ref.type === 'sketch') {
+						const sessionId = selectActiveSession(useSessionStore.getState())?.id;
+						if (sessionId) closeSketchTabInSession(sessionId, ref.id);
+					}
 				},
 			}),
 			[
@@ -1210,6 +1215,9 @@ export const MainPanel = React.memo(
 									unifiedTabs={unifiedTabs}
 									activeFileTabId={pianolaView === 'dashboard' ? null : activeFileTabId}
 									activeBrowserTabId={pianolaView === 'dashboard' ? null : activeBrowserTabId}
+									activeSketchTabId={
+										pianolaView === 'dashboard' ? null : activeSession.activeSketchTabId
+									}
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
@@ -1299,6 +1307,7 @@ export const MainPanel = React.memo(
 									unifiedTabs={unifiedTabs}
 									activeFileTabId={activeFileTabId}
 									activeBrowserTabId={activeBrowserTabId}
+									activeSketchTabId={activeSession.activeSketchTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}

@@ -2470,6 +2470,7 @@ app
 				activeTabId: tabId,
 				activeFileTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				inputMode: 'ai',
 				unifiedTabOrder: [
@@ -2501,6 +2502,7 @@ app
 			...(tabId ? { activeTabId: tabId } : {}),
 			activeFileTabId: null,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			activeTerminalTabId: null,
 			inputMode: 'ai',
 			activeGroupId: null,
@@ -2546,6 +2548,7 @@ app
 						activeTerminalTabId: tabId,
 						activeFileTabId: null,
 						activeBrowserTabId: null,
+						activeSketchTabId: null,
 						inputMode: 'terminal',
 					};
 				}

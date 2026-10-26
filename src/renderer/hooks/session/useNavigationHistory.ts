@@ -2,7 +2,7 @@ import { useRef, useCallback } from 'react';
 import type { Session } from '../../types';
 
 // Kind of tab a navigation entry points at. Mirrors UnifiedTabRef['type'].
-export type NavTabKind = 'ai' | 'file' | 'terminal' | 'browser';
+export type NavTabKind = 'ai' | 'file' | 'terminal' | 'browser' | 'sketch';
 
 // Navigation history entry - tracks session/tab position or group chat
 export interface NavHistoryEntry {
@@ -33,6 +33,9 @@ export function resolveActiveNavTab(session: Session): { tabId?: string; tabKind
 	}
 	if (session.activeBrowserTabId) {
 		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
+	}
+	if (session.activeSketchTabId) {
+		return { tabId: session.activeSketchTabId, tabKind: 'sketch' };
 	}
 	if (session.aiTabs?.length > 0) {
 		return { tabId: session.activeTabId, tabKind: 'ai' };

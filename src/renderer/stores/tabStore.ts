@@ -602,6 +602,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 			...session,
 			activeFileTabId: tabId,
 			activeBrowserTabId: null,
+			activeSketchTabId: null,
 			activeTerminalTabId: null,
 			inputMode: 'ai',
 		});

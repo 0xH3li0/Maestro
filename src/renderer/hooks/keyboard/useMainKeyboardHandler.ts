@@ -1444,14 +1444,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.mainPanelRef?.current?.reloadBrowserTab();
 					return;
 				}
-				// Cmd+W: Close the active tab (AI, file, browser, or terminal) via unified handler
+				// Cmd+W: Close the active tab (AI, file, browser, sketch, or terminal) via unified handler
 				if (ctx.isTabShortcut(e, 'closeTab')) {
 					e.preventDefault();
 					const closeResult = ctx.handleCloseCurrentTab();
 
 					if (closeResult.type === 'file') {
 						trackShortcut('closeTab');
-					} else if (closeResult.type === 'browser') {
+					} else if (closeResult.type === 'browser' || closeResult.type === 'sketch') {
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'terminal' && closeResult.tabId) {
 						ctx.handleCloseTerminalTab(closeResult.tabId);
@@ -1576,14 +1576,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// AI-tab-specific metadata toggles (read-only, save-to-history,
 				// show-thinking). These only make sense when an AI chat tab is the
-				// active tab. inputMode alone is insufficient: file and browser tabs
-				// keep inputMode 'ai' (only terminal flips it), so without also
-				// excluding active file/browser tabs these shortcuts would silently
-				// mutate the last-visited AI tab while the user is looking at a file.
+				// active tab. inputMode alone is insufficient: file, browser and sketch
+				// tabs keep inputMode 'ai' (only terminal flips it), so without also
+				// excluding them these shortcuts would silently mutate the last-visited
+				// AI tab while the user is looking at a file.
 				const isAiChatTabActive =
 					activeSession.inputMode === 'ai' &&
 					!activeSession.activeFileTabId &&
-					!activeSession.activeBrowserTabId;
+					!activeSession.activeBrowserTabId &&
+					!activeSession.activeSketchTabId;
 				if (isAiChatTabActive) {
 					if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
 						e.preventDefault();

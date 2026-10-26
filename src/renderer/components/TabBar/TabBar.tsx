@@ -16,6 +16,12 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
+import { SketchTabItem } from './SketchTabItem';
+import {
+	closeSketchTabInSession,
+	requestSketchTabRename,
+	selectSketchTabInSession,
+} from '../../services/sketchTabs';
 import { FileTab } from './FileTab';
 import { TerminalTabItem } from './TerminalTabItem';
 import { GroupTabChip } from './GroupTabChip';
@@ -80,6 +86,7 @@ function TabBarInner({
 	onBrowserTabClose,
 	onBrowserTabRename,
 	onBrowserTabResetName,
+	activeSketchTabId,
 	onUnifiedTabReorder,
 	activeTerminalTabId,
 	inputMode = 'ai',
@@ -178,7 +185,7 @@ function TabBarInner({
 					? activeGroupId
 					: inputMode === 'terminal'
 						? activeTerminalTabId || activeTabId
-						: activeFileTabId || activeBrowserTabId || activeTabId;
+						: activeFileTabId || activeBrowserTabId || activeSketchTabId || activeTabId;
 				const tabElement = container?.querySelector(
 					`[data-tab-id="${targetTabId}"]`
 				) as HTMLElement | null;
@@ -205,6 +212,7 @@ function TabBarInner({
 		activeTabId,
 		activeFileTabId,
 		activeBrowserTabId,
+		activeSketchTabId,
 		activeTerminalTabId,
 		activeGroupId,
 		inputMode,
@@ -308,6 +316,8 @@ function TabBarInner({
 			if (ut.type === 'browser') {
 				return showBrowserTabsInUnreadFilter || ut.id === activeBrowserTabId;
 			}
+			// A sketch has no unread state; only the active one stays visible.
+			if (ut.type === 'sketch') return ut.id === activeSketchTabId;
 			// Terminal tabs
 			return showTerminalTabsInUnreadFilter || ut.id === activeTerminalTabId;
 		});
@@ -325,6 +335,7 @@ function TabBarInner({
 		showTerminalTabsInUnreadFilter,
 		showBrowserTabsInUnreadFilter,
 		activeBrowserTabId,
+		activeSketchTabId,
 		stuckTabIds,
 		queuedTabIds,
 	]);
@@ -767,7 +778,8 @@ function TabBarInner({
 							activeBrowserTabId,
 							activeTerminalTabId,
 							inputMode,
-							activeGroupId
+							activeGroupId,
+							activeSketchTabId
 						);
 						const prevTab = index > 0 ? displayedUnifiedTabs[index - 1] : null;
 						const isPrevActive = prevTab
@@ -778,7 +790,8 @@ function TabBarInner({
 									activeBrowserTabId,
 									activeTerminalTabId,
 									inputMode,
-									activeGroupId
+									activeGroupId,
+									activeSketchTabId
 								)
 							: false;
 
@@ -924,6 +937,41 @@ function TabBarInner({
 										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
 										onCopyContent={onCopyBrowserContent}
 										onSendContentToAgent={onSendBrowserContentToAgent}
+										totalTabs={allTabs.length}
+										tabIndex={originalIndex}
+										shortcutHint={shortcutHint}
+									/>
+								</React.Fragment>
+							);
+						} else if (unifiedTab.type === 'sketch') {
+							const sketchTab = unifiedTab.data;
+							return (
+								<React.Fragment key={unifiedTab.id}>
+									{showSeparator && separator}
+									<SketchTabItem
+										tab={sketchTab}
+										isActive={isActive}
+										theme={theme}
+										onSelect={(tabId) => sessionId && selectSketchTabInSession(sessionId, tabId)}
+										onClose={(tabId) => sessionId && closeSketchTabInSession(sessionId, tabId)}
+										onRename={(tabId) => sessionId && requestSketchTabRename(sessionId, tabId)}
+										onDragStart={handleDragStart}
+										onDragOver={handleDragOver}
+										onDragEnd={handleDragEnd}
+										onDrop={handleDrop}
+										isDragging={draggingTabId === sketchTab.id}
+										isDragOver={dragOverTabId === sketchTab.id}
+										registerRef={(el) => registerTabRef(sketchTab.id, el)}
+										onSnooze={onSnooze || undefined}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
+										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										isFirstTab={isFirstTab}
+										isLastTab={isLastTab}
+										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}

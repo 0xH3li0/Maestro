@@ -4,7 +4,7 @@ import type { BrowserTab } from '../../../../shared/browserPage';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
 export interface CloseCurrentTabResult {
-	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
+	type: 'file' | 'browser' | 'sketch' | 'ai' | 'terminal' | 'prevented' | 'none';
 	tabId?: string;
 	isWizardTab?: boolean;
 	hasWizardUserInteraction?: boolean;

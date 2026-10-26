@@ -32,11 +32,13 @@ import {
 	focusAiTabInSession,
 	closeFileTab,
 	closeBrowserTab,
+	closeSketchTab,
 	getRepairedUnifiedTabOrder,
 	ensureInUnifiedTabOrder,
 	aiTabFocusFields,
 	fileTabFocusFields,
 	browserTabFocusFields,
+	sketchTabFocusFields,
 	terminalTabFocusFields,
 } from './tabHelpers';
 import { closeTerminalTab } from './terminalTabHelpers';
@@ -213,6 +215,8 @@ function focusFieldsForKind(kind: SnoozableTabKind, tabId: string): Partial<Sess
 			return fileTabFocusFields(tabId);
 		case 'browser':
 			return browserTabFocusFields(tabId);
+		case 'sketch':
+			return sketchTabFocusFields(tabId);
 		case 'terminal':
 			return terminalTabFocusFields(tabId);
 	}
@@ -224,7 +228,8 @@ function focusFieldsForKind(kind: SnoozableTabKind, tabId: string): Partial<Sess
  * Waking must not create a duplicate when the user reopened the same thing
  * while it slept, and "the same thing" means something different per kind:
  * an AI tab is identified by its provider session, a file by its path on a
- * given host, a browser tab by its URL, a terminal by its working directory.
+ * given host, a browser tab by its URL, a sketch tab by its sketch, a terminal by
+ * its working directory.
  * Falling back to tab id alone (the old behaviour) only catches the case where
  * the very same tab object came back.
  */
@@ -253,6 +258,13 @@ function isSameSnoozedTab(entry: SnoozedTabEntry, session: Session): { id: strin
 		case 'browser': {
 			const tabs = session.browserTabs || [];
 			return tabs.find((t) => t.id === entry.tab.id) ?? tabs.find((t) => t.url === entry.tab.url);
+		}
+		case 'sketch': {
+			const tabs = session.sketchTabs || [];
+			return (
+				tabs.find((t) => t.id === entry.tab.id) ??
+				tabs.find((t) => t.sketchId === entry.tab.sketchId)
+			);
 		}
 		case 'terminal': {
 			const tabs = session.terminalTabs || [];
@@ -370,6 +382,17 @@ export function snoozeTab(
 			if (!closed) return null;
 			closedSession = closed.session;
 			entry = { type: 'browser', tab, ...common };
+			break;
+		}
+		case 'sketch': {
+			// Only the tab parks: the drawing stays in the store and its live
+			// session keeps the room and the bot online while the tab sleeps.
+			const tab = session.sketchTabs?.find((t) => t.id === tabId);
+			if (!tab) return null;
+			const closed = closeSketchTab(session, tabId);
+			if (!closed) return null;
+			closedSession = closed.session;
+			entry = { type: 'sketch', tab, ...common };
 			break;
 		}
 		case 'terminal': {
@@ -527,6 +550,9 @@ export function wakeSnoozedTab(
 			break;
 		case 'browser':
 			tabsPatch = { browserTabs: insertAt(session.browserTabs || [], entry.tab) };
+			break;
+		case 'sketch':
+			tabsPatch = { sketchTabs: insertAt(session.sketchTabs || [], entry.tab) };
 			break;
 		case 'terminal':
 			// pid 0 / idle is what tells the terminal host to spawn a fresh shell at
@@ -854,6 +880,10 @@ function captureGroupMember(session: Session, ref: UnifiedTabRef): SnoozedGroupM
 			const tab = session.browserTabs?.find((t) => t.id === ref.id);
 			return tab ? { type: 'browser', tab } : null;
 		}
+		case 'sketch': {
+			const tab = session.sketchTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'sketch', tab } : null;
+		}
 		case 'terminal': {
 			const tab = session.terminalTabs?.find((t) => t.id === ref.id);
 			// The PTY dies with the pane. Keep the shell's identity, drop the
@@ -887,6 +917,8 @@ function closeGroupMember(session: Session, ref: UnifiedTabRef): Session {
 			return closeFileTab(session, ref.id)?.session ?? session;
 		case 'browser':
 			return closeBrowserTab(session, ref.id)?.session ?? session;
+		case 'sketch':
+			return closeSketchTab(session, ref.id)?.session ?? session;
 		case 'terminal':
 			return closeTerminalTab(session, ref.id);
 		default:
@@ -1019,6 +1051,7 @@ export function wakeSnoozedTabGroup(
 		ai: [] as Session['aiTabs'],
 		file: [] as NonNullable<Session['filePreviewTabs']>,
 		browser: [] as NonNullable<Session['browserTabs']>,
+		sketch: [] as NonNullable<Session['sketchTabs']>,
 		terminal: [] as NonNullable<Session['terminalTabs']>,
 	};
 	for (const member of keep) {
@@ -1041,6 +1074,9 @@ export function wakeSnoozedTabGroup(
 			aiTabs: [...(session.aiTabs || []), ...restored.ai],
 			filePreviewTabs: [...(session.filePreviewTabs || []), ...restored.file],
 			browserTabs: [...(session.browserTabs || []), ...restored.browser],
+			...(restored.sketch.length > 0
+				? { sketchTabs: [...(session.sketchTabs || []), ...restored.sketch] }
+				: {}),
 			terminalTabs: [...(session.terminalTabs || []), ...restored.terminal],
 			tabGroups: [...(session.tabGroups || []), group],
 			unifiedTabOrder: nextOrder,

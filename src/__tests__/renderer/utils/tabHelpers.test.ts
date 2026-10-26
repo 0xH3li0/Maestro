@@ -1519,6 +1519,7 @@ describe('tabHelpers', () => {
 				activeFileTabId: null,
 				activeTerminalTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				inputMode: 'ai',
 				// Landing on an AI tab exits any active tiled group (tab tiling).
 				activeGroupId: null,
@@ -1532,6 +1533,7 @@ describe('tabHelpers', () => {
 				activeFileTabId: null,
 				activeTerminalTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				inputMode: 'ai',
 				// Landing on an AI tab exits any active tiled group (tab tiling).
 				activeGroupId: null,
@@ -1601,6 +1603,7 @@ describe('tabHelpers', () => {
 				activeTabId: 'tab-2',
 				activeFileTabId: null,
 				activeBrowserTabId: null,
+				activeSketchTabId: null,
 				activeTerminalTabId: null,
 				inputMode: 'ai',
 			});

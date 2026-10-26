@@ -21,8 +21,10 @@ import type {
 import { generateId } from './ids';
 import {
 	getActiveTab,
+	getSketchTabLabel,
 	getTabDisplayName,
 	reopenUnifiedClosedTab,
+	standaloneFocusPatch,
 	type ReopenUnifiedClosedTabResult,
 } from './tabHelpers';
 import { getTerminalTabDisplayName } from './terminalTabHelpers';
@@ -327,6 +329,10 @@ export function resolveTabRefTitle(session: Session, ref: UnifiedTabRef): string
 			// mid-reload transient after switching away from and back to the group).
 			return browserTab ? getBrowserTabLabel(browserTab) : 'Browser';
 		}
+		case 'sketch': {
+			const sketchTab = session.sketchTabs?.find((t) => t.id === ref.id);
+			return sketchTab ? getSketchTabLabel(sketchTab) : 'Sketch Book';
+		}
 		default:
 			return 'Tab';
 	}
@@ -361,6 +367,10 @@ export function resolveTabRefRenameValue(session: Session, ref: UnifiedTabRef): 
 			const browserTab = session.browserTabs?.find((t) => t.id === ref.id);
 			return browserTab ? (browserTab.customTitle ?? '') : null;
 		}
+		case 'sketch': {
+			const sketchTab = session.sketchTabs?.find((t) => t.id === ref.id);
+			return sketchTab ? sketchTab.name : null;
+		}
 		default:
 			return null;
 	}
@@ -368,8 +378,9 @@ export function resolveTabRefRenameValue(session: Session, ref: UnifiedTabRef): 
 
 /**
  * The tab ref the single (non-tiled) view is currently showing. Terminal mode
- * wins, then a file tab, then a browser tab, then the AI tab - file and browser
- * tabs keep `inputMode: 'ai'` but outrank the AI tab in render precedence, so
+ * wins, then a file tab, then a browser tab, then a sketch tab, then the AI tab -
+ * file, browser and sketch tabs keep `inputMode: 'ai'` but outrank the AI tab in
+ * render precedence, so
  * this order mirrors what the panel actually paints. Null when nothing is
  * showing (an agent with no tabs).
  */
@@ -379,6 +390,7 @@ export function resolveSingleViewTabRef(session: Session): UnifiedTabRef | null 
 	}
 	if (session.activeFileTabId) return { type: 'file', id: session.activeFileTabId };
 	if (session.activeBrowserTabId) return { type: 'browser', id: session.activeBrowserTabId };
+	if (session.activeSketchTabId) return { type: 'sketch', id: session.activeSketchTabId };
 	const aiTab = getActiveTab(session);
 	return aiTab ? { type: 'ai', id: aiTab.id } : null;
 }
@@ -1380,6 +1392,7 @@ function liveTabRefKeys(session: Session): Set<string> {
 	for (const t of session.filePreviewTabs ?? []) keys.add(`file:${t.id}`);
 	for (const t of session.terminalTabs ?? []) keys.add(`terminal:${t.id}`);
 	for (const t of session.browserTabs ?? []) keys.add(`browser:${t.id}`);
+	for (const t of session.sketchTabs ?? []) keys.add(`sketch:${t.id}`);
 	return keys;
 }
 
@@ -1424,50 +1437,6 @@ function pruneLayoutToLiveTabs(
  * Wired into the session-restoration path so it runs once per session before it
  * lands in the store. A session with no groups round-trips untouched.
  */
-/**
- * Field patch that makes `ref` the active standalone tab: sets that kind's active
- * pointer, clears the competing pointers, and picks the matching inputMode. Mirrors
- * the per-kind activation in navigateToUnifiedTabByIndex so an auto-dissolved
- * group's lone survivor lands full-screen instead of stranding the panel on a stale
- * pointer. Does NOT touch activeGroupId (callers clear it as part of the dissolve).
- * A `group` ref (never a leaf) yields an empty patch.
- */
-export function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
-	switch (ref.type) {
-		case 'ai':
-			return {
-				activeTabId: ref.id,
-				activeFileTabId: null,
-				activeTerminalTabId: null,
-				activeBrowserTabId: null,
-				inputMode: 'ai',
-			};
-		case 'file':
-			return {
-				activeFileTabId: ref.id,
-				activeTerminalTabId: null,
-				activeBrowserTabId: null,
-				inputMode: 'ai',
-			};
-		case 'browser':
-			return {
-				activeBrowserTabId: ref.id,
-				activeFileTabId: null,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-			};
-		case 'terminal':
-			return {
-				activeTerminalTabId: ref.id,
-				activeFileTabId: null,
-				activeBrowserTabId: null,
-				inputMode: 'terminal',
-			};
-		default:
-			return {};
-	}
-}
-
 /**
  * Return `unifiedClosedTabHistory` with a `tilePlacement` filled in for every
  * entry whose tab is a now-dangling leaf in some group, or the original array
