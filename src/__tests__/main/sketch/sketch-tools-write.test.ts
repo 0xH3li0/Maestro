@@ -46,6 +46,7 @@ vi.mock('../../../main/sketch/sketch-renderer-bridge', () => ({
 	}),
 }));
 
+import { screenForSecrets } from '../../../main/local-models/secret-screen';
 import { screenOutbound } from '../../../main/sketch/sketch-outbound';
 import {
 	SKETCH_MAX_CHAT_POST_BYTES,
@@ -191,7 +192,14 @@ function fakeWindow(initial: SketchSessionSnapshot) {
 /** Agent alpha with a fake window, a spied outbound screen and a fake Mermaid converter. */
 async function writer(initial: SketchSessionSnapshot, deps: SketchToolDeps = {}) {
 	const win = fakeWindow(initial);
-	const outbound = vi.fn(screenOutbound);
+	// The real outbound screen with the real pattern pass; the model pass is
+	// sketch-outbound.test.ts's, so it never runs here.
+	const outbound = vi.fn((request: Parameters<typeof screenOutbound>[0]) =>
+		screenOutbound(request, {
+			env: [],
+			screen: (parts, options) => screenForSecrets(parts, { ...options, modelPass: false }),
+		})
+	);
 	const convertMermaid = vi.fn<SketchMermaidConverter>(async () => [{ type: 'rectangle' }]);
 	const harness = await asAlpha(scene([]), {
 		readSession: win.readSession,
@@ -484,7 +492,11 @@ describe('sketch write tools: outbound redaction', () => {
 
 	it('refuses the whole write when the screen refuses', async () => {
 		const { refusal, win } = await writer(scene([]), {
-			outbound: async () => ({ ok: false, reason: 'the text holds a configured secret.' }),
+			outbound: async () => ({
+				ok: false,
+				reason: 'the text holds a configured secret.',
+				kinds: ['env-var-value'],
+			}),
 		});
 		const error = await refusal('sketch_add_elements', {
 			sketchId: 'sk-alpha',
@@ -495,6 +507,44 @@ describe('sketch write tools: outbound redaction', () => {
 		});
 		expect(error.message).toBe('Sketch Book: the text holds a configured secret.');
 		expect(win.writeSession).not.toHaveBeenCalled();
+	});
+
+	it('refuses a write whose text holds a secret redaction cannot know', async () => {
+		const value = 'hunter2-but-much-longer-0042';
+		const { refusal, win } = await writer(scene([]), {
+			outbound: (request) =>
+				screenOutbound(request, {
+					env: [['DEPLOY_TOKEN', value]],
+					screen: (parts, options) => screenForSecrets(parts, { ...options, modelPass: false }),
+				}),
+		});
+		const error = await refusal('sketch_add_elements', {
+			sketchId: 'sk-alpha',
+			elements: [{ type: 'text', text: `deploy with ${value}` }],
+		});
+		expect(error.message).toContain('Configured secret');
+		expect(error.message).not.toContain(value);
+		expect(win.writeSession).not.toHaveBeenCalled();
+	});
+
+	it('holds a chat post the model pass flags and writes nothing', async () => {
+		const { result, win } = await writer(scene([]), {
+			outbound: async (request) => ({
+				ok: true,
+				texts: request.texts,
+				redactedCount: 0,
+				held: true,
+				heldReason: 'Flagged by Prompt Guard 2.',
+			}),
+		});
+		const posted = await result('sketch_chat_post', { sketchId: 'sk-alpha', text: 'hello' });
+		expect(posted).toMatchObject({
+			posted: false,
+			held: true,
+			heldReason: 'Flagged by Prompt Guard 2.',
+		});
+		expect(win.writeSession).not.toHaveBeenCalled();
+		expect(win.chat).toEqual([]);
 	});
 });
 

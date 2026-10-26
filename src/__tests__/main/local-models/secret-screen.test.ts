@@ -372,6 +372,22 @@ describe('screenForSecrets', () => {
 		});
 	});
 
+	describe('modelPass: false', () => {
+		it('runs the pattern pass only and asks no model or engine', async () => {
+			stores.settings = { localModelAssignments: { 'secret-screen': SOURCE } };
+
+			const result = await screenForSecrets([{ text: `token ${GITHUB_TOKEN}` }], {
+				modelPass: false,
+			});
+
+			expect(runSystemOneTask).not.toHaveBeenCalled();
+			expect(runClassifierTask).not.toHaveBeenCalled();
+			expect(result).toEqual({
+				findings: [expect.objectContaining({ kind: 'github-token' })],
+			});
+		});
+	});
+
 	describe('configured environment values', () => {
 		const value = 'correct-horse-battery-staple';
 

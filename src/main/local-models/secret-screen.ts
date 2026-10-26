@@ -74,6 +74,12 @@ export interface SecretScreenOptions {
 	 * decides. Sketch Book uses it to enforce cloud consent.
 	 */
 	allowSource?: (source: InjectionSourceInfo) => boolean;
+	/**
+	 * `false` runs the pattern pass only. For a caller that must not send text
+	 * to a model before the patterns have cleared it (Sketch Book screens its
+	 * outbound text with patterns first, then asks the model about clean text).
+	 */
+	modelPass?: boolean;
 }
 
 /**
@@ -94,7 +100,8 @@ export async function screenForSecrets(
 		findings.push(...scanForSecrets(part.text, { env, source: part.source }));
 	}
 
-	const model = await modelPass(present, options.allowSource);
+	const model: ModelPassResult =
+		options.modelPass === false ? {} : await modelPass(present, options.allowSource);
 	if (model.finding) findings.push(model.finding);
 
 	if (findings.length > 0) {
@@ -108,11 +115,17 @@ export async function screenForSecrets(
 	return { findings, ...(model.note ? { note: model.note } : {}) };
 }
 
+/** What the model pass adds: a finding, a note, or neither. */
+interface ModelPassResult {
+	finding?: SecretFinding;
+	note?: string;
+}
+
 /** The optional model pass. Reports a finding, a note, or neither. */
 async function modelPass(
 	parts: readonly SecretScreenPart[],
 	allowSource?: (source: InjectionSourceInfo) => boolean
-): Promise<{ finding?: SecretFinding; note?: string }> {
+): Promise<ModelPassResult> {
 	if (parts.length === 0) return {};
 	const task = LOCAL_MODEL_TASKS[TASK_ID];
 	const unavailable = (reason: string) => ({

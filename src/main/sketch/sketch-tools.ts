@@ -42,7 +42,8 @@
  * Writes. Main checks the arguments and the caps, runs the per-sketch write
  * rate guard, and passes every outbound text through `screenOutbound()`
  * (sketch-outbound.ts, spec section 8.5) in one batch per write; a refusal
- * refuses the whole write. The change itself is made by the window
+ * refuses the whole write, and a T12 post the model pass flags is held (not
+ * posted) with the reason. The change itself is made by the window
  * (`SketchSessionWriter`, the `agentWrite` hop): Excalidraw converts skeletons
  * and Mermaid in a DOM, and the session there stamps the change as the agent
  * (`kind: 'bot'`, `id: 'agent:<agentId>'`). A sketch an agent creates opens
@@ -783,14 +784,20 @@ export function createSketchToolRuntime(deps: SketchToolDeps = {}): SketchToolRu
 
 	/**
 	 * `value` with its outbound texts screened (spec section 8.5), in one batch.
-	 * A refusal refuses the whole write.
+	 * A refusal refuses the whole write. A chat message the model pass flagged
+	 * comes back `held` with its reason.
 	 */
 	async function screenTexts<T>(
 		call: SketchToolCall,
 		record: SketchRecord,
 		purpose: OutboundPurpose,
 		value: T
-	): Promise<{ value: T; redactedCount: number }> {
+	): Promise<{
+		value: T;
+		redactedCount: number;
+		heldReason?: string;
+		screenNote?: string;
+	}> {
 		const texts = collectSketchOutboundTexts(value);
 		if (texts.length === 0) return { value, redactedCount: 0 };
 		const screened = await outbound({
@@ -803,6 +810,8 @@ export function createSketchToolRuntime(deps: SketchToolDeps = {}): SketchToolRu
 		return {
 			value: replaceSketchOutboundTexts(value, screened.texts),
 			redactedCount: screened.redactedCount,
+			...(screened.held ? { heldReason: screened.heldReason } : {}),
+			...(screened.note ? { screenNote: screened.note } : {}),
 		};
 	}
 
@@ -1134,6 +1143,19 @@ export function createSketchToolRuntime(deps: SketchToolDeps = {}): SketchToolRu
 			}
 			return sketchWrite(record, async () => {
 				const screened = await screenTexts(call, record, 'chat', { text });
+				const note = screened.screenNote ? { screenNote: screened.screenNote } : {};
+				// A model flag holds the post: nothing is written, and the agent
+				// hears why. The "Publish anyway" chip is the bot relay's (phase 06).
+				if (screened.heldReason !== undefined) {
+					return {
+						sketchId: record.sketchId,
+						posted: false,
+						held: true,
+						heldReason: screened.heldReason,
+						redactedCount: screened.redactedCount,
+						...note,
+					};
+				}
 				const result = await writeSession(call.agent, record.sketchId, {
 					op: 'chat',
 					text: screened.value.text,
@@ -1143,6 +1165,7 @@ export function createSketchToolRuntime(deps: SketchToolDeps = {}): SketchToolRu
 					sceneVersion: result.sceneVersion,
 					posted: true,
 					redactedCount: screened.redactedCount,
+					...note,
 				};
 			});
 		},
