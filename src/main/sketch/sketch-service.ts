@@ -88,7 +88,8 @@ export interface SketchService {
 	exportSketch(sketchId: string, format: SketchExportFormat): Promise<ExportedSketch>;
 }
 
-function defaultFindAgent(agentId: string): SketchOwnerAgent | null {
+/** The live agent with this id, as Sketch Book sees it, or `null`. */
+export function findSketchOwnerAgent(agentId: string): SketchOwnerAgent | null {
 	const session = getLiveSessions().find((candidate) => candidate.id === agentId);
 	if (!session) return null;
 	return {
@@ -119,7 +120,7 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 	const store = deps.store ?? getSketchStore;
 	const isEnabled =
 		deps.isEnabled ?? (() => isEncoreFeatureEnabled(getSettingsStore(), 'sketchBook'));
-	const findAgent = deps.findAgent ?? defaultFindAgent;
+	const findAgent = deps.findAgent ?? findSketchOwnerAgent;
 	const renderer = deps.renderer ?? requestSketchRenderer;
 
 	/** The store, once the gate has passed. */

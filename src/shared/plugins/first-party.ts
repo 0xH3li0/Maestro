@@ -1590,8 +1590,9 @@ export const SKETCH_BOOK_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	settingsNamespace: 'sketchBook',
 	encoreFlag: 'sketchBook',
 	releaseDate: '2026-10-26',
-	// No supervised background service yet: the MCP bridge and room sockets
-	// are host-owned, and a sketch's room lives with its open session.
+	// No supervised background service: the `maestro-sketch` MCP bridge socket
+	// is host-owned and follows the flag through the Encore lifecycle
+	// (main/index.ts), and a sketch's room lives with its open session.
 	backgroundServices: [],
 	usage: {
 		overview: [

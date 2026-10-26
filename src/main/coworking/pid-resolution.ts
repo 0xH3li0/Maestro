@@ -171,3 +171,53 @@ export async function resolveSessionFromPidWalk<T = string>(
 	}
 	return null;
 }
+
+/** Why a bridge handshake could not bind its connection to an agent. */
+export type HandshakeBindFailure =
+	/** Neither a claimed id nor a usable `ppid` was sent. */
+	| 'missing'
+	/** The claimed id names a different agent than the caller's process tree. */
+	| 'mismatch'
+	/** Only `ppid` was sent, and no PID resolver is configured. */
+	| 'no-resolver'
+	/** Only `ppid` was sent, and it maps to no known agent. */
+	| 'unresolved';
+
+export type HandshakeBinding =
+	| { ok: true; ownerId: string }
+	| { ok: false; reason: HandshakeBindFailure };
+
+function isUsablePid(value: unknown): value is number {
+	return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+/**
+ * Bind an MCP bridge connection to the agent that owns its subprocess, from the
+ * `hello` payload. Shared by the Coworking and Sketch Book bridges so both bind
+ * the same way and fail closed the same way; neither ever falls back to the
+ * active session (the PR #948 privacy bug).
+ *
+ * 1. `claimedId`, injected into the agent CLI's env at spawn and propagated to
+ *    its MCP subprocess (Claude Code, OpenCode), wins. When `ppid` is sent too,
+ *    the process tree must not name a DIFFERENT agent; a tree that names no
+ *    agent is not a mismatch (env-propagating agents whose PIDs are untracked).
+ * 2. `ppid` alone (Codex, which passes only its config's env): walk the process
+ *    tree up to a tracked agent CLI. No match fails closed.
+ */
+export async function bindHandshakeOwner(
+	hello: { claimedId?: unknown; ppid?: unknown },
+	resolveFromPid: ((pid: number) => Promise<string | null>) | null
+): Promise<HandshakeBinding> {
+	const { claimedId, ppid } = hello;
+	if (typeof claimedId === 'string' && claimedId.length > 0) {
+		if (resolveFromPid && isUsablePid(ppid)) {
+			const resolved = await resolveFromPid(ppid);
+			if (resolved !== null && resolved !== claimedId) return { ok: false, reason: 'mismatch' };
+		}
+		return { ok: true, ownerId: claimedId };
+	}
+	if (!isUsablePid(ppid)) return { ok: false, reason: 'missing' };
+	if (!resolveFromPid) return { ok: false, reason: 'no-resolver' };
+	const resolved = await resolveFromPid(ppid);
+	return resolved ? { ok: true, ownerId: resolved } : { ok: false, reason: 'unresolved' };
+}

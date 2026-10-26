@@ -29,9 +29,8 @@
  * to no known agent, the bridge rejects the connection - fail closed.
  */
 
-import * as fs from 'fs';
-import * as net from 'net';
-import { logger } from '../utils/logger';
+import type * as net from 'net';
+import { createNdjsonSocketServer } from '../utils/ndjson-socket-server';
 import { COWORKING_SOCKET_ENV_VAR } from './coworking-types';
 import { getBridgeSocketPath } from './coworking-socket-path';
 import type {
@@ -41,6 +40,7 @@ import type {
 	CoworkingBridgeMethod,
 } from './coworking-types';
 import { coworkingRegistry } from './coworking-registry';
+import { bindHandshakeOwner, type HandshakeBindFailure } from './pid-resolution';
 import type { CoworkingBrowserCaller } from '../../shared/coworkingBrowser';
 import {
 	browserInteract,
@@ -57,8 +57,6 @@ import {
 } from './coworking-audit';
 
 const LOG_CTX = '[Coworking][Bridge]';
-
-let server: net.Server | null = null;
 
 /** Run a browser tool call and emit one audit record with its outcome (ok or
  *  error). Denied calls are audited separately by the caller. */
@@ -95,23 +93,28 @@ const connections = new WeakMap<
 	{ sessionId: string | null; caller?: CoworkingBrowserCaller }
 >();
 
-/** Every open connection, so stopping the bridge can drop them too (a WeakMap
- *  cannot be walked). Closing the server alone only stops NEW connections. */
-const openSockets = new Set<net.Socket>();
+/** The bridge socket. Stopping it drops live connections as well. */
+const bridgeServer = createNdjsonSocketServer({
+	socketPath: getBridgeSocketPath,
+	logContext: LOG_CTX,
+	logCategory: 'Coworking',
+	onConnect: (conn) => connections.set(conn, { sessionId: null }),
+	onClose: (conn) => connections.delete(conn),
+	onRequest: (conn, request) => dispatch(conn, request as CoworkingBridgeRequest),
+});
+
+/** What a failed `hello` tells the MCP subprocess, per binding failure. */
+const HELLO_FAILURE_MESSAGES: Record<HandshakeBindFailure, string> = {
+	missing: '`sessionId` or `ppid` is required for hello',
+	mismatch: 'session id does not match caller process',
+	'no-resolver': 'coworking bridge: ppid resolver not configured',
+	unresolved: 'coworking bridge: could not resolve session from peer PID',
+};
 
 /** Env-var pair to embed in each agent's MCP-server config entry. */
 export function getBridgeEnvVar(): { name: string; value: string } {
 	return { name: COWORKING_SOCKET_ENV_VAR, value: getBridgeSocketPath() };
 }
-
-/**
- * The start in progress, or null. `server` is only set once the socket listens,
- * several awaits in, so two overlapping starts (the Extensions toggle reconciles
- * once directly and once through the flag listener) would both pass the
- * `server` check: the second would unlink the first one's live socket and leave
- * its server open with nothing able to close it.
- */
-let starting: Promise<void> | null = null;
 
 /** Start the bridge. Idempotent. Must be called inside `app.whenReady`. */
 export async function startCoworkingBridge(options?: {
@@ -123,63 +126,7 @@ export async function startCoworkingBridge(options?: {
 	}
 	if (options?.resolveCallerFromPid !== undefined)
 		resolveCallerFromPid = options.resolveCallerFromPid;
-	if (server) return;
-	if (!starting) {
-		starting = listenOnBridgeSocket().finally(() => {
-			starting = null;
-		});
-	}
-	await starting;
-}
-
-async function listenOnBridgeSocket(): Promise<void> {
-	const socketPath = getBridgeSocketPath();
-
-	// Clean up stale socket file from a prior crashed run (POSIX only).
-	if (process.platform !== 'win32') {
-		try {
-			await fs.promises.unlink(socketPath);
-		} catch (e) {
-			const code = (e as NodeJS.ErrnoException)?.code;
-			if (code && code !== 'ENOENT') {
-				logger.warn(`${LOG_CTX} Could not clean stale socket: ${String(e)}`, 'Coworking');
-			}
-		}
-	}
-
-	const srv = net.createServer((conn) => handleConnection(conn));
-	srv.on('error', (err) => {
-		logger.error(`${LOG_CTX} server error: ${err.message}`, 'Coworking');
-	});
-
-	await new Promise<void>((resolve, reject) => {
-		const onError = (err: Error) => {
-			srv.removeListener('listening', onListening);
-			reject(err);
-		};
-		const onListening = () => {
-			srv.removeListener('error', onError);
-			resolve();
-		};
-		srv.once('error', onError);
-		srv.once('listening', onListening);
-		srv.listen(socketPath);
-	});
-
-	// Restrict the socket to the owner (POSIX). Node creates Unix sockets with the
-	// process umask, which can leave them group/other-connectable; the coworking
-	// bridge exposes terminal scrollback + live browser control, so lock it to the
-	// current user. (Windows named pipes are per-user via the userData-slug name.)
-	if (process.platform !== 'win32') {
-		try {
-			await fs.promises.chmod(socketPath, 0o600);
-		} catch (e) {
-			logger.warn(`${LOG_CTX} Could not chmod socket to 0600: ${String(e)}`, 'Coworking');
-		}
-	}
-
-	server = srv;
-	logger.info(`${LOG_CTX} listening on ${socketPath}`, 'Coworking');
+	await bridgeServer.start();
 }
 
 /**
@@ -188,56 +135,7 @@ async function listenOnBridgeSocket(): Promise<void> {
  * that connected while the feature was on cannot keep calling tools after it.
  */
 export async function stopCoworkingBridge(): Promise<void> {
-	// A stop that lands mid-start waits for the socket, then closes it.
-	if (starting) await starting.catch(() => undefined);
-	if (!server) return;
-	const srv = server;
-	server = null;
-	const closed = new Promise<void>((resolve) => {
-		srv.close(() => resolve());
-	});
-	for (const socket of openSockets) socket.destroy();
-	openSockets.clear();
-	await closed;
-}
-
-function handleConnection(conn: net.Socket): void {
-	connections.set(conn, { sessionId: null });
-	openSockets.add(conn);
-	conn.setEncoding('utf8');
-	let buffer = '';
-	conn.on('data', (chunk) => {
-		buffer += chunk;
-		let nl: number;
-		while ((nl = buffer.indexOf('\n')) !== -1) {
-			const line = buffer.slice(0, nl).trim();
-			buffer = buffer.slice(nl + 1);
-			if (!line) continue;
-			handleLine(conn, line).catch((err) => {
-				logger.error(`${LOG_CTX} dispatch failed: ${String(err)}`, 'Coworking');
-			});
-		}
-	});
-	conn.on('error', (err) => {
-		logger.warn(`${LOG_CTX} connection error: ${err.message}`, 'Coworking');
-	});
-	conn.on('close', () => {
-		connections.delete(conn);
-		openSockets.delete(conn);
-	});
-}
-
-async function handleLine(conn: net.Socket, line: string): Promise<void> {
-	let req: CoworkingBridgeRequest;
-	try {
-		req = JSON.parse(line) as CoworkingBridgeRequest;
-	} catch {
-		// Bad JSON - close the connection. The MCP subprocess will log and exit.
-		conn.end();
-		return;
-	}
-	const resp = await dispatch(conn, req);
-	conn.write(JSON.stringify(resp) + '\n');
+	await bridgeServer.stop();
 }
 
 /** Guard for the URL/search input an agent may navigate a browser tab to. The
@@ -340,74 +238,21 @@ async function dispatch(
 	try {
 		if (method === 'hello') {
 			const params = (req.params ?? {}) as { sessionId?: string | null; ppid?: number };
-			let bound: string | null = null;
-
-			// Explicit sessionId wins. Agents that propagate env (Claude Code,
-			// OpenCode) take this path; the env is the strongest binding signal
-			// because the main process injected it at agent-CLI spawn time.
-			if (typeof params.sessionId === 'string' && params.sessionId.length > 0) {
-				bound = params.sessionId;
-				// The bundled MCP server always sends ppid too. Cross-check it
-				// against the process tree: if the ppid resolver maps the caller's
-				// process to a DIFFERENT known session, the caller is claiming a
-				// session it does not own, so reject. A null result (can't
-				// determine) is NOT a mismatch, so keep trusting the explicit
-				// sessionId and avoid regressing env-propagating agents whose PIDs
-				// aren't tracked.
-				if (
-					resolveSessionFromPid &&
-					typeof params.ppid === 'number' &&
-					Number.isInteger(params.ppid) &&
-					params.ppid > 0
-				) {
-					const resolved = await resolveSessionFromPid(params.ppid);
-					if (resolved !== null && resolved !== bound) {
-						return {
-							id: req.id,
-							error: {
-								code: -32602,
-								message: 'session id does not match caller process',
-							},
-						};
-					}
-				}
-			} else if (
-				typeof params.ppid === 'number' &&
-				Number.isInteger(params.ppid) &&
-				params.ppid > 0
-			) {
-				// Fallback for agents that don't propagate env (e.g. Codex CLI):
-				// walk the process tree from the MCP subprocess up to a tracked
-				// agent-CLI PID. If nothing matches, fail closed - silent default
-				// would reintroduce the privacy hole PR #948 closed.
-				if (!resolveSessionFromPid) {
-					return {
-						id: req.id,
-						error: {
-							code: -32602,
-							message: 'coworking bridge: ppid resolver not configured',
-						},
-					};
-				}
-				bound = await resolveSessionFromPid(params.ppid);
-				if (!bound) {
-					return {
-						id: req.id,
-						error: {
-							code: -32602,
-							message: 'coworking bridge: could not resolve session from peer PID',
-						},
-					};
-				}
-			} else {
+			// Explicit sessionId (env injected at spawn) wins, cross-checked
+			// against the process tree; `ppid` alone is the fallback for agents
+			// that don't propagate env (e.g. Codex CLI). No match fails closed - a
+			// silent default would reintroduce the privacy hole PR #948 closed.
+			const binding = await bindHandshakeOwner(
+				{ claimedId: params.sessionId, ppid: params.ppid },
+				resolveSessionFromPid
+			);
+			if (!binding.ok) {
 				return {
 					id: req.id,
-					error: {
-						code: -32602,
-						message: '`sessionId` or `ppid` is required for hello',
-					},
+					error: { code: -32602, message: HELLO_FAILURE_MESSAGES[binding.reason] },
 				};
 			}
+			const bound = binding.ownerId;
 
 			const caller =
 				resolveCallerFromPid &&

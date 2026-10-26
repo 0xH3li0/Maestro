@@ -209,6 +209,7 @@ import {
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
+import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
@@ -2037,6 +2038,12 @@ app
 			coworking: {
 				reconcile: () => void startCoworkingService(() => processManager),
 				stopAll: () => void stopCoworkingService(),
+			},
+			// Sketch Book: the `maestro-sketch` bridge socket the agents' MCP
+			// subprocesses dial for the sketch tools. Off also drops live connections.
+			sketchBook: {
+				reconcile: () => void startSketchMcpBridge({ getProcessManager: () => processManager }),
+				stopAll: () => void stopSketchMcpBridge(),
 			},
 			// OpenCode serve: the shared server spawns lazily on the first OpenCode
 			// turn, so there is nothing to start. Off tears down every server.
@@ -3974,12 +3981,13 @@ app
 
 		// Start Pianola (the supervisor's store-file watch + relaunch of enabled
 		// targets, and the scheduled re-learn cadence) and the community-plugin
-		// runtime (bundled seeding, discovery, hot reload, trigger scheduler) only
-		// while their flags are on. Off, neither touches disk nor arms a timer; a
+		// runtime (bundled seeding, discovery, hot reload, trigger scheduler), and
+		// the Sketch Book MCP bridge socket only while their flags are on. Off, neither touches disk nor arms a timer; a
 		// later flag change starts or stops them through the Encore lifecycle.
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
+		encoreLifecycle.startIfEnabled('sketchBook', bootEncoreFeatures);
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
@@ -4292,6 +4300,8 @@ quitHandler = createQuitHandler({
 			});
 			logger.warn(`Failed to stop coworking bridge: ${String(error)}`, 'Shutdown');
 		});
+		// Stop the Sketch Book bridge socket too (stopSketchMcpBridge never throws).
+		void stopSketchMcpBridge();
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},

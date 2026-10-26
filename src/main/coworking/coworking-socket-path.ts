@@ -1,6 +1,7 @@
 /**
  * Resolves the coworking IPC bridge socket path (Unix domain socket on POSIX,
- * per-user named pipe on Windows).
+ * per-user named pipe on Windows), and the same path rule for Sketch Book's
+ * `maestro-sketch` bridge (`getAppSocketPath('sketch')`).
  *
  * Extracted into its own tiny, side-effect-free module so callers that only
  * need the path - notably ProcessManager, which injects the owning window's
@@ -29,13 +30,22 @@ function userDataSlug(userData: string): string {
 
 /** Compute the platform-appropriate IPC bridge socket path. */
 export function getBridgeSocketPath(): string {
+	return getAppSocketPath('coworking');
+}
+
+/**
+ * The socket (POSIX) or named pipe (Windows) for one of Maestro's host-owned
+ * MCP bridges, named `name` and unique per userData directory. Coworking uses
+ * `coworking`; Sketch Book's bridge uses `sketch`.
+ */
+export function getAppSocketPath(name: string): string {
 	const userData = app.getPath('userData');
 
 	if (process.platform === 'win32') {
 		// Per-user named pipe. Derive the slug from a hash of the FULL userData
 		// path so the pipe name is unique per OS user; path.basename would be the
 		// same app-folder name for every account and collide across users.
-		return `\\\\.\\pipe\\maestro-coworking-${userDataSlug(userData)}`;
+		return `\\\\.\\pipe\\maestro-${name}-${userDataSlug(userData)}`;
 	}
 
 	// Preferred: alongside the rest of the per-userData runtime state.
@@ -45,7 +55,7 @@ export function getBridgeSocketPath(): string {
 	// the two are identical (win32 returned above), but being explicit keeps the
 	// sun_path byte count honest and lets the tests assert the POSIX contract on
 	// any host.
-	const preferred = path.posix.join(userData, 'coworking.sock');
+	const preferred = path.posix.join(userData, `${name}.sock`);
 	if (Buffer.byteLength(preferred) + 1 <= SUN_PATH_MAX) return preferred;
 
 	// The userData path is too deep to hold a bindable socket (long home
@@ -53,6 +63,6 @@ export function getBridgeSocketPath(): string {
 	// under the temp dir, keyed by the same userData hash the Windows pipe uses
 	// so the socket stays unique per data directory. Callers all resolve the
 	// path through this function, so the bridge and the env var agents read
-	// (COWORKING_SOCKET_ENV_VAR) stay in sync automatically.
-	return path.posix.join(os.tmpdir(), `maestro-coworking-${userDataSlug(userData)}.sock`);
+	// stay in sync automatically.
+	return path.posix.join(os.tmpdir(), `maestro-${name}-${userDataSlug(userData)}.sock`);
 }
