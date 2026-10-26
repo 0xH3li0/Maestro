@@ -20,6 +20,7 @@ import {
 	runRemoteSketchCommand,
 } from '../../../renderer/services/sketchRemoteCommands';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSketchSessionStore } from '../../../renderer/stores/sketchSessionStore';
 import type { SketchScene } from '../../../shared/sketch/types';
 import { createMockSession } from '../../helpers/mockSession';
 
@@ -115,6 +116,88 @@ describe('runRemoteSketchCommand', () => {
 		await expect(
 			runRemoteSketchCommand({ action: 'export', format: 'svg', scene })
 		).resolves.toEqual({ success: false, error: 'font load failed' });
+	});
+});
+
+describe('runRemoteSketchCommand readSession', () => {
+	const readScene = vi.fn<(id: string) => Promise<SketchScene>>();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSketchSessionStore.setState({ sessions: {} });
+		(window.maestro as unknown as { sketch: { readScene: typeof readScene } }).sketch = {
+			readScene,
+		};
+	});
+
+	it('answers null for a sketch no view has open when asked not to open it', async () => {
+		await expect(
+			runRemoteSketchCommand({ action: 'readSession', sketchId: 'sketch-1', open: false })
+		).resolves.toEqual({ success: true, session: null });
+		expect(readScene).not.toHaveBeenCalled();
+	});
+
+	it('opens the session when asked and hands back the elements, author map and file count', async () => {
+		readScene.mockResolvedValueOnce({ ...scene, files: { f1: {} } });
+		const result = await runRemoteSketchCommand({
+			action: 'readSession',
+			sketchId: 'sketch-1',
+			open: true,
+		});
+		expect(result).toEqual({
+			success: true,
+			session: { elements: scene.elements, authors: {}, fileCount: 1 },
+		});
+		expect(useSketchSessionStore.getState().sessions['sketch-1'].status).toBe('ready');
+	});
+
+	it('reads an open session without touching disk, unsaved edits included', async () => {
+		const author = {
+			version: 1,
+			actor: {
+				id: 'conductor',
+				kind: 'conductor' as const,
+				name: 'Me',
+				role: 'conductor' as const,
+			},
+			textHash: 'h',
+			guestTouched: false,
+		};
+		useSketchSessionStore.setState({
+			sessions: {
+				'sketch-1': {
+					sketchId: 'sketch-1',
+					status: 'ready',
+					loadError: null,
+					scene,
+					authors: { live: author },
+					dirty: true,
+					revision: 4,
+					saveError: null,
+				},
+			},
+		});
+		const result = await runRemoteSketchCommand({
+			action: 'readSession',
+			sketchId: 'sketch-1',
+			open: false,
+		});
+		expect(result).toEqual({
+			success: true,
+			session: { elements: scene.elements, authors: { live: author }, fileCount: 0 },
+		});
+		expect(readScene).not.toHaveBeenCalled();
+	});
+
+	it('answers the load error when the scene cannot be read', async () => {
+		readScene.mockRejectedValueOnce(new Error('scene-unreadable'));
+		const result = await runRemoteSketchCommand({
+			action: 'readSession',
+			sketchId: 'sketch-1',
+			open: true,
+		});
+		expect(result.success).toBe(false);
+		expect(result.success === false && result.error).toContain('scene-unreadable');
 	});
 });
 

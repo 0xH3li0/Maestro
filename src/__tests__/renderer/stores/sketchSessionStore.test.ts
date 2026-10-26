@@ -65,6 +65,25 @@ describe('openSketchSession', () => {
 		expect(session().dirty).toBe(false);
 	});
 
+	it('lets a second open await the read already in flight', async () => {
+		let finishRead!: (value: SketchScene) => void;
+		sketchApi.readScene.mockReturnValueOnce(
+			new Promise<SketchScene>((resolve) => {
+				finishRead = resolve;
+			})
+		);
+		const first = useSketchSessionStore.getState().openSketchSession(SKETCH_ID);
+		const second = useSketchSessionStore.getState().openSketchSession(SKETCH_ID);
+		await Promise.resolve();
+		expect(session().status).toBe('loading');
+
+		finishRead(scene([el('a', 1)]));
+		await second;
+		expect(session().status).toBe('ready');
+		await first;
+		expect(sketchApi.readScene).toHaveBeenCalledTimes(1);
+	});
+
 	it('starts with an empty author map: a scene from disk has unknown authors', async () => {
 		await openWith(scene([el('a', 1, { text: 'hello' })]));
 		expect(session().authors).toEqual({});

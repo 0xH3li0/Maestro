@@ -96,8 +96,9 @@ export interface SketchLocalChangeResult {
 interface SketchSessionState {
 	sessions: Record<string, SketchSession>;
 	/**
-	 * Read the sketch's scene into a session. A ready or loading session is
-	 * left alone; a failed one is read again.
+	 * Read the sketch's scene into a session. A ready session is left alone, a
+	 * loading one is awaited (the promise settles when that read does), and a
+	 * failed one is read again.
 	 */
 	openSketchSession: (sketchId: string) => Promise<void>;
 	/**
@@ -119,6 +120,9 @@ interface SketchSessionState {
 }
 
 const saveQueue = createKeyedWriteQueue();
+
+/** The scene reads in flight, so a second open awaits the first instead of returning early. */
+const pendingOpens = new Map<string, Promise<void>>();
 
 function newSession(sketchId: string): SketchSession {
 	return {
@@ -172,20 +176,29 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 	return {
 		sessions: {},
 
-		openSketchSession: async (sketchId) => {
+		openSketchSession: (sketchId) => {
+			const pending = pendingOpens.get(sketchId);
+			if (pending) return pending;
 			const existing = get().sessions[sketchId];
-			if (existing && existing.status !== 'error') return;
+			if (existing && existing.status !== 'error') return Promise.resolve();
 			set((state) => ({ sessions: { ...state.sessions, [sketchId]: newSession(sketchId) } }));
-			try {
-				const scene = await window.maestro.sketch.readScene(sketchId);
-				patchSession(sketchId, (session) => ({ ...session, status: 'ready', scene }));
-			} catch (error) {
-				patchSession(sketchId, (session) => ({
-					...session,
-					status: 'error',
-					loadError: ipcErrorMessage(error),
-				}));
-			}
+			// Deferred one microtask, so the read is registered before it can settle.
+			const read = Promise.resolve().then(async () => {
+				try {
+					const scene = await window.maestro.sketch.readScene(sketchId);
+					patchSession(sketchId, (session) => ({ ...session, status: 'ready', scene }));
+				} catch (error) {
+					patchSession(sketchId, (session) => ({
+						...session,
+						status: 'error',
+						loadError: ipcErrorMessage(error),
+					}));
+				} finally {
+					pendingOpens.delete(sketchId);
+				}
+			});
+			pendingOpens.set(sketchId, read);
+			return read;
 		},
 
 		applyLocalChange: (

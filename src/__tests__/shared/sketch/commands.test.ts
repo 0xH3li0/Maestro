@@ -69,6 +69,41 @@ describe('normalizeSketchRendererResult', () => {
 		).toEqual({ success: true });
 	});
 
+	it('keeps a session snapshot and drops author entries that do not parse', () => {
+		const actor = { id: 'g1', kind: 'guest', name: 'Sam', role: 'rw' };
+		const good = { version: 2, actor, textHash: 'abc', guestTouched: true };
+		expect(
+			normalizeSketchRendererResult({
+				success: true,
+				session: {
+					elements: [{ id: 'a', version: 2, type: 'text' }],
+					authors: { a: good, b: { version: 1, actor: { ...actor, kind: 'host' } } },
+					fileCount: 3,
+				},
+			})
+		).toEqual({
+			success: true,
+			session: {
+				elements: [{ id: 'a', version: 2, type: 'text' }],
+				authors: { a: good },
+				fileCount: 3,
+			},
+		});
+	});
+
+	it('keeps a null session and drops a malformed one', () => {
+		expect(normalizeSketchRendererResult({ success: true, session: null })).toEqual({
+			success: true,
+			session: null,
+		});
+		expect(
+			normalizeSketchRendererResult({
+				success: true,
+				session: { elements: [{ id: 'a' }], authors: {} },
+			})
+		).toEqual({ success: true });
+	});
+
 	it('turns anything else into a failure with a readable error', () => {
 		expect(normalizeSketchRendererResult(null)).toEqual({
 			success: false,

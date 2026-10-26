@@ -210,6 +210,7 @@ import {
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-bridge';
+import { getSketchToolService } from './sketch/sketch-tools';
 import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
@@ -2047,7 +2048,10 @@ app
 			// provider's MCP config. Off drops live connections and removes the entry.
 			sketchBook: {
 				reconcile: () => {
-					void startSketchMcpBridge({ getProcessManager: () => processManager });
+					void startSketchMcpBridge({
+						getProcessManager: () => processManager,
+						tools: getSketchToolService(),
+					});
 					void syncSketchMcpServerOn();
 				},
 				stopAll: () => {

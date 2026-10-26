@@ -1,7 +1,8 @@
 /**
  * The Sketch Book hop from main to a window, for the work only a renderer can
  * do: opening a sketch tab (the tab is part of the agent model the window
- * owns) and drawing PNG or SVG (Excalidraw measures text in a DOM).
+ * owns), drawing PNG or SVG (Excalidraw measures text in a DOM), and reading
+ * a live `SketchSession` for the agent read tools (the author map lives there).
  *
  * The request goes to the window that owns the sketch's agent, so a sketch tab
  * opens where that agent lives. With no owner (an export of a sketch whose
@@ -24,7 +25,7 @@ import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
 /** The channel a window listens on for Sketch Book requests. */
 export const SKETCH_REMOTE_COMMAND_CHANNEL = 'remote:sketchCommand';
 
-/** Opening a tab is one store write. */
+/** Opening a tab is one store write; reading a session at most one scene read. */
 const OPEN_REPLY_MS = 10_000;
 /** The first export loads Excalidraw and its fonts before it can draw. */
 const EXPORT_REPLY_MS = 45_000;

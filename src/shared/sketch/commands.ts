@@ -7,15 +7,18 @@
  * actions need a window: opening a sketch tab (the tab lives in the renderer's
  * agent model) and rendering PNG or SVG (Excalidraw measures text in a DOM).
  * For those, main sends a `SketchRendererRequest` to the window that owns the
- * agent and waits for a `SketchRendererResult`.
+ * agent and waits for a `SketchRendererResult`. The agent read tools (T1, T3,
+ * T4) use the same hop to read the live `SketchSession` (`readSession`): the
+ * scene with unsaved edits and the author map, which only the window holds.
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
  * from Electron or Node.
  */
 
+import type { ElementAuthorship } from './attribution';
 import type { SketchWireElement } from './payloads';
-import type { SketchRecord, SketchScene } from './types';
+import { SKETCH_ACTOR_KINDS, SKETCH_ROLES, type SketchRecord, type SketchScene } from './types';
 
 export const SKETCH_COMMAND_ACTIONS = ['new', 'list', 'open', 'read', 'export'] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
@@ -91,10 +94,36 @@ export type SketchRendererRequest =
 			/** Leave the active agent and tab alone (`--background`). */
 			background: boolean;
 	  }
-	| { action: 'export'; format: SketchImageFormat; scene: SketchScene };
+	| { action: 'export'; format: SketchImageFormat; scene: SketchScene }
+	| {
+			action: 'readSession';
+			sketchId: string;
+			/**
+			 * Read the scene into a session when none is open yet. False answers
+			 * `session: null` instead, so a listing never loads every board.
+			 */
+			open: boolean;
+	  };
+
+/**
+ * A live `SketchSession` as the agent read tools see it: the elements (deleted
+ * ones included, for `sketch_changes`) and the author map (spec section 7).
+ * Binary files stay in the window; only their count crosses.
+ */
+export interface SketchSessionSnapshot {
+	elements: SketchWireElement[];
+	authors: Record<string, ElementAuthorship>;
+	fileCount: number;
+}
 
 export type SketchRendererResult =
-	| { success: true; tabId?: string; file?: SketchExportFile }
+	| {
+			success: true;
+			tabId?: string;
+			file?: SketchExportFile;
+			/** `readSession`: null when no session is open and `open` was false. */
+			session?: SketchSessionSnapshot | null;
+	  }
 	| { success: false; error: string };
 
 function isExportFile(value: unknown): value is SketchExportFile {
@@ -106,6 +135,49 @@ function isExportFile(value: unknown): value is SketchExportFile {
 		(file.encoding === 'utf8' || file.encoding === 'base64') &&
 		typeof file.data === 'string'
 	);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAuthorship(value: unknown): value is ElementAuthorship {
+	if (!isObjectRecord(value) || !isObjectRecord(value.actor)) return false;
+	const actor = value.actor;
+	return (
+		typeof value.version === 'number' &&
+		typeof value.textHash === 'string' &&
+		typeof value.guestTouched === 'boolean' &&
+		typeof actor.id === 'string' &&
+		typeof actor.name === 'string' &&
+		(SKETCH_ACTOR_KINDS as readonly unknown[]).includes(actor.kind) &&
+		(SKETCH_ROLES as readonly unknown[]).includes(actor.role)
+	);
+}
+
+/**
+ * A session snapshot as main may trust it, or undefined when it is malformed.
+ * An author map entry that does not parse is dropped, so its element reads as
+ * unknown-author, which the gate treats as third-party (fail closed).
+ */
+function normalizeSessionSnapshot(value: unknown): SketchSessionSnapshot | undefined {
+	if (!isObjectRecord(value) || !Array.isArray(value.elements)) return undefined;
+	const elements = value.elements.filter(
+		(element): element is SketchWireElement =>
+			isObjectRecord(element) &&
+			typeof element.id === 'string' &&
+			typeof element.version === 'number'
+	);
+	if (elements.length !== value.elements.length) return undefined;
+	const authors: Record<string, ElementAuthorship> = {};
+	if (isObjectRecord(value.authors)) {
+		for (const [id, entry] of Object.entries(value.authors)) {
+			if (isAuthorship(entry)) authors[id] = entry;
+		}
+	}
+	const fileCount =
+		typeof value.fileCount === 'number' && Number.isFinite(value.fileCount) ? value.fileCount : 0;
+	return { elements, authors, fileCount };
 }
 
 /** A renderer reply as main may trust it. Anything malformed is a failure. */
@@ -123,10 +195,12 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 					: 'The Maestro window could not do that.',
 		};
 	}
+	const session = reply.session === null ? null : normalizeSessionSnapshot(reply.session);
 	return {
 		success: true,
 		...(typeof reply.tabId === 'string' ? { tabId: reply.tabId } : {}),
 		...(isExportFile(reply.file) ? { file: reply.file } : {}),
+		...(session !== undefined ? { session } : {}),
 	};
 }
 
@@ -163,19 +237,23 @@ export interface SketchSceneSummary {
 	fileCount: number;
 }
 
-const CONNECTOR_TYPES: ReadonlySet<string> = new Set(['arrow', 'line']);
+/** The element types drawn as connectors (`from -> to`). */
+export const SKETCH_CONNECTOR_TYPES: ReadonlySet<string> = new Set(['arrow', 'line']);
 
-function stringField(element: SketchWireElement, field: string): string | undefined {
+/** A string field, trimmed; undefined when missing or blank. */
+export function sketchStringField(element: SketchWireElement, field: string): string | undefined {
 	const value = element[field];
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function numberField(element: SketchWireElement, field: string): number {
+/** A finite number field, or 0. */
+export function sketchNumberField(element: SketchWireElement, field: string): number {
 	const value = element[field];
 	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function boundElementId(element: SketchWireElement, field: string): string | null {
+/** The element id an arrow end (`startBinding` / `endBinding`) is bound to, or null. */
+export function sketchBoundElementId(element: SketchWireElement, field: string): string | null {
 	const binding = element[field];
 	if (!binding || typeof binding !== 'object') return null;
 	const id = (binding as Record<string, unknown>).elementId;
@@ -183,7 +261,7 @@ function boundElementId(element: SketchWireElement, field: string): string | nul
 }
 
 /** The short name of an element nobody labeled: `rectangle#1a2b3c4d`. */
-function anonymousName(element: SketchWireElement): string {
+export function sketchAnonymousName(element: SketchWireElement): string {
 	return `${String(element.type ?? 'element')}#${element.id.slice(0, 8)}`;
 }
 
@@ -199,19 +277,19 @@ export function summarizeSketchScene(scene: SketchScene): SketchSceneSummary {
 	// A text element with a live container labels that container.
 	const boundText = new Map<string, string>();
 	for (const element of live) {
-		const containerId = stringField(element, 'containerId');
-		const text = stringField(element, 'text');
+		const containerId = sketchStringField(element, 'containerId');
+		const text = sketchStringField(element, 'text');
 		if (element.type === 'text' && containerId && text && byId.has(containerId)) {
 			boundText.set(containerId, text);
 		}
 	}
 	const labelOf = (element: SketchWireElement): string | undefined =>
 		boundText.get(element.id) ??
-		(element.type === 'text' ? stringField(element, 'text') : undefined);
+		(element.type === 'text' ? sketchStringField(element, 'text') : undefined);
 	const endName = (id: string | null): string | null => {
 		if (!id) return null;
 		const end = byId.get(id);
-		return end ? (labelOf(end) ?? anonymousName(end)) : null;
+		return end ? (labelOf(end) ?? sketchAnonymousName(end)) : null;
 	};
 
 	const byType: Record<string, number> = {};
@@ -226,28 +304,28 @@ export function summarizeSketchScene(scene: SketchScene): SketchSceneSummary {
 		const type = String(element.type ?? 'unknown');
 		byType[type] = (byType[type] ?? 0) + 1;
 
-		const x = numberField(element, 'x');
-		const y = numberField(element, 'y');
-		const width = numberField(element, 'width');
-		const height = numberField(element, 'height');
+		const x = sketchNumberField(element, 'x');
+		const y = sketchNumberField(element, 'y');
+		const width = sketchNumberField(element, 'width');
+		const height = sketchNumberField(element, 'height');
 		minX = Math.min(minX, x, x + width);
 		minY = Math.min(minY, y, y + height);
 		maxX = Math.max(maxX, x, x + width);
 		maxY = Math.max(maxY, y, y + height);
 
 		const label = labelOf(element);
-		if (CONNECTOR_TYPES.has(type)) {
+		if (SKETCH_CONNECTOR_TYPES.has(type)) {
 			connections.push({
 				id: element.id,
 				type,
-				from: endName(boundElementId(element, 'startBinding')),
-				to: endName(boundElementId(element, 'endBinding')),
+				from: endName(sketchBoundElementId(element, 'startBinding')),
+				to: endName(sketchBoundElementId(element, 'endBinding')),
 				...(label ? { label } : {}),
 			});
 			continue;
 		}
 		// Bound text is already the label of its container.
-		const containerId = stringField(element, 'containerId');
+		const containerId = sketchStringField(element, 'containerId');
 		if (type === 'text' && containerId && byId.has(containerId)) continue;
 		shapes.push({ id: element.id, type, ...(label ? { label } : {}) });
 	}

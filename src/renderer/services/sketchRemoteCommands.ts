@@ -2,7 +2,7 @@
  * The renderer half of `maestro-cli sketch` (spec section 9).
  *
  * Main answers every verb through its SketchService, and sends this window
- * only the two jobs a window must do (`SketchRendererRequest`):
+ * only the jobs a window must do (`SketchRendererRequest`):
  *
  * - `open`: show a sketch in a tab on its agent, through the same
  *   `openSketchInSession()` the four UI ways in use. `background` leaves the
@@ -10,6 +10,9 @@
  * - `export`: draw a saved scene as SVG or PNG with Excalidraw's own exporters,
  *   which need a DOM to measure text. Excalidraw loads lazily, the same way the
  *   tab loads it, with the bundled fonts.
+ * - `readSession`: hand the agent read tools (T1, T3, T4) the live session:
+ *   the scene with unsaved edits and the author map, which only this window
+ *   holds. `open` reads the scene into a session first when none is open.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -21,8 +24,10 @@ import {
 	type SketchImageFormat,
 	type SketchRendererRequest,
 	type SketchRendererResult,
+	type SketchSessionSnapshot,
 } from '../../shared/sketch/commands';
 import type { SketchScene } from '../../shared/sketch/types';
+import { useSketchSessionStore } from '../stores/sketchSessionStore';
 import { readBlobAsDataUrl } from '../utils/imageData';
 import { openSketchInSession } from './sketchTabs';
 
@@ -64,6 +69,33 @@ export async function exportSketchImage(
 	return { format, mimeType, encoding: 'base64', data: dataUrl.slice(dataUrl.indexOf(',') + 1) };
 }
 
+/**
+ * The live session of a sketch, for the agent read tools. With `open`, a
+ * sketch no view has opened is read into a session first (and stays, so the
+ * author map it gathers from here on is kept); without it, such a sketch
+ * answers null. A session that failed to load throws its error.
+ */
+export async function readSketchSessionSnapshot(
+	sketchId: string,
+	open: boolean
+): Promise<SketchSessionSnapshot | null> {
+	const store = useSketchSessionStore.getState();
+	const existing = store.sessions[sketchId];
+	if (!existing && !open) return null;
+	if (!existing || existing.status !== 'ready' || !existing.scene) {
+		await store.openSketchSession(sketchId);
+	}
+	const session = useSketchSessionStore.getState().sessions[sketchId];
+	if (!session?.scene || session.status !== 'ready') {
+		throw new Error(session?.loadError ?? 'The sketch could not be read.');
+	}
+	return {
+		elements: session.scene.elements,
+		authors: session.authors,
+		fileCount: Object.keys(session.scene.files).length,
+	};
+}
+
 /** Run one request from main and resolve with the reply it waits for. */
 export async function runRemoteSketchCommand(
 	request: SketchRendererRequest
@@ -81,6 +113,12 @@ export async function runRemoteSketchCommand(
 		}
 		if (request.action === 'export') {
 			return { success: true, file: await exportSketchImage(request.scene, request.format) };
+		}
+		if (request.action === 'readSession') {
+			return {
+				success: true,
+				session: await readSketchSessionSnapshot(request.sketchId, request.open),
+			};
 		}
 		return { success: false, error: 'Unknown Sketch Book request.' };
 	} catch (error) {
