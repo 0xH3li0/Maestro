@@ -76,6 +76,7 @@ import type {
 	StartAutoRunCallback,
 	ControlAutoRunCallback,
 } from '../../shared/autoRunRemote';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { BatchRunConfig } from '../../shared/types';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -111,6 +112,7 @@ import type {
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	ClosedTabCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
@@ -186,14 +188,13 @@ import type {
 	StartGroupChatOptions,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
-	MergeContextCallback,
-	TransferContextCallback,
-	SummarizeContextCallback,
+	TabContextOpCallback,
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
@@ -220,6 +221,8 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
+import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
@@ -619,6 +622,10 @@ export class WebServer {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
 	}
 
+	setClosedTabCommandCallback(callback: ClosedTabCommandCallback): void {
+		this.callbackRegistry.setClosedTabCommandCallback(callback);
+	}
+
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
 	}
@@ -928,6 +935,10 @@ export class WebServer {
 		this.callbackRegistry.setStopGroupChatCallback(callback);
 	}
 
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbackRegistry.setArchiveGroupChatCallback(callback);
+	}
+
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
 	}
@@ -936,16 +947,8 @@ export class WebServer {
 		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
-	setMergeContextCallback(callback: MergeContextCallback): void {
-		this.callbackRegistry.setMergeContextCallback(callback);
-	}
-
-	setTransferContextCallback(callback: TransferContextCallback): void {
-		this.callbackRegistry.setTransferContextCallback(callback);
-	}
-
-	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
-		this.callbackRegistry.setSummarizeContextCallback(callback);
+	setTabContextOpCallback(callback: TabContextOpCallback): void {
+		this.callbackRegistry.setTabContextOpCallback(callback);
 	}
 
 	setCreateGistCallback(callback: CreateGistCallback): void {
@@ -1206,7 +1209,8 @@ export class WebServer {
 				this.callbackRegistry.getSessionDetail(sessionId, tabId),
 			getTheme: () => this.callbackRegistry.getTheme(),
 			writeToSession: (sessionId, data) => this.callbackRegistry.writeToSession(sessionId, data),
-			interruptSession: async (sessionId) => this.callbackRegistry.interruptSession(sessionId),
+			interruptSession: (sessionId, tabId) =>
+				this.callbackRegistry.interruptSession(sessionId, tabId),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -1313,7 +1317,8 @@ export class WebServer {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1322,7 +1327,8 @@ export class WebServer {
 					tabId,
 					force,
 					images,
-					background
+					background,
+					mentionRouting
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1340,6 +1346,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			closedTabCommand: async (request: ClosedTabCommandRequest) =>
+				this.callbackRegistry.closedTabCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
@@ -1374,8 +1382,18 @@ export class WebServer {
 				sessionId: string,
 				prompt: string,
 				background?: boolean,
-				hidden?: boolean
-			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, hidden),
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
+			) =>
+				this.callbackRegistry.newAITabWithPrompt(
+					sessionId,
+					prompt,
+					background,
+					hidden,
+					mentionRouting
+				),
+			interruptSession: (sessionId: string, tabId?: string) =>
+				this.callbackRegistry.interruptSession(sessionId, tabId),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
@@ -1387,7 +1405,8 @@ export class WebServer {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: MentionRouting
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1396,7 +1415,8 @@ export class WebServer {
 					tabId,
 					images,
 					background,
-					held
+					held,
+					mentionRouting
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1502,16 +1522,14 @@ export class WebServer {
 			) => this.callbackRegistry.startGroupChat(topic, participantIds, options),
 			getGroupChatState: async (chatId: string) => this.callbackRegistry.getGroupChatState(chatId),
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
+			archiveGroupChat: async (chatId: string, archived: boolean) =>
+				this.callbackRegistry.archiveGroupChat(chatId, archived),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
 				this.callbackRegistry.steerGroupChat(chatId, request),
-			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
-			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
-				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
-			summarizeContext: async (sessionId: string) =>
-				this.callbackRegistry.summarizeContext(sessionId),
+			tabContextOp: async (request: TabContextOpRequest) =>
+				this.callbackRegistry.tabContextOp(request),
 			createGist: async (
 				sessionId: string,
 				description: string,

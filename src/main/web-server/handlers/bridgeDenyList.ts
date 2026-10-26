@@ -29,8 +29,10 @@ const METHODS: Record<string, string> = {
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
-	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
+	cue: 'cancelScheduledTask checkReadiness createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
+	// DQL only (DV-14). DataviewJS reads and the trust list stay desktop and CLI only.
+	dataview: 'query queryInline rebuild status',
 	'director-notes':
 		'generateSynopsis getGraphData getOffsetForTimestamp getRichOverviewStats getUnifiedHistory',
 	documentGraph: 'unwatchFolder watchFolder',
@@ -52,6 +54,7 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
 	permission: 'respond',
@@ -79,6 +82,7 @@ const METHODS: Record<string, string> = {
 	tempfile: 'delete read write',
 	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
+	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
 const EVENTS: Record<string, string> = {
 	agent: 'authExpired error',
@@ -91,6 +95,7 @@ const EVENTS: Record<string, string> = {
 	cli: 'activityChange',
 	'cross-agent': 'chunk',
 	cue: 'activityUpdate',
+	dataview: 'changed',
 	'director-notes': 'synopsisProgress',
 	documentGraph: 'filesChanged',
 	git: 'commandOutput',
@@ -98,7 +103,7 @@ const EVENTS: Record<string, string> = {
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
 	marketplace: 'manifestChanged',
-	notification: 'commandCompleted',
+	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',
 	process:
@@ -158,7 +163,7 @@ export function isRemoteSettingReadable(key: unknown): key is string {
 export function isRemoteSettingWritable(key: unknown): key is string {
 	return (
 		isRemoteSettingReadable(key) &&
-		!/^(?:webAuth|webInterface|persistentWebLink|encoreFeatures|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
+		!/^(?:webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
 			key
 		)
 	);
