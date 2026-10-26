@@ -38,6 +38,17 @@ export const DATAVIEW_GUEST_CSP =
 /** A run that has not answered `render.done` or `render.error` within this long loses its guest (D4). */
 export const DATAVIEW_JS_RUN_TIMEOUT_MS = 5000;
 
+/**
+ * The most list-item data one `run` snapshot carries, as an estimate in bytes (`DATAVIEW_JS_LIST_ITEM_BYTES`
+ * per item). Every task and list item of a page costs about a kilobyte of raw parse, so a 16k-page vault came to
+ * 400 MB: cloned through IPC into the renderer and again into each guest, it froze the app before the watchdog
+ * could fire. Pages are admitted smallest first; a page past the budget keeps its metadata and loses `lists`.
+ */
+export const DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES = 24 * 1024 * 1024;
+
+/** Estimated bytes of one list item or task in a snapshot (measured at 1.2 to 1.6 KB, text excluded). */
+export const DATAVIEW_JS_LIST_ITEM_BYTES = 1500;
+
 /** The tallest a guest frame grows, in CSS pixels; taller output scrolls inside the frame. */
 export const DATAVIEW_JS_MAX_FRAME_HEIGHT = 10_000;
 
