@@ -442,6 +442,44 @@ describe('cue-spawn-builder', () => {
 					expect(message).toContain('cannot pass argument 4 intact');
 					expect(message).not.toContain('ab%cd');
 				});
+
+				it('names the value of a single-letter flag by its flag', async () => {
+					const message = await refusalFor(['exec', '-c', 'home=%APPDATA%']);
+
+					expect(message).toContain('cannot pass the value of -c intact');
+					expect(message).not.toContain('%APPDATA%');
+				});
+
+				it('never names a short flag with a value attached, which may be the secret', async () => {
+					const message = await refusalFor(['exec', '-pSECRET', '%APPDATA%']);
+
+					expect(message).toContain('cannot pass argument 3 intact');
+					expect(message).not.toContain('SECRET');
+				});
+
+				it('never names a preceding value that only starts with a dash', async () => {
+					const message = await refusalFor(['exec', '--token', '-secret-value', 'bad%arg']);
+
+					expect(message).toContain('cannot pass argument 4 intact');
+					expect(message).not.toContain('secret-value');
+					expect(message).not.toContain('bad%arg');
+				});
+
+				it('never names the part before = unless it is a bare flag name', async () => {
+					const message = await refusalFor(['exec', '-pSECRET=ab%cd']);
+
+					expect(message).toContain('cannot pass argument 2 intact');
+					expect(message).not.toContain('SECRET');
+				});
+
+				it('can only name a flag, never a value, after a flag that takes no value', async () => {
+					// Shape alone cannot tell that --json takes no value, so the label is
+					// imprecise here, but what it names is still only a flag.
+					const message = await refusalFor(['exec', '--json', '-pSECRET=ab%cd']);
+
+					expect(message).toContain('cannot pass the value of --json intact');
+					expect(message).not.toContain('SECRET');
+				});
 			});
 
 			it('leaves a Windows .exe untouched: no shell, prompt in argv', async () => {
