@@ -29,6 +29,8 @@ import {
 export const SKETCH_MAX_ELEMENTS_PER_CALL = 500;
 /** Largest `sketch_chat_post` text, in UTF-8 bytes (spec section 4 caps). */
 export const SKETCH_MAX_CHAT_POST_BYTES = 64 * 1024;
+/** Largest `sketch_screenshot` scale, in PNG pixels per scene pixel (T9). */
+export const SKETCH_MAX_SCREENSHOT_SCALE = 4;
 
 /** A tool definition whose name must be one of T1-T12. */
 interface SketchMcpToolDefinition extends McpToolDefinition {
@@ -239,7 +241,7 @@ export const SKETCH_MCP_TOOLS: ReadonlyArray<SketchMcpToolDefinition> = [
 				scale: {
 					type: 'number',
 					exclusiveMinimum: 0,
-					maximum: 4,
+					maximum: SKETCH_MAX_SCREENSHOT_SCALE,
 					description: 'Render scale (default 1).',
 				},
 			},

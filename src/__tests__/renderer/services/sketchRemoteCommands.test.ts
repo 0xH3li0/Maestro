@@ -2,8 +2,9 @@
  * Tests for the renderer half of `maestro-cli sketch`: `open` shows the sketch
  * through the same tab helper the UI uses (background leaves the view alone),
  * `export` draws SVG as text and PNG as base64 with Excalidraw's exporters,
- * `agentWrite` and `convertMermaid` reach the agent write service, and every
- * failure comes back as a reply instead of a throw.
+ * `agentWrite` and `convertMermaid` reach the agent write service,
+ * `renderForAgent` draws only the elements main picked (with only the files
+ * they name), and every failure comes back as a reply instead of a throw.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -290,5 +291,92 @@ describe('exportSketchImage', () => {
 		expect(file).toMatchObject({ format: 'png', mimeType: 'image/png', encoding: 'base64' });
 		expect(file.data).toBe(btoa(String.fromCharCode(...bytes)));
 		expect(excalidraw.exportToBlob.mock.calls[0][0]).toMatchObject({ mimeType: 'image/png' });
+	});
+});
+
+describe('runRemoteSketchCommand renderForAgent', () => {
+	const files = {
+		kept: { id: 'kept', mimeType: 'image/png', dataURL: 'data:image/png;base64,AAAA' },
+		guest: { id: 'guest', mimeType: 'image/png', dataURL: 'data:image/png;base64,BBBB' },
+	};
+	const sessionScene: SketchScene = {
+		type: 'excalidraw',
+		version: 2,
+		source: 'maestro',
+		elements: [
+			{ id: 'box', version: 1, type: 'rectangle' },
+			{ id: 'secret', version: 1, type: 'text', text: 'withheld words' },
+			{ id: 'img', version: 1, type: 'image', fileId: 'kept' },
+			{ id: 'guest-img', version: 1, type: 'image', fileId: 'guest' },
+		],
+		appState: { viewBackgroundColor: '#123456', gridSize: 20, name: 'not copied' },
+		files,
+	};
+	const picked = [
+		{ id: 'box', version: 1, type: 'rectangle' },
+		{ id: 'img', version: 1, type: 'image', fileId: 'kept' },
+	];
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSketchSessionStore.setState({
+			sessions: {
+				'sketch-1': {
+					sketchId: 'sketch-1',
+					status: 'ready',
+					loadError: null,
+					scene: sessionScene,
+					authors: {},
+					dirty: false,
+					revision: 1,
+					saveError: null,
+					externalRevision: 0,
+					focusRequest: null,
+					chat: [],
+				},
+			},
+		});
+	});
+
+	it('draws only the elements main picked, with only the files they name', async () => {
+		excalidraw.exportToBlob.mockResolvedValue(
+			new Blob([new Uint8Array([1])], { type: 'image/png' })
+		);
+		const result = await runRemoteSketchCommand({
+			action: 'renderForAgent',
+			sketchId: 'sketch-1',
+			format: 'png',
+			elements: picked,
+			scale: 2,
+		});
+
+		expect(result).toMatchObject({ success: true, file: { format: 'png', encoding: 'base64' } });
+		const options = excalidraw.exportToBlob.mock.calls[0][0];
+		expect(options.elements.map((e: { id: string }) => e.id)).toEqual(['box', 'img']);
+		expect(Object.keys(options.files)).toEqual(['kept']);
+		expect(options.appState).toEqual({
+			viewBackgroundColor: '#123456',
+			gridSize: 20,
+			exportBackground: true,
+		});
+		expect(options.getDimensions(100, 50)).toEqual({ width: 200, height: 100, scale: 2 });
+	});
+
+	it('writes JSON from the picked elements alone', async () => {
+		const result = await runRemoteSketchCommand({
+			action: 'renderForAgent',
+			sketchId: 'sketch-1',
+			format: 'json',
+			elements: picked,
+		});
+
+		expect(result.success).toBe(true);
+		const file = result.success ? result.file : undefined;
+		expect(file).toMatchObject({ format: 'json', mimeType: 'application/json', encoding: 'utf8' });
+		const written = JSON.parse(file!.data) as SketchScene;
+		expect(written.elements).toEqual(picked);
+		expect(Object.keys(written.files)).toEqual(['kept']);
+		expect(file!.data).not.toContain('withheld words');
+		expect(file!.data).not.toContain('BBBB');
 	});
 });

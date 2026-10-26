@@ -14,6 +14,7 @@ import {
 	isPathWithin,
 	realpathThroughAncestor,
 	resolvePathInRealRoot,
+	resolveWriteTargetInRoot,
 } from '../../../main/utils/real-path-containment';
 
 describe('isPathWithin', () => {
@@ -128,5 +129,60 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 		expect(realpathThroughAncestor(path.join(base, 'vault-link', 'new.md'))).toBe(
 			path.join(root, 'new.md')
 		);
+	});
+
+	describe('resolveWriteTargetInRoot', () => {
+		it('names a new file inside the root, nested folders included', () => {
+			expect(resolveWriteTargetInRoot(root, 'out/new.png')).toEqual({
+				kind: 'inside',
+				target: path.join(root, 'out', 'new.png'),
+			});
+			expect(resolveWriteTargetInRoot(root, 'notes/../b.png')).toEqual({
+				kind: 'inside',
+				target: path.join(root, 'b.png'),
+			});
+		});
+
+		it('refuses a path that climbs out or is absolute before touching the disk', () => {
+			expect(resolveWriteTargetInRoot(root, '../outside/x.png')).toEqual({
+				kind: 'outside-lexically',
+			});
+			expect(resolveWriteTargetInRoot(root, '/etc/x.png')).toEqual({ kind: 'outside-lexically' });
+			expect(resolveWriteTargetInRoot(root, 'C:\\x.png')).toEqual({ kind: 'outside-lexically' });
+		});
+
+		it('reads the root itself as no file name', () => {
+			expect(resolveWriteTargetInRoot(root, '.')).toEqual({ kind: 'root' });
+			expect(resolveWriteTargetInRoot(root, 'notes/..')).toEqual({ kind: 'root' });
+		});
+
+		it('refuses a symlinked folder or file that leads out of the root', () => {
+			expect(resolveWriteTargetInRoot(root, 'escape-dir/new.png')).toEqual({
+				kind: 'outside-real',
+				target: path.join(root, 'escape-dir', 'new.png'),
+			});
+			expect(resolveWriteTargetInRoot(root, 'escape.md')).toEqual({
+				kind: 'outside-real',
+				target: path.join(root, 'escape.md'),
+			});
+		});
+
+		it('allows a dangling link inside the root: a rename replaces it instead of following it', () => {
+			expect(resolveWriteTargetInRoot(root, 'dangling.md')).toEqual({
+				kind: 'inside',
+				target: path.join(root, 'dangling.md'),
+			});
+		});
+
+		it('works when the root itself is reached through a symlink', () => {
+			const linkedRoot = path.join(base, 'vault-link');
+			expect(resolveWriteTargetInRoot(linkedRoot, 'new.png')).toEqual({
+				kind: 'inside',
+				target: path.join(linkedRoot, 'new.png'),
+			});
+			expect(resolveWriteTargetInRoot(linkedRoot, 'escape-dir/new.png')).toMatchObject({
+				kind: 'outside-real',
+			});
+		});
 	});
 });

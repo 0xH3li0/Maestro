@@ -2,7 +2,8 @@
  * Tests for the `sketch_command` wire module: the action and format guards,
  * the renderer reply normalizer main trusts, and `summarizeSketchScene()`, the
  * `maestro-cli sketch read` summary (bound text folded into its shape, arrows
- * as `from -> to`, deleted elements counted but not listed).
+ * as `from -> to`, deleted elements counted but not listed), and the
+ * `.excalidraw` file both JSON exports write.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -11,6 +12,7 @@ import {
 	isSketchExportFormat,
 	isSketchReadFormat,
 	normalizeSketchRendererResult,
+	sketchSceneJsonFile,
 	summarizeSketchScene,
 } from '../../../shared/sketch/commands';
 import type { SketchScene } from '../../../shared/sketch/types';
@@ -243,5 +245,15 @@ describe('summarizeSketchScene', () => {
 		expect(summary.elementCount).toBe(2);
 		expect(summary.shapes).toEqual([{ id: 'orphan', type: 'text', label: 'left behind' }]);
 		expect(summary.connections).toEqual([{ id: 'arrow', type: 'arrow', from: null, to: null }]);
+	});
+});
+
+describe('sketchSceneJsonFile', () => {
+	it('writes the scene as tab-indented JSON that parses back unchanged', () => {
+		const board = scene([{ id: 'a', version: 1, type: 'rectangle' }]);
+		const file = sketchSceneJsonFile(board);
+		expect(file).toMatchObject({ format: 'json', mimeType: 'application/json', encoding: 'utf8' });
+		expect(file.data).toBe(JSON.stringify(board, null, '\t'));
+		expect(JSON.parse(file.data)).toEqual(board);
 	});
 });

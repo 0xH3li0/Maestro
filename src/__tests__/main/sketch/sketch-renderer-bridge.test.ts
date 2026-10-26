@@ -95,7 +95,7 @@ describe('requestSketchRenderer', () => {
 		expect(h.requestFromRenderer.mock.calls[0][2].timeoutMs).toBeGreaterThan(10_000);
 	});
 
-	it("answers an agent write before the maestro-sketch script's 30 s call timeout", async () => {
+	it("answers an agent write or render before the maestro-sketch script's 30 s call timeout", async () => {
 		setSketchWindowResolver(() => win);
 
 		await requestSketchRenderer('agent-1', {
@@ -105,7 +105,14 @@ describe('requestSketchRenderer', () => {
 			write: { op: 'delete', ids: ['r1'] },
 		});
 		await requestSketchRenderer('agent-1', { action: 'convertMermaid', mermaid: 'flowchart LR' });
+		await requestSketchRenderer('agent-1', {
+			action: 'renderForAgent',
+			sketchId: 'sketch-1',
+			format: 'png',
+			elements: [],
+		});
 
+		expect(h.requestFromRenderer).toHaveBeenCalledTimes(3);
 		for (const call of h.requestFromRenderer.mock.calls) {
 			expect(call[2].timeoutMs).toBeGreaterThan(10_000);
 			expect(call[2].timeoutMs).toBeLessThan(30_000);

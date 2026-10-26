@@ -2,12 +2,13 @@
  * Real-path containment for the main process: whether a path stays inside a root once the file system has
  * resolved its symlinks. The lexical check for an UNTRUSTED relative path is `normalizeRootRelativePath()` in
  * `src/shared/pathContainment.ts` (no `..` escape, nothing absolute); this is the check after it, the one a
- * symlink inside the root cannot get past. Used by the web bridge's protected-path guard and by Dataview's
- * `dataview:readInRoot` (`dv.io.load`).
+ * symlink inside the root cannot get past. Used by the web bridge's protected-path guard, by Dataview's
+ * `dataview:readInRoot` (`dv.io.load`), and, for writes, by Sketch Book's Save to project and `sketch_export`.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { normalizeRootRelativePath } from '../../shared/pathContainment';
 
 /** Error codes that mean "nothing readable there", not a broken file system. */
 const MISSING_PATH_CODES = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
@@ -77,4 +78,38 @@ export async function resolvePathInRealRoot(
 	if (!inside) return { kind: 'outside', realPath };
 	const realRelativePath = path.relative(realRoot, realPath).split(path.sep).join('/');
 	return { kind: 'inside', realPath, realRelativePath };
+}
+
+/** Where a file named beneath a root would be written. */
+export type WriteTargetInRoot =
+	/** `target`: the absolute path to write, the root as given joined with the normalized path. */
+	| { kind: 'inside'; target: string }
+	/** The path names the root itself, so there is no file name. */
+	| { kind: 'root' }
+	/** `..`, absolute, or drive-qualified: it climbs out before the file system is consulted. */
+	| { kind: 'outside-lexically' }
+	/** Lexically inside, but a symlink on the way (or at the target) resolves outside the real root. */
+	| { kind: 'outside-real'; target: string };
+
+/**
+ * Where a file named by an UNTRUSTED relative path would be written beneath `root`, which may not exist
+ * yet: the lexical check (`normalizeRootRelativePath()`), then the real one, with symlinks resolved through
+ * the nearest existing ancestor, so a symlinked folder (or a link at the target) that points elsewhere is
+ * refused. Write `target` with a temp file and a rename (`atomicWriteFile()`): a rename replaces a link
+ * left at the target after this check instead of following it. Synchronous, like `realpathThroughAncestor()`.
+ */
+export function resolveWriteTargetInRoot(
+	root: string,
+	relativePath: string,
+	platform: NodeJS.Platform = process.platform
+): WriteTargetInRoot {
+	const relative = normalizeRootRelativePath(relativePath);
+	if (relative === null) return { kind: 'outside-lexically' };
+	if (relative === '') return { kind: 'root' };
+	const target = path.join(root, ...relative.split('/'));
+	const realRoot = foldPathCase(realpathThroughAncestor(path.resolve(root)), platform);
+	if (!isPathWithin(foldPathCase(realpathThroughAncestor(target), platform), realRoot)) {
+		return { kind: 'outside-real', target };
+	}
+	return { kind: 'inside', target };
 }

@@ -31,17 +31,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import { parseJsonWithBom, assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
-import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import type { SketchRecord, SketchScene, SketchShare } from '../../shared/sketch/types';
 import { generateUUID } from '../../shared/uuid';
 import { createStoreDeserializer } from '../stores/corrupt-store-recovery';
 import { atomicWriteFile, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
-import {
-	foldPathCase,
-	isPathWithin,
-	realpathThroughAncestor,
-} from '../utils/real-path-containment';
+import { resolveWriteTargetInRoot } from '../utils/real-path-containment';
 import { safeStorageSeal, type SealProvider } from '../utils/safe-storage-seal';
 import {
 	sealSecret,
@@ -429,25 +424,24 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 				);
 			}
 			const fileName = options.fileName ?? projectFileName(record.name);
-			const relative = normalizeRootRelativePath(fileName);
-			if (relative === null) {
+			// Lexically inside is not enough: a symlink under the folder could point anywhere.
+			const resolved = resolveWriteTargetInRoot(destDir, fileName);
+			if (resolved.kind === 'outside-lexically') {
 				throw new SketchStoreError(
 					'outside-destination',
 					`"${fileName}" would land outside ${destDir}. Name a file inside it.`
 				);
 			}
-			if (relative === '') {
+			if (resolved.kind === 'root') {
 				throw new SketchStoreError('invalid-destination', 'The file name is empty.');
 			}
-			const target = path.join(destDir, ...relative.split('/'));
-			// Lexically inside is not enough: a symlink under the folder could point anywhere.
-			const realRoot = foldPathCase(realpathThroughAncestor(path.resolve(destDir)));
-			if (!isPathWithin(foldPathCase(realpathThroughAncestor(target)), realRoot)) {
+			if (resolved.kind === 'outside-real') {
 				throw new SketchStoreError(
 					'outside-destination',
-					`${target} resolves outside ${destDir}. Name a file inside it.`
+					`${resolved.target} resolves outside ${destDir}. Name a file inside it.`
 				);
 			}
+			const target = resolved.target;
 			return writes.enqueue(sketchId, async () => {
 				const { text } = await loadScene(await requireRecord(sketchId));
 				if (!options.overwrite) {

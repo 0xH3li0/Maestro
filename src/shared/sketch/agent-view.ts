@@ -1,6 +1,7 @@
 /**
  * What an agent sees of a sketch: the views behind the read tools T1, T3 and
- * T4 (spec section 4) and the change digest (digest.ts).
+ * T4 (spec section 4), the change digest (digest.ts), and the element list a
+ * render for an agent draws (T9, T10).
  *
  * Two rules shape every view here:
  *
@@ -532,4 +533,119 @@ export function buildSketchChangeEntries(
 		updated: diff.updated.map((element) => entry(element, true)),
 		deleted: diff.deleted.map((element) => entry(element, false)),
 	};
+}
+
+/**
+ * True for an image a guest may have put on the board (spec section 8.2, I3):
+ * its current version has an unknown author or a guest author, or a guest
+ * created it. Pixels cannot be screened, so such an image is left out of every
+ * render an agent sees (T9, T10). Per-image approval (D3) does not exist yet,
+ * so none is approved.
+ */
+export function isUnapprovedGuestImage(
+	element: SketchWireElement,
+	authors: Readonly<Record<string, ElementAuthorship>>
+): boolean {
+	if (element.type !== 'image') return false;
+	const entry = currentAuthorship(element, authors);
+	return !entry || entry.guestTouched || entry.actor.kind === 'guest';
+}
+
+/** What an agent render covers, before the gate. */
+export interface SketchRenderPlan {
+	/** The live elements in scope, in scene (z) order. */
+	candidates: SketchWireElement[];
+	/** The third-party candidates the gate must decide. Guest images are not screened: they are left out. */
+	toScreen: SketchWireElement[];
+	/** Named ids the scene does not hold (or holds only as deleted). */
+	missing: string[];
+}
+
+/**
+ * The elements a render for an agent covers (T9 `elementIds`, T10 the whole
+ * board): every live element, or the named ones with the text bound to them
+ * and, for a frame, the elements inside it, so a box keeps its label and a
+ * frame its content.
+ */
+export function planSketchAgentRender(
+	elements: readonly SketchWireElement[],
+	authors: Readonly<Record<string, ElementAuthorship>>,
+	elementIds?: readonly string[]
+): SketchRenderPlan {
+	const { byId, boundText } = indexScene(elements);
+	let candidates: SketchWireElement[];
+	let missing: string[] = [];
+	if (!elementIds) {
+		candidates = [...byId.values()];
+	} else {
+		const named = new Set(elementIds.filter((id) => byId.has(id)));
+		missing = elementIds.filter((id) => !byId.has(id));
+		const frames = new Set([...named].filter((id) => FRAME_TYPES.has(String(byId.get(id)?.type))));
+		const inScope = new Set(named);
+		for (const element of byId.values()) {
+			const frameId = sketchStringField(element, 'frameId');
+			if (frameId && frames.has(frameId)) inScope.add(element.id);
+		}
+		for (const id of [...inScope]) {
+			const label = boundText.get(id);
+			if (label) inScope.add(label.id);
+		}
+		candidates = [...byId.values()].filter((element) => inScope.has(element.id));
+	}
+	return {
+		candidates,
+		toScreen: candidates.filter(
+			(element) =>
+				isThirdPartyElement(element, authors) && !isUnapprovedGuestImage(element, authors)
+		),
+		missing,
+	};
+}
+
+/** What an agent render draws, and what it left out. */
+export interface SketchAgentRender {
+	/** The elements to hand the exporter, `customData` stripped. */
+	elements: SketchWireElement[];
+	/** Elements the gate withheld, with the text bound to a withheld container. */
+	withheldCount: number;
+	/** Unapproved guest images. */
+	guestImageCount: number;
+}
+
+/**
+ * The candidates an agent render may draw (spec section 8.4, Pixels): every
+ * withheld element, the text bound to a withheld container, and every
+ * unapproved guest image are removed, so the pixels (or the exported JSON)
+ * cannot carry what the gate refused. `customData` is stripped, since any
+ * client can write it.
+ */
+export function buildSketchAgentRender(
+	candidates: readonly SketchWireElement[],
+	authors: Readonly<Record<string, ElementAuthorship>>,
+	withheld: SketchWithheldMap
+): SketchAgentRender {
+	const dropped = new Set<string>();
+	let withheldCount = 0;
+	let guestImageCount = 0;
+	for (const element of candidates) {
+		if (withheld.has(element.id)) {
+			dropped.add(element.id);
+			withheldCount += 1;
+		} else if (isUnapprovedGuestImage(element, authors)) {
+			dropped.add(element.id);
+			guestImageCount += 1;
+		}
+	}
+	const kept: SketchWireElement[] = [];
+	for (const element of candidates) {
+		if (dropped.has(element.id)) continue;
+		const containerId = sketchStringField(element, 'containerId');
+		if (element.type === 'text' && containerId && dropped.has(containerId)) {
+			withheldCount += 1;
+			continue;
+		}
+		const { customData: _forgeable, ...rest } = element;
+		kept.push({ ...rest, id: element.id, version: element.version });
+	}
+	return { elements: kept, withheldCount, guestImageCount };
 }

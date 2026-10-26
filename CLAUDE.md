@@ -90,7 +90,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
-- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `resolveWriteTargetInRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **Safe remote file writes and links:** `writeFileAtomicRemote()`, `createExclusiveRemote()`, `lstatRemote()`, `realpathRemote()`, `readlinkRemote()`, `symlinkRemote()` in `src/main/utils/remote-fs.ts`
 - **Remote native directory names:** `readDirNamesRemote()` in `src/main/utils/remote-fs.ts`

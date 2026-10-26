@@ -28,13 +28,12 @@
 
 import { encoreDisabledMessage, isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 import {
-	SKETCH_EXPORT_MIME_TYPES,
 	isSketchExportFormat,
 	isSketchReadFormat,
+	sketchSceneJsonFile,
 	summarizeSketchScene,
 	type ExportedSketch,
 	type OpenedSketch,
-	type SketchExportFile,
 	type SketchExportFormat,
 	type SketchReadFormat,
 	type SketchReading,
@@ -50,6 +49,8 @@ export interface SketchOwnerAgent {
 	name: string;
 	/** True when the agent runs over SSH, which Sketch Book does not support (Q12). */
 	sshRemote: boolean;
+	/** The agent's working directory: the only place `sketch_export` may write (T10). */
+	cwd: string;
 }
 
 export interface SketchServiceDeps {
@@ -96,6 +97,7 @@ export function findSketchOwnerAgent(agentId: string): SketchOwnerAgent | null {
 		id: session.id,
 		name: session.name,
 		sshRemote: session.sessionSshRemoteConfig?.enabled === true,
+		cwd: session.cwd,
 	};
 }
 
@@ -268,14 +270,8 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 			const record = await requireSketch(sketches, sketchId);
 			const scene = await sketches.readScene(record.sketchId);
 			if (format === 'json') {
-				// The `.excalidraw` file as saved: it opens in excalidraw.com unchanged.
-				const file: SketchExportFile = {
-					format,
-					mimeType: SKETCH_EXPORT_MIME_TYPES.json,
-					encoding: 'utf8',
-					data: JSON.stringify(scene, null, '\t'),
-				};
-				return { record, file };
+				// The `.excalidraw` file as saved.
+				return { record, file: sketchSceneJsonFile(scene) };
 			}
 			// Any window can draw it; prefer the one that owns the agent.
 			const owner = findAgent(record.ownerAgentId);

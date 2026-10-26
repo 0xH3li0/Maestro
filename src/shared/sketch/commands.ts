@@ -13,6 +13,8 @@
  * The agent write tools (T5-T8, T11, T12) use it to change that session
  * (`agentWrite`, after main's outbound screen) and to turn Mermaid into
  * element skeletons (`convertMermaid`), since both need Excalidraw's DOM.
+ * `sketch_screenshot` and `sketch_export` (T9, T10) draw the session's
+ * elements that main picked, with the session's files (`renderForAgent`).
  *
  * Also here: `summarizeSketchScene()`, the `read --format summary` view of a
  * saved scene. Bundled into the renderer and the CLI, so it imports nothing
@@ -69,6 +71,20 @@ export interface SketchExportFile {
 	data: string;
 }
 
+/**
+ * A scene as an `.excalidraw` file: the scene JSON as given, tab-indented, so
+ * it opens in excalidraw.com unchanged. `maestro-cli sketch export --format
+ * json` and the agent's `sketch_export` both write it.
+ */
+export function sketchSceneJsonFile(scene: SketchScene): SketchExportFile {
+	return {
+		format: 'json',
+		mimeType: SKETCH_EXPORT_MIME_TYPES.json,
+		encoding: 'utf8',
+		data: JSON.stringify(scene, null, '\t'),
+	};
+}
+
 /** `new` and `open`: a sketch and the tab it is shown in. */
 export interface OpenedSketch {
 	record: SketchRecord;
@@ -115,7 +131,21 @@ export type SketchRendererRequest =
 			/** Already through main's outbound screen. */
 			write: SketchAgentWrite;
 	  }
-	| { action: 'convertMermaid'; mermaid: string };
+	| { action: 'convertMermaid'; mermaid: string }
+	| {
+			action: 'renderForAgent';
+			sketchId: string;
+			format: SketchExportFormat;
+			/**
+			 * Exactly what to draw (T9, T10). Main has already removed every
+			 * withheld element and unapproved guest image (spec section 8.4,
+			 * Pixels); the window adds only the session's background and the
+			 * binary files these elements name.
+			 */
+			elements: SketchWireElement[];
+			/** PNG pixels per scene pixel; 1 when unset. */
+			scale?: number;
+	  };
 
 /** Element skeletons in Excalidraw's `convertToExcalidrawElements` shape (spec T5). */
 export type SketchElementSkeleton = Record<string, unknown>;

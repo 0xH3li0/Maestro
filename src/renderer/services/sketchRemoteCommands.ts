@@ -15,6 +15,10 @@
  *   holds. `open` reads the scene into a session first when none is open.
  * - `agentWrite` and `convertMermaid`: the agent write tools (T5-T8, T11,
  *   T12), in `sketchAgentWrites.ts`.
+ * - `renderForAgent`: `sketch_screenshot` and `sketch_export` (T9, T10). Main
+ *   picks the elements (the gate has removed what the agent may not see);
+ *   this window adds the session's background and the image files those
+ *   elements name, and nothing else.
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -22,6 +26,7 @@
 
 import {
 	SKETCH_EXPORT_MIME_TYPES,
+	sketchSceneJsonFile,
 	type SketchExportFile,
 	type SketchImageFormat,
 	type SketchRendererRequest,
@@ -41,11 +46,13 @@ type ExportOptions = Parameters<(typeof import('@excalidraw/excalidraw'))['expor
 
 /**
  * Draw a saved scene as SVG (text) or PNG (base64). Deleted elements are left
- * out; the board's background color is kept.
+ * out; the board's background color is kept. `scale` (PNG only) is pixels per
+ * scene pixel.
  */
 export async function exportSketchImage(
 	scene: SketchScene,
-	format: SketchImageFormat
+	format: SketchImageFormat,
+	options: { scale?: number } = {}
 ): Promise<SketchExportFile> {
 	// Imported here so the asset module stays its own lazy chunk (excalidrawAssets.ts).
 	const { loadExcalidraw } = await import('../components/SketchBook/excalidrawAssets');
@@ -61,12 +68,22 @@ export async function exportSketchImage(
 		const svg = await exportToSvg({ elements, appState, files, exportPadding: EXPORT_PADDING });
 		return { format, mimeType, encoding: 'utf8', data: svg.outerHTML };
 	}
+	const scale = options.scale ?? 1;
 	const blob = await exportToBlob({
 		elements,
 		appState,
 		files,
 		mimeType,
 		exportPadding: EXPORT_PADDING,
+		...(scale !== 1
+			? {
+					getDimensions: (width: number, height: number) => ({
+						width: width * scale,
+						height: height * scale,
+						scale,
+					}),
+				}
+			: {}),
 	});
 	const dataUrl = await readBlobAsDataUrl(blob);
 	return { format, mimeType, encoding: 'base64', data: dataUrl.slice(dataUrl.indexOf(',') + 1) };
@@ -89,6 +106,36 @@ export async function readSketchSessionSnapshot(
 		authors: session.authors,
 		fileCount: Object.keys(session.scene.files).length,
 	};
+}
+
+/**
+ * Draw the elements main picked from a live session, for an agent (T9, T10).
+ * The scene is rebuilt from those elements alone: the session adds its
+ * background color and the image files the elements name, so nothing main
+ * left out (a withheld element, a guest image's file) can reach the output.
+ */
+export async function renderSketchForAgent(
+	request: Extract<SketchRendererRequest, { action: 'renderForAgent' }>
+): Promise<SketchExportFile> {
+	const session = await openReadySketchSession(request.sketchId);
+	const files: Record<string, unknown> = {};
+	for (const element of request.elements) {
+		const fileId = element.type === 'image' ? element.fileId : undefined;
+		if (typeof fileId === 'string' && session.scene.files[fileId] !== undefined) {
+			files[fileId] = session.scene.files[fileId];
+		}
+	}
+	const { viewBackgroundColor, gridSize } = session.scene.appState;
+	const scene: SketchScene = {
+		type: 'excalidraw',
+		version: session.scene.version,
+		source: session.scene.source,
+		elements: request.elements,
+		appState: { viewBackgroundColor: viewBackgroundColor ?? '#ffffff', gridSize: gridSize ?? null },
+		files,
+	};
+	if (request.format === 'json') return sketchSceneJsonFile(scene);
+	return exportSketchImage(scene, request.format, { scale: request.scale });
 }
 
 /** Run one request from main and resolve with the reply it waits for. */
@@ -117,6 +164,9 @@ export async function runRemoteSketchCommand(
 		}
 		if (request.action === 'convertMermaid') {
 			return { success: true, skeletons: await convertMermaidToSkeletons(request.mermaid) };
+		}
+		if (request.action === 'renderForAgent') {
+			return { success: true, file: await renderSketchForAgent(request) };
 		}
 		if (request.action === 'readSession') {
 			return {

@@ -5,7 +5,8 @@
  * T4 `sketch_changes`) and the write tools (T2 `sketch_create`, T5
  * `sketch_add_elements`, T6 `sketch_update_elements`, T7
  * `sketch_delete_elements`, T8 `sketch_from_mermaid`, T11 `sketch_focus`,
- * T12 `sketch_chat_post`).
+ * T12 `sketch_chat_post`), and the renders (T9 `sketch_screenshot`, T10
+ * `sketch_export`).
  *
  * The bridge has already bound the caller to its agent at the handshake and
  * checked that the sketch a call names belongs to that agent, so every
@@ -35,17 +36,32 @@
  * in a background tab and is never shared (Q5). A chat post is allowed only
  * on an unshared sketch until bot turns exist (phase 06).
  *
+ * Renders. T9 and T10 draw only what the gate let through (spec section 8.4,
+ * Pixels): main plans the elements in scope, screens the third-party ones,
+ * drops every withheld element (with its bound text) and every unapproved
+ * guest image, and hands the window exactly that list (`SketchSessionRenderer`,
+ * the `renderForAgent` hop); the window adds the background and the image
+ * files those elements name. T10 writes only inside the agent's working
+ * directory: the path is checked lexically and again with symlinks resolved
+ * (`resolveWriteTargetInRoot()`), once before the render and once just before
+ * the write, which is a temp file and a rename, so a link at the target is
+ * replaced rather than followed. Renders share their own per-sketch guard.
+ *
  * Caps: a response is cut to 1 MB (`truncated: true` plus `omittedCount`), and
  * every response carries `sceneVersion`.
  */
 
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { serializedJsonByteLength } from '../../shared/jsonUtils';
 import {
 	buildSketchAgentElements,
+	buildSketchAgentRender,
 	buildSketchAgentSummary,
 	buildSketchChangeEntries,
 	currentAuthorship,
 	diffSketchElements,
+	planSketchAgentRender,
 	selectSketchElements,
 	sketchElementsToScreen,
 	sketchSceneVersion,
@@ -62,17 +78,22 @@ import {
 } from '../../shared/sketch/agent-writes';
 import { sketchTextFields, type ElementAuthorship } from '../../shared/sketch/attribution';
 import {
+	isSketchExportFormat,
 	isSketchReadFormat,
 	type OpenedSketch,
 	type SketchAgentWrite,
 	type SketchAgentWriteResult,
 	type SketchElementPatch,
 	type SketchElementSkeleton,
+	type SketchExportFile,
+	type SketchExportFormat,
 	type SketchSessionSnapshot,
 } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { SketchRecord, SketchScene, WithheldReason } from '../../shared/sketch/types';
+import { atomicWriteFile } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
+import { resolveWriteTargetInRoot } from '../utils/real-path-containment';
 import {
 	createSlidingWindowGuard,
 	type SlidingWindowGuard,
@@ -87,6 +108,7 @@ import type { SketchToolCall, SketchToolService } from './sketch-mcp-bridge';
 import {
 	SKETCH_MAX_CHAT_POST_BYTES,
 	SKETCH_MAX_ELEMENTS_PER_CALL,
+	SKETCH_MAX_SCREENSHOT_SCALE,
 } from './sketch-mcp-server-script';
 import {
 	screenOutbound,
@@ -119,6 +141,13 @@ export const SKETCH_WRITE_LIMITS: SlidingWindowLimits = {
 export const SKETCH_CREATE_LIMITS: SlidingWindowLimits = {
 	windowMs: 60_000,
 	maxPerWindow: 5,
+	maxConcurrent: 1,
+};
+
+/** Renders per sketch (T9, T10): each loads the window's exporter and may write a file. */
+export const SKETCH_RENDER_LIMITS: SlidingWindowLimits = {
+	windowMs: 10_000,
+	maxPerWindow: 10,
 	maxConcurrent: 1,
 };
 
@@ -178,6 +207,40 @@ export const convertMermaidInWindow: SketchMermaidConverter = async (agentId, me
 	return result.skeletons;
 };
 
+/** What an agent render asks the window to draw. */
+export interface SketchRenderRequest {
+	format: SketchExportFormat;
+	/** Exactly the elements to draw, already gated. */
+	elements: SketchWireElement[];
+	/** PNG only. */
+	scale?: number;
+}
+
+/** Draws gated elements of a sketch's live session, in the window that owns the agent (T9, T10). */
+export type SketchSessionRenderer = (
+	agentId: string,
+	sketchId: string,
+	request: SketchRenderRequest
+) => Promise<SketchExportFile>;
+
+/** The default renderer: the Sketch Book renderer bridge. */
+export const renderLiveSketchSession: SketchSessionRenderer = async (
+	agentId,
+	sketchId,
+	request
+) => {
+	const result = await requestSketchRenderer(agentId, {
+		action: 'renderForAgent',
+		sketchId,
+		...request,
+	});
+	if (!result.success) throw new Error(`Sketch Book: ${result.error}`);
+	if (!result.file || result.file.format !== request.format) {
+		throw new Error(`Sketch Book: the Maestro window did not return a ${request.format} file.`);
+	}
+	return result.file;
+};
+
 export interface SketchToolDeps {
 	readSession?: SketchSessionReader;
 	writeSession?: SketchSessionWriter;
@@ -185,6 +248,7 @@ export interface SketchToolDeps {
 	/** Create a sketch owned by the agent and open it in a background tab (T2). */
 	createSketch?: (ownerAgentId: string, name: string | undefined) => Promise<OpenedSketch>;
 	outbound?: (request: OutboundScreenRequest) => Promise<OutboundScreenResult>;
+	renderSession?: SketchSessionRenderer;
 	/** The write rate guard; one per service by default. */
 	writeGuard?: SlidingWindowGuard;
 	/** The sketches an agent owns. */
@@ -321,6 +385,69 @@ function boundedText(value: unknown, field: string, maxBytes: number): string {
 	return value;
 }
 
+/** `sketch_screenshot.scale`, checked: 1 when unset. */
+function renderScale(value: unknown): number {
+	if (value === undefined) return 1;
+	if (
+		typeof value !== 'number' ||
+		!Number.isFinite(value) ||
+		value <= 0 ||
+		value > SKETCH_MAX_SCREENSHOT_SCALE
+	) {
+		throw new Error(
+			`Sketch Book: \`scale\` must be a number above 0 and at most ${SKETCH_MAX_SCREENSHOT_SCALE}.`
+		);
+	}
+	return value;
+}
+
+/**
+ * Where `sketch_export` may write `requested` (absolute, or relative to the
+ * agent's working directory): inside that directory once symlinks resolve,
+ * or an error saying why not.
+ */
+export function sketchExportTarget(cwd: string, requested: unknown): string {
+	if (typeof requested !== 'string' || !requested.trim()) {
+		throw new Error('Sketch Book: `path` must be a non-empty string.');
+	}
+	if (!cwd || !path.isAbsolute(cwd)) {
+		throw new Error('Sketch Book: this agent has no working directory to export into.');
+	}
+	// An absolute path counts only when it is under the working directory as written.
+	const relative = path.isAbsolute(requested) ? path.relative(cwd, requested) : requested;
+	const resolved = resolveWriteTargetInRoot(cwd, relative);
+	switch (resolved.kind) {
+		case 'inside':
+			return resolved.target;
+		case 'root':
+			throw new Error('Sketch Book: `path` names your working directory, not a file in it.');
+		case 'outside-lexically':
+			throw new Error(
+				`Sketch Book: "${requested}" is outside your working directory (${cwd}). Name a path inside it.`
+			);
+		case 'outside-real':
+			throw new Error(
+				`Sketch Book: "${requested}" resolves outside your working directory (${cwd}) through a symlink. Name a path inside it.`
+			);
+	}
+}
+
+/** Write an exported file to a target `sketchExportTarget()` checked. Not over a folder. */
+async function writeSketchExport(target: string, file: SketchExportFile): Promise<number> {
+	try {
+		if ((await fs.lstat(target)).isDirectory()) {
+			throw new Error(`Sketch Book: ${target} is a folder. Name a file.`);
+		}
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+	}
+	const contents =
+		file.encoding === 'base64' ? Buffer.from(file.data, 'base64') : Buffer.from(file.data, 'utf8');
+	await fs.mkdir(path.dirname(target), { recursive: true });
+	await atomicWriteFile(target, contents);
+	return contents.length;
+}
+
 /** `sketch_read_scene` scope arguments, checked. */
 function readScope(params: Record<string, unknown>): SketchReadScope {
 	const scope: SketchReadScope = {};
@@ -372,6 +499,7 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		((ownerAgentId, name) =>
 			getSketchService().newSketch({ ownerAgentId, name, background: true }));
 	const outbound = deps.outbound ?? screenOutbound;
+	const renderSession = deps.renderSession ?? renderLiveSketchSession;
 	const writeGuard = deps.writeGuard ?? createSlidingWindowGuard();
 
 	/** sketchId -> sceneVersion -> element versions, the reads `sketch_changes` can diff against. */
@@ -447,6 +575,47 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 		} finally {
 			admitted.release();
 		}
+	}
+
+	/**
+	 * The live elements an agent render may draw, gated (spec section 8.4,
+	 * Pixels). Throws when nothing is left to draw and `allowEmpty` is off.
+	 */
+	async function gatedRender(
+		call: SketchToolCall,
+		record: SketchRecord,
+		elementIds: string[] | undefined,
+		allowEmpty: boolean
+	) {
+		const { elements, authors } = await liveSession(call.agent.id, record.sketchId);
+		const sceneVersion = rememberRead(record.sketchId, elements);
+		const plan = planSketchAgentRender(elements, authors, elementIds);
+		const withheld = await gate(call.agent.id, record.sketchId, plan.toScreen, authors);
+		const render = buildSketchAgentRender(plan.candidates, authors, withheld);
+		if (render.elements.length === 0 && !allowEmpty) {
+			const left = render.withheldCount + render.guestImageCount;
+			throw new Error(
+				left > 0
+					? `Sketch Book: nothing to draw: all ${left} elements in scope were withheld from you.`
+					: plan.candidates.length === 0 && elementIds
+						? 'Sketch Book: nothing to draw: none of `elementIds` is on the sketch.'
+						: 'Sketch Book: nothing to draw: the sketch is empty.'
+			);
+		}
+		return {
+			sceneVersion,
+			elements: render.elements,
+			omitted: {
+				withheldCount: render.withheldCount,
+				guestImageCount: render.guestImageCount,
+				...(plan.missing.length > 0 ? { missing: plan.missing } : {}),
+			},
+		};
+	}
+
+	/** One render (T9, T10): its own per-sketch guard. */
+	function sketchRender<T>(record: SketchRecord, fn: () => Promise<T>): Promise<T> {
+		return guarded(`render:${record.sketchId}`, SKETCH_RENDER_LIMITS, 'renders of this sketch', fn);
 	}
 
 	/** One sketch write: the per-sketch guard around it. */
@@ -714,6 +883,67 @@ export function createSketchToolService(deps: SketchToolDeps = {}): SketchToolSe
 					regenerateIds: true,
 					placeBelowScene: true,
 				});
+			});
+		},
+
+		// T9: a PNG of the board, or some of it, without what the gate withheld.
+		sketch_screenshot: async (call) => {
+			const record = requireSketch(call);
+			const elementIds =
+				call.params.elementIds === undefined
+					? undefined
+					: elementIdList(call.params.elementIds, 'elementIds');
+			const scale = renderScale(call.params.scale);
+			return sketchRender(record, async () => {
+				const render = await gatedRender(call, record, elementIds, false);
+				const file = await renderSession(call.agent.id, record.sketchId, {
+					format: 'png',
+					elements: render.elements,
+					scale,
+				});
+				if (file.encoding !== 'base64') {
+					throw new Error('Sketch Book: the Maestro window did not return PNG bytes.');
+				}
+				if (file.data.length > maxBytes) {
+					throw new Error(
+						`Sketch Book: the screenshot is ${file.data.length} bytes, over the ${maxBytes}-byte response cap. Use a smaller \`scale\` or fewer \`elementIds\`.`
+					);
+				}
+				return {
+					sketchId: record.sketchId,
+					sceneVersion: render.sceneVersion,
+					image: { data: file.data, mimeType: file.mimeType },
+					...render.omitted,
+				};
+			});
+		},
+
+		// T10: the board as png, svg or json, written inside the agent's working directory.
+		sketch_export: async (call) => {
+			const record = requireSketch(call);
+			const format = call.params.format;
+			if (!isSketchExportFormat(format)) {
+				throw new Error('Sketch Book: `format` must be "png", "svg" or "json".');
+			}
+			// Refuse a bad path before anything is drawn.
+			sketchExportTarget(call.agent.cwd, call.params.path);
+			return sketchRender(record, async () => {
+				const render = await gatedRender(call, record, undefined, format === 'json');
+				const file = await renderSession(call.agent.id, record.sketchId, {
+					format,
+					elements: render.elements,
+				});
+				// Checked again at the write: the folders may have changed during the render.
+				const target = sketchExportTarget(call.agent.cwd, call.params.path);
+				const bytes = await writeSketchExport(target, file);
+				return {
+					sketchId: record.sketchId,
+					sceneVersion: render.sceneVersion,
+					format,
+					path: target,
+					bytes,
+					...render.omitted,
+				};
 			});
 		},
 
