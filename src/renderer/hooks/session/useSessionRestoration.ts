@@ -43,6 +43,7 @@ import {
 } from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 import { applyRuntime } from './useSessionTranscriptSync';
+import type { SessionRuntimeSnapshot } from '../../../shared/sessionTranscript';
 import { useEventListener } from '../utils/useEventListener';
 import { SESSION_PERSISTENCE_BASELINE_EVENT } from '../utils/useDebouncedPersistence';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
@@ -297,6 +298,38 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		});
 	}, [ownedGate]);
 
+	// Reconnect also has to refresh background agents: selected deferred content
+	// and process liveness cannot tell us whether the host still needs input.
+	// Use the same private, metadata-only snapshots and stale-turn guard as
+	// deferred runtime hydration; never load background transcripts here.
+	const refreshWebRuntime = useCallback(async () => {
+		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
+		const baselines = new Map(
+			useSessionStore.getState().sessions.map((session) => [session.id, session])
+		);
+		try {
+			const bootstrap = await window.maestro.sessions.getBootstrap();
+			for (const session of bootstrap) {
+				const baseline = baselines.get(session.id);
+				if (!baseline) continue;
+				for (const snapshot of session.transcriptSnapshots ?? []) {
+					if (snapshot.sessionId !== session.id || snapshot.tabId) continue;
+					updateSessionWith(session.id, (current) => {
+						const hydrated = applyRuntime(current, snapshot, baseline);
+						return hydrated === current
+							? current
+							: {
+									...hydrated,
+									unifiedTabOrder: getRepairedUnifiedTabOrder(hydrated),
+								};
+					});
+				}
+			}
+		} catch (error) {
+			logger.warn('Failed to refresh owning host runtime after reconnect', 'Sessions', error);
+		}
+	}, []);
+
 	const loadActiveDeferredContent = useCallback(() => {
 		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
 		const { sessions, activeSessionId } = useSessionStore.getState();
@@ -429,11 +462,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		return startReopenedTabContentLoader();
 	}, []);
 
-	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, async () => {
 		deferredLoadsFailed.current.clear();
 		if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
 		loadActiveDeferredContent();
-		void reattachLiveAiTurns();
+		await reattachLiveAiTurns();
+		await refreshWebRuntime();
 	});
 
 	// --- fetchGitInfoInBackground ---
@@ -933,8 +967,17 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			setSessionsLoaded(false);
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
+				const runtimeSnapshots = new Map<string, SessionRuntimeSnapshot>();
 				const savedSessions = isWebDesktop()
-					? await window.maestro.sessions.getBootstrap()
+					? (await window.maestro.sessions.getBootstrap()).map(
+							({ transcriptSnapshots, ...session }) => {
+								for (const snapshot of transcriptSnapshots ?? []) {
+									if (snapshot.sessionId === session.id && !snapshot.tabId)
+										runtimeSnapshots.set(session.id, snapshot);
+								}
+								return session;
+							}
+						)
 					: await window.maestro.sessions.getAll();
 
 				window.dispatchEvent(
@@ -942,7 +985,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				);
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
-					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
+					const restoredSessions = await Promise.all(
+						savedSessions.map(async (session) => {
+							const restored = await restoreSession(session);
+							const snapshot = runtimeSnapshots.get(session.id);
+							if (!snapshot) return restored;
+							const hydrated = applyRuntime(restored, snapshot);
+							return { ...hydrated, unifiedTabOrder: getRepairedUnifiedTabOrder(hydrated) };
+						})
+					);
 					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.

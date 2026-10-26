@@ -1020,7 +1020,8 @@ describe('persistence IPC handlers', () => {
 								removedIds: [],
 								orderIds: [],
 								snapshot: true,
-								runtime: { browserTabs, terminalTabs },
+								runtime: { state: 'waiting_input', browserTabs, terminalTabs },
+								clearRuntimeFields: ['statusMessage'],
 							},
 							payload.requestId
 						);
@@ -1045,6 +1046,15 @@ describe('persistence IPC handlers', () => {
 				]);
 				expect(bootstrap.browserTabs).toEqual(browserTabs);
 				expect(bootstrap.terminalTabs).toEqual(terminalTabs);
+				expect(bootstrap.transcriptSnapshots).toEqual([
+					{
+						sessionId: stored.id,
+						runtime: { state: 'waiting_input', browserTabs, terminalTabs },
+						clearRuntimeFields: ['statusMessage'],
+					},
+				]);
+				expect(fallback).not.toHaveProperty('transcriptSnapshots');
+				expect(broadcastBridgeEvent).not.toHaveBeenCalled();
 				expect(bootstrap.aiTabs[0].logs).toEqual([]);
 				expect(mockSessionsStore.set).not.toHaveBeenCalled();
 			} finally {
