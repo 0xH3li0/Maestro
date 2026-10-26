@@ -50,8 +50,49 @@ export const CT_MAX_BYTES = {
 export const SNAPSHOT_MAX_BYTES = 25 * MiB;
 export const FILE_MAX_BYTES = 4 * MiB;
 
-/** Contract section 4: `catchup` answers with at most this many ops per page. */
+/**
+ * Contract section 4: a `catchup` page holds at most this many ops, or at
+ * most `CATCHUP_PAGE_MAX_CT_CHARS` of `ct`, whichever comes first. Page on
+ * `more`, never on the count.
+ */
 export const CATCHUP_PAGE_MAX = 500;
+export const CATCHUP_PAGE_MAX_CT_CHARS = 512 * KiB;
+
+/** Contract section 5a (D12): a 12-byte IV plus the 16-byte GCM tag. No real blob is shorter. */
+export const MIN_BLOB_BYTES = 28;
+
+/** Contract section 5a (D12): response headers on `GET .../snapshots/latest`. */
+export const SNAPSHOT_HEADERS = {
+	seq: 'Sketch-Snapshot-Seq',
+	keyEpoch: 'Sketch-Key-Epoch',
+} as const;
+
+/** Contract section 5a (D12): `409 {error}` values from the blob routes. */
+export const BLOB_CONFLICT_CODES = [
+	'base_seq_ahead',
+	'stale_epoch',
+	'file_exists',
+	'files_limit',
+] as const;
+export type BlobConflictCode = (typeof BLOB_CONFLICT_CODES)[number];
+
+/**
+ * Contract section 5a (D12): `PUT` (owner `Authorization: Bearer` only, X6)
+ * with `baseSeq` = the newest op seq the snapshot includes.
+ */
+export function snapshotUploadPath(roomId: string, baseSeq: number): string {
+	return `/api/rooms/${encodeURIComponent(roomId)}/snapshots?baseSeq=${baseSeq}`;
+}
+
+/** Contract section 5a (D12): `GET`, owner `Bearer` or `Cap`. */
+export function latestSnapshotPath(roomId: string): string {
+	return `/api/rooms/${encodeURIComponent(roomId)}/snapshots/latest`;
+}
+
+/** Contract section 5a (D12): `PUT` (owner or an `rw` cap) and `GET` (owner or any cap). */
+export function roomFilePath(roomId: string, fileId: string): string {
+	return `/api/rooms/${encodeURIComponent(roomId)}/files/${encodeURIComponent(fileId)}`;
+}
 
 /** Upper bound on any id or name string. Not in the contract; an abuse guard only. */
 const MAX_ID_CHARS = 256;
@@ -62,7 +103,11 @@ const MAX_KEY_CHARS = 1024;
 export type Screening = 'local' | 'cloud';
 export const SCREENINGS: readonly Screening[] = ['local', 'cloud'];
 
-/** Contract section 5. */
+/**
+ * Contract section 5. The close code is the answer to a refused `hello`; an
+ * `error` frame before it is optional (D1). 4008 also closes a guest `hello`
+ * into a full room, after `error {room_full}` (D11).
+ */
 export const CLOSE_CODES = {
 	auth_failed: 4001,
 	revoked: 4003,
@@ -75,9 +120,9 @@ export const CLOSE_CODES = {
 export type CloseCodeName = keyof typeof CLOSE_CODES;
 
 /**
- * `error {code}` values. The contract names `bad_frame`, `forbidden`,
- * `unknown_ref` and `rate_limited`; `auth_failed`, `name_reserved` (M2) and
- * `room_full` are the hosted rejections sent before a close.
+ * The `error {code}` values of contract section 5 (D2). `auth_failed`,
+ * `name_reserved` (M2) and `room_full` precede a close. A code outside this
+ * list still parses (see `ServerErrorCode`), as a generic error.
  */
 export const ERROR_CODES = {
 	bad_frame: 'bad_frame',
@@ -89,6 +134,13 @@ export const ERROR_CODES = {
 	room_full: 'room_full',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+
+/** A known code, or any other non-empty string a later server may send (D2). */
+export type ServerErrorCode = ErrorCode | (string & {});
+
+export function isKnownErrorCode(code: string): code is ErrorCode {
+	return (Object.values(ERROR_CODES) as string[]).includes(code);
+}
 
 // ---------------------------------------------------------------- client to server (contract 4)
 
@@ -196,6 +248,11 @@ export interface WelcomeFrame {
 	limits: Readonly<Record<string, number>>;
 }
 
+/** D6: `agentId` and `name` come with `online: true` and never with `online: false`. */
+export type PresenceBotFrame =
+	| { t: 'presence.bot'; online: true; agentId: string; name: string }
+	| { t: 'presence.bot'; online: false };
+
 export type ServerFrame =
 	| WelcomeFrame
 	| { t: 'screening'; screening: Screening; since: number }
@@ -208,8 +265,8 @@ export type ServerFrame =
 	| RoomStatsFrame
 	| { t: 'policy'; botPolicy: BotPolicy }
 	| { t: 'presence'; actor: SketchActor; iv: string; ct: string }
-	| { t: 'presence.bot'; online: boolean; agentId?: string; name?: string }
-	| { t: 'error'; code: ErrorCode; ref?: string };
+	| PresenceBotFrame
+	| { t: 'error'; code: ServerErrorCode; ref?: string };
 
 export type ServerFrameType = ServerFrame['t'];
 
@@ -515,16 +572,12 @@ function build(o: Obj): ServerFrame {
 			return { t, botPolicy: oneOf(o, 'botPolicy', BOT_POLICIES) };
 		case 'presence':
 			return { t, actor: actor(o.actor), iv: iv(o), ct: ct(o, CT_MAX_BYTES.presence) };
-		case 'presence.bot': {
-			const frame: Extract<ServerFrame, { t: 'presence.bot' }> = { t, online: bool(o, 'online') };
-			const agentId = optStr(o, 'agentId');
-			if (agentId !== undefined) frame.agentId = agentId;
-			const name = optStr(o, 'name', true);
-			if (name !== undefined) frame.name = name;
-			return frame;
-		}
+		case 'presence.bot':
+			return bool(o, 'online')
+				? { t, online: true, agentId: str(o, 'agentId'), name: str(o, 'name', MAX_ID_CHARS, true) }
+				: { t, online: false };
 		case 'error':
-			return withOptional({ t, code: oneOf(o, 'code', Object.values(ERROR_CODES)) }, o, ['ref']);
+			return withOptional({ t, code: str(o, 'code') as ServerErrorCode }, o, ['ref']);
 		default:
 			fail('unknown t');
 	}

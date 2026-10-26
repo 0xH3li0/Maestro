@@ -3,7 +3,7 @@ type: spec
 title: Sketch Book wire contract v1
 tags: [sketch-book, wire-contract, e2e]
 created: 2026-10-15
-status: X1-X10 and Y1-Y4 and H1 agreed by both sides (RunMaestro.ai 4e82cf3); frozen for the hosted build
+status: X1-X10 and Y1-Y4 and H1 agreed by both sides (RunMaestro.ai 4e82cf3); frozen for the hosted build. v1.1 errata D1-D14 (2026-10-26) state what the hosted build does; no wire change
 owners: rc (desktop), RunMaestro.ai (hosted)
 ---
 
@@ -18,8 +18,8 @@ Base: hosted spec §5, §6, §6.1, §7 and §12 as of commit `89ff033`, plus ame
 - One WebSocket per client: `wss://sketch.runmaestro.ai/ws/<roomId>`.
 - JSON text frames, one object per frame, discriminated by `t`. `PROTOCOL_VERSION = 1`. An unknown `t` gets `error {code:'bad_frame'}`.
 - Encrypted fields are always the pair `iv` (base64url, 12 bytes, 16 chars) + `ct` (base64url, AES-GCM output including the 16-byte tag).
-- Max frame 1 MiB; `chat.ct` and `bot.reply.ct` **32 KiB** (Y1); `delta.ct` 1 MiB; `presence.ct` 2 KiB (hosted spec §7).
-- HTTP blob bodies (`PUT` snapshot, `PUT` file) are raw binary `iv (12 bytes) || ct`, `Content-Type: application/octet-stream`, never base64 or JSON. Size caps apply to the body as sent (Y2). Snapshot 25 MiB; file 4 MiB, which holds about a 2.9 MiB source image after the dataURL and tag.
+- Max frame 1 MiB; `chat.ct` and `bot.reply.ct` **32 KiB** (Y1); `delta.ct` 1 MiB; `presence.ct` 2 KiB (hosted spec §7). `ct` caps count base64url characters as sent, not decoded bytes (D10). The frame cap also binds, so a `delta.ct` near 1 MiB never fits.
+- HTTP blob bodies (`PUT` snapshot, `PUT` file) are raw binary `iv (12 bytes) || ct`, `Content-Type: application/octet-stream`, never base64 or JSON. Size caps apply to the body as sent (Y2). Snapshot 25 MiB; file 4 MiB, which holds about a 2.9 MiB source image after the dataURL and tag. Routes in section 5a.
 
 ## 2. Link and crypto
 
@@ -33,7 +33,7 @@ Base: hosted spec §5, §6, §6.1, §7 and §12 as of commit `89ff033`, plus ame
 
 - AES-GCM-128, WebCrypto on both sides, a fresh random 12-byte IV per encryption. Never reuse an IV under one key.
 - **X8 (amendment): associated data.** Every encryption uses AAD = UTF-8 of `"sketch/v1|" + roomId + "|" + keyEpoch + "|" + kind`, where `kind` is the plaintext type in section 3 (`delta`, `chat`, `presence`, `bot.reply`, `snapshot`, `file`). Without AAD, a guest can replay a chat ciphertext as a delta (or across rooms that share nothing but a pasted key), and the receiver decrypts it without error. The server never decrypts, so this costs it nothing.
-- Interop test vectors: `workers/sketch-room/test/vectors.json` in the RunMaestro.ai repo, copied verbatim to `src/__tests__/fixtures/sketch/vectors.json` on `rc`. Each vector: `{key, iv, aad, plaintext, ct}`. Both sides must pass every vector in CI.
+- Interop test vectors: `workers/sketch-room/test/vectors.json` in the RunMaestro.ai repo, copied verbatim to `src/__tests__/fixtures/sketch/vectors.json` on `rc`. The file is `{description, version, vectors, negative}` (D13). Each `vectors[]` entry is `{kind, key, iv, aad, plaintext, ct}`: `ct` opens to `plaintext`, and sealing `plaintext` under `iv` gives `ct` byte for byte. Each `negative[]` entry is `{name, key, iv, aad, ct}` and must fail to open. Both sides must pass every entry in CI.
 - Excalidraw is pinned to **`@excalidraw/excalidraw@0.18.1`** on both sides. A version change is a contract change.
 
 ## 3. Plaintext payloads (X9, amendment)
@@ -45,9 +45,11 @@ The hosted spec defines the envelopes but not what is inside `ct`. Both clients 
 | `delta`     | `{ v: 1, elements: ExcalidrawElement[] }`: full element objects whose `version` changed. Deletions are elements with `isDeleted: true`. Receivers merge with `reconcileElements`. |
 | `snapshot`  | `{ v: 1, type: 'excalidraw', elements: ExcalidrawElement[], appState: { viewBackgroundColor, gridSize }, files: string[] }` (file ids only)                                       |
 | `file`      | `{ v: 1, id, mimeType, dataURL, created }`: one Excalidraw binary file                                                                                                            |
-| `chat`      | `{ v: 1, text: string }`: at most 4,000 characters. `@bot` detection is the `toBot` envelope flag, not text parsing.                                                              |
+| `chat`      | `{ v: 1, text: string }`: at most 4,000 Unicode code points (D14), not UTF-16 units. `@bot` detection is the `toBot` envelope flag, not text parsing.                             |
 | `bot.reply` | `{ v: 1, text: string, elementIds?: string[] }` (`elementIds`: what the turn changed, for the "show me" link)                                                                     |
 | `presence`  | `{ v: 1, pointer?: {x, y}, button?: 'down' \| 'up', selectedElementIds?: string[], username?: string }`                                                                           |
+
+Field constraints both guards enforce (D14): every element has a non-empty string `id` and a safe-integer `version`; `isDeleted`, when present, is a boolean; `file.id` is non-empty and `file.dataURL` starts with `data:`; `snapshot.appState.gridSize` is a number or `null`. The `bot.reply` text cap is the same 4,000 code points.
 
 Display names in payloads are cosmetic. Every client shows the envelope `actor.name`.
 
@@ -55,10 +57,10 @@ Display names in payloads are cosmetic. Every client shows the envelope `actor.n
 
 | `t`                       | Sender        | Fields                                                                                        | Server action                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------- | ------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `hello`                   | any           | `v, room, auth:{owner}\|{cap}, clientId, name`                                                | Authenticate; reply `welcome` or `error` + close. The conductor sends `screening.set` right after `welcome`, before it screens any guest text.                                                                                                                                                                                                               |
-| `delta`                   | conductor, rw | `iv, ct, n`, **`asBot?: true`** (X2)                                                          | Append to `ops`, broadcast with `seq` + `actor`, `ack {seq}` to sender                                                                                                                                                                                                                                                                                       |
-| `catchup`                 | any           | `sinceSeq`                                                                                    | `ops {items, more}`, max 500 per page                                                                                                                                                                                                                                                                                                                        |
-| `chat`                    | any           | `id, iv, ct, toBot`                                                                           | `toBot` gate (hosted §7), store, broadcast                                                                                                                                                                                                                                                                                                                   |
+| `hello`                   | any           | `v, room, auth:{owner}\|{cap}, clientId, name`                                                | Authenticate; reply `welcome`, or close. The close code is the answer: an `error` frame precedes only 4001 and 4008 (D1). The conductor's `name` is ignored (the owner name is used). After `welcome` the conductor sends `screening.set`, then `bot.presence {online:true}`, before any `bot.reply` or `delta.asBot` (D4).                                  |
+| `delta`                   | conductor, rw | `iv, ct, n`, **`asBot?: true`** (X2)                                                          | Append to `ops`, broadcast with `seq` + `actor`, `ack {seq}` to sender. `n` is the element count of the payload: advisory, checked only as an integer `>= 0`, never used (D7).                                                                                                                                                                               |
+| `catchup`                 | any           | `sinceSeq`                                                                                    | `ops {items, more}`, max 500 ops or 512 KiB of `ct` per page, whichever comes first. Page on `more`.                                                                                                                                                                                                                                                         |
+| `chat`                    | any           | `id, iv, ct, toBot`                                                                           | `toBot` gate (hosted §7), store, broadcast to all. The echo's `toBot` is the gate's verdict: a refused request is broadcast with `toBot:false`, and the desktop treats only `toBot:true` echoes as requests (D8).                                                                                                                                            |
 | `presence`                | any           | `iv, ct`                                                                                      | Relay only, never stored, max 20/s per socket                                                                                                                                                                                                                                                                                                                |
 | `policy.set`              | conductor     | `botPolicy: 'conductor' \| 'writers'`                                                         | Store, broadcast `policy`                                                                                                                                                                                                                                                                                                                                    |
 | **`screening.set`** (X10) | conductor     | `screening: 'local' \| 'cloud'`                                                               | If the value differs from `meta.screening`: store it with `meta.screening_since = now` (server ms), broadcast `screening {screening, since}` to every socket including the conductor (the echo it waits for), mark `room.stats` dirty. An identical value changes nothing and is not rebroadcast. From a guest socket, or with any other value: `bad_frame`. |
@@ -75,33 +77,64 @@ Display names in payloads are cosmetic. Every client shows the envelope `actor.n
 
 `guardrail_rejected` rules (hosted §6.1): conductor socket only (`error {code:'forbidden'}` otherwise); no `iv`, `ct`, `score`, or `excerpt` field (`bad_frame`); an unknown `reason` is stored as `other`. The guest sees only `rejected` (for `injection` and `other`) or `unavailable` (for `screen_unavailable`).
 
+Refusals (D3, from hosted spec §7). Each is an `error` frame to the sender; the socket stays open.
+
+| Condition                                                                                            | `error`                             |
+| ---------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| A conductor-only frame from a guest                                                                  | `forbidden`                         |
+| `screening.set` from a guest, or with a value other than `local` / `cloud`                           | `bad_frame`                         |
+| `delta.asBot` from a guest, or while `botOnline` is false                                            | `bad_frame`                         |
+| `delta` from an `ro` guest                                                                           | `forbidden`                         |
+| `bot.reply` with no online bot on the conductor socket                                               | `bad_frame`                         |
+| `bot.progress`, `bot.denied`, `bot.failed`, `guardrail_rejected` with no pending entry for `replyTo` | `unknown_ref`, `ref: replyTo`       |
+| `guardrail_rejected` whose `opSeq` names no stored guest op                                          | `unknown_ref`, `ref: String(opSeq)` |
+| `kick` / `actor.unlock` / `cap.unsuspend` with an unknown `actorId` / `capId`                        | `unknown_ref`, `ref` = that id      |
+| `guardrail_rejected` with `opSeq` and `screen_unavailable`                                           | `bad_frame`                         |
+| A chat `id` already used                                                                             | `bad_frame`, `ref: id`              |
+| A chat over the chat rate                                                                            | `rate_limited`, `ref: id`           |
+
 ## 5. Server to client
 
-| `t`                                  | To                                                          | Fields                                                                                                                            |
-| ------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `welcome`                            | sender                                                      | `actor, role, botPolicy, botOnline, guestEdited, screening, screeningSince, headSeq, snapshot:{seq, key}\|null, keyEpoch, limits` |
-| **`screening`** (X10)                | all                                                         | `screening: 'local' \| 'cloud', since: number` (server ms)                                                                        |
-| `ack`                                | sender                                                      | `seq`                                                                                                                             |
-| `delta`                              | others                                                      | `seq, actor, ts, iv, ct`                                                                                                          |
-| `ops`                                | sender                                                      | `items:[{seq, actor, ts, iv, ct}], more`                                                                                          |
-| `chat`                               | all                                                         | `id, seq, actor, ts, iv, ct, toBot, replyTo?`                                                                                     |
-| `bot.status`                         | the `@bot` sender, **and the conductor for `expired`** (X3) | `replyTo, status`                                                                                                                 |
-| `guardrail_rejected`                 | flagged sender                                              | `replyTo` or `opSeq`, `reason: 'rejected' \| 'unavailable'`                                                                       |
-| `room.stats`                         | conductor                                                   | hosted §8, plus `screening`, `screeningSince` (X10) and `actors[].unavailableTotal` (Y4, never locks)                             |
-| `policy`, `presence`, `presence.bot` | all                                                         | as named                                                                                                                          |
-| `error`                              | sender                                                      | `code, ref?`                                                                                                                      |
+| `t`                   | To                                                          | Fields                                                                                                                                                                                                    |
+| --------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `welcome`             | sender                                                      | `actor, role, botPolicy, botOnline, guestEdited, screening, screeningSince, headSeq, snapshot:{seq, key}\|null, keyEpoch, limits`                                                                         |
+| **`screening`** (X10) | all                                                         | `screening: 'local' \| 'cloud', since: number` (server ms)                                                                                                                                                |
+| `ack`                 | sender                                                      | `seq`                                                                                                                                                                                                     |
+| `delta`               | others                                                      | `seq, actor, ts, iv, ct`                                                                                                                                                                                  |
+| `ops`                 | sender                                                      | `items:[{seq, actor, ts, iv, ct}], more`                                                                                                                                                                  |
+| `chat`                | all                                                         | `id, seq, actor, ts, iv, ct, toBot, replyTo?`                                                                                                                                                             |
+| `bot.status`          | the `@bot` sender, **and the conductor for `expired`** (X3) | `replyTo, status`                                                                                                                                                                                         |
+| `guardrail_rejected`  | flagged sender                                              | `replyTo` or `opSeq`, `reason: 'rejected' \| 'unavailable'`                                                                                                                                               |
+| `room.stats`          | conductor                                                   | hosted §8, plus `screening`, `screeningSince` (X10) and `actors[].unavailableTotal` (Y4, never locks)                                                                                                     |
+| `policy`              | all                                                         | `botPolicy`                                                                                                                                                                                               |
+| `presence`            | all but the sender                                          | `actor, iv, ct` (D5)                                                                                                                                                                                      |
+| `presence.bot`        | all                                                         | `online`; `agentId` and `name` only when `online` is true (D6)                                                                                                                                            |
+| `error`               | sender                                                      | `code, ref?`. Codes (D2): `bad_frame`, `forbidden`, `unknown_ref`, `rate_limited`, `auth_failed`, `name_reserved`, `room_full`. A client treats any other code as a generic error, never drops the frame. |
 
 `actor` = `{id, kind: 'conductor' \| 'guest' \| 'bot', name, capId?, capLabel?, role}`, stamped by the server. Clients trust only this, never anything inside ciphertext.
 
 `bot.status` values: `queued, screening, awaiting_approval, running, done, denied, failed (X5), rejected, unavailable, bot_offline, rate_limited, locked_out, forbidden, expired`.
 
-Pending lifetimes: `queued`, `screening` and `awaiting_approval` expire after `pendingTtlMinutes` (15); `running` expires after `runningTtlMinutes` (120) (X4, Y3). Either ends as `expired`, sent to the sender and the conductor (X3). A `bot.reply` whose `replyTo` is no longer pending (expired, or failed by X7) is still broadcast as bot chat, with no counter change (Y3).
+Pending lifetimes: `queued`, `screening` and `awaiting_approval` expire after `pendingTtlMinutes` (15); `running` expires after `runningTtlMinutes` (120) (X4, Y3). Both count from the time the server stored the request, not from the status change (D9). Either ends as `expired`, sent to the sender and the conductor (X3). A `bot.reply` whose `replyTo` is no longer pending (expired, or failed by X7) is still broadcast as bot chat, with no counter change (Y3).
 
 `screening` and `screeningSince` are `null` until the conductor first reports. The value persists while the conductor is offline. It describes where guest text goes when the desktop screens it, not whether a screen is assigned (a room with the screen off reports `local`). The guest client labels it "reported by the room owner": the server cannot verify it.
 
 **Timestamps.** Every `ts` (on `delta`, `ops.items[]`, `chat`) and `since` is the Durable Object's `Date.now()` in milliseconds, taken when the server stores the op or the change. They share one clock, so they compare directly. No client clock appears anywhere in the contract.
 
-Close codes: 4001 `auth_failed`, 4003 `revoked`, 4004 `kicked`, 4008 `rate_limited`, 4009 `superseded`, 4010 `expired`, 4011 `archived`.
+Close codes: 4001 `auth_failed`, 4003 `revoked`, 4004 `kicked`, 4008 `rate_limited`, 4009 `superseded`, 4010 `expired`, 4011 `archived`. 4008 also closes a guest `hello` into a full room (`socketsPerRoom` 50, `socketsPerCap` 10, `maxParticipants` 50), after `error {room_full}`; the conductor is never refused (D11). A `hello` not completed within 10 s closes 4001.
+
+## 5a. HTTP blobs (D12)
+
+All on `https://sketch.runmaestro.ai`. `Authorization: Bearer <ownerToken>` for the owner, `Authorization: Cap <cap>` for a guest. Bodies are raw `iv || ct` (section 1), at least 28 bytes.
+
+| Route                                      | Who                   | Notes                                                                                                                                                        |
+| ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUT /api/rooms/:id/snapshots?baseSeq=<n>` | owner only (X6)       | `baseSeq` = newest op seq the snapshot includes. `Cap` gets 403 before the body is read. 201 on success. AAD kind `snapshot`, the room's current `keyEpoch`. |
+| `GET /api/rooms/:id/snapshots/latest`      | owner or any live cap | Body plus `Sketch-Snapshot-Seq` and `Sketch-Key-Epoch` headers. The newest may be newer than `welcome.snapshot`; replay ops after its seq.                   |
+| `PUT /api/rooms/:id/files/:fileId`         | owner or an `rw` cap  | `fileId` matches `[A-Za-z0-9_-]{1,128}`. 201 `{fileId, bytes}`.                                                                                              |
+| `GET /api/rooms/:id/files/:fileId`         | owner or any live cap | No epoch header: file AAD uses the current `welcome.keyEpoch`.                                                                                               |
+
+Statuses: 400 (`invalid_base_seq`, `invalid_body`), 401 `unauthorized`, 403 `forbidden`, 404 `not_found`, 409 (`base_seq_ahead`, `stale_epoch`, `file_exists`, `files_limit`), 413 `too_large`. Every error body is JSON `{error}`. Every blob response is `Content-Type: application/octet-stream`, `Cache-Control: no-store`. `welcome.snapshot.key` is the opaque R2 object key; clients fetch through `.../snapshots/latest`, never by key.
 
 ## 6. Desktop obligations (hosted §12, confirmed)
 
@@ -144,6 +177,29 @@ X1-X9 accepted by RunMaestro.ai in `e3888a2`. X10 added 2026-10-15 after Pedram'
 | **Y3** | `runningTtlMinutes = 120`; late `bot.reply` still broadcast | The desktop never stops a turn on the server's clock; it posts whenever the turn ends.                                                                                                                                                                                                                                                                                                                                        |
 | **Y4** | `actors[].unavailableTotal` in `room.stats`                 | Shown as "Your screen failed N guest requests" in the Room panel.                                                                                                                                                                                                                                                                                                                                                             |
 | **H1** | `since` bounds retroactive cloud screening                  | After a switch to `cloud`, the desktop sends a cloud engine only guest text whose write time is `>= since`. Write time = the server `ts` of the latest op in which a guest changed that element's text fields (a move or restyle does not count). Chat uses the `chat.ts`. Older guest text is screened locally if a local model is available, else withheld. Text with no op `ts` (delivered in a snapshot) counts as older. |
+
+## 7b. Errata v1.1 (D1-D14), from the hosted build
+
+Source: `docs/sketch-book-contract-diff.md` in the RunMaestro.ai repo (hosted build compared against this file, 2026-10-15), reconciled on the desktop 2026-10-26. No frame, field, cap or close code changed: each item states what the hosted build already does where v1 was silent or loose. The hosted code was right in every case; desktop changes are listed.
+
+| #   | Section | Errata                                                                                                        | Desktop change                                                                                                                 |
+| --- | ------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| D1  | 4       | A refused `hello` is answered by the close code; an `error` frame precedes only 4001 and 4008.                | Obligation: the room client (`sketchRoomClient.ts`) keys on the close code.                                                    |
+| D2  | 5       | The seven `error.code` values are named; an unknown code is a generic error.                                  | `parseServerFrame` keeps an unknown code (`ServerErrorCode`, `isKnownErrorCode()`); it used to drop the frame.                 |
+| D3  | 4       | Refusal table.                                                                                                | None.                                                                                                                          |
+| D4  | 4       | After `welcome`: `screening.set`, then `bot.presence {online:true}`, before any `bot.reply` or `delta.asBot`. | Obligation: room client ordering.                                                                                              |
+| D5  | 5       | `presence {actor, iv, ct}`, to all but the sender.                                                            | Already parsed.                                                                                                                |
+| D6  | 5       | `presence.bot`: `agentId` and `name` only when online.                                                        | `PresenceBotFrame` union; the parser requires both when online and drops them when offline.                                    |
+| D7  | 4       | `delta.n` is the advisory element count.                                                                      | None.                                                                                                                          |
+| D8  | 4       | The chat echo's `toBot` is the gate's verdict.                                                                | Obligation: the bot relay acts only on `toBot:true` echoes.                                                                    |
+| D9  | 5       | Both pending TTLs count from storage time.                                                                    | None.                                                                                                                          |
+| D10 | 1       | `ct` caps count base64url characters as sent.                                                                 | Already so (`CT_MAX_BYTES`).                                                                                                   |
+| D11 | 5       | 4008 also closes a guest `hello` into a full room (`room_full`).                                              | Close comment on `CLOSE_CODES`.                                                                                                |
+| D12 | 5a      | HTTP blob routes, headers and statuses.                                                                       | `snapshotUploadPath()`, `latestSnapshotPath()`, `roomFilePath()`, `SNAPSHOT_HEADERS`, `BLOB_CONFLICT_CODES`, `MIN_BLOB_BYTES`. |
+| D13 | 2       | `vectors.json` wrapper, `kind`, and the `negative` list.                                                      | Obligation: the crypto test runs the negatives too.                                                                            |
+| D14 | 3       | Chat and reply caps are code points; four field constraints.                                                  | Already so (`payloadCharCount()`, payload guards).                                                                             |
+
+Also added from the hosted build: a `catchup` page stops at 500 ops or 512 KiB of `ct` (`CATCHUP_PAGE_MAX_CT_CHARS`), and an unfinished `hello` closes 4001 after 10 s.
 
 ## 8. Clarifications (no change needed)
 

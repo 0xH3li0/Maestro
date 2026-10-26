@@ -7,12 +7,22 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	BLOB_CONFLICT_CODES,
 	buildGuardrailRejected,
+	CATCHUP_PAGE_MAX,
+	CATCHUP_PAGE_MAX_CT_CHARS,
+	CLOSE_CODES,
 	CT_MAX_BYTES,
 	ERROR_CODES,
+	isKnownErrorCode,
+	latestSnapshotPath,
 	MAX_FRAME_BYTES,
+	MIN_BLOB_BYTES,
 	parseServerFrame,
 	PROTOCOL_VERSION,
+	roomFilePath,
+	SNAPSHOT_HEADERS,
+	snapshotUploadPath,
 	type GuardrailTarget,
 	type ServerFrame,
 	type ServerFrameType,
@@ -149,7 +159,7 @@ const CASES: Record<ServerFrameType, { valid: Record<string, unknown>; invalid: 
 	},
 	error: {
 		valid: { t: 'error', code: 'rate_limited', ref: 'msg-1' },
-		invalid: { t: 'error', code: 'teapot' },
+		invalid: { t: 'error', code: '' },
 	},
 };
 
@@ -184,6 +194,45 @@ describe('sketch protocol constants', () => {
 	it('includes failed in the bot statuses (X5)', () => {
 		expect(BOT_STATUSES).toContain('failed');
 	});
+
+	it('matches the hosted close codes, error codes and catchup page caps', () => {
+		expect(CLOSE_CODES).toEqual({
+			auth_failed: 4001,
+			revoked: 4003,
+			kicked: 4004,
+			rate_limited: 4008,
+			superseded: 4009,
+			expired: 4010,
+			archived: 4011,
+		});
+		expect(Object.values(ERROR_CODES).sort()).toEqual(
+			[
+				'auth_failed',
+				'bad_frame',
+				'forbidden',
+				'name_reserved',
+				'rate_limited',
+				'room_full',
+				'unknown_ref',
+			].sort()
+		);
+		expect(CATCHUP_PAGE_MAX).toBe(500);
+		expect(CATCHUP_PAGE_MAX_CT_CHARS).toBe(512 * 1024);
+	});
+
+	it('names the HTTP blob routes, headers and conflicts of section 5a (D12)', () => {
+		expect(snapshotUploadPath('room1', 42)).toBe('/api/rooms/room1/snapshots?baseSeq=42');
+		expect(latestSnapshotPath('room1')).toBe('/api/rooms/room1/snapshots/latest');
+		expect(roomFilePath('room1', 'file 1')).toBe('/api/rooms/room1/files/file%201');
+		expect(SNAPSHOT_HEADERS).toEqual({ seq: 'Sketch-Snapshot-Seq', keyEpoch: 'Sketch-Key-Epoch' });
+		expect(BLOB_CONFLICT_CODES).toEqual([
+			'base_seq_ahead',
+			'stale_epoch',
+			'file_exists',
+			'files_limit',
+		]);
+		expect(MIN_BLOB_BYTES).toBe(12 + 16);
+	});
 });
 
 describe('parseServerFrame: one valid and one invalid case per frame', () => {
@@ -215,6 +264,22 @@ describe('parseServerFrame: shape rules', () => {
 	it('leaves absent optional fields absent', () => {
 		const frame = expectFrame({ t: 'presence.bot', online: false });
 		expect(frame).toEqual({ t: 'presence.bot', online: false });
+	});
+
+	it('keeps an unknown error code as a generic error instead of dropping it (D2)', () => {
+		const frame = expectFrame({ t: 'error', code: 'teapot', ref: 'x' });
+		expect(frame).toEqual({ t: 'error', code: 'teapot', ref: 'x' });
+		expect(isKnownErrorCode('teapot')).toBe(false);
+		expect(isKnownErrorCode('room_full')).toBe(true);
+		expectBad({ t: 'error' });
+	});
+
+	it('requires agentId and name on an online presence.bot and drops them when offline (D6)', () => {
+		expectBad({ t: 'presence.bot', online: true });
+		expectBad({ t: 'presence.bot', online: true, agentId: 'agent-1' });
+		expect(
+			expectFrame({ t: 'presence.bot', online: false, agentId: 'agent-1', name: 'Sketch Bot' })
+		).toEqual({ t: 'presence.bot', online: false });
 	});
 
 	it('accepts welcome screening values and a null snapshot', () => {
@@ -259,7 +324,12 @@ describe('parseServerFrame: size caps', () => {
 	});
 
 	it('counts UTF-8 bytes, not UTF-16 units', () => {
-		const raw = JSON.stringify({ t: 'presence.bot', online: true, name: 'é'.repeat(40) });
+		const raw = JSON.stringify({
+			t: 'presence.bot',
+			online: true,
+			agentId: 'agent-1',
+			name: 'é'.repeat(40),
+		});
 		const bytes = new TextEncoder().encode(raw).length;
 		expect(raw.length).toBeLessThan(bytes);
 		expect(parseServerFrame(raw, bytes).ok).toBe(true);
