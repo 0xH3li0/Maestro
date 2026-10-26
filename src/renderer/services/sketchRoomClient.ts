@@ -713,8 +713,20 @@ export class SketchRoomClient {
 				if (known === undefined || element.version > known) {
 					this.knownVersions.set(element.id, element.version);
 				}
+			}
+			// A queued local edit is dropped only when a remote version beat it.
+			// `merged` also holds the local elements, so it cannot decide that.
+			for (const { element } of entries) {
+				const kept = mergedById.get(element.id);
 				const queued = this.pending.get(element.id);
-				if (queued && queued.element.version <= element.version) this.pending.delete(element.id);
+				if (
+					kept &&
+					queued &&
+					sameVersion(kept, element) &&
+					queued.element.version <= kept.version
+				) {
+					this.pending.delete(element.id);
+				}
 			}
 			// `knownVersions` already holds every merged version, so the scene
 			// subscription finds nothing in this write to send back.
