@@ -160,6 +160,7 @@ export async function prepareGroupChatSpawn(
 			args,
 			customEnvVars,
 			maxWaitSeconds: spawn.maxWaitSeconds,
+			acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -197,6 +198,7 @@ export async function prepareGroupChatSpawn(
 			interactiveModeArgs: agent.interactiveModeArgs,
 			remoteClaudeBin: claudeDecision.claudeRealBinPath,
 			maxWaitSeconds: spawn.maxWaitSeconds,
+			acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		});
 		if (remoteInteractive && debugLabel) {
 			logger.debug(
