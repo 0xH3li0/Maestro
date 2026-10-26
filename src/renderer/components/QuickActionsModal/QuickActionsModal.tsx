@@ -95,6 +95,9 @@ import {
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
+import { buildSketchBookCommands } from './commands/sketchBookCommands';
+import { createSketchInSession } from '../../services/sketchTabs';
+import { canUseSketchBook } from '../../utils/sketchBookAvailability';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
@@ -310,6 +313,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		canOpenComputerHistory(s.encoreFeatures)
 	);
 	const openComputerHistory = useCallback(() => getModalActions().setComputerHistoryOpen(true), []);
+	const sketchBookAvailable = useSettingsStore((s) => canUseSketchBook(s.encoreFeatures));
 	const toggleConcertoStageFloating = useCallback(
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
@@ -692,6 +696,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newFileTabShortcut: tabShortcuts?.newFileTab,
 			newBrowserTabShortcut: tabShortcuts?.newBrowserTab,
 			newTerminalTabShortcut: shortcuts.toggleMode,
+		}),
+		...buildSketchBookCommands({
+			sketchBookAvailable,
+			activeSession,
+			newSketchBook: (sessionId) => void createSketchInSession(sessionId),
+			setQuickActionOpen,
+			newSketchBookShortcut: shortcuts.newSketchBook,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,

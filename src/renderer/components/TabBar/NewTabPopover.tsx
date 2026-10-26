@@ -1,6 +1,14 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Globe, MessageSquare, Plus, Terminal, VenetianMask } from 'lucide-react';
+import {
+	FileText,
+	Globe,
+	MessageSquare,
+	PenTool,
+	Plus,
+	Terminal,
+	VenetianMask,
+} from 'lucide-react';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -19,6 +27,8 @@ interface NewTabPopoverProps {
 	onNewFileTab?: () => void;
 	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onNewTerminalTab?: () => void;
+	/** New Sketch Book. Absent while the Sketch Book Encore Feature is off. */
+	onNewSketchBook?: () => void;
 	/** Shortcut keys config for new tab */
 	newTabKeys: string[];
 	/** Shortcut keys config for new file tab */
@@ -27,6 +37,8 @@ interface NewTabPopoverProps {
 	browserTabKeys: string[];
 	/** Shortcut keys config for terminal toggle */
 	terminalKeys: string[];
+	/** Shortcut keys config for New Sketch Book */
+	sketchBookKeys?: string[];
 	/** Whether the tab container is overflowing (makes the button sticky) */
 	isOverflowing: boolean;
 }
@@ -42,10 +54,12 @@ export const NewTabPopover = memo(function NewTabPopover({
 	onNewFileTab,
 	onNewBrowserTab,
 	onNewTerminalTab,
+	onNewSketchBook,
 	newTabKeys,
 	fileTabKeys,
 	browserTabKeys,
 	terminalKeys,
+	sketchBookKeys = [],
 	isOverflowing,
 }: NewTabPopoverProps) {
 	const [popoverOpen, setPopoverOpen] = useState(false);
@@ -100,7 +114,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 	}, [popoverOpen]);
 
 	const handleClick = useCallback(() => {
-		if (!onNewTerminalTab && !onNewBrowserTab && !onNewFileTab) {
+		if (!onNewTerminalTab && !onNewBrowserTab && !onNewFileTab && !onNewSketchBook) {
 			onNewTab();
 			return;
 		}
@@ -117,7 +131,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 			: rect.left;
 		setPopoverPos({ top: rect.bottom + 4, left });
 		setPopoverOpen((open) => !open);
-	}, [onNewFileTab, onNewBrowserTab, onNewTerminalTab, onNewTab]);
+	}, [onNewFileTab, onNewBrowserTab, onNewTerminalTab, onNewSketchBook, onNewTab]);
 
 	const closeAndDo = useCallback((action: () => void) => {
 		setPopoverOpen(false);
@@ -231,6 +245,20 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Incognito Browser
+							</button>
+						)}
+						{onNewSketchBook && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(onNewSketchBook)}
+							>
+								<PenTool
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('sketch', theme) }}
+								/>
+								Sketch Book
+								<ShortcutHint theme={theme} keys={sketchBookKeys} />
 							</button>
 						)}
 					</div>,

@@ -228,6 +228,20 @@ describe('app menu', () => {
 		expect(buildFromTemplate).not.toHaveBeenCalled();
 	});
 
+	it('offers New Sketch Book in the File menu only while Sketch Book is on', () => {
+		const fileItems = () => menuNamed('File').submenu!.map(nameOf);
+
+		setMenuEncoreFeatures({ sketchBook: false });
+		installApplicationMenu();
+		expect(fileItems()).not.toContain('New Sketch Book');
+
+		setMenuEncoreFeatures({ sketchBook: true });
+		expect(fileItems()).toContain('New Sketch Book');
+
+		itemNamed(menuNamed('File'), 'New Sketch Book').click?.({}, new FakeBrowserWindow());
+		expect(send).toHaveBeenCalledWith('menu:command', 'newSketchBook');
+	});
+
 	it('does not send to a destroyed window', () => {
 		installApplicationMenu();
 		getFocusedWindow.mockReturnValue(null);

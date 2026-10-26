@@ -234,6 +234,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Show/Hide Throughput Gauge',
 		keys: ['Alt', 'Meta', 'Shift', 't'],
 	},
+	// K for sKetch: Opt+Cmd+S is Snooze Tab and Opt+Cmd+D hides the macOS Dock,
+	// so the Sketch Book takes the free K in the same Opt+Cmd family.
+	newSketchBook: {
+		id: 'newSketchBook',
+		label: 'New Sketch Book',
+		keys: ['Alt', 'Meta', 'k'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

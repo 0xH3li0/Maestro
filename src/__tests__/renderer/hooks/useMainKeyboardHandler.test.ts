@@ -27,6 +27,15 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+// Opt+Cmd+K creates a sketch through the shared service. Mocked so the test
+// asserts the gating and wiring; the create path is covered in sketchTabs.test.
+const { mockCreateSketchInSession } = vi.hoisted(() => ({
+	mockCreateSketchInSession: vi.fn(),
+}));
+vi.mock('../../../renderer/services/sketchTabs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/sketchTabs')>()),
+	createSketchInSession: (...args: unknown[]) => mockCreateSketchInSession(...args),
+}));
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 
@@ -3628,6 +3637,63 @@ describe('useMainKeyboardHandler', () => {
 
 			pressGaugeChord();
 			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+	});
+
+	describe('newSketchBook shortcut', () => {
+		const pressSketchChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'k',
+						code: 'KeyK',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		beforeEach(() => {
+			mockCreateSketchInSession.mockReset();
+		});
+
+		it('creates a sketch for the active agent while Sketch Book is on', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { sketchBook: true },
+				activeSession: { id: 'agent-1', name: 'Planner' },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'newSketchBook',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			pressSketchChord();
+			expect(mockCreateSketchInSession).toHaveBeenCalledWith('agent-1');
+		});
+
+		it('does nothing while the Encore Feature is off', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { sketchBook: false },
+				activeSession: { id: 'agent-1', name: 'Planner' },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'newSketchBook',
+			});
+
+			pressSketchChord();
+			expect(mockCreateSketchInSession).not.toHaveBeenCalled();
+		});
+
+		it('does nothing while a group chat owns the main panel', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { sketchBook: true },
+				activeSession: { id: 'agent-1', name: 'Planner' },
+				activeGroupChatId: 'room-1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'newSketchBook',
+			});
+
+			pressSketchChord();
+			expect(mockCreateSketchInSession).not.toHaveBeenCalled();
 		});
 	});
 

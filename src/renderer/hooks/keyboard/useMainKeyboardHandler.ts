@@ -13,6 +13,7 @@ import {
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
+import { createSketchInSession } from '../../services/sketchTabs';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
@@ -41,6 +42,7 @@ import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
+import { canUseSketchBook } from '../../utils/sketchBookAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
@@ -1131,6 +1133,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useThroughputGaugeStore.getState().toggle();
 				trackShortcut('toggleThroughputGauge');
+			} else if (ctx.isShortcut(e, 'newSketchBook') && canUseSketchBook(ctx.encoreFeatures)) {
+				// A sketch belongs to an agent, so it needs one on screen; a group
+				// chat owns the main panel and has no tab strip to open it in.
+				e.preventDefault();
+				if (activeSession && !ctx.activeGroupChatId) {
+					void createSketchInSession(activeSession.id);
+					trackShortcut('newSketchBook');
+				}
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

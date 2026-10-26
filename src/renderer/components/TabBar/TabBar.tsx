@@ -19,6 +19,7 @@ import { BrowserTabItem } from './BrowserTabItem';
 import { SketchTabItem } from './SketchTabItem';
 import {
 	closeSketchTabInSession,
+	createSketchInSession,
 	requestSketchTabRename,
 	selectSketchTabInSession,
 } from '../../services/sketchTabs';
@@ -35,6 +36,7 @@ import { useDragAutoScroll } from '../../hooks/ui/useDragAutoScroll';
 import type { TabBarProps } from './types';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { logger } from '../../utils/logger';
+import { canUseSketchBook } from '../../utils/sketchBookAvailability';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
@@ -140,6 +142,10 @@ function TabBarInner({
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const sketchBookAvailable = useSettingsStore((s) => canUseSketchBook(s.encoreFeatures));
+	const handleNewSketchBook = useCallback(() => {
+		if (sessionId) void createSketchInSession(sessionId);
+	}, [sessionId]);
 
 	// Snoozed tabs are a cross-agent concept, so the count and the list opener
 	// come straight from the stores rather than through TabBar's prop surface.
@@ -1069,6 +1075,8 @@ function TabBarInner({
 				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
 				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
 				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
+				onNewSketchBook={sketchBookAvailable && sessionId ? handleNewSketchBook : undefined}
+				sketchBookKeys={shortcuts.newSketchBook?.keys}
 				isOverflowing={isOverflowing}
 			/>
 		</div>

@@ -12,6 +12,7 @@
 
 import type { EncoreFeatureFlags, Shortcut } from '../types';
 import { canOpenComputerHistory } from './computerHistoryAvailability';
+import { canUseSketchBook } from './sketchBookAvailability';
 
 export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureFlags>> = {
 	usageDashboard: 'usageStats',
@@ -23,17 +24,28 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	toggleConcerto: 'concerto',
 	toggleCadenzas: 'concerto',
 	toggleThroughputGauge: 'throughputGauge',
+	newSketchBook: 'sketchBook',
 };
 
 type EncoreFlagsInput = Partial<EncoreFeatureFlags> | null | undefined;
+
+/**
+ * Features that need more than their flag: each is also withheld on the
+ * web-desktop build. The hotkey, palette and menu ask the same predicate.
+ */
+const FLAG_AVAILABILITY: Partial<
+	Record<keyof EncoreFeatureFlags, (encoreFeatures: EncoreFlagsInput) => boolean>
+> = {
+	computerHistory: canOpenComputerHistory,
+	sketchBook: canUseSketchBook,
+};
 
 /** False only for a shortcut whose Encore Feature is switched off. */
 export function isShortcutAvailable(shortcutId: string, encoreFeatures: EncoreFlagsInput): boolean {
 	const flag = SHORTCUT_ENCORE_FLAGS[shortcutId];
 	if (!flag) return true;
-	// Same predicate the hotkey, palette and menu use: the viewer is also
-	// withheld on the web-desktop build.
-	if (flag === 'computerHistory') return canOpenComputerHistory(encoreFeatures);
+	const available = FLAG_AVAILABILITY[flag];
+	if (available) return available(encoreFeatures);
 	return encoreFeatures?.[flag] === true;
 }
 

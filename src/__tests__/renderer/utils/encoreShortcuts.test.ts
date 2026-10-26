@@ -16,6 +16,7 @@ import {
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
 import { ENCORE_FEATURE_DEFAULTS } from '../../../shared/encoreFeatureDefaults';
+import { findReservedShortcutCombo, shortcutKeysEqual } from '../../../shared/shortcutKeys';
 
 const ALL_OFF = Object.fromEntries(
 	Object.keys(ENCORE_FEATURE_DEFAULTS).map((key) => [key, false])
@@ -54,6 +55,29 @@ describe('encoreShortcuts', () => {
 			availableShortcuts(DEFAULT_SHORTCUTS, { ...ALL_OFF, throughputGauge: true })
 				.toggleThroughputGauge
 		).toBe(DEFAULT_SHORTCUTS.toggleThroughputGauge);
+	});
+
+	it('lists New Sketch Book only while Sketch Book is on, and never on web-desktop', () => {
+		expect(availableShortcuts(DEFAULT_SHORTCUTS, ALL_OFF).newSketchBook).toBeUndefined();
+		expect(
+			availableShortcuts(DEFAULT_SHORTCUTS, { ...ALL_OFF, sketchBook: true }).newSketchBook
+		).toBe(DEFAULT_SHORTCUTS.newSketchBook);
+		webDesktop = true;
+		expect(isShortcutAvailable('newSketchBook', ALL_ON)).toBe(false);
+		webDesktop = false;
+	});
+
+	it('binds New Sketch Book to a chord no other shortcut or reserved combo owns', () => {
+		const keys = DEFAULT_SHORTCUTS.newSketchBook.keys;
+		expect(findReservedShortcutCombo(keys)).toBeNull();
+		const all = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
+		const clashes = Object.values(all).filter(
+			(shortcut) =>
+				shortcut.id !== 'newSketchBook' &&
+				shortcut.keys.length > 0 &&
+				shortcutKeysEqual(shortcut.keys, keys)
+		);
+		expect(clashes.map((shortcut) => shortcut.id)).toEqual([]);
 	});
 
 	it('treats a missing flag map as everything off', () => {

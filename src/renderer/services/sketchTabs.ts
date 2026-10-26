@@ -6,11 +6,18 @@
  * the callers that come later (`maestro-cli sketch open`, the `sketch_create`
  * tool). Each is one store write through the pure helpers in
  * `utils/tabHelpers`, which own the focus and neighbor rules.
+ *
+ * "New Sketch Book" lives here too: the hotkey, the command palette, the
+ * hamburger menu and the tab bar `+` menu all call `createSketchInSession()`,
+ * so the four ways in create and open a sketch the same way.
  */
 
+import type { SketchRecord } from '../../shared/sketch/types';
 import { getModalActions } from '../stores/modalStore';
-import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import { closeSketchTab, navigateToUnifiedTabById } from '../utils/tabHelpers';
+import { notifyToast } from '../stores/notificationStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import { ipcErrorMessage } from '../utils/ipcErrorMessage';
+import { closeSketchTab, navigateToUnifiedTabById, openSketchTab } from '../utils/tabHelpers';
 
 function findSketchTab(sessionId: string, tabId: string) {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
@@ -46,4 +53,46 @@ export function requestSketchTabRename(sessionId: string, tabId: string): boolea
 	actions.setRenameTabInitialName(tab.name);
 	actions.setRenameTabModalOpen(true);
 	return true;
+}
+
+/**
+ * Create a sketch owned by this agent and open it in a tab. The tab is focused
+ * unless `background` is set (spec Q5: an agent's own sketch opens behind the
+ * user). Resolves with the new record, or null when main refused (the Encore
+ * flag is off, the agent is gone or runs over SSH); the refusal is shown as a
+ * toast in main's own words.
+ */
+export async function createSketchInSession(
+	sessionId: string,
+	options: { name?: string; background?: boolean } = {}
+): Promise<SketchRecord | null> {
+	let record: SketchRecord;
+	try {
+		record = await window.maestro.sketch.create({ ownerAgentId: sessionId, name: options.name });
+	} catch (error) {
+		notifyToast({
+			color: 'red',
+			title: 'Sketch Book',
+			message: ipcErrorMessage(error),
+			sessionId,
+		});
+		return null;
+	}
+	updateSessionWith(
+		sessionId,
+		(s) =>
+			openSketchTab(
+				s,
+				{ sketchId: record.sketchId, name: record.name },
+				{ background: options.background }
+			).session
+	);
+	return record;
+}
+
+/** "New Sketch Book" on the active agent. Null when no agent is active. */
+export function newSketchBookInActiveAgent(): Promise<SketchRecord | null> {
+	const session = selectActiveSession(useSessionStore.getState());
+	if (!session) return Promise.resolve(null);
+	return createSketchInSession(session.id);
 }

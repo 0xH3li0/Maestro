@@ -10,7 +10,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { NewTabPopover } from '../../../../renderer/components/TabBar/NewTabPopover';
 import { mockTheme } from '../../../helpers/mockTheme';
 
-function renderPopover() {
+function renderPopover(overrides: Partial<Parameters<typeof NewTabPopover>[0]> = {}) {
 	const props = {
 		theme: mockTheme,
 		onNewTab: vi.fn(),
@@ -22,6 +22,7 @@ function renderPopover() {
 		browserTabKeys: ['Meta', 'l'],
 		terminalKeys: ['Meta', 'j'],
 		isOverflowing: false,
+		...overrides,
 	};
 	render(<NewTabPopover {...props} />);
 	return props;
@@ -45,5 +46,20 @@ describe('NewTabPopover', () => {
 		fireEvent.click(screen.getByText('New Terminal'));
 		expect(props.onNewTerminalTab).toHaveBeenCalledTimes(1);
 		expect(screen.queryByText('New Terminal')).not.toBeInTheDocument();
+	});
+
+	it('offers Sketch Book only when a handler is passed (the Encore Feature is on)', () => {
+		renderPopover();
+		fireEvent.click(screen.getByTitle('New tab…'));
+		expect(screen.queryByText('Sketch Book')).not.toBeInTheDocument();
+	});
+
+	it('runs New Sketch Book from the menu and closes', () => {
+		const onNewSketchBook = vi.fn();
+		renderPopover({ onNewSketchBook, sketchBookKeys: ['Alt', 'Meta', 'k'] });
+		fireEvent.click(screen.getByTitle('New tab…'));
+		fireEvent.click(screen.getByText('Sketch Book'));
+		expect(onNewSketchBook).toHaveBeenCalledTimes(1);
+		expect(screen.queryByText('Sketch Book')).not.toBeInTheDocument();
 	});
 });
