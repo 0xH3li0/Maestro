@@ -517,10 +517,60 @@ describe('persistence IPC handlers', () => {
 				mockSettingsStore.get.mockReturnValue({ maxAgents: 99 });
 
 				const handler = handlers.get('settings:set');
-				await handler!({} as any, 'autoRunStats', { cumulativeTimeMs: 5 });
+				await handler!({} as any, 'onboardingStats', { wizardStartCount: 5 });
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('onboardingStats', {
+					wizardStartCount: 5,
+				});
+			});
+		});
+
+		// autoRunStats is lifetime Conductor time, runs and badges. A Cue credit
+		// applied to a zeroed renderer copy once replaced 1,352 hours with 10.
+		describe('autoRunStats totals', () => {
+			const stored = {
+				cumulativeTimeMs: 4_869_514_889,
+				cueTimeMs: 1_655_880_000,
+				longestRunMs: 82_370_665,
+				longestRunTimestamp: 1_783_641_600_000,
+				totalRuns: 326,
+				currentBadgeLevel: 6,
+				lastBadgeUnlockLevel: 6,
+				lastAcknowledgedBadgeLevel: 6,
+				badgeHistory: [{ level: 2, unlockedAt: 1_764_668_373_382 }],
+			};
+
+			it('refuses a write from a caller whose baseline was zeroed', async () => {
+				mockSettingsStore.get.mockReturnValue(stored);
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'autoRunStats', {
+					cumulativeTimeMs: 60_000,
+					cueTimeMs: 60_000,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					totalRuns: 0,
+					currentBadgeLevel: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+					badgeHistory: [],
+				});
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('autoRunStats', stored);
+			});
+
+			it('takes a genuine increase', async () => {
+				mockSettingsStore.get.mockReturnValue(stored);
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'autoRunStats', {
+					...stored,
+					cumulativeTimeMs: stored.cumulativeTimeMs + 60_000,
+				});
 
 				expect(mockSettingsStore.set).toHaveBeenCalledWith('autoRunStats', {
-					cumulativeTimeMs: 5,
+					...stored,
+					cumulativeTimeMs: stored.cumulativeTimeMs + 60_000,
 				});
 			});
 		});

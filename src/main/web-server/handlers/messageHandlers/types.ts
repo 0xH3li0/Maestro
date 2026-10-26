@@ -90,6 +90,13 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/**
+	 * True when the upgrade presented this boot's CLI secret (`maestro-cli`).
+	 * A browser cannot set custom headers on a WebSocket upgrade, so this is
+	 * how a handler tells the CLI from a web client. Handlers a browser must
+	 * never reach (switching Live mode or its tunnel) refuse sockets without it.
+	 */
+	cli?: boolean;
 }
 
 /**

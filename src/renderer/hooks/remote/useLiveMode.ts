@@ -6,11 +6,12 @@
  *   - webInterfaceUrl state (current URL)
  *   - toggleGlobalLive (start/stop server + tunnel)
  *   - restartWebServer (restart when port settings change)
+ *   - follows live:stateChanged, so a `maestro-cli live` toggle shows here
  *
  * Calls IPC: window.maestro.tunnel, window.maestro.live
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -35,6 +36,10 @@ export interface UseLiveModeReturn {
 export function useLiveMode(autoStart = false): UseLiveModeReturn {
 	const [isLiveMode, setIsLiveMode] = useState(false);
 	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
+	// True while restartWebServer runs. Its stop + start each push a state
+	// change, and following the stop would flash Live off mid-restart, which
+	// resets the tunnel panel before restartTunnel can act on it.
+	const restartingRef = useRef(false);
 
 	useEffect(() => {
 		if (!autoStart) return;
@@ -128,8 +133,21 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 		return () => unsubscribe?.();
 	}, []);
 
+	// Main pushes the real state whenever the server or tunnel starts or stops,
+	// including when `maestro-cli live` did it. Without this the panel keeps
+	// whatever this hook last set and contradicts the running server.
+	useEffect(() => {
+		const unsubscribe = window.maestro?.live?.onStateChanged?.((state) => {
+			if (restartingRef.current) return;
+			setIsLiveMode(state.live);
+			setWebInterfaceUrl(state.url);
+		});
+		return () => unsubscribe?.();
+	}, []);
+
 	const restartWebServer = useCallback(async (): Promise<string | null> => {
 		if (!isLiveMode) return null;
+		restartingRef.current = true;
 		try {
 			// Stop and restart the server to pick up new port settings
 			await (window as any).maestro.live.stopServer();
@@ -150,6 +168,8 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 			setWebInterfaceUrl(null);
 			logger.error('[restartWebServer] Error:', undefined, error);
 			return null;
+		} finally {
+			restartingRef.current = false;
 		}
 	}, [isLiveMode]);
 
