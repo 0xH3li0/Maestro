@@ -22,6 +22,7 @@ import { createWebLoginApi } from './webLogin';
 import { createComputerHistoryApi } from './computerHistory';
 import { createMaestroRunApi } from './maestroRun';
 import { createDataviewApi } from './dataview';
+import { createSketchApi } from './sketch';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -144,6 +145,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Dataview API (DQL queries, index status and rebuild, change push)
 	dataview: createDataviewApi(),
+
+	// Sketch Book API (sketch store; desktop-only, gated on the sketchBook Encore Feature)
+	sketch: createSketchApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -343,6 +347,8 @@ export {
 	createMaestroRunApi,
 	// Dataview
 	createDataviewApi,
+	// Sketch Book
+	createSketchApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

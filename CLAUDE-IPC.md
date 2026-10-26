@@ -195,3 +195,4 @@ Engine internals (pruning, projection, resumable scans) are documented in [REMAI
 - `devtools` - Developer tools: open, close, toggle
 - `attachments` - Image attachment management
 - `codexVisualization` - Codex `visualize` content references: load (builds and registers the isolated frame document; local agents only)
+- `sketch` - Sketch Book store: create, list, get, readScene, writeScene, rename, delete, saveToProject. Every call goes through `getSketchService()` (`src/main/sketch/sketch-service.ts`), the same service the CLI's WS verbs call, and rejects while the `sketchBook` Encore Feature is off. A new sketch needs a live local agent as owner (SSH agents are refused). Desktop only: no `sketch:*` channel is on the web bridge allowlist.

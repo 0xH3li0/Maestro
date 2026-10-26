@@ -42,6 +42,7 @@ import {
 	registerComputerHistoryHandlers,
 	registerMaestroRunHandlers,
 	registerDataviewHandlers,
+	registerSketchHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
@@ -142,6 +143,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Dataview - DQL queries, index status and rebuild, and the `dataview:changed`
 	// push to every window. See src/main/ipc/handlers/dataview.ts.
 	registerDataviewHandlers({ safeSend: deps.safeSend });
+
+	// Sketch Book - the sketch store behind the Sketch tab and `maestro-cli sketch`,
+	// gated on the `sketchBook` Encore Feature. Desktop-only: no `sketch:*`
+	// channel is on the web bridge allowlist. See src/main/ipc/handlers/sketch.ts.
+	registerSketchHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

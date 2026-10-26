@@ -263,6 +263,7 @@ import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { DataviewApi } from '../main/preload/dataview';
+import type { SketchApi } from '../main/preload/sketch';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -2061,6 +2062,12 @@ interface MaestroAPI {
 	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
 	 */
 	dataview: DataviewApi;
+	/**
+	 * Sketch Book (the sketch store: create, list, read and write scenes, rename,
+	 * delete, Save to project). Every call rejects while the `sketchBook` Encore
+	 * Feature is off. Desktop only: the web-desktop bridge refuses these channels.
+	 */
+	sketch: SketchApi;
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
