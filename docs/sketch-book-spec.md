@@ -249,6 +249,21 @@ The gate screens every third-party input before the agent can read it. It runs o
 | System One engines    | Jev (TypeSafe cloud, `api.typesafe.ai`), OpenJev (a server at a user URL), local judge (a local text model, uncalibrated). Jev answers in about 0.1 to 0.2 s with a 1.5 s default timeout; the local judge allows 30 s.                                                                                                                                                                      |
 | Latency               | **Not measured in the repo for the classifier.** `classifier-e2e.test.ts` records cold and warm times but publishes no numbers. The same encoder pool measured BGE embeddings at 1,056 ms cold and about 1.2 ms per short document warm. Prompt Guard 2 22M is a comparable small encoder, so expect about 1 s cold and single-digit ms per window warm. Phase 04 measures it (section 8.7). |
 
+#### 8.1 Verified on the build branch
+
+Checked 2026-10-26 on `burn/2026-10-15-sketch-book` at `099ece91c8` (`git merge-base --is-ancestor origin/acappella HEAD` passes; `origin/acappella` is the same commit). Every name above exists unchanged, so sections 8.1 and 8.6 need no renames.
+
+| Symbol                                  | Location                                           | Notes                                                                                                                                                         |
+| --------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scoreCueInjectionText`                 | `src/main/local-models/cue-injection-screen.ts:99` | Request `CueInjectionScoreRequest` (`src/shared/cue/injection-screen.ts:266`), result `CueInjectionScore` (`:248`).                                           |
+| `CUE_INJECTION_SCREEN_TIMEOUT_MS`       | `src/main/local-models/cue-injection-screen.ts:52` | `60 * 1000`. Applied only to `runClassifierTask` (`:115`); the System One call has no signal.                                                                 |
+| `DEFAULT_CUE_INJECTION_THRESHOLD`       | `src/shared/cue/injection-screen.ts:72`            | `0.8`.                                                                                                                                                        |
+| `screenForSecrets`                      | `src/main/local-models/secret-screen.ts:75`        |                                                                                                                                                               |
+| `SECRET_SCREEN_MODEL_TIMEOUT_MS`        | `src/main/local-models/secret-screen.ts:49`        | `30 * 1000`.                                                                                                                                                  |
+| `runSystemOneTask`                      | `src/main/local-models/task-router.ts:505`         |                                                                                                                                                               |
+| `runClassifierTask`                     | `src/main/local-models/task-router.ts:319`         |                                                                                                                                                               |
+| `LOCAL_MODEL_TASKS['injection-screen']` | `src/shared/local-models/tasks.ts:367`             | `system: 'one'`, `needs: 'classifier'`, `defaultAssignment: OFF_ASSIGNMENT`, `failPolicy: 'closed'`. `'secret-screen'` follows at `:379` with no fail policy. |
+
 ### 8.2 Scope
 
 | Input                                                                                | Third-party when                                             | Gate behaviour                                                                                                                          |
