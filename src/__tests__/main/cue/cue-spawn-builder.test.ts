@@ -928,7 +928,7 @@ describe('cue-spawn-builder', () => {
 			expect(result.spec.args.slice(-2)).toEqual(['--', multiLinePrompt]);
 		});
 
-		it('hands maestro-p its prompt as the trailing positional, not stdin', async () => {
+		it('leaves a shim prompt on stdin for maestro-p, which reads non-TTY stdin', async () => {
 			stdinCapable();
 			mockGetAgentDefinition.mockReturnValue({
 				...defaultAgentDef,
@@ -950,8 +950,165 @@ describe('cue-spawn-builder', () => {
 			if (!result.ok) return;
 			expect(result.spec.command).toBe(process.execPath);
 			expect(result.spec.args[0]).toBe('/bundled/maestro-p.js');
-			expect(result.spec.args[result.spec.args.length - 1]).toBe(multiLinePrompt);
+			expect(result.spec.args).not.toContain(multiLinePrompt);
+			expect(result.spec.stdinPrompt).toBe(multiLinePrompt);
+		});
+
+		function argvOnly() {
+			mockGetAgentCapabilities.mockReturnValueOnce({
+				...mockGetAgentCapabilities(),
+				supportsPromptViaStdin: false,
+			} as ReturnType<typeof mockGetAgentCapabilities>);
+		}
+
+		it('refuses a multi-line prompt for a provider that cannot read stdin', async () => {
+			argvOnly();
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				multiLinePrompt
+			);
+
+			expect(result).toEqual({
+				ok: false,
+				message: `Claude Code at ${shimPath} only starts through cmd.exe, which cannot pass the prompt intact: it contains a line break, which ends a cmd.exe command line`,
+			});
+		});
+
+		it('refuses a prompt containing % for a provider that cannot read stdin', async () => {
+			argvOnly();
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				'Use %USERPROFILE% as the root'
+			);
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.message).toContain('cannot pass the prompt intact');
+			expect(result.message).toContain('it contains %, which cmd.exe expands as a variable');
+		});
+
+		it('refuses a prompt containing ^ for a provider that cannot read stdin', async () => {
+			argvOnly();
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				'match ^main$'
+			);
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.message).toContain('it contains ^, which cmd.exe would pass on doubled');
+		});
+
+		it('still runs a stdin-capable provider with a multi-line, % prompt: it never rides cmd.exe', async () => {
+			stdinCapable();
+			const prompt = 'Use %USERPROFILE% as the root.\nThen match ^main$.';
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				prompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.stdinPrompt).toBe(prompt);
+			expect(result.spec.args).not.toContain(prompt);
+		});
+
+		it('refuses any other shell-bound argument cmd.exe would rewrite, even with the prompt on stdin', async () => {
+			stdinCapable();
+			mockApplyOverrides.mockReturnValueOnce({
+				args: ['--print', '--verbose', '--settings', '%APPDATA%\\claude.json'],
+				effectiveCustomEnvVars: undefined,
+				customArgsSource: 'none' as const,
+				customEnvSource: 'none' as const,
+				modelSource: 'default' as const,
+			});
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				'prompt'
+			);
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.message).toContain('cannot pass the argument "%APPDATA%\\claude.json" intact');
+		});
+
+		it('releases the plugin run identity when it refuses the launch', async () => {
+			argvOnly();
+			mockPluginsEnabled.mockReturnValue(true);
+			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+			const issue = vi.spyOn(pluginToolRunIdentity, 'issue');
+			const revoke = vi.spyOn(pluginToolRunIdentity, 'revoke');
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				multiLinePrompt
+			);
+
+			expect(result.ok).toBe(false);
+			expect(issue).toHaveBeenCalledTimes(1);
+			expect(revoke).toHaveBeenCalledWith(issue.mock.results[0].value);
+			issue.mockRestore();
+			revoke.mockRestore();
+			mockPluginsEnabled.mockReturnValue(false);
+			mockActivePluginManager.mockReturnValue(null);
+		});
+	});
+
+	describe('off Windows (no cmd.exe)', () => {
+		afterEach(async () => {
+			const actual = await vi.importActual<typeof import('../../../shared/platformDetection')>(
+				'../../../shared/platformDetection'
+			);
+			vi.mocked(platformDetection.isWindows).mockImplementation(actual.isWindows);
+		});
+
+		it('keeps a long prompt on stdin for maestro-p instead of pulling it back into argv', async () => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(false);
+			mockGetAgentCapabilities.mockReturnValueOnce({
+				...mockGetAgentCapabilities(),
+				supportsPromptViaStdin: true,
+			} as ReturnType<typeof mockGetAgentCapabilities>);
+			mockGetAgentDefinition.mockReturnValue({
+				...defaultAgentDef,
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+				defaultEnvVars: {},
+			});
+			const longPrompt = 'x'.repeat(200_000);
+
+			const result = await buildSpawnSpec(
+				createConfig({ enableMaestroP: true, maestroPMode: 'interactive' }),
+				longPrompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.command).toBe(process.execPath);
+			expect(result.spec.args[0]).toBe('/bundled/maestro-p.js');
+			expect(result.spec.args).not.toContain(longPrompt);
+			expect(result.spec.stdinPrompt).toBe(longPrompt);
+		});
+
+		it('passes a multi-line, % prompt through untouched off Windows', async () => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(false);
+			mockGetAgentCapabilities.mockReturnValueOnce({
+				...mockGetAgentCapabilities(),
+				supportsPromptViaStdin: false,
+			} as ReturnType<typeof mockGetAgentCapabilities>);
+			const prompt = 'Use %HOME% as the root.\nThen match ^main$.';
+
+			const result = await buildSpawnSpec(createConfig({ enableMaestroP: false }), prompt);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.command).toBe('claude');
 			expect(result.spec.stdinPrompt).toBeUndefined();
+			expect(result.spec.args.slice(-2)).toEqual(['--', prompt]);
 		});
 	});
 });

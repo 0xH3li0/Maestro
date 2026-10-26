@@ -20,8 +20,10 @@ import {
 	describeUndeliveredSecrets,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import { buildSpawnPath } from '../utils/spawnPath';
-import { buildPromptArgv } from '../../shared/maestro-lib/launch/prompt-delivery';
-import { windowsShellReason } from '../../shared/maestro-lib/launch/windows-command';
+import {
+	cmdShellArgProblem,
+	windowsShellReason,
+} from '../../shared/maestro-lib/launch/windows-command';
 import { isWindows } from '../../shared/platformDetection';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
@@ -350,16 +352,9 @@ export async function buildSpawnSpec(
 		// claude TUI, and reads the trailing positional as the prompt). The vars
 		// it adds (MAESTRO_CLAUDE_BIN and its Node settings) are merged over the
 		// planned env, which already holds the agent's own.
-		// maestro-p reads the prompt as its trailing positional, never stdin, so a
-		// prompt the plan sent to stdin for a cmd.exe launch comes back to argv:
-		// the command is maestro-p from here on, not the shim.
-		if (plan.prompt.via === 'stdin' && stdinPrompt !== undefined) {
-			spawnArgs = [
-				...spawnArgs.slice(0, spawnArgs.length - plan.prompt.args.length),
-				...buildPromptArgv(agentDef, stdinPrompt),
-			];
-			stdinPrompt = undefined;
-		}
+		// A prompt the plan sent to stdin (a cmd.exe launch, or one too long for
+		// the command line) stays there: with no trailing positional, maestro-p
+		// reads it from its non-TTY stdin, as in run-agent-turn.
 		const applied = applyClaudeSpawnDecision({
 			decision: claudeSpawnDecision,
 			interactiveModeArgs: agentDef.interactiveModeArgs,
@@ -428,6 +423,37 @@ export async function buildSpawnSpec(
 			}
 			pluginRunToken = undefined;
 			pluginRunProofFile = undefined;
+		}
+	}
+
+	// 7. A local run whose command only starts through cmd.exe gets the shell in
+	// cue-process-lifecycle (applyWindowsShellRules, same condition), and every
+	// argument then rides the cmd.exe command line: the agent's own flags, the
+	// model, custom args, the MCP injection, and the prompt when the provider
+	// cannot read it from stdin (omp). One that cmd.exe would cut off or
+	// rewrite fails the run here rather than handing the agent different
+	// instructions, as planSessionTurn does.
+	if (!sshRemoteUsed && isWindows() && windowsShellReason(command).reason !== null) {
+		const promptArgs = plan.prompt.via === 'argv' ? new Set(plan.prompt.args) : new Set<string>();
+		for (const arg of spawnArgs) {
+			const problem = cmdShellArgProblem(arg);
+			if (!problem) continue;
+			// The run never starts, so nothing else would release its MCP identity.
+			if (pluginRunToken) pluginToolRunIdentity.revoke(pluginRunToken);
+			if (pluginRunProofFile) {
+				try {
+					removePluginRunProofFile(pluginRunProofFile);
+				} catch (error) {
+					logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+						error: String(error),
+					});
+				}
+			}
+			const what = promptArgs.has(arg) ? 'the prompt' : `the argument "${arg}"`;
+			return {
+				ok: false,
+				message: `${agentDef.name} at ${command} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+			};
 		}
 	}
 
