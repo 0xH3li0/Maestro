@@ -197,7 +197,13 @@ export class ImapResponseDecoder {
 				}
 				return { kind: 'data', name: 'SEARCH', parts: [text] };
 			}
-			if (/^\* FLAGS \((?:\\?[A-Za-z0-9_.-]{1,64}(?: \\?[A-Za-z0-9_.-]{1,64})*)?\)$/i.test(text)) {
+			if (/^\* CAPABILITY [\x21-\x7e ]{1,4096}$/i.test(text)) {
+				// The command layer validates these bounded opaque tokens only during LOGIN.
+				return { kind: 'data', name: 'CAPABILITY', parts: [text] };
+			}
+			if (
+				/^\* FLAGS \((?:\\?[A-Za-z0-9_.$-]{1,64}(?: \\?[A-Za-z0-9_.$-]{1,64})*)?\)$/i.test(text)
+			) {
 				return { kind: 'data', name: 'FLAGS', parts: [text] };
 			}
 			const fetch = /^\* ([1-9][0-9]{0,9}) FETCH \(/i.exec(text);

@@ -187,6 +187,8 @@ describe('real framed IMAP command response semantics', () => {
 	it.each([
 		['A1 OK peer-private synthetic-secret\r\n', 'status'],
 		['* OK [ALERT] peer-private\r\nA1 OK [alert] peer-private\r\n', 'status'],
+		['A1 OK [CAPABILITY IMAP4rev1 AUTH=PLAIN X-FIXTURE] ready\r\n', 'status'],
+		['* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\nA1 OK logged in\r\n', 'status'],
 	])('accepts LOGIN without forwarding opaque status text', (wire, kind) => {
 		const command = prepareImapCommand('A1', { kind: 'login', username: 'u', password: 'p' });
 		expect(validateImapCommandResult(command, decode(wire))).toEqual({ kind });
@@ -204,7 +206,11 @@ describe('real framed IMAP command response semantics', () => {
 		['* NO peer-private\r\nA1 OK done\r\n', 'MAIL_PROTOCOL'],
 		['* BAD peer-private\r\nA1 OK done\r\n', 'MAIL_PROTOCOL'],
 		['* 1 EXISTS\r\nA1 OK done\r\n', 'MAIL_PROTOCOL'],
-		['A1 OK [CAPABILITY IMAP4rev1] peer-private\r\n', 'MAIL_PROTOCOL'],
+		['A1 OK [CAPABILITY AUTH=PLAIN] peer-private\r\n', 'MAIL_PROTOCOL'],
+		['A1 OK [CAPABILITY IMAP4rev1 "bad"] peer-private\r\n', 'MAIL_PROTOCOL'],
+		['* CAPABILITY IMAP4rev1\r\n* CAPABILITY IMAP4rev1\r\nA1 OK done\r\n', 'MAIL_PROTOCOL'],
+		['* CAPABILITY IMAP4rev1] "bad"\r\nA1 OK done\r\n', 'MAIL_PROTOCOL'],
+		[`A1 OK [CAPABILITY IMAP4rev1 ${'X '.repeat(64)}X] ready\r\n`, 'MAIL_LIMIT'],
 		['A1 OK [ALERT extra] peer-private\r\n', 'MAIL_PROTOCOL'],
 		['A1 OK [UIDVALIDITY 1] peer-private\r\n', 'MAIL_PROTOCOL'],
 		['A1 OK [READ-ONLY] peer-private\r\n', 'MAIL_PROTOCOL'],
@@ -221,7 +227,7 @@ describe('real framed IMAP command response semantics', () => {
 		const namespace = '* oK [uidvalidity 4294967295] peer-private\r\n';
 		const end = 'A1 oK [read-only] peer-private\r\n';
 		const extras =
-			'* OK [UIDNEXT 1] next\r\n* OK [UNSEEN 1] unseen\r\n* OK [PERMANENTFLAGS (\\Seen \\*)] flags\r\n* OK [ALERT] alert\r\n';
+			'* OK [UIDNEXT 1] next\r\n* OK [UNSEEN 1] unseen\r\n* OK [PERMANENTFLAGS (\\Seen \\* $Forwarded)] flags\r\n* OK [HIGHESTMODSEQ 9223372036854775807] metadata\r\n* OK [ALERT] alert\r\n';
 		expect(validateImapCommandResult(command, decode(data + namespace + extras + end))).toEqual({
 			kind: 'examine',
 			uidValidity: '4294967295',
@@ -236,8 +242,18 @@ describe('real framed IMAP command response semantics', () => {
 			data.replace('* 0 RECENT\r\n', '* 0 EXISTS\r\n') + namespace + end,
 			data + '* SEARCH 1\r\n' + namespace + end,
 			data + namespace + 'A1 OK [READ-WRITE] peer-private\r\n',
+			data + namespace + '* OK [HIGHESTMODSEQ 0] invalid\r\n' + end,
+			data + namespace + '* OK [HIGHESTMODSEQ 9223372036854775808] overflow\r\n' + end,
+			data + namespace + '* OK [HIGHESTMODSEQ 1 extra] invalid\r\n' + end,
+			data + namespace + '* OK [NOMODSEQ 1] invalid\r\n' + end,
 		])
 			rejected(() => validateImapCommandResult(command, decode(wire)));
+		expect(
+			validateImapCommandResult(
+				command,
+				decode(data + namespace + '* OK [NOMODSEQ] none\r\n' + end)
+			)
+		).toEqual({ kind: 'examine', uidValidity: '4294967295' });
 		command.bytes.fill(0);
 	});
 	it.each([

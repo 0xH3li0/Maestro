@@ -4,6 +4,7 @@ import { ImapFramingError, ImapResponseDecoder, type ImapResponseFrame } from '.
 import {
 	prepareImapCommand,
 	validateImapCommandResult,
+	validateImapStatusCode,
 	eraseImapFrameLiterals,
 	type FixedImapCommand,
 	type ImapCommandResult,
@@ -94,10 +95,10 @@ export async function openMailSession(stream: MailByteStream, authorize: () => P
 			frames.length !== 1 ||
 			frames[0].kind !== 'status' ||
 			frames[0].tag !== null ||
-			frames[0].status !== 'OK' ||
-			(frames[0].text.startsWith('[') && !/^\[ALERT\](?: |$)/i.test(frames[0].text))
+			frames[0].status !== 'OK'
 		)
 			throw new ImapConnectionError('MAIL_PROTOCOL');
+		validateImapStatusCode('greeting', frames[0].text);
 		decoder.setLiteralLimit(0); // Also rejects trailing partial records.
 		frames.length = 0;
 		await active();

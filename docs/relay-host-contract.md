@@ -291,6 +291,16 @@ is a behavior patch, not a new SDK capability. A combined Relay package that
 separately requires Host API 1.31 still needs its independent platform prerequisites;
 this patch does not import unrelated local continuity changes or downgrade a plugin.
 
+The bounded IMAP parser accepts passive CAPABILITY metadata during greeting/LOGIN
+and `$` flag keywords ([RFC 3501](https://www.rfc-editor.org/rfc/rfc3501.html)),
+plus validated HIGHESTMODSEQ/NOMODSEQ metadata during EXAMINE
+([RFC 7162](https://www.rfc-editor.org/rfc/rfc7162.html)). These responses neither
+enable extensions nor grant authority. LOGINDISABLED in the greeting stops the
+read before LOGIN or secret use. Unknown or malformed responses still fail closed.
+Search requests retain their explicit `fromUid`/`toUid` span: more than 1,024
+returned UIDs fail with `MAIL_LIMIT`; the Host never silently narrows the search
+and risks hiding matches. Callers may explicitly choose smaller UID windows.
+
 The reader's protocol/MIME implementation and focused parser regressions are
 adapted from merged Backstage PR24 (`841c9b676df119a58f9ab99258d621e82ad685ed`),
 whose bounded parsers originated in the earlier Host mail implementation. Only

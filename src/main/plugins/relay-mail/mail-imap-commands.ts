@@ -194,22 +194,44 @@ export function eraseImapFrameLiterals(frames: readonly ImapResponseFrame[]): vo
 	}
 }
 
-/** Only these rev1 response codes are understood; all extensions fail closed. */
-function validateStatusCode(kind: FixedImapCommand['kind'], text: string): void {
+/** Validate passive metadata only; it never enables commands or authorizes access. */
+export function validateImapStatusCode(
+	kind: FixedImapCommand['kind'] | 'greeting',
+	text: string
+): void {
 	if (!text.startsWith('[')) return; // Ordinary human-readable text is opaque.
 	const code = /^\[([A-Z-]+)(?: ([^\]]*))?\](?: |$)/i.exec(text);
 	if (!code) fail();
 	const name = code[1].toUpperCase();
 	if (name === 'ALERT' && code[2] === undefined) return;
+	if (name === 'CAPABILITY' && (kind === 'greeting' || kind === 'login')) {
+		const capabilities = (code[2] ?? '').split(' ');
+		if ((code[2]?.length ?? 0) > 4096 || capabilities.length > 64) fail('MAIL_LIMIT');
+		if (
+			!capabilities.every((cap) => /^[A-Za-z0-9][A-Za-z0-9=+_.:/-]{0,127}$/.test(cap)) ||
+			!capabilities.some((cap) => cap.toUpperCase() === 'IMAP4REV1')
+		)
+			fail();
+		// RFC 3501 forbids LOGIN when the greeting advertises LOGINDISABLED.
+		if (kind === 'greeting' && capabilities.some((cap) => cap.toUpperCase() === 'LOGINDISABLED'))
+			fail('MAIL_UNAVAILABLE');
+		return;
+	}
 	if (kind !== 'examine') fail();
 	if (name === 'READ-ONLY' && code[2] === undefined) return;
+	if (name === 'NOMODSEQ' && code[2] === undefined) return;
+	if (name === 'HIGHESTMODSEQ') {
+		if (!/^[1-9][0-9]{0,18}$/.test(code[2] ?? '') || BigInt(code[2]!) > 9223372036854775807n)
+			fail();
+		return;
+	}
 	if (name === 'UIDVALIDITY' || name === 'UIDNEXT' || name === 'UNSEEN') {
 		assertImapUid(code[2], 'MAIL_PROTOCOL');
 		return;
 	}
 	if (
 		name === 'PERMANENTFLAGS' &&
-		/^\((?:\\?[A-Za-z0-9_.*-]{1,64}(?: \\?[A-Za-z0-9_.*-]{1,64})*)?\)$/.test(code[2] ?? '')
+		/^\((?:\\?[A-Za-z0-9_.$*-]{1,64}(?: \\?[A-Za-z0-9_.$*-]{1,64})*)?\)$/.test(code[2] ?? '')
 	)
 		return;
 	fail();
@@ -230,7 +252,7 @@ export function validateImapCommandResult(
 		if (completion.kind !== 'status' || completion.tag !== command.tag) fail();
 		if (completion.status === 'NO' || completion.status === 'BAD') fail('MAIL_UNAVAILABLE');
 		if (completion.status !== 'OK') fail();
-		validateStatusCode(command.kind, completion.text);
+		validateImapStatusCode(command.kind, completion.text);
 		const data: Extract<ImapResponseFrame, { kind: 'data' }>[] = [];
 		let uidValidity: string | undefined;
 		let uidNext: string | undefined;
@@ -241,7 +263,7 @@ export function validateImapCommandResult(
 				continue;
 			}
 			if (frame.tag !== null) fail();
-			validateStatusCode(command.kind, frame.text);
+			validateImapStatusCode(command.kind, frame.text);
 			if (frame.status === 'BYE' && command.kind === 'logout' && !bye) {
 				bye = true;
 				continue;
@@ -325,7 +347,19 @@ export function validateImapCommandResult(
 				if (!bye || data.length) fail();
 				return { kind: 'status' };
 			case 'login':
-				if (data.length) fail();
+				if (data.length > 1) fail();
+				for (const frame of data) {
+					const line = frame.parts[0];
+					if (
+						frame.name !== 'CAPABILITY' ||
+						frame.parts.length !== 1 ||
+						typeof line !== 'string' ||
+						!/^\* CAPABILITY /i.test(line) ||
+						line.includes(']')
+					)
+						fail();
+					validateImapStatusCode('login', `[${line.slice(2)}]`);
+				}
 				return { kind: 'status' };
 			default:
 				fail();

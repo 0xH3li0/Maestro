@@ -54,6 +54,11 @@ describe('host-private incremental IMAP framing', () => {
 			{ kind: 'data', name: 'SEARCH', parts: ['* SEARCH 9 1 4294967295'] },
 		],
 		['* FLAGS ()\r\n', { kind: 'data', name: 'FLAGS', parts: ['* FLAGS ()'] }],
+		['* FLAGS ($Forwarded)\r\n', { kind: 'data', name: 'FLAGS', parts: ['* FLAGS ($Forwarded)'] }],
+		[
+			'* CAPABILITY IMAP4rev1\r\n',
+			{ kind: 'data', name: 'CAPABILITY', parts: ['* CAPABILITY IMAP4rev1'] },
+		],
 		[
 			'* FLAGS (\\Seen custom.flag)\r\n',
 			{ kind: 'data', name: 'FLAGS', parts: ['* FLAGS (\\Seen custom.flag)'] },
@@ -123,7 +128,7 @@ describe('host-private incremental IMAP framing', () => {
 		'A1 BYE closing\r\n',
 		'+ continuation\r\n',
 		'* PREAUTH ready\r\n',
-		'* CAPABILITY IMAP4rev1\r\n',
+		'* CAPABILITY\r\n',
 		'* 1 EXPUNGE\r\n',
 		'A-1 OK ready\r\n',
 		'* 4294967296 EXISTS\r\n',

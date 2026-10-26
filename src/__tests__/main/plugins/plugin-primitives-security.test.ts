@@ -1524,7 +1524,10 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 		'mail-read-attachment',
 	];
 
-	function mailFixture(body = 'synthetic body') {
+	function mailFixture(
+		body = 'synthetic body',
+		greeting = '* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN X-FIXTURE] ready\r\n'
+	) {
 		const authIdentity = { ...ident, signerKey: RELAY_PUBLISHER_KEY };
 		const { store } = privateStore(RELAY_PLUGIN_ID, authIdentity);
 		const identity = new PluginToolRunIdentity();
@@ -1644,8 +1647,10 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 				onCommand(wire);
 				const tag = wire.split(' ')[0];
 				let response = `${tag} OK completed\r\n`;
-				if (wire.includes(' EXAMINE '))
-					response = `* FLAGS (\\Seen)\r\n* 1 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] valid\r\n${tag} OK [READ-ONLY] selected\r\n`;
+				if (wire.includes(' LOGIN '))
+					response = `* CAPABILITY IMAP4rev1 AUTH=PLAIN X-FIXTURE\r\n${tag} OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] authenticated\r\n`;
+				else if (wire.includes(' EXAMINE '))
+					response = `* FLAGS (\\Seen $Forwarded)\r\n* 1 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] valid\r\n* OK [HIGHESTMODSEQ 9223372036854775807] metadata\r\n${tag} OK [READ-ONLY] selected\r\n`;
 				else if (wire.includes(' UID SEARCH ')) response = `* SEARCH 12\r\n${tag} OK found\r\n`;
 				else if (wire.includes(' UID FETCH ')) {
 					const section = /BODY\.PEEK\[(.*?)\]/.exec(wire)?.[1];
@@ -1668,7 +1673,7 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 			sockets.push(socket);
 			queueMicrotask(() => {
 				socket.emit('secureConnect');
-				socket.emit('data', Buffer.from('* OK ready\r\n'));
+				socket.emit('data', Buffer.from(greeting));
 			});
 			return socket as unknown as TLSSocket;
 		});
@@ -1840,6 +1845,26 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 				if (operation !== 'mail-search-headers')
 					expect(f.commands.join('\n')).toContain('BODY.PEEK[');
 			}
+		} finally {
+			await f.cleanup();
+		}
+	});
+
+	it.each([
+		'* OK [CAPABILITY IMAP4rev1 LOGINDISABLED] disabled\r\n',
+		'* OK [CAPABILITY AUTH=PLAIN] missing version\r\n',
+		'* OK [CAPABILITY IMAP4rev1 "bad"] malformed\r\n',
+		'* OK [UNKNOWN source] unsupported\r\n',
+	])('rejects unsupported greeting metadata before secret use: %j', async (greeting) => {
+		const f = mailFixture('synthetic body', greeting);
+		try {
+			expect(await f.call('mail-read-body', { reference })).toMatchObject({
+				ok: true,
+				result: { ok: false },
+			});
+			expect(f.nativeSecretRead).not.toHaveBeenCalled();
+			expect(f.commands).toEqual([]);
+			expect(f.sockets.every((socket) => socket.destroyed)).toBe(true);
 		} finally {
 			await f.cleanup();
 		}
