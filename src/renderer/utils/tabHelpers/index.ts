@@ -2288,7 +2288,10 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
  *      tab living inside a tiled group focuses its pane instead of being orphaned.
  *   2. The tab was closed - restore it from the closed-tab history so the jump
  *      lands on that conversation rather than whatever tab happens to be active.
- *   3. No tabId (or it aged out of history) - just force the AI view.
+ *      A tab closed mid-turn that aged out of that history is still parked in
+ *      `orphanedThinkingTabs` while its process runs, so it is restored from
+ *      there (same id, so the running process re-attaches to the visible tab).
+ *   3. No tabId (or it is gone everywhere) - just force the AI view.
  *
  * @param session - The session to update
  * @param tabId - The AI tab to land on. Omit to force the AI view only.
@@ -2302,6 +2305,10 @@ export function focusAiTabInSession(session: Session, tabId?: string): Session {
 		const reopened = reopenClosedAiTabById(session, tabId);
 		if (reopened) {
 			return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+		}
+		const restored = restoreOrphanedTab(session, tabId);
+		if (restored) {
+			return { ...restored.session, ...aiTabFocusFields(restored.tab.id) };
 		}
 	}
 	return { ...session, ...aiTabFocusFields() };
@@ -2485,6 +2492,24 @@ export function getBusyTabs(session: Session, options: { includeOrphans?: boolea
 		: (session.aiTabs ?? []);
 
 	return tabs.filter((tab) => tab.state === 'busy');
+}
+
+/**
+ * The AI tab a "jump to this running agent" lands on: the tab doing the work.
+ * Prefers the active tab when it is the busy one (the jump then changes nothing
+ * but the agent), then the first busy tab in the strip, then a busy tab the user
+ * closed mid-turn (`orphanedThinkingTabs`), which the jump reopens through
+ * `focusAiTabInSession`. Hidden consult tabs are skipped: they answer in the
+ * background, and a palette jump must not surface one.
+ *
+ * @returns undefined when no tab is busy (idle agent, or legacy agent-level busy).
+ */
+export function getRunningJumpTab(session: Session): AITab | undefined {
+	const isRunning = (tab: AITab) => tab.state === 'busy' && !isAiTabHidden(tab);
+	const openTabs = session.aiTabs ?? [];
+	const activeTab = openTabs.find((tab) => tab.id === session.activeTabId);
+	if (activeTab && isRunning(activeTab)) return activeTab;
+	return openTabs.find(isRunning) ?? (session.orphanedThinkingTabs ?? []).find(isRunning);
 }
 
 /**
