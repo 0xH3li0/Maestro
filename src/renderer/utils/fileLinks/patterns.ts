@@ -71,18 +71,23 @@ export const PATH_PATTERN = new RegExp(
  *    whitespace, or a fullwidth `。！？；`), which a directory or file name
  *    essentially never does;
  *  - no segment exceeds 255 characters, the NAME_MAX of every platform we ship.
- * The directory run is lazy, so the match ends at the FIRST file name that
- * closes a path (`/a/SKILL.md and refs/b.md` stops at `SKILL.md`), while the
- * file name itself stays greedy so `/a/archive.tar.gz` keeps its full name.
- * That is a deliberate tradeoff: a real folder whose name holds a file name
- * and a space (`/a/node.js backup/b.md`) is the same text as that prose, and
- * stops at `/a/node.js` too. Stopping early is the safer error of the two.
+ * The match ends at the FIRST file name that closes a path. The directory
+ * run is lazy (`/a/SKILL.md and refs/b.md` stops at `SKILL.md`), and the file
+ * name may not run past a `.ext` that already ends one, i.e. one followed by
+ * whitespace or closing punctuation (`/a/first.md and second.md` and
+ * `/a/b.md, then c.md` stop at the first `.md`). A following `.` is not such
+ * an ending, so `/a/archive.tar.gz` keeps its full name.
+ * That is a deliberate tradeoff: a real folder or file whose name holds a
+ * file name and a space (`/a/node.js backup/b.md`) is the same text as that
+ * prose, and stops at `/a/node.js` too. Stopping early is the safer error.
  */
 const ABSOLUTE_PATH_SEGMENT = `(?!\\s)(?:(?![.;!?]\\s|[。！？；])[^/\\n]){1,255}(?<!\\s)`;
+/** The final segment: the same, but it may not run past a `.ext` that already ends a path. */
+const ABSOLUTE_PATH_FILE_SEGMENT = `(?!\\s)(?:(?!\\.(?:${LINKABLE_EXTENSIONS})(?:\\s|[,;:!?\`'"\\)\\]}>])|[.;!?]\\s|[。！？；])[^/\\n]){1,255}(?<!\\s)`;
 /** A word character, except in the scripts written without spaces between words. */
 const SPACED_WORD_CHAR = `(?![\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}])[\\p{L}\\p{N}_]`;
 export const ABSOLUTE_PATH_PATTERN = new RegExp(
-	`(?<!${SPACED_WORD_CHAR})\\/(?:${ABSOLUTE_PATH_SEGMENT}\\/)+?${ABSOLUTE_PATH_SEGMENT}\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
+	`(?<!${SPACED_WORD_CHAR})\\/(?:${ABSOLUTE_PATH_SEGMENT}\\/)+?${ABSOLUTE_PATH_FILE_SEGMENT}\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
 	'giu'
 );
 

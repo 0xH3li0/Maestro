@@ -490,6 +490,18 @@ describe('remarkFileLinks', () => {
 			expect(result).toContain('[/other/place/archive.tar.gz](file:///other/place/archive.tar.gz)');
 		});
 
+		it.each([
+			['Open /other/place/first.md and second.md now.', 'first.md and second'],
+			['See /other/place/first.md, then second.md.', 'first.md, then second'],
+		])(
+			'stops the file name at the first extension that ends a path: %j',
+			async (text, swallowed) => {
+				const result = await processMarkdown(text, sampleFileTree, '', '/Users/pedram/Project');
+				expect(result).toContain('[/other/place/first.md](file:///other/place/first.md)');
+				expect(result).not.toContain(swallowed);
+			}
+		);
+
 		it('keeps prose that runs into a later absolute path out of the link', async () => {
 			const result = await processMarkdown(
 				'Read /handoff notes in /other/place/report.md first.',
