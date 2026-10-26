@@ -34,6 +34,12 @@ const DATA_DIR =
 vi.mock('electron', () => ({
 	app: { getPath: () => DATA_DIR },
 }));
+// The encoder runs in a worker the build produces; bundle it for the source run.
+vi.mock('worker_threads', async (importOriginal) =>
+	(await import('../../helpers/onnxWorkerE2e')).workerThreadsWithBuiltOnnxWorker(
+		await importOriginal<typeof import('worker_threads')>()
+	)
+);
 
 import {
 	downloadLocalModel,
