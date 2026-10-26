@@ -14,6 +14,7 @@ import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType } from '../../shared/types';
 import { getOutputParser } from '../parsers';
 import { captureException } from '../utils/sentry';
+import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import {
@@ -400,6 +401,21 @@ export function runProcess(
 			});
 			stderr += `\nSpawn error: ${error.message}`;
 			finish('failed', null);
+		});
+
+		// Handle stdin errors. A stream error with no listener is an uncaught
+		// exception; a child that exits while a large prompt is still being
+		// written raises EPIPE, and the exit that follows settles the run. Same
+		// handling as ChildProcessSpawner.
+		child.stdin?.on('error', (err) => {
+			const errorCode = (err as NodeJS.ErrnoException).code;
+			if (errorCode === 'EPIPE') {
+				logger.debug('[CUE] stdin EPIPE - process closed before write completed', 'Cue', {
+					runId,
+				});
+			} else {
+				logger.error('[CUE] stdin error', 'Cue', { runId, error: String(err) });
+			}
 		});
 
 		// Write to stdin based on execution mode

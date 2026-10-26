@@ -324,6 +324,84 @@ describe('cue-spawn-builder', () => {
 				}
 			});
 
+			it('refuses a multi-line prompt for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					multiLinePrompt
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: `Codex at ${shimPath} only starts through cmd.exe, which cannot pass the prompt intact: it contains a line break, which ends a cmd.exe command line`,
+				});
+			});
+
+			it('refuses a prompt containing % for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'Use %USERPROFILE% as the root'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('cannot pass the prompt intact');
+					expect(result.message).toContain('it contains %, which cmd.exe expands as a variable');
+				}
+			});
+
+			it('refuses a prompt containing ^ for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'match ^main$'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('it contains ^, which cmd.exe would pass on doubled');
+				}
+			});
+
+			it('still runs a stdin-capable agent with a multi-line, % prompt: it never rides cmd.exe', async () => {
+				useStdinCapableCodex();
+				const prompt = 'Use %USERPROFILE% as the root.\nThen match ^main$.';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					prompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.args).toEqual(['exec', '--json']);
+					expect(result.spec.stdinPrompt).toBe(prompt);
+				}
+			});
+
+			it('refuses any other shell-bound argument cmd.exe would rewrite, even with the prompt on stdin', async () => {
+				useStdinCapableCodex();
+				mockApplyOverrides.mockReturnValueOnce({
+					args: ['exec', '--json', '--config', 'home=%APPDATA%'],
+					effectiveCustomEnvVars: undefined,
+				} as unknown as ReturnType<typeof mockApplyOverrides>);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('cannot pass the argument "home=%APPDATA%" intact');
+				}
+			});
+
 			it('leaves a Windows .exe untouched: no shell, prompt in argv', async () => {
 				useStdinCapableCodex();
 				const exe = 'C:\\Users\\dev\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe';
@@ -355,6 +433,22 @@ describe('cue-spawn-builder', () => {
 				if (result.ok) {
 					expect(result.spec.shell).toBeUndefined();
 					expect(result.spec.args).toEqual(['exec', '--json', '--', 'prompt']);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
+
+			it('passes a multi-line, % prompt through untouched off Windows', async () => {
+				mockIsWindows.mockReturnValue(false);
+				useStdinCapableCodex(false);
+				const prompt = 'Use %HOME% as the root.\nThen match ^main$.';
+
+				const result = await buildSpawnSpec(createConfig({ toolType: 'codex' }), prompt);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.command).toBe('codex');
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', prompt]);
 					expect(result.spec.stdinPrompt).toBeUndefined();
 				}
 			});

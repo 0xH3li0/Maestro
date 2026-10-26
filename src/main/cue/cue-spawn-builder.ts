@@ -72,6 +72,29 @@ function isWindowsBatchShim(command: string): boolean {
 	return ext === '.cmd' || ext === '.bat';
 }
 
+/**
+ * Why `arg` cannot reach the program intact as one argument of a cmd.exe
+ * command line built with `escapeCmdArg()`, or null when it can.
+ *
+ * - A line break ends the command line, so the rest of the argument is lost
+ *   (or runs as a second command).
+ * - `%NAME%` is expanded inside double quotes, and there is no escape for it
+ *   on a command line.
+ * - `^` is literal inside double quotes, so the `^^` that `escapeCmdArg()`
+ *   writes arrives doubled.
+ *
+ * Same rule, name and wording as rc's `cmdShellArgProblem()` in
+ * `src/shared/maestro-lib/launch/windows-command.ts`, which main does not have
+ * yet. When main is merged into rc, rc's builder (which imports that one) wins
+ * this file and this copy goes.
+ */
+function cmdShellArgProblem(arg: string): string | null {
+	if (/[\r\n]/.test(arg)) return 'it contains a line break, which ends a cmd.exe command line';
+	if (arg.includes('%')) return 'it contains %, which cmd.exe expands as a variable';
+	if (arg.includes('^')) return 'it contains ^, which cmd.exe would pass on doubled';
+	return null;
+}
+
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
 export interface SpawnBuildError {
 	ok: false;
@@ -182,6 +205,9 @@ export async function buildSpawnSpec(
 	let sshStdinScript: string | undefined;
 	let sshRemoteCommand: string | undefined;
 	let stdinPrompt: string | undefined;
+	// The args step 5 appended to carry the prompt locally, so a cmd.exe refusal
+	// can say it was the prompt.
+	let promptArgv: string[] = [];
 	let sshRemoteUsed: SpawnSpec['sshRemoteUsed'];
 
 	// 3b. Resolve the Claude token source (TUI / API / dynamic) the same way the
@@ -305,12 +331,13 @@ export async function buildSpawnSpec(
 		stdinPrompt = substitutedPrompt;
 	} else if (!sshRemoteUsed) {
 		if (agentDef.promptArgs) {
-			spawnArgs = [...spawnArgs, ...agentDef.promptArgs(substitutedPrompt)];
+			promptArgv = agentDef.promptArgs(substitutedPrompt);
 		} else if (agentDef.noPromptSeparator) {
-			spawnArgs = [...spawnArgs, substitutedPrompt];
+			promptArgv = [substitutedPrompt];
 		} else {
-			spawnArgs = [...spawnArgs, '--', substitutedPrompt];
+			promptArgv = ['--', substitutedPrompt];
 		}
+		spawnArgs = [...spawnArgs, ...promptArgv];
 	}
 
 	// 6. Realize an interactive (maestro-p) decision for local spawns. Applied
@@ -342,8 +369,24 @@ export async function buildSpawnSpec(
 	// argument escaped for it and a command path containing spaces quoted
 	// (cmd.exe would split "C:\Users\First Last\...\claude.cmd"), matching
 	// ChildProcessSpawner.
+	//
+	// Every argument rides the cmd.exe command line: the agent's own flags, the
+	// model, custom args, and the prompt when the agent cannot read it from
+	// stdin (omp). One that cmd.exe would cut off or rewrite fails the run here
+	// rather than handing the agent different instructions, as rc's
+	// planSessionTurn does.
 	let shell: boolean | undefined;
 	if (!sshRemoteUsed && isWindowsBatchShim(command)) {
+		const promptArgs = new Set(promptArgv);
+		for (const arg of spawnArgs) {
+			const problem = cmdShellArgProblem(arg);
+			if (!problem) continue;
+			const what = promptArgs.has(arg) ? 'the prompt' : `the argument "${arg}"`;
+			return {
+				ok: false,
+				message: `${agentDef.name} at ${command} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+			};
+		}
 		shell = true;
 		spawnArgs = escapeCmdArgs(spawnArgs);
 		if (/\s/.test(command) && !command.startsWith('"')) {
