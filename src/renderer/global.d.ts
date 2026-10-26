@@ -300,7 +300,11 @@ interface MaestroAPI {
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
-		getBootstrap: () => Promise<any[]>;
+		getBootstrap: () => Promise<
+			(import('./types').Session & {
+				transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
+			})[]
+		>;
 		getDeferredContent: (
 			sessionId: string,
 			tabId: string | null,

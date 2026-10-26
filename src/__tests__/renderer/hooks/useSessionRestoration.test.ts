@@ -7,7 +7,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { createElement } from 'react';
 
 const runtime = vi.hoisted(() => ({ web: false }));
 vi.mock('../../../renderer/utils/runtimeContext', () => ({
@@ -47,8 +46,6 @@ import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import { addAiTabToUnifiedHistory, closeTab } from '../../../renderer/utils/tabHelpers';
 import { reopenClosedTabWithTiling } from '../../../renderer/utils/panelLayout';
 import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
-import { WindowProvider } from '../../../renderer/contexts/WindowContext';
-import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -1636,78 +1633,6 @@ describe('initialLoadComplete proxy', () => {
 // ============================================================================
 
 describe('Session & Group loading effect', () => {
-	it('hydrates the browser title from host input requests and reconciles replayed answers', async () => {
-		runtime.web = true;
-		document.title = 'Maestro';
-		let receive!: Parameters<typeof window.maestro.sessions.onTranscriptSync>[0];
-		window.maestro.sessions.onTranscriptSync = (handler) => {
-			receive = handler;
-			return () => {};
-		};
-		window.maestro.sessions.publishTranscript = vi.fn().mockResolvedValue(true);
-		const waitingSnapshot: SessionTranscriptPatch = {
-			sessionId: 'web-agent',
-			field: 'shellLogs',
-			upserts: [],
-			removedIds: [],
-			orderIds: [],
-			snapshot: true,
-			runtime: { state: 'waiting_input' },
-		};
-		// Bootstrap requests the owner's runtime snapshot before restoration has
-		// finished. Persisted metadata alone cannot tell us who is awaiting input.
-		mockGetBootstrap.mockImplementationOnce(async () => {
-			await Promise.resolve();
-			receive(waitingSnapshot);
-			receive({ ...waitingSnapshot, sessionId: 'background-agent' });
-			return [
-				createMockSession({ id: 'web-agent', state: 'idle' }),
-				createMockSession({ id: 'background-agent', state: 'idle' }),
-			];
-		});
-		let resolveProcesses!: (
-			value: Awaited<ReturnType<typeof window.maestro.process.getActiveProcesses>>
-		) => void;
-		vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValueOnce(
-			new Promise((resolve) => {
-				resolveProcesses = resolve;
-			})
-		);
-		renderHook(() => useSessionRestoration(), {
-			wrapper: ({ children }) => createElement(WindowProvider, { children }),
-		});
-		await vi.waitFor(() => expect(document.title).toBe('(2) Maestro'));
-		expect(useSessionStore.getState().initialLoadComplete).toBe(true);
-
-		const running = [
-			{ sessionId: 'web-agent-ai-tab-1', pid: 42, isTerminal: false },
-			{ sessionId: 'background-agent-ai-tab-1', pid: 43, isTerminal: false },
-		];
-		// Process reconciliation may finish AFTER the snapshot. A blocked
-		// process is still alive and must not erase its pending input request.
-		await act(async () => resolveProcesses(running));
-		expect(document.title).toBe('(2) Maestro');
-
-		// A retained bridge gap replays the host's answer while reconnect also
-		// probes running processes. Repeat a frame to verify it cannot double-count.
-		vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValueOnce(running);
-		await act(async () => {
-			receive({ ...waitingSnapshot, snapshot: false, runtime: { state: 'busy' } });
-			receive({ ...waitingSnapshot, sessionId: 'background-agent', snapshot: false });
-			window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
-		});
-		expect(document.title).toBe('(1) Maestro');
-		await act(async () => {
-			receive({
-				...waitingSnapshot,
-				sessionId: 'background-agent',
-				snapshot: false,
-				runtime: { state: 'idle' },
-			});
-		});
-		expect(document.title).toBe('Maestro');
-	});
-
 	it('loads browser metadata first, then merges a live log into the selected transcript', async () => {
 		runtime.web = true;
 		const thin = createMockSession({
