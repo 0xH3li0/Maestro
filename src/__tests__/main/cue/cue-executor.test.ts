@@ -130,10 +130,10 @@ vi.mock('../../../shared/platformDetection', async (importOriginal) => {
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;
-	stdin = {
+	stdin = Object.assign(new EventEmitter(), {
 		write: vi.fn(),
 		end: vi.fn(),
-	};
+	});
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
