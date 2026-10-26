@@ -303,7 +303,7 @@ export function AgentEnvVarsSection({
 								value={value}
 								knownAuthDirs={knownAuthDirs}
 								onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
-								onBlur={onEnvVarsBlur}
+								onBlur={() => onEnvVarsBlur()}
 								className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
 								containerClassName="flex-[2] min-w-0"
 								style={{

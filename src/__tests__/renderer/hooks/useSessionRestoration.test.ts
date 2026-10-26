@@ -48,7 +48,6 @@ import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import { addAiTabToUnifiedHistory, closeTab } from '../../../renderer/utils/tabHelpers';
 import { reopenClosedTabWithTiling } from '../../../renderer/utils/panelLayout';
-import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
 
 // Cast to access mock methods
 const mockGitService = gitService as {

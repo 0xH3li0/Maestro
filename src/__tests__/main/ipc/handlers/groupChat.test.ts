@@ -57,7 +57,8 @@ vi.mock('../../../../main/group-chat/group-chat-storage', () => ({
 }));
 
 // The participant summary's agent turn. Never spawns in these tests.
-vi.mock('../../../../main/utils/context-groomer', () => ({
+vi.mock('../../../../main/utils/context-groomer', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/context-groomer')>()),
 	groomContext: vi.fn(),
 }));
 

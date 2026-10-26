@@ -85,6 +85,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli show agent <agent-id> --show-secrets',
 	],
 	'show playbook': ['maestro-cli show playbook <playbook-id>'],
+	'duplicate-agent': ['maestro-cli duplicate-agent <agent-id> --background'],
+	interrupt: ['maestro-cli interrupt <agent-id> --tab active'],
+	'live status': ['maestro-cli live status --json'],
+	'live on': ['maestro-cli live on --background'],
+	'live off': ['maestro-cli live off --background'],
+	'live tunnel': ['maestro-cli live tunnel off'],
 
 	// Run work
 	playbook: [
@@ -289,6 +295,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'tab enter-to-send': ['maestro-cli tab enter-to-send <tab-id> false'],
 	'tab move': ['maestro-cli tab move <tab-id> first'],
 	'tab suggest-cleanup': ['maestro-cli tab suggest-cleanup --json'],
+	'tab closed': ['maestro-cli tab closed --agent <agent-id> --json'],
+	'tab reopen': ['maestro-cli tab reopen --agent <agent-id> --index 0 --background'],
+	'tab compact': ['maestro-cli tab compact active --agent <agent-id> --background'],
+	'tab merge': ['maestro-cli tab merge <tab-id> --into <agent-id> --background'],
+	'tab transfer': ['maestro-cli tab transfer <tab-id> --to <agent-id> --background'],
 
 	// SSH remotes
 	'create-ssh-remote': [

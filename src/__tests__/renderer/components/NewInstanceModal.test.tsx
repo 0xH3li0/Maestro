@@ -2514,7 +2514,11 @@ describe('NewInstanceModal', () => {
 				expected.retryOnTokenExhaustion,
 				expected.additionalDirectories,
 				expected.codexAutoResetOnExhaustion,
-				expected.codexTransport
+				expected.codexTransport,
+				undefined, // No gateway override.
+				undefined, // Provider is the default Run-on target.
+				{ peerAgents: undefined, groupPeerAccess: undefined, worktreePeerAccess: undefined },
+				undefined // No group-seeded extras.
 			);
 		});
 

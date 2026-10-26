@@ -111,7 +111,8 @@ markdown file is open in preview.
 
 The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
 `Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
-Table of Contents on the other side. Ask a question and the agent whose
+Table of Contents on the other side. The panel sits above the button, which stays
+visible while the chat is open. Ask a question and the agent whose
 workspace the file lives in reads it and answers there. It is not limited to the
 file: it reads whatever else it needs and uses its tools normally. It just
 starts from your document rather than from nothing.
@@ -125,7 +126,8 @@ Type into the box, or use the microphone beside Send:
   about this document and the reply is spoken back.
 
 The microphone works as a hold or as a tap: hold it for one sentence, or tap
-once to leave it running and tap again to stop.
+once to leave it running and tap again to stop. Releasing a hold sends the utterance
+and keeps the voice session. Closing the panel ends its document voice session.
 
 All inputs land in the **same conversation**, so you can ask something out loud,
 type the follow-up, and read both in the chat. The conversation is an ordinary
@@ -133,11 +135,10 @@ AI tab that Maestro keeps out of your tab strip until you want it, which means:
 
 - **It survives a restart.** Come back to the file tomorrow, open the chat, and
   the whole conversation is still there.
-- **Keep as a tab** adds it to the tab strip without leaving the document.
+- **Open in tab** in the panel header reveals the conversation in the tab strip
+  and switches to it.
 - **History** restores an earlier conversation about this file. **New chat**
   starts a fresh session and keeps the previous thread in that history.
-- **Thinking** cycles between hidden reasoning, reasoning shown while the agent
-  works, and reasoning kept above the answer.
 
 Attach, paste, or drop images into the composer. **Stop** interrupts this
 document's reply and withdraws its queued messages. The chat's text size is

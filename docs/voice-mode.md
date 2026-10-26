@@ -248,23 +248,22 @@ You can also start a session from the microphone under the **Send button** in th
 
 Point a session at one file and the conversation is about that file. Three ways in, all doing the same thing:
 
-- The **microphone in the File Preview toolbar**, on any file you have open. It is also the stop button while that file's session is running.
+- The **microphone in the document chat**, opened from the bottom-left chat button in the preview. Tap it to start or stop, or hold it to speak and release to send.
 - **Talk with Document** in the **Files panel** right-click menu.
 - **File: Talk with Document** in the command palette, while a file preview is the active tab.
 
-Starting a document session opens the file preview and its chat panel. You can close the panel while continuing to speak; starting another session opens it again.
+Starting a document session opens the file preview and its chat panel before recording begins. Closing the panel or leaving the preview ends its document voice session. Releasing a microphone hold sends the utterance and keeps the session.
 
-The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one when needed and continuing it even if you click away to another tab. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
+The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one when needed. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
 
-The HUD names the **file** rather than the agent while a document session is running, because what you want confirmed before speaking is which document you are talking about.
+The panel names the **file** and owns its microphone and transcript. Document sessions do not show a separate voice HUD.
 
 A document conversation is an ordinary AI tab, tagged with the file it is about, and it is the **same conversation the chat bubble types into** - see [Chatting with a document](./file-preview#chatting-with-a-document). So you can ask something out loud, type the follow-up, and read both in either place. It also survives a restart: come back to the file tomorrow and the conversation is still there.
 
 <Note>
-	The microphone hides itself when A Cappella is off, and for any file with no text in it: images
-	(SVG included), audio and video, and compiled binaries and archives. You can also hide the toolbar
-	button on its own in **Settings → Display → File Edit & Preview**; the right-click entry and the
-	palette command stay.
+	Talk with Document is offered only when A Cappella is on and the file has text to read.
+	With A Cappella off, the chat microphone uses dictation when available. Images (SVG included),
+	audio and video, compiled binaries, and archives do not offer document chat.
 </Note>
 
 ## While a session is running

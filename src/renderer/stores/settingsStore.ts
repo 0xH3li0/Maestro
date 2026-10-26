@@ -291,7 +291,6 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'copyContent',
 	'publishGist',
 	'documentGraph',
-	'talkWithDocument',
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',

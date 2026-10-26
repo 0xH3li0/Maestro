@@ -13,7 +13,6 @@ import {
 	Edit,
 	Share2,
 	GitGraph,
-	Mic,
 	ExternalLink,
 	FolderOpen,
 	WrapText,
@@ -78,13 +77,6 @@ interface FilePreviewHeaderProps {
 	copyPathToClipboard: () => void;
 	/** Open the image annotator to edit the previewed image. Images only. */
 	onEditImage?: () => void;
-	/**
-	 * Start a voice session about this file. Omitted when A Cappella is off, which
-	 * is the Encore rule: a feature nobody turned on adds no buttons anywhere.
-	 */
-	onTalkWithDocument?: () => void;
-	/** True while the live voice session is already about THIS file. */
-	isTalkingAboutDocument?: boolean;
 	headerBtnClass: string;
 	headerIconClass: string;
 	/** Whether the previewed file is HTML (.html / .htm). */
@@ -148,8 +140,6 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	copyContentToClipboard,
 	copyPathToClipboard,
 	onEditImage,
-	onTalkWithDocument,
-	isTalkingAboutDocument = false,
 	headerBtnClass,
 	headerIconClass,
 	isHtml,
@@ -355,24 +345,6 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			label: hasGist ? 'View published gist' : 'Publish as GitHub Gist',
 			onClick: onPublishGist,
 			active: hasGist,
-		});
-	}
-	// Talk with Document - opens a voice session with this file as the
-	// conversation's subject. It doubles as the stop control while that session
-	// is running, matching the composer microphone: one button that reads as
-	// active is what stops a second session being opened on top of the first.
-	if (toolbarVisibility.talkWithDocument && onTalkWithDocument) {
-		actions.push({
-			kind: 'button',
-			key: 'talkWithDocument',
-			icon: Mic,
-			label: isTalkingAboutDocument
-				? 'End the voice session about this document'
-				: 'Talk with this document',
-			onClick: onTalkWithDocument,
-			active: isTalkingAboutDocument,
-			pressed: isTalkingAboutDocument,
-			testId: 'talk-with-document-button',
 		});
 	}
 	// Document Graph - markdown files, when the callback is available.

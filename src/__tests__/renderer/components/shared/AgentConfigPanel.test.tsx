@@ -1159,7 +1159,7 @@ describe('AgentConfigPanel blur callbacks', () => {
 
 		fireEvent.blur(screen.getByDisplayValue('on'));
 
-		expect(onEnvVarsBlur).toHaveBeenCalled();
+		expect(onEnvVarsBlur).toHaveBeenCalledTimes(1);
 		for (const call of onEnvVarsBlur.mock.calls) {
 			expect(call).toEqual([]);
 		}

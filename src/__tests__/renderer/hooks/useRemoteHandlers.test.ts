@@ -29,7 +29,8 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 // Cross-agent mention planning is exercised through its seam: the planner
 // decides, the hook must act on the decision (consult, and skip the spawn for
 // a leading mention).
-vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/crossAgentMentions')>()),
 	planCrossAgentMentions: vi.fn(() => null),
 	dispatchCrossAgentMentions: vi.fn(),
 	previewMentionDispatch: vi.fn(() => ({ consultTargets: [], handoffTargets: [] })),
@@ -828,6 +829,7 @@ describe('useRemoteHandlers', () => {
 				'fix it, @Reviewer too',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
 				undefined
 			);
 			// Consult first: this agent answers when the hold releases, not now.

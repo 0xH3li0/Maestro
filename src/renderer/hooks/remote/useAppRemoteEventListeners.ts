@@ -68,6 +68,7 @@ import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
 import { seedRemoteCreate } from '../../services/groupSeededCreate';
 import type { GroupDefaultsCreateFields } from '../../../shared/groupAgentDefaults';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
+import { requestDocumentChatPanel } from '../../services/documentChatPanel';
 import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
@@ -267,8 +268,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, background, switchToAgent, mediaMode, line } = (e as CustomEvent)
-			.detail as {
+		const { sessionId, filePath, background, switchToAgent, mediaMode, line, documentChat } = (
+			e as CustomEvent
+		).detail as {
 			sessionId: string;
 			filePath: string;
 			/**
@@ -291,6 +293,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
+			/** Open the document's embedded chat after the preview is ready. */
+			documentChat?: 'voice';
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -359,6 +363,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					},
 					{ targetSessionId: sessionId, activate: !background, mediaMode }
 				);
+				if (documentChat === 'voice' && !background) {
+					requestDocumentChatPanel({ path: filePath, sessionId, voice: true });
+				}
 			}
 		} catch (error) {
 			logger.error('[Remote] Failed to open file tab:', undefined, error);

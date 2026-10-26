@@ -2106,6 +2106,10 @@ Duplicate an agent with the same settings the Left Bar "Duplicate..." copies (re
 | `--focus`           | Select the copy after creating it (default)                                                  | -       |
 | `--json`            | Output as JSON (for scripting)                                                               | -       |
 
+```bash
+maestro-cli duplicate-agent <agent-id> --background
+```
+
 ## `maestro-cli create-group <name>`
 
 Create a new group in the Maestro desktop app
@@ -2428,6 +2432,10 @@ Stop an agent's running turn (every busy tab, like the Stop pill), or one tab's 
 | `--tab <tab-id>` | Stop only this tab (exact id, unique prefix, or "active") | -       |
 | `--json`         | Output as JSON (for scripting)                            | -       |
 
+```bash
+maestro-cli interrupt <agent-id> --tab active
+```
+
 ## `maestro-cli live`
 
 Read or switch Live mode (the web interface other devices on the network can open)
@@ -2440,6 +2448,10 @@ Show whether Live mode is on, its web interface URL, and Remote Control
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+```bash
+maestro-cli live status --json
+```
+
 ## `maestro-cli live on`
 
 Turn Live mode on, as the LIVE pill does (no-op when already on; answers with the status)
@@ -2450,6 +2462,10 @@ Turn Live mode on, as the LIVE pill does (no-op when already on; answers with th
 | `--background` | Accepted for uniformity; Live mode moves no view                     | -       |
 | `--json`       | Output as JSON (for scripting)                                       | -       |
 
+```bash
+maestro-cli live on --background
+```
+
 ## `maestro-cli live off`
 
 Turn Live mode off and stop Remote Control, as the LIVE pill does (no-op when already off)
@@ -2459,6 +2475,10 @@ Turn Live mode off and stop Remote Control, as the LIVE pill does (no-op when al
 | `--background` | Accepted for uniformity; Live mode moves no view | -       |
 | `--json`       | Output as JSON (for scripting)                   | -       |
 
+```bash
+maestro-cli live off --background
+```
+
 ## `maestro-cli live tunnel <state>`
 
 Start (on) or stop (off) Remote Control, the Cloudflare tunnel to the web interface. "on" needs Live mode on.
@@ -2466,6 +2486,10 @@ Start (on) or stop (off) Remote Control, the Cloudflare tunnel to the web interf
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli live tunnel off
+```
 
 ## `maestro-cli tab`
 
@@ -2691,6 +2715,10 @@ List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
 | `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
 | `--json`           | Output as JSON (for scripting)                                 | -       |
 
+```bash
+maestro-cli tab closed --agent <agent-id> --json
+```
+
 ## `maestro-cli tab reopen`
 
 Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
@@ -2704,6 +2732,10 @@ Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
 | `--focus`          | Switch to the restored tab (default)                             | -       |
 | `--json`           | Output as JSON (for scripting)                                   | -       |
 
+```bash
+maestro-cli tab reopen --agent <agent-id> --index 0 --background
+```
+
 ## `maestro-cli tab compact [tab-id]`
 
 Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
@@ -2714,6 +2746,10 @@ Context: Compact - summarize a tab into a new tab beside it (default: the active
 | `--json`           | Output as JSON (for scripting)                          | -       |
 | `--background`     | Keep the source tab selected (no view change, no toast) | -       |
 | `--focus`          | Switch to the compacted tab (default)                   | -       |
+
+```bash
+maestro-cli tab compact active --agent <agent-id> --background
+```
 
 ## `maestro-cli tab merge [tab-id]`
 
@@ -2728,6 +2764,10 @@ Context: Merge Into - send a tab's transcript, verbatim, into another agent's ta
 | `--background`          | Stay put; the context waits on the target tab and sends when that tab is opened | -       |
 | `--focus`               | Jump to the target tab, which sends the context (default)                       | -       |
 
+```bash
+maestro-cli tab merge <tab-id> --into <agent-id> --background
+```
+
 ## `maestro-cli tab transfer [tab-id]`
 
 Context: Send to Agent - open a new tab in another agent carrying this tab's transcript, verbatim
@@ -2739,6 +2779,10 @@ Context: Send to Agent - open a new tab in another agent carrying this tab's tra
 | `--to <agent>`     | The agent that gets the new tab                | -       |
 | `--background`     | Add the tab without selecting it or the agent  | -       |
 | `--focus`          | Jump to the new tab (default)                  | -       |
+
+```bash
+maestro-cli tab transfer <tab-id> --to <agent-id> --background
+```
 
 ## `maestro-cli create-ssh-remote <name>`
 

@@ -2035,7 +2035,17 @@ describe('web-server/web-server-factory', () => {
 			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
 				.calls[0][0];
 
-			void callback('session-1', 'tell @Backend', 'ai', 'tab-1', undefined, true, false, 'handoff');
+			void callback(
+				'session-1',
+				'tell @Backend',
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				undefined,
+				'handoff'
+			);
 
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:enqueueCommand',
@@ -2047,6 +2057,7 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				true,
 				false,
+				undefined,
 				'handoff'
 			);
 		});
