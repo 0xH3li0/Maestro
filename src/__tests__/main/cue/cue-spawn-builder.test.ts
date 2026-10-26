@@ -398,8 +398,50 @@ describe('cue-spawn-builder', () => {
 
 				expect(result.ok).toBe(false);
 				if (!result.ok) {
-					expect(result.message).toContain('cannot pass the argument "home=%APPDATA%" intact');
+					expect(result.message).toContain('cannot pass the value of --config intact');
+					expect(result.message).not.toContain('%APPDATA%');
 				}
+			});
+
+			describe('never quotes a refused argument, which may be a credential', () => {
+				async function refusalFor(args: string[]) {
+					useStdinCapableCodex();
+					mockApplyOverrides.mockReturnValueOnce({
+						args,
+						effectiveCustomEnvVars: undefined,
+					} as unknown as ReturnType<typeof mockApplyOverrides>);
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'prompt'
+					);
+					expect(result.ok).toBe(false);
+					return result.ok ? '' : result.message;
+				}
+
+				it('names a --flag=value argument by its flag', async () => {
+					const message = await refusalFor(['exec', '--json', '--api-key=ab%cd']);
+
+					expect(message).toContain(
+						'cannot pass the value of --api-key intact: it contains %, which cmd.exe expands as a variable'
+					);
+					expect(message).not.toContain('ab%cd');
+				});
+
+				it('names the value of a --flag value pair by its flag', async () => {
+					const message = await refusalFor(['exec', '--json', '--token', 'ab^cd']);
+
+					expect(message).toContain(
+						'cannot pass the value of --token intact: it contains ^, which cmd.exe would pass on doubled'
+					);
+					expect(message).not.toContain('ab^cd');
+				});
+
+				it('names any other argument by its position', async () => {
+					const message = await refusalFor(['exec', '--json', '--', 'ab%cd']);
+
+					expect(message).toContain('cannot pass argument 4 intact');
+					expect(message).not.toContain('ab%cd');
+				});
 			});
 
 			it('leaves a Windows .exe untouched: no shell, prompt in argv', async () => {

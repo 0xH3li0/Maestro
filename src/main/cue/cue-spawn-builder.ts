@@ -95,6 +95,28 @@ function cmdShellArgProblem(arg: string): string | null {
 	return null;
 }
 
+/**
+ * Name `args[index]` for a refusal message without quoting it. A value can be
+ * a credential (a custom `--api-key=...`), and the message lands in the Cue log
+ * and the run history; flag names are not secrets, so a value is named by the
+ * flag it belongs to, and anything else by its position.
+ */
+function describeCmdShellArg(
+	args: readonly string[],
+	index: number,
+	promptArgs: ReadonlySet<string>
+): string {
+	const arg = args[index];
+	if (promptArgs.has(arg)) return 'the prompt';
+	const eq = arg.indexOf('=');
+	if (arg.startsWith('-') && eq > 0) return `the value of ${arg.slice(0, eq)}`;
+	const previous = index > 0 ? args[index - 1] : undefined;
+	if (previous?.startsWith('-') && previous !== '--' && !previous.includes('=')) {
+		return `the value of ${previous}`;
+	}
+	return `argument ${index + 1}`;
+}
+
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
 export interface SpawnBuildError {
 	ok: false;
@@ -378,10 +400,10 @@ export async function buildSpawnSpec(
 	let shell: boolean | undefined;
 	if (!sshRemoteUsed && isWindowsBatchShim(command)) {
 		const promptArgs = new Set(promptArgv);
-		for (const arg of spawnArgs) {
+		for (const [index, arg] of spawnArgs.entries()) {
 			const problem = cmdShellArgProblem(arg);
 			if (!problem) continue;
-			const what = promptArgs.has(arg) ? 'the prompt' : `the argument "${arg}"`;
+			const what = describeCmdShellArg(spawnArgs, index, promptArgs);
 			return {
 				ok: false,
 				message: `${agentDef.name} at ${command} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
