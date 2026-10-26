@@ -13,6 +13,7 @@
  *   - Exit that dequeues an item marks the target tab busy (with its user log)
  *   - Exit that dequeues an item for a closed tab marks the orphan busy
  *   - Exit leaves an item queued when its target tab is still mid-turn (MAESTRO-ZS)
+ *   - A held item whose busy target is a closed (orphan) tab keeps the agent busy
  *   - A failed dispatch after the exit is logged, not left as an unhandled rejection
  */
 
@@ -273,6 +274,46 @@ describe('useAgentExecution - Auto Run exit vs. parallel tab busy state', () => 
 		expect(next.activeTabId).toBe('tab-a');
 		// tab-b is still running, so the agent stays busy.
 		expect(next.state).toBe('busy');
+
+		// Let the Auto Run task's queue-drain poll settle so no timer outlives the test.
+		sessionsRef.current = [{ ...next, state: 'idle' }];
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 80));
+		});
+	});
+
+	// The same hold, but the user closed tab-c mid-turn so it lives in
+	// orphanedThinkingTabs. Every open tab is idle, so an aiTabs-only busy check
+	// settled the agent idle - and the Auto Run queue wait, which stops on an idle
+	// agent, resumed the run while the closed tab and its follow-up were pending.
+	it('keeps the agent busy when the held item targets a closed tab still mid-turn', async () => {
+		const processQueuedItem = vi.fn(async () => {});
+		const sessionsRef = {
+			current: [
+				createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					busySource: 'ai',
+					activeTabId: 'tab-a',
+					executionQueue: [queuedMessage('tab-c')],
+					aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })],
+					orphanedThinkingTabs: [
+						createMockAITab({ id: 'tab-c', state: 'busy', thinkingStartTime: 1000 }),
+					],
+				}),
+			],
+		};
+
+		const next = await runExit(sessionsRef.current[0], processQueuedItem, sessionsRef);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(next.executionQueue.map((item) => item.id)).toEqual(['queued-1']);
+		expect(next.orphanedThinkingTabs?.[0].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.busySource).toBe('ai');
 
 		// Let the Auto Run task's queue-drain poll settle so no timer outlives the test.
 		sessionsRef.current = [{ ...next, state: 'idle' }];

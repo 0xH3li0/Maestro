@@ -9,6 +9,7 @@ import {
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 	isQueuedItemTargetBusy,
+	getBusyTabs,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -517,13 +518,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											};
 										}
 
-										// No queued items. This spawn ran under its own `-batch-` process id
+										// Nothing to dispatch: the queue is empty, or its next item is held
+										// for a tab still mid-turn. This spawn ran under its own `-batch-` process id
 										// and deliberately never marked a tab busy (see the spawn site), so
 										// its exit must not clear tabs whose own `-ai-{tabId}` agents are
 										// still running in parallel - that drops the in-progress indicator
 										// from threads that are very much still working. Each of those tabs
-										// is cleared by its own onExit handler.
-										const anyTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+										// is cleared by its own onExit handler. A closed tab still mid-turn
+										// (orphanedThinkingTabs) counts too: a held item can be waiting on
+										// one, and settling the agent idle would end the Auto Run queue wait
+										// below while that turn and its follow-up are still pending.
+										const anyTabStillBusy = getBusyTabs(s, { includeOrphans: true }).length > 0;
 
 										return {
 											...s,
