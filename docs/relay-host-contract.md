@@ -269,6 +269,14 @@ requires Relay's existing exact-agent `agents:dispatch` grant carrying the separ
 `unattended` consent. Interactive account rights alone do not grant that authority.
 No new unattended ledger or automatic consent is introduced.
 
+The desktop composer explicitly marks direct sends, queued messages/commands and
+retry snapshots as `user`. The queue drain preserves that origin; it does not
+assume every queued item came from a person. Legacy or programmatic items without
+an origin remain unattended, and merging messages cannot promote such an item to
+a human turn.
+Automatic context-transfer/merge sends remain `auto`, including when initiated
+through CLI/remote operations; they do not inherit the composer's human origin.
+
 The reader uses the already confirmed Relay policy schema and six tool input/result
 shapes. Account setup remains in Relay's protected settings/native confirmation
 flow. No Backstage update is required for the six-tool contract. Host API 1.29.1

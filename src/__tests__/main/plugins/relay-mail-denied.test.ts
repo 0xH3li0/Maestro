@@ -406,6 +406,57 @@ it('keeps ordinary verified tool admission independent of unavailable sealed plu
 	expect(unavailable).not.toHaveBeenCalled();
 });
 
+it('automatic context transfer enters the composer with unattended provenance', () => {
+	const text = fs.readFileSync(path.join(__dirname, '../../../renderer/App.tsx'), 'utf8');
+	const file = ts.createSourceFile(
+		'App.tsx',
+		text,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX
+	);
+	let effect: ts.CallExpression | undefined;
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			node.expression.getText(file) === 'useEffect' &&
+			node.arguments[0]?.getText(file).includes('autoSendOnActivate')
+		)
+			effect = node;
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	expect(effect).toBeDefined();
+	// Execute the actual App admission effect, including its delayed target checks.
+	const run = new Function(
+		'activeSession',
+		'getActiveTab',
+		'updateAiTab',
+		'setTimeout',
+		'useSessionStore',
+		'activeSessionIdRef',
+		'processInput',
+		'clearTimeout',
+		`return (${effect!.arguments[0].getText(file)})();`
+	);
+	const session = { id: owner, aiTabs: [{ id: 'fixture-tab', autoSendOnActivate: true }] };
+	const processInput = vi.fn();
+	run(
+		session,
+		(s: typeof session) => s.aiTabs[0],
+		vi.fn(),
+		(callback: () => void) => {
+			callback();
+			return 1;
+		},
+		{ getState: () => ({ sessions: [session] }) },
+		{ current: owner },
+		processInput,
+		vi.fn()
+	);
+	expect(processInput).toHaveBeenCalledWith(undefined, { querySource: 'auto' });
+});
+
 it.each([
 	{ querySource: 'user', unattended: false },
 	{ querySource: 'auto', unattended: true },
