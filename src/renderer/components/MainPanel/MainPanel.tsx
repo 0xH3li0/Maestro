@@ -8,6 +8,7 @@ import { MemoryViewer } from '../MemoryViewer';
 import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
+import { jumpToAgent } from '../../services/agentNavigation';
 import { useAgentCapabilities } from '../../hooks';
 import {
 	useAgentModelEffortOptions,
@@ -1339,7 +1340,13 @@ export const MainPanel = React.memo(
 						    Chat view (and every non-Pianola agent) renders the normal content. */}
 						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
 							<ErrorBoundary>
-								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
+								<PianolaDashboard
+									theme={theme}
+									onJumpToAgent={(sessionId, tabId) => {
+										if (tabId) jumpToAgent(sessionId, { tabId });
+										else setActiveSessionId(sessionId);
+									}}
+								/>
 							</ErrorBoundary>
 						) : (
 							<>
