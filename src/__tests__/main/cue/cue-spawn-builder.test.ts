@@ -1080,6 +1080,44 @@ describe('cue-spawn-builder', () => {
 				expect(message).toContain('cannot pass argument 4 intact');
 				expect(message).not.toContain('ab%cd');
 			});
+
+			it('names the value of a single-letter flag by its flag', async () => {
+				const message = await refusalFor(['--print', '-c', 'home=%APPDATA%']);
+
+				expect(message).toContain('cannot pass the value of -c intact');
+				expect(message).not.toContain('%APPDATA%');
+			});
+
+			it('never names a short flag with a value attached, which may be the secret', async () => {
+				const message = await refusalFor(['--print', '-pSECRET', '%APPDATA%']);
+
+				expect(message).toContain('cannot pass argument 3 intact');
+				expect(message).not.toContain('SECRET');
+			});
+
+			it('never names a preceding value that only starts with a dash', async () => {
+				const message = await refusalFor(['--print', '--token', '-secret-value', 'bad%arg']);
+
+				expect(message).toContain('cannot pass argument 4 intact');
+				expect(message).not.toContain('secret-value');
+				expect(message).not.toContain('bad%arg');
+			});
+
+			it('never names the part before = unless it is a bare flag name', async () => {
+				const message = await refusalFor(['-pSECRET=ab%cd', '--print']);
+
+				expect(message).toContain('cannot pass argument 1 intact');
+				expect(message).not.toContain('SECRET');
+			});
+
+			it('can only name a flag, never a value, after a flag that takes no value', async () => {
+				// Shape alone cannot tell that --print takes no value, so the label is
+				// imprecise here, but what it names is still only a flag.
+				const message = await refusalFor(['--print', '-pSECRET=ab%cd']);
+
+				expect(message).toContain('cannot pass the value of --print intact');
+				expect(message).not.toContain('SECRET');
+			});
 		});
 
 		it('releases the plugin run identity when it refuses the launch', async () => {
