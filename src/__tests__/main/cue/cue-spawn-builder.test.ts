@@ -1034,7 +1034,52 @@ describe('cue-spawn-builder', () => {
 
 			expect(result.ok).toBe(false);
 			if (result.ok) return;
-			expect(result.message).toContain('cannot pass the argument "%APPDATA%\\claude.json" intact');
+			expect(result.message).toContain('cannot pass the value of --settings intact');
+			expect(result.message).not.toContain('%APPDATA%');
+		});
+
+		describe('never quotes a refused argument, which may be a credential', () => {
+			async function refusalFor(args: string[]) {
+				stdinCapable();
+				mockApplyOverrides.mockReturnValueOnce({
+					args,
+					effectiveCustomEnvVars: undefined,
+					customArgsSource: 'none' as const,
+					customEnvSource: 'none' as const,
+					modelSource: 'default' as const,
+				});
+				const result = await buildSpawnSpec(
+					createConfig({ customPath: shimPath, enableMaestroP: false }),
+					'prompt'
+				);
+				expect(result.ok).toBe(false);
+				return result.ok ? '' : result.message;
+			}
+
+			it('names a --flag=value argument by its flag', async () => {
+				const message = await refusalFor(['--print', '--verbose', '--api-key=ab%cd']);
+
+				expect(message).toContain(
+					'cannot pass the value of --api-key intact: it contains %, which cmd.exe expands as a variable'
+				);
+				expect(message).not.toContain('ab%cd');
+			});
+
+			it('names the value of a --flag value pair by its flag', async () => {
+				const message = await refusalFor(['--print', '--verbose', '--token', 'ab^cd']);
+
+				expect(message).toContain(
+					'cannot pass the value of --token intact: it contains ^, which cmd.exe would pass on doubled'
+				);
+				expect(message).not.toContain('ab^cd');
+			});
+
+			it('names any other argument by its position', async () => {
+				const message = await refusalFor(['--print', '--verbose', '--', 'ab%cd']);
+
+				expect(message).toContain('cannot pass argument 4 intact');
+				expect(message).not.toContain('ab%cd');
+			});
 		});
 
 		it('releases the plugin run identity when it refuses the launch', async () => {
