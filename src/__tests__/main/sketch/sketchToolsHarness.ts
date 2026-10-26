@@ -144,7 +144,7 @@ export function realGate({ off = false }: { off?: boolean } = {}) {
 		resolveLocalClassifier: async () => null,
 		assignmentKey: () => (off ? 'off' : 'prompt-guard'),
 		auditPath: async () => null,
-		providerHasReadOnlyArgs: () => true,
+		restrictedPostureBlocker: () => null,
 	});
 	return { screen: vi.fn(guardrail.screenForAgent), score, guardrail };
 }

@@ -59,6 +59,7 @@ import {
 } from '../../shared/local-models/tasks';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import { sketchRestrictedPostureBlocker } from '../../shared/sketch/restricted-posture';
 import type { SketchActor, SketchActorKind, WithheldReason } from '../../shared/sketch/types';
 import {
 	resolveInjectionSource,
@@ -203,8 +204,8 @@ export interface SketchGuardrailDeps {
 	/** Where a sketch's audit log lives, or null when the sketch is unknown. */
 	auditPath?: (sketchId: string) => Promise<string | null>;
 	appendAudit?: (filePath: string, line: string) => Promise<void>;
-	/** Whether the agent's provider can run restricted turns (non-empty `readOnlyArgs`). */
-	providerHasReadOnlyArgs?: (agentId: string) => boolean;
+	/** Why the agent's provider cannot run restricted turns, or null when it can. */
+	restrictedPostureBlocker?: (agentId: string) => string | null;
 	now?: () => number;
 	timeoutMs?: number;
 	eagerDelayMs?: number;
@@ -388,7 +389,8 @@ export interface SketchGuardrail {
 	/**
 	 * Whether B2 (guests may ask the bot) can be offered for the agent's
 	 * sketches: never while the screen is `off` or unusable, while the engine
-	 * is cloud without consent, or on a provider with no read-only mode.
+	 * is cloud without consent, or on a provider that cannot run restricted
+	 * turns (`sketchRestrictedPostureBlocker()`, risk K1).
 	 */
 	isB2Available(input: { agentId: string }): Promise<SketchB2Availability>;
 	clearVerdictCache(): void;
@@ -414,10 +416,13 @@ function defaultAssignmentKey(): string {
 	);
 }
 
-function defaultProviderHasReadOnlyArgs(agentId: string): boolean {
+function defaultRestrictedPostureBlocker(agentId: string): string | null {
 	const session = getLiveSessions().find((candidate) => candidate.id === agentId);
-	if (!session) return false;
-	return (getAgentDefinition(session.toolType)?.readOnlyArgs?.length ?? 0) > 0;
+	if (!session) return 'The owner agent was removed.';
+	return sketchRestrictedPostureBlocker(
+		session.toolType,
+		getAgentDefinition(session.toolType)?.readOnlyArgs
+	);
 }
 
 export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGuardrail {
@@ -428,7 +433,7 @@ export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGua
 	const auditPath = deps.auditPath ?? defaultAuditPath;
 	const appendAudit =
 		deps.appendAudit ?? ((filePath: string, line: string) => fs.appendFile(filePath, line, 'utf8'));
-	const providerHasReadOnlyArgs = deps.providerHasReadOnlyArgs ?? defaultProviderHasReadOnlyArgs;
+	const restrictedPostureBlocker = deps.restrictedPostureBlocker ?? defaultRestrictedPostureBlocker;
 	const now = deps.now ?? Date.now;
 	const timeoutMs = deps.timeoutMs ?? SKETCH_SCREEN_TIMEOUT_MS;
 	const eagerDelayMs = deps.eagerDelayMs ?? SKETCH_EAGER_SCREEN_DELAY_MS;
@@ -749,13 +754,8 @@ export function createSketchGuardrail(deps: SketchGuardrailDeps = {}): SketchGua
 	}
 
 	async function isB2Available({ agentId }: { agentId: string }): Promise<SketchB2Availability> {
-		if (!providerHasReadOnlyArgs(agentId)) {
-			return {
-				ok: false,
-				reason:
-					"This agent's provider has no read-only mode, so guest requests cannot run restricted.",
-			};
-		}
+		const postureBlocker = restrictedPostureBlocker(agentId);
+		if (postureBlocker) return { ok: false, reason: postureBlocker };
 		const resolved = await resolveSource();
 		if (!isSourceInfo(resolved)) {
 			return resolved.status === 'off'

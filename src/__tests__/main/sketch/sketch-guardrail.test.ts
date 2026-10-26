@@ -66,6 +66,7 @@ import {
 	type InjectionSourceInfo,
 	type InjectionSourceResolution,
 } from '../../../shared/local-models/injection-screen';
+import { SKETCH_RESTRICTED_POSTURE_BLOCKERS } from '../../../shared/sketch/restricted-posture';
 import type { SketchActor } from '../../../shared/sketch/types';
 
 const LOCAL: InjectionSourceInfo = {
@@ -115,7 +116,8 @@ let scores: Map<string, number>;
 let calls: { request: InjectionScoreRequest; offered: InjectionSourceInfo; sent: boolean }[];
 let assignment: string;
 let auditLines: string[];
-let readOnly: boolean;
+/** What the mocked provider check says blocks a restricted turn, or null. */
+let postureBlocker: string | null;
 let guardrail: SketchGuardrail;
 
 /** The real scorer's contract: resolve, ask `allowSource`, then send or refuse. */
@@ -139,7 +141,7 @@ function makeGuardrail(extra: SketchGuardrailDeps = {}): SketchGuardrail {
 		appendAudit: async (_filePath, line) => {
 			auditLines.push(line);
 		},
-		providerHasReadOnlyArgs: () => readOnly,
+		restrictedPostureBlocker: () => postureBlocker,
 		now: () => SINCE + 5_000,
 		...extra,
 	});
@@ -201,7 +203,7 @@ beforeEach(() => {
 	calls = [];
 	assignment = 'local:prompt-guard-2-22m';
 	auditLines = [];
-	readOnly = true;
+	postureBlocker = null;
 	vi.mocked(scoreInjectionText).mockImplementation(mockScore);
 	vi.mocked(resolveInjectionSource).mockImplementation(async () => source);
 	vi.mocked(resolveLocalInjectionClassifier).mockImplementation(async () => localClassifier);
@@ -655,10 +657,12 @@ describe('isB2Available', () => {
 		expect(await guardrail.isB2Available({ agentId: 'agent-1' })).toEqual({ ok: true });
 	});
 
-	it('refuses a provider with no read-only mode', async () => {
-		readOnly = false;
-		const result = await guardrail.isB2Available({ agentId: 'agent-1' });
-		expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('read-only') });
+	it('refuses a provider that cannot run restricted turns, with its reason', async () => {
+		postureBlocker = SKETCH_RESTRICTED_POSTURE_BLOCKERS['claude-code']!;
+		expect(await guardrail.isB2Available({ agentId: 'agent-1' })).toEqual({
+			ok: false,
+			reason: postureBlocker,
+		});
 	});
 
 	it('refuses while the screen is off', async () => {
