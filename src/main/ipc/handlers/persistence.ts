@@ -648,6 +648,15 @@ export function registerPersistenceHandlers(
 					...session,
 					browserTabs: live.runtime?.browserTabs,
 					terminalTabs: live.runtime?.terminalTabs,
+					// Keep requested runtime private and separate from persisted metadata.
+					// The browser applies it after restoration resets restart-only state.
+					transcriptSnapshots: [
+						{
+							sessionId: live.sessionId,
+							runtime: live.runtime,
+							clearRuntimeFields: live.clearRuntimeFields,
+						},
+					],
 				};
 			})
 		);

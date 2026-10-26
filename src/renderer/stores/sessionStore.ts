@@ -442,6 +442,12 @@ export const selectSessionById =
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
 
+/** Logical agents that need a decision, matching the Pianola dashboard badge. */
+export const selectNeedsInputCount = (state: SessionStore): number =>
+	state.sessions.filter(
+		(session) => !session.isPianola && !session.parentSessionId && session.state === 'waiting_input'
+	).length;
+
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 

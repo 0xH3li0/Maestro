@@ -1,3 +1,8 @@
+import {
+	registerSpawn,
+	createPending,
+	resolvePending,
+} from '../../../../main/permission-relay/registry';
 /**
  * Tests for the process IPC handlers
  *
@@ -56,6 +61,7 @@ import {
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
+	BrowserWindow: { getAllWindows: vi.fn(() => []) },
 	ipcMain: {
 		handle: vi.fn(),
 		on: vi.fn(),
@@ -465,6 +471,7 @@ describe('process IPC handlers', () => {
 				'process:resize',
 				'process:getActiveProcesses',
 				'process:getHeadlessActivity',
+				'process:getPendingPermissions',
 				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
@@ -477,6 +484,22 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('process:getPendingPermissions', () => {
+		it('returns only authoritative pending process IDs and a version', async () => {
+			const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
+			try {
+				const pending = createPending('process-snapshot', spawn.token);
+				const snapshot = await handlers.get('process:getPendingPermissions')!({});
+				expect(snapshot).toEqual({ version: expect.any(Number), processIds: ['agent-ai-tab'] });
+				resolvePending('process-snapshot', { behavior: 'allow' });
+				await pending;
+				expect((await handlers.get('process:getPendingPermissions')!({})).processIds).toEqual([]);
+			} finally {
+				spawn.cleanup();
+			}
 		});
 	});
 

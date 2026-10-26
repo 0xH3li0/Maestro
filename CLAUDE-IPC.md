@@ -10,13 +10,21 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots); getPendingPermissions/onPendingPermissionsChanged (native-only permission relay status)
 - `fs` - readDir, readFile
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
 - `shells` - Detect available shells
 - `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
+
+`process.getPendingPermissions()` and `process.onPendingPermissionsChanged()` return
+`PendingPermissionSnapshot` (`src/shared/pendingPermissions.ts`): a monotonic
+`version` and deduplicated compound `processIds`. Requests, decisions, timeouts,
+and spawn cleanup update the snapshot. These channels stay native-only and carry
+no prompt bodies, tool inputs, or authentication tokens. The owning renderer
+projects this status into agent runtime; browser clients receive that runtime
+through the existing transcript synchronization and private bootstrap snapshots.
 
 ## Agent & Provider Sessions
 
