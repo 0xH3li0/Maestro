@@ -4,7 +4,9 @@
  * `sketch_command` action the SketchService method behind it expects, `new` is
  * background by default and `open` focuses by default, `read` prints a summary or
  * the elements, `export` writes the returned bytes to the resolved `--output` path,
- * and bad arguments and app refusals exit with the documented codes.
+ * the sharing verbs pass an agent caller on (A1: the app confirms on the desktop,
+ * so the CLI waits longer) and a person's request goes without one, and bad
+ * arguments and app refusals exit with the documented codes.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -36,7 +38,11 @@ import {
 	sketchNew,
 	sketchOpen,
 	sketchRead,
+	sketchRevokeLink,
+	sketchRotate,
 	sketchScreeningConsent,
+	sketchShare,
+	sketchUnshare,
 } from '../../../cli/commands/sketch';
 import { canPrompt, confirmOnTerminal } from '../../../cli/utils/confirm';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
@@ -468,6 +474,167 @@ describe('sketch command', () => {
 			expect(sent).toHaveLength(0);
 			expect(errors()).toContain('screening-consent expects grant, revoke or status');
 			expect(errors()).toContain('--engine expects jev or openjev');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('sharing', () => {
+		const SHARE_TIMEOUT_MS = 4 * 60_000;
+		const AGENT_SHARE_TIMEOUT_MS = 5 * 60_000 + SHARE_TIMEOUT_MS;
+		const share = {
+			roomId: 'R'.repeat(22),
+			keyEpoch: 0,
+			botPolicy: 'conductor' as const,
+			links: [
+				{
+					capId: 'capid0000001',
+					role: 'rw' as const,
+					label: '',
+					createdAt: 1,
+					expiresAt: Date.UTC(2026, 10, 3),
+					revoked: false,
+				},
+			],
+		};
+		const shared: SketchRecord = { ...record, share };
+		const link = {
+			capId: 'capid0000001',
+			role: 'rw' as const,
+			label: 'Team',
+			expiresAt: Date.UTC(2026, 10, 3),
+			url: `https://sketch.example/s/${share.roomId}#key.cap`,
+		};
+		let savedCaller: string | undefined;
+
+		beforeEach(() => {
+			savedCaller = process.env[CALLER_AGENT_ID_ENV_VAR];
+			delete process.env[CALLER_AGENT_ID_ENV_VAR];
+		});
+
+		afterEach(() => {
+			if (savedCaller === undefined) delete process.env[CALLER_AGENT_ID_ENV_VAR];
+			else process.env[CALLER_AGENT_ID_ENV_VAR] = savedCaller;
+		});
+
+		it('shares for a person with no caller and prints the link once', async () => {
+			const sent = respond({ record: shared, createdRoom: true, link });
+			await sketchShare(` ${SKETCH_ID} `, { role: 'rw', expiresDays: '3', label: '  Team  ' });
+
+			expect(sent[0]).toMatchObject({
+				type: 'sketch_command',
+				action: 'share',
+				sketchId: SKETCH_ID,
+				role: 'rw',
+				expiresInDays: 3,
+				label: 'Team',
+				timeout: SHARE_TIMEOUT_MS,
+			});
+			expect(sent[0].fromSessionId).toBeUndefined();
+			const out = logged();
+			expect(out).toContain('Shared "Architecture" (can edit, expires 2026-11-03)');
+			expect(out).toContain(`Link: ${link.url}`);
+			expect(out).toContain('Link id: capid0000001');
+			expect(out.split(link.url)).toHaveLength(2);
+		});
+
+		it('says "New link for" when the room already existed, and defaults the role to rw', async () => {
+			const sent = respond({ record: shared, createdRoom: false, link });
+			await sketchShare(SKETCH_ID, {});
+
+			expect(sent[0]).toMatchObject({ action: 'share', role: 'rw' });
+			expect(sent[0].expiresInDays).toBeUndefined();
+			expect(sent[0].label).toBeUndefined();
+			expect(logged()).toContain('New link for "Architecture"');
+		});
+
+		it('passes an agent caller on so the app confirms on the desktop, and waits for it', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond({ record: shared, createdRoom: true, link });
+			await sketchShare(SKETCH_ID, { role: 'ro', json: true });
+
+			expect(sent[0]).toMatchObject({ action: 'share', role: 'ro', fromSessionId: 'agent-7' });
+			expect(sent[0].timeout).toBe(AGENT_SHARE_TIMEOUT_MS);
+			expect(json()).toEqual({ success: true, record: shared, createdRoom: true, link });
+		});
+
+		it('exits with the conductor refusal when the desktop confirmation is denied', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			mockReply({
+				type: 'sketch_result',
+				success: false,
+				error: 'Sketch Book: the conductor chose Deny, so nothing was changed.',
+			});
+			await expect(sketchShare(SKETCH_ID, {})).rejects.toThrow('__exit__');
+
+			expect(errors()).toContain('the conductor chose Deny');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('refuses a bad role or expiry as a usage error before the bridge', async () => {
+			const sent = respond({});
+			await expect(sketchShare(SKETCH_ID, { role: 'admin' })).rejects.toThrow('__exit__');
+			await expect(sketchShare(SKETCH_ID, { expiresDays: '1.5' })).rejects.toThrow('__exit__');
+			await expect(sketchShare(SKETCH_ID, { expiresDays: '0' })).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('--role expects rw or ro, got "admin"');
+			expect(errors()).toContain('--expires-days expects a whole number of days, got "1.5"');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		});
+
+		it.each([
+			[
+				'unshare',
+				() => sketchUnshare(SKETCH_ID, {}),
+				{ action: 'unshare', sketchId: SKETCH_ID },
+				{ ...record, share: null },
+				'Stopped sharing "Architecture".',
+			],
+			[
+				'revoke-link',
+				() => sketchRevokeLink(SKETCH_ID, ' capid0000001 ', {}),
+				{ action: 'revoke-link', sketchId: SKETCH_ID, capId: 'capid0000001' },
+				{ ...shared, share: { ...share, links: [{ ...share.links[0], revoked: true }] } },
+				'Revoked link capid0000001 on "Architecture". 0 link(s) still work.',
+			],
+			[
+				'rotate',
+				() => sketchRotate(SKETCH_ID, {}),
+				{ action: 'rotate', sketchId: SKETCH_ID },
+				{ ...shared, share: { ...share, keyEpoch: 1 } },
+				'under a new key (epoch 1)',
+			],
+		])('%s runs for a person with no caller', async (_verb, call, payload, reply, message) => {
+			const sent = respond(reply);
+			await call();
+
+			expect(sent[0]).toMatchObject({
+				type: 'sketch_command',
+				...payload,
+				timeout: SHARE_TIMEOUT_MS,
+			});
+			expect(sent[0].fromSessionId).toBeUndefined();
+			expect(logged()).toContain(message);
+		});
+
+		it.each([
+			['unshare', () => sketchUnshare(SKETCH_ID, {})],
+			['revoke-link', () => sketchRevokeLink(SKETCH_ID, 'capid0000001', {})],
+			['rotate', () => sketchRotate(SKETCH_ID, {})],
+		])('%s passes an agent caller on and waits for the confirmation', async (_verb, call) => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'agent-7';
+			const sent = respond(shared);
+			await call();
+
+			expect(sent[0]).toMatchObject({ fromSessionId: 'agent-7', timeout: AGENT_SHARE_TIMEOUT_MS });
+		});
+
+		it('revoke-link needs a link id', async () => {
+			const sent = respond(shared);
+			await expect(sketchRevokeLink(SKETCH_ID, '  ', {})).rejects.toThrow('__exit__');
+
+			expect(sent).toHaveLength(0);
+			expect(errors()).toContain('A link id is required.');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		});
 	});
