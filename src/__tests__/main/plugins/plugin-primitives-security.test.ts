@@ -1741,7 +1741,12 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 		manager.getRegistry().records.push(record);
 		vi.mocked(getActivePluginManager).mockReturnValue(manager);
 		const run = identity.issue('agent-a', undefined, undefined, false);
-		const call = async (localId: string, args: unknown, runToken: unknown = run) => {
+		const call = async (
+			localId: string,
+			args: unknown,
+			runToken: unknown = run,
+			includeProof = true
+		) => {
 			preparing = 0;
 			let result: Record<string, any> = {};
 			const ctx = {
@@ -1753,7 +1758,7 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 				type: 'plugins_call_tool',
 				toolId: `${RELAY_PLUGIN_ID}/${localId}`,
 				args,
-				runToken,
+				...(includeProof ? { runToken } : {}),
 			});
 			return result;
 		};
@@ -1855,7 +1860,7 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 				}
 				if (mode === 'untrusted') Object.assign(f.record.signature, { status: 'unsigned' });
 				if (mode === 'wrong-publisher') f.record.signature.signerKey = 'other-trusted-key';
-				const result = await f.call('mail-read-body', { reference }, token);
+				const result = await f.call('mail-read-body', { reference }, token, mode !== 'missing');
 				expect(result.ok).toBe(false);
 				expect(result).not.toHaveProperty('result');
 				expect(f.connectSocket).not.toHaveBeenCalled();
@@ -1935,6 +1940,9 @@ describe('Host-enforced Relay mail reads through regular MCP admission', () => {
 				token = f.identity.issue('agent-a', undefined, undefined, true);
 				f.setCaps(f.caps().map((c) => ({ ...c, unattended: false })));
 			}
+			// A policy edit revokes old invocation leases, not the owning run proof.
+			// These negatives must reach a new invocation with an authenticated caller.
+			expect(f.identity.resolveVerified(token).callerAgentId).toBe('agent-a');
 			const result = await f.call(operation, args, token);
 			expect(result.ok === false || result.result?.ok === false).toBe(true);
 			expect(JSON.stringify(result)).not.toMatch(/synthetic body|Zml4dHVyZQ|synthetic-only/);

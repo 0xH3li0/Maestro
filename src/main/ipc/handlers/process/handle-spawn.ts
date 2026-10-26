@@ -458,7 +458,7 @@ async function handleProcessSpawnImpl(
 				baseSessionId,
 				undefined,
 				undefined,
-				config.querySource === 'auto'
+				config.querySource !== 'user'
 			);
 			try {
 				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);

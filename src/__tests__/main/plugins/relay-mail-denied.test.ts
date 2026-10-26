@@ -405,3 +405,35 @@ it('keeps ordinary verified tool admission independent of unavailable sealed plu
 	).not.toThrow();
 	expect(unavailable).not.toHaveBeenCalled();
 });
+
+it.each([
+	{ querySource: 'user', unattended: false },
+	{ querySource: 'auto', unattended: true },
+	{ querySource: 'cue', unattended: true },
+	{ querySource: undefined, unattended: true },
+])('desktop proof admission preserves $querySource provenance', ({ querySource, unattended }) => {
+	const text = fs.readFileSync(
+		path.join(__dirname, '../../../main/ipc/handlers/process/handle-spawn.ts'),
+		'utf8'
+	);
+	const file = ts.createSourceFile('handle-spawn.ts', text, ts.ScriptTarget.Latest, true);
+	let issuance: ts.CallExpression | undefined;
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			node.expression.getText(file) === 'pluginToolRunIdentity.issue'
+		)
+			issuance = node;
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	expect(issuance?.arguments.length).toBe(4);
+	// Execute the actual shipped admission expression, not a copied boolean policy.
+	const stamp = new Function('config', `return ${issuance!.arguments[3].getText(file)}`);
+	const run = pluginToolRunIdentity.issue(owner, undefined, undefined, stamp({ querySource }));
+	try {
+		expect(pluginToolRunIdentity.resolveVerified(run).unattended).toBe(unattended);
+	} finally {
+		pluginToolRunIdentity.revoke(run);
+	}
+});

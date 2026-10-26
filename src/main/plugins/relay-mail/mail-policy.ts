@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer';
+import { serializedJsonByteLength } from '../../../shared/jsonUtils';
 import { ImapConnectionError } from './mail-errors';
 import { assertImapQuotedString, IMAP_COMMAND_LIMITS } from './mail-imap-commands';
 import { mailRecord, mailList, parseMailAccountId, parseMailAccountRevision } from './mail-schema';
@@ -142,8 +142,8 @@ export function parseMailPolicy(value: unknown): MailPolicy {
 		removed: Object.freeze(removed),
 		retiredSecrets: Object.freeze(retiredSecrets),
 	});
-	if (Buffer.byteLength(JSON.stringify(policy), 'utf8') > 64 * 1024)
-		throw new ImapConnectionError('MAIL_LIMIT');
+	const bytes = serializedJsonByteLength(policy);
+	if (bytes === null || bytes > 64 * 1024) throw new ImapConnectionError('MAIL_LIMIT');
 	return policy;
 }
 
