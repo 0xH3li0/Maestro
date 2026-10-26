@@ -8,7 +8,15 @@
 	"extends": "./tsconfig.main.json",
 	"compilerOptions": {
 		"noEmit": true,
-		"rootDir": "."
+		"rootDir": ".",
+		// `paths` replaces the main config's map instead of merging, so its
+		// @opencode-ai/sdk entry is repeated here. `vite` is ESM-only with types
+		// behind its "exports" map, which node10 resolution cannot read; the Vite
+		// plugins under scripts/ (vite-excalidraw-assets.ts) need its types.
+		"paths": {
+			"@opencode-ai/sdk": ["./node_modules/@opencode-ai/sdk/dist/index.d.ts"],
+			"vite": ["./node_modules/vite/dist/node/index.d.ts"]
+		}
 	},
 	// The ambient module declarations ride along: a script that reaches a
 	// main-process module which imports an untyped package needs them too.

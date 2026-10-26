@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { excalidrawAssetsPlugin } from './scripts/vite-excalidraw-assets';
 
 // Read version from package.json as fallback
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
@@ -29,6 +30,8 @@ const disableHmr = process.env.DISABLE_HMR === '1';
 export default defineConfig(({ mode }) => ({
 	plugins: [
 		react({ fastRefresh: !disableHmr }),
+		// Sketch Book: ship Excalidraw's fonts locally, never the CDN.
+		excalidrawAssetsPlugin(__dirname),
 		// In dev mode, relax CSP to allow Vite's inline HMR/React Refresh scripts
 		mode === 'development' && {
 			name: 'dev-csp-relaxation',

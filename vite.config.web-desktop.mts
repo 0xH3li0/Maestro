@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'path';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { excalidrawAssetsPlugin } from './scripts/vite-excalidraw-assets';
 
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
@@ -86,7 +87,7 @@ function bundledFontsPlugin(): PluginOption {
 }
 
 export default defineConfig(({ mode }) => ({
-	plugins: [react(), bundledFontsPlugin()],
+	plugins: [react(), bundledFontsPlugin(), excalidrawAssetsPlugin(__dirname)],
 
 	root: path.join(__dirname, 'src/web-desktop'),
 	// Copy the PWA assets (manifest.json, service worker, icons/) from the shared

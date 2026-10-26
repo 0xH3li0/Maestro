@@ -367,8 +367,6 @@
 		}
 	},
 	"dependencies": {
-		"@serenity-kit/opaque": "1.1.0",
-		"dns-packet": "5.6.1",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",
@@ -392,6 +390,8 @@
 		"@dagrejs/dagre": "^1.1.8",
 		"@emoji-mart/data": "^1.2.1",
 		"@emoji-mart/react": "^1.1.1",
+		"@excalidraw/excalidraw": "0.18.1",
+		"@excalidraw/mermaid-to-excalidraw": "2.2.2",
 		"@fastify/cors": "^11.3.0",
 		"@fastify/rate-limit": "^11.2.0",
 		"@fastify/static": "^10.1.5",
@@ -403,6 +403,7 @@
 		"@napi-rs/keyring": "2.0.0",
 		"@opencode-ai/sdk": "^1.17.13",
 		"@sentry/electron": "^7.13.0",
+		"@serenity-kit/opaque": "1.1.0",
 		"@tanstack/react-virtual": "^3.13.13",
 		"@types/d3-force": "^3.0.10",
 		"@types/dompurify": "^3.0.5",
@@ -422,6 +423,7 @@
 		"d3-force": "^3.0.0",
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
+		"dns-packet": "5.6.1",
 		"dompurify": "^3.4.16",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
@@ -463,11 +465,11 @@
 		"remove-markdown": "^0.5.5",
 		"semver": "^7.7.4",
 		"shiki": "^4.0.2",
+		"smol-toml": "1.9.1",
 		"tar": "^7.5.17",
 		"undici": "^7.29.1",
 		"ws": "^8.16.0",
-		"zustand": "^5.0.11",
-		"smol-toml": "1.9.1"
+		"zustand": "^5.0.11"
 	},
 	"devDependencies": {
 		"@electron/notarize": "^3.1.1",
