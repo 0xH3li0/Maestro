@@ -38,7 +38,7 @@ import {
 } from 'react';
 import { formatWindowTitle, type WindowInfo } from '../../shared/window-types';
 import type { WindowCommandResult } from '../../shared/windowCommands';
-import { useSessionStore } from '../stores/sessionStore';
+import { selectNeedsInputCount, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 import { collectGroupAgentIds } from '../utils/windowTargets';
@@ -240,7 +240,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	// idle/busy; unread output and idle conversations do not imply a request.
 	// Select a number so transcript updates do not re-render this root provider.
 	const waitingInputCount = useSessionStore((state) =>
-		windowScoped ? 0 : state.sessions.filter((session) => session.state === 'waiting_input').length
+		windowScoped ? 0 : selectNeedsInputCount(state)
 	);
 	// isMainWindow and the initial windowId are known synchronously from the URL,
 	// so the very first render already reflects the correct window identity.

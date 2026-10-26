@@ -1070,6 +1070,19 @@ describe('WindowContext', () => {
 			expect(document.title).toBe('(1) Maestro');
 		});
 
+		it('shares the needs-input count exclusions for Pianola and worktree children', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'root', state: 'waiting_input' }),
+					createMockSession({ id: 'manager', isPianola: true, state: 'waiting_input' }),
+					createMockSession({ id: 'child', parentSessionId: 'root', state: 'waiting_input' }),
+				],
+			});
+			renderHook(() => useWindowContext(), { wrapper });
+			expect(document.title).toBe('(1) Maestro');
+		});
+
 		it('excludes empty, idle, unread, busy, connecting and failed agents', () => {
 			vi.mocked(isWebDesktop).mockReturnValue(true);
 			useSessionStore.setState({
