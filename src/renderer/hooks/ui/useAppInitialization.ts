@@ -42,7 +42,7 @@ import {
 	recoverUncommittedAutoRunCredit,
 	reportLeaderboardDrift,
 } from '../../services/leaderboard';
-import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { useIsLifecycleOwner, useWindowContextOptional } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -99,6 +99,9 @@ export function useAppInitialization(): AppInitializationReturn {
 	// Outside a WindowProvider (web build) there is only one renderer, so treat
 	// it as the main window.
 	const isMainWindow = useWindowContextOptional()?.isMainWindow ?? true;
+	// Narrower than isMainWindow: a web-desktop client also reads as the main
+	// window, and it shares the same settings file and leaderboard outbox.
+	const isLifecycleOwner = useIsLifecycleOwner();
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -284,9 +287,10 @@ export function useAppInitialization(): AppInitializationReturn {
 		const email = leaderboardRegistration?.email;
 		if (!authToken || !email) return;
 
-		// Only the main window syncs. Every window runs this hook, and a flush
-		// from two of them would submit the same queued deltas twice.
-		if (!isMainWindow) return;
+		// Only the desktop's main window syncs. Every window and every web-desktop
+		// client runs this hook, and a flush from two of them would submit the
+		// same queued deltas twice.
+		if (!isLifecycleOwner) return;
 
 		const timer = setTimeout(async () => {
 			try {
@@ -333,7 +337,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		}, 3000);
 
 		return () => clearTimeout(timer);
-	}, [settingsLoaded, leaderboardAuthToken, isMainWindow]);
+	}, [settingsLoaded, leaderboardAuthToken, isLifecycleOwner]);
 
 	// --- SpecKit commands loading ---
 	// Wait for settings so we know whether the user has disabled this bundle.
