@@ -78,6 +78,26 @@ export function sketchRoomSocketUrl(serverUrl: unknown, roomId: string): string 
 	return `${scheme}${origin.slice(origin.indexOf('//'))}/ws/${encodeURIComponent(roomId)}`;
 }
 
+/**
+ * Contract section 2: the share link, `<server>/s/<roomId>#<key>.<cap>`. The
+ * key and the cap sit in the fragment, which a browser never sends, so the
+ * server sees neither.
+ */
+export function sketchShareLinkUrl(
+	serverUrl: unknown,
+	roomId: string,
+	roomKey: string,
+	cap: string
+): string {
+	return `${resolveSketchServerUrl(serverUrl)}/s/${encodeURIComponent(roomId)}#${roomKey}.${cap}`;
+}
+
+/** Q7: how long a new link lives when the conductor does not say, in days. */
+export const DEFAULT_LINK_EXPIRY_DAYS = { rw: 7, ro: 30 } as const;
+
+/** The hosted server refuses a link label longer than this (code points). */
+export const LINK_LABEL_MAX_CHARS = 64;
+
 /** Where this device's Sketch Book owner registration stands. */
 export type SketchOwnerState = 'signed-out' | 'pending' | 'confirmed';
 

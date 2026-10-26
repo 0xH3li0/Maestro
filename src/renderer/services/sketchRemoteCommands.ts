@@ -19,6 +19,9 @@
  *   picks the elements (the gate has removed what the agent may not see);
  *   this window adds the session's background and the image files those
  *   elements name, and nothing else.
+ * - `snapshotScene`: the live scene for a snapshot upload (share, rotate),
+ *   with the newest op seq the room client has merged (0 without one).
+ * - `syncRoom`: join or leave a shared sketch's room (`sketchSharing.ts`).
  *
  * Every path answers, a thrown one included, so main never waits out its
  * timeout. Registered by `useRemoteIntegration`.
@@ -168,6 +171,23 @@ export async function runRemoteSketchCommand(
 		}
 		if (request.action === 'renderForAgent') {
 			return { success: true, file: await renderSketchForAgent(request) };
+		}
+		if (request.action === 'snapshotScene') {
+			// Imported here, like the asset module: the room client loads Excalidraw's helpers.
+			const { getSketchRoomClient } = await import('./sketchRoomClient');
+			const session = await openReadySketchSession(request.sketchId);
+			return {
+				success: true,
+				snapshot: {
+					scene: session.scene,
+					baseSeq: getSketchRoomClient(request.sketchId)?.currentSeq() ?? 0,
+				},
+			};
+		}
+		if (request.action === 'syncRoom') {
+			const { applySketchRoomConnection } = await import('./sketchSharing');
+			await applySketchRoomConnection(request.sketchId, request.connection, request.baseline);
+			return { success: true };
 		}
 		if (request.action === 'readSession') {
 			return {

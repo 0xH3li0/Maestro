@@ -34,7 +34,15 @@
  * the ones it will not (auth, revoked, kicked, superseded, expired, archived).
  *
  * Baseline: the room is assumed to hold the scene as it was when the client
- * started. Sharing uploads that scene as the first snapshot, so the two agree.
+ * started, or `options.baseline` when main just uploaded a snapshot (share,
+ * rotate): then every element newer than the baseline goes out as a delta
+ * once the client is live, so an edit made during the upload is not lost.
+ *
+ * Snapshots (spec section 6): after {@link SKETCH_SNAPSHOT_EVERY_OPS} ops, or
+ * {@link SKETCH_SNAPSHOT_IDLE_MS} after the last op, the live scene goes to
+ * main (`uploadSnapshot`), which seals it and uploads it with `baseSeq` = the
+ * newest op the scene includes. A failed upload is tried again after the
+ * idle delay.
  */
 
 import { readElementStamp, sketchTextHash } from '../../shared/sketch/attribution';
@@ -56,6 +64,7 @@ import {
 } from '../../shared/sketch/protocol';
 import { sketchRoomSocketUrl } from '../../shared/sketch/server';
 import type { SketchScreeningChange } from '../../shared/sketch/cloud-consent';
+import type { SketchElementVersion, SketchSceneForSnapshot } from '../../shared/sketch/commands';
 import { generateUUID } from '../../shared/uuid';
 import { loadExcalidraw } from '../components/SketchBook/excalidrawAssets';
 import {
@@ -68,6 +77,11 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 
 const LOG_CTX = '[SketchBook][Room]';
+
+/** Spec section 6: upload a snapshot after this many ops since the last one. */
+export const SKETCH_SNAPSHOT_EVERY_OPS = 200;
+/** Spec section 6: or this long after the last op, when any op came since the last one. */
+export const SKETCH_SNAPSHOT_IDLE_MS = 60_000;
 
 /** Spec section 6: outgoing `delta` frames per second, at most. */
 export const SKETCH_DELTA_MAX_PER_SECOND = 30;
@@ -244,6 +258,11 @@ export interface SketchRoomClientOptions {
 	bot?: { agentId: string; name: string };
 	/** Every op up to this seq is already in the scene. Default 0. */
 	sinceSeq?: number;
+	/**
+	 * What the room holds, when main just uploaded it as a snapshot. Default:
+	 * the session's scene when the client starts.
+	 */
+	baseline?: readonly SketchElementVersion[];
 	/** `hello.clientId`. Default a fresh UUID. */
 	clientId?: string;
 }
@@ -255,6 +274,8 @@ export interface SketchRoomClientDeps {
 	screeningApi?: SketchRoomScreeningApi;
 	/** For the reconnect jitter. */
 	random?: () => number;
+	/** Seal and upload a snapshot (main). Default `window.maestro.sketch.uploadSnapshot`. */
+	uploadSnapshot?: (sketchId: string, input: SketchSceneForSnapshot) => Promise<unknown>;
 }
 
 type Phase = 'idle' | 'connecting' | 'welcomed' | 'catching-up' | 'live' | 'stopped';
@@ -305,6 +326,7 @@ export class SketchRoomClient {
 	private readonly createSocket: CreateSketchRoomSocket;
 	private readonly screeningApi: SketchRoomScreeningApi;
 	private readonly random: () => number;
+	private readonly uploadSnapshot: NonNullable<SketchRoomClientDeps['uploadSnapshot']>;
 	private reconcile: ReconcileSketchElements | null;
 
 	private key: SketchRoomKey | null = null;
@@ -331,6 +353,11 @@ export class SketchRoomClient {
 	private flushTimer: ReturnType<typeof setTimeout> | null = null;
 	private flushing = false;
 
+	/** Ops the room gained since the last snapshot upload. */
+	private opsSinceSnapshot = 0;
+	private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+	private snapshotting = false;
+
 	private reportedScreening: Screening | null = null;
 	private botAnnounced = false;
 	private readonly listeners = new Set<SketchRoomFrameListener>();
@@ -346,6 +373,9 @@ export class SketchRoomClient {
 		this.createSocket = deps.createSocket ?? createBrowserSocket;
 		this.screeningApi = deps.screeningApi ?? window.maestro.sketch;
 		this.random = deps.random ?? Math.random;
+		this.uploadSnapshot =
+			deps.uploadSnapshot ??
+			((sketchId, input) => window.maestro.sketch.uploadSnapshot(sketchId, input));
 		this.reconcile = deps.reconcile ?? null;
 	}
 
@@ -361,10 +391,12 @@ export class SketchRoomClient {
 		this.reconcile ??= await loadReconcile();
 		if (this.phase !== 'idle') return;
 
-		for (const element of session.scene.elements) {
+		for (const element of this.options.baseline ?? session.scene.elements) {
 			this.knownVersions.set(element.id, element.version);
 		}
 		this.lastScene = session.scene;
+		// Edits newer than the uploaded snapshot wait for the room like offline edits.
+		if (this.options.baseline) this.collectLocalEdits(session.scene.elements);
 		this.unsubscribeStore = useSketchSessionStore.subscribe((state) => {
 			const scene = state.sessions[this.sketchId]?.scene;
 			if (!scene || scene === this.lastScene) return;
@@ -377,6 +409,11 @@ export class SketchRoomClient {
 		});
 		this.updateRoom(() => initialRoomState(this.roomId, this.syncedSeq));
 		this.connect();
+	}
+
+	/** The newest op seq the scene includes. */
+	currentSeq(): number {
+		return this.syncedSeq;
 	}
 
 	/** Leave the room for good: the bot goes offline, the socket closes, nothing retries. */
@@ -516,8 +553,10 @@ export class SketchRoomClient {
 	private clearTimers(): void {
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		if (this.flushTimer) clearTimeout(this.flushTimer);
+		if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
 		this.reconnectTimer = null;
 		this.flushTimer = null;
+		this.snapshotTimer = null;
 	}
 
 	private sendFrame(frame: ClientFrame): boolean {
@@ -652,11 +691,14 @@ export class SketchRoomClient {
 		this.updateRoom((room) => (room ? { ...room, connection: 'live' } : room));
 		// Edits made while the socket was down go out now, after the room's own.
 		this.scheduleFlush();
+		this.scheduleSnapshot();
 	}
 
 	private advanceSeq(seq: number): void {
 		if (seq <= this.syncedSeq) return;
+		this.opsSinceSnapshot += seq - this.syncedSeq;
 		this.syncedSeq = seq;
+		this.scheduleSnapshot();
 		this.updateRoom((room) =>
 			room ? { ...room, syncedSeq: seq, headSeq: Math.max(room.headSeq, seq) } : room
 		);
@@ -745,6 +787,53 @@ export class SketchRoomClient {
 			});
 		}
 		this.advanceSeq(maxSeq);
+	}
+
+	// ------------------------------------------------------------ snapshots
+
+	/** Upload now at the op threshold; otherwise (re)arm the idle timer. */
+	private scheduleSnapshot(): void {
+		if (this.phase !== 'live' || this.snapshotting || this.opsSinceSnapshot === 0) return;
+		if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+		this.snapshotTimer = null;
+		if (this.opsSinceSnapshot >= SKETCH_SNAPSHOT_EVERY_OPS) {
+			void this.snapshotNow();
+			return;
+		}
+		this.armSnapshotTimer();
+	}
+
+	private armSnapshotTimer(): void {
+		if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+		this.snapshotTimer = setTimeout(() => {
+			this.snapshotTimer = null;
+			void this.snapshotNow();
+		}, SKETCH_SNAPSHOT_IDLE_MS);
+	}
+
+	private async snapshotNow(): Promise<void> {
+		if (this.phase !== 'live' || this.snapshotting || this.opsSinceSnapshot === 0) return;
+		const scene = useSketchSessionStore.getState().sessions[this.sketchId]?.scene;
+		if (!scene) return;
+		const generation = this.generation;
+		const counted = this.opsSinceSnapshot;
+		this.snapshotting = true;
+		let failed = false;
+		try {
+			await this.uploadSnapshot(this.sketchId, { scene, baseSeq: this.syncedSeq });
+			this.opsSinceSnapshot = Math.max(0, this.opsSinceSnapshot - counted);
+		} catch (error) {
+			failed = true;
+			logger.warn('The room snapshot did not upload; trying again later', LOG_CTX, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			this.snapshotting = false;
+		}
+		if (generation !== this.generation || this.phase !== 'live') return;
+		// A failure waits the idle delay, so a refused upload never loops.
+		if (failed) this.armSnapshotTimer();
+		else this.scheduleSnapshot();
 	}
 
 	// ------------------------------------------------------------ screening

@@ -127,6 +127,15 @@ export interface SketchStore {
 		destDir: string,
 		options?: SaveToProjectOptions
 	): Promise<string>;
+	/**
+	 * Change a sketch's share state (spec section 6). `change` gets the current
+	 * share and returns the next one; `null` means not shared. Resolves with the
+	 * updated record.
+	 */
+	updateSketchShare(
+		sketchId: string,
+		change: (share: SketchShare | null) => SketchShare | null
+	): Promise<SketchRecord>;
 	/** Seal and store secrets; `null` removes one. */
 	setSketchSecrets(
 		sketchId: string,
@@ -459,6 +468,20 @@ export function createSketchStore(deps: SketchStoreDeps): SketchStore {
 			});
 		},
 
+		async updateSketchShare(sketchId, change) {
+			await requireRecord(sketchId);
+			return writes.enqueue(sketchId, () =>
+				updateIndex((index) => {
+					const record = index.sketches[sketchId];
+					if (!record) {
+						throw new SketchStoreError('not-found', `No sketch has the id "${sketchId}".`);
+					}
+					record.share = change(record.share);
+					return { ...record };
+				})
+			);
+		},
+
 		async setSketchSecrets(sketchId, secrets) {
 			await requireRecord(sketchId);
 			// Seal outside the queue: it is CPU work and may ask the OS for its key.
@@ -530,6 +553,8 @@ export const saveSketchToProject: SketchStore['saveSketchToProject'] = (
 	destDir,
 	options
 ) => getSketchStore().saveSketchToProject(sketchId, destDir, options);
+export const updateSketchShare: SketchStore['updateSketchShare'] = (sketchId, change) =>
+	getSketchStore().updateSketchShare(sketchId, change);
 export const setSketchSecrets: SketchStore['setSketchSecrets'] = (sketchId, secrets) =>
 	getSketchStore().setSketchSecrets(sketchId, secrets);
 export const readSketchSecrets: SketchStore['readSketchSecrets'] = (sketchId) =>

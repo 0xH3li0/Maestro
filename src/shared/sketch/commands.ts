@@ -22,8 +22,15 @@
  */
 
 import type { ElementAuthorship } from './attribution';
+import type { SketchOwnerStatus } from './server';
 import type { SketchWireElement } from './payloads';
-import { SKETCH_ACTOR_KINDS, SKETCH_ROLES, type SketchRecord, type SketchScene } from './types';
+import {
+	SKETCH_ACTOR_KINDS,
+	SKETCH_ROLES,
+	type SketchLinkRole,
+	type SketchRecord,
+	type SketchScene,
+} from './types';
 
 export const SKETCH_COMMAND_ACTIONS = [
 	'new',
@@ -32,8 +39,24 @@ export const SKETCH_COMMAND_ACTIONS = [
 	'read',
 	'export',
 	'screening-consent',
+	'share',
+	'unshare',
+	'revoke-link',
+	'rotate',
+	'owner',
 ] as const;
 export type SketchCommandAction = (typeof SKETCH_COMMAND_ACTIONS)[number];
+
+/**
+ * The verbs that change who can reach a room (spec section 9, A1). From an
+ * agent caller each raises a desktop confirmation and runs only on Allow.
+ */
+export const SKETCH_SHARING_ACTIONS = ['share', 'unshare', 'revoke-link', 'rotate'] as const;
+export type SketchSharingAction = (typeof SKETCH_SHARING_ACTIONS)[number];
+
+/** `maestro-cli sketch owner <op>`: this device's RunMaestro.ai owner sign-in (spec section 6, M1). */
+export const SKETCH_OWNER_OPS = ['status', 'register', 'sign-out'] as const;
+export type SketchOwnerOp = (typeof SKETCH_OWNER_OPS)[number];
 
 /** `maestro-cli sketch screening-consent <op>` (spec section 8.10). */
 export const SKETCH_SCREENING_CONSENT_OPS = ['grant', 'revoke', 'status'] as const;
@@ -60,6 +83,14 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 
 export function isSketchCommandAction(value: unknown): value is SketchCommandAction {
 	return isOneOf(SKETCH_COMMAND_ACTIONS, value);
+}
+
+export function isSketchSharingAction(value: unknown): value is SketchSharingAction {
+	return isOneOf(SKETCH_SHARING_ACTIONS, value);
+}
+
+export function isSketchOwnerOp(value: unknown): value is SketchOwnerOp {
+	return isOneOf(SKETCH_OWNER_OPS, value);
 }
 
 export function isSketchScreeningConsentOp(value: unknown): value is SketchScreeningConsentOp {
@@ -117,6 +148,66 @@ export interface ExportedSketch {
 	file: SketchExportFile;
 }
 
+/** `owner`: the sign-in state, and for `register` what the server did with the email. */
+export interface SketchOwnerCommandResult {
+	status: SketchOwnerStatus;
+	email?: 'sent' | 'already-confirmed';
+}
+
+/** A link as `share` mints it. `url` holds the key and the cap: shown once, never stored. */
+export interface SketchMintedLink {
+	capId: string;
+	role: SketchLinkRole;
+	label: string;
+	/** Server expiry, ms since the epoch. */
+	expiresAt: number;
+	url: string;
+}
+
+/** `share`: the sketch, whether a room was made for it, and the new link. */
+export interface SketchShareResult {
+	record: SketchRecord;
+	createdRoom: boolean;
+	link: SketchMintedLink;
+}
+
+/** What `share` takes beyond the sketch. Every field is optional. */
+export interface SketchShareOptions {
+	role?: SketchLinkRole;
+	/** Days until the link expires; the role's default (Q7) when unset. */
+	expiresInDays?: number;
+	label?: string;
+}
+
+/**
+ * Everything the room client needs to join a shared sketch's room (spec
+ * section 6). Main hands it only to the window that owns the sketch's agent;
+ * the key and the owner token never go to the CLI or into a log.
+ */
+export interface SketchRoomJoin {
+	sketchId: string;
+	roomId: string;
+	/** The room key, base64url. */
+	roomKey: string;
+	/** The owner token, for `hello.auth.owner`. */
+	ownerToken: string;
+	serverUrl: string;
+	/** The agent the room's bot speaks for, announced after `screening.set` (D4). */
+	bot: { agentId: string; name: string } | null;
+}
+
+/** One element's version: what the room is known to hold after a snapshot upload. */
+export interface SketchElementVersion {
+	id: string;
+	version: number;
+}
+
+/** A live scene for a snapshot upload, and the newest op seq it includes. */
+export interface SketchSceneForSnapshot {
+	scene: SketchScene;
+	baseSeq: number;
+}
+
 /** Main to the renderer: the work only a window can do. */
 export type SketchRendererRequest =
 	| {
@@ -160,6 +251,22 @@ export type SketchRendererRequest =
 			elements: SketchWireElement[];
 			/** PNG pixels per scene pixel; 1 when unset. */
 			scale?: number;
+	  }
+	| {
+			/** The live scene (unsaved edits included) for a snapshot, and the room's seq. */
+			action: 'snapshotScene';
+			sketchId: string;
+	  }
+	| {
+			/**
+			 * Join the sketch's room, or leave it (`connection: null`). `baseline`
+			 * is what the room holds after the snapshot main just uploaded; edits
+			 * newer than it go out as deltas once the client is live.
+			 */
+			action: 'syncRoom';
+			sketchId: string;
+			connection: SketchRoomJoin | null;
+			baseline?: SketchElementVersion[];
 	  };
 
 /** Element skeletons in Excalidraw's `convertToExcalidrawElements` shape (spec T5). */
@@ -236,6 +343,8 @@ export type SketchRendererResult =
 			write?: SketchAgentWriteResult;
 			/** `convertMermaid`. */
 			skeletons?: SketchElementSkeleton[];
+			/** `snapshotScene`. */
+			snapshot?: SketchSceneForSnapshot;
 	  }
 	| { success: false; error: string };
 
@@ -335,6 +444,7 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		Array.isArray(reply.skeletons) && reply.skeletons.every(isObjectRecord)
 			? reply.skeletons
 			: undefined;
+	const snapshot = normalizeSceneForSnapshot(reply.snapshot);
 	return {
 		success: true,
 		...(typeof reply.tabId === 'string' ? { tabId: reply.tabId } : {}),
@@ -342,7 +452,23 @@ export function normalizeSketchRendererResult(raw: unknown): SketchRendererResul
 		...(session !== undefined ? { session } : {}),
 		...(write ? { write } : {}),
 		...(skeletons ? { skeletons } : {}),
+		...(snapshot ? { snapshot } : {}),
 	};
+}
+
+/** A `snapshotScene` reply as main may trust it, or undefined. The store checks the scene again. */
+function normalizeSceneForSnapshot(value: unknown): SketchSceneForSnapshot | undefined {
+	if (!isObjectRecord(value) || !isObjectRecord(value.scene)) return undefined;
+	const { scene, baseSeq } = value;
+	if (!Number.isSafeInteger(baseSeq) || (baseSeq as number) < 0) return undefined;
+	if (
+		!Array.isArray(scene.elements) ||
+		!isObjectRecord(scene.appState) ||
+		!isObjectRecord(scene.files)
+	) {
+		return undefined;
+	}
+	return { scene: scene as unknown as SketchScene, baseSeq: baseSeq as number };
 }
 
 /** One shape on the board, named by its own or its bound text. */

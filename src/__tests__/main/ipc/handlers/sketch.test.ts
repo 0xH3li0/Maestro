@@ -69,6 +69,16 @@ describe('sketch IPC handlers', () => {
 			renameSketch: vi.fn(async () => ({ ...record, name: 'Renamed' })),
 			deleteSketch: vi.fn(async () => undefined),
 			saveSketchToProject: vi.fn(async () => '/project/Board.excalidraw'),
+			ownerStatus: vi.fn(async () => ({ state: 'signed-out' })),
+			registerOwner: vi.fn(async () => ({ email: 'sent' })),
+			waitForOwner: vi.fn(async () => ({ state: 'confirmed' })),
+			signOutOwner: vi.fn(async () => ({ state: 'signed-out' })),
+			shareSketch: vi.fn(async () => ({ record, createdRoom: true })),
+			unshareSketch: vi.fn(async () => record),
+			revokeSketchLink: vi.fn(async () => record),
+			rotateSketch: vi.fn(async () => record),
+			uploadSnapshot: vi.fn(async () => ({ bytes: 64 })),
+			roomConnection: vi.fn(async () => null),
 		};
 		registerSketchHandlers();
 	});
@@ -94,16 +104,55 @@ describe('sketch IPC handlers', () => {
 			'sketch:get',
 			'sketch:grantScreeningConsent',
 			'sketch:list',
+			'sketch:ownerStatus',
 			'sketch:readScene',
+			'sketch:registerOwner',
 			'sketch:rename',
 			'sketch:reportServerScreening',
+			'sketch:revokeLink',
 			'sketch:revokeScreeningConsent',
+			'sketch:roomConnection',
 			'sketch:roomScreening',
+			'sketch:rotate',
 			'sketch:saveToProject',
 			'sketch:screeningConsentStatus',
 			'sketch:setRoomLive',
+			'sketch:share',
+			'sketch:signOutOwner',
+			'sketch:unshare',
+			'sketch:uploadSnapshot',
+			'sketch:waitForOwner',
 			'sketch:writeScene',
 		]);
+	});
+
+	it('passes each sharing channel through with no caller (the person in the tab is the conductor)', async () => {
+		const service = h.service!;
+		await invoke('sketch:ownerStatus');
+		expect(service.ownerStatus).toHaveBeenCalled();
+		await invoke('sketch:registerOwner', 'a@example.com');
+		expect(service.registerOwner).toHaveBeenCalledWith('a@example.com');
+		await invoke('sketch:waitForOwner', { timeoutMs: 1000 });
+		expect(service.waitForOwner).toHaveBeenCalledWith({ timeoutMs: 1000 });
+		await invoke('sketch:signOutOwner');
+		expect(service.signOutOwner).toHaveBeenCalled();
+
+		await invoke('sketch:share', SKETCH_ID, { role: 'ro' });
+		expect(service.shareSketch).toHaveBeenCalledWith(SKETCH_ID, { role: 'ro' });
+		await invoke('sketch:unshare', SKETCH_ID);
+		expect(service.unshareSketch).toHaveBeenCalledWith(SKETCH_ID);
+		await invoke('sketch:revokeLink', SKETCH_ID, 'cap-1');
+		expect(service.revokeSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1');
+		await invoke('sketch:rotate', SKETCH_ID);
+		expect(service.rotateSketch).toHaveBeenCalledWith(SKETCH_ID);
+		await expect(
+			invoke('sketch:uploadSnapshot', SKETCH_ID, { scene, baseSeq: 3 })
+		).resolves.toEqual({
+			bytes: 64,
+		});
+		expect(service.uploadSnapshot).toHaveBeenCalledWith(SKETCH_ID, { scene, baseSeq: 3 });
+		await expect(invoke('sketch:roomConnection', SKETCH_ID)).resolves.toBeNull();
+		expect(service.roomConnection).toHaveBeenCalledWith(SKETCH_ID);
 	});
 
 	it('passes each consent channel through to the consent module', async () => {

@@ -4,7 +4,9 @@
  * `export` draws SVG as text and PNG as base64 with Excalidraw's exporters,
  * `agentWrite` and `convertMermaid` reach the agent write service,
  * `renderForAgent` draws only the elements main picked (with only the files
- * they name), and every failure comes back as a reply instead of a throw.
+ * they name), `snapshotScene` hands main the live scene with the room's seq,
+ * `syncRoom` joins or leaves the room, and every failure comes back as a
+ * reply instead of a throw.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +24,13 @@ const agentWrites = vi.hoisted(() => ({
 	convertMermaidToSkeletons: vi.fn(),
 }));
 vi.mock('../../../renderer/services/sketchAgentWrites', () => agentWrites);
+
+const roomClient = vi.hoisted(() => ({
+	getSketchRoomClient: vi.fn(),
+	connectSketchRoom: vi.fn(),
+	disconnectSketchRoom: vi.fn(),
+}));
+vi.mock('../../../renderer/services/sketchRoomClient', () => roomClient);
 
 import {
 	exportSketchImage,
@@ -385,5 +394,82 @@ describe('runRemoteSketchCommand renderForAgent', () => {
 		expect(Object.keys(written.files)).toEqual(['kept']);
 		expect(file!.data).not.toContain('withheld words');
 		expect(file!.data).not.toContain('BBBB');
+	});
+});
+
+describe('runRemoteSketchCommand: sharing', () => {
+	const live: SketchScene = { ...scene, elements: [{ id: 'unsaved', version: 4, type: 'text' }] };
+	const join = {
+		sketchId: 'sketch-1',
+		roomId: 'R'.repeat(22),
+		roomKey: 'k'.repeat(22),
+		ownerToken: 'token',
+		serverUrl: 'https://sketch.runmaestro.ai',
+		bot: null,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSketchSessionStore.setState({
+			sessions: {
+				'sketch-1': {
+					sketchId: 'sketch-1',
+					status: 'ready',
+					loadError: null,
+					scene: live,
+					authors: {},
+					dirty: true,
+					revision: 1,
+					saveError: null,
+					externalRevision: 0,
+					focusRequest: null,
+					chat: [],
+					approvedImages: {},
+				},
+			},
+		});
+	});
+
+	it('hands main the live scene, unsaved edits included, with the room seq', async () => {
+		roomClient.getSketchRoomClient.mockReturnValue({ currentSeq: () => 12 });
+		await expect(
+			runRemoteSketchCommand({ action: 'snapshotScene', sketchId: 'sketch-1' })
+		).resolves.toEqual({ success: true, snapshot: { scene: live, baseSeq: 12 } });
+	});
+
+	it('reports seq 0 when no room client runs', async () => {
+		roomClient.getSketchRoomClient.mockReturnValue(undefined);
+		const result = await runRemoteSketchCommand({ action: 'snapshotScene', sketchId: 'sketch-1' });
+		expect(result).toMatchObject({ success: true, snapshot: { baseSeq: 0 } });
+	});
+
+	it('joins the room with the baseline, and leaves it for a null connection', async () => {
+		const baseline = [{ id: 'unsaved', version: 3 }];
+		await expect(
+			runRemoteSketchCommand({
+				action: 'syncRoom',
+				sketchId: 'sketch-1',
+				connection: join,
+				baseline,
+			})
+		).resolves.toEqual({ success: true });
+		expect(roomClient.connectSketchRoom).toHaveBeenCalledWith({
+			sketchId: 'sketch-1',
+			roomId: join.roomId,
+			roomKey: join.roomKey,
+			ownerToken: 'token',
+			serverUrl: join.serverUrl,
+			baseline,
+		});
+
+		await runRemoteSketchCommand({ action: 'syncRoom', sketchId: 'sketch-1', connection: null });
+		expect(roomClient.disconnectSketchRoom).toHaveBeenCalledWith('sketch-1');
+	});
+
+	it('answers a failed join instead of throwing', async () => {
+		roomClient.connectSketchRoom.mockRejectedValueOnce(new Error('bad key'));
+		await expect(
+			runRemoteSketchCommand({ action: 'syncRoom', sketchId: 'sketch-1', connection: join })
+		).resolves.toEqual({ success: false, error: 'bad key' });
 	});
 });

@@ -3,7 +3,9 @@
  * socket (`hello`, `welcome`, `screening.set`, `bot.presence`, `catchup`),
  * the screening value the server confirmed and its `since`, the author map
  * taken from op envelopes (never `customData`), delta batching, catchup
- * paging, offline edits flushed after catchup, and the close-code notices.
+ * paging, offline edits flushed after catchup, the close-code notices, the
+ * snapshot baseline main hands over, and the snapshot cadence (200 ops, or
+ * 60 s idle).
  *
  * Real WebCrypto seals and opens every frame; `reconcileElements` is a small
  * stand-in that keeps the higher version of each element.
@@ -15,6 +17,8 @@ import {
 	SKETCH_DELTA_MIN_INTERVAL_MS,
 	SKETCH_RATE_LIMITED_RECONNECT_MS,
 	SKETCH_ROOM_CLOSE_ACTIONS,
+	SKETCH_SNAPSHOT_EVERY_OPS,
+	SKETCH_SNAPSHOT_IDLE_MS,
 	SketchRoomClient,
 	sketchReconnectDelay,
 	type CreateSketchRoomSocket,
@@ -28,6 +32,7 @@ import {
 	useSketchSessionStore,
 } from '../../../renderer/stores/sketchSessionStore';
 import type { SketchScreeningChange } from '../../../shared/sketch/cloud-consent';
+import type { SketchSceneForSnapshot } from '../../../shared/sketch/commands';
 import {
 	decryptPayload,
 	encryptPayload,
@@ -156,6 +161,9 @@ const screeningApi = {
 	onScreeningChanged: vi.fn<SketchRoomScreeningApi['onScreeningChanged']>(),
 };
 
+const uploadSnapshot =
+	vi.fn<(sketchId: string, input: SketchSceneForSnapshot) => Promise<unknown>>();
+
 let roomKey: string;
 let key: SketchRoomKey;
 let client: SketchRoomClient | null = null;
@@ -198,7 +206,7 @@ async function startClient(
 			clientId: 'client-1',
 			...options,
 		},
-		{ createSocket, reconcile, screeningApi, random: () => 0 }
+		{ createSocket, reconcile, screeningApi, uploadSnapshot, random: () => 0 }
 	);
 	await client.start();
 	return client;
@@ -265,6 +273,7 @@ beforeEach(async () => {
 	sketchApi.writeScene.mockReset().mockResolvedValue(undefined);
 	(window.maestro as unknown as { sketch: typeof sketchApi }).sketch = sketchApi;
 
+	uploadSnapshot.mockReset().mockResolvedValue({ bytes: 64 });
 	screeningValue = 'local';
 	screeningListener = null;
 	screeningApi.setRoomLive.mockReset().mockImplementation(async () => screeningValue);
@@ -725,5 +734,92 @@ describe('sketchReconnectDelay', () => {
 		expect(sketchReconnectDelay(0, CLOSE_CODES.rate_limited, () => 0)).toBe(
 			SKETCH_RATE_LIMITED_RECONNECT_MS
 		);
+	});
+});
+
+describe('snapshot baseline', () => {
+	it('sends, once live, every element newer than the snapshot main uploaded', async () => {
+		// The session moved on while main uploaded: a at 3 (snapshot has 2), b is new.
+		await startClient({ baseline: [{ id: 'a', version: 2 }] }, [el('a', 3), el('b', 1)]);
+		await joinLive();
+		await vi.advanceTimersByTimeAsync(0);
+		await until(() => sentOf('delta').length === 1, 'the delta');
+
+		const sent = await deltaElements(sentOf('delta')[0]);
+		expect(sent.map((element) => [element.id, element.version]).sort()).toEqual([
+			['a', 3],
+			['b', 1],
+		]);
+	});
+
+	it('sends nothing when the session matches the snapshot', async () => {
+		await startClient({ baseline: [{ id: 'a', version: 1 }] }, [el('a', 1)]);
+		await joinLive();
+		await vi.advanceTimersByTimeAsync(SKETCH_DELTA_MIN_INTERVAL_MS);
+		await settle();
+		expect(sentOf('delta')).toHaveLength(0);
+	});
+});
+
+describe('snapshots', () => {
+	it(`uploads the live scene ${SKETCH_SNAPSHOT_IDLE_MS / 1000} s after the last op, with baseSeq = the newest op`, async () => {
+		await startClient();
+		await joinLive();
+		receive({ t: 'delta', ...(await op(1, guest, 5_000, [el('g', 1)])) });
+		await until(() => client!.currentSeq() === 1, 'the op');
+
+		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS - 1);
+		expect(uploadSnapshot).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		await until(() => uploadSnapshot.mock.calls.length === 1, 'the snapshot');
+
+		const [sketchId, input] = uploadSnapshot.mock.calls[0];
+		expect(sketchId).toBe(SKETCH_ID);
+		expect(input.baseSeq).toBe(1);
+		expect(input.scene.elements.map((element) => element.id).sort()).toEqual(['a', 'g']);
+
+		// Nothing new since: no second upload.
+		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS);
+		await settle();
+		expect(uploadSnapshot).toHaveBeenCalledTimes(1);
+	});
+
+	it(`uploads at once after ${SKETCH_SNAPSHOT_EVERY_OPS} ops, acks of its own deltas included`, async () => {
+		await startClient();
+		await joinLive();
+		receive({ t: 'ack', seq: SKETCH_SNAPSHOT_EVERY_OPS - 1 });
+		await settle();
+		expect(uploadSnapshot).not.toHaveBeenCalled();
+
+		receive({ t: 'ack', seq: SKETCH_SNAPSHOT_EVERY_OPS });
+		await until(() => uploadSnapshot.mock.calls.length === 1, 'the snapshot');
+		expect(uploadSnapshot.mock.calls[0][1].baseSeq).toBe(SKETCH_SNAPSHOT_EVERY_OPS);
+	});
+
+	it('tries a failed upload again after the idle delay, never in a loop', async () => {
+		uploadSnapshot.mockRejectedValueOnce(new Error('offline'));
+		await startClient();
+		await joinLive();
+		receive({ t: 'ack', seq: SKETCH_SNAPSHOT_EVERY_OPS });
+		await until(() => uploadSnapshot.mock.calls.length === 1, 'the first try');
+		await settle();
+		expect(uploadSnapshot).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS);
+		await until(() => uploadSnapshot.mock.calls.length === 2, 'the retry');
+	});
+
+	it('uploads nothing while no op came, and nothing after stop', async () => {
+		await startClient();
+		await joinLive();
+		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS * 2);
+		expect(uploadSnapshot).not.toHaveBeenCalled();
+
+		receive({ t: 'ack', seq: 3 });
+		await settle();
+		client!.stop();
+		await vi.advanceTimersByTimeAsync(SKETCH_SNAPSHOT_IDLE_MS);
+		await settle();
+		expect(uploadSnapshot).not.toHaveBeenCalled();
 	});
 });

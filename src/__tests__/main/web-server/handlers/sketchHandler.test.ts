@@ -2,7 +2,8 @@
 // Each action is one SketchService method (the service the `sketch:*` IPC
 // handlers call), its fields come from the message, every reply carries the
 // request id so the CLI never hangs, and only the CLI's own connection is
-// answered: Sketch Book is desktop only (Q13).
+// answered: Sketch Book is desktop only (Q13). The sharing verbs name the
+// agent caller so the service can raise the desktop confirmation (A1).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -22,6 +23,14 @@ const service = {
 	openSketch: vi.fn(),
 	readSketch: vi.fn(),
 	exportSketch: vi.fn(),
+	shareSketch: vi.fn(),
+	unshareSketch: vi.fn(),
+	revokeSketchLink: vi.fn(),
+	rotateSketch: vi.fn(),
+	ownerStatus: vi.fn(),
+	registerOwner: vi.fn(),
+	waitForOwner: vi.fn(),
+	signOutOwner: vi.fn(),
 };
 
 vi.mock('../../../../main/sketch/sketch-service', () => ({
@@ -177,9 +186,71 @@ describe('sketch_command handler', () => {
 		expect(consent.requestGrant).not.toHaveBeenCalled();
 	});
 
+	it('shares with the link options, and names the agent caller for the desktop confirmation', async () => {
+		service.shareSketch.mockResolvedValue({ createdRoom: true });
+		const reply = await send({
+			action: 'share',
+			sketchId: SKETCH_ID,
+			role: 'ro',
+			expiresInDays: 3,
+			label: 'Review',
+		});
+		expect(service.shareSketch).toHaveBeenLastCalledWith(
+			SKETCH_ID,
+			{ role: 'ro', expiresInDays: 3, label: 'Review' },
+			{}
+		);
+		expect(reply).toMatchObject({ success: true, response: { createdRoom: true } });
+
+		await send({ action: 'share', sketchId: SKETCH_ID, fromSessionId: 'agent-1' });
+		expect(service.shareSketch).toHaveBeenLastCalledWith(
+			SKETCH_ID,
+			{ role: undefined, expiresInDays: undefined, label: undefined },
+			{ requestedBy: 'Builder' }
+		);
+	});
+
+	it('passes unshare, revoke-link and rotate through with the caller', async () => {
+		await send({ action: 'unshare', sketchId: SKETCH_ID, fromSessionId: 'agent-1' });
+		expect(service.unshareSketch).toHaveBeenCalledWith(SKETCH_ID, { requestedBy: 'Builder' });
+		await send({ action: 'revoke-link', sketchId: SKETCH_ID, capId: 'cap-1' });
+		expect(service.revokeSketchLink).toHaveBeenCalledWith(SKETCH_ID, 'cap-1', {});
+		await send({ action: 'rotate', sketchId: SKETCH_ID, fromSessionId: 'gone-agent' });
+		// An agent no longer in the list is named by its id.
+		expect(service.rotateSketch).toHaveBeenCalledWith(SKETCH_ID, { requestedBy: 'gone-agent' });
+	});
+
+	it('reads, registers (waiting only when asked) and signs out the owner', async () => {
+		const pending = { state: 'pending', email: 'a@example.com' };
+		const confirmed = { state: 'confirmed', email: 'a@example.com' };
+		service.ownerStatus.mockResolvedValue(confirmed);
+		service.registerOwner.mockResolvedValue({ status: pending, email: 'sent' });
+		service.waitForOwner.mockResolvedValue(confirmed);
+		service.signOutOwner.mockResolvedValue({ state: 'signed-out' });
+
+		expect(await send({ action: 'owner', op: 'status' })).toMatchObject({
+			response: { status: confirmed },
+		});
+		expect(await send({ action: 'owner', op: 'register', email: 'a@example.com' })).toMatchObject({
+			response: { status: pending, email: 'sent' },
+		});
+		expect(service.waitForOwner).not.toHaveBeenCalled();
+		expect(
+			await send({ action: 'owner', op: 'register', email: 'a@example.com', wait: true })
+		).toMatchObject({ response: { status: confirmed, email: 'sent' } });
+		expect(service.registerOwner).toHaveBeenCalledWith('a@example.com');
+		expect(await send({ action: 'owner', op: 'sign-out' })).toMatchObject({
+			response: { status: { state: 'signed-out' } },
+		});
+
+		const bad = await send({ action: 'owner', op: 'login' });
+		expect(bad).toMatchObject({ success: false });
+		expect(String(bad.error)).toContain('status, register or sign-out');
+	});
+
 	it('refuses an unknown action', async () => {
-		const reply = await send({ action: 'share', sketchId: SKETCH_ID });
-		expect(reply).toMatchObject({ success: false, error: 'Unknown Sketch Book action: share' });
+		const reply = await send({ action: 'kick', sketchId: SKETCH_ID });
+		expect(reply).toMatchObject({ success: false, error: 'Unknown Sketch Book action: kick' });
 		expect(service.openSketch).not.toHaveBeenCalled();
 	});
 

@@ -15,12 +15,21 @@ import {
 	CT_MAX_BYTES,
 	ERROR_CODES,
 	isKnownErrorCode,
+	isSketchCap,
+	isSketchCapId,
+	isSketchFileId,
+	isSketchRoomId,
 	latestSnapshotPath,
 	MAX_FRAME_BYTES,
 	MIN_BLOB_BYTES,
 	parseServerFrame,
 	PROTOCOL_VERSION,
 	roomFilePath,
+	roomLinkPath,
+	roomLinksPath,
+	roomPath,
+	roomRotatePath,
+	ROOMS_PATH,
 	SNAPSHOT_HEADERS,
 	snapshotUploadPath,
 	type GuardrailTarget,
@@ -232,6 +241,28 @@ describe('sketch protocol constants', () => {
 			'files_limit',
 		]);
 		expect(MIN_BLOB_BYTES).toBe(12 + 16);
+	});
+
+	it('names the owner room routes of hosted spec section 5', () => {
+		expect(ROOMS_PATH).toBe('/api/rooms');
+		expect(roomPath('room1')).toBe('/api/rooms/room1');
+		expect(roomLinksPath('room1')).toBe('/api/rooms/room1/links');
+		expect(roomLinkPath('room1', 'cap/1')).toBe('/api/rooms/room1/links/cap%2F1');
+		expect(roomRotatePath('room1')).toBe('/api/rooms/room1/rotate');
+	});
+
+	it('checks room ids, cap ids, caps and file ids by their hosted shapes', () => {
+		expect(isSketchRoomId('A'.repeat(22))).toBe(true);
+		expect(isSketchRoomId('A'.repeat(21))).toBe(false);
+		expect(isSketchRoomId('A'.repeat(21) + '-')).toBe(false);
+		expect(isSketchCapId('abcDEF123456')).toBe(true);
+		expect(isSketchCapId('abcDEF12345_')).toBe(false);
+		expect(isSketchCap('a-_'.repeat(14) + 'b')).toBe(true);
+		expect(isSketchCap('a'.repeat(42))).toBe(false);
+		expect(isSketchFileId('f'.repeat(40))).toBe(true);
+		expect(isSketchFileId('f'.repeat(129))).toBe(false);
+		expect(isSketchFileId('a/b')).toBe(false);
+		expect(isSketchFileId(7)).toBe(false);
 	});
 });
 

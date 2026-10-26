@@ -9,7 +9,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	isSketchCommandAction,
+	isSketchOwnerOp,
 	isSketchScreeningConsentOp,
+	isSketchSharingAction,
 	isSketchExportFormat,
 	isSketchReadFormat,
 	normalizeSketchRendererResult,
@@ -26,12 +28,42 @@ function scene(
 }
 
 describe('guards', () => {
-	it('accepts exactly the room-free actions and screening-consent', () => {
-		for (const action of ['new', 'list', 'open', 'read', 'export', 'screening-consent']) {
+	it('accepts exactly the sketch verbs', () => {
+		for (const action of [
+			'new',
+			'list',
+			'open',
+			'read',
+			'export',
+			'screening-consent',
+			'share',
+			'unshare',
+			'revoke-link',
+			'rotate',
+			'owner',
+		]) {
 			expect(isSketchCommandAction(action), action).toBe(true);
 		}
-		for (const action of ['share', 'NEW', '', undefined, 1]) {
+		for (const action of ['kick', 'NEW', '', undefined, 1]) {
 			expect(isSketchCommandAction(action), String(action)).toBe(false);
+		}
+	});
+
+	it('marks only the access-changing verbs as sharing (A1)', () => {
+		for (const action of ['share', 'unshare', 'revoke-link', 'rotate']) {
+			expect(isSketchSharingAction(action), action).toBe(true);
+		}
+		for (const action of ['owner', 'list', 'export', undefined]) {
+			expect(isSketchSharingAction(action), String(action)).toBe(false);
+		}
+	});
+
+	it('accepts the owner ops only', () => {
+		for (const op of ['status', 'register', 'sign-out']) {
+			expect(isSketchOwnerOp(op), op).toBe(true);
+		}
+		for (const op of ['signout', 'login', '', undefined]) {
+			expect(isSketchOwnerOp(op), String(op)).toBe(false);
 		}
 	});
 
@@ -52,6 +84,31 @@ describe('guards', () => {
 		expect(isSketchExportFormat('svg')).toBe(true);
 		expect(isSketchExportFormat('json')).toBe(true);
 		expect(isSketchExportFormat('gif')).toBe(false);
+	});
+});
+
+describe('normalizeSketchRendererResult: snapshotScene', () => {
+	it('keeps a well-formed live scene and its seq', () => {
+		const live = scene([{ id: 'a', version: 2 }]);
+		expect(
+			normalizeSketchRendererResult({ success: true, snapshot: { scene: live, baseSeq: 7 } })
+		).toEqual({ success: true, snapshot: { scene: live, baseSeq: 7 } });
+	});
+
+	it('drops a snapshot with a bad seq or a scene missing a part', () => {
+		const live = scene([]);
+		for (const snapshot of [
+			{ scene: live, baseSeq: -1 },
+			{ scene: live, baseSeq: 1.5 },
+			{ scene: live },
+			{ scene: { ...live, files: undefined }, baseSeq: 0 },
+			{ scene: { ...live, elements: 'x' }, baseSeq: 0 },
+			'scene',
+		]) {
+			expect(normalizeSketchRendererResult({ success: true, snapshot })).toEqual({
+				success: true,
+			});
+		}
 	});
 });
 

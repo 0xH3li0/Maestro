@@ -44,6 +44,18 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli sketch screening-consent grant --engine jev',
 		'maestro-cli sketch screening-consent revoke --engine openjev --json',
 	],
+	'sketch share': [
+		'maestro-cli sketch share <sketch-id>',
+		'maestro-cli sketch share <sketch-id> --role ro --expires-days 3 --label "Review" --json',
+	],
+	'sketch unshare': ['maestro-cli sketch unshare <sketch-id>'],
+	'sketch revoke-link': ['maestro-cli sketch revoke-link <sketch-id> <link-id>'],
+	'sketch rotate': ['maestro-cli sketch rotate <sketch-id> --json'],
+	'sketch owner': [
+		'maestro-cli sketch owner status',
+		'maestro-cli sketch owner register --email you@example.com --wait',
+		'maestro-cli sketch owner sign-out',
+	],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

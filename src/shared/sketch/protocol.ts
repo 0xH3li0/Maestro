@@ -94,6 +94,56 @@ export function roomFilePath(roomId: string, fileId: string): string {
 	return `/api/rooms/${encodeURIComponent(roomId)}/files/${encodeURIComponent(fileId)}`;
 }
 
+/**
+ * Hosted spec section 5: the owner's room routes, all `Authorization: Bearer`.
+ * `POST` creates a room (`201 {roomId}`); `DELETE` on the room archives it for
+ * good (every socket closes 4011, storage and blobs go).
+ */
+export const ROOMS_PATH = '/api/rooms';
+
+export function roomPath(roomId: string): string {
+	return `${ROOMS_PATH}/${encodeURIComponent(roomId)}`;
+}
+
+/** `POST {role, label, expiresInDays}` mints a link: `201 {capId, cap, expiresAt}`, `cap` only here. */
+export function roomLinksPath(roomId: string): string {
+	return `${roomPath(roomId)}/links`;
+}
+
+/** `DELETE` revokes one link; its live sockets close 4003. */
+export function roomLinkPath(roomId: string, capId: string): string {
+	return `${roomLinksPath(roomId)}/${encodeURIComponent(capId)}`;
+}
+
+/** `POST` resets all access: every link revoked, `keyEpoch` bumped, ops, chat and snapshots purged. */
+export function roomRotatePath(roomId: string): string {
+	return `${roomPath(roomId)}/rotate`;
+}
+
+/** Hosted spec section 5: a room id is 22 base62 characters, a link's `capId` 12. */
+const ROOM_ID_PATTERN = /^[A-Za-z0-9]{22}$/;
+const CAP_ID_PATTERN = /^[A-Za-z0-9]{12}$/;
+/** Contract section 2: a link `cap` is 32 random bytes, base64url (43 characters). */
+const CAP_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+/** Contract section 5a: the `fileId` a file route accepts. */
+const FILE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isSketchRoomId(value: unknown): value is string {
+	return typeof value === 'string' && ROOM_ID_PATTERN.test(value);
+}
+
+export function isSketchCapId(value: unknown): value is string {
+	return typeof value === 'string' && CAP_ID_PATTERN.test(value);
+}
+
+export function isSketchCap(value: unknown): value is string {
+	return typeof value === 'string' && CAP_PATTERN.test(value);
+}
+
+export function isSketchFileId(value: unknown): value is string {
+	return typeof value === 'string' && FILE_ID_PATTERN.test(value);
+}
+
 /** Upper bound on any id or name string. Not in the contract; an abuse guard only. */
 const MAX_ID_CHARS = 256;
 /** R2 object keys in `welcome.snapshot.key`. */

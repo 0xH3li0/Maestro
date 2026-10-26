@@ -275,3 +275,59 @@ export function decodePayload<K extends SketchPayloadKind>(
 		throw err;
 	}
 }
+
+// ---------------------------------------------------------------- scene to blobs
+
+/** What `sceneSnapshotPayloads()` reads from a saved or live scene. */
+export interface SnapshotSourceScene {
+	elements: SketchWireElement[];
+	appState: Record<string, unknown>;
+	/** Excalidraw's `BinaryFiles`, keyed by file id. */
+	files: Record<string, unknown>;
+}
+
+/**
+ * A scene as the room's blobs (contract section 3, Y2): one `snapshot`
+ * payload naming its files, and one `file` payload per image the scene
+ * holds. A file entry that is not an Excalidraw binary file is left out of
+ * both, so the snapshot never names a file no one can fetch.
+ */
+export function sceneSnapshotPayloads(scene: SnapshotSourceScene): {
+	snapshot: SnapshotPayload;
+	files: FilePayload[];
+} {
+	const files: FilePayload[] = [];
+	for (const [fileId, raw] of Object.entries(scene.files)) {
+		if (!isObj(raw)) continue;
+		const { mimeType, dataURL, created } = raw;
+		if (
+			typeof mimeType !== 'string' ||
+			typeof dataURL !== 'string' ||
+			!dataURL.startsWith('data:')
+		) {
+			continue;
+		}
+		files.push({
+			v: 1,
+			id: fileId,
+			mimeType,
+			dataURL,
+			created: isFiniteNumber(created) ? created : 0,
+		});
+	}
+	const { viewBackgroundColor, gridSize } = scene.appState;
+	return {
+		snapshot: {
+			v: 1,
+			type: 'excalidraw',
+			elements: scene.elements,
+			appState: {
+				viewBackgroundColor:
+					typeof viewBackgroundColor === 'string' ? viewBackgroundColor : '#ffffff',
+				gridSize: isFiniteNumber(gridSize) ? gridSize : null,
+			},
+			files: files.map((file) => file.id),
+		},
+		files,
+	};
+}

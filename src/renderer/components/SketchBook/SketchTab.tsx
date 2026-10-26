@@ -17,9 +17,15 @@
  * in the session until a mounted view scrolls to it; its chat posts (T12)
  * show in the chat pane. A shared sketch's room notice (a close code, a
  * reconnect; `sketchRoomClient.ts`) shows above the canvas.
+ *
+ * The Share button in the bar above the canvas opens the Share panel
+ * (`SketchSharePanel.tsx`). Opening a shared sketch joins its room when this
+ * window has no client for it yet (`ensureSketchRoomConnected()`), which is
+ * how a room comes back after a restart.
  */
 
 import React from 'react';
+import { Share2 } from 'lucide-react';
 import type {
 	AppState,
 	BinaryFiles,
@@ -37,6 +43,9 @@ import {
 } from '../../stores/sketchSessionStore';
 import { loadExcalidraw } from './excalidrawAssets';
 import { SketchChatPane } from './SketchChatPane';
+import { SketchSharePanel } from './SketchSharePanel';
+import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { ensureSketchRoomConnected } from '../../services/sketchSharing';
 
 const Excalidraw = React.lazy(() =>
 	loadExcalidraw().then((module) => ({ default: module.Excalidraw }))
@@ -75,11 +84,19 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 	const focusRequest = useSketchSessionStore((s) => s.sessions[sketchId]?.focusRequest ?? null);
 	const chat = useSketchSessionStore((s) => s.sessions[sketchId]?.chat);
 	const roomNotice = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.notice ?? null);
+	const roomConnection = useSketchSessionStore(
+		(s) => s.sessions[sketchId]?.room?.connection ?? null
+	);
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
+	const [shareOpen, setShareOpen] = React.useState(false);
 
 	React.useEffect(() => {
 		void useSketchSessionStore.getState().openSketchSession(sketchId);
 	}, [sketchId]);
+
+	React.useEffect(() => {
+		if (status === 'ready') void ensureSketchRoomConnected(sketchId);
+	}, [sketchId, status]);
 
 	const { debouncedCallback: scheduleSave } = useDebouncedCallback(
 		() => {
@@ -203,6 +220,25 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 			data-sketch-id={sketchId}
 			style={{ backgroundColor: theme.colors.bgMain }}
 		>
+			<div
+				className="px-2 py-1 flex items-center justify-end gap-2 select-none"
+				style={{ borderBottom: `1px solid ${theme.colors.border}` }}
+			>
+				{roomConnection === 'live' && (
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Shared
+					</span>
+				)}
+				<HeaderActionButton
+					theme={theme}
+					variant={shareOpen ? 'primary' : 'ghost'}
+					icon={<Share2 />}
+					ariaLabel="Share this sketch"
+					onClick={() => setShareOpen((open) => !open)}
+				>
+					Share
+				</HeaderActionButton>
+			</div>
 			{saveError && (
 				<div
 					className="px-3 py-1 text-xs select-text"
@@ -246,6 +282,9 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 					</div>
 				</div>
 				{chat && chat.length > 0 && <SketchChatPane messages={chat} theme={theme} />}
+				{shareOpen && (
+					<SketchSharePanel sketchId={sketchId} theme={theme} onClose={() => setShareOpen(false)} />
+				)}
 			</div>
 		</div>
 	);

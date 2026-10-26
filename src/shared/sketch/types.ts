@@ -114,6 +114,11 @@ export interface SketchShare {
 	keyEpoch: number;
 	links: SketchLink[];
 	botPolicy: BotPolicy;
+	/**
+	 * The server the room lives on (`sketchBook.serverUrl` when it was made).
+	 * Absent on a record from before it was kept: the hosted server.
+	 */
+	serverUrl?: string;
 }
 
 /** Spec section 3, binding record. One per sketch in `userData/sketches/index.json`. */

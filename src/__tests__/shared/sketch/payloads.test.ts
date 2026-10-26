@@ -11,6 +11,7 @@ import {
 	decodePayload,
 	encodePayload,
 	payloadCharCount,
+	sceneSnapshotPayloads,
 	SKETCH_PAYLOAD_KINDS,
 	type SketchPayloadByKind,
 	type SketchPayloadKind,
@@ -186,5 +187,48 @@ describe('decodePayload never throws', () => {
 	it('returns an error for an unknown kind', () => {
 		const result = decodePayload('bogus' as SketchPayloadKind, '{"v":1}');
 		expect(result).toEqual({ ok: false, error: 'unknown kind bogus' });
+	});
+});
+
+describe('sceneSnapshotPayloads', () => {
+	const image = {
+		id: 'file-1',
+		mimeType: 'image/png',
+		dataURL: 'data:image/png;base64,AAAA',
+		created: 5,
+	};
+
+	it('makes a snapshot naming every usable file, and one file payload each', () => {
+		const { snapshot, files } = sceneSnapshotPayloads({
+			elements: [rectangle],
+			appState: { viewBackgroundColor: '#123456', gridSize: 20, zoom: { value: 2 } },
+			files: { 'file-1': image },
+		});
+		expect(snapshot).toEqual({
+			v: 1,
+			type: 'excalidraw',
+			elements: [rectangle],
+			appState: { viewBackgroundColor: '#123456', gridSize: 20 },
+			files: ['file-1'],
+		});
+		expect(files).toEqual([{ v: 1, ...image }]);
+		// Both pass the guards the guest client runs.
+		expect(() => encodePayload('snapshot', snapshot)).not.toThrow();
+		expect(() => encodePayload('file', files[0])).not.toThrow();
+	});
+
+	it('defaults the background and grid, and leaves out a file that is not a binary file', () => {
+		const { snapshot, files } = sceneSnapshotPayloads({
+			elements: [],
+			appState: {},
+			files: {
+				bad: { mimeType: 'image/png', dataURL: 'https://example.com/x.png' },
+				'no-time': { mimeType: 'image/png', dataURL: 'data:image/png;base64,AA' },
+				junk: 'x',
+			},
+		});
+		expect(snapshot.appState).toEqual({ viewBackgroundColor: '#ffffff', gridSize: null });
+		expect(snapshot.files).toEqual(['no-time']);
+		expect(files.map((file) => [file.id, file.created])).toEqual([['no-time', 0]]);
 	});
 });

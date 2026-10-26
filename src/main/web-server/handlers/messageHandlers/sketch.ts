@@ -1,6 +1,10 @@
 /**
  * Sketch Book WebSocket handler: `sketch_command`, the CLI half of Sketch Book
- * (`maestro-cli sketch new|list|open|read|export`, spec section 9).
+ * (`maestro-cli sketch new|list|open|read|export|screening-consent|share|
+ * unshare|revoke-link|rotate|owner`, spec section 9).
+ *
+ * The sharing verbs pass the asking agent's name when an agent called (A1):
+ * the service raises the desktop confirmation and runs only on Allow.
  *
  * One message carrying an `action`, answered by the SAME SketchService the
  * `sketch:*` IPC handlers call, so the CLI and the UI cannot drift. The service
@@ -17,8 +21,10 @@ import { getSketchService } from '../../../sketch/sketch-service';
 import { getSketchCloudConsent } from '../../../sketch/sketch-cloud-consent';
 import {
 	isSketchCommandAction,
+	isSketchOwnerOp,
 	isSketchScreeningConsentOp,
 	type SketchCommandAction,
+	type SketchOwnerCommandResult,
 } from '../../../../shared/sketch/commands';
 import { isSketchCloudEngine } from '../../../../shared/sketch/cloud-consent';
 import { readCallerMessageFields } from '../../../../shared/agentDelegation';
@@ -48,7 +54,54 @@ function run(action: SketchCommandAction, message: WebClientMessage): Promise<un
 			return service.exportSketch(sketchId, message.format as 'json');
 		case 'screening-consent':
 			return screeningConsent(message);
+		case 'share':
+			return service.shareSketch(
+				sketchId,
+				{
+					role: message.role as 'rw' | 'ro' | undefined,
+					expiresInDays: message.expiresInDays as number | undefined,
+					label: message.label as string | undefined,
+				},
+				callerOf(message)
+			);
+		case 'unshare':
+			return service.unshareSketch(sketchId, callerOf(message));
+		case 'revoke-link':
+			return service.revokeSketchLink(sketchId, message.capId as string, callerOf(message));
+		case 'rotate':
+			return service.rotateSketch(sketchId, callerOf(message));
+		case 'owner':
+			return owner(message);
 	}
+}
+
+/** The asking agent's name (or id), when an agent called through the CLI (A1). */
+function requestedBy(message: WebClientMessage): string | undefined {
+	const caller = readCallerMessageFields(message);
+	if (!caller) return undefined;
+	return getLiveSessions().find((s) => s.id === caller.fromSessionId)?.name ?? caller.fromSessionId;
+}
+
+function callerOf(message: WebClientMessage): { requestedBy?: string } {
+	const name = requestedBy(message);
+	return name ? { requestedBy: name } : {};
+}
+
+/** `maestro-cli sketch owner status|register|sign-out` (spec section 6, M1). */
+async function owner(message: WebClientMessage): Promise<SketchOwnerCommandResult> {
+	const service = getSketchService();
+	const op = message.op;
+	if (!isSketchOwnerOp(op)) {
+		throw new Error(`owner expects status, register or sign-out, not ${String(op ?? '(none)')}.`);
+	}
+	if (op === 'status') return { status: await service.ownerStatus() };
+	if (op === 'sign-out') return { status: await service.signOutOwner() };
+	const registration = await service.registerOwner(message.email as string);
+	const status =
+		message.wait === true && registration.status.state === 'pending'
+			? await service.waitForOwner()
+			: registration.status;
+	return { status, email: registration.email };
 }
 
 /**
@@ -70,10 +123,7 @@ function screeningConsent(message: WebClientMessage): Promise<unknown> {
 		throw new Error(`--engine expects jev or openjev, not ${String(engine ?? '(none)')}.`);
 	}
 	if (op === 'revoke') return consent.revokeConsent(engine);
-	const caller = readCallerMessageFields(message);
-	const fromAgent = caller
-		? (getLiveSessions().find((s) => s.id === caller.fromSessionId)?.name ?? caller.fromSessionId)
-		: undefined;
+	const fromAgent = requestedBy(message);
 	return consent.requestGrant(engine, fromAgent ? { fromAgent } : {});
 }
 

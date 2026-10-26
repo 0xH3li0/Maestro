@@ -5,7 +5,9 @@
  * live `SketchSession` for the agent read tools (the author map lives there),
  * changing it for the agent write tools (element conversion needs the DOM
  * too), and drawing it for `sketch_screenshot` and `sketch_export` (the
- * session's image files never leave the window).
+ * session's image files never leave the window), reading the live scene for
+ * a snapshot upload, and joining or leaving a shared sketch's room (the room
+ * client lives beside the session).
  *
  * The request goes to the window that owns the sketch's agent, so a sketch tab
  * opens where that agent lives. With no owner (an export of a sketch whose
@@ -43,9 +45,11 @@ function replyTimeoutMs(request: SketchRendererRequest): number {
 	switch (request.action) {
 		case 'export':
 			return EXPORT_REPLY_MS;
+		// Joining a room (`syncRoom`) may load Excalidraw for `reconcileElements` first.
 		case 'agentWrite':
 		case 'convertMermaid':
 		case 'renderForAgent':
+		case 'syncRoom':
 			return AGENT_TOOL_REPLY_MS;
 		default:
 			return OPEN_REPLY_MS;

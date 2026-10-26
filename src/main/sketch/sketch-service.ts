@@ -24,6 +24,25 @@
  * agent; the window opens the tab with the same `openSketchTab()` the UI uses.
  * `read` and `export` read the SAVED scene, which the tab autosaves within a
  * second of an edit.
+ *
+ * Sharing (spec section 6) lives here too, so the Share panel and
+ * `maestro-cli sketch share|unshare|revoke-link|rotate` run the same code:
+ *
+ * - `share`: on the first share, create the room, generate the AES key on this
+ *   desktop, upload the live scene as the first encrypted snapshot (images
+ *   first, each its own blob), then mint the link. The link is the last step,
+ *   so no link ever opens an empty room; a failure before it archives the new
+ *   room again. Later shares mint another link only. The window that owns the
+ *   agent then joins the room (`syncRoom`).
+ * - `unshare` archives the room, `revoke-link` revokes one link, `rotate`
+ *   resets all access: every link revoked, a new key, and a new snapshot.
+ * - `uploadSnapshot` is the room client's periodic snapshot (every ~200 ops,
+ *   or after 60 s idle): the window sends the live scene, main seals it.
+ *
+ * Every sharing verb takes `requestedBy` when an agent asked through the CLI
+ * (A1): the conductor answers a desktop confirmation first, and nothing runs
+ * on Deny. The owner token and the room key stay in main, except for the
+ * connection handed to the room client in the owning window.
  */
 
 import { encoreDisabledMessage, isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
@@ -38,10 +57,66 @@ import {
 	type SketchReadFormat,
 	type SketchReading,
 } from '../../shared/sketch/commands';
-import type { SketchRecord, SketchScene } from '../../shared/sketch/types';
+import {
+	encryptPayloadBlob,
+	generateRoomKey,
+	importRoomKey,
+	type SketchRoomKey,
+} from '../../shared/sketch/crypto';
+import { sceneSnapshotPayloads } from '../../shared/sketch/payloads';
+import { FILE_MAX_BYTES, isSketchFileId } from '../../shared/sketch/protocol';
+import {
+	DEFAULT_LINK_EXPIRY_DAYS,
+	LINK_LABEL_MAX_CHARS,
+	sketchShareLinkUrl,
+	type SketchOwnerStatus,
+} from '../../shared/sketch/server';
+import {
+	SKETCH_LINK_ROLES,
+	type SketchLink,
+	type SketchLinkRole,
+	type SketchRecord,
+	type SketchScene,
+	type SketchShare,
+} from '../../shared/sketch/types';
+import type {
+	SketchElementVersion,
+	SketchRoomJoin,
+	SketchSceneForSnapshot,
+	SketchShareOptions,
+	SketchShareResult,
+} from '../../shared/sketch/commands';
 import { getLiveSessions, getSettingsStore } from '../stores/getters';
+import { logger } from '../utils/logger';
+import {
+	confirmSketchActionOnDesktop,
+	type SketchDesktopConfirmPrompt,
+} from './sketch-desktop-confirm';
+import {
+	configuredSketchServerUrl,
+	getSketchOwnerAuth,
+	type SketchOwnerAuth,
+	type SketchOwnerRegistration,
+} from './sketch-owner-auth';
 import { requestSketchRenderer, type SketchRendererBridge } from './sketch-renderer-bridge';
-import { getSketchStore, type SaveToProjectOptions, type SketchStore } from './sketch-store';
+import { createSketchRoomApi, type SketchRoomApi, type SketchRoomAuth } from './sketch-room-api';
+import {
+	assertSketchScene,
+	getSketchStore,
+	type SaveToProjectOptions,
+	type SketchStore,
+} from './sketch-store';
+
+const LOG_CONTEXT = '[SketchBook][Share]';
+
+/** The longest link expiry a request may name; the server caps it lower by plan. */
+const MAX_LINK_EXPIRY_DAYS = 3650;
+
+/** Who asked, when an agent asked through the CLI (A1). */
+export interface SketchCaller {
+	/** The asking agent's name, shown in the desktop confirmation. */
+	requestedBy?: string;
+}
 
 /** The live agent a sketch may belong to, as the service sees it. */
 export interface SketchOwnerAgent {
@@ -60,6 +135,15 @@ export interface SketchServiceDeps {
 	findAgent?: (agentId: string) => SketchOwnerAgent | null;
 	/** Reaches the window that owns an agent (open a tab, draw an image). */
 	renderer?: SketchRendererBridge;
+	/** This device's owner sign-in (spec section 6, M1). */
+	ownerAuth?: () => SketchOwnerAuth;
+	/** The server configured now (`sketchBook.serverUrl`, else the hosted one). */
+	serverUrl?: () => string;
+	roomApi?: SketchRoomApi;
+	/** The A1 desktop confirmation. Resolves true only on Allow. */
+	confirm?: (prompt: SketchDesktopConfirmPrompt) => Promise<boolean>;
+	newRoomKey?: () => string;
+	now?: () => number;
 }
 
 export interface SketchService {
@@ -87,6 +171,31 @@ export interface SketchService {
 	readSketch(sketchId: string, format?: SketchReadFormat): Promise<SketchReading>;
 	/** The saved scene as PNG, SVG or Excalidraw JSON (`maestro-cli sketch export`). */
 	exportSketch(sketchId: string, format: SketchExportFormat): Promise<ExportedSketch>;
+
+	/** This device's owner sign-in. Never carries a token. */
+	ownerStatus(): Promise<SketchOwnerStatus>;
+	/** Ask for the confirmation email (`maestro-cli sketch owner register`). */
+	registerOwner(email: string): Promise<SketchOwnerRegistration>;
+	/** Wait for the email to be confirmed, at most `timeoutMs` (default 15 minutes). */
+	waitForOwner(options?: { timeoutMs?: number }): Promise<SketchOwnerStatus>;
+	signOutOwner(): Promise<SketchOwnerStatus>;
+
+	/** Share a sketch: the room on the first share, then a new link (`sketch share`). */
+	shareSketch(
+		sketchId: string,
+		options?: SketchShareOptions,
+		caller?: SketchCaller
+	): Promise<SketchShareResult>;
+	/** Archive the room; the sketch stays on this desktop (`sketch unshare`). */
+	unshareSketch(sketchId: string, caller?: SketchCaller): Promise<SketchRecord>;
+	/** Revoke one link (`sketch revoke-link`). */
+	revokeSketchLink(sketchId: string, capId: string, caller?: SketchCaller): Promise<SketchRecord>;
+	/** Reset all access: links revoked, a new key, a new snapshot (`sketch rotate`). */
+	rotateSketch(sketchId: string, caller?: SketchCaller): Promise<SketchRecord>;
+	/** The room client's periodic snapshot of the live scene. */
+	uploadSnapshot(sketchId: string, input: SketchSceneForSnapshot): Promise<{ bytes: number }>;
+	/** What the room client needs to join, or null when the sketch is not shared or no one is signed in. */
+	roomConnection(sketchId: string): Promise<SketchRoomJoin | null>;
 }
 
 /** The live agent with this id, as Sketch Book sees it, or `null`. */
@@ -124,6 +233,14 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 		deps.isEnabled ?? (() => isEncoreFeatureEnabled(getSettingsStore(), 'sketchBook'));
 	const findAgent = deps.findAgent ?? findSketchOwnerAgent;
 	const renderer = deps.renderer ?? requestSketchRenderer;
+	const ownerAuth = deps.ownerAuth ?? getSketchOwnerAuth;
+	const serverUrl = deps.serverUrl ?? configuredSketchServerUrl;
+	const roomApi = deps.roomApi ?? createSketchRoomApi();
+	const confirm = deps.confirm ?? confirmSketchActionOnDesktop;
+	const newRoomKey = deps.newRoomKey ?? generateRoomKey;
+	const now = deps.now ?? Date.now;
+	/** The file ids each room holds under each key epoch, so a snapshot uploads only new images. */
+	const uploadedFiles = new Map<string, Set<string>>();
 
 	/** The store, once the gate has passed. */
 	function open(): SketchStore {
@@ -160,6 +277,264 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 		});
 		if (!result.success) throw new Error(`Sketch Book: ${result.error}`);
 		return { record, tabId: result.tabId ?? null };
+	}
+
+	/** The gate alone, for the verbs that need no store (owner sign-in). */
+	function requireEnabled(): void {
+		if (!isEnabled()) throw new Error(encoreDisabledMessage('sketchBook'));
+	}
+
+	function requireShare(record: SketchRecord): SketchShare {
+		if (!record.share) throw new Error(`Sketch Book: "${record.name}" is not shared.`);
+		return record.share;
+	}
+
+	/**
+	 * The owner's credentials for a room on `roomServer` (the configured server
+	 * for a new room). A token is only ever sent to the server it came from.
+	 */
+	async function requireAuth(roomServer?: string): Promise<SketchRoomAuth> {
+		const configured = serverUrl();
+		if (roomServer && roomServer !== configured) {
+			throw new Error(
+				`Sketch Book: this sketch is shared on ${roomServer}, but Sketch Book now points at ${configured}. Set sketchBook.serverUrl back to reach its room.`
+			);
+		}
+		const token = await ownerAuth().ownerToken();
+		if (!token) {
+			throw new Error(
+				`Sketch Book: sign in to ${configured} first (the Share panel, or maestro-cli sketch owner register --email <address>).`
+			);
+		}
+		return { serverUrl: configured, ownerToken: token };
+	}
+
+	/** A1: an agent's request waits on the conductor. Throws on Deny. */
+	async function confirmForAgent(
+		caller: SketchCaller | undefined,
+		prompt: Omit<SketchDesktopConfirmPrompt, 'requestedBy'>
+	): Promise<void> {
+		const requestedBy = isObject(caller)
+			? optionalString(caller.requestedBy, 'requestedBy')
+			: undefined;
+		if (!requestedBy) return;
+		if (!(await confirm({ ...prompt, requestedBy }))) {
+			throw new Error('Sketch Book: the conductor chose Deny, so nothing was changed.');
+		}
+	}
+
+	function normalizeShareOptions(raw: unknown): {
+		role: SketchLinkRole;
+		expiresInDays: number;
+		label: string;
+	} {
+		const options: Record<string, unknown> = isObject(raw) ? raw : {};
+		const role = options.role ?? 'rw';
+		if (!(SKETCH_LINK_ROLES as readonly unknown[]).includes(role)) {
+			throw new Error('Sketch Book: role must be "rw" or "ro".');
+		}
+		const linkRole = role as SketchLinkRole;
+		const days = options.expiresInDays ?? DEFAULT_LINK_EXPIRY_DAYS[linkRole];
+		if (
+			!Number.isSafeInteger(days) ||
+			(days as number) < 1 ||
+			(days as number) > MAX_LINK_EXPIRY_DAYS
+		) {
+			throw new Error(
+				`Sketch Book: the link expiry must be a whole number of days from 1 to ${MAX_LINK_EXPIRY_DAYS}.`
+			);
+		}
+		const label = (optionalString(options.label, 'label') ?? '')
+			.replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+			.trim();
+		if (Array.from(label).length > LINK_LABEL_MAX_CHARS) {
+			throw new Error(`Sketch Book: a link label is at most ${LINK_LABEL_MAX_CHARS} characters.`);
+		}
+		return { role: linkRole, expiresInDays: days as number, label };
+	}
+
+	/** The room key of a shared sketch. */
+	async function requireRoomKey(sketches: SketchStore, record: SketchRecord): Promise<string> {
+		const { roomKey } = await sketches.readSketchSecrets(record.sketchId);
+		if (!roomKey) {
+			throw new Error(
+				`Sketch Book: the room key of "${record.name}" is missing on this desktop. Stop sharing and share it again.`
+			);
+		}
+		return roomKey;
+	}
+
+	/**
+	 * The live scene (unsaved edits included) from the window that owns the
+	 * agent, or the saved scene when no window answers.
+	 */
+	async function liveScene(
+		sketches: SketchStore,
+		record: SketchRecord
+	): Promise<SketchSceneForSnapshot> {
+		const agent = findAgent(record.ownerAgentId);
+		if (agent && !agent.sshRemote) {
+			const result = await renderer(agent.id, {
+				action: 'snapshotScene',
+				sketchId: record.sketchId,
+			});
+			if (result.success && result.snapshot) return result.snapshot;
+			logger.warn('No window gave the live scene; the saved scene is uploaded', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				error: result.success ? 'no snapshot' : result.error,
+			});
+		}
+		return { scene: await sketches.readScene(record.sketchId), baseSeq: 0 };
+	}
+
+	/**
+	 * Seal and upload a scene: each image the room does not hold yet as its own
+	 * `file` blob, then the `snapshot` naming them (Y2). Resolves with the
+	 * snapshot body size. An image the server cannot take is left out of the
+	 * snapshot, with a warning, rather than failing the whole upload.
+	 */
+	async function uploadScene(
+		auth: SketchRoomAuth,
+		share: SketchShare,
+		key: SketchRoomKey,
+		source: SketchSceneForSnapshot
+	): Promise<number> {
+		const { roomId, keyEpoch } = share;
+		const { snapshot, files } = sceneSnapshotPayloads(source.scene);
+		const uploadKey = `${roomId}:${keyEpoch}`;
+		const held = uploadedFiles.get(uploadKey) ?? new Set<string>();
+		uploadedFiles.set(uploadKey, held);
+		const skipped = new Set<string>();
+		for (const file of files) {
+			if (held.has(file.id)) continue;
+			if (!isSketchFileId(file.id)) {
+				skipped.add(file.id);
+				continue;
+			}
+			const body = await encryptPayloadBlob(key, 'file', roomId, keyEpoch, file);
+			if (body.length > FILE_MAX_BYTES) {
+				skipped.add(file.id);
+				continue;
+			}
+			const stored = await roomApi.putFile(auth, roomId, file.id, body);
+			if (stored === 'exists' && keyEpoch > 0) {
+				// The hosted rotate keeps files from the old key; guests cannot open those.
+				logger.warn(
+					'The room kept an image from before a reset; guests may not see it',
+					LOG_CONTEXT,
+					{
+						roomId,
+						keyEpoch,
+					}
+				);
+			}
+			held.add(file.id);
+		}
+		if (skipped.size > 0) {
+			logger.warn('Images the room cannot hold were left out of the snapshot', LOG_CONTEXT, {
+				roomId,
+				count: skipped.size,
+			});
+			snapshot.files = snapshot.files.filter((id) => !skipped.has(id));
+		}
+		const body = await encryptPayloadBlob(key, 'snapshot', roomId, keyEpoch, snapshot);
+		await roomApi.putSnapshot(auth, roomId, source.baseSeq, body);
+		return body.length;
+	}
+
+	/** What the room holds after `source` was uploaded. */
+	function baselineOf(source: SketchSceneForSnapshot): SketchElementVersion[] {
+		return source.scene.elements.map((element) => ({ id: element.id, version: element.version }));
+	}
+
+	/**
+	 * Tell the window that owns the agent to join the room (or leave it, for
+	 * `null`). A window that is not there joins when the sketch opens, so a
+	 * failure here is logged, never thrown.
+	 */
+	async function syncRoom(
+		record: SketchRecord,
+		connection: SketchRoomJoin | null,
+		baseline?: SketchElementVersion[]
+	): Promise<void> {
+		const agent = findAgent(record.ownerAgentId);
+		if (!agent || agent.sshRemote) return;
+		const result = await renderer(agent.id, {
+			action: 'syncRoom',
+			sketchId: record.sketchId,
+			connection,
+			...(baseline ? { baseline } : {}),
+		});
+		if (!result.success) {
+			logger.warn('The window did not update the sketch room connection', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				join: connection !== null,
+				error: result.error,
+			});
+		}
+	}
+
+	function connectionFor(
+		record: SketchRecord,
+		share: SketchShare,
+		auth: SketchRoomAuth,
+		roomKey: string
+	): SketchRoomJoin {
+		return {
+			sketchId: record.sketchId,
+			roomId: share.roomId,
+			roomKey,
+			ownerToken: auth.ownerToken,
+			serverUrl: auth.serverUrl,
+			// The bot is announced once the bot relay can answer for it (spec section 5).
+			bot: null,
+		};
+	}
+
+	/** Archive a room this call created and forget it locally. Best effort. */
+	async function rollbackRoom(
+		sketches: SketchStore,
+		record: SketchRecord,
+		auth: SketchRoomAuth,
+		roomId: string
+	): Promise<void> {
+		try {
+			await roomApi.deleteRoom(auth, roomId);
+		} catch (error) {
+			logger.warn('Could not archive a room whose share failed', LOG_CONTEXT, {
+				roomId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+		await sketches.updateSketchShare(record.sketchId, () => null);
+		await sketches.setSketchSecrets(record.sketchId, { roomKey: null });
+	}
+
+	/** First share: a room, a key, and the live scene as the first snapshot. */
+	async function createRoom(
+		sketches: SketchStore,
+		record: SketchRecord,
+		auth: SketchRoomAuth
+	): Promise<{ record: SketchRecord; roomKey: string; baseline: SketchElementVersion[] }> {
+		const { roomId } = await roomApi.createRoom(auth);
+		try {
+			const roomKey = newRoomKey();
+			const key = await importRoomKey(roomKey);
+			await sketches.setSketchSecrets(record.sketchId, { roomKey });
+			const updated = await sketches.updateSketchShare(record.sketchId, () => ({
+				roomId,
+				keyEpoch: 0,
+				links: [],
+				botPolicy: 'conductor',
+				serverUrl: auth.serverUrl,
+			}));
+			const source = await liveScene(sketches, updated);
+			await uploadScene(auth, requireShare(updated), key, source);
+			return { record: updated, roomKey, baseline: baselineOf(source) };
+		} catch (error) {
+			await rollbackRoom(sketches, record, auth, roomId);
+			throw error;
+		}
 	}
 
 	const service: SketchService = {
@@ -281,6 +656,232 @@ export function createSketchService(deps: SketchServiceDeps = {}): SketchService
 				throw new Error(`Sketch Book: the Maestro window did not return a ${format} file.`);
 			}
 			return { record, file: result.file };
+		},
+
+		async ownerStatus() {
+			requireEnabled();
+			return ownerAuth().status();
+		},
+
+		async registerOwner(email) {
+			requireEnabled();
+			return ownerAuth().register(requireString(email, 'email'));
+		},
+
+		async waitForOwner(options) {
+			requireEnabled();
+			const timeoutMs = isObject(options) ? options.timeoutMs : undefined;
+			if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !(timeoutMs > 0))) {
+				throw new Error('Sketch Book: timeoutMs must be a positive number.');
+			}
+			return ownerAuth().pollStatus(timeoutMs !== undefined ? { timeoutMs } : {});
+		},
+
+		async signOutOwner() {
+			requireEnabled();
+			await ownerAuth().signOut();
+			return ownerAuth().status();
+		},
+
+		async shareSketch(sketchId, options, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const link = normalizeShareOptions(options);
+			await confirmForAgent(caller, {
+				title: 'Share a sketch?',
+				message: `Share "${record.name}" on RunMaestro.ai?`,
+				detail: `This mints a link that lets anyone who has it ${link.role === 'rw' ? 'view and edit' : 'view'} the sketch for ${link.expiresInDays} day${link.expiresInDays === 1 ? '' : 's'}. ${record.share ? 'The sketch is already shared; this adds one more link.' : 'The sketch is uploaded, end-to-end encrypted, to a new room.'} The agent receives the link.`,
+			});
+			const auth = await requireAuth(record.share?.serverUrl);
+
+			let current = record;
+			let roomKey: string;
+			let baseline: SketchElementVersion[] | undefined;
+			const createdRoom = record.share === null;
+			if (createdRoom) {
+				({ record: current, roomKey, baseline } = await createRoom(sketches, record, auth));
+			} else {
+				roomKey = await requireRoomKey(sketches, record);
+			}
+			const share = requireShare(current);
+
+			let minted;
+			try {
+				minted = await roomApi.createLink(auth, share.roomId, {
+					role: link.role,
+					expiresInDays: link.expiresInDays,
+					...(link.label ? { label: link.label } : {}),
+				});
+			} catch (error) {
+				if (createdRoom) await rollbackRoom(sketches, current, auth, share.roomId);
+				throw error;
+			}
+			const stored: SketchLink = {
+				capId: minted.capId,
+				role: link.role,
+				label: link.label,
+				createdAt: now(),
+				expiresAt: minted.expiresAt,
+				revoked: false,
+			};
+			current = await sketches.updateSketchShare(record.sketchId, (prev) =>
+				prev ? { ...prev, links: [...prev.links, stored] } : prev
+			);
+			if (createdRoom) {
+				await syncRoom(current, connectionFor(current, share, auth, roomKey), baseline);
+			}
+			logger.info('Sketch shared', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				roomId: share.roomId,
+				createdRoom,
+				role: link.role,
+				byAgent: Boolean(caller?.requestedBy),
+			});
+			return {
+				record: current,
+				createdRoom,
+				link: {
+					capId: minted.capId,
+					role: link.role,
+					label: link.label,
+					expiresAt: minted.expiresAt,
+					url: sketchShareLinkUrl(auth.serverUrl, share.roomId, roomKey, minted.cap),
+				},
+			};
+		},
+
+		async unshareSketch(sketchId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			await confirmForAgent(caller, {
+				title: 'Stop sharing a sketch?',
+				message: `Stop sharing "${record.name}"?`,
+				detail:
+					'The room is deleted on RunMaestro.ai: every guest is disconnected, every link stops working, and the room chat is gone. The sketch stays on this computer.',
+			});
+			const auth = await requireAuth(share.serverUrl);
+			await syncRoom(record, null);
+			await roomApi.deleteRoom(auth, share.roomId);
+			const updated = await sketches.updateSketchShare(record.sketchId, () => null);
+			await sketches.setSketchSecrets(record.sketchId, { roomKey: null });
+			for (const key of [...uploadedFiles.keys()]) {
+				if (key.startsWith(`${share.roomId}:`)) uploadedFiles.delete(key);
+			}
+			logger.info('Sketch unshared', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				roomId: share.roomId,
+			});
+			return updated;
+		},
+
+		async revokeSketchLink(sketchId, capId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			const id = requireString(capId, 'capId');
+			const link = share.links.find((candidate) => candidate.capId === id);
+			if (!link) throw new Error(`Sketch Book: "${record.name}" has no link "${id}".`);
+			await confirmForAgent(caller, {
+				title: 'Revoke a sketch link?',
+				message: `Revoke the ${link.role === 'rw' ? 'edit' : 'view'} link${link.label ? ` "${link.label}"` : ''} to "${record.name}"?`,
+				detail:
+					'Guests on this link are disconnected and the link stops working. Other links keep working.',
+			});
+			const auth = await requireAuth(share.serverUrl);
+			await roomApi.revokeLink(auth, share.roomId, id);
+			return sketches.updateSketchShare(record.sketchId, (prev) =>
+				prev
+					? {
+							...prev,
+							links: prev.links.map((candidate) =>
+								candidate.capId === id ? { ...candidate, revoked: true } : candidate
+							),
+						}
+					: prev
+			);
+		},
+
+		async rotateSketch(sketchId, caller) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			await confirmForAgent(caller, {
+				title: 'Reset all access to a sketch?',
+				message: `Reset all access to "${record.name}"?`,
+				detail:
+					'Every link stops working and every guest is disconnected. The room history and chat are cleared, and the sketch is uploaded again under a new key. Share again to invite anyone back.',
+			});
+			const auth = await requireAuth(share.serverUrl);
+			// Leave first: nothing may go out under the old key once the server rotates.
+			await syncRoom(record, null);
+			const { keyEpoch } = await roomApi.rotate(auth, share.roomId);
+			const roomKey = newRoomKey();
+			const key = await importRoomKey(roomKey);
+			await sketches.setSketchSecrets(record.sketchId, { roomKey });
+			const updated = await sketches.updateSketchShare(record.sketchId, (prev) =>
+				prev
+					? {
+							...prev,
+							keyEpoch,
+							links: prev.links.map((candidate) => ({ ...candidate, revoked: true })),
+						}
+					: prev
+			);
+			const rotated = requireShare(updated);
+			let uploadError: unknown = null;
+			let baseline: SketchElementVersion[] | undefined;
+			try {
+				const source = await liveScene(sketches, updated);
+				await uploadScene(auth, rotated, key, source);
+				baseline = baselineOf(source);
+			} catch (error) {
+				uploadError = error;
+			}
+			await syncRoom(updated, connectionFor(updated, rotated, auth, roomKey), baseline);
+			logger.info('Sketch access reset', LOG_CONTEXT, {
+				sketchId: record.sketchId,
+				roomId: share.roomId,
+				keyEpoch,
+				snapshot: uploadError === null,
+			});
+			if (uploadError !== null) {
+				const reason = uploadError instanceof Error ? uploadError.message : String(uploadError);
+				throw new Error(
+					`Sketch Book: access was reset, but the new snapshot did not upload (${reason}). It uploads again after the next edits.`
+				);
+			}
+			return updated;
+		},
+
+		async uploadSnapshot(sketchId, input) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = requireShare(record);
+			const raw: Record<string, unknown> = isObject(input) ? input : {};
+			const { baseSeq, scene } = raw;
+			if (!Number.isSafeInteger(baseSeq) || (baseSeq as number) < 0) {
+				throw new Error('Sketch Book: baseSeq must be a whole number of at least 0.');
+			}
+			assertSketchScene(scene);
+			const auth = await requireAuth(share.serverUrl);
+			const key = await importRoomKey(await requireRoomKey(sketches, record));
+			const bytes = await uploadScene(auth, share, key, {
+				scene: scene as SketchScene,
+				baseSeq: baseSeq as number,
+			});
+			return { bytes };
+		},
+
+		async roomConnection(sketchId) {
+			const sketches = open();
+			const record = await requireSketch(sketches, sketchId);
+			const share = record.share;
+			if (!share) return null;
+			const token = await ownerAuth().ownerToken();
+			if (!token || (share.serverUrl && share.serverUrl !== serverUrl())) return null;
+			const roomKey = await requireRoomKey(sketches, record);
+			return connectionFor(record, share, { serverUrl: serverUrl(), ownerToken: token }, roomKey);
 		},
 	};
 	return service;

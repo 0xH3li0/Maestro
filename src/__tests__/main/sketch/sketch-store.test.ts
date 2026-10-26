@@ -387,6 +387,43 @@ describe('renameSketch', () => {
 	});
 });
 
+describe('updateSketchShare', () => {
+	const share = {
+		roomId: 'R'.repeat(22),
+		keyEpoch: 0,
+		links: [],
+		botPolicy: 'conductor' as const,
+		serverUrl: 'https://sketch.runmaestro.ai',
+	};
+
+	it('stores the share state on the record, keeps it across a reload, and clears it with null', async () => {
+		const { sketchId } = await store.createSketch({ ownerAgentId: 'agent-a' });
+
+		const shared = await store.updateSketchShare(sketchId, (current) => {
+			expect(current).toBeNull();
+			return share;
+		});
+		expect(shared.share).toEqual(share);
+
+		await store.updateSketchShare(sketchId, (current) =>
+			current ? { ...current, keyEpoch: current.keyEpoch + 1 } : current
+		);
+		expect((await makeStore().getSketch(sketchId))?.share).toEqual({ ...share, keyEpoch: 1 });
+
+		const cleared = await store.updateSketchShare(sketchId, () => null);
+		expect(cleared.share).toBeNull();
+		expect((await store.getSketch(sketchId))?.share).toBeNull();
+	});
+
+	it('refuses an unknown sketch and never calls the change', async () => {
+		const change = vi.fn(() => share);
+		await expect(
+			store.updateSketchShare('99999999-2222-4333-8444-555555555555', change)
+		).rejects.toMatchObject({ code: 'not-found' });
+		expect(change).not.toHaveBeenCalled();
+	});
+});
+
 describe('saveSketchToProject', () => {
 	let projectDir: string;
 	let outsideDir: string;

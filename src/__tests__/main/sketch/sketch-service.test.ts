@@ -12,6 +12,8 @@
  *   - **Arguments from IPC are checked by type** before the store sees them.
  *   - **Listing by owner does not need the agent to exist**: a sketch outlives
  *     the agent that made it.
+ *   - **The sharing verbs** are gated too; their behavior is covered in
+ *     `sketch-share.test.ts`.
  *   - **The CLI verbs** (`new`, `open`, `read`, `export`): a tab opens on the
  *     sketch's own agent through the renderer bridge, a gone or SSH owner is
  *     refused before the window is asked, `read` summarizes or returns live
@@ -79,6 +81,7 @@ function fakeStore() {
 		renameSketch: vi.fn(async () => ({ ...record, name: 'Renamed' })),
 		deleteSketch: vi.fn(async () => {}),
 		saveSketchToProject: vi.fn(async () => '/project/Board.excalidraw'),
+		updateSketchShare: vi.fn(async () => record),
 		setSketchSecrets: vi.fn(async () => {}),
 		readSketchSecrets: vi.fn(async () => ({})),
 		sketchesDir: vi.fn(() => 'sketches'),
@@ -123,6 +126,16 @@ describe('SketchService', () => {
 				['openSketch', (s) => s.openSketch(SKETCH_ID)],
 				['readSketch', (s) => s.readSketch(SKETCH_ID)],
 				['exportSketch', (s) => s.exportSketch(SKETCH_ID, 'png')],
+				['ownerStatus', (s) => s.ownerStatus()],
+				['registerOwner', (s) => s.registerOwner('a@example.com')],
+				['waitForOwner', (s) => s.waitForOwner()],
+				['signOutOwner', (s) => s.signOutOwner()],
+				['shareSketch', (s) => s.shareSketch(SKETCH_ID)],
+				['unshareSketch', (s) => s.unshareSketch(SKETCH_ID)],
+				['revokeSketchLink', (s) => s.revokeSketchLink(SKETCH_ID, 'AAAAAAAAAAAA')],
+				['rotateSketch', (s) => s.rotateSketch(SKETCH_ID)],
+				['uploadSnapshot', (s) => s.uploadSnapshot(SKETCH_ID, { scene, baseSeq: 0 })],
+				['roomConnection', (s) => s.roomConnection(SKETCH_ID)],
 			];
 
 		it.each(calls)(

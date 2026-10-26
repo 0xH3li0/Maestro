@@ -83,6 +83,37 @@ describe('Sketch Book Preload API', () => {
 		});
 	});
 
+	it('reaches the sharing and owner channels, optional arguments as {}', async () => {
+		await api.ownerStatus();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:ownerStatus');
+		await api.registerOwner('a@example.com');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:registerOwner', 'a@example.com');
+		await api.waitForOwner();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:waitForOwner', {});
+		await api.signOutOwner();
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:signOutOwner');
+		await api.share(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:share', SKETCH_ID, {});
+		await api.share(SKETCH_ID, { role: 'ro', expiresInDays: 3 });
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:share', SKETCH_ID, {
+			role: 'ro',
+			expiresInDays: 3,
+		});
+		await api.unshare(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:unshare', SKETCH_ID);
+		await api.revokeLink(SKETCH_ID, 'cap-1');
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:revokeLink', SKETCH_ID, 'cap-1');
+		await api.rotate(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:rotate', SKETCH_ID);
+		await api.uploadSnapshot(SKETCH_ID, { scene, baseSeq: 4 });
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:uploadSnapshot', SKETCH_ID, {
+			scene,
+			baseSeq: 4,
+		});
+		await api.roomConnection(SKETCH_ID);
+		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:roomConnection', SKETCH_ID);
+	});
+
 	it("listens for main's remote commands and hands the request and reply channel on", () => {
 		const callback = vi.fn();
 		const unsubscribe = api.onRemoteCommand(callback);

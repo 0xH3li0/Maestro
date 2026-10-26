@@ -37,7 +37,6 @@
  * (`setSketchCloudScreeningPolicy`) when started.
  */
 
-import { BrowserWindow, dialog } from 'electron';
 import { EventEmitter } from 'events';
 import type Store from 'electron-store';
 import { encoreDisabledMessage, isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
@@ -71,6 +70,7 @@ import type { MaestroSettings } from '../stores/types';
 import { logger } from '../utils/logger';
 import type { SafeSendFn } from '../utils/safe-send';
 import { captureException } from '../utils/sentry';
+import { confirmSketchActionOnDesktop } from './sketch-desktop-confirm';
 import { setSketchCloudScreeningPolicy, type SketchCloudScreeningPolicy } from './sketch-guardrail';
 
 const LOG_CTX = '[SketchBook][CloudConsent]';
@@ -174,27 +174,10 @@ function requireEngine(engine: unknown): SketchCloudEngine {
 	return engine;
 }
 
-/** The desktop confirmation: a native dialog on the focused (or first) window. */
-async function confirmOnDesktop(prompt: SketchCloudConfirmPrompt): Promise<boolean> {
+/** The desktop confirmation (A1), with the disclosure for this engine. */
+function confirmOnDesktop(prompt: SketchCloudConfirmPrompt): Promise<boolean> {
 	const disclosure = sketchCloudScreeningDisclosure(prompt);
-	const asker = prompt.requestedBy
-		? `\n\nThe agent "${prompt.requestedBy}" asked for this. Allow it only if you meant to.`
-		: '';
-	const options: Electron.MessageBoxOptions = {
-		type: 'warning',
-		title: disclosure.title,
-		message: disclosure.message,
-		detail: `${disclosure.detail}${asker}`,
-		buttons: ['Allow', 'Deny'],
-		defaultId: 1,
-		cancelId: 1,
-		noLink: true,
-	};
-	const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-	const answer = parent
-		? await dialog.showMessageBox(parent, options)
-		: await dialog.showMessageBox(options);
-	return answer.response === 0;
+	return confirmSketchActionOnDesktop({ ...disclosure, requestedBy: prompt.requestedBy });
 }
 
 export function createSketchCloudConsent(deps: SketchCloudConsentDeps = {}): SketchCloudConsent {

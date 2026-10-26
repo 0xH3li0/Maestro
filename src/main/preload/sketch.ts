@@ -12,7 +12,16 @@
 
 import { ipcRenderer } from 'electron';
 import type { SaveToProjectOptions } from '../sketch/sketch-store';
-import type { SketchRendererRequest, SketchRendererResult } from '../../shared/sketch/commands';
+import type {
+	SketchRendererRequest,
+	SketchRendererResult,
+	SketchRoomJoin,
+	SketchSceneForSnapshot,
+	SketchShareOptions,
+	SketchShareResult,
+} from '../../shared/sketch/commands';
+import type { SketchOwnerRegistration } from '../sketch/sketch-owner-auth';
+import type { SketchOwnerStatus } from '../../shared/sketch/server';
 import type {
 	SketchCloudEngine,
 	SketchScreeningChange,
@@ -52,6 +61,32 @@ export function createSketchApi() {
 			options?: SaveToProjectOptions
 		): Promise<string> =>
 			ipcRenderer.invoke('sketch:saveToProject', sketchId, destDir, options ?? {}),
+		/** This device's RunMaestro.ai owner sign-in. Never carries a token. */
+		ownerStatus: (): Promise<SketchOwnerStatus> => ipcRenderer.invoke('sketch:ownerStatus'),
+		/** Ask for the confirmation email. */
+		registerOwner: (email: string): Promise<SketchOwnerRegistration> =>
+			ipcRenderer.invoke('sketch:registerOwner', email),
+		/** Resolves once the email is confirmed, or with `pending` when the wait runs out. */
+		waitForOwner: (options?: { timeoutMs?: number }): Promise<SketchOwnerStatus> =>
+			ipcRenderer.invoke('sketch:waitForOwner', options ?? {}),
+		signOutOwner: (): Promise<SketchOwnerStatus> => ipcRenderer.invoke('sketch:signOutOwner'),
+		/** Share: the room on the first share, then a new link. The link URL is shown once. */
+		share: (sketchId: string, options?: SketchShareOptions): Promise<SketchShareResult> =>
+			ipcRenderer.invoke('sketch:share', sketchId, options ?? {}),
+		/** Archive the room; the sketch stays here. */
+		unshare: (sketchId: string): Promise<SketchRecord> =>
+			ipcRenderer.invoke('sketch:unshare', sketchId),
+		revokeLink: (sketchId: string, capId: string): Promise<SketchRecord> =>
+			ipcRenderer.invoke('sketch:revokeLink', sketchId, capId),
+		/** Reset all access: links revoked, a new key, a new snapshot. */
+		rotate: (sketchId: string): Promise<SketchRecord> =>
+			ipcRenderer.invoke('sketch:rotate', sketchId),
+		/** The room client's periodic snapshot of the live scene. */
+		uploadSnapshot: (sketchId: string, input: SketchSceneForSnapshot): Promise<{ bytes: number }> =>
+			ipcRenderer.invoke('sketch:uploadSnapshot', sketchId, input),
+		/** What the room client needs to join, or null when it cannot. */
+		roomConnection: (sketchId: string): Promise<SketchRoomJoin | null> =>
+			ipcRenderer.invoke('sketch:roomConnection', sketchId),
 		/** Main's requests for this window (`maestro-cli sketch`). Returns the unsubscribe. */
 		onRemoteCommand: (
 			callback: (request: SketchRendererRequest, responseChannel: string) => void

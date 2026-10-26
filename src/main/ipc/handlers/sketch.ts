@@ -27,6 +27,7 @@ import type { SaveToProjectOptions } from '../../sketch/sketch-store';
 import { getSketchCloudConsent, startSketchCloudConsent } from '../../sketch/sketch-cloud-consent';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { SketchCloudEngine } from '../../../shared/sketch/cloud-consent';
+import type { SketchSceneForSnapshot, SketchShareOptions } from '../../../shared/sketch/commands';
 import type { Screening } from '../../../shared/sketch/protocol';
 import type { SketchScene } from '../../../shared/sketch/types';
 
@@ -93,6 +94,67 @@ export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
 			opts('saveToProject'),
 			async (sketchId: string, destDir: string, options?: SaveToProjectOptions) =>
 				service.saveSketchToProject(sketchId, destDir, options)
+		)
+	);
+
+	// Sharing (spec section 6). The Share panel calls these; `maestro-cli sketch
+	// share|unshare|revoke-link|rotate|owner` reaches the same service methods
+	// over the WS bridge, where an agent caller gets the A1 confirmation. A
+	// person in the Sketch tab is the conductor, so these pass no caller.
+	ipcMain.handle(
+		'sketch:ownerStatus',
+		withIpcErrorLogging(opts('ownerStatus'), async () => service.ownerStatus())
+	);
+	ipcMain.handle(
+		'sketch:registerOwner',
+		withIpcErrorLogging(opts('registerOwner'), async (email: string) =>
+			service.registerOwner(email)
+		)
+	);
+	ipcMain.handle(
+		'sketch:waitForOwner',
+		withIpcErrorLogging(opts('waitForOwner'), async (options?: { timeoutMs?: number }) =>
+			service.waitForOwner(options)
+		)
+	);
+	ipcMain.handle(
+		'sketch:signOutOwner',
+		withIpcErrorLogging(opts('signOutOwner'), async () => service.signOutOwner())
+	);
+	ipcMain.handle(
+		'sketch:share',
+		withIpcErrorLogging(opts('share'), async (sketchId: string, options?: SketchShareOptions) =>
+			service.shareSketch(sketchId, options)
+		)
+	);
+	ipcMain.handle(
+		'sketch:unshare',
+		withIpcErrorLogging(opts('unshare'), async (sketchId: string) =>
+			service.unshareSketch(sketchId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:revokeLink',
+		withIpcErrorLogging(opts('revokeLink'), async (sketchId: string, capId: string) =>
+			service.revokeSketchLink(sketchId, capId)
+		)
+	);
+	ipcMain.handle(
+		'sketch:rotate',
+		withIpcErrorLogging(opts('rotate'), async (sketchId: string) => service.rotateSketch(sketchId))
+	);
+	ipcMain.handle(
+		'sketch:uploadSnapshot',
+		withIpcErrorLogging(
+			opts('uploadSnapshot'),
+			async (sketchId: string, input: SketchSceneForSnapshot) =>
+				service.uploadSnapshot(sketchId, input)
+		)
+	);
+	ipcMain.handle(
+		'sketch:roomConnection',
+		withIpcErrorLogging(opts('roomConnection'), async (sketchId: string) =>
+			service.roomConnection(sketchId)
 		)
 	);
 

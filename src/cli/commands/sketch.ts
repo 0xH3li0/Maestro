@@ -24,6 +24,16 @@
 //   confirmation instead (A1), and nothing is stored unless the conductor
 //   allows it. `revoke` and `status` run.
 //
+// - `share <sketchId> [--role rw|ro] [--expires-days n] [--label]` shares the
+//   sketch on RunMaestro.ai (the room on the first share) and prints the new
+//   link, which holds the room key: it is shown once and kept nowhere.
+//   `unshare` archives the room, `revoke-link <sketchId> <capId>` revokes one
+//   link, `rotate` resets all access. From an agent caller each raises the
+//   desktop confirmation and runs only on Allow (A1); a person runs them.
+// - `owner status|register|sign-out` is this device's RunMaestro.ai sign-in,
+//   which sharing needs. `register --email <address> [--wait]` sends the
+//   confirmation email and, with `--wait`, waits for the click.
+//
 // `read` and `export` work from the SAVED scene, which the tab autosaves within
 // a second of an edit.
 //
@@ -51,6 +61,7 @@ import { formatRelativeTime, formatSize } from '../../shared/formatters';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import {
 	isSketchExportFormat,
+	isSketchOwnerOp,
 	isSketchReadFormat,
 	isSketchScreeningConsentOp,
 	type ExportedSketch,
@@ -59,9 +70,12 @@ import {
 	type SketchExportFile,
 	type SketchExportFormat,
 	type SketchReading,
+	type SketchOwnerCommandResult,
 	type SketchSceneSummary,
+	type SketchShareResult,
 } from '../../shared/sketch/commands';
-import type { SketchRecord } from '../../shared/sketch/types';
+import type { SketchOwnerStatus } from '../../shared/sketch/server';
+import type { SketchLinkRole, SketchRecord } from '../../shared/sketch/types';
 
 /** Opening a tab waits on the window that owns the agent. */
 const OPEN_TIMEOUT_MS = 20_000;
@@ -69,6 +83,12 @@ const OPEN_TIMEOUT_MS = 20_000;
 const EXPORT_TIMEOUT_MS = 60_000;
 /** An agent's grant waits on the conductor answering the desktop confirmation. */
 const CONSENT_CONFIRM_TIMEOUT_MS = 5 * 60_000;
+/** A share uploads the whole board (and its images) before the link exists. */
+const SHARE_TIMEOUT_MS = 4 * 60_000;
+/** An agent's share waits on the conductor first (A1), then uploads. */
+const AGENT_SHARE_TIMEOUT_MS = CONSENT_CONFIRM_TIMEOUT_MS + SHARE_TIMEOUT_MS;
+/** `owner register --wait`: the app polls for up to 15 minutes. */
+const OWNER_WAIT_TIMEOUT_MS = 16 * 60_000;
 
 export interface SketchNewOptions {
 	agent: string;
@@ -97,6 +117,23 @@ export interface SketchReadOptions {
 export interface SketchScreeningConsentOptions {
 	engine?: string;
 	yes?: boolean;
+	json?: boolean;
+}
+
+export interface SketchShareCliOptions {
+	role?: string;
+	expiresDays?: string;
+	label?: string;
+	json?: boolean;
+}
+
+export interface SketchSharingCliOptions {
+	json?: boolean;
+}
+
+export interface SketchOwnerOptions {
+	email?: string;
+	wait?: boolean;
 	json?: boolean;
 }
 
@@ -409,4 +446,159 @@ export async function sketchScreeningConsent(
 		console.log(`Cloud screening consent revoked for ${sketchCloudEngineLabel(engine)}.`);
 	}
 	console.log(formatScreeningConsentStatus(status));
+}
+
+/** A sharing verb from an agent waits on the desktop confirmation (A1). */
+function sharingTimeout(fromAgent: boolean): number {
+	return fromAgent ? AGENT_SHARE_TIMEOUT_MS : SHARE_TIMEOUT_MS;
+}
+
+export async function sketchShare(sketchId: string, options: SketchShareCliOptions): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const role = options.role ?? 'rw';
+	if (role !== 'rw' && role !== 'ro') {
+		failCommand(`--role expects rw or ro, got "${role}"`, options.json, ExitCode.InvalidUsage);
+	}
+	let expiresInDays: number | undefined;
+	if (options.expiresDays !== undefined) {
+		expiresInDays = Number(options.expiresDays);
+		if (!Number.isSafeInteger(expiresInDays) || expiresInDays < 1) {
+			failCommand(
+				`--expires-days expects a whole number of days, got "${options.expiresDays}"`,
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+	}
+	const caller = readCallerIdentity(process.env);
+	const result = await request<SketchShareResult>(
+		'share',
+		{
+			sketchId: id,
+			role: role as SketchLinkRole,
+			...(expiresInDays !== undefined ? { expiresInDays } : {}),
+			...(options.label?.trim() ? { label: options.label.trim() } : {}),
+			...callerMessageFields(caller),
+		},
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, ...result });
+		return;
+	}
+	console.log(
+		`${result.createdRoom ? 'Shared' : 'New link for'} "${result.record.name}" (${result.link.role === 'rw' ? 'can edit' : 'can view'}, expires ${new Date(result.link.expiresAt).toISOString().slice(0, 10)})`
+	);
+	console.log(`  Link: ${result.link.url}`);
+	console.log(`  Link id: ${result.link.capId}`);
+	console.log('  The link holds the room key. It is shown once and kept nowhere.');
+}
+
+export async function sketchUnshare(
+	sketchId: string,
+	options: SketchSharingCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const caller = readCallerIdentity(process.env);
+	const record = await request<SketchRecord>(
+		'unshare',
+		{ sketchId: id, ...callerMessageFields(caller) },
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, record });
+		return;
+	}
+	console.log(`Stopped sharing "${record.name}". The room is deleted; the sketch stays here.`);
+}
+
+export async function sketchRevokeLink(
+	sketchId: string,
+	capId: string,
+	options: SketchSharingCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const link = capId.trim();
+	if (!link) failCommand('A link id is required.', options.json, ExitCode.InvalidUsage);
+	const caller = readCallerIdentity(process.env);
+	const record = await request<SketchRecord>(
+		'revoke-link',
+		{ sketchId: id, capId: link, ...callerMessageFields(caller) },
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, record });
+		return;
+	}
+	const live = record.share?.links.filter((candidate) => !candidate.revoked).length ?? 0;
+	console.log(`Revoked link ${link} on "${record.name}". ${live} link(s) still work.`);
+}
+
+export async function sketchRotate(
+	sketchId: string,
+	options: SketchSharingCliOptions
+): Promise<void> {
+	const id = requireSketchId(sketchId, options.json);
+	const caller = readCallerIdentity(process.env);
+	const record = await request<SketchRecord>(
+		'rotate',
+		{ sketchId: id, ...callerMessageFields(caller) },
+		options.json,
+		sharingTimeout(Boolean(caller))
+	);
+	if (options.json) {
+		printJson({ success: true, record });
+		return;
+	}
+	console.log(
+		`Reset all access to "${record.name}": every link is revoked and the sketch is under a new key (epoch ${record.share?.keyEpoch ?? 0}). Run sketch share to invite anyone back.`
+	);
+}
+
+/** The human reading of the owner sign-in. */
+export function formatOwnerStatus(status: SketchOwnerStatus): string {
+	if (status.state === 'signed-out') return 'Not signed in to Sketch Book sharing.';
+	const where = status.serverUrl ?? '';
+	const other = status.otherServer ? ' (not the server Sketch Book uses now)' : '';
+	if (status.state === 'pending') {
+		return `Waiting for ${status.email} to confirm the email from ${where}${other}.`;
+	}
+	return `Signed in as ${status.email} on ${where}${other}.`;
+}
+
+export async function sketchOwner(op: string, options: SketchOwnerOptions): Promise<void> {
+	if (!isSketchOwnerOp(op)) {
+		failCommand(
+			`owner expects status, register or sign-out, got "${op}"`,
+			options.json,
+			ExitCode.InvalidUsage
+		);
+	}
+	if (op === 'register' && !options.email?.trim()) {
+		failCommand('owner register needs --email <address>.', options.json, ExitCode.InvalidUsage);
+	}
+	const result = await request<SketchOwnerCommandResult>(
+		'owner',
+		{
+			op,
+			...(op === 'register' ? { email: options.email?.trim(), wait: options.wait === true } : {}),
+		},
+		options.json,
+		op === 'register' && options.wait ? OWNER_WAIT_TIMEOUT_MS : undefined
+	);
+	if (options.json) {
+		printJson({ success: true, op, ...result });
+		return;
+	}
+	if (op === 'register' && result.email) {
+		console.log(
+			result.email === 'already-confirmed'
+				? 'That address was confirmed before; a new sign-in link went out.'
+				: 'A confirmation email went out. Open the link in it to finish signing in.'
+		);
+	}
+	console.log(formatOwnerStatus(result.status));
 }

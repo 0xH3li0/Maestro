@@ -263,7 +263,12 @@ import {
 	sketchNew,
 	sketchOpen,
 	sketchRead,
+	sketchOwner,
+	sketchRevokeLink,
+	sketchRotate,
 	sketchScreeningConsent,
+	sketchShare,
+	sketchUnshare,
 } from './commands/sketch';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
@@ -4623,7 +4628,7 @@ dataviewCmd
 // Sketch Book commands - the verbs that need no room (spec section 9). Each
 // rides `sketch_command` to the SketchService the Sketch tab uses.
 const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
-	'Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent, and manage cloud screening consent'
+	'Sketch Book: create, list, open, read, export and share Excalidraw whiteboards owned by an agent, and manage cloud screening consent'
 );
 
 sketchCmd
@@ -4675,6 +4680,49 @@ sketchCmd
 	.option('--yes', 'Grant without the terminal prompt (you have read what it sends)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((op, options) => sketchScreeningConsent(op, options));
+
+sketchCmd
+	.command('share <sketchId>')
+	.description(
+		'Share a sketch on RunMaestro.ai and print a new link (the room on the first share). An agent caller gets a desktop confirmation'
+	)
+	.option('--role <role>', 'rw (view and edit, the default) or ro (view only)')
+	.option('--expires-days <days>', 'Days until the link expires (default 7 for rw, 30 for ro)')
+	.option('--label <label>', 'A name for the link, shown in the Share panel')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchShare(sketchId, options));
+
+sketchCmd
+	.command('unshare <sketchId>')
+	.description(
+		'Stop sharing: delete the room on RunMaestro.ai (the sketch stays). An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchUnshare(sketchId, options));
+
+sketchCmd
+	.command('revoke-link <sketchId> <capId>')
+	.description(
+		'Revoke one share link (its id is in sketch share and sketch list --json). An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, capId, options) => sketchRevokeLink(sketchId, capId, options));
+
+sketchCmd
+	.command('rotate <sketchId>')
+	.description(
+		'Reset all access: revoke every link, clear the room, re-upload under a new key. An agent caller gets a desktop confirmation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchRotate(sketchId, options));
+
+sketchCmd
+	.command('owner <op>')
+	.description("status, register or sign-out: this device's RunMaestro.ai sign-in for sharing")
+	.option('--email <address>', 'The address to confirm (register)')
+	.option('--wait', 'Wait for the confirmation link to be clicked (register, up to 15 minutes)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((op, options) => sketchOwner(op, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

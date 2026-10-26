@@ -19,6 +19,7 @@ import {
 	SKETCH_DEFAULT_SERVER_URL,
 	sketchRoomSocketUrl,
 	sketchServerUrlProblem,
+	sketchShareLinkUrl,
 } from '../../../shared/sketch/server';
 
 describe('normalizeSketchServerUrl', () => {
@@ -100,5 +101,26 @@ describe('the serverUrl field of the sketchBook setting', () => {
 			serverUrl: 'http://localhost:8787',
 		});
 		expect(normalizeSketchBookSettings({ serverUrl: 'http://evil.example' })).toEqual({});
+	});
+});
+
+describe('sketchShareLinkUrl', () => {
+	it('puts the key and the cap in the fragment, never in the path or query (contract 2)', () => {
+		const url = sketchShareLinkUrl(undefined, 'R'.repeat(22), 'k'.repeat(22), 'c'.repeat(43));
+		expect(url).toBe(
+			`https://sketch.runmaestro.ai/s/${'R'.repeat(22)}#${'k'.repeat(22)}.${'c'.repeat(43)}`
+		);
+		const parsed = new URL(url);
+		expect(parsed.search).toBe('');
+		expect(parsed.pathname).not.toContain('k'.repeat(22));
+	});
+
+	it('follows a usable dev server and falls back on an unusable one', () => {
+		expect(sketchShareLinkUrl('http://localhost:8787', 'room1', 'key', 'cap')).toBe(
+			'http://localhost:8787/s/room1#key.cap'
+		);
+		expect(sketchShareLinkUrl('http://evil.example', 'room1', 'key', 'cap')).toBe(
+			'https://sketch.runmaestro.ai/s/room1#key.cap'
+		);
 	});
 });
