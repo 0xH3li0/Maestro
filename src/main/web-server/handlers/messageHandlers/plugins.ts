@@ -142,7 +142,8 @@ export async function handlePluginsSendAgent(
 				prompt,
 				sessionId as string | undefined,
 				controller.signal,
-				'user',
+				// The CLI boot secret authenticates the caller, not a human turn.
+				'auto',
 				undefined,
 				requiredToolId as string | undefined,
 				...(requirePluginTools === true ? ([true] as const) : [])

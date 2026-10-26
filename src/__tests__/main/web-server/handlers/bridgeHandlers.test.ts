@@ -82,6 +82,40 @@ beforeEach(() => {
 });
 
 describe('handleBridgeInvoke', () => {
+	it.each([false, true])('stamps generic bridge spawns as unattended (cli=%s)', async (cli) => {
+		const handler = vi.fn().mockResolvedValue({ success: true });
+		invokeHandlers.set('process:spawn', handler);
+		for (const querySource of ['user', 'auto', undefined]) {
+			const config = { sessionId: 'fixture-ai-tab', prompt: 'Read authorized mail', querySource };
+			await handleBridgeInvoke(
+				{ ...makeClient(), cli },
+				{ type: 'bridge.invoke', requestId: 'spawn', channel: 'process:spawn', args: [config] },
+				vi.fn()
+			);
+			expect(handler).toHaveBeenLastCalledWith(expect.anything(), {
+				...config,
+				querySource: 'auto',
+			});
+			expect(config.querySource).toBe(querySource);
+		}
+	});
+
+	it.each([{ args: [] }, { args: [null] }, { args: [[]] }, { args: [{}, 'user'] }])(
+		'rejects malformed remote spawn arguments %j',
+		async ({ args }) => {
+			const handler = vi.fn();
+			invokeHandlers.set('process:spawn', handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 'invalid', channel: 'process:spawn', args },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+		}
+	);
+
 	it('rejects empty/non-string channel without touching ipcMain', async () => {
 		const send = vi.fn();
 		const client = makeClient();

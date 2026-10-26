@@ -1761,6 +1761,22 @@ describe('persistence IPC handlers', () => {
 			toolType: 'claude-code',
 		};
 
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s cannot persist a new remote human queue claim',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([]);
+				const incoming = {
+					...baseSession,
+					executionQueue: [
+						{ id: 'remote-item', type: 'message', text: 'Read mail', querySource: 'user' },
+					],
+				};
+				await handlers.get(channel)!({ type: 'bridge' } as any, [incoming], []);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof incoming)[];
+				expect(saved[0].executionQueue[0].querySource).toBe('auto');
+			}
+		);
+
 		it('notifies Pianola of added and removed agents only after a durable write', async () => {
 			const onSessionsPersisted = vi.fn(() => {
 				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();

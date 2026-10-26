@@ -276,6 +276,13 @@ an origin remain unattended, and merging messages cannot promote such an item to
 a human turn.
 Automatic context-transfer/merge sends remain `auto`, including when initiated
 through CLI/remote operations; they do not inherit the composer's human origin.
+Generic Web/CLI bridge spawns are Host-stamped `auto` regardless of submitted
+`querySource`. Remote session saves cannot create a human queue origin or retain
+it after changing a queued operation; unchanged Host-observed queue items retain
+their origin. An authenticated remote connection alone is not a human-turn proof.
+The loopback CLI headless-send route likewise stamps `auto`; the CLI boot secret
+does not attest a human origin. Mail reads from those runs still need the existing
+separate unattended consent.
 
 The reader uses the already confirmed Relay policy schema and six tool input/result
 shapes. Account setup remains in Relay's protected settings/native confirmation
