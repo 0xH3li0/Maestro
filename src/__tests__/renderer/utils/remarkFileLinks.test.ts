@@ -501,6 +501,28 @@ describe('remarkFileLinks', () => {
 			expect(result).not.toContain('file:///handoff');
 		});
 
+		// Chinese and Japanese put no space between words, so a path written
+		// straight after one is still a path, not the middle of a word.
+		it('links an absolute path written straight after CJK text', async () => {
+			const result = await processMarkdown(
+				'ファイルは/other/place/report.md',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/report.md](file:///other/place/report.md)');
+		});
+
+		it('does not link CJK prose that uses slashes and full stops', async () => {
+			const result = await processMarkdown(
+				'読む/書く。完了しました。結果は docs/notes.md',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+		});
+
 		// Deliberate: a folder whose name holds a file name and a space reads the
 		// same as prose after a path (`/a/SKILL.md and refs/b.md`), and the match
 		// stops at the first file name rather than risk swallowing a sentence.

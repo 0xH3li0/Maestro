@@ -61,12 +61,15 @@ export const PATH_PATTERN = new RegExp(
  * sent a whole paragraph to `fs:stat` (ENAMETOOLONG, MAESTRO-176 / MAESTRO-16F).
  * Four rules keep a match on one path:
  *  - it starts at a token boundary, never inside a word (`C/bozze/x.md`,
- *    `and/or`), in any script;
+ *    `and/or`), in any script that separates words with spaces. Chinese and
+ *    Japanese do not, so a path written straight after a Han, Hiragana or
+ *    Katakana character (`これは/Users/me/a.md`) still starts there;
  *  - no segment starts or ends with whitespace, so prose that runs into a
  *    later path (`Read /handoff notes in /Users/me/a.md`) is not read as a
  *    directory: ` /` is where a sentence meets a path, not a folder name;
  *  - no segment holds a sentence break (`.`, `;`, `!` or `?` followed by
- *    whitespace), which a directory or file name essentially never does;
+ *    whitespace, or a fullwidth `。！？；`), which a directory or file name
+ *    essentially never does;
  *  - no segment exceeds 255 characters, the NAME_MAX of every platform we ship.
  * The directory run is lazy, so the match ends at the FIRST file name that
  * closes a path (`/a/SKILL.md and refs/b.md` stops at `SKILL.md`), while the
@@ -75,9 +78,11 @@ export const PATH_PATTERN = new RegExp(
  * and a space (`/a/node.js backup/b.md`) is the same text as that prose, and
  * stops at `/a/node.js` too. Stopping early is the safer error of the two.
  */
-const ABSOLUTE_PATH_SEGMENT = `(?!\\s)(?:(?![.;!?]\\s)[^/\\n]){1,255}(?<!\\s)`;
+const ABSOLUTE_PATH_SEGMENT = `(?!\\s)(?:(?![.;!?]\\s|[。！？；])[^/\\n]){1,255}(?<!\\s)`;
+/** A word character, except in the scripts written without spaces between words. */
+const SPACED_WORD_CHAR = `(?![\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}])[\\p{L}\\p{N}_]`;
 export const ABSOLUTE_PATH_PATTERN = new RegExp(
-	`(?<![\\p{L}\\p{N}_])\\/(?:${ABSOLUTE_PATH_SEGMENT}\\/)+?${ABSOLUTE_PATH_SEGMENT}\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
+	`(?<!${SPACED_WORD_CHAR})\\/(?:${ABSOLUTE_PATH_SEGMENT}\\/)+?${ABSOLUTE_PATH_SEGMENT}\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
 	'giu'
 );
 
