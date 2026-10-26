@@ -88,6 +88,7 @@ const mockWebContents = {
 	}),
 	setWindowOpenHandler: vi.fn(),
 	reload: vi.fn(),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	session: {
 		setPermissionRequestHandler: vi.fn(),
 	},
@@ -324,6 +325,7 @@ describe('app-lifecycle/window-manager', () => {
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
 		mockWindowInstance.isMinimized.mockReturnValue(false);
 		mockWindowInstance.isDestroyed.mockReturnValue(false);
+		mockWebContents.isDestroyed.mockReturnValue(false);
 		mockWindowInstance.setMinimumSize.mockClear();
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 		mockWebContents.getType.mockReturnValue('window');
@@ -2198,6 +2200,44 @@ describe('app-lifecycle/window-manager', () => {
 					expect(mockWebContents.reload).toHaveBeenCalledTimes(MAX_RENDERER_RELOADS);
 				});
 
+				// Two exits for one death share the queued reload and one budget slot,
+				// so the renderer still gets every reload it is owed afterwards.
+				it('shares one queued reload between exits that arrive before it fires', async () => {
+					const { MAX_RENDERER_RELOADS } =
+						await import('../../../main/app-lifecycle/window-crash-handlers');
+					await fireRenderProcessGone('crashed', 139, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone')!;
+					handler({}, { reason: 'crashed', exitCode: 139 });
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(1);
+
+					// An exit after the reload fired schedules a new one.
+					for (let i = 1; i < MAX_RENDERER_RELOADS; i++) {
+						handler({}, { reason: 'crashed', exitCode: 139 });
+						vi.advanceTimersByTime(1000);
+					}
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(MAX_RENDERER_RELOADS);
+
+					// Budget spent: the next exit stops the loop.
+					handler({}, { reason: 'crashed', exitCode: 139 });
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(MAX_RENDERER_RELOADS);
+				});
+
+				it('does not reload a window destroyed while its reload was pending', async () => {
+					await fireRenderProcessGone('crashed', 139, () => false);
+					mockWindowInstance.isDestroyed.mockReturnValue(true);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).not.toHaveBeenCalled();
+				});
+
+				it('does not reload webContents destroyed while its reload was pending', async () => {
+					await fireRenderProcessGone('crashed', 139, () => false);
+					mockWebContents.isDestroyed.mockReturnValue(true);
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).not.toHaveBeenCalled();
+				});
+
 				it('keeps reloading crashes that are spread out in time', async () => {
 					const { MAX_RENDERER_RELOADS, RENDERER_RELOAD_WINDOW_MS } =
 						await import('../../../main/app-lifecycle/window-crash-handlers');
@@ -2230,7 +2270,11 @@ describe('app-lifecycle/window-manager', () => {
 				// Let the lazily imported Sentry module load before the burst.
 				await vi.waitFor(() => expect(sentryCaptureMessageMock).toHaveBeenCalled());
 				const handler = webContentsEventHandlers.get('render-process-gone')!;
-				for (let i = 0; i < 10; i++) handler({}, { reason: 'launch-failed', exitCode: 1002 });
+				// Each relaunch dies again once its reload fires.
+				for (let i = 0; i < 10; i++) {
+					vi.advanceTimersByTime(1000);
+					handler({}, { reason: 'launch-failed', exitCode: 1002 });
+				}
 
 				const messagesFor = (text: string) =>
 					(sentryCaptureMessageMock.mock.calls as unknown[][]).filter(([m]) => m === text);

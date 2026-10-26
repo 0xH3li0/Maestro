@@ -62,6 +62,10 @@ export function attachWindowCrashHandlers(
 	// apart from a renderer that dies every time it is started.
 	let recentReloads: number[] = [];
 	let reportedCrashLoop = false;
+	// One reload at a time: an exit that arrives while a reload is already queued
+	// shares it rather than queueing another and spending a second slot of the
+	// budget on the same death (approach from #1903).
+	let reloadPending = false;
 
 	// Handle renderer process termination (crash, kill, OOM, etc.)
 	mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -71,7 +75,8 @@ export function attachWindowCrashHandlers(
 		});
 
 		const wantsReload = details.reason !== 'clean-exit' && !getIsQuitting?.();
-		if (wantsReload) {
+		const scheduleReload = wantsReload && !reloadPending;
+		if (scheduleReload) {
 			const now = Date.now();
 			recentReloads = recentReloads.filter((at) => now - at < RENDERER_RELOAD_WINDOW_MS);
 			if (recentReloads.length >= MAX_RENDERER_RELOADS) {
@@ -114,12 +119,18 @@ export function attachWindowCrashHandlers(
 		// The main process outlives a SIGTERM aimed at the renderer (a stray
 		// `pkill -f` whose pattern hits Chromium's `--lang=en-US` flag is
 		// enough), and without a reload the window stays black for good.
-		if (wantsReload) {
+		if (scheduleReload) {
 			logger.info('Attempting to reload renderer after it exited', 'Window', {
 				reason: details.reason,
 			});
+			reloadPending = true;
 			setTimeout(() => {
-				if (!mainWindow.isDestroyed() && !getIsQuitting?.()) {
+				reloadPending = false;
+				if (
+					!mainWindow.isDestroyed() &&
+					!mainWindow.webContents.isDestroyed() &&
+					!getIsQuitting?.()
+				) {
 					mainWindow.webContents.reload();
 				}
 			}, 1000);
