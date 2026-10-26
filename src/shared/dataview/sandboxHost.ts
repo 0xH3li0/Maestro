@@ -35,8 +35,18 @@ export const DATAVIEW_GUEST_CSP =
 	"connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; " +
 	"form-action 'none'; base-uri 'none'; webrtc 'block'";
 
-/** A run that has not answered `render.done` or `render.error` within this long loses its guest (D4). */
+/**
+ * A run that has not answered `render.done` or `render.error` within this long of its `index.ready` loses its
+ * guest (D4). The budget is the script's own: the index build before it has {@link DATAVIEW_JS_INDEX_TIMEOUT_MS}.
+ */
 export const DATAVIEW_JS_RUN_TIMEOUT_MS = 5000;
+
+/**
+ * How long a guest may take to decode the snapshot and build the run's index before `index.ready`. A 16k-page
+ * vault took about 3.5 s, which left a script 1.5 s of the 5 s budget when both shared it. Trusted code runs in
+ * this phase, so the bound is only there for a guest that hangs.
+ */
+export const DATAVIEW_JS_INDEX_TIMEOUT_MS = 30_000;
 
 /**
  * The most list-item data one `run` snapshot carries, as an estimate in bytes (`DATAVIEW_JS_LIST_ITEM_BYTES`
