@@ -28,6 +28,7 @@ import {
 } from '../../../main/utils/ssh-spawn-wrapper';
 import {
 	POSIX_PROMPT_ARGV_MAX_BYTES,
+	promptExceedsArgvLimit,
 	WINDOWS_PROMPT_ARGV_MAX_CHARS,
 } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-resolver';
@@ -213,6 +214,34 @@ describe('wrapSpawnWithSsh', () => {
 			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
 			expect(result.sshStdinScript).toBeUndefined();
 		});
+
+		// The SSH line is measured with the same quoting rule as a local prompt,
+		// so the two cannot disagree: `ssh` plus one argument quoted to 29,996
+		// characters is exactly the 30,000 cap, and two more `"` cross it.
+		it.each([
+			['crosses', 15_000, true],
+			['stays under', 14_997, false],
+		] as const)(
+			'agrees with the prompt check when a Windows line %s the cap once quoted',
+			async (_label, quotes, tooLong) => {
+				const prompt = '"'.repeat(quotes);
+				mockBuildSshCommand.mockResolvedValue({
+					command: 'ssh',
+					args: [prompt],
+					remoteCommandLine: 'claude',
+				});
+
+				const result = await wrapSpawnWithSsh(
+					{ ...baseConfig, prompt: 'short question', isWindowsHost: true },
+					{ enabled: true, remoteId: 'jennifer-box' },
+					sshStore
+				);
+
+				expect(promptExceedsArgvLimit(prompt, true)).toBe(tooLong);
+				expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(tooLong ? 1 : 0);
+				expect(result.sshStdinScript === undefined).toBe(!tooLong);
+			}
+		);
 
 		// sshd hands the remote command to the login shell as one argument, so
 		// past the POSIX per-argument cap neither end could start it inline.

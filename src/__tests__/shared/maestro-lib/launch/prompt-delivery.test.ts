@@ -6,6 +6,8 @@ import {
 	resolvePromptDelivery,
 	resolveSystemPromptDelivery,
 	WINDOWS_PROMPT_ARGV_MAX_CHARS,
+	windowsCommandLineLength,
+	windowsQuotedArgLength,
 	type PromptDeliveryAgent,
 } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
@@ -50,6 +52,43 @@ describe('promptExceedsArgvLimit', () => {
 		// 40,000 three-byte characters: short in code units, 120,000 bytes on the wire.
 		expect(promptExceedsArgvLimit('\u20ac'.repeat(40_000), false)).toBe(true);
 		expect(promptExceedsArgvLimit('\u20ac'.repeat(30_000), false)).toBe(false);
+	});
+
+	// A prompt is measured as Node quotes it for CreateProcess, not as written:
+	// every `"` gains a backslash, so a prompt well under the cap can cross it.
+	it('measures a Windows prompt after quoting', () => {
+		const over = '"'.repeat(15_000);
+		const under = '"'.repeat(14_997);
+		expect(over.length).toBeLessThan(WINDOWS_PROMPT_ARGV_MAX_CHARS);
+		expect(windowsQuotedArgLength(over)).toBe(30_002);
+		expect(windowsQuotedArgLength(under)).toBe(29_996);
+
+		expect(promptExceedsArgvLimit(over, true)).toBe(true);
+		expect(promptExceedsArgvLimit(under, true)).toBe(false);
+	});
+});
+
+describe('windowsQuotedArgLength', () => {
+	// Input and output pairs from libuv's quote_cmd_arg (src/win/process.c).
+	it.each([
+		['hello"world', '"hello\\"world"'],
+		['hello""world', '"hello\\"\\"world"'],
+		['hello\\world', 'hello\\world'],
+		['hello\\\\world', 'hello\\\\world'],
+		['hello\\"world', '"hello\\\\\\"world"'],
+		['hello\\\\"world', '"hello\\\\\\\\\\"world"'],
+		['hello world\\', '"hello world\\\\"'],
+		['', '""'],
+		['a b', '"a b"'],
+		['a\tb', '"a\tb"'],
+		['plain', 'plain'],
+	])('counts %j as %j', (input, quoted) => {
+		expect(windowsQuotedArgLength(input)).toBe(quoted.length);
+	});
+
+	it('joins a command line with single spaces', () => {
+		// ssh "a b" plain
+		expect(windowsCommandLineLength('ssh', ['a b', 'plain'])).toBe(15);
 	});
 });
 

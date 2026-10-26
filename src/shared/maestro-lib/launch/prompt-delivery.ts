@@ -37,10 +37,11 @@ export function buildPromptArgv(
 }
 
 /**
- * Longest prompt (in UTF-16 code units) left on a Windows command line.
- * CreateProcess caps the WHOLE command line at 32,767 characters and fails
- * with ERROR_FILENAME_EXCED_RANGE, which Node reports as `spawn ENAMETOOLONG`;
- * this leaves room for the binary path and the rest of the argv.
+ * Longest prompt left on a Windows command line, in UTF-16 code units AFTER
+ * Node quotes it (`windowsQuotedArgLength`). CreateProcess caps the WHOLE
+ * command line at 32,767 characters and fails with ERROR_FILENAME_EXCED_RANGE,
+ * which Node reports as `spawn ENAMETOOLONG`; this leaves room for the binary
+ * path and the rest of the argv.
  */
 export const WINDOWS_PROMPT_ARGV_MAX_CHARS = 30_000;
 
@@ -52,12 +53,60 @@ export const WINDOWS_PROMPT_ARGV_MAX_CHARS = 30_000;
 export const POSIX_PROMPT_ARGV_MAX_BYTES = 100_000;
 
 /**
+ * Characters one argument takes on a Windows command line, counted exactly as
+ * Node builds it: libuv's `quote_cmd_arg` (`src/win/process.c`). An argument
+ * with no space, tab or `"` is copied as is, and an empty one becomes `""`.
+ * Any other is wrapped in quotes, every `"` gains a `\`, and a run of
+ * backslashes right before a `"` or before the closing quote is doubled, so a
+ * prompt full of JSON can grow by thousands of characters on the way to
+ * CreateProcess. Counted in UTF-16 code units, the unit `.length` and the
+ * 32,767 cap share. A spawn with `windowsVerbatimArguments` (Node's shell
+ * launches) skips this quoting; its arguments were escaped for cmd.exe first.
+ */
+export function windowsQuotedArgLength(arg: string): number {
+	if (arg.length === 0) return 2;
+	if (!/[ \t"]/.test(arg)) return arg.length;
+	let length = arg.length + 2;
+	// Walk backwards, as libuv does: a backslash is doubled while its run ends
+	// at a `"` or at the closing quote.
+	let quoteHit = true;
+	for (let i = arg.length - 1; i >= 0; i--) {
+		const ch = arg[i];
+		if (quoteHit && ch === '\\') {
+			length++;
+		} else if (ch === '"') {
+			quoteHit = true;
+			length++;
+		} else {
+			quoteHit = false;
+		}
+	}
+	return length;
+}
+
+/**
+ * Length of the command line Node hands CreateProcess for `command` and
+ * `args`: each quoted by `windowsQuotedArgLength`, joined by single spaces.
+ */
+export function windowsCommandLineLength(command: string, args: readonly string[]): number {
+	return args.reduce(
+		(total, arg) => total + 1 + windowsQuotedArgLength(arg),
+		windowsQuotedArgLength(command)
+	);
+}
+
+/**
  * Whether `prompt` is too long to ride the command line of a process started
  * on this kind of machine. Such a spawn cannot succeed, so moving the prompt
- * to stdin is never a behavior change for a turn that would have worked.
+ * to stdin is never a behavior change for a turn that would have worked. On
+ * Windows the prompt is measured as Node will quote it, not as written.
  */
 export function promptExceedsArgvLimit(prompt: string, windowsHost: boolean): boolean {
-	if (windowsHost) return prompt.length > WINDOWS_PROMPT_ARGV_MAX_CHARS;
+	if (windowsHost) {
+		// Quoting only ever adds characters, so a prompt already past the cap is.
+		if (prompt.length > WINDOWS_PROMPT_ARGV_MAX_CHARS) return true;
+		return windowsQuotedArgLength(prompt) > WINDOWS_PROMPT_ARGV_MAX_CHARS;
+	}
 	// Cheap reject first: a UTF-8 encoding is never shorter than the code-unit
 	// count, and never more than three bytes per code unit.
 	if (prompt.length > POSIX_PROMPT_ARGV_MAX_BYTES) return true;

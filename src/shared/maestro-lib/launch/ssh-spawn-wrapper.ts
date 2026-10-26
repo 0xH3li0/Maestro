@@ -14,7 +14,12 @@ import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
-import { buildPromptArgv, promptExceedsArgvLimit } from './prompt-delivery';
+import {
+	buildPromptArgv,
+	promptExceedsArgvLimit,
+	WINDOWS_PROMPT_ARGV_MAX_CHARS,
+	windowsCommandLineLength,
+} from './prompt-delivery';
 import { logger } from '../host';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
@@ -65,10 +70,11 @@ export function sshUnresolvedRemoteMessage(sshConfig: AgentSshRemoteConfig): str
  * macOS cap each argument. And the remote host, whose sshd hands the remote
  * command to the login shell as ONE `-c` argument, so the POSIX per-argument
  * cap applies there as well. Off Windows the per-argument check covers both
- * ends; on Windows the whole-line cap is far tighter than the remote one.
+ * ends; on Windows the whole-line cap, measured as Node quotes the line, is
+ * far tighter than the remote one.
  */
 function inlineSshCommandTooLong(command: string, args: string[], windowsHost: boolean): boolean {
-	if (windowsHost) return promptExceedsArgvLimit([command, ...args].join(' '), true);
+	if (windowsHost) return windowsCommandLineLength(command, args) > WINDOWS_PROMPT_ARGV_MAX_CHARS;
 	return args.some((arg) => promptExceedsArgvLimit(arg, false));
 }
 
