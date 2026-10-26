@@ -2055,6 +2055,18 @@ describe('app-lifecycle/window-manager', () => {
 		// `'render-process-gone'`. These tests pin the wiring so a future
 		// revert can't silently drop renderer-crash reporting.
 		describe('webContents crash event wiring', () => {
+			// Every exit that is not a clean exit schedules a 1 s reload against the
+			// shared mockWebContents. Under real timers that timer outlives its test
+			// and lands in whichever test runs a second later, which on a slow runner
+			// is one that counts reloads. Faking timers for the whole block makes
+			// useRealTimers discard anything a test left pending.
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
 			it('registers a render-process-gone listener', async () => {
 				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -2134,11 +2146,7 @@ describe('app-lifecycle/window-manager', () => {
 
 			describe('reload after the renderer exits', () => {
 				beforeEach(() => {
-					vi.useFakeTimers();
 					mockWebContents.reload.mockClear();
-				});
-				afterEach(() => {
-					vi.useRealTimers();
 				});
 
 				it('reloads after a crash', async () => {

@@ -256,6 +256,23 @@ describe('group-chat-storage', () => {
 
 			await deleteGroupChat(created.id);
 		});
+
+		// Metadata that parses to something other than an object (`null`, an
+		// array) is as unusable as a corrupt file: skip the chat rather than throw,
+		// or one bad room fails listGroupChats for every healthy one.
+		it('treats metadata that is not an object as missing', async () => {
+			const created = await createGroupChat('Null Metadata', 'claude-code');
+			const metadataPath = path.join(path.dirname(created.logPath), 'metadata.json');
+
+			for (const content of ['null', '[]', '42']) {
+				await fs.writeFile(metadataPath, content, 'utf-8');
+				expect(await loadGroupChat(created.id)).toBeNull();
+				const listed = await listGroupChats();
+				expect(listed.some((chat) => chat.id === created.id)).toBe(false);
+			}
+
+			await deleteGroupChat(created.id);
+		});
 	});
 
 	// ===========================================================================
