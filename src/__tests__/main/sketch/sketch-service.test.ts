@@ -12,6 +12,10 @@
  *   - **Arguments from IPC are checked by type** before the store sees them.
  *   - **Listing by owner does not need the agent to exist**: a sketch outlives
  *     the agent that made it.
+ *   - **The CLI verbs** (`new`, `open`, `read`, `export`): a tab opens on the
+ *     sketch's own agent through the renderer bridge, a gone or SSH owner is
+ *     refused before the window is asked, `read` summarizes or returns live
+ *     elements, and `export` answers JSON itself and asks a window for PNG/SVG.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -23,6 +27,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
 	app: { getPath: vi.fn(() => 'sketch-service-unused') },
+	ipcMain: { on: vi.fn(), removeListener: vi.fn() },
 	safeStorage: {
 		isEncryptionAvailable: vi.fn(() => false),
 		encryptString: vi.fn(),
@@ -38,6 +43,7 @@ vi.mock('../../../main/stores/getters', () => ({
 }));
 
 import { createSketchService, type SketchOwnerAgent } from '../../../main/sketch/sketch-service';
+import type { SketchRendererBridge } from '../../../main/sketch/sketch-renderer-bridge';
 import type { SketchStore } from '../../../main/sketch/sketch-store';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
 import type { SketchRecord, SketchScene } from '../../../shared/sketch/types';
@@ -84,16 +90,19 @@ const localAgent: SketchOwnerAgent = { id: 'agent-1', name: 'Builder', sshRemote
 describe('SketchService', () => {
 	let store: ReturnType<typeof fakeStore>;
 	let enabled: boolean;
+	let renderer: ReturnType<typeof vi.fn<SketchRendererBridge>>;
 
 	const service = (agents: SketchOwnerAgent[] = [localAgent]) =>
 		createSketchService({
 			store: () => store,
 			isEnabled: () => enabled,
 			findAgent: (id) => agents.find((agent) => agent.id === id) ?? null,
+			renderer,
 		});
 
 	beforeEach(() => {
 		store = fakeStore();
+		renderer = vi.fn<SketchRendererBridge>(async () => ({ success: true, tabId: 'tab-1' }));
 		enabled = true;
 		h.settings = { encoreFeatures: { sketchBook: true } };
 		h.sessions = [];
@@ -110,6 +119,10 @@ describe('SketchService', () => {
 				['renameSketch', (s) => s.renameSketch(SKETCH_ID, 'New')],
 				['deleteSketch', (s) => s.deleteSketch(SKETCH_ID)],
 				['saveSketchToProject', (s) => s.saveSketchToProject(SKETCH_ID, '/project')],
+				['newSketch', (s) => s.newSketch({ ownerAgentId: 'agent-1' })],
+				['openSketch', (s) => s.openSketch(SKETCH_ID)],
+				['readSketch', (s) => s.readSketch(SKETCH_ID)],
+				['exportSketch', (s) => s.exportSketch(SKETCH_ID, 'png')],
 			];
 
 		it.each(calls)(
@@ -118,6 +131,7 @@ describe('SketchService', () => {
 				enabled = false;
 				await expect(call(service())).rejects.toThrow(encoreDisabledMessage('sketchBook'));
 				for (const method of Object.values(store)) expect(method).not.toHaveBeenCalled();
+				expect(renderer).not.toHaveBeenCalled();
 			}
 		);
 
@@ -272,6 +286,174 @@ describe('SketchService', () => {
 				s.saveSketchToProject(SKETCH_ID, '/project', { fileName: 9 } as never)
 			).rejects.toThrow('fileName must be a string');
 			expect(store.saveSketchToProject).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('newSketch', () => {
+		it('creates the sketch and opens it on its agent, in the background when asked', async () => {
+			const opened = await service().newSketch({
+				ownerAgentId: 'agent-1',
+				name: 'Plan',
+				background: true,
+			});
+
+			expect(store.createSketch).toHaveBeenCalledWith({ ownerAgentId: 'agent-1', name: 'Plan' });
+			expect(renderer).toHaveBeenCalledWith('agent-1', {
+				action: 'open',
+				sessionId: 'agent-1',
+				sketchId: SKETCH_ID,
+				name: 'Board',
+				background: true,
+			});
+			expect(opened).toEqual({ record, tabId: 'tab-1' });
+		});
+
+		it('focuses unless background is literally true', async () => {
+			await service().newSketch({ ownerAgentId: 'agent-1', background: 'yes' as never });
+			expect(renderer.mock.calls[0][1]).toMatchObject({ background: false });
+		});
+
+		it('refuses an SSH owner before anything is created', async () => {
+			await expect(
+				service([{ ...localAgent, sshRemote: true }]).newSketch({ ownerAgentId: 'agent-1' })
+			).rejects.toThrow('local agents only');
+			expect(store.createSketch).not.toHaveBeenCalled();
+			expect(renderer).not.toHaveBeenCalled();
+		});
+
+		it('names the created sketch when its tab did not open', async () => {
+			renderer.mockResolvedValue({ success: false, error: 'No Maestro window is open.' });
+			await expect(service().newSketch({ ownerAgentId: 'agent-1' })).rejects.toThrow(
+				`Sketch "Board" (${SKETCH_ID}) was created, but its tab did not open. Sketch Book: No Maestro window is open.`
+			);
+		});
+	});
+
+	describe('openSketch', () => {
+		it('opens the tab on the agent that owns the sketch, focused by default', async () => {
+			await expect(service().openSketch(SKETCH_ID)).resolves.toEqual({ record, tabId: 'tab-1' });
+			expect(renderer).toHaveBeenCalledWith(
+				'agent-1',
+				expect.objectContaining({ action: 'open', sketchId: SKETCH_ID, background: false })
+			);
+		});
+
+		it('reports a missing tab id as null', async () => {
+			renderer.mockResolvedValue({ success: true });
+			await expect(service().openSketch(SKETCH_ID, { background: true })).resolves.toEqual({
+				record,
+				tabId: null,
+			});
+		});
+
+		it('refuses an unknown sketch, a gone owner and an SSH owner without asking a window', async () => {
+			store.getSketch.mockResolvedValueOnce(null as never);
+			await expect(service().openSketch(SKETCH_ID)).rejects.toThrow('no sketch has the id');
+			await expect(service([]).openSketch(SKETCH_ID)).rejects.toThrow('is gone');
+			await expect(
+				service([{ ...localAgent, sshRemote: true }]).openSketch(SKETCH_ID)
+			).rejects.toThrow('runs over SSH');
+			expect(renderer).not.toHaveBeenCalled();
+		});
+
+		it("passes the window's refusal through", async () => {
+			renderer.mockResolvedValue({ success: false, error: 'The window did not answer in time.' });
+			await expect(service().openSketch(SKETCH_ID)).rejects.toThrow(
+				'Sketch Book: The window did not answer in time.'
+			);
+		});
+	});
+
+	describe('readSketch', () => {
+		const drawn: SketchScene = {
+			...scene,
+			elements: [
+				{ id: 'box', version: 1, type: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
+				{ id: 'gone', version: 2, type: 'ellipse', isDeleted: true },
+			],
+		};
+
+		it('summarizes the saved scene by default', async () => {
+			store.readScene.mockResolvedValue(drawn);
+			const reading = await service().readSketch(SKETCH_ID);
+
+			expect(reading.format).toBe('summary');
+			if (reading.format !== 'summary') return;
+			expect(reading.record).toEqual(record);
+			expect(reading.summary).toMatchObject({ elementCount: 1, deletedCount: 1 });
+		});
+
+		it('returns only the live elements for the elements format', async () => {
+			store.readScene.mockResolvedValue(drawn);
+			const reading = await service().readSketch(SKETCH_ID, 'elements');
+
+			expect(reading).toEqual({ record, format: 'elements', elements: [drawn.elements[0]] });
+		});
+
+		it('refuses an unknown format and an unknown sketch', async () => {
+			await expect(service().readSketch(SKETCH_ID, 'xml' as never)).rejects.toThrow(
+				'format must be "summary" or "elements"'
+			);
+			store.getSketch.mockResolvedValueOnce(null as never);
+			await expect(service().readSketch(SKETCH_ID)).rejects.toThrow('no sketch has the id');
+			expect(store.readScene).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('exportSketch', () => {
+		it('answers JSON from the saved file without a window', async () => {
+			const { file } = await service().exportSketch(SKETCH_ID, 'json');
+
+			expect(file).toEqual({
+				format: 'json',
+				mimeType: 'application/json',
+				encoding: 'utf8',
+				data: JSON.stringify(scene, null, '\t'),
+			});
+			expect(renderer).not.toHaveBeenCalled();
+		});
+
+		it("asks the owner's window to draw PNG and SVG", async () => {
+			const png = {
+				format: 'png',
+				mimeType: 'image/png',
+				encoding: 'base64',
+				data: 'iVBO',
+			} as const;
+			renderer.mockResolvedValue({ success: true, file: png });
+
+			await expect(service().exportSketch(SKETCH_ID, 'png')).resolves.toEqual({
+				record,
+				file: png,
+			});
+			expect(renderer).toHaveBeenCalledWith('agent-1', { action: 'export', format: 'png', scene });
+		});
+
+		it('lets any window draw a sketch whose agent is gone', async () => {
+			renderer.mockResolvedValue({
+				success: true,
+				file: { format: 'svg', mimeType: 'image/svg+xml', encoding: 'utf8', data: '<svg/>' },
+			});
+			await service([]).exportSketch(SKETCH_ID, 'svg');
+			expect(renderer.mock.calls[0][0]).toBeNull();
+		});
+
+		it('refuses a window that returned the wrong file or failed', async () => {
+			renderer.mockResolvedValueOnce({ success: true });
+			await expect(service().exportSketch(SKETCH_ID, 'svg')).rejects.toThrow(
+				'did not return a svg file'
+			);
+			renderer.mockResolvedValueOnce({ success: false, error: 'Excalidraw failed to load.' });
+			await expect(service().exportSketch(SKETCH_ID, 'png')).rejects.toThrow(
+				'Sketch Book: Excalidraw failed to load.'
+			);
+		});
+
+		it('refuses an unknown format before reading the scene', async () => {
+			await expect(service().exportSketch(SKETCH_ID, 'gif' as never)).rejects.toThrow(
+				'format must be "png", "svg" or "json"'
+			);
+			expect(store.readScene).not.toHaveBeenCalled();
 		});
 	});
 });

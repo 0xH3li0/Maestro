@@ -45,6 +45,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'tab-compact',
 	'tab-merge',
 	'tab-transfer',
+	// Opening a sketch shows it, as clicking its tab does.
+	'sketch-open',
 ];
 
 describe('no verb changes its default', () => {
@@ -72,6 +74,14 @@ describe('no verb changes its default', () => {
 		expect(CLI_BACKGROUND_DEFAULTS['refresh-auto-run']).toBe(true);
 		expect(resolveBackgroundFlag({}, 'refresh-auto-run')).toBe(true);
 		expect(resolveBackgroundFlag({ focus: true }, 'refresh-auto-run')).toBe(false);
+	});
+
+	it('creates a Sketch Book in the background, the new verb spec Q5 asks for', () => {
+		// A new verb, so no existing caller changes: an agent's sketch opens behind
+		// the person, who opts in with --focus.
+		expect(CLI_BACKGROUND_DEFAULTS['sketch-new']).toBe(true);
+		expect(resolveBackgroundFlag({}, 'sketch-new')).toBe(true);
+		expect(resolveBackgroundFlag({ focus: true }, 'sketch-new')).toBe(false);
 	});
 
 	it('keys defaults by verb, since two verbs share one message and disagree', () => {

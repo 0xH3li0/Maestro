@@ -7,10 +7,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockInvoke = vi.fn();
+const mockOn = vi.fn();
+const mockRemoveListener = vi.fn();
+const mockSend = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		on: (...args: unknown[]) => mockOn(...args),
+		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 	},
 }));
 
@@ -74,6 +80,31 @@ describe('Sketch Book Preload API', () => {
 		expect(mockInvoke).toHaveBeenLastCalledWith('sketch:saveToProject', SKETCH_ID, '/project', {
 			fileName: 'plan.excalidraw',
 			overwrite: true,
+		});
+	});
+
+	it("listens for main's remote commands and hands the request and reply channel on", () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onRemoteCommand(callback);
+
+		expect(mockOn).toHaveBeenCalledWith('remote:sketchCommand', expect.any(Function));
+		const handler = mockOn.mock.calls[0][1] as (...args: unknown[]) => void;
+		const request = { action: 'export', format: 'svg', scene };
+		handler({}, request, 'remote:sketchCommand:response:1');
+		expect(callback).toHaveBeenCalledWith(request, 'remote:sketchCommand:response:1');
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('remote:sketchCommand', handler);
+	});
+
+	it('answers on the response channel main named', () => {
+		api.sendRemoteCommandResponse('remote:sketchCommand:response:1', {
+			success: true,
+			tabId: 'tab-1',
+		});
+		expect(mockSend).toHaveBeenCalledWith('remote:sketchCommand:response:1', {
+			success: true,
+			tabId: 'tab-1',
 		});
 	});
 });

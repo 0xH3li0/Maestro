@@ -53,6 +53,19 @@ export function encoreDisabledCode(flag: EncoreFlag): string {
 	return `${encoreFeatureCliName(flag).replace(/-/g, '_').toUpperCase()}_DISABLED`;
 }
 
+/**
+ * The JSON fields for an app reply that refused because `flag` is off: the
+ * flag was switched off after the verb read the settings file, and the app's
+ * service noticed. Same code as `requireEncore`, so a script sees one outcome.
+ * For `sendBridgeCommand`'s `failureFields`.
+ */
+export function encoreRefusalFields(
+	flag: EncoreFlag
+): (error: string) => Record<string, unknown> | undefined {
+	return (error) =>
+		error === encoreDisabledMessage(flag) ? { code: encoreDisabledCode(flag) } : undefined;
+}
+
 /** Exit 1 with the turned-off message unless `flag` is on. */
 export function requireEncore(flag: EncoreFlag, json?: boolean): void {
 	if (isEncoreEnabled(flag)) return;

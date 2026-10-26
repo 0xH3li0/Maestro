@@ -31,6 +31,7 @@
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
+ * - sketch_command: Create, list, open, read and export Sketch Books, CLI clients only (CLI: `sketch`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -168,6 +169,7 @@ import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
+import { handleSketchCommand } from './sketch';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
@@ -429,6 +431,10 @@ export class WebSocketMessageHandler {
 
 			case 'dataview_command':
 				void handleDataviewCommand(this.ctx, client, message);
+				break;
+
+			case 'sketch_command':
+				void handleSketchCommand(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

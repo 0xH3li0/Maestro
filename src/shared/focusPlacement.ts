@@ -166,6 +166,19 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * for the next task either way.
 	 */
 	'steer-auto-run': false,
+	/**
+	 * maestro-cli sketch new - background by default, `--focus` to opt out.
+	 *
+	 * A new verb, so no caller's behaviour changes. Spec Q5: an agent may create
+	 * a Sketch Book, and it opens in a background tab like the `sketch_create`
+	 * tool's. The person asks to be taken there with `--focus`.
+	 */
+	'sketch-new': true,
+	/**
+	 * maestro-cli sketch open - shows the sketch, so it focuses the tab and its
+	 * agent unless `--background` is passed.
+	 */
+	'sketch-open': false,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */

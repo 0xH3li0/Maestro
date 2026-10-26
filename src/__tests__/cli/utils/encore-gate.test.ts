@@ -18,6 +18,7 @@ import {
 	encoreDisabledMessage,
 	encoreFeatureCliName,
 	encoreFeatureName,
+	encoreRefusalFields,
 	listedSubcommands,
 	readEncoreFlagsForHelp,
 	requireEncore,
@@ -176,5 +177,16 @@ describe('requireEncoreForOptions', () => {
 	it('accepts it once the feature is on', () => {
 		vi.mocked(readSettingValue).mockReturnValue({ groupsPlus: true });
 		expect(() => requireEncoreForOptions('groupsPlus', { parent: 'g1' }, OWNED)).not.toThrow();
+	});
+});
+
+describe('encoreRefusalFields', () => {
+	it("gives the app's turned-off refusal the gate's JSON code, and nothing else", () => {
+		const fields = encoreRefusalFields('sketchBook');
+		expect(fields(encoreDisabledMessage('sketchBook'))).toEqual({
+			code: encoreDisabledCode('sketchBook'),
+		});
+		expect(fields('Sketch Book: no sketch has the id "x".')).toBeUndefined();
+		expect(fields(encoreDisabledMessage('dataview'))).toBeUndefined();
 	});
 });

@@ -617,6 +617,18 @@ const mockMaestro = {
 		relayRespond: vi.fn(),
 		pageClose: vi.fn().mockResolvedValue(undefined),
 	},
+	sketch: {
+		create: vi.fn().mockResolvedValue(null),
+		list: vi.fn().mockResolvedValue([]),
+		get: vi.fn().mockResolvedValue(null),
+		readScene: vi.fn().mockResolvedValue(null),
+		writeScene: vi.fn().mockResolvedValue(undefined),
+		rename: vi.fn().mockResolvedValue(null),
+		delete: vi.fn().mockResolvedValue(undefined),
+		saveToProject: vi.fn().mockResolvedValue(''),
+		onRemoteCommand: vi.fn(() => () => {}),
+		sendRemoteCommandResponse: vi.fn(),
+	},
 	web: {
 		onLiteReady: vi.fn(() => () => {}),
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),

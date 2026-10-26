@@ -151,6 +151,13 @@ import {
 	dataviewUntrust,
 } from '../../cli/commands/dataview';
 import {
+	sketchExport,
+	sketchList,
+	sketchNew,
+	sketchOpen,
+	sketchRead,
+} from '../../cli/commands/sketch';
+import {
 	tabClose,
 	tabClosed,
 	tabCompact,
@@ -343,6 +350,14 @@ const rows: Row[] = [
 	{ name: 'dataview trust', run: (json) => dataviewTrust('/vault', j(json)) },
 	{ name: 'dataview untrust', run: (json) => dataviewUntrust('/vault', j(json)) },
 	{ name: 'dataview trusted', run: (json) => dataviewTrusted(j(json)) },
+	{ name: 'sketch new', run: (json) => sketchNew({ agent: 'agent-1', json }) },
+	{ name: 'sketch list', run: (json) => sketchList(j(json)) },
+	{ name: 'sketch open', run: (json) => sketchOpen('sketch-1', j(json)) },
+	{ name: 'sketch read', run: (json) => sketchRead('sketch-1', j(json)) },
+	{
+		name: 'sketch export',
+		run: (json) => sketchExport('sketch-1', { format: 'json', output: 'board.json', json }),
+	},
 	// special cases
 	{
 		name: 'goal-run --visible',

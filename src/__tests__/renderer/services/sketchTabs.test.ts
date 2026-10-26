@@ -15,6 +15,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 import {
 	createSketchInSession,
 	newSketchBookInActiveAgent,
+	openSketchInSession,
 } from '../../../renderer/services/sketchTabs';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { SketchRecord } from '../../../shared/sketch/types';
@@ -100,6 +101,38 @@ describe('createSketchInSession', () => {
 				sessionId: 'agent-1',
 			})
 		);
+	});
+});
+
+describe('openSketchInSession', () => {
+	beforeEach(() => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'agent-1', name: 'Planner' }),
+				createMockSession({ id: 'agent-2', name: 'Builder' }),
+			],
+			activeSessionId: 'agent-1',
+		});
+	});
+
+	it('shows the sketch on another agent by switching to it', () => {
+		const tabId = openSketchInSession('agent-2', { sketchId: 'sketch-1', name: 'Board' });
+
+		expect(tabId).toBe(agent('agent-2').sketchTabs?.[0].id);
+		expect(agent('agent-2').activeSketchTabId).toBe(tabId);
+		expect(useSessionStore.getState().activeSessionId).toBe('agent-2');
+	});
+
+	it('leaves the active agent alone in the background', () => {
+		openSketchInSession('agent-2', { sketchId: 'sketch-1', name: 'Board' }, { background: true });
+
+		expect(agent('agent-2').sketchTabs).toHaveLength(1);
+		expect(useSessionStore.getState().activeSessionId).toBe('agent-1');
+	});
+
+	it('returns null for an agent that is gone', () => {
+		expect(openSketchInSession('missing', { sketchId: 'sketch-1', name: 'Board' })).toBeNull();
+		expect(useSessionStore.getState().activeSessionId).toBe('agent-1');
 	});
 });
 

@@ -5561,6 +5561,81 @@ List the vault roots whose DataviewJS blocks run without asking
 maestro-cli dataview trusted --json
 ```
 
+## `maestro-cli sketch`
+
+Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent
+
+## `maestro-cli sketch new`
+
+Create a sketch owned by a local agent and open it in a background tab there
+
+| Option          | Description                                        | Default |
+| --------------- | -------------------------------------------------- | ------- |
+| `--agent <id>`  | Agent that owns the sketch (local agents only)     | -       |
+| `--name <name>` | Sketch name (default: "Untitled Sketch")           | -       |
+| `--background`  | Open the tab without moving the view (the default) | -       |
+| `--focus`       | Show the new sketch: switch to its agent and tab   | -       |
+| `--json`        | Output as JSON (for scripting)                     | -       |
+
+```bash
+maestro-cli sketch new --agent <agent-id> --name "Architecture" --json
+```
+
+## `maestro-cli sketch list`
+
+List every sketch, or the sketches one agent owns
+
+| Option         | Description                       | Default |
+| -------------- | --------------------------------- | ------- |
+| `--agent <id>` | Only the sketches this agent owns | -       |
+| `--json`       | Output as JSON (for scripting)    | -       |
+
+```bash
+maestro-cli sketch list --agent <agent-id> --json
+```
+
+## `maestro-cli sketch open <sketchId>`
+
+Show a sketch in a tab on the agent that owns it
+
+| Option         | Description                               | Default |
+| -------------- | ----------------------------------------- | ------- |
+| `--background` | Add the tab without moving the view       | -       |
+| `--focus`      | Switch to the agent and tab (the default) | -       |
+| `--json`       | Output as JSON (for scripting)            | -       |
+
+```bash
+maestro-cli sketch open <sketch-id> --background
+```
+
+## `maestro-cli sketch read <sketchId>`
+
+Print the saved board: a summary of shapes and connections, or its elements
+
+| Option              | Description                    | Default     |
+| ------------------- | ------------------------------ | ----------- |
+| `--format <format>` | summary or elements            | `"summary"` |
+| `--json`            | Output as JSON (for scripting) | -           |
+
+```bash
+maestro-cli sketch read <sketch-id>
+maestro-cli sketch read <sketch-id> --format elements --json
+```
+
+## `maestro-cli sketch export <sketchId>`
+
+Write the saved board to a file as PNG, SVG or Excalidraw JSON
+
+| Option              | Description                                            | Default |
+| ------------------- | ------------------------------------------------------ | ------- |
+| `--format <format>` | png, svg or json                                       | -       |
+| `--output <path>`   | File to write (relative paths resolve against the cwd) | -       |
+| `--json`            | Output as JSON (for scripting)                         | -       |
+
+```bash
+maestro-cli sketch export <sketch-id> --format png --output board.png
+```
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

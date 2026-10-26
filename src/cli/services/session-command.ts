@@ -48,14 +48,16 @@ export function errorFrameMessage(reply: unknown): string | null {
  * `code` names the class of failure for a script: a bad invocation is
  * `InvalidUsage`, a bridge call that failed takes `exitCodeForError(error)`.
  * Left out, it is the general failure every caller of this had before.
+ * `extra` adds fields to the JSON error (a machine-readable `code`, say).
  */
 export function failCommand(
 	message: string,
 	json?: boolean,
-	code: ExitCode = ExitCode.GeneralError
+	code: ExitCode = ExitCode.GeneralError,
+	extra?: Record<string, unknown>
 ): never {
 	if (json) {
-		console.log(JSON.stringify({ success: false, error: message }));
+		console.log(JSON.stringify({ success: false, error: message, ...extra }));
 	} else {
 		console.error(formatError(message));
 	}
@@ -83,12 +85,15 @@ export function failFromError(error: unknown, json?: boolean): never {
  * A transport failure exits with the code for it (an older app build, a hung
  * renderer), and a reply the app marked `success: false` exits with its error,
  * so the caller reads a reply that succeeded and nothing else.
+ * `failureFields` maps that error to extra JSON fields, such as the code a
+ * turned-off Encore Feature reports (`encoreRefusalFields()`).
  */
 export async function sendBridgeCommand<T extends { success: boolean; error?: string }>(
 	payload: Record<string, unknown>,
 	responseType: string,
 	json: boolean | undefined,
-	timeoutMs?: number
+	timeoutMs?: number,
+	failureFields?: (error: string) => Record<string, unknown> | undefined
 ): Promise<T> {
 	let reply: T;
 	try {
@@ -98,8 +103,10 @@ export async function sendBridgeCommand<T extends { success: boolean; error?: st
 	} catch (error) {
 		failFromError(error, json);
 	}
-	if (!reply.success)
-		failCommand(reply.error || errorFrameMessage(reply) || 'Request failed', json);
+	if (!reply.success) {
+		const error = reply.error || errorFrameMessage(reply) || 'Request failed';
+		failCommand(error, json, ExitCode.GeneralError, failureFields?.(error));
+	}
 	return reply;
 }
 

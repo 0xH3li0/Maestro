@@ -147,7 +147,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Sketch Book - the sketch store behind the Sketch tab and `maestro-cli sketch`,
 	// gated on the `sketchBook` Encore Feature. Desktop-only: no `sketch:*`
 	// channel is on the web bridge allowlist. See src/main/ipc/handlers/sketch.ts.
-	registerSketchHandlers();
+	registerSketchHandlers({
+		// The CLI opens a sketch tab where its agent lives, like a voice dispatch.
+		resolveWindow: (agentId) => {
+			const windowId = agentId ? deps.windowRegistry.getWindowForSession(agentId) : null;
+			const owner = windowId ? deps.windowRegistry.get(windowId) : deps.windowRegistry.getPrimary();
+			return owner?.browserWindow ?? deps.getMainWindow();
+		},
+	});
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

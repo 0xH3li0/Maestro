@@ -10,11 +10,19 @@
  * Desktop only: no `sketch:` channel is on the web bridge's allowlist
  * (`src/main/web-server/handlers/bridgeDenyList.ts`). Sketch Book shares
  * through RunMaestro.ai, never through the web interface (Q13).
+ *
+ * Registration also hands the service the window registry
+ * (`setSketchWindowResolver`), so `maestro-cli sketch open` and PNG or SVG
+ * export reach the window that owns the agent.
  */
 
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { getSketchService } from '../../sketch/sketch-service';
+import {
+	setSketchWindowResolver,
+	type SketchWindowResolver,
+} from '../../sketch/sketch-renderer-bridge';
 import type { SaveToProjectOptions } from '../../sketch/sketch-store';
 import type { SketchScene } from '../../../shared/sketch/types';
 
@@ -24,7 +32,13 @@ function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
 }
 
-export function registerSketchHandlers(): void {
+export interface SketchHandlerDeps {
+	/** The window that owns an agent, or the primary window for `null`. */
+	resolveWindow?: SketchWindowResolver;
+}
+
+export function registerSketchHandlers(deps: SketchHandlerDeps = {}): void {
+	if (deps.resolveWindow) setSketchWindowResolver(deps.resolveWindow);
 	const service = getSketchService();
 
 	ipcMain.handle(

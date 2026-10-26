@@ -1,0 +1,142 @@
+// Covers the sketch_command WebSocket message that backs `maestro-cli sketch`.
+// Each action is one SketchService method (the service the `sketch:*` IPC
+// handlers call), its fields come from the message, every reply carries the
+// request id so the CLI never hangs, and only the CLI's own connection is
+// answered: Sketch Book is desktop only (Q13).
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	getPluginManager: () => null,
+	getActivePluginManager: () => null,
+	isPluginsFeatureEnabled: () => false,
+}));
+
+const service = {
+	newSketch: vi.fn(),
+	listSketches: vi.fn(),
+	openSketch: vi.fn(),
+	readSketch: vi.fn(),
+	exportSketch: vi.fn(),
+};
+
+vi.mock('../../../../main/sketch/sketch-service', () => ({
+	getSketchService: () => service,
+}));
+
+import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
+import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+
+function createMockClient(cli = false): WebClient {
+	return {
+		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		id: 'client-1',
+		connectedAt: 0,
+		...(cli ? { cli: true } : {}),
+	};
+}
+
+function lastResponse(client: WebClient): Record<string, unknown> {
+	const calls = (client.socket.send as ReturnType<typeof vi.fn>).mock.calls;
+	return JSON.parse(calls[calls.length - 1][0] as string);
+}
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+const SKETCH_ID = '11111111-2222-4333-8444-555555555555';
+
+describe('sketch_command handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const send = async (message: Record<string, unknown>) => {
+		handler.handleMessage(client, { type: 'sketch_command', requestId: 'r1', ...message });
+		await flush();
+		return lastResponse(client);
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		service.newSketch.mockResolvedValue({ record: { sketchId: SKETCH_ID }, tabId: 'tab-1' });
+		service.listSketches.mockResolvedValue([]);
+		service.openSketch.mockResolvedValue({ record: { sketchId: SKETCH_ID }, tabId: 'tab-1' });
+		service.readSketch.mockResolvedValue({ format: 'summary' });
+		service.exportSketch.mockResolvedValue({ file: { format: 'json' } });
+		handler = new WebSocketMessageHandler();
+		client = createMockClient(true);
+	});
+
+	it('creates a sketch with the agent, name and background bit', async () => {
+		const reply = await send({ action: 'new', agentId: 'agent-1', name: 'Plan', background: true });
+
+		expect(service.newSketch).toHaveBeenCalledWith({
+			ownerAgentId: 'agent-1',
+			name: 'Plan',
+			background: true,
+		});
+		expect(reply).toEqual({
+			type: 'sketch_result',
+			success: true,
+			response: { record: { sketchId: SKETCH_ID }, tabId: 'tab-1' },
+			requestId: 'r1',
+		});
+	});
+
+	it('reads only a literal true as background', async () => {
+		await send({ action: 'open', sketchId: SKETCH_ID, background: 'true' });
+		expect(service.openSketch).toHaveBeenCalledWith(SKETCH_ID, { background: false });
+	});
+
+	it('lists every sketch, or one owner', async () => {
+		await send({ action: 'list' });
+		expect(service.listSketches).toHaveBeenLastCalledWith(undefined);
+		await send({ action: 'list', agentId: 'agent-1' });
+		expect(service.listSketches).toHaveBeenLastCalledWith({ ownerAgentId: 'agent-1' });
+	});
+
+	it('reads with the summary format unless another is named', async () => {
+		await send({ action: 'read', sketchId: SKETCH_ID });
+		expect(service.readSketch).toHaveBeenLastCalledWith(SKETCH_ID, 'summary');
+		await send({ action: 'read', sketchId: SKETCH_ID, format: 'elements' });
+		expect(service.readSketch).toHaveBeenLastCalledWith(SKETCH_ID, 'elements');
+	});
+
+	it('exports in the requested format', async () => {
+		const reply = await send({ action: 'export', sketchId: SKETCH_ID, format: 'png' });
+		expect(service.exportSketch).toHaveBeenCalledWith(SKETCH_ID, 'png');
+		expect(reply).toMatchObject({ success: true, response: { file: { format: 'json' } } });
+	});
+
+	it('replies with the service refusal, keeping the request id', async () => {
+		service.openSketch.mockRejectedValue(new Error('Sketch Book is turned off.'));
+		const reply = await send({ action: 'open', sketchId: SKETCH_ID });
+
+		expect(reply).toEqual({
+			type: 'sketch_result',
+			success: false,
+			error: 'Sketch Book is turned off.',
+			requestId: 'r1',
+		});
+	});
+
+	it('refuses an unknown action', async () => {
+		const reply = await send({ action: 'share', sketchId: SKETCH_ID });
+		expect(reply).toMatchObject({ success: false, error: 'Unknown Sketch Book action: share' });
+		expect(service.openSketch).not.toHaveBeenCalled();
+	});
+
+	it('refuses a browser client before the service is reached', async () => {
+		client = createMockClient(false);
+		const reply = await send({ action: 'list' });
+
+		expect(reply).toMatchObject({
+			success: false,
+			error: 'Sketch Book is not available over the web interface',
+			requestId: 'r1',
+		});
+		expect(service.listSketches).not.toHaveBeenCalled();
+	});
+});

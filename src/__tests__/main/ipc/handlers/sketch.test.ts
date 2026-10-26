@@ -2,7 +2,8 @@
  * `sketch:*` IPC. Each handler is a pass-through to one SketchService method
  * (the CLI's WS verbs call the same methods), and a refusal from the service
  * (the Encore gate, a bad argument, a missing sketch) is logged and rethrown
- * to the renderer unchanged.
+ * to the renderer unchanged. Registration hands the window resolver to the
+ * renderer bridge, so the CLI reaches the window that owns an agent.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,7 @@ const h = vi.hoisted(() => ({
 	handlers: new Map<string, (...args: unknown[]) => unknown>(),
 	service: null as Record<string, ReturnType<typeof vi.fn>> | null,
 	logError: vi.fn(),
+	setSketchWindowResolver: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -23,6 +25,9 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 vi.mock('../../../../main/sketch/sketch-service', () => ({
 	getSketchService: () => h.service,
+}));
+vi.mock('../../../../main/sketch/sketch-renderer-bridge', () => ({
+	setSketchWindowResolver: h.setSketchWindowResolver,
 }));
 
 import { registerSketchHandlers } from '../../../../main/ipc/handlers/sketch';
@@ -37,6 +42,7 @@ describe('sketch IPC handlers', () => {
 	beforeEach(() => {
 		h.handlers.clear();
 		h.logError.mockReset();
+		h.setSketchWindowResolver.mockReset();
 		h.service = {
 			createSketch: vi.fn(async () => record),
 			listSketches: vi.fn(async () => [record]),
@@ -48,6 +54,13 @@ describe('sketch IPC handlers', () => {
 			saveSketchToProject: vi.fn(async () => '/project/Board.excalidraw'),
 		};
 		registerSketchHandlers();
+	});
+
+	it('hands the window resolver to the renderer bridge only when given one', () => {
+		expect(h.setSketchWindowResolver).not.toHaveBeenCalled();
+		const resolveWindow = vi.fn(() => null);
+		registerSketchHandlers({ resolveWindow });
+		expect(h.setSketchWindowResolver).toHaveBeenCalledWith(resolveWindow);
 	});
 
 	it('registers exactly the sketch channels', () => {

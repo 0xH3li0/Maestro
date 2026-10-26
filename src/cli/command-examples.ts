@@ -31,6 +31,14 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'dataview trust': ['maestro-cli dataview trust <vault-root>'],
 	'dataview untrust': ['maestro-cli dataview untrust <vault-root>'],
 	'dataview trusted': ['maestro-cli dataview trusted --json'],
+	'sketch new': ['maestro-cli sketch new --agent <agent-id> --name "Architecture" --json'],
+	'sketch list': ['maestro-cli sketch list --agent <agent-id> --json'],
+	'sketch open': ['maestro-cli sketch open <sketch-id> --background'],
+	'sketch read': [
+		'maestro-cli sketch read <sketch-id>',
+		'maestro-cli sketch read <sketch-id> --format elements --json',
+	],
+	'sketch export': ['maestro-cli sketch export <sketch-id> --format png --output board.png'],
 	// RC queue steering, notifications and Quick Chat controls
 	'queue hold': ['maestro-cli queue hold <item-id> --agent <agent-id>'],
 	'queue resume': ['maestro-cli queue resume <item-id> --agent <agent-id>'],

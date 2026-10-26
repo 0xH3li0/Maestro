@@ -257,6 +257,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
+import { sketchExport, sketchList, sketchNew, sketchOpen, sketchRead } from './commands/sketch';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -4611,6 +4612,52 @@ dataviewCmd
 	.description('List the vault roots whose DataviewJS blocks run without asking')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => dataviewTrusted(options));
+
+// Sketch Book commands - the verbs that need no room (spec section 9). Each
+// rides `sketch_command` to the SketchService the Sketch tab uses.
+const sketchCmd = encoreCommand(program, 'sketch', 'sketchBook', encoreFlags).description(
+	'Sketch Book: create, list, open, read and export Excalidraw whiteboards owned by an agent'
+);
+
+sketchCmd
+	.command('new')
+	.description('Create a sketch owned by a local agent and open it in a background tab there')
+	.requiredOption('--agent <id>', 'Agent that owns the sketch (local agents only)')
+	.option('--name <name>', 'Sketch name (default: "Untitled Sketch")')
+	.option('--background', 'Open the tab without moving the view (the default)')
+	.option('--focus', 'Show the new sketch: switch to its agent and tab')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => sketchNew(options));
+
+sketchCmd
+	.command('list')
+	.description('List every sketch, or the sketches one agent owns')
+	.option('--agent <id>', 'Only the sketches this agent owns')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => sketchList(options));
+
+sketchCmd
+	.command('open <sketchId>')
+	.description('Show a sketch in a tab on the agent that owns it')
+	.option('--background', 'Add the tab without moving the view')
+	.option('--focus', 'Switch to the agent and tab (the default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchOpen(sketchId, options));
+
+sketchCmd
+	.command('read <sketchId>')
+	.description('Print the saved board: a summary of shapes and connections, or its elements')
+	.option('--format <format>', 'summary or elements', 'summary')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchRead(sketchId, options));
+
+sketchCmd
+	.command('export <sketchId>')
+	.description('Write the saved board to a file as PNG, SVG or Excalidraw JSON')
+	.requiredOption('--format <format>', 'png, svg or json')
+	.requiredOption('--output <path>', 'File to write (relative paths resolve against the cwd)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sketchId, options) => sketchExport(sketchId, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.
